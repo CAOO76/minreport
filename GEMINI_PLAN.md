@@ -1,59 +1,62 @@
-# Plan de Trabajo Final: MINREPORT
+# Plan de Trabajo: MINREPORT
 
 ## Descripción General
-MINREPORT es una aplicación serverless diseñada para la generación de reportes, optimizada para operar dentro de los límites de los planes gratuitos de Google Cloud y Firebase. La arquitectura sigue un enfoque de monorepo desacoplado para facilitar el mantenimiento y la escalabilidad.
+MINREPORT es una plataforma de planificación, gestión, control y reportabilidad de proyectos mineros. Su núcleo es un gestor de cuentas dinámico con una arquitectura de plugins desacoplada para garantizar la estabilidad y escalabilidad del sistema.
 
 ## Arquitectura Tecnológica
 - **Monorepo:** pnpm workspaces
 - **Backend:** Cloud Functions for Firebase (TypeScript)
 - **Frontend:** React con Vite (TypeScript), desplegado en Firebase Hosting (multi-sitio)
 - **Base de Datos:** Firestore
-- **UI Components:** Storybook y MSW para desarrollo desacoplado
+- **UI Components:** Storybook para desarrollo de componentes de UI.
 
 ---
 
-## Estrategia de Optimización de Almacenamiento (< 5GB)
-Para mantenernos dentro de la cuota gratuita de 5GB de Firebase Storage, implementaremos las siguientes tácticas:
+## FASE 1: Desarrollo del Núcleo - Flujo de Registro y Aprobación
 
-1.  **Compresión de Imágenes en el Cliente:** Antes de subir cualquier imagen a Firebase Storage, se comprimirá y redimensionará en el lado del cliente utilizando librerías como `browser-image-compression`. El objetivo es reducir el tamaño de los archivos sin una pérdida de calidad perceptible.
-2.  **Políticas de Ciclo de Vida de Objetos:** Se configurarán reglas de ciclo de vida en Firebase Storage para archivar o eliminar automáticamente los archivos que no se han accedido en un período determinado (ej. 90 días). Esto es ideal para reportes o datos temporales.
-3.  **Uso de URLs en lugar de Almacenamiento Directo:** Para recursos que no son críticos o que pueden ser alojados externamente, se almacenarán únicamente las URLs en Firestore en lugar de los archivos completos en Storage.
-4.  **Limpieza de Artefactos de Build:** El `.gitignore` está configurado para excluir directorios como `dist` y `build`, evitando que se suban al repositorio y ocupen espacio innecesario.
+El objetivo de esta fase es construir el sistema central de solicitud y aprobación de cuentas, que es la base de toda la plataforma.
+
+**Task 9: Diseño de Datos en Firestore**
+- **Descripción:** Definir y documentar los modelos de datos (esquemas) para las colecciones principales en Firestore:
+  - `requests`: Almacenará todas las solicitudes de nuevas cuentas, con estados como `pending_review`, `pending_additional_data`, `rejected`, `approved`.
+  - `accounts`: Contendrá la información detallada de las cuentas aprobadas y activas, incluyendo tipo (`B2B`, `EDUCATIONAL`), estado (`active`, `suspended`) y datos de la institución.
+  - `account_logs`: Guardará un registro inmutable de todas las acciones importantes realizadas sobre una cuenta para garantizar la trazabilidad.
+- **Estado:** `Pendiente`
+
+**Task 10: UI - Formulario de Solicitud Inicial**
+- **Descripción:** En la aplicación pública (`client-app`), crear una nueva página/ruta con un formulario para que los nuevos usuarios envíen su solicitud de cuenta inicial.
+- **Estado:** `Pendiente`
+
+**Task 11: Backend - Recepción de Solicitudes**
+- **Descripción:** Crear una Cloud Function (HTTPS) llamada `requestInitialRegistration` que reciba los datos del formulario de la Task 10, los valide y cree un nuevo documento en la colección `requests`.
+- **Estado:** `Pendiente`
+
+**Task 12: UI - Panel de Revisión de Solicitudes**
+- **Descripción:** En la aplicación de administración (`admin-app`), construir la interfaz que liste las solicitudes pendientes de la colección `requests`, permitiendo al super administrador ver los detalles de cada una.
+- **Estado:** `Pendiente`
+
+**Task 13: Backend - Lógica de Aprobación**
+- **Descripción:** Crear las Cloud Functions (HTTPS, solo para administradores) que manejarán el flujo de aprobación:
+  - `reviewRequest`: Permite al admin aprobar inicialmente una solicitud (cambiando su estado a `pending_additional_data`) o rechazarla.
+  - `finalApproveAccount`: La función más crítica. Crea el usuario en Firebase Authentication, crea el documento final en la colección `accounts`, y actualiza todos los estados correspondientes.
+- **Estado:** `Pendiente`
+
+**Task 14: UI - Formulario de Datos Adicionales**
+- **Descripción:** Crear la página y el formulario donde el usuario, después de la aprobación inicial, puede completar la información adicional requerida por el administrador.
+- **Estado:** `Pendiente`
+
+**Task 15: Implementación de Inicio de Sesión**
+- **Descripción:** Crear la página de inicio de sesión en `client-app` para que los usuarios con cuentas finalmente aprobadas puedan autenticarse.
+- **Estado:** `Pendiente`
 
 ---
 
-## Estrategia de Uso Eficiente de Cloud Functions (Control de Cuotas)
-Para no exceder las 2 millones de invocaciones mensuales del plan gratuito, se aplicarán las siguientes estrategias:
-
-1.  **Funciones Desencadenadas por Eventos:** Se priorizará el uso de funciones que se activan por eventos de Firestore, Storage o Authentication (`onWrite`, `onCreate`, `onDelete`). Esto evita la necesidad de endpoints HTTP para operaciones internas.
-2.  **Agrupación de Operaciones (Batching):** En lugar de realizar múltiples escrituras a Firestore desde una función, se agruparán en una sola operación atómica (`batch`) para reducir el número de operaciones facturables.
-3.  **Diseño de Datos para Minimizar Lecturas:** La estructura de datos en Firestore se diseñará de forma desnormalizada para evitar consultas complejas y reducir el número de lecturas necesarias por operación. Por ejemplo, si un reporte necesita datos de un usuario, se duplicarán los datos necesarios en el documento del reporte.
-4.  **Uso de Cache en el Cliente:** Las aplicaciones frontend cachearán datos de Firestore localmente para reducir las lecturas repetitivas de información que no cambia con frecuencia.
-5.  **Optimización de Tiempos de Ejecución:** El código de las funciones será lo más eficiente posible para minimizar el tiempo de ejecución, utilizando `Promise.all` para operaciones asíncronas paralelas y evitando la inicialización de variables globales dentro del cuerpo de la función.
+## FASE 2: Gestión de Cuentas y Plugins (Próximamente)
+- Tareas relacionadas con la suspensión/reactivación de cuentas.
+- Tareas para la visualización de logs de trazabilidad.
+- Tareas para la implementación de la arquitectura de plugins basada en eventos.
 
 ---
 
-## Registro de Progreso
-- [x] Tarea 1: Inicializar Repositorio Git y Configurar Exclusiones.
-- [x] Tarea 2: Crear la Arquitectura de Directorios.
-- [x] Tarea 3: Crear el Archivo de Plan Maestro y Documentar Estrategias.
-- [x] Tarea 4: Inicializar el Proyecto de Firebase.
-- [x] Tarea 5: Inicializar Aplicaciones Frontend.
-- [x] Tarea 6: Configurar la Arquitectura de UI Desacoplada.
-- [x] Tarea 7: Conectar y Subir el Proyecto a GitHub.
-- [x] Tarea 8: Crear componente de UI 'Input' y su historia de Storybook.
-
----
-
-## Próximos Pasos: Desarrollo de Funcionalidades
-
-La infraestructura del proyecto, la configuración y el despliegue inicial en Firebase están completos. Las aplicaciones base (pública y de administración) están en línea.
-
-La próxima sesión debe centrarse en el desarrollo de la aplicación `minreport`.
-
-**Instrucciones para la próxima sesión con Gemini CLI:**
-
-1.  **Definir Requisitos:** Preguntar al usuario cuál es el propósito de la aplicación `minreport`.
-2.  **Recopilar Funcionalidades:** Obtener una lista de las funcionalidades clave para la aplicación pública (`minreport-acces`) y la de administración (`minreport-x`).
-3.  **Diseñar UI/UX:** Basado en los requisitos, proponer y empezar a construir la interfaz de usuario (UI) y la experiencia de usuario (UX), comenzando por la pantalla principal de la aplicación pública.
-4.  **Iterar:** Construir, probar y desplegar las funcionalidades de forma incremental.
+## Registro de Progreso Anterior
+- [x] Tarea 1-8: Configuración inicial de la infraestructura, proyecto y despliegue.
