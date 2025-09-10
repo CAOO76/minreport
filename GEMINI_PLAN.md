@@ -21,7 +21,7 @@ El objetivo de esta fase es construir el sistema central de solicitud y aprobaci
   - `requests`: Almacenará todas las solicitudes de nuevas cuentas, con estados como `pending_review`, `pending_additional_data`, `rejected`, `approved`.
   - `accounts`: Contendrá la información detallada de las cuentas aprobadas y activas, incluyendo tipo (`B2B`, `EDUCATIONAL`), estado (`active`, `suspended`) y datos de la institución.
   - `account_logs`: Guardará un registro inmutable de todas las acciones importantes realizadas sobre una cuenta para garantizar la trazabilidad.
-- **Estado:** `Pendiente`
+- **Estado:** `Completada`
 
 **Task 10: UI - Formulario de Solicitud Inicial**
 - **Descripción:** En la aplicación pública (`client-app`), crear una nueva página/ruta con un formulario para que los nuevos usuarios envíen su solicitud de cuenta inicial.
