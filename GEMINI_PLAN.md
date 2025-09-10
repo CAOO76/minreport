@@ -41,3 +41,19 @@ Para no exceder las 2 millones de invocaciones mensuales del plan gratuito, se a
 - [x] Tarea 5: Inicializar Aplicaciones Frontend.
 - [x] Tarea 6: Configurar la Arquitectura de UI Desacoplada.
 - [x] Tarea 7: Conectar y Subir el Proyecto a GitHub.
+- [x] Tarea 8: Crear componente de UI 'Input' y su historia de Storybook.
+
+---
+
+## Próximos Pasos: Desarrollo de Funcionalidades
+
+La infraestructura del proyecto, la configuración y el despliegue inicial en Firebase están completos. Las aplicaciones base (pública y de administración) están en línea.
+
+La próxima sesión debe centrarse en el desarrollo de la aplicación `minreport`.
+
+**Instrucciones para la próxima sesión con Gemini CLI:**
+
+1.  **Definir Requisitos:** Preguntar al usuario cuál es el propósito de la aplicación `minreport`.
+2.  **Recopilar Funcionalidades:** Obtener una lista de las funcionalidades clave para la aplicación pública (`minreport-acces`) y la de administración (`minreport-x`).
+3.  **Diseñar UI/UX:** Basado en los requisitos, proponer y empezar a construir la interfaz de usuario (UI) y la experiencia de usuario (UX), comenzando por la pantalla principal de la aplicación pública.
+4.  **Iterar:** Construir, probar y desplegar las funcionalidades de forma incremental.
