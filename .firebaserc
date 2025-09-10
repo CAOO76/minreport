@@ -1,9 +1,9 @@
 {
   "projects": {
-    "default": "minreport-f48f8"
+    "default": "minreport-app"
   },
   "targets": {
-    "minreport-f48f8": {
+    "minreport-app": {
       "hosting": {
         "client-app": [
           "minreport-acces"
@@ -13,6 +13,5 @@
         ]
       }
     }
-  },
-  "etags": {}
+  }
 }

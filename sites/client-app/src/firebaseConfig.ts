@@ -5,13 +5,13 @@ import { getAuth } from "firebase/auth";
 // TODO: Agrega la configuración de tu proyecto de Firebase
 // REEMPLAZA ESTO con el objeto firebaseConfig que copiaste de la consola
 const firebaseConfig = {
-  apiKey: "AIzaSyD9j9iZzj9SaeJ02MA1q5x0OMzN70vaUpg",
-  authDomain: "minreport-f48f8.firebaseapp.com",
-  projectId: "minreport-f48f8",
-  storageBucket: "minreport-f48f8.firebasestorage.app",
-  messagingSenderId: "1036571621129",
-  appId: "1:1036571621129:web:85769d05cb01b2ae5285d8",
-  measurementId: "G-RPZNNS1YPV"
+  apiKey: "AIzaSyDYA5MkuXpZ8peeHJZ3gef487nToA6c0Ho",
+  authDomain: "minreport-app.firebaseapp.com",
+  projectId: "minreport-app",
+  storageBucket: "minreport-app.firebasestorage.app",
+  messagingSenderId: "1025778756133",
+  appId: "1:1025778756133:web:01ee0c2c70858bc2be6dcc",
+  measurementId: "G-DFW7QEL425"
 };
 
 // Inicializa Firebase

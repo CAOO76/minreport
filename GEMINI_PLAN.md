@@ -25,11 +25,18 @@ El objetivo de esta fase es construir el sistema central de solicitud y aprobaci
 
 **Task 10: UI - Formulario de Solicitud Inicial**
 - **Descripción:** En la aplicación pública (`client-app`), crear una nueva página/ruta con un formulario para que los nuevos usuarios envíen su solicitud de cuenta inicial.
-- **Estado:** `Pendiente`
+- **Estado:** `En Progreso`
+- **Notas:**
+  - Se configuró el enrutamiento (`react-router-dom`) en `client-app`.
+  - Se creó el componente `RequestAccess.tsx` con el formulario básico y manejo de estado.
+  - Se integraron estilos globales (fuente Atkinson Hyperlegible, Material Symbols) y estructura de temas (claro/oscuro).
 
 **Task 11: Backend - Recepción de Solicitudes**
 - **Descripción:** Crear una Cloud Function (HTTPS) llamada `requestInitialRegistration` que reciba los datos del formulario de la Task 10, los valide y cree un nuevo documento en la colección `requests`.
-- **Estado:** `Pendiente`
+- **Estado:** `Bloqueada`
+- **Notas:**
+  - Se implementó el código de la función `requestInitialRegistration` en `packages/core/src/index.ts`.
+  - **Bloqueo:** El despliegue de funciones a `southamerica-west1` falla con error de permisos/App Engine no disponible en la región. La región `southamerica-west1` no permite la inicialización de App Engine en el proyecto, a pesar de tener permisos de Propietario. Se intentó cambiar a `southamerica-east1` pero se revirtió a petición del usuario.
 
 **Task 12: UI - Panel de Revisión de Solicitudes**
 - **Descripción:** En la aplicación de administración (`admin-app`), construir la interfaz que liste las solicitudes pendientes de la colección `requests`, permitiendo al super administrador ver los detalles de cada una.

@@ -1,35 +1,27 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import RequestAccess from './components/RequestAccess';
+import './App.css';
 
 function App() {
-  const [count, setCount] = useState(0)
-
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    <BrowserRouter>
+      <nav style={{ padding: '1rem', borderBottom: '1px solid #ccc' }}>
+        <Link to="/">Inicio</Link> |
+        <Link to="/request-access">Solicitar Acceso</Link>
+      </nav>
+      <Routes>
+        <Route path="/" element={
+          <div style={{ textAlign: 'center', marginTop: '2rem' }}>
+            <h1>Bienvenido a MINREPORT</h1>
+            <p>Plataforma de planificación, gestión, control y reportabilidad de proyectos mineros.</p>
+            <p>Haz clic en "Solicitar Acceso" para comenzar.</p>
+            <img src="/vite.svg" className="logo" alt="Vite logo" style={{ width: '100px', height: '100px' }} />
+          </div>
+        } />
+        <Route path="/request-access" element={<RequestAccess />} />
+      </Routes>
+    </BrowserRouter>
+  );
 }
 
-export default App
+export default App;
