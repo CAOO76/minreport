@@ -37,7 +37,7 @@ Para no exceder las 2 millones de invocaciones mensuales del plan gratuito, se a
 - [x] Tarea 1: Inicializar Repositorio Git y Configurar Exclusiones.
 - [x] Tarea 2: Crear la Arquitectura de Directorios.
 - [x] Tarea 3: Crear el Archivo de Plan Maestro y Documentar Estrategias.
-- [ ] Tarea 4: Inicializar el Proyecto de Firebase.
-- [ ] Tarea 5: Inicializar Aplicaciones Frontend.
-- [ ] Tarea 6: Configurar la Arquitectura de UI Desacoplada.
+- [x] Tarea 4: Inicializar el Proyecto de Firebase.
+- [x] Tarea 5: Inicializar Aplicaciones Frontend.
+- [x] Tarea 6: Configurar la Arquitectura de UI Desacoplada.
 - [ ] Tarea 7: Conectar y Subir el Proyecto a GitHub.

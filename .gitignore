@@ -1,4 +1,9 @@
+# System Files
+.DS_Store
+
+# dependencies
 node_modules
+
 .env
 .env.*
 /dist
