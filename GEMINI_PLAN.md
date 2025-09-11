@@ -54,6 +54,18 @@ El objetivo es completar el flujo de registro y aprobación.
 -   [x] **Gestión de Cuentas:** Implementación en `admin-app` de funcionalidades para visualizar y filtrar cuentas activas (B2B/EDUCACIONALES) y botón de suspender.
 -   [x] **Visualizador de Trazabilidad:** Creación de la interfaz en `admin-app` para ver el historial de logs de una cuenta.
 -   [ ] **Autenticación y Autorización en Admin-App:** Implementar inicio de sesión y verificación de rol de administrador para proteger el acceso al panel.
+    *   **Paso 1: Crear Usuario Administrador (Manual):**
+        *   Ve a la Consola de Firebase -> Authentication -> Usuarios.
+        *   Añade un nuevo usuario (ej. `admin@minreport.com`) con contraseña.
+    *   **Paso 2: Asignar Rol de Administrador (Script `setAdminClaim.js`):**
+        *   Asegúrate de tener `serviceAccountKey.json` en la raíz del proyecto (descárgalo de Firebase Console -> Configuración del proyecto -> Cuentas de servicio -> Generar nueva clave privada).
+        *   **Edita `setAdminClaim.js` y cambia `admin@minreport.com` por el correo electrónico del usuario que creaste.**
+        *   En la terminal (raíz del proyecto), ejecuta `npm install firebase-admin` (si no lo has hecho).
+        *   Ejecuta el script: `node setAdminClaim.js`.
+    *   **Paso 3: Implementar Autenticación en `admin-app`:**
+        *   Añadir una página de inicio de sesión en `admin-app` (usando Firebase Authentication SDK).
+        *   Proteger las rutas principales para que solo los usuarios autenticados puedan acceder.
+        *   Verificar el "Custom Claim" `admin: true` del usuario autenticado para permitir el acceso al panel de administración.
 
 ### FASE 3: Arquitectura de Plugins (Próximamente)
 
