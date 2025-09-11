@@ -41,13 +41,20 @@ El objetivo de esta fase es construir el sistema central de solicitud y aprobaci
 
 **Task 12: UI - Panel de Revisión de Solicitudes**
 - **Descripción:** En la aplicación de administración (`admin-app`), construir la interfaz que liste las solicitudes pendientes de la colección `requests`, permitiendo al super administrador ver los detalles de cada una.
-- **Estado:** `Pendiente`
+- **Estado:** `Completada`
+- **Notas:**
+  - Se creó el componente `RequestReviewPanel` para mostrar las solicitudes.
+  - Se estableció un tema base (claro/oscuro) y se limpiaron los estilos por defecto.
+  - Se corrigió la configuración del proyecto Firebase en `admin-app` y `client-app`.
+  - Se actualizaron las reglas de Firestore para permitir la lectura en desarrollo.
 
 **Task 13: Backend - Lógica de Aprobación**
-- **Descripción:** Crear las Cloud Functions (HTTPS, solo para administradores) que manejarán el flujo de aprobación:
+- **Descripción:** Crear los servicios de Cloud Run (HTTPS, solo para administradores) que manejarán el flujo de aprobación:
   - `reviewRequest`: Permite al admin aprobar inicialmente una solicitud (cambiando su estado a `pending_additional_data`) o rechazarla.
   - `finalApproveAccount`: La función más crítica. Crea el usuario en Firebase Authentication, crea el documento final en la colección `accounts`, y actualiza todos los estados correspondientes.
 - **Estado:** `Pendiente`
+- **Notas:**
+  - Se implementará como servicios de Cloud Run en `southamerica-west1` para mantener la residencia de datos y evitar la dependencia de App Engine.
 
 **Task 14: UI - Formulario de Datos Adicionales**
 - **Descripción:** Crear la página y el formulario donde el usuario, después de la aprobación inicial, puede completar la información adicional requerida por el administrador.
