@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import './RequestAccess.css';
 
 /**
  * Página para solicitar acceso a la plataforma MINREPORT.
@@ -26,13 +27,13 @@ const RequestAccess: React.FC = () => {
   };
 
   return (
-    <div style={styles.container}>
-      <h1 style={styles.title}>Solicitar Acceso a MINREPORT</h1>
-      <p style={styles.subtitle}>Por favor, completa el siguiente formulario para solicitar acceso a la plataforma.</p>
+    <div className="request-access-container">
+      <h1 className="request-access-title">Solicitar Acceso a MINREPORT</h1>
+      <p className="request-access-subtitle">Por favor, completa el siguiente formulario para solicitar acceso a la plataforma.</p>
       
-      <form onSubmit={handleSubmit} style={styles.form}>
-        <div style={styles.formGroup}>
-          <label htmlFor="requesterName" style={styles.label}>Nombre Completo:</label>
+      <form onSubmit={handleSubmit} className="request-access-form">
+        <div className="request-access-form-group">
+          <label htmlFor="requesterName" className="request-access-label">Nombre Completo:</label>
           <input
             type="text"
             id="requesterName"
@@ -40,12 +41,12 @@ const RequestAccess: React.FC = () => {
             value={formData.requesterName}
             onChange={handleChange}
             required
-            style={styles.input}
+            className="request-access-input"
           />
         </div>
 
-        <div style={styles.formGroup}>
-          <label htmlFor="requesterEmail" style={styles.label}>Correo Electrónico:</label>
+        <div className="request-access-form-group">
+          <label htmlFor="requesterEmail" className="request-access-label">Correo Electrónico:</label>
           <input
             type="email"
             id="requesterEmail"
@@ -53,12 +54,12 @@ const RequestAccess: React.FC = () => {
             value={formData.requesterEmail}
             onChange={handleChange}
             required
-            style={styles.input}
+            className="request-access-input"
           />
         </div>
 
-        <div style={styles.formGroup}>
-          <label htmlFor="rut" style={styles.label}>RUT (Institución o Personal):</label>
+        <div className="request-access-form-group">
+          <label htmlFor="rut" className="request-access-label">RUT (Institución o Personal):</label>
           <input
             type="text"
             id="rut"
@@ -66,12 +67,12 @@ const RequestAccess: React.FC = () => {
             value={formData.rut}
             onChange={handleChange}
             required
-            style={styles.input}
+            className="request-access-input"
           />
         </div>
 
-        <div style={styles.formGroup}>
-          <label htmlFor="institutionName" style={styles.label}>Nombre de la Institución:</label>
+        <div className="request-access-form-group">
+          <label htmlFor="institutionName" className="request-access-label">Nombre de la Institución:</label>
           <input
             type="text"
             id="institutionName"
@@ -79,25 +80,25 @@ const RequestAccess: React.FC = () => {
             value={formData.institutionName}
             onChange={handleChange}
             required
-            style={styles.input}
+            className="request-access-input"
           />
         </div>
 
-        <div style={styles.formGroup}>
-          <label htmlFor="requestType" style={styles.label}>Tipo de Solicitud:</label>
+        <div className="request-access-form-group">
+          <label htmlFor="requestType" className="request-access-label">Tipo de Solicitud:</label>
           <select
             id="requestType"
             name="requestType"
             value={formData.requestType}
             onChange={handleChange}
-            style={styles.select}
+            className="request-access-select"
           >
             <option value="B2B">B2B</option>
-            <option value="EDUCATIONAL">Educacional</option>
+            <option value="EDUCACIONALES">Educacional</option>
           </select>
         </div>
 
-        <button type="submit" style={styles.button}>
+        <button type="submit" className="request-access-button">
           Enviar Solicitud
           <span className="material-symbols-outlined" style={{ marginLeft: '8px' }}>send</span>
         </button>
@@ -106,70 +107,4 @@ const RequestAccess: React.FC = () => {
   );
 };
 
-const styles = {
-  container: {
-    maxWidth: '600px',
-    margin: '2rem auto',
-    padding: '2rem',
-    backgroundColor: 'var(--color-surface)',
-    borderRadius: '8px',
-    boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-    color: 'var(--color-text-primary)',
-  },
-  title: {
-    textAlign: 'center',
-    color: 'var(--color-primary)',
-    marginBottom: '1rem',
-  },
-  subtitle: {
-    textAlign: 'center',
-    color: 'var(--color-text-secondary)',
-    marginBottom: '2rem',
-  },
-  form: {
-    display: 'flex',
-    flexDirection: 'column' as 'column',
-    gap: '1rem',
-  },
-  formGroup: {
-    display: 'flex',
-    flexDirection: 'column' as 'column',
-  },
-  label: {
-    marginBottom: '0.5rem',
-    fontWeight: 'bold',
-    color: 'var(--color-text-primary)',
-  },
-  input: {
-    padding: '0.8rem',
-    border: '1px solid var(--color-border)',
-    borderRadius: '4px',
-    backgroundColor: 'var(--color-background)',
-    color: 'var(--color-text-primary)',
-    fontSize: '1rem',
-  },
-  select: {
-    padding: '0.8rem',
-    border: '1px solid var(--color-border)',
-    borderRadius: '4px',
-    backgroundColor: 'var(--color-background)',
-    color: 'var(--color-text-primary)',
-    fontSize: '1rem',
-  },
-  button: {
-    padding: '1rem 1.5rem',
-    backgroundColor: 'var(--color-primary)',
-    color: 'white',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontSize: '1.1rem',
-    fontWeight: 'bold',
-    marginTop: '1rem',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '8px',
-    transition: 'background-color 0.3s ease',
-  },
-};
+export default RequestAccess;

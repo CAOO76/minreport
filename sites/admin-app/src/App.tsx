@@ -1,10 +1,10 @@
-import { RequestReviewPanel } from './components/RequestReviewPanel';
+import { AdminPanel } from './components/AdminPanel';
 import './App.css';
 
 function App() {
   return (
     <main>
-      <RequestReviewPanel />
+      <AdminPanel />
     </main>
   );
 }

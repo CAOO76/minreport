@@ -1,77 +1,68 @@
-# Plan de Trabajo: MINREPORT
+# Plan de Desarrollo: MINREPORT
 
-## Descripción General
-MINREPORT es una plataforma de planificación, gestión, control y reportabilidad de proyectos mineros. Su núcleo es un gestor de cuentas dinámico con una arquitectura de plugins desacoplada para garantizar la estabilidad y escalabilidad del sistema.
+## 1. Descripción General del Producto
 
-## Arquitectura Tecnológica
-- **Monorepo:** pnpm workspaces
-- **Backend:** Cloud Functions for Firebase (TypeScript)
-- **Frontend:** React con Vite (TypeScript), desplegado en Firebase Hosting (multi-sitio)
-- **Base de Datos:** Firestore
-- **UI Components:** Storybook para desarrollo de componentes de UI.
+MINREPORT es una plataforma de planificación, gestión, control y reportabilidad para proyectos mineros, diseñada inicialmente para la pequeña minería en Chile con planes de expansión a Latinoamérica. El núcleo de la plataforma es un sistema dinámico de gestión de cuentas (`B2B` y `EDUCACIONALES`) y una arquitectura de plugins desacoplada que garantiza la estabilidad, seguridad y escalabilidad del sistema.
 
----
+## 2. Arquitectura y Estrategia Tecnológica
 
-## FASE 1: Desarrollo del Núcleo - Flujo de Registro y Aprobación
+Se adopta una estrategia de desarrollo moderna, minimalista y funcional, basada en las siguientes tecnologías y principios:
 
-El objetivo de esta fase es construir el sistema central de solicitud y aprobación de cuentas, que es la base de toda la plataforma.
+-   **Monorepo:** Se utiliza `pnpm workspaces` para gestionar todo el código base (frontends, backends, librerías compartidas) en un único repositorio, facilitando la coherencia y el desarrollo.
+-   **Backend:** Servicios desacoplados escritos en **TypeScript** y desplegados como contenedores en **Cloud Run**. Esto asegura la residencia de datos en `southamerica-west1` y evita las limitaciones de App Engine.
+-   **Frontend:** Aplicaciones **React (TypeScript) con Vite**. Se mantienen dos sitios separados:
+    -   `client-app`: Portal público para solicitudes de cuenta y acceso de clientes.
+    -   `admin-app`: Panel de administración para la gestión interna de MINREPORT.
+-   **Base de Datos:** **Firestore** (NoSQL) para almacenar todos los datos, incluyendo solicitudes, cuentas y logs de trazabilidad.
+-   **Despliegue:** **Firebase Hosting** para los frontends y **Cloud Run** para los servicios de backend, configurado a través de `firebase.json`.
+-   **Desarrollo de Componentes:** **Storybook** se utiliza en `client-app` para desarrollar y documentar componentes de UI de forma aislada, asegurando su reusabilidad y consistencia.
+-   **Principio Fundamental: Desacoplamiento Total del Núcleo y Plugins:** Esta es la regla arquitectónica más importante. El núcleo de MINREPORT (gestión de cuentas, autenticación, datos base) es un sistema cerrado y estable. Los plugins son entidades completamente independientes que se comunican con el núcleo exclusivamente a través de un API Gateway y un bus de eventos bien definidos. **Bajo ninguna circunstancia un plugin podrá acceder directamente a la base de datos principal, modificar el código del núcleo o afectar la estabilidad de otros plugins.** Su desarrollo, despliegue, conexión y desconexión deben ser operaciones seguras y aisladas. Esta arquitectura es innegociable para permitir el desarrollo en paralelo por parte de terceros y garantizar la integridad y disponibilidad 24/7 de la plataforma.
+-   **Preparación para Móvil:** La arquitectura de servicios desacoplados facilitará el desarrollo futuro de una aplicación móvil multiplataforma que consuma las mismas APIs.
 
-**Task 9: Diseño de Datos en Firestore**
-- **Descripción:** Definir y documentar los modelos de datos (esquemas) para las colecciones principales en Firestore:
-  - `requests`: Almacenará todas las solicitudes de nuevas cuentas, con estados como `pending_review`, `pending_additional_data`, `rejected`, `approved`.
-  - `accounts`: Contendrá la información detallada de las cuentas aprobadas y activas, incluyendo tipo (`B2B`, `EDUCATIONAL`), estado (`active`, `suspended`) y datos de la institución.
-  - `account_logs`: Guardará un registro inmutable de todas las acciones importantes realizadas sobre una cuenta para garantizar la trazabilidad.
-- **Estado:** `Completada`
+### Principios de Verificación y Despliegue
+-   **Verificación en Entorno Real:** Para confirmar cualquier avance o cambio en el proyecto, es **obligatorio** realizar un despliegue completo de la aplicación y verificar su funcionalidad y comportamiento directamente en el entorno web. Esto asegura que los cambios se comportan como se espera en un escenario de producción y y que no hay regresiones o problemas de integración.
 
-**Task 10: UI - Formulario de Solicitud Inicial**
-- **Descripción:** En la aplicación pública (`client-app`), crear una nueva página/ruta con un formulario para que los nuevos usuarios envíen su solicitud de cuenta inicial.
-- **Estado:** `En Progreso`
-- **Notas:**
-  - Se configuró el enrutamiento (`react-router-dom`) en `client-app`.
-  - Se creó el componente `RequestAccess.tsx` con el formulario básico y manejo de estado.
-  - Se integraron estilos globales (fuente Atkinson Hyperlegible, Material Symbols) y estructura de temas (claro/oscuro).
+## 3. Flujo de Registro y Ciclo de Vida de la Cuenta
 
-**Task 11: Backend - Recepción de Solicitudes**
-- **Descripción:** Migrar la lógica de `requestInitialRegistration` a un servicio de Cloud Run que reciba los datos del formulario de la Task 10, los valide y cree un nuevo documento en la colección `requests`.
-- **Estado:** `Completada`
-- **Notas:**
-  - Se migró la lógica de `requestInitialRegistration` de Cloud Functions a un **servicio de Cloud Run** (`request-registration-service`) desplegado en `southamerica-west1`.
-  - Se resolvió el bloqueo de despliegue de Cloud Functions debido a la incompatibilidad de App Engine en `southamerica-west1` utilizando Cloud Run como alternativa.
-  - El servicio de Cloud Run está operativo y procesa las solicitudes correctamente.
+El proceso de alta de una cuenta es un flujo de aprobación de varios pasos, diseñado para máxima seguridad y control. **No se crean credenciales de acceso hasta la aprobación final.**
 
-**Task 12: UI - Panel de Revisión de Solicitudes**
-- **Descripción:** En la aplicación de administración (`admin-app`), construir la interfaz que liste las solicitudes pendientes de la colección `requests`, permitiendo al super administrador ver los detalles de cada una.
-- **Estado:** `Completada`
-- **Notas:**
-  - Se creó el componente `RequestReviewPanel` para mostrar las solicitudes.
-  - Se estableció un tema base (claro/oscuro) y se limpiaron los estilos por defecto.
-  - Se corrigió la configuración del proyecto Firebase en `admin-app` y `client-app`.
-  - Se actualizaron las reglas de Firestore para permitir la lectura en desarrollo.
+1.  **Solicitud Inicial:** Un usuario llena un formulario básico en `client-app`.
+2.  **Recepción y Validación:** El servicio `request-registration-service` (Cloud Run) recibe la data, la valida y crea un documento en la colección `requests` de Firestore con estado `pending_review`.
+3.  **Revisión de Administrador:** Un super administrador revisa la solicitud pendiente en el `admin-app`.
+4.  **Aprobación Inicial o Rechazo:** El administrador puede rechazar la solicitud (cambiando su estado a `rejected`) o aprobarla inicialmente (cambiando el estado a `pending_additional_data`).
+5.  **Datos Adicionales:** El usuario es notificado para que complete un segundo formulario con información detallada de la institución.
+6.  **Aprobación Final:** El administrador revisa la información completa y otorga la aprobación final.
+7.  **Creación de la Cuenta:** **Solo en este punto**, un servicio de backend crea el usuario en **Firebase Authentication**, crea el documento final en la colección `accounts` con estado `active`, y actualiza el estado de la solicitud original a `approved`.
+8.  **Trazabilidad:** Todas las acciones (solicitud, rechazo, aprobación, suspensión, etc.) se registran en una colección `account_logs` para garantizar una auditoría completa e inmutable. El historial jamás se borra.
 
-**Task 13: Backend - Lógica de Aprobación**
-- **Descripción:** Crear los servicios de Cloud Run (HTTPS, solo para administradores) que manejarán el flujo de aprobación:
-  - `reviewRequest`: Permite al admin aprobar inicialmente una solicitud (cambiando su estado a `pending_additional_data`) o rechazarla.
-  - `finalApproveAccount`: La función más crítica. Crea el usuario en Firebase Authentication, crea el documento final en la colección `accounts`, y actualiza todos los estados correspondientes.
-- **Estado:** `Pendiente`
-- **Notas:**
-  - Se implementará como servicios de Cloud Run en `southamerica-west1` para mantener la residencia de datos y evitar la dependencia de App Engine.
+## 4. Roadmap de Desarrollo (Fases)
 
-**Task 14: UI - Formulario de Datos Adicionales**
-- **Descripción:** Crear la página y el formulario donde el usuario, después de la aprobación inicial, puede completar la información adicional requerida por el administrador.
-- **Estado:** `Pendiente`
+### FASE 1: Núcleo de Cuentas y Registro (En Progreso)
 
-**Task 15: Implementación de Inicio de Sesión**
-- **Descripción:** Crear la página de inicio de sesión en `client-app` para que los usuarios con cuentas finalmente aprobadas puedan autenticarse.
-- **Estado:** `Pendiente`
+El objetivo es completar el flujo de registro y aprobación.
 
----
+-   [x] **Diseño de Datos en Firestore:** Colecciones `requests`, `accounts`, `account_logs`.
+-   [x] **UI - Formulario de Solicitud Inicial:** Componente `RequestAccess.tsx` en `client-app`.
+-   [x] **Backend - Recepción de Solicitudes:** Servicio `request-registration-service` en Cloud Run.
+-   [x] **UI - Panel de Revisión de Solicitudes:** Componente `RequestReviewPanel.tsx` en `admin-app`.
+-   [ ] **Backend - Lógica de Aprobación/Rechazo:** Crear los servicios de Cloud Run para que el admin gestione las solicitudes.
+-   [ ] **UI - Formulario de Datos Adicionales:** Crear la vista para que el usuario complete su perfil tras la aprobación inicial.
+-   [ ] **UI - Inicio de Sesión:** Implementar la página de login en `client-app` para cuentas activas.
 
-## FASE 2: Gestión de Cuentas y Plugins (Próximamente)
-- Tareas relacionadas con la suspensión/reactivación de cuentas.
-- Tareas para la visualización de logs de trazabilidad.
-- Tareas para la implementación de la arquitectura de plugins basada en eventos.
+### FASE 2: Gestión de Cuentas y Trazabilidad (Completada)
 
----
+-   [x] **Gestión de Cuentas:** Implementación en `admin-app` de funcionalidades para visualizar y filtrar cuentas activas (B2B/EDUCACIONALES) y botón de suspender.
+-   [x] **Visualizador de Trazabilidad:** Creación de la interfaz en `admin-app` para ver el historial de logs de una cuenta.
+-   [ ] **Autenticación y Autorización en Admin-App:** Implementar inicio de sesión y verificación de rol de administrador para proteger el acceso al panel.
 
-## Registro de Progreso Anterior
-- [x] Tarea 1-8: Configuración inicial de la infraestructura, proyecto y despliegue.
+### FASE 3: Arquitectura de Plugins (Próximamente)
+
+-   **Diseño del Bus de Eventos:** Definir la arquitectura para la comunicación entre el núcleo y los plugins.
+-   **SDK de Plugins:** Crear una librería de desarrollo para facilitar la creación de plugins por terceros.
+-   **Gestión de Plugins:** Implementar en `admin-app` la interfaz para asignar y configurar plugins a las cuentas.
+-   **Desarrollo del Primer Plugin:** Crear un plugin de ejemplo (ej. "Reporte de Seguridad Básico").
+
+### FASE 4: Versión Móvil y Métricas (Futuro)
+
+-   **App Móvil:** Iniciar el desarrollo de la aplicación móvil multiplataforma para captura y visualización de datos en terreno.
+-   **Dashboard de Métricas:** Implementar un panel en `admin-app` con métricas de uso de la plataforma y de los plugins.

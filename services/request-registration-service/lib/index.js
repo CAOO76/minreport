@@ -39,17 +39,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const admin = __importStar(require("firebase-admin"));
 const core_1 = require("@minreport/core");
-console.log('--- Application starting ---'); // Added a very early log
 // Initialize Firebase Admin SDK
 // This will be initialized once when the Cloud Run instance starts
-admin.initializeApp(); // Removed try-catch for now to see if it crashes here
-console.log('Firebase Admin SDK initialized.'); // Added log
+admin.initializeApp();
 const app = (0, express_1.default)();
 app.use(express_1.default.json()); // Enable JSON body parsing
 // Health check endpoint
 app.get('/', (req, res) => {
     res.status(200).send('Service is running.');
-    console.log('Health check received.'); // Added log
 });
 // Endpoint for initial registration requests
 app.post('/requestInitialRegistration', async (req, res) => {
@@ -57,7 +54,6 @@ app.post('/requestInitialRegistration', async (req, res) => {
         // Call the core function with the request body
         const result = await (0, core_1.requestInitialRegistration)(req.body);
         res.status(200).json(result);
-        console.log('Request processed successfully.'); // Added log
     }
     catch (error) {
         // Handle HttpsError from Firebase Functions
@@ -72,5 +68,5 @@ app.post('/requestInitialRegistration', async (req, res) => {
 });
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-    console.log(`Server listening on port ${PORT}`); // Added log
+    console.log(`Server listening on port ${PORT}`);
 });
