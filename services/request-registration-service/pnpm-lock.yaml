@@ -48,7 +48,7 @@ importers:
   packages/core:
     dependencies:
       firebase-admin:
-        specifier: ^12.7.0
+        specifier: ^12.1.0
         version: 12.7.0
       firebase-functions:
         specifier: ^5.1.1

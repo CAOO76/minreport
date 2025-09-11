@@ -1,6 +1,6 @@
 {
   "projects": {
-    "default": "minreport-app"
+    "default": "minreport-8f2a8"
   },
   "targets": {
     "minreport-app": {

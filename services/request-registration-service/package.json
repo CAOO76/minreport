@@ -1,0 +1,25 @@
+{
+  "name": "request-registration-service",
+  "version": "1.0.0",
+  "description": "Cloud Run service for initial registration requests.",
+  "main": "lib/index.js",
+  "scripts": {
+    "build": "node_modules/.bin/tsc",
+    "start": "node lib/index.js",
+    "dev": "ts-node-dev src/index.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@minreport/core": "file:../../packages/core",
+    "express": "^4.19.2",
+    "firebase-admin": "^12.7.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.10",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.5.3"
+  }
+}

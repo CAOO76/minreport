@@ -32,11 +32,12 @@ El objetivo de esta fase es construir el sistema central de solicitud y aprobaci
   - Se integraron estilos globales (fuente Atkinson Hyperlegible, Material Symbols) y estructura de temas (claro/oscuro).
 
 **Task 11: Backend - Recepción de Solicitudes**
-- **Descripción:** Crear una Cloud Function (HTTPS) llamada `requestInitialRegistration` que reciba los datos del formulario de la Task 10, los valide y cree un nuevo documento en la colección `requests`.
-- **Estado:** `Bloqueada`
+- **Descripción:** Migrar la lógica de `requestInitialRegistration` a un servicio de Cloud Run que reciba los datos del formulario de la Task 10, los valide y cree un nuevo documento en la colección `requests`.
+- **Estado:** `Completada`
 - **Notas:**
-  - Se implementó el código de la función `requestInitialRegistration` en `packages/core/src/index.ts`.
-  - **Bloqueo:** El despliegue de funciones a `southamerica-west1` falla con error de permisos/App Engine no disponible en la región. La región `southamerica-west1` no permite la inicialización de App Engine en el proyecto, a pesar de tener permisos de Propietario. Se intentó cambiar a `southamerica-east1` pero se revirtió a petición del usuario.
+  - Se migró la lógica de `requestInitialRegistration` de Cloud Functions a un **servicio de Cloud Run** (`request-registration-service`) desplegado en `southamerica-west1`.
+  - Se resolvió el bloqueo de despliegue de Cloud Functions debido a la incompatibilidad de App Engine en `southamerica-west1` utilizando Cloud Run como alternativa.
+  - El servicio de Cloud Run está operativo y procesa las solicitudes correctamente.
 
 **Task 12: UI - Panel de Revisión de Solicitudes**
 - **Descripción:** En la aplicación de administración (`admin-app`), construir la interfaz que liste las solicitudes pendientes de la colección `requests`, permitiendo al super administrador ver los detalles de cada una.
