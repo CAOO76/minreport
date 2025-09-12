@@ -1,26 +1,24 @@
 # Use the official Node.js 20 image as the base image.
 FROM node:20-slim
 
-# Set the working directory in the container.
-WORKDIR /usr/src/app
+# Set the working directory to the monorepo root inside the container.
+WORKDIR /app
 
-# Copy package.json and pnpm-lock.yaml to the working directory.
-# A wildcard is used to ensure both package.json and package-lock.json are copied.
-# Copying them separately helps in leveraging Docker cache.
-COPY package.json ./ 
-COPY pnpm-lock.yaml ./ 
+# Copy the entire monorepo structure (or at least relevant parts)
+# This assumes the docker build context is the monorepo root.
+COPY . .
 
 # Install pnpm globally
 RUN npm install -g pnpm
 
-# Install dependencies using pnpm
-RUN pnpm install --prod
+# Install all dependencies for the monorepo
+RUN pnpm install
 
-# Copy the rest of the application code.
-COPY . .
+# Change working directory to the specific service for subsequent steps
+WORKDIR /app/services/request-registration-service
 
-# Build the TypeScript code.
-RUN npm run build
+# Build the TypeScript code for this service
+RUN pnpm build
 
 # Expose the port that the application listens on.
 EXPOSE 8080

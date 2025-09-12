@@ -1,0 +1,9 @@
+/* Estilos específicos para el componente Login de Admin App */
+
+/* El .form-container y .form-layout son manejados por forms.css */
+
+.error-message {
+  color: var(--color-error);
+  margin-bottom: 15px;
+  font-weight: bold;
+}

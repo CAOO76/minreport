@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { db } from '../firebaseConfig';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { AccountLogViewer } from './AccountLogViewer';
-import './AdminPanel.css';
 
 // Tipos de datos basados en DATA_CONTRACT.md
 type Request = {
@@ -11,8 +10,11 @@ type Request = {
   applicantName: string;
   applicantEmail: string;
   accountType: 'B2B' | 'EDUCACIONALES';
-  status: 'pending_review' | 'pending_additional_data' | 'rejected' | 'approved';
+  status: 'pending_review' | 'pending_additional_data' | 'pending_final_review' | 'rejected' | 'approved';
   createdAt: Date;
+  additionalData?: any; // Datos adicionales enviados por el usuario
+  additionalDataToken?: string; // Token para completar datos adicionales
+  additionalDataTokenExpiry?: number; // Fecha de expiración del token
 };
 
 type Account = {
@@ -92,7 +94,7 @@ export function AdminPanel() {
 
     setIsActionLoading(true);
     try {
-      const response = await fetch('http://localhost:8080/approve', {
+      const response = await fetch('https://request-registration-service-493995072778.southamerica-west1.run.app/approveRequest', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -125,7 +127,7 @@ export function AdminPanel() {
 
     setIsActionLoading(true);
     try {
-      const response = await fetch('http://localhost:8080/reject', {
+      const response = await fetch('https://request-registration-service-493995072778.southamerica-west1.run.app/rejectRequest', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -157,7 +159,7 @@ export function AdminPanel() {
 
     setIsActionLoading(true);
     try {
-      const response = await fetch('http://localhost:8080/final-approve', {
+      const response = await fetch('https://request-registration-service-493995072778.southamerica-west1.run.app/finalApprove', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -190,8 +192,7 @@ export function AdminPanel() {
 
     setIsActionLoading(true);
     try {
-      // TODO: Reemplazar con la URL real del servicio de Cloud Run
-      const response = await fetch('http://localhost:8080/suspend', {
+      const response = await fetch('https://request-registration-service-493995072778.southamerica-west1.run.app/suspendAccount', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -230,13 +231,10 @@ export function AdminPanel() {
 
   return (
     <div className="panel-container">
-      <header className="panel-header">
-        <h1>Panel de Administración</h1>
-        <div className="view-selector">
-          <button onClick={() => setView('requests')} className={view === 'requests' ? 'active' : ''}>Solicitudes Pendientes</button>
-          <button onClick={() => setView('accounts')} className={view === 'accounts' ? 'active' : ''}>Cuentas Activas</button>
-        </div>
-      </header>
+      <div className="view-selector">
+        <button onClick={() => setView('requests')} className={view === 'requests' ? 'active' : ''}>Solicitudes Pendientes</button>
+        <button onClick={() => setView('accounts')} className={view === 'accounts' ? 'active' : ''}>Cuentas Activas</button>
+      </div>
       {selectedItem ? (
         <div className="detail-view">
           <button onClick={handleBackToList} className="back-button">&larr; Volver a la lista</button>
@@ -247,21 +245,31 @@ export function AdminPanel() {
             <p><strong>Institución:</strong> {selectedItem.institutionName}</p>
             <p><strong>Tipo de Cuenta:</strong> {selectedItem.accountType}</p>
             <p><strong>Estado:</strong> {selectedItem.status}</p>
+            {selectedItem.status === 'pending_final_review' && selectedItem.additionalData && (
+              <>
+                <h3>Datos Adicionales Enviados:</h3>
+                <div className="detail-grid">
+                  {Object.entries(selectedItem.additionalData).map(([key, value]) => (
+                    <p key={key}><strong>{key}:</strong> {String(value)}</p>
+                  ))}
+                </div>
+              </>
+            )}
             <p><strong>Fecha:</strong> {selectedItem.createdAt.toLocaleString()}</p>
           </div>
           <div className="action-buttons">
             {/* Lógica de botones condicional según el tipo de item */}
             {view === 'requests' && selectedItem.status === 'pending_review' && (
               <button className="approve" onClick={() => handleApproveAccount(selectedItem.id)} disabled={isActionLoading}>
-                {isActionLoading ? 'Aprobando...' : 'Aprobar'}
+                {isActionLoading ? 'Aprobando...' : 'Aprobar Inicialmente'}
               </button>
             )}
-            {view === 'requests' && selectedItem.status === 'pending_additional_data' && (
+            {view === 'requests' && selectedItem.status === 'pending_final_review' && (
               <button className="approve" onClick={() => handleFinalApproveAccount(selectedItem.id)} disabled={isActionLoading}>
                 {isActionLoading ? 'Aprobando Final...' : 'Aprobación Final'}
               </button>
             )}
-            {view === 'requests' && selectedItem.status === 'pending_review' && (
+            {view === 'requests' && (selectedItem.status === 'pending_review' || selectedItem.status === 'pending_final_review') && (
               <button className="reject" onClick={() => handleRejectAccount(selectedItem.id)} disabled={isActionLoading}>
                 {isActionLoading ? 'Rechazando...' : 'Rechazar'}
               </button>

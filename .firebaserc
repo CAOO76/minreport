@@ -9,9 +9,20 @@
           "minreport-acces"
         ],
         "admin-app": [
-          "minreport-x"
+          "x-minreport"
+        ]
+      }
+    },
+    "minreport-8f2a8": {
+      "hosting": {
+        "client-app": [
+          "minreport-access"
+        ],
+        "x-minreport": [
+          "x-minreport"
         ]
       }
     }
-  }
+  },
+  "etags": {}
 }

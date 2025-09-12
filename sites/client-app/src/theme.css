@@ -12,7 +12,10 @@
   --color-text-primary: #1a202c; /* Texto principal */
   --color-text-secondary: #4a5568; /* Texto más suave, placeholders */
   --color-primary: #005f73;    /* Color de acento principal (ej. botones, enlaces) */
+  --color-primary-rgb: 0, 95, 115; /* RGB de --color-primary */
+  --color-primary-hover: #004a5a; /* Un poco más oscuro para hover */
   --color-border: #e2e8f0;      /* Bordes sutiles */
+  --font-main: 'Atkinson Hyperlegible', sans-serif;
 }
 
 [data-theme='dark'] {
@@ -22,6 +25,8 @@
   --color-text-primary: #e2e8f0; /* Texto principal claro */
   --color-text-secondary: #a0aec0; /* Texto secundario más suave */
   --color-primary: #00a9c7;    /* Acento principal, más brillante para el modo oscuro */
+  --color-primary-rgb: 0, 169, 199; /* RGB de --color-primary en modo oscuro */
+  --color-primary-hover: #008da3; /* Un poco más oscuro para hover en modo oscuro */
   --color-border: #2d3748;      /* Bordes sutiles en modo oscuro */
 }
 

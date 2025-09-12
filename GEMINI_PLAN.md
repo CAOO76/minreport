@@ -47,7 +47,7 @@ El objetivo es completar el flujo de registro y aprobación.
 -   [x] **UI - Panel de Revisión de Solicitudes:** Componente `RequestReviewPanel.tsx` en `admin-app`.
 -   [ ] **Backend - Lógica de Aprobación/Rechazo:** Crear los servicios de Cloud Run para que el admin gestione las solicitudes.
 -   [ ] **UI - Formulario de Datos Adicionales:** Crear la vista para que el usuario complete su perfil tras la aprobación inicial.
--   [ ] **UI - Inicio de Sesión:** Implementar la página de login en `client-app` para cuentas activas.
+-   [x] **UI - Inicio de Sesión:** Implementar y refinar la página de login en `client-app` para cuentas activas (incluye refinamiento de estilos y refactorización a hook `useAuth`).
 
 ### FASE 2: Gestión de Cuentas y Trazabilidad (Completada)
 

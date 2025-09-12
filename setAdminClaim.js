@@ -9,7 +9,7 @@ admin.initializeApp({
 const auth = admin.auth();
 
 // Correo electrónico del usuario al que quieres dar permisos de administrador
-const adminEmail = 'admin@minreport.com'; // ¡CAMBIA ESTO AL CORREO QUE CREASTE!
+const adminEmail = 'app_dev@minreport.com'; // ¡CAMBIA ESTO AL CORREO QUE CREASTE!
 
 async function setAdminClaim() {
   try {

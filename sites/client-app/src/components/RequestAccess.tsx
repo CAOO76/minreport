@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import './RequestAccess.css';
+import './forms.css'; // Importar los estilos de formulario comunes
 
 /**
  * Página para solicitar acceso a la plataforma MINREPORT.
@@ -27,13 +28,13 @@ const RequestAccess: React.FC = () => {
   };
 
   return (
-    <div className="request-access-container">
-      <h1 className="request-access-title">Solicitar Acceso a MINREPORT</h1>
-      <p className="request-access-subtitle">Por favor, completa el siguiente formulario para solicitar acceso a la plataforma.</p>
+    <div className="form-container"> {/* Usar form-container */}
+      <h2>Solicitar Acceso a MINREPORT</h2> {/* Usar h2 directamente */}
+      <p>Por favor, completa el siguiente formulario para solicitar acceso a la plataforma.</p> {/* Usar p directamente */}
       
-      <form onSubmit={handleSubmit} className="request-access-form">
-        <div className="request-access-form-group">
-          <label htmlFor="requesterName" className="request-access-label">Nombre Completo:</label>
+      <form onSubmit={handleSubmit} className="form-layout"> {/* Usar form-layout */}
+        <div className="form-group"> {/* Usar form-group */}
+          <label htmlFor="requesterName">Nombre Completo:</label>
           <input
             type="text"
             id="requesterName"
@@ -41,12 +42,12 @@ const RequestAccess: React.FC = () => {
             value={formData.requesterName}
             onChange={handleChange}
             required
-            className="request-access-input"
+            autoComplete="off"
           />
         </div>
 
-        <div className="request-access-form-group">
-          <label htmlFor="requesterEmail" className="request-access-label">Correo Electrónico:</label>
+        <div className="form-group"> {/* Usar form-group */}
+          <label htmlFor="requesterEmail">Correo Electrónico:</label>
           <input
             type="email"
             id="requesterEmail"
@@ -54,12 +55,12 @@ const RequestAccess: React.FC = () => {
             value={formData.requesterEmail}
             onChange={handleChange}
             required
-            className="request-access-input"
+            autoComplete="off"
           />
         </div>
 
-        <div className="request-access-form-group">
-          <label htmlFor="rut" className="request-access-label">RUT (Institución o Personal):</label>
+        <div className="form-group"> {/* Usar form-group */}
+          <label htmlFor="rut">RUT (Institución o Personal):</label>
           <input
             type="text"
             id="rut"
@@ -67,12 +68,12 @@ const RequestAccess: React.FC = () => {
             value={formData.rut}
             onChange={handleChange}
             required
-            className="request-access-input"
+            autoComplete="off"
           />
         </div>
 
-        <div className="request-access-form-group">
-          <label htmlFor="institutionName" className="request-access-label">Nombre de la Institución:</label>
+        <div className="form-group"> {/* Usar form-group */}
+          <label htmlFor="institutionName">Nombre de la Institución:</label>
           <input
             type="text"
             id="institutionName"
@@ -80,27 +81,27 @@ const RequestAccess: React.FC = () => {
             value={formData.institutionName}
             onChange={handleChange}
             required
-            className="request-access-input"
+            autoComplete="off"
           />
         </div>
 
-        <div className="request-access-form-group">
-          <label htmlFor="requestType" className="request-access-label">Tipo de Solicitud:</label>
+        <div className="form-group"> {/* Usar form-group */}
+          <label htmlFor="requestType">Tipo de Solicitud:</label>
           <select
             id="requestType"
             name="requestType"
             value={formData.requestType}
             onChange={handleChange}
-            className="request-access-select"
+            autoComplete="off"
           >
             <option value="B2B">B2B</option>
             <option value="EDUCACIONALES">Educacional</option>
           </select>
         </div>
 
-        <button type="submit" className="request-access-button">
+        <button type="submit" className="button-primary icon-button">
           Enviar Solicitud
-          <span className="material-symbols-outlined" style={{ marginLeft: '8px' }}>send</span>
+          <span className="material-symbols-outlined">send</span>
         </button>
       </form>
     </div>
