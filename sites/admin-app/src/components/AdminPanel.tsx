@@ -1,329 +1,249 @@
 import { useState, useEffect, useCallback } from 'react';
 import { db } from '../firebaseConfig';
-import { collection, getDocs, query, where } from 'firebase/firestore';
-import { AccountLogViewer } from './AccountLogViewer';
+import { collection, getDocs, query, where, orderBy } from 'firebase/firestore';
 
-// Tipos de datos basados en DATA_CONTRACT.md
+// --- Type Definitions ---
+type RequestStatus = 'pending_review' | 'pending_additional_data' | 'pending_final_review' | 'rejected' | 'activated' | 'expired';
+type AccountStatus = 'active' | 'suspended';
+
 type Request = {
   id: string;
-  institutionName: string;
+  status: RequestStatus;
+  createdAt: { toDate: () => Date };
   applicantName: string;
   applicantEmail: string;
-  accountType: 'B2B' | 'EDUCACIONALES';
-  status: 'pending_review' | 'pending_additional_data' | 'pending_final_review' | 'rejected' | 'approved';
-  createdAt: Date;
-  additionalData?: any; // Datos adicionales enviados por el usuario
-  additionalDataToken?: string; // Token para completar datos adicionales
-  additionalDataTokenExpiry?: number; // Fecha de expiración del token
+  rut?: string; // Optional for INDIVIDUAL
+  institutionName?: string; // Optional for INDIVIDUAL
+  accountType: 'B2B' | 'EDUCACIONALES' | 'INDIVIDUAL';
+  country: string;
+  entityType: 'natural' | 'juridica';
+  additionalData?: {
+    designatedAdminName?: string;
+    designatedAdminEmail?: string;
+    run?: string; // For individual
+    institutionAddress?: string; // For B2B/Edu
+    institutionPhone?: string; // For B2B/Edu
+    contactPhone?: string; // For B2B/Edu
+  };
 };
 
 type Account = {
   id: string;
   institutionName: string;
-  accountType: 'B2B' | 'EDUCACIONALES';
-  status: 'active' | 'suspended';
-  createdAt: Date;
+  status: AccountStatus;
+  createdAt: { toDate: () => Date };
+  // Add other relevant account fields here if needed for display
+};
+
+type HistoryEntry = {
+  id: string;
+  timestamp: { toDate: () => Date };
+  action: string;
+  actor: string;
+  details?: string;
 };
 
 export function AdminPanel() {
-  const [view, setView] = useState('requests'); // 'requests' o 'accounts'
-  const [accountFilter, setAccountFilter] = useState('all'); // 'all', 'B2B', 'EDUCACIONALES'
+  // --- State Management ---
+  const [view, setView] = useState('requests'); // 'requests' or 'accounts'
+  const [requestFilter, setRequestFilter] = useState<RequestStatus>('pending_review');
   const [requests, setRequests] = useState<Request[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedItem, setSelectedItem] = useState<Request | Account | null>(null);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
-  const [showLogs, setShowLogs] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
+  // --- Data Fetching ---
   const fetchData = useCallback(async () => {
     setIsLoading(true);
+    setSelectedItem(null);
     try {
+      let q;
       if (view === 'requests') {
-        const requestsCollection = collection(db, 'requests');
-        const q = query(requestsCollection, where('status', '==', 'pending_review'));
-        const querySnapshot = await getDocs(q);
-        const requestsList = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          createdAt: doc.data().createdAt.toDate(),
-        } as Request));
-        setRequests(requestsList);
-      } else {
-        const accountsCollection = collection(db, 'accounts');
-        let accountsQuery = query(accountsCollection, where('status', '==', 'active'));
-
-        if (accountFilter !== 'all') {
-          accountsQuery = query(accountsQuery, where('accountType', '==', accountFilter));
-        }
-
-        const querySnapshot = await getDocs(accountsQuery);
-        const accountsList = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          createdAt: doc.data().createdAt.toDate(),
-        } as Account));
-        setAccounts(accountsList);
+        q = query(collection(db, 'requests'), where('status', '==', requestFilter));
+      } else { // view === 'accounts'
+        q = query(collection(db, 'accounts'), where('status', '==', 'active'));
       }
+      const snapshot = await getDocs(q);
+      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      view === 'requests' ? setRequests(list) : setAccounts(list);
       setError(null);
-    } catch (err) {
+    } catch (err: any) {
       console.error(`Error fetching ${view}:`, err);
-      setError(`Error al cargar ${view}. Verifique la consola.`);
+      setError(`Error al cargar ${view}: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
-  }, [view, accountFilter]); // Dependencies for useCallback
+  }, [view, requestFilter]);
 
   useEffect(() => {
     fetchData();
-  }, [fetchData]); // fetchData is now a dependency
+  }, [fetchData]);
+
+  const fetchHistory = async (collectionName: string, docId: string) => {
+    try {
+      const historyQuery = query(collection(db, collectionName, docId, 'history'), orderBy('timestamp', 'desc'));
+      const snapshot = await getDocs(historyQuery);
+      setHistory(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as HistoryEntry)));
+    } catch (err) {
+      console.error('Error fetching history:', err);
+      setHistory([]);
+    }
+  };
 
   const handleSelectItem = (item: Request | Account) => {
     setSelectedItem(item);
+    // Determine collection name for history based on view
+    const collectionName = view === 'requests' ? 'requests' : 'accounts';
+    fetchHistory(collectionName, item.id);
   };
 
-  const handleBackToList = () => {
-    setSelectedItem(null);
-    setShowLogs(false); // Asegurarse de cerrar el visor de logs al volver a la lista
-  };
-
-  const handleApproveAccount = async (requestId: string) => {
-    if (!window.confirm('¿Estás seguro de que quieres aprobar inicialmente esta solicitud?')) {
-      return;
-    }
+  // --- Action Handlers ---
+  const handleInitialDecision = async (decision: 'approved' | 'rejected') => {
+    if (!selectedItem || selectedItem.status !== 'pending_review') return;
+    const reason = decision === 'rejected' ? window.prompt('Motivo del rechazo:') : '';
+    if (decision === 'rejected' && !reason) return alert('El motivo es obligatorio.');
 
     setIsActionLoading(true);
     try {
-      const response = await fetch('https://request-registration-service-493995072778.southamerica-west1.run.app/approveRequest', {
+      const response = await fetch('http://localhost:8082/processInitialDecision', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ requestId }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId: selectedItem.id, decision, adminId: 'admin@minreport.com', reason }),
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Error al aprobar la solicitud inicialmente');
-      }
-
-      alert('Solicitud aprobada inicialmente. Ahora espera datos adicionales.');
-      // Recargar datos para reflejar el cambio de estado
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message);
+      alert('Decisión procesada con éxito.');
       fetchData();
-      handleBackToList();
-
-    } catch (err: any) {
-      console.error('Error al aprobar la solicitud inicialmente:', err);
-      alert(`Error: ${err.message}`);
-    } finally {
-      setIsActionLoading(false);
-    }
+    } catch (err: any) { alert(`Error: ${err.message}`); } finally { setIsActionLoading(false); }
   };
-
-  const handleRejectAccount = async (requestId: string) => {
-    if (!window.confirm('¿Estás seguro de que quieres rechazar esta solicitud?')) {
-      return;
-    }
+  
+  const handleFinalDecision = async (decision: 'activated' | 'rejected') => {
+    if (!selectedItem || selectedItem.status !== 'pending_final_review') return;
+    const reason = decision === 'rejected' ? window.prompt('Motivo del rechazo final:') : '';
+    if (decision === 'rejected' && !reason) return alert('El motivo es obligatorio para el rechazo final.');
 
     setIsActionLoading(true);
     try {
-      const response = await fetch('https://request-registration-service-493995072778.southamerica-west1.run.app/rejectRequest', {
+      const response = await fetch('http://localhost:8082/processFinalDecision', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ requestId, reason: 'Rechazado por administrador' }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId: selectedItem.id, decision, adminId: 'admin@minreport.com', reason }),
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Error al rechazar la solicitud');
-      }
-
-      alert('Solicitud rechazada exitosamente.');
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message);
+      alert('Decisión final procesada con éxito.');
       fetchData();
-      handleBackToList();
+    } catch (err: any) { alert(`Error: ${err.message}`); } finally { setIsActionLoading(false); }
+  };
 
-    } catch (err: any) {
-      console.error('Error al rechazar la solicitud:', err);
-      alert(`Error: ${err.message}`);
-    } finally {
-      setIsActionLoading(false);
+  // --- UI Rendering ---
+  const renderDetailView = () => {
+    if (!selectedItem) return null;
+    const isRequest = 'status' in selectedItem && typeof selectedItem.status === 'string';
+
+    if (isRequest) {
+      const item = selectedItem as Request;
+      return (
+        <div className="detail-view">
+          <button onClick={() => setSelectedItem(null)} className="back-button">&larr; Volver</button>
+          <h2>Detalle de Solicitud</h2>
+          <div className="detail-grid">
+            <p><strong>ID:</strong> <span>{item.id}</span></p>
+            <p><strong>Estado:</strong> <span>{item.status}</span></p>
+            <p><strong>Fecha Solicitud:</strong> <span>{item.createdAt.toDate().toLocaleString()}</span></p>
+            <p><strong>Nombre Solicitante:</strong> <span>{item.applicantName}</span></p>
+            <p><strong>Email Solicitante:</strong> <span>{item.applicantEmail}</span></p>
+            <p><strong>País:</strong> <span>{item.country}</span></p>
+            <p><strong>Tipo de Cuenta:</strong> <span>{item.accountType}</span></p>
+            <p><strong>Tipo de Entidad:</strong> <span>{item.entityType === 'natural' ? 'Persona Natural' : 'Persona Jurídica'}</span></p>
+
+            {item.accountType !== 'INDIVIDUAL' && (
+              <>
+                <p><strong>Nombre Institución / Razón Social:</strong> <span>{item.institutionName}</span></p>
+                <p><strong>RUT:</strong> <span>{item.rut}</span></p>
+              </>
+            )}
+
+            {item.status === 'pending_final_review' && item.additionalData && (
+              <>
+                <h3>Datos Adicionales Enviados:</h3>
+                <p><strong>Administrador Designado:</strong> <span>{item.additionalData.designatedAdminName}</span></p>
+                <p><strong>Email Administrador:</strong> <span>{item.additionalData.designatedAdminEmail}</span></p>
+                {item.accountType === 'INDIVIDUAL' ? (
+                  <p><strong>RUN del Solicitante:</strong> <span>{item.additionalData.run}</span></p>
+                ) : (
+                  <>
+                    <p><strong>Dirección Institución:</strong> <span>{item.additionalData.institutionAddress}</span></p>
+                    <p><strong>Teléfono Institución:</strong> <span>{item.additionalData.institutionPhone}</span></p>
+                    <p><strong>Teléfono Contacto:</strong> <span>{item.additionalData.contactPhone}</span></p>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="action-buttons">
+            {item.status === 'pending_review' && (
+              <>
+                <button className="approve" onClick={() => handleInitialDecision('approved')} disabled={isActionLoading}>Aprobar Inicialmente</button>
+                <button className="reject" onClick={() => handleInitialDecision('rejected')} disabled={isActionLoading}>Rechazar</button>
+              </>
+            )}
+            {item.status === 'pending_final_review' && (
+              <>
+                <button className="approve" onClick={() => handleFinalDecision('activated')} disabled={isActionLoading}>Activar Cuenta Definitiva</button>
+                <button className="reject" onClick={() => handleFinalDecision('rejected')} disabled={isActionLoading}>Rechazar Finalmente</button>
+              </>
+            )}
+          </div>
+
+          <h3>Historial de Trazabilidad</h3>
+          <ul className="history-list">{history.map(h => <li key={h.id}><strong>{h.action}</strong> por <em>{h.actor}</em> ({h.timestamp.toDate().toLocaleString()})<p>{h.details}</p></li>)}</ul>
+        </div>
+      );
+    } else { // Account detail view
+      const item = selectedItem as Account;
+      return (
+        <div className="detail-view">
+          <button onClick={() => setSelectedItem(null)} className="back-button">&larr; Volver</button>
+          <h2>Detalle de Cuenta</h2>
+          <div className="detail-grid">
+            <p><strong>ID:</strong> <span>{item.id}</span></p>
+            <p><strong>Institución:</strong> <span>{item.institutionName}</span></p>
+            <p><strong>Estado:</strong> <span>{item.status}</span></p>
+            <p><strong>Fecha Creación:</strong> <span>{item.createdAt.toDate().toLocaleString()}</span></p>
+            {/* Add more account details here as needed */}
+          </div>
+          <h3>Historial de Trazabilidad</h3>
+          <ul className="history-list">{history.map(h => <li key={h.id}><strong>{h.action}</strong> por <em>{h.actor}</em> ({h.timestamp.toDate().toLocaleString()})<p>{h.details}</p></li>)}</ul>
+        </div>
+      );
     }
   };
 
-  const handleFinalApproveAccount = async (requestId: string) => {
-    if (!window.confirm('¿Estás seguro de que quieres aprobar FINALMENTE esta solicitud y crear la cuenta?')) {
-      return;
-    }
-
-    setIsActionLoading(true);
-    try {
-      const response = await fetch('https://request-registration-service-493995072778.southamerica-west1.run.app/finalApprove', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ requestId }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Error al aprobar finalmente la cuenta');
-      }
-
-      alert('Cuenta creada y solicitud aprobada finalmente.');
-      // Recargar datos para reflejar el cambio de estado
-      fetchData();
-      handleBackToList();
-
-    } catch (err: any) {
-      console.error('Error al aprobar finalmente la cuenta:', err);
-      alert(`Error: ${err.message}`);
-    } finally {
-      setIsActionLoading(false);
-    }
-  };
-
-  const handleSuspendAccount = async (accountId: string) => {
-    if (!window.confirm('¿Estás seguro de que quieres suspender esta cuenta?')) {
-      return;
-    }
-
-    setIsActionLoading(true);
-    try {
-      const response = await fetch('https://request-registration-service-493995072778.southamerica-west1.run.app/suspendAccount', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ accountId, reason: 'Suspendido por administrador' }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Error al suspender la cuenta');
-      }
-
-      alert('Cuenta suspendida exitosamente.');
-      // TODO: Actualizar la lista de cuentas o recargar datos
-      handleBackToList(); // Volver a la lista después de la acción
-
-    } catch (err: any) {
-      console.error('Error al suspender la cuenta:', err);
-      alert(`Error: ${err.message}`);
-    } finally {
-      setIsActionLoading(false);
-    }
-  };
-
-  const handleViewLogs = () => {
-    setShowLogs(true);
-  };
-
-  if (isLoading) {
-    return <div className="panel-container">Cargando...</div>;
-  }
-
-  if (error) {
-    return <div className="panel-container error">{error}</div>;
-  }
+  const renderListView = () => (
+    <div className="list-view">
+      {view === 'requests' && (
+        <div className="sub-view-selector">
+          <button onClick={() => setRequestFilter('pending_review')} className={requestFilter === 'pending_review' ? 'active' : ''}>Pendientes de Revisión</button>
+          <button onClick={() => setRequestFilter('pending_final_review')} className={requestFilter === 'pending_final_review' ? 'active' : ''}>Pendientes de Aprobación Final</button>
+        </div>
+      )}
+      {view === 'requests' && (requests.length > 0 ? <ul className="requests-list">{requests.map(req => <li key={req.id} onClick={() => handleSelectItem(req)}><strong>{req.institutionName}</strong><span>{req.applicantName}</span></li>)}</ul> : <p>No hay solicitudes en este estado.</p>)}
+      {view === 'accounts' && (accounts.length > 0 ? <ul className="requests-list">{accounts.map(acc => <li key={acc.id} onClick={() => handleSelectItem(acc)}><strong>{acc.institutionName}</strong><span>{acc.id}</span></li>)}</ul> : <p>No hay cuentas activas.</p>)}
+    </div>
+  );
 
   return (
     <div className="panel-container">
       <div className="view-selector">
-        <button onClick={() => setView('requests')} className={view === 'requests' ? 'active' : ''}>Solicitudes Pendientes</button>
+        <button onClick={() => setView('requests')} className={view === 'requests' ? 'active' : ''}>Solicitudes</button>
         <button onClick={() => setView('accounts')} className={view === 'accounts' ? 'active' : ''}>Cuentas Activas</button>
       </div>
-      {selectedItem ? (
-        <div className="detail-view">
-          <button onClick={handleBackToList} className="back-button">&larr; Volver a la lista</button>
-          <h2>Detalle</h2>
-          {/* Aquí podrías diferenciar el detalle si es Request o Account */}
-          <div className="detail-grid">
-            <p><strong>ID:</strong> {selectedItem.id}</p>
-            <p><strong>Institución:</strong> {selectedItem.institutionName}</p>
-            <p><strong>Tipo de Cuenta:</strong> {selectedItem.accountType}</p>
-            <p><strong>Estado:</strong> {selectedItem.status}</p>
-            {selectedItem.status === 'pending_final_review' && selectedItem.additionalData && (
-              <>
-                <h3>Datos Adicionales Enviados:</h3>
-                <div className="detail-grid">
-                  {Object.entries(selectedItem.additionalData).map(([key, value]) => (
-                    <p key={key}><strong>{key}:</strong> {String(value)}</p>
-                  ))}
-                </div>
-              </>
-            )}
-            <p><strong>Fecha:</strong> {selectedItem.createdAt.toLocaleString()}</p>
-          </div>
-          <div className="action-buttons">
-            {/* Lógica de botones condicional según el tipo de item */}
-            {view === 'requests' && selectedItem.status === 'pending_review' && (
-              <button className="approve" onClick={() => handleApproveAccount(selectedItem.id)} disabled={isActionLoading}>
-                {isActionLoading ? 'Aprobando...' : 'Aprobar Inicialmente'}
-              </button>
-            )}
-            {view === 'requests' && selectedItem.status === 'pending_final_review' && (
-              <button className="approve" onClick={() => handleFinalApproveAccount(selectedItem.id)} disabled={isActionLoading}>
-                {isActionLoading ? 'Aprobando Final...' : 'Aprobación Final'}
-              </button>
-            )}
-            {view === 'requests' && (selectedItem.status === 'pending_review' || selectedItem.status === 'pending_final_review') && (
-              <button className="reject" onClick={() => handleRejectAccount(selectedItem.id)} disabled={isActionLoading}>
-                {isActionLoading ? 'Rechazando...' : 'Rechazar'}
-              </button>
-            )}
-            {view === 'accounts' && selectedItem.status !== 'suspended' && (
-              <button className="suspend" onClick={() => handleSuspendAccount(selectedItem.id)} disabled={isActionLoading}>
-                {isActionLoading ? 'Suspendiendo...' : 'Suspender'}
-              </button>
-            )}
-            {view === 'accounts' && (
-              <button onClick={handleViewLogs} className="view-logs-button">
-                Ver Trazabilidad
-              </button>
-            )}
-          </div>
-        </div>
-      ) : (
-        <div className="list-view">
-          {view === 'requests' && (
-            requests.length > 0 ? (
-              <ul className="requests-list">
-                {requests.map(req => (
-                  <li key={req.id} onClick={() => handleSelectItem(req)}>
-                    <strong>{req.institutionName}</strong>
-                    <span>{req.applicantName}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : <p>No hay solicitudes pendientes.</p>
-          )}
-          {view === 'accounts' && (
-            <div className="sub-view-selector">
-              <button onClick={() => setAccountFilter('all')} className={accountFilter === 'all' ? 'active' : ''}>Todas</button>
-              <button onClick={() => setAccountFilter('B2B')} className={accountFilter === 'B2B' ? 'active' : ''}>B2B</button>
-              <button onClick={() => setAccountFilter('EDUCACIONALES')} className={accountFilter === 'EDUCACIONALES' ? 'active' : ''}>EDUCACIONALES</button>
-            </div>
-          )}
-          {view === 'accounts' && (
-            accounts.length > 0 ? (
-              <ul className="requests-list"> 
-                {accounts.map(acc => (
-                  <li key={acc.id} onClick={() => handleSelectItem(acc)}>
-                    <strong>{acc.institutionName}</strong>
-                    <span>{acc.status}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : <p>No hay cuentas activas.</p>
-          )}
-        </div>
-      )}
-      {showLogs && selectedItem && (
-        <AccountLogViewer accountId={selectedItem.id} onClose={() => setShowLogs(false)} />
-      )}
+      {isLoading ? <p>Cargando...</p> : error ? <p className="error">{error}</p> : (selectedItem ? renderDetailView() : renderListView())}
     </div>
   );
 }

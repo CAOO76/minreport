@@ -41,7 +41,9 @@
 
 .form-group input[type="text"],
 .form-group input[type="email"],
-.form-group input[type="password"] { /* Added password input type */
+.form-group input[type="password"],
+.form-group input[type="tel"],
+.form-group select {
   padding: 0.85rem 1rem; /* Slightly more vertical padding */
   background-color: var(--color-background);
   border: 1px solid var(--color-border);
@@ -52,7 +54,9 @@
 
 .form-group input[type="text"]:focus,
 .form-group input[type="email"]:focus,
-.form-group input[type="password"]:focus { /* Added password input type */
+.form-group input[type="password"]:focus,
+.form-group input[type="tel"]:focus,
+.form-group select:focus {
   outline: none;
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px rgba(var(--color-primary-rgb), 0.2); /* Focus ring with primary color */
@@ -125,4 +129,107 @@
 
 .icon-button .material-symbols-outlined {
   font-size: 20px; /* Adjust size as needed */
+}
+
+/* --- Account Type Selector --- */
+.account-type-selector {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.account-type-option {
+  flex: 1 1 calc(50% - 0.5rem); /* Two columns, with gap */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem 1rem;
+  border: 2px solid var(--color-border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+  text-align: center;
+}
+
+.account-type-option:hover {
+  border-color: var(--color-primary);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.account-type-option.selected {
+  border-color: var(--color-primary);
+  background-color: rgba(var(--color-primary-rgb), 0.1);
+  box-shadow: 0 4px 12px rgba(var(--color-primary-rgb), 0.2);
+}
+
+.account-type-option .material-symbols-outlined {
+  font-size: 36px;
+  margin-bottom: 0.5rem;
+  color: var(--color-primary);
+}
+
+.account-type-option span {
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+/* --- Review Step --- */
+.review-data-summary {
+  background-color: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.review-data-summary p {
+  margin-bottom: 0.5rem;
+  color: var(--color-text-primary);
+}
+
+.review-data-summary p strong {
+  color: var(--color-text-primary);
+}
+
+.review-data-summary p span {
+  color: var(--color-text-secondary);
+}
+
+.form-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.form-actions .button-primary {
+  flex: 1;
+  align-self: stretch; /* Make buttons fill available height */
+}
+
+.form-actions .button-secondary {
+  flex: 1;
+  align-self: stretch;
+  padding: 0.85rem 1.8rem;
+  background-color: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.form-actions .button-secondary:hover {
+  background-color: var(--color-surface);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }

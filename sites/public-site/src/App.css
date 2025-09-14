@@ -1,0 +1,50 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  text-align: center;
+  padding: 2rem;
+  box-sizing: border-box;
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+}
+
+.app-header h1 {
+  font-size: 3rem;
+  color: var(--color-primary);
+  margin-bottom: 0.5rem;
+}
+
+.app-header p {
+  font-size: 1.2rem;
+  color: var(--color-text-secondary);
+}
+
+.access-button {
+  background-color: var(--color-primary);
+  color: var(--color-background);
+  padding: 15px 30px;
+  font-size: 1.2rem;
+  font-family: var(--font-main);
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  text-decoration: none;
+  margin-top: 2rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: background-color 0.3s ease;
+}
+
+.access-button:hover {
+  background-color: var(--color-primary-hover);
+}
+
+.theme-toggle-container {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+}

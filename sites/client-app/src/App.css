@@ -8,10 +8,16 @@
   transition: background-color 0.3s ease, border-color 0.3s ease;
 }
 
+.main-nav {
+  display: flex;
+  align-items: center;
+  gap: 1rem; /* Use gap for spacing */
+}
+
 .main-nav a {
   color: var(--color-text-secondary);
   text-decoration: none;
-  margin-right: 1.5rem;
+  /* margin-right is removed in favor of gap */
   font-weight: 500;
   transition: color 0.3s ease;
 }
@@ -28,4 +34,30 @@
 /* Eliminando estilos de demo de Vite que ya no se usan */
 .logo {
   display: none;
+}
+
+/* Styles for header icon buttons */
+.header-icon-button {
+  background-color: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+  text-decoration: none; /* For 'a' tags styled as buttons */
+}
+
+.header-icon-button:hover {
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+  border-color: var(--color-primary);
+}
+
+.header-icon-button .material-symbols-outlined {
+  font-size: 20px;
 }

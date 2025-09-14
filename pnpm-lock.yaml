@@ -130,37 +130,6 @@ importers:
         specifier: ^5.5.3
         version: 5.8.3
 
-  services/review-request-service:
-    dependencies:
-      '@minreport/core':
-        specifier: file:../../packages/core
-        version: link:../../packages/core
-      cross-env:
-        specifier: ^7.0.3
-        version: 7.0.3
-      express:
-        specifier: ^4.19.2
-        version: 4.21.2
-      firebase-admin:
-        specifier: ^12.7.0
-        version: 12.7.0
-    devDependencies:
-      '@types/express':
-        specifier: ^4.17.21
-        version: 4.17.23
-      '@types/node':
-        specifier: ^20.0.0
-        version: 20.19.13
-      dotenv-cli:
-        specifier: ^7.4.2
-        version: 7.4.4
-      ts-node-dev:
-        specifier: ^2.0.0
-        version: 2.0.0(@types/node@20.19.13)(typescript@5.8.3)
-      typescript:
-        specifier: ^5.5.3
-        version: 5.8.3
-
   sites/admin-app:
     dependencies:
       firebase:
@@ -297,6 +266,52 @@ importers:
       vitest:
         specifier: ^3.2.4
         version: 3.2.4(@types/node@20.19.13)(@vitest/browser@3.2.4)(msw@2.11.1(@types/node@20.19.13)(typescript@5.8.3))
+
+  sites/public-site:
+    dependencies:
+      react:
+        specifier: ^19.1.1
+        version: 19.1.1
+      react-dom:
+        specifier: ^19.1.1
+        version: 19.1.1(react@19.1.1)
+      react-router-dom:
+        specifier: ^7.8.2
+        version: 7.8.2(react-dom@19.1.1(react@19.1.1))(react@19.1.1)
+    devDependencies:
+      '@eslint/js':
+        specifier: ^9.33.0
+        version: 9.35.0
+      '@types/react':
+        specifier: ^19.1.10
+        version: 19.1.12
+      '@types/react-dom':
+        specifier: ^19.1.7
+        version: 19.1.9(@types/react@19.1.12)
+      '@vitejs/plugin-react':
+        specifier: ^5.0.0
+        version: 5.0.2(vite@7.1.5(@types/node@20.19.13))
+      eslint:
+        specifier: ^9.33.0
+        version: 9.35.0
+      eslint-plugin-react-hooks:
+        specifier: ^5.2.0
+        version: 5.2.0(eslint@9.35.0)
+      eslint-plugin-react-refresh:
+        specifier: ^0.4.20
+        version: 0.4.20(eslint@9.35.0)
+      globals:
+        specifier: ^16.3.0
+        version: 16.4.0
+      typescript:
+        specifier: ~5.8.3
+        version: 5.8.3
+      typescript-eslint:
+        specifier: ^8.39.1
+        version: 8.43.0(eslint@9.35.0)(typescript@5.8.3)
+      vite:
+        specifier: ^7.1.2
+        version: 7.1.5(@types/node@20.19.13)
 
 packages:
 

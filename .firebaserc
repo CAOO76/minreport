@@ -15,6 +15,9 @@
     },
     "minreport-8f2a8": {
       "hosting": {
+        "public-site": [
+          "minreport-8f2a8"
+        ],
         "client-app": [
           "minreport-access"
         ],

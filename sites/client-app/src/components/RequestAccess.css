@@ -16,3 +16,159 @@
   color: var(--color-text-secondary);
   margin-bottom: 2rem;
 }
+
+.account-type-selector {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); /* Adjust minmax for desired card size */
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.account-type-option {
+  background-color: var(--color-background-card);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  box-shadow: var(--shadow-small);
+}
+
+.account-type-option:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-medium);
+  transform: translateY(-2px);
+}
+
+.account-type-option.selected {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-large);
+  background-color: var(--color-primary-light);
+  color: var(--color-primary-text);
+}
+
+.account-type-option .material-symbols-outlined {
+  font-size: 2.5rem;
+  margin-bottom: 0.5rem;
+  color: var(--color-icon);
+}
+
+.account-type-option.selected .material-symbols-outlined {
+  color: var(--color-primary);
+}
+
+.account-type-option span {
+  font-weight: bold;
+  margin-bottom: 0.25rem;
+  color: var(--color-text-primary);
+}
+
+.account-type-option.selected span {
+  color: var(--color-primary);
+}
+
+.account-type-option p {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.account-type-option.selected p {
+  color: var(--color-primary-dark);
+}
+
+.selected-account-type-display {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background-color: var(--color-background-card);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 2rem;
+  box-shadow: var(--shadow-small);
+}
+
+.selected-account-type-display .material-symbols-outlined {
+  font-size: 3rem;
+  color: var(--color-primary);
+}
+
+.selected-account-type-display h4 {
+  margin: 0;
+  color: var(--color-primary);
+}
+
+.selected-account-type-display p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.9rem;
+}
+
+.form-layout h3 {
+  color: var(--color-primary);
+  margin-top: 1.5rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 0.5rem;
+}
+
+.review-data-summary p {
+  margin-bottom: 0.5rem;
+}
+
+.review-data-summary p strong {
+  color: var(--color-text-primary);
+  margin-right: 0.5rem;
+}
+
+.review-data-summary p span {
+  color: var(--color-text-secondary);
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+.form-actions .button-secondary {
+  background-color: var(--color-background-alt);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+}
+
+.form-actions .button-secondary:hover {
+  background-color: var(--color-hover);
+}
+
+.submit-message {
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+  text-align: center;
+  font-weight: bold;
+}
+
+.submit-message.success {
+  background-color: var(--color-success-light);
+  color: var(--color-success-dark);
+  border: 1px solid var(--color-success);
+}
+
+.submit-message.error {
+  background-color: var(--color-error-light);
+  color: var(--color-error-dark);
+  border: 1px solid var(--color-error);
+}
+
+.error-message {
+  color: var(--color-error-dark);
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}

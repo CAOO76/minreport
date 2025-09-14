@@ -1,32 +1,39 @@
 import { useState, useEffect } from 'react';
-import type { User, Auth } from 'firebase/auth';
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import type { User, Auth, IdTokenResult } from 'firebase/auth';
+import { onAuthStateChanged } from 'firebase/auth';
 
-interface AuthState {
+// Expanded AuthState to include user claims
+export interface AuthState {
   user: User | null;
+  claims: IdTokenResult['claims'] | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  logout: () => Promise<void>;
 }
 
 const useAuth = (authInstance: Auth): AuthState => {
   const [user, setUser] = useState<User | null>(null);
+  const [claims, setClaims] = useState<IdTokenResult['claims'] | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(authInstance, async (firebaseUser) => {
       if (firebaseUser) {
-        const idTokenResult = await firebaseUser.getIdTokenResult();
-        const isAdmin = idTokenResult.claims.admin === true;
-
-        // Principio de fallo silencioso: si es admin, no debe loguearse en el portal de clientes.
-        if (!isAdmin) {
+        try {
+          // Force refresh to get the latest claims
+          const idTokenResult = await firebaseUser.getIdTokenResult(true);
+          
+          // Set user and claims
           setUser(firebaseUser);
-        } else {
+          setClaims(idTokenResult.claims);
+
+        } catch (error) {
+          console.error("Error getting user token result:", error);
           setUser(null);
+          setClaims(null);
         }
       } else {
+        // No user, clear everything
         setUser(null);
+        setClaims(null);
       }
       setLoading(false);
     });
@@ -34,28 +41,7 @@ const useAuth = (authInstance: Auth): AuthState => {
     return () => unsubscribe();
   }, [authInstance]);
 
-  const login = async (email: string, password: string) => {
-    setLoading(true);
-    try {
-      await signInWithEmailAndPassword(authInstance, email, password);
-    } catch (err: any) {
-      console.error('useAuth: Login error caught:', err);
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const logout = async () => {
-    setLoading(true);
-    try {
-      await signOut(authInstance);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return { user, loading, login, logout };
+  return { user, claims, loading };
 };
 
 export default useAuth;

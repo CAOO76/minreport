@@ -1,11 +1,12 @@
 {
   "private": true,
   "scripts": {
-    "emulators:start": "firebase emulators:start --only auth,firestore,storage,hosting --import=./firebase-emulators-data --export-on-exit",
+    "emulators:start": "firebase emulators:start --only auth,firestore,storage,hosting --import=./firebase-emulators-data --export-on-exit=./firebase-emulators-data",
     "dev:client": "pnpm --filter client-app dev",
     "dev:admin": "pnpm --filter admin-app dev",
+    "dev:public": "pnpm --filter public-site dev",
     "dev:services": "pnpm --filter \"./services/*\" dev",
-    "dev": "concurrently \"pnpm:emulators:start\" \"pnpm:dev:services\" \"pnpm:dev:client\" \"pnpm:dev:admin\""
+    "dev": "concurrently \"pnpm:emulators:start\" \"pnpm:dev:services\" \"pnpm:dev:client\" \"pnpm:dev:admin\" \"pnpm:dev:public\""
   },
   "pnpm": {
     "overrides": {

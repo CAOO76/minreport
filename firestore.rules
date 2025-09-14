@@ -2,13 +2,31 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Permite la lectura de la colección 'requests' para el desarrollo del panel de admin.
-    // TODO: Asegurar esta regla cuando se implemente la autenticación de administradores.
-    match /requests/{request} {
-      allow read: if true;
-      allow write: if false; // La escritura debe ser controlada por el backend.
+
+    // Las solicitudes solo pueden ser leídas por administradores.
+    // La escritura es manejada por los servicios de backend.
+    match /requests/{requestId} {
+      allow get, list: if request.auth.token.admin == true;
+      allow write: if false;
+
+      // El historial de una solicitud también es solo para administradores.
+      match /history/{logId} {
+        allow get, list: if request.auth.token.admin == true;
+        allow write: if false;
+      }
     }
 
-    // Por defecto, el resto de las colecciones están cerradas hasta que se definan.
+    // Las cuentas solo pueden ser leídas por administradores.
+    // La escritura es manejada por los servicios de backend.
+    match /accounts/{accountId} {
+      allow get, list: if request.auth.token.admin == true;
+      allow write: if false;
+
+      // El historial de una cuenta también es solo para administradores.
+      match /history/{logId} {
+        allow get, list: if request.auth.token.admin == true;
+        allow write: if false;
+      }
+    }
   }
 }

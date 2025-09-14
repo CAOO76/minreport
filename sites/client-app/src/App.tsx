@@ -1,30 +1,47 @@
-import { BrowserRouter, Routes, Route, Link, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
+import React from 'react';
 import RequestAccess from './components/RequestAccess';
-import AdditionalDataForm from './components/AdditionalDataForm';
 import Login from './components/Login';
 import { ThemeToggleButton } from './components/ThemeToggleButton';
-import useUserRequestStatus from './hooks/useUserRequestStatus'; // Keep this import
-import { auth } from './firebaseConfig'; // Import auth
-import useAuth from '@minreport/core/hooks/useAuth'; // Import the shared useAuth hook
+import { auth } from './firebaseConfig';
+import useAuth from '@minreport/core/hooks/useAuth';
 import './App.css';
-import { signOut } from 'firebase/auth'; // Import signOut
+import { signOut } from 'firebase/auth';
+import CompleteDataForm from './components/CompleteDataForm';
+
+/**
+ * A component to handle routing logic for provisional users.
+ */
+const ProvisionalRouteGuard: React.FC<{ claims: any, children: React.ReactElement }> = ({ claims, children }) => {
+  const location = useLocation();
+
+  if (claims?.status === 'provisional' && location.pathname !== '/complete-data') {
+    // If user is provisional and not on the completion page, redirect them there.
+    return <Navigate to="/complete-data" replace />;
+  }
+  
+  if (claims?.status !== 'provisional' && location.pathname === '/complete-data') {
+    // If user is NOT provisional but tries to access completion page, redirect away.
+    return <Navigate to="/" replace />;
+  }
+
+  return children; // Otherwise, render the requested routes.
+};
 
 function App() {
-  const { status, loading: statusLoading } = useUserRequestStatus(); // Removed requestUser
-  const { user, loading: authLoading } = useAuth(auth); // Use the shared useAuth hook
+  const { user, claims, loading: authLoading } = useAuth(auth);
 
-  const overallLoading = statusLoading || authLoading; // Combine loading states
+  const publicSiteUrl = import.meta.env.VITE_PUBLIC_SITE_URL || 'http://localhost:5176';
 
   const handleLogout = async () => {
     try {
       await signOut(auth);
     } catch (error) {
       console.error("Error al cerrar sesión:", error);
-      alert("Error al cerrar sesión. Por favor, inténtalo de nuevo.");
     }
   };
 
-  if (overallLoading) {
+  if (authLoading) {
     return <div className="loading-container">Cargando aplicación...</div>;
   }
 
@@ -32,55 +49,39 @@ function App() {
     <BrowserRouter>
       <header className="app-header">
         <nav className="main-nav">
-          <Link to="/">Inicio</Link>
-          <Link to="/request-access">Solicitar Acceso</Link>
-          {/* Mostrar el enlace a Completar Registro solo si el usuario está logueado */}
-          {user && <Link to="/complete-registration">Completar Registro</Link>}
+          <a href={publicSiteUrl} className="header-icon-button" title="Ir a la página principal">
+            <span className="material-symbols-outlined">home</span>
+          </a>
+          {/* Hide request access if user is logged in */}
+          {!user && <Link to="/request-access">Solicitar Acceso</Link>}
         </nav>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          {/* Conditionally render Login/Logout link */}
           {user ? (
-            <button onClick={handleLogout} className="button-primary">Cerrar Sesión</button> // Use button-primary for styling
+            <button onClick={handleLogout} className="header-icon-button" title="Cerrar Sesión">
+              <span className="material-symbols-outlined">logout</span>
+            </button>
           ) : (
-            <Link to="/login">Iniciar Sesión</Link>
+            <Link to="/login" className="header-icon-button" title="Iniciar Sesión">
+              <span className="material-symbols-outlined">login</span>
+            </Link>
           )}
           <ThemeToggleButton />
         </div>
       </header>
       <main className="app-main">
-        <Routes>
-          <Route path="/" element={
-            <div style={{ textAlign: 'center', marginTop: '2rem' }}>
-              <h1>Bienvenido a MINREPORT</h1>
-              <p>Plataforma de planificación, gestión, control y reportabilidad de proyectos mineros.</p>
-              {user && <p>¡Has iniciado sesión como: {user.email}!</p>} {/* Show welcome message */}
-            </div>
-          } />
-          <Route path="/request-access" element={<RequestAccess />} />
-          <Route
-            path="/complete-registration"
-            element={
-              user ? (
-                status === 'pending_additional_data' ? (
-                  <AdditionalDataForm />
-                ) : (
-                  <div className="form-container">
-                    <h2>Estado de tu Solicitud</h2>
-                    <p>Tu solicitud se encuentra en estado: <strong>{status || 'No encontrada'}</strong>.</p>
-                    {status === 'approved' && <p>¡Tu cuenta ha sido aprobada! Puedes iniciar sesión.</p>}
-                    {status === 'rejected' && <p>Tu solicitud ha sido rechazada. Por favor, contacta a soporte.</p>}
-                    {status === 'pending_review' && <p>Tu solicitud está pendiente de revisión por un administrador.</p>}
-                    {!status && <p>No se encontró ninguna solicitud asociada a tu cuenta.</p>}
-                  </div>
-                )
-              ) : (
-                <Navigate to="/login" replace />
-              )
-            }
-          />
-          {/* Redirect from /login if user is already authenticated */}
-          <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
-        </Routes>
+        <ProvisionalRouteGuard claims={claims}>
+          <Routes>
+            <Route path="/" element={
+              <div style={{ textAlign: 'center', marginTop: '2rem' }}>
+                <h1>Portal de Clientes MINREPORT</h1>
+                {!user && <p>Por favor, inicia sesión para ver el estado de tu solicitud o crear una nueva.</p>}
+              </div>
+            } />
+            <Route path="/request-access" element={<RequestAccess />} />
+            <Route path="/complete-data" element={<CompleteDataForm />} />
+            <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
+          </Routes>
+        </ProvisionalRouteGuard>
       </main>
     </BrowserRouter>
   );

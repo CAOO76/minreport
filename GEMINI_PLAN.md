@@ -149,3 +149,150 @@ Para optimizar el uso de cuotas del plan Gemini Pro y agilizar el desarrollo, se
 ## 5. Roadmap de Desarrollo (Fases)
 
 (Roadmap sin cambios)
+
+## 6. Actualización del Plan de Desarrollo (14/09/2025)
+
+Se actualiza el flujo de creación de cuentas para adoptar un modelo de **aprobación única con trazabilidad absoluta**, reemplazando el flujo de múltiples pasos anterior.
+
+### Plan de Optimización (v2): Flujo de Aprobación Única con Trazabilidad Absoluta
+
+Este plan refina la propuesta anterior para incluir un sistema de auditoría detallado y validaciones basadas en el RUT.
+
+#### **1. Estructura de Datos Auditable en Firestore**
+
+*   **Acción:** Se modificará la estructura de datos para garantizar un historial inmutable por cada solicitud.
+*   **Detalles:**
+    *   **Historial por Solicitud:** Cada documento en la colección `requests` (`requests/{requestId}`) contendrá una subcolección `history`. Cada evento (creación, aprobación, rechazo, intento de duplicación) se registrará como un documento inmutable dentro de esa subcolección, incluyendo `timestamp`, `actor` (quién hizo la acción), `action` y `details`.
+    *   **RUT como Clave de Negocio:** El campo `rut` será un campo obligatorio y principal en la colección `accounts`. Se asegurará que esté indexado para búsquedas eficientes.
+    *   **Prohibición de Borrado:** Se establece como regla que ningún registro de solicitud o historial asociado a un RUT será eliminado jamás de la base de datos.
+
+#### **2. Lógica de Negocio en `request-registration-service`**
+
+*   **Acción:** Se centralizará y fortalecerá la lógica de negocio en este servicio.
+*   **Detalles:**
+    1.  **Validación Anti-Duplicación (Endpoint `createRequest`):**
+        *   Antes de crear cualquier solicitud nueva, el servicio **verificará el `rut`** contra la colección `accounts`.
+        *   **Si existe una cuenta `activa`:** Se rechaza la nueva solicitud y se registra el intento en el historial de la cuenta ya existente.
+        *   **Si existe una cuenta `suspendida` o `cancelada`:** Se rechaza la solicitud de *nueva cuenta* y se informa al usuario sobre el estado actual, guiándolo a un futuro flujo de reactivación/reapertura. Se registra el intento.
+        *   **Si no hay cuenta activa:** Se procede a crear la solicitud.
+    2.  **Flujo de Aprobación Única (Endpoint `processRequest`):**
+        *   Este endpoint reemplazará toda la lógica de aprobación anterior. Recibirá el `requestId`, la `decision` (`approved` | `rejected`) y la identidad del `admin`.
+        *   Si es `approved`, el servicio se encargará de:
+            1.  Crear el usuario en Firebase Auth.
+            2.  Crear el documento final en la colección `accounts`.
+            3.  Actualizar el estado de la solicitud original a `approved`.
+            4.  Registrar la aprobación en el historial de la solicitud (`requests/{id}/history`).
+        *   Si es `rejected`, se actualizará el estado y se registrará el motivo y el autor en el historial de la solicitud.
+
+#### **3. Frontend (`client-app` y `admin-app`)**
+
+*   **Acción:** Simplificar la experiencia del usuario y potenciar la del administrador.
+*   **Detalles:**
+    *   **`client-app`:** Se unificarán los formularios `RequestAccess` y `AdditionalDataForm` en uno solo. El usuario ingresará toda su información en un único paso.
+    *   **`admin-app`:** El `AdminPanel` mostrará toda la información de la solicitud de una vez. Los botones serán "Aprobar y Crear Cuenta" y "Rechazar". Se añadirá una vista para consultar el historial detallado de cada solicitud.
+
+#### **4. Limpieza de Arquitectura**
+
+*   **Acción:** Eliminar código y servicios redundantes.
+*   **Detalles:** El servicio `review-request-service` será completamente eliminado del monorepo, ya que su lógica se consolida en `request-registration-service`.
+
+## 7. Actualización de Arquitectura (14/09/2025): Incorporación de Sitio Público
+
+Se aprueba la siguiente modificación a la arquitectura de frontends para clarificar los dominios y puntos de acceso.
+
+### Separación de Dominios
+
+-   **`minreport.com` (Sitio Público):** Será la página de aterrizaje (landing page) pública y de marketing del proyecto. Contendrá información general y un punto de acceso para clientes.
+    -   **Implementación:** Se creará una nueva aplicación React llamada `public-site` dentro de `sites/`.
+    -   **Despliegue:** Se configurará para desplegarse en el hosting de Firebase asociado a `minreport.com`.
+
+-   **`minreport-access.web.app` (Portal de Clientes):** Es la aplicación web privada donde los clientes inician sesión, gestionan sus datos y utilizan las herramientas de la plataforma.
+    -   **Implementación:** Corresponde a la aplicación existente `client-app`.
+    -   **Acceso:** Se accederá a través de un botón "Acceso Clientes" desde `minreport.com`.
+
+### Plan de Implementación
+
+1.  **Crear `public-site`:** Añadir una nueva aplicación React + Vite en `sites/public-site`.
+2.  **Actualizar Configuración:** Modificar `pnpm-workspace.yaml`, `package.json` raíz y `firebase.json` para integrar el nuevo sitio.
+3.  **Desarrollar Landing Page:** Implementar una página de inicio simple en `public-site` con un enlace claro hacia la `client-app`.
+
+## 8. Redefinición del Ciclo de Vida de la Cuenta (14/09/2025)
+
+Se redefine por completo el flujo de creación y activación de cuentas, reemplazando el modelo de aprobación única (v2). El nuevo modelo (v3) se basa en una cuenta provisional y un proceso de múltiples pasos para garantizar una mayor rigurosidad en la recolección de datos.
+
+### Flujo v3: Activación con Cuenta Provisional
+
+1.  **Solicitud de Acceso:**
+    *   Un usuario llena un formulario de solicitud inicial en la `client-app`.
+    *   El backend verifica que el RUT no esté asociado a una cuenta activa.
+    *   Se crea un documento en la colección `requests` con estado `pending_review`.
+    *   **Trazabilidad:** Se registra la acción `request_created` en el historial de la solicitud.
+
+2.  **Aprobación Inicial:**
+    *   Un administrador aprueba o rechaza la solicitud inicial desde el `admin-app`.
+    *   Se notifica al solicitante vía Resend.
+    *   **Si es aprobada:**
+        *   Se crea un **usuario provisional** en Firebase Authentication con un claim personalizado (ej. `{ "status": "provisional" }`).
+        *   Se actualiza el documento de la solicitud a `status: 'pending_additional_data'` y se le añade una fecha de expiración de 24 horas.
+        *   Se envía un correo al solicitante con un enlace para iniciar sesión y completar la información requerida.
+    *   **Trazabilidad:** Se registra `request_approved_initial` o `request_rejected_initial`.
+
+3.  **Completar Datos por el Cliente:**
+    *   El cliente inicia sesión con su cuenta provisional.
+    *   Es redirigido a un formulario para completar datos **obligatorios**. El campo más importante es la designación del **Administrador de la Cuenta** (que puede ser una persona distinta al solicitante).
+    *   Si no completa los datos en 24 horas, la cuenta provisional y la solicitud expiran.
+    *   **Trazabilidad:** Una vez enviados los datos, se registra `additional_data_submitted` y el estado de la solicitud cambia a `pending_final_review`.
+
+4.  **Aprobación Final y Activación:**
+    *   Un administrador revisa la información completa en el `admin-app`.
+    *   **Si es aprobada:**
+        *   Se crea (o se actualiza) el usuario definitivo con los datos del **Administrador de la Cuenta** designado.
+        *   Se crea el documento final en la colección `accounts`.
+        *   El estado de la solicitud cambia a `activated`.
+        *   Se envía un correo de bienvenida al **Administrador de la Cuenta** con un enlace para que **cree su contraseña definitiva**.
+    *   **Si es rechazada:** El estado de la solicitud cambia a `rejected`.
+    *   **Trazabilidad:** Se registra `account_activated` o `final_rejection`.
+
+Este nuevo flujo es el que se implementará a partir de esta fecha, invalidando el plan de optimización v2.
+
+## 9. Manejo de RUT/RUN y Clasificación de Entidades (14/09/2025)
+
+Se establecen nuevas directrices para el manejo del identificador tributario chileno (RUT/RUN) y la clasificación de las entidades solicitantes.
+
+### Formato y Validación de RUT/RUN
+
+-   **Formato de Almacenamiento:** El RUT/RUN se almacenará siempre en mayúsculas, con el número y el dígito verificador separados por un guion (ej. `12345678-K`).
+-   **Normalización:** El sistema normalizará automáticamente el RUT/RUN ingresado por el usuario, independientemente de cómo lo haya tipeado (ej. `12345678K` o `12.345.678-K` se convertirán a `12345678-K`).
+-   **Algoritmo de Verificación:** Se implementará el algoritmo estándar chileno para validar el dígito verificador del RUT/RUN tanto en el frontend como en el backend.
+
+### Clasificación de Entidades (Persona Natural vs. Persona Jurídica)
+
+-   **Nuevo Campo:** Se introducirá un nuevo campo `entityType` en el formulario de solicitud inicial (`RequestAccess.tsx`) con las opciones `natural` (persona natural) y `juridica` (persona jurídica).
+-   **Etiquetado Dinámico:** La etiqueta del campo RUT/RUN se ajustará dinámicamente a "RUT de la Institución" o "RUN del Solicitante" según el `entityType` seleccionado.
+-   **Propósito:** Esta clasificación permitirá ordenar y gestionar de forma diferenciada las cuentas, especialmente para futuros módulos como RRHH (donde los trabajadores serán personas naturales con RUN).
+
+## 10. Simplificación y Especialización del Formulario de Solicitud (14/09/2025)
+
+Se ajusta el formulario de solicitud de acceso para ofrecer una experiencia más simplificada y adaptada al tipo de cuenta, introduciendo el tipo "INDIVIDUAL".
+
+### Formulario de Solicitud Inicial (`RequestAccess.tsx`)
+
+-   **Selección de Tipo de Cuenta:** El campo "Tipo de Cuenta" se presentará mediante tres tarjetas visuales (ajustadas al mínimo tamaño necesario):
+    -   **EMPRESARIAL:** Para empresas y organizaciones.
+    -   **EDUCACIONAL:** Para instituciones educativas.
+    -   **INDIVIDUAL:** Para personas naturales (ej. profesionales independientes, trabajadores).
+-   **Campos Condicionales:**
+    -   **Si se selecciona "EMPRESARIAL" o "EDUCACIONAL":** Se solicitarán los campos "Nombre de la Institución / Razón Social", "RUT de la Institución" y "País".
+    -   **Si se selecciona "INDIVIDUAL":** Solo se solicitará el campo "País".
+-   **Derivación de `entityType`:** El campo `entityType` (persona natural/jurídica) se derivará automáticamente del `accountType` seleccionado (`INDIVIDUAL` -> `natural`; `EMPRESARIAL`/`EDUCACIONAL` -> `juridica`). El campo `entityType` ya no será una selección explícita en este formulario.
+-   **Manejo de RUN para Individuales:** Para solicitudes "INDIVIDUAL", el RUN se solicitará y validará en la etapa de la cuenta provisional (`CompleteDataForm.tsx`), no en el formulario inicial.
+
+### Interfaz de Cuenta Provisional Diferenciada (`CompleteDataForm.tsx`)
+
+-   **Adaptación por Tipo de Cuenta:** La interfaz del formulario para completar datos adicionales (`CompleteDataForm.tsx`) se adaptará según el `accountType` del usuario provisional.
+-   **Cuentas "INDIVIDUAL":** Se presentará una interfaz simplificada que no incluirá información tributaria compleja o direcciones comerciales, ya que no aplica a personas naturales. Se solicitará el RUN en esta etapa.
+-   **Cuentas "EMPRESARIAL" / "EDUCACIONAL":** Se mantendrá la solicitud de información detallada (direcciones, teléfonos, etc.).
+
+### Información Adicional
+
+-   La definición específica de la información adicional para cada tipo de cuenta se realizará en una fase posterior.
