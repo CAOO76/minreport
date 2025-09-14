@@ -63,6 +63,7 @@ Para cerrar una sesión de desarrollo de manera eficiente y económica, sigue es
 
 1.  **Verificación Manual en Entorno Local:** Prueba manualmente la funcionalidad en la que trabajaste en la `client-app` o `admin-app` usando los emuladores.
 2.  **Ejecución de Pruebas Automatizadas (si existen):** Si hay tests unitarios o de integración, ejecútalos localmente.
+    **¡IMPORTANTE!** Los pasos 1 y 2 son **OBLIGATORIOS** y deben completarse **ANTES** de cualquier `commit` o `push`.
 3.  **Consolidación en Git:** Haz un `commit` de tus cambios con un mensaje claro y siguiendo las "Normas de Contribución con Git".
 4.  **Subir a GitHub:** Haz un `git push` para subir tus cambios al repositorio.
 
