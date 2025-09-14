@@ -12,3 +12,5 @@ node_modules
 firebase-debug.log
 .firebase/emulators/storage/blobs
 serviceAccountKey.json
+firebase-emulators-data/
+.firebase/

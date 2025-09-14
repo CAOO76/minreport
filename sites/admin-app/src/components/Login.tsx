@@ -18,8 +18,8 @@ const Login: React.FC = () => {
       await signInWithEmailAndPassword(auth, email, password);
       // Si el inicio de sesión es exitoso, el hook useAuth manejará la redirección
     } catch (err: any) {
-      console.error('Error de inicio de sesión:', err);
-      setError(err.message || 'Error al iniciar sesión. Por favor, verifica tus credenciales.');
+      console.error('Error de inicio de sesión (admin):', err.code);
+      setError('Credenciales inválidas o acceso no autorizado.');
     }
   };
 
@@ -31,7 +31,7 @@ const Login: React.FC = () => {
       </div>
       <p>Bienvenido de nuevo. Ingresa tus credenciales para acceder a tu cuenta.</p>
       
-      <form onSubmit={handleSubmit} className="form-layout"> {/* Usar form-layout */}
+      <form onSubmit={handleSubmit} className="form-layout" autoComplete="off"> {/* Usar form-layout */}
         {error && <p className="error-message">{error}</p>}
         <div className="form-group"> {/* Usar form-group */}
           <label htmlFor="email">Correo Electrónico:</label>
@@ -41,7 +41,7 @@ const Login: React.FC = () => {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
-            autoComplete="off"
+            autoComplete="new-password"
           />
         </div>
         <div className="form-group"> {/* Usar form-group */}
@@ -53,7 +53,7 @@ const Login: React.FC = () => {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              autoComplete="off"
+              autoComplete="new-password"
             />
             <button
               type="button"
@@ -66,10 +66,6 @@ const Login: React.FC = () => {
               </span>
             </button>
           </div>
-        </div>
-
-        <div style={{ textAlign: 'right', marginTop: '-1rem' }}>
-          <a href="#" style={{ fontSize: '0.9rem', color: 'var(--color-primary)' }}>¿Olvidaste tu contraseña?</a>
         </div>
 
         <button type="submit" className="button-primary icon-button">

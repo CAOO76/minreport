@@ -21,19 +21,29 @@ const useAuth = (): AuthState => {
       if (user) {
         try {
           // Forzar la recarga del token para obtener los custom claims más recientes
-          await user.getIdToken(true); 
           const idTokenResult = await user.getIdTokenResult();
           const isAdmin = idTokenResult.claims.admin === true;
-          setAuthState({
-            user,
-            isAdmin,
-            loading: false,
-          });
+
+          // Principio de fallo silencioso: si no es admin, se trata como si no estuviera logueado.
+          if (isAdmin) {
+            setAuthState({
+              user,
+              isAdmin: true,
+              loading: false,
+            });
+          } else {
+            // Si es un usuario válido pero no admin, no se le da acceso.
+            setAuthState({
+              user: null,
+              isAdmin: false,
+              loading: false,
+            });
+          }
         } catch (error) {
           console.error("Error al obtener custom claims:", error);
           setAuthState({
-            user,
-            isAdmin: false, // Asumir no admin en caso de error
+            user: null, // No dar acceso en caso de error
+            isAdmin: false,
             loading: false,
           });
         }

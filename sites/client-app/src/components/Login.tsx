@@ -18,8 +18,8 @@ const Login = () => {
       await login(email, password);
       // Si el inicio de sesión es exitoso, el usuario será redirigido por el listener de auth en App.tsx
     } catch (err: any) {
-      console.error('Error de inicio de sesión:', err);
-      setError(err.message || 'Error al iniciar sesión. Por favor, verifica tus credenciales.');
+      console.error('Error de inicio de sesión (client):', err.code);
+      setError('Credenciales inválidas o acceso no autorizado.');
     }
   };
 
@@ -28,7 +28,7 @@ const Login = () => {
       <h2>Iniciar Sesión</h2>
       <p>Bienvenido de nuevo. Ingresa tus credenciales para acceder a tu cuenta.</p>
       
-      <form onSubmit={handleSubmit} className="form-layout">
+      <form onSubmit={handleSubmit} className="form-layout" autoComplete="off">
         {error && <p className="error-message">{error}</p>}
         <div className="form-group">
           <label htmlFor="email">Correo Electrónico</label>
@@ -38,7 +38,7 @@ const Login = () => {
             name="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            autoComplete="off"
+            autoComplete="one-time-code"
             required
           />
         </div>
@@ -52,7 +52,7 @@ const Login = () => {
               name="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              autoComplete="off"
+              autoComplete="new-password"
               required
             />
             <button

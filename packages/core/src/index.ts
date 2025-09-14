@@ -14,6 +14,40 @@ const getFirestoreInstance = () => {
 };
 
 /**
+ * Valida un RUT chileno usando el algoritmo de Módulo 11.
+ * @param rutCompleto El RUT en formato string, con o sin puntos y guion.
+ * @returns `true` si el RUT es válido, `false` en caso contrario.
+ */
+const validateRut = (rutCompleto: string): boolean => {
+  if (!rutCompleto) return false;
+
+  // Limpia el RUT de puntos y guion
+  const rutLimpio = rutCompleto.replace(/[.-]/g, "");
+
+  // Valida el formato básico (números y un dígito verificador)
+  if (!/^[0-9]+[0-9kK]{1}$/.test(rutLimpio)) {
+    return false;
+  }
+
+  const cuerpo = rutLimpio.slice(0, -1);
+  const dv = rutLimpio.slice(-1).toUpperCase();
+
+  let suma = 0;
+  let multiplo = 2;
+
+  for (let i = cuerpo.length - 1; i >= 0; i--) {
+    suma += parseInt(cuerpo.charAt(i), 10) * multiplo;
+    multiplo = multiplo < 7 ? multiplo + 1 : 2;
+  }
+
+  const dvEsperado = 11 - (suma % 11);
+  const dvCalculado = dvEsperado === 11 ? '0' : dvEsperado === 10 ? 'K' : String(dvEsperado);
+
+  return dvCalculado === dv;
+};
+
+
+/**
  * Función para manejar la solicitud inicial de acceso a MINREPORT.
  * Recibe los datos del formulario, valida y crea un documento en la colección 'requests'.
  */
@@ -29,6 +63,11 @@ export const requestInitialRegistration = async (data: any) => {
   // Validar formato de email básico
   if (!/^[^@]+@[^@]+\.[^@]+$/.test(requesterEmail)) { // Corrected regex
     throw { code: "invalid-argument", message: "Formato de correo electrónico inválido." };
+  }
+
+  // Validar RUT/RUN chileno
+  if (!validateRut(rut)) {
+      throw { code: "invalid-argument", message: "El RUT o RUN ingresado no es válido." };
   }
 
   // Validar tipo de solicitud

@@ -8,73 +8,84 @@ MINREPORT es una plataforma de planificación, gestión, control y reportabilida
 
 Se adopta una estrategia de desarrollo moderna, minimalista y funcional, basada en las siguientes tecnologías y principios:
 
+### Reglas Arquitectónicas Fundamentales
+
+-   **Soberanía del Dato:** Todos los recursos en la nube deben residir exclusivamente en la región `southamerica-west1` (Santiago, Chile).
+-   **Tecnología de Backend:** El backend se compone de servicios contenerizados en **Cloud Run**. No se utilizará App Engine ni Firebase Functions en la arquitectura.
+
+### Patrones y Tecnologías
+
 -   **Monorepo:** Se utiliza `pnpm workspaces` para gestionar todo el código base (frontends, backends, librerías compartidas) en un único repositorio, facilitando la coherencia y el desarrollo.
--   **Backend:** Servicios desacoplados escritos en **TypeScript** y desplegados como contenedores en **Cloud Run**. Esto asegura la residencia de datos en `southamerica-west1` y evita las limitaciones de App Engine.
+-   **Backend:** Servicios desacoplados escritos en **TypeScript** y desplegados como contenedores en **Cloud Run**.
 -   **Frontend:** Aplicaciones **React (TypeScript) con Vite**. Se mantienen dos sitios separados:
-    -   `client-app`: Portal público para solicitudes de cuenta y acceso de clientes.
-    -   `admin-app`: Panel de administración para la gestión interna de MINREPORT.
--   **Base de Datos:** **Firestore** (NoSQL) para almacenar todos los datos, incluyendo solicitudes, cuentas y logs de trazabilidad.
--   **Despliegue:** **Firebase Hosting** para los frontends y **Cloud Run** para los servicios de backend, configurado a través de `firebase.json`.
--   **Desarrollo de Componentes:** **Storybook** se utiliza en `client-app` para desarrollar y documentar componentes de UI de forma aislada, asegurando su reusabilidad y consistencia.
--   **Principio Fundamental: Desacoplamiento Total del Núcleo y Plugins:** Esta es la regla arquitectónica más importante. El núcleo de MINREPORT (gestión de cuentas, autenticación, datos base) es un sistema cerrado y estable. Los plugins son entidades completamente independientes que se comunican con el núcleo exclusivamente a través de un API Gateway y un bus de eventos bien definidos. **Bajo ninguna circunstancia un plugin podrá acceder directamente a la base de datos principal, modificar el código del núcleo o afectar la estabilidad de otros plugins.** Su desarrollo, despliegue, conexión y desconexión deben ser operaciones seguras y aisladas. Esta arquitectura es innegociable para permitir el desarrollo en paralelo por parte de terceros y garantizar la integridad y disponibilidad 24/7 de la plataforma.
--   **Preparación para Móvil:** La arquitectura de servicios desacoplados facilitará el desarrollo futuro de una aplicación móvil multiplataforma que consuma las mismas APIs.
+    -   `client-app`: Portal público para solicitudes de cuenta y acceso de clientes (`minreport-access.web.app`).
+    -   `admin-app`: Panel de administración para la gestión interna de MINREPORT (`minreport-x.web.app`).
+-   **Base de Datos:** **Firestore** (NoSQL) para almacenar todos los datos.
+-   **Despliegue:** **Firebase Hosting** para los frontends y **Cloud Run** para los servicios de backend.
+-   **Desarrollo de Componentes:** **Storybook** se utiliza en `client-app` para desarrollar y documentar componentes de UI de forma aislada.
+
+### Principios de Seguridad y Acceso
+
+Se establecen los siguientes principios de seguridad como inalterables:
+
+-   **Secretismo del Portal de Administración:** La URL de acceso para administradores (`minreport-x.web.app`) es confidencial. No debe ser enlazada o mencionada en ninguna web pública.
+-   **Fallo de Autenticación Silencioso:** Si un usuario intenta acceder a un portal que no le corresponde, el sistema no proporcionará mensajes de error específicos.
+-   **No Autocompletado en Formularios:** Todos los campos en formularios de inicio de sesión deben tener el autocompletado deshabilitado.
+
+### Gestión de Entorno y Configuración
+
+Para permitir el trabajo colaborativo en diferentes máquinas sin conflictos, se utiliza un sistema de variables de entorno:
+
+-   **Archivo `.env` (Local):** Cada desarrollador debe crear un archivo `.env` en la raíz del proyecto para definir sus configuraciones locales (ej. puertos). Este archivo no se sube a GitHub.
+-   **Archivo `.env.example` (Plantilla):** Existe un archivo `.env.example` en el repositorio que sirve como plantilla.
+
+### Normas de Contribución con Git
+
+Para mantener un historial de cambios limpio y legible, es mandatorio seguir estas normas:
+
+1.  **Configurar Identidad de Git:** Cada desarrollador debe configurar su nombre y email en su máquina local.
+    ```bash
+    git config --global user.name "Tu Nombre"
+    git config --global user.email "tu@email.com"
+    ```
+2.  **Mensajes de Commit Convencionales:** Todos los mensajes de commit deben seguir el estándar de [Conventional Commits](https://www.conventionalcommits.org/) (ej. `feat:`, `fix:`, `docs:`).
 
 ### Principios de Verificación y Despliegue
--   **Verificación en Entorno Real:** Para confirmar cualquier avance o cambio en el proyecto, es **obligatorio** realizar un despliegue completo de la aplicación y verificar su funcionalidad y comportamiento directamente en el entorno web. Esto asegura que los cambios se comportan como se espera en un escenario de producción y y que no hay regresiones o problemas de integración.
+
+Para asegurar la calidad y estabilidad del proyecto, se establecen los siguientes niveles de verificación:
+
+-   **Verificación en Entorno Local (Desarrollo Diario):** Para el desarrollo y la validación de funcionalidades individuales, el **entorno de emuladores local** se considera el "entorno real" de trabajo. Toda nueva funcionalidad debe ser probada y validada exhaustivamente aquí antes de ser considerada "terminada" para un commit.
+-   **Verificación en Entorno de Staging/Producción (Integración y Despliegue):** Para la validación de la integración de múltiples funcionalidades, pruebas de rendimiento o la preparación para un lanzamiento, se realizará un despliegue completo a un entorno de staging o directamente a producción. Este paso es crucial para asegurar el comportamiento en un escenario real de la nube y detectar posibles regresiones o diferencias entre emuladores y servicios reales.
+
+### Cierre de Sesión de Desarrollo
+
+Para cerrar una sesión de desarrollo de manera eficiente y económica, sigue estos pasos:
+
+1.  **Verificación Manual en Entorno Local:** Prueba manualmente la funcionalidad en la que trabajaste en la `client-app` o `admin-app` usando los emuladores.
+2.  **Ejecución de Pruebas Automatizadas (si existen):** Si hay tests unitarios o de integración, ejecútalos localmente.
+3.  **Consolidación en Git:** Haz un `commit` de tus cambios con un mensaje claro y siguiendo las "Normas de Contribución con Git".
+4.  **Subir a GitHub:** Haz un `git push` para subir tus cambios al repositorio.
 
 ## 3. Flujo de Registro y Ciclo de Vida de la Cuenta
 
 El proceso de alta de una cuenta es un flujo de aprobación de varios pasos, diseñado para máxima seguridad y control. **No se crean credenciales de acceso hasta la aprobación final.**
 
 1.  **Solicitud Inicial:** Un usuario llena un formulario básico en `client-app`.
-2.  **Recepción y Validación:** El servicio `request-registration-service` (Cloud Run) recibe la data, la valida y crea un documento en la colección `requests` de Firestore con estado `pending_review`.
-3.  **Revisión de Administrador:** Un super administrador revisa la solicitud pendiente en el `admin-app`.
-4.  **Aprobación Inicial o Rechazo:** El administrador puede rechazar la solicitud (cambiando su estado a `rejected`) o aprobarla inicialmente (cambiando el estado a `pending_additional_data`).
-5.  **Datos Adicionales:** El usuario es notificado para que complete un segundo formulario con información detallada de la institución.
+2.  **Recepción y Validación:** El servicio `request-registration-service` recibe la data, la valida y crea un documento en `requests` con estado `pending_review`.
+3.  **Revisión de Administrador:** Un administrador revisa la solicitud en `admin-app`.
+4.  **Aprobación Inicial o Rechazo:** El administrador aprueba (`pending_additional_data`) o rechaza (`rejected`) la solicitud.
+5.  **Datos Adicionales:** El usuario recibe un email para completar un segundo formulario.
 6.  **Aprobación Final:** El administrador revisa la información completa y otorga la aprobación final.
-7.  **Creación de la Cuenta:** **Solo en este punto**, un servicio de backend crea el usuario en **Firebase Authentication**, crea el documento final en la colección `accounts` con estado `active`, y actualiza el estado de la solicitud original a `approved`.
-8.  **Trazabilidad:** Todas las acciones (solicitud, rechazo, aprobación, suspensión, etc.) se registran en una colección `account_logs` para garantizar una auditoría completa e inmutable. El historial jamás se borra.
+7.  **Creación de la Cuenta:** Solo en este punto, un servicio de backend crea el usuario en Firebase Authentication, crea el documento en la colección `accounts` y actualiza la solicitud a `approved`.
+8.  **Trazabilidad:** Todas las acciones se registran en una colección `account_logs` para auditoría.
 
-## 4. Roadmap de Desarrollo (Fases)
+## 4. Política de Desarrollo y Colaboración (Desde 13/09/2025)
 
-### FASE 1: Núcleo de Cuentas y Registro (En Progreso)
+Para optimizar el uso de cuotas del plan Gemini Pro y agilizar el desarrollo, se establece la siguiente separación de roles:
 
-El objetivo es completar el flujo de registro y aprobación.
+-   **Rol de Gemini CLI (Generación de Código):** Responsable de **crear, editar y modificar** el código. No ejecutará comandos de terminal.
+-   **Rol del Usuario (Ejecución de Comandos):** Responsable de **ejecutar manualmente** todos los comandos que Gemini CLI le indique.
 
--   [x] **Diseño de Datos en Firestore:** Colecciones `requests`, `accounts`, `account_logs`.
--   [x] **UI - Formulario de Solicitud Inicial:** Componente `RequestAccess.tsx` en `client-app`.
--   [x] **Backend - Recepción de Solicitudes:** Servicio `request-registration-service` en Cloud Run.
--   [x] **UI - Panel de Revisión de Solicitudes:** Componente `RequestReviewPanel.tsx` en `admin-app`.
--   [ ] **Backend - Lógica de Aprobación/Rechazo:** Crear los servicios de Cloud Run para que el admin gestione las solicitudes.
--   [ ] **UI - Formulario de Datos Adicionales:** Crear la vista para que el usuario complete su perfil tras la aprobación inicial.
--   [x] **UI - Inicio de Sesión:** Implementar y refinar la página de login en `client-app` para cuentas activas (incluye refinamiento de estilos y refactorización a hook `useAuth`).
+## 5. Roadmap de Desarrollo (Fases)
 
-### FASE 2: Gestión de Cuentas y Trazabilidad (Completada)
-
--   [x] **Gestión de Cuentas:** Implementación en `admin-app` de funcionalidades para visualizar y filtrar cuentas activas (B2B/EDUCACIONALES) y botón de suspender.
--   [x] **Visualizador de Trazabilidad:** Creación de la interfaz en `admin-app` para ver el historial de logs de una cuenta.
--   [ ] **Autenticación y Autorización en Admin-App:** Implementar inicio de sesión y verificación de rol de administrador para proteger el acceso al panel.
-    *   **Paso 1: Crear Usuario Administrador (Manual):**
-        *   Ve a la Consola de Firebase -> Authentication -> Usuarios.
-        *   Añade un nuevo usuario (ej. `admin@minreport.com`) con contraseña.
-    *   **Paso 2: Asignar Rol de Administrador (Script `setAdminClaim.js`):**
-        *   Asegúrate de tener `serviceAccountKey.json` en la raíz del proyecto (descárgalo de Firebase Console -> Configuración del proyecto -> Cuentas de servicio -> Generar nueva clave privada).
-        *   **Edita `setAdminClaim.js` y cambia `admin@minreport.com` por el correo electrónico del usuario que creaste.**
-        *   En la terminal (raíz del proyecto), ejecuta `npm install firebase-admin` (si no lo has hecho).
-        *   Ejecuta el script: `node setAdminClaim.js`.
-    *   **Paso 3: Implementar Autenticación en `admin-app`:**
-        *   Añadir una página de inicio de sesión en `admin-app` (usando Firebase Authentication SDK).
-        *   Proteger las rutas principales para que solo los usuarios autenticados puedan acceder.
-        *   Verificar el "Custom Claim" `admin: true` del usuario autenticado para permitir el acceso al panel de administración.
-
-### FASE 3: Arquitectura de Plugins (Próximamente)
-
--   **Diseño del Bus de Eventos:** Definir la arquitectura para la comunicación entre el núcleo y los plugins.
--   **SDK de Plugins:** Crear una librería de desarrollo para facilitar la creación de plugins por terceros.
--   **Gestión de Plugins:** Implementar en `admin-app` la interfaz para asignar y configurar plugins a las cuentas.
--   **Desarrollo del Primer Plugin:** Crear un plugin de ejemplo (ej. "Reporte de Seguridad Básico").
-
-### FASE 4: Versión Móvil y Métricas (Futuro)
-
--   **App Móvil:** Iniciar el desarrollo de la aplicación móvil multiplataforma para captura y visualización de datos en terreno.
--   **Dashboard de Métricas:** Implementar un panel en `admin-app` con métricas de uso de la plataforma y de los plugins.
+(Roadmap sin cambios)

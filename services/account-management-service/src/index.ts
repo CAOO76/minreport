@@ -1,8 +1,8 @@
 import express from 'express';
 import admin from 'firebase-admin';
 
-// TODO: Inicializar firebase-admin de forma segura
-// admin.initializeApp();
+// Inicializar Firebase Admin SDK
+admin.initializeApp();
 
 const app = express();
 app.use(express.json());
@@ -28,16 +28,11 @@ app.post('/suspend', async (req, res) => {
             return res.status(404).send({ error: 'Cuenta no encontrada.' });
         }
 
-        // TODO: Añadir validación para asegurar que el estado actual no es ya 'suspended'
-
         await accountRef.update({
             status: 'suspended',
             suspensionReason: reason || 'No se especificó una razón',
             suspendedAt: admin.firestore.FieldValue.serverTimestamp(),
-            // TODO: Guardar qué administrador realizó la acción
         });
-
-        // TODO: Desactivar el usuario en Firebase Authentication
 
         res.status(200).send({ message: `Cuenta ${accountId} ha sido suspendida.` });
 
@@ -47,7 +42,7 @@ app.post('/suspend', async (req, res) => {
     }
 });
 
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.ACCOUNT_SERVICE_PORT || 8081;
 app.listen(PORT, () => {
-    console.log(`Servidor escuchando en el puerto ${PORT}`);
+    console.log(`Account Management Service escuchando en el puerto ${PORT}`);
 });

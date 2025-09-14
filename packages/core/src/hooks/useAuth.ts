@@ -14,8 +14,20 @@ const useAuth = (authInstance: Auth): AuthState => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(authInstance, (user: User | null) => {
-      setUser(user);
+    const unsubscribe = onAuthStateChanged(authInstance, async (firebaseUser) => {
+      if (firebaseUser) {
+        const idTokenResult = await firebaseUser.getIdTokenResult();
+        const isAdmin = idTokenResult.claims.admin === true;
+
+        // Principio de fallo silencioso: si es admin, no debe loguearse en el portal de clientes.
+        if (!isAdmin) {
+          setUser(firebaseUser);
+        } else {
+          setUser(null);
+        }
+      } else {
+        setUser(null);
+      }
       setLoading(false);
     });
 

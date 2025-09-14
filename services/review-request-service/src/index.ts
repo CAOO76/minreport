@@ -179,7 +179,7 @@ app.post('/final-approve', async (req, res) => {
     }
 });
 
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.REVIEW_SERVICE_PORT || 8083;
 app.listen(PORT, () => {
-    console.log(`Servidor escuchando en el puerto ${PORT}`);
+    console.log(`Review Request Service escuchando en el puerto ${PORT}`);
 });

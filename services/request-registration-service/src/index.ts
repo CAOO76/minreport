@@ -16,11 +16,28 @@ const resend = new Resend(process.env.RESEND_API_KEY || 're_YOUR_RESEND_API_KEY'
 const app = express();
 app.use(express.json()); // Enable JSON body parsing
 
-// Configuración explícita de CORS
-app.use(cors({
-  origin: 'https://minreport-x.web.app',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+// Lista de orígenes permitidos
+const allowedOrigins = [
+  'https://minreport-access.web.app', // URL de clientes
+  'https://minreport-x.web.app',       // URL de administración
+  'http://localhost:5173',            // Vite dev server para client-app
+  'http://localhost:5174'             // Vite dev server para admin-app
+];
+
+// Configuración dinámica de CORS
+app.use(cors((req, callback) => {
+  const origin = req.header('Origin');
+  let corsOptions: { origin: boolean | string | string[] } = { origin: false }; // Por defecto, denegar
+
+  if (origin && allowedOrigins.includes(origin)) {
+    corsOptions.origin = true; // Permitir si el origen está en la lista
+  } else if (!origin) {
+    // Permitir solicitudes sin origen (como Postman o peticiones de servidor a servidor)
+    // En un entorno de producción estricto, podrías querer bloquear esto.
+    corsOptions.origin = true; 
+  }
+
+  callback(null, corsOptions); // Devolver la configuración de CORS
 }));
 
 // Health check endpoint
@@ -342,7 +359,7 @@ app.post('/finalRejectRequest', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.REGISTRATION_SERVICE_PORT || 8082;
 app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+  console.log(`Request Registration Service escuchando en el puerto ${PORT}`);
 });
