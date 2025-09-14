@@ -39,6 +39,65 @@ Para permitir el trabajo colaborativo en diferentes máquinas sin conflictos, se
 -   **Archivo `.env` (Local):** Cada desarrollador debe crear un archivo `.env` en la raíz del proyecto para definir sus configuraciones locales (ej. puertos). Este archivo no se sube a GitHub.
 -   **Archivo `.env.example` (Plantilla):** Existe un archivo `.env.example` en el repositorio que sirve como plantilla.
 
+### Configuración del Entorno de Desarrollo Local (Colaborativo)
+
+Para garantizar un entorno de desarrollo consistente y evitar conflictos de configuración entre colaboradores, especialmente en la gestión de puertos, sigue estas instrucciones:
+
+1.  **Clonar el Repositorio:**
+    ```bash
+    git clone [URL_DEL_REPOSITORIO]
+    cd minreport
+    ```
+
+2.  **Instalar pnpm:** Asegúrate de tener `pnpm` instalado globalmente. Si no, instálalo:
+    ```bash
+    npm install -g pnpm
+    ```
+
+3.  **Instalar Dependencias del Monorepo:**
+    ```bash
+    pnpm install
+    ```
+
+4.  **Configurar Variables de Entorno Locales (`.env`):**
+    *   Crea un archivo `.env` en la raíz del proyecto copiando el `.env.example`:
+        ```bash
+        cp .env.example .env
+        ```
+    *   Este archivo `.env` es **exclusivo de tu máquina local** y no debe subirse a GitHub. Aquí puedes sobrescribir las configuraciones por defecto si es necesario (ej. si un puerto ya está en uso en tu sistema).
+    *   **Variables de Entorno de Puertos de Servicios (para `services/*`):**
+        *   `ACCOUNT_SERVICE_PORT=8081`
+        *   `REGISTRATION_SERVICE_PORT=8082`
+        *   `REVIEW_SERVICE_PORT=8083`
+        Puedes cambiar estos valores en tu `.env` si los puertos por defecto están ocupados. Los servicios leerán estos valores.
+    *   **Variables de Entorno de Emuladores de Firebase (para `sites/*`):**
+        *   `VITE_EMULATOR_HOST=localhost`
+        *   `VITE_AUTH_EMULATOR_PORT=9190`
+        *   `VITE_FIRESTORE_EMULATOR_PORT=8085`
+        Puedes ajustar `VITE_EMULATOR_HOST` si tus emuladores no corren en `localhost` o los puertos si los por defecto están ocupados.
+
+5.  **Instalar Navegadores de Playwright (para pruebas de `client-app`):**
+    ```bash
+    pnpm --prefix sites/client-app exec playwright install
+    ```
+    Esto descargará los navegadores necesarios para ejecutar las pruebas automatizadas del frontend.
+
+6.  **Iniciar el Entorno de Desarrollo Completo:**
+    *   El script `dev` en el `package.json` raíz está configurado para iniciar todos los emuladores de Firebase, los servicios de backend y las aplicaciones frontend simultáneamente.
+    *   Ejecuta:
+        ```bash
+        pnpm dev
+        ```
+    *   Esto iniciará:
+        *   Emuladores de Firebase (Auth, Firestore, Storage, Hosting, UI) en los puertos definidos en `firebase.json` (o los sobrescritos en tu `.env`).
+        *   Servicios de backend (`account-management-service`, `request-registration-service`, `review-request-service`) en los puertos definidos en sus respectivos `index.ts` (o los sobrescritos en tu `.env`).
+        *   Aplicaciones frontend (`client-app` en `http://localhost:5175`, `admin-app` en `http://localhost:5174`).
+
+7.  **Acceso a las Aplicaciones:**
+    *   `client-app`: `http://localhost:5175` (o el puerto configurado en `sites/client-app/vite.config.ts`)
+    *   `admin-app`: `http://localhost:5174` (o el puerto configurado en `sites/admin-app/vite.config.ts`)
+    *   Firebase Emulator UI: `http://localhost:4001` (o el puerto configurado en `firebase.json`)
+
 ### Normas de Contribución con Git
 
 Para mantener un historial de cambios limpio y legible, es mandatorio seguir estas normas:
