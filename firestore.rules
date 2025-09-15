@@ -3,30 +3,17 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Las solicitudes solo pueden ser leídas por administradores.
-    // La escritura es manejada por los servicios de backend.
-    match /requests/{requestId} {
-      allow get, list: if request.auth.token.admin == true;
+    // Los Admins tienen permiso de LECTURA a "requests" y TODO lo que contenga dentro.
+    // La escritura se deniega para forzar que solo el backend pueda modificar datos.
+    match /requests/{document=**} {
+      allow read: if request.auth.token.admin == true;
       allow write: if false;
-
-      // El historial de una solicitud también es solo para administradores.
-      match /history/{logId} {
-        allow get, list: if request.auth.token.admin == true;
-        allow write: if false;
-      }
     }
 
-    // Las cuentas solo pueden ser leídas por administradores.
-    // La escritura es manejada por los servicios de backend.
-    match /accounts/{accountId} {
-      allow get, list: if request.auth.token.admin == true;
+    // Misma lógica para las cuentas.
+    match /accounts/{document=**} {
+      allow read: if request.auth.token.admin == true;
       allow write: if false;
-
-      // El historial de una cuenta también es solo para administradores.
-      match /history/{logId} {
-        allow get, list: if request.auth.token.admin == true;
-        allow write: if false;
-      }
     }
   }
 }

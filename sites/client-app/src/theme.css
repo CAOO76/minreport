@@ -17,6 +17,12 @@
   --color-primary-hover: #004a5a; /* Un poco más oscuro para hover */
   --color-border: #e2e8f0;      /* Bordes sutiles */
   --font-main: 'Atkinson Hyperlegible', sans-serif;
+
+  /* Paleta Semántica para Estados */
+  --color-success-bg: #d4edda;
+  --color-success-text: #155724;
+  --color-danger-bg: #f8d7da;
+  --color-danger-text: #721c24;
 }
 
 [data-theme='dark'] {

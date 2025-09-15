@@ -253,7 +253,67 @@ Se redefine por completo el flujo de creación y activación de cuentas, reempla
     *   **Si es rechazada:** El estado de la solicitud cambia a `rejected`.
     *   **Trazabilidad:** Se registra `account_activated` o `final_rejection`.
 
-Este nuevo flujo es el que se implementará a partir de esta fecha, invalidando el plan de optimización v2.
+## 11. Redefinición del Flujo de Activación (v4 - 15/09/2025)
+
+Se establece un nuevo flujo de activación que elimina el concepto de "cuenta provisional" para simplificar el proceso, aumentar la seguridad y resolver problemas con los enlaces de un solo uso de Firebase. **Este flujo v4 invalida el flujo v3.**
+
+### Principios Fundamentales (v4)
+
+-   **Cero Cuentas Provisionales:** No se crea ningún tipo de usuario en Firebase Authentication hasta la aprobación final por parte de un administrador.
+-   **Token de Datos Seguros:** El proceso intermedio de recolección de datos se gestiona a través de un token seguro, de un solo uso y con tiempo de expiración, que no está ligado a una sesión de usuario.
+-   **Trazabilidad Absoluta:** Todas las solicitudes de suscripción, sin importar su resultado (aprobada, rechazada, expirada), se registran y **nunca se eliminan** de la base de datos para garantizar una auditoría completa.
+-   **Lógica de Reactivación:** Se pueden crear nuevas solicitudes de suscripción o reactivación para un mismo RUT/RUN siempre y cuando no exista ya una cuenta en estado `activa`.
+
+### Flujo Detallado (v4)
+
+1.  **Solicitud Inicial:**
+    *   Un usuario llena el formulario `RequestAccess` en la `client-app`.
+    *   El `request-registration-service` verifica que no exista una cuenta `activa` para el RUT/RUN proporcionado.
+    *   Se crea un documento en la colección `requests` con estado `pending_review`.
+
+2.  **Aprobación Inicial (Admin):**
+    *   Un administrador aprueba la solicitud desde la `admin-app`.
+    *   El `request-registration-service` **no crea un usuario**.
+    *   Genera un **token criptográficamente seguro** y de un solo uso.
+    *   Almacena el *hash* de este token en el documento de la solicitud junto con una fecha de expiración de 24 horas.
+    *   Actualiza el estado de la solicitud a `pending_additional_data`.
+    *   Envía un email al solicitante con un enlace público a la `client-app` que contiene el token en la URL (ej: `https://minreport-access.web.app/complete-data?token=...`).
+
+3.  **Completar Datos por el Usuario (Sin Sesión):**
+    *   El usuario hace clic en el enlace.
+    *   La `client-app` recibe el token de la URL.
+    *   Antes de mostrar el formulario, la `client-app` consulta a un nuevo endpoint del backend para validar el token.
+    *   Si el token es válido, se muestra el formulario `CompleteDataForm`.
+    *   El usuario envía los datos adicionales. La `client-app` envía estos datos junto con el token al backend.
+    *   El backend verifica el token nuevamente, guarda los datos en la solicitud, la marca como `pending_final_review` e invalida el token para que no pueda ser reutilizado.
+
+4.  **Aprobación Final y Creación de Cuenta (Admin):**
+    *   Un administrador revisa la solicitud completa en la `admin-app`.
+    *   Si la aprueba, el `request-registration-service` ejecuta la acción final:
+        1.  **Crea el usuario definitivo** en Firebase Authentication.
+        2.  Crea el documento correspondiente en la colección `accounts`.
+        3.  Actualiza el estado de la solicitud a `activated`.
+        4.  Envía un email de bienvenida al usuario con un enlace para que **cree su contraseña por primera vez**. (Este enlace también debe ser seguro contra pre-fetching).
+
+Este es el flujo que regirá el desarrollo a partir de esta fecha.
+
+## 12. Manejo de Direcciones y Verificación Geográfica (15/09/2025)
+
+Se establecen los siguientes lineamientos para la captura y validación de datos de ubicación.
+
+### 1. Captura de Datos de Ubicación
+
+-   **Cuentas de Persona Natural (`INDIVIDUAL`):** Se capturará el **País** y la **Ciudad** en el primer formulario de solicitud (`RequestAccess.tsx`). No se solicitará dirección completa.
+-   **Cuentas de Persona Jurídica (`EMPRESARIAL`, `EDUCACIONAL`):** En el segundo formulario (`CompleteDataForm.tsx`), se solicitará una dirección comercial estructurada en los siguientes campos: `Dirección (Calle y Número)`, `Ciudad`, `Región/Provincia/Estado` y `Código Postal`.
+
+### 2. Verificación de Coherencia Geográfica
+
+-   **País-Ciudad:** Se implementará una validación para asegurar que la ciudad introducida corresponde al país seleccionado. Para esto, se utilizará la librería `country-state-city`, que contiene una base de datos local y no requiere APIs externas.
+-   **Validación de Dirección Comercial (Postergado):** La verificación de la existencia real de una dirección comercial (geocodificación) es un objetivo a futuro. Queda **pendiente y postergada** la integración de una API externa (como Google Maps Geocoding API) para esta funcionalidad, debido a la necesidad de gestionar claves de API y costes asociados. El sistema se diseñará para poder incorporar esta validación en el futuro sin cambios estructurales.
+
+---
+
+
 
 ## 9. Manejo de RUT/RUN y Clasificación de Entidades (14/09/2025)
 

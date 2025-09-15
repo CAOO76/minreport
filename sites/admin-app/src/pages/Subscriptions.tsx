@@ -1,0 +1,243 @@
+import { useState, useEffect, useCallback } from 'react';
+import { db } from '../firebaseConfig';
+import { collection, getDocs, query, where, orderBy, doc, getDoc } from 'firebase/firestore';
+import './Subscriptions.css';
+
+// --- Type Definitions ---
+type RequestStatus = 'pending_review' | 'pending_additional_data' | 'pending_final_review' | 'rejected' | 'activated' | 'expired';
+type Request = { id: string; status: RequestStatus; createdAt: { toDate: () => Date; }; applicantName: string; applicantEmail: string; rut?: string; institutionName?: string; accountType: 'B2B' | 'EDUCACIONALES' | 'INDIVIDUAL'; country: string; city?: string; entityType: 'natural' | 'juridica'; additionalData?: any; };
+type HistoryEntry = { id: string; timestamp: { toDate: () => Date; }; action: string; actor: string; details?: string; };
+type Clarification = { id: string; adminMessage: string; userReply?: string; status: string; createdAt: { toDate: () => Date; }; };
+
+// --- Helper Components ---
+const RequestCard = ({ request, onClick }: { request: Request, onClick: () => void }) => (
+  <div className="request-card" onClick={onClick}>
+    <div className="card-header">
+      <strong>{request.accountType === 'INDIVIDUAL' ? request.applicantName : request.institutionName}</strong>
+      <span className={`status-badge status-${request.status}`}>{request.status.replace('_', ' ')}</span>
+    </div>
+    <div className="card-body">
+      <p>{request.applicantEmail}</p>
+      <small>{request.createdAt.toDate().toLocaleDateString()}</small>
+    </div>
+  </div>
+);
+
+const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClarification }: any) => {
+    const [history, setHistory] = useState<HistoryEntry[]>([]);
+    const [clarifications, setClarifications] = useState<Clarification[]>([]);
+    const [view, setView] = useState('details'); // 'details', 'history', 'clarifications'
+
+    const hasPendingClarification = clarifications.some(c => c.status === 'pending_response');
+
+    useEffect(() => {
+        const fetchSubCollections = async () => {
+            const historyQuery = query(collection(db, 'requests', request.id, 'history'), orderBy('timestamp', 'desc'));
+            const clarificationsQuery = query(collection(db, 'requests', request.id, 'clarifications'), orderBy('createdAt', 'desc'));
+            const [historySnapshot, clarificationsSnapshot] = await Promise.all([getDocs(historyQuery), getDocs(clarificationsQuery)]);
+            setHistory(historySnapshot.docs.map(d => ({ id: d.id, ...d.data() } as HistoryEntry)));
+            setClarifications(clarificationsSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as Clarification)));
+        };
+        fetchSubCollections();
+    }, [request.id]);
+
+    const renderDetails = () => (
+        <div className="detail-content-section">
+            <h4>Datos del Solicitante</h4>
+            <p><span className="material-symbols-outlined icon-inline">person</span> <strong>Nombre:</strong> <span>{request.applicantName}</span></p>
+            <p><span className="material-symbols-outlined icon-inline">mail</span> <strong>Email:</strong> <span>{request.applicantEmail}</span></p>
+            <p><span className="material-symbols-outlined icon-inline">flag</span> <strong>País:</strong> <span>{request.country}</span></p>
+            {request.accountType === 'INDIVIDUAL' && <p><span className="material-symbols-outlined icon-inline">location_city</span> <strong>Ciudad:</strong> <span>{request.city}</span></p>}
+            {request.accountType !== 'INDIVIDUAL' && <p><span className="material-symbols-outlined icon-inline">business</span> <strong>Institución:</strong> <span>{request.institutionName}</span></p>}
+            {request.rut && <p><span className="material-symbols-outlined icon-inline">badge</span> <strong>RUT:</strong> <span>{request.rut}</span></p>}
+            {request.additionalData?.run && <p><span className="material-symbols-outlined icon-inline">badge</span> <strong>RUN:</strong> <span>{request.additionalData.run}</span></p>}
+            
+            {request.additionalData && <>
+                <h4>Datos del Administrador Designado</h4>
+                <p><span className="material-symbols-outlined icon-inline">person</span> <strong>Nombre:</strong> <span>{request.additionalData.adminName}</span></p>
+                <p><span className="material-symbols-outlined icon-inline">mail</span> <strong>Email:</strong> <span>{request.additionalData.adminEmail}</span></p>
+                <p><span className="material-symbols-outlined icon-inline">phone</span> <strong>Celular:</strong> <a href={`tel:${request.additionalData.adminPhone}`}>{request.additionalData.adminPhone}</a></p>
+                {request.additionalData.adminRole && <p><span className="material-symbols-outlined icon-inline">work</span> <strong>Cargo:</strong> <span>{request.additionalData.adminRole}</span></p>}
+            </>}
+
+            {request.additionalData?.streetAddress && <>
+                <h4>Dirección Comercial</h4>
+                <p><span className="material-symbols-outlined icon-inline">home</span> <strong>Dirección:</strong> <span>{request.additionalData.streetAddress}</span></p>
+                <p><span className="material-symbols-outlined icon-inline">location_city</span> <strong>Ciudad:</strong> <span>{request.additionalData.city}</span></p>
+                <p><span className="material-symbols-outlined icon-inline">map</span> <strong>Región/Estado:</strong> <span>{request.additionalData.state}</span></p>
+                <p><span className="material-symbols-outlined icon-inline">pin_drop</span> <strong>Cód. Postal:</strong> <span>{request.additionalData.postalCode}</span></p>
+            </>}
+        </div>
+    );
+
+    return (
+        <div className="detail-modal-overlay" onClick={onClose}>
+            <div className="detail-modal-content" onClick={(e) => e.stopPropagation()}>
+                <button onClick={onClose} className="close-button">&times;</button>
+                <div className="modal-header-with-actions">
+                    <h2>Detalle de Solicitud</h2>
+                    <div className="header-icons">
+                        <button onClick={() => setView('history')} className="icon-button" title="Ver Historial"><span className="material-symbols-outlined">history</span></button>
+                        <button onClick={() => setView('clarifications')} className="icon-button" title={`Ver Aclaraciones (${clarifications.filter(c => c.status === 'pending_response').length})`}><span className="material-symbols-outlined">chat_bubble_outline</span></button>
+                    </div>
+                </div>
+                
+                {hasPendingClarification && (
+                    <div className="pending-clarification-alert">
+                        <span className="material-symbols-outlined">help_outline</span>
+                        <p>Aclaración pendiente de respuesta por parte del usuario.</p>
+                    </div>
+                )}
+
+                {view === 'details' && (
+                    <>
+                        {renderDetails()}
+                    </>
+                )}
+
+                {view === 'history' && (
+                    <>
+                        <button onClick={() => setView('details')} className="back-button">&larr; Volver a Detalles</button>
+                        <h3>Historial de Trazabilidad</h3>
+                        <ul className="history-list">{history.map(h => <li key={h.id}><strong>{h.action}</strong> por <em>{h.actor}</em> ({h.timestamp.toDate().toLocaleString()})<p>{h.details}</p></li>)}</ul>
+                    </>
+                )}
+
+                {view === 'clarifications' && (
+                    <>
+                        <button onClick={() => setView('details')} className="back-button">&larr; Volver a Detalles</button>
+                        <h3>Aclaraciones</h3>
+                        <div className="clarifications-list">{clarifications.map(c => <div key={c.id} className='clarification-item'><strong>Pregunta:</strong><p>{c.adminMessage}</p>{c.userReply && <><strong>Respuesta:</strong><p>{c.userReply}</p></>}</div>)}</div>
+                    </>
+                )}
+
+                <div className="action-buttons">
+                    {request.status === 'pending_review' && <button className="approve" onClick={() => onAction('approved')} disabled={isActionLoading}>Aprobar Inicialmente</button>}
+                    {request.status === 'pending_final_review' && <button className="approve" onClick={() => onAction('activated')} disabled={isActionLoading}>Activar Cuenta</button>}
+                    {request.status !== 'activated' && request.status !== 'rejected' && <button className="reject" onClick={() => onAction('rejected')} disabled={isActionLoading}>Rechazar</button>}
+                    <button className="secondary" onClick={onRequestClarification} disabled={isActionLoading}>Solicitar Aclaración</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- Main Component ---
+const Subscriptions = () => {
+  const [requests, setRequests] = useState<Request[]>([]);
+  const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isActionLoading, setIsActionLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchRequests = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const q = query(collection(db, 'requests'), where('status', 'in', ['pending_review', 'pending_additional_data', 'pending_final_review']));
+      const snapshot = await getDocs(q);
+      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Request));
+      setRequests(list);
+      setError(null);
+    } catch (err: any) { 
+        console.error("Error fetching requests: ", err);
+        setError(`Error al cargar solicitudes: ${err.message}`); 
+    } finally { 
+        setIsLoading(false); 
+    }
+  }, []);
+
+  useEffect(() => { fetchRequests(); }, [fetchRequests]);
+
+  const handleAction = async (decision: string) => {
+    if (!selectedRequest) return;
+    
+    let url = '';
+    let body: any = { requestId: selectedRequest.id, adminId: 'admin@minreport.com' };
+    let reason = '';
+
+    if (decision === 'rejected') {
+        reason = window.prompt('Por favor, especifica el motivo del rechazo:');
+        if (!reason) return; // User cancelled the prompt
+        body.reason = reason;
+    }
+
+    if (selectedRequest.status === 'pending_review') {
+      url = 'http://localhost:8082/processInitialDecision';
+      body.decision = decision;
+    } else if (selectedRequest.status === 'pending_final_review') {
+      url = 'http://localhost:8082/processFinalDecision';
+      body.decision = decision;
+    }
+
+    if (!url) return;
+
+    setIsActionLoading(true);
+    try {
+      const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message);
+      alert('Acción completada con éxito.');
+      setSelectedRequest(null);
+      fetchRequests(); // Refresh list
+    } catch (err: any) { 
+        alert(`Error al procesar la acción: ${err.message}`); 
+    } finally { 
+        setIsActionLoading(false); 
+    }
+  };
+
+  const handleRequestClarification = async () => {
+      if (!selectedRequest) return;
+      const message = window.prompt('Escribe el mensaje o la pregunta para el solicitante:');
+      if (!message) return;
+
+      setIsActionLoading(true);
+      try {
+          const response = await fetch('http://localhost:8082/request-clarification', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ requestId: selectedRequest.id, adminId: 'admin@minreport.com', message })
+          });
+          if (!response.ok) throw new Error('Falló el envío de la aclaración.');
+          alert('Solicitud de aclaración enviada.');
+      } catch (err: any) { 
+          alert(`Error al enviar la solicitud de aclaración: ${err.message}`); 
+      } finally { 
+          setIsActionLoading(false); 
+      }
+  };
+
+  const columns: { title: string, status: RequestStatus }[] = [
+    { title: 'Nuevas Solicitudes', status: 'pending_review' },
+    { title: 'Esperando Datos Adicionales', status: 'pending_additional_data' },
+    { title: 'Revisión Final', status: 'pending_final_review' },
+  ];
+
+  if (isLoading) return <p>Cargando solicitudes...</p>;
+  if (error) return <p className="error">{error}</p>;
+
+  return (
+    <div className="subscriptions-board">
+      {columns.map(col => (
+        <div key={col.status} className="board-column">
+          <h3>{col.title} ({requests.filter(r => r.status === col.status).length})</h3>
+          <div className="column-content">
+            {requests.filter(r => r.status === col.status).map(req => (
+              <RequestCard key={req.id} request={req} onClick={() => setSelectedRequest(req)} />
+            ))}
+          </div>
+        </div>
+      ))}
+      {selectedRequest && 
+        <DetailView 
+          request={selectedRequest} 
+          onClose={() => setSelectedRequest(null)} 
+          onAction={handleAction}
+          isActionLoading={isActionLoading}
+          onRequestClarification={handleRequestClarification}
+        />}
+    </div>
+  );
+};
+
+export default Subscriptions;
