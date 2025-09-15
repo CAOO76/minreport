@@ -58,6 +58,15 @@ type FormData = {
   country: string;
 };
 
+const initialFormData: FormData = {
+  applicantName: '',
+  applicantEmail: '',
+  rut: '',
+  institutionName: '',
+  accountType: null,
+  country: COUNTRIES[0],
+};
+
 const getEntityType = (accountType: AccountType) => {
   return accountType === 'INDIVIDUAL' ? 'natural' : 'juridica';
 };
@@ -76,6 +85,7 @@ const RequestAccess: React.FC = () => {
   const [submitMessage, setSubmitMessage] = useState<string | null>(null);
   const [isError, setIsError] = useState(false);
   const [rutError, setRutError] = useState<string | null>(null);
+  const [isSubmittedSuccessfully, setIsSubmittedSuccessfully] = useState(false);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -198,17 +208,25 @@ const RequestAccess: React.FC = () => {
 
   return (
     <div className="form-container">
-      <h2>Solicitar Acceso a MINREPORT</h2>
-      <p>Completa el siguiente formulario para solicitar tu cuenta. Todos los campos son obligatorios.</p>
-      
-      {submitMessage && (
+      {submitMessage && isSubmittedSuccessfully && (
         <p className={`submit-message ${isError ? 'error' : 'success'}`}>
           {submitMessage}
         </p>
       )}
 
-      {currentStep === 'form' && (
-        <form onSubmit={handleReview} className="form-layout">
+      {!isSubmittedSuccessfully && (
+        <>
+          <h2>Solicitar Acceso a MINREPORT</h2>
+          <p>Completa el siguiente formulario para solicitar tu cuenta. Todos los campos son obligatorios.</p>
+          
+          {submitMessage && !isSubmittedSuccessfully && (
+            <p className={`submit-message ${isError ? 'error' : 'success'}`}>
+              {submitMessage}
+            </p>
+          )}
+
+          {currentStep === 'form' && (
+            <form onSubmit={handleReview} className="form-layout">
           {!formData.accountType ? (
             <>
               <h3>Selecciona tu Tipo de Cuenta</h3>
@@ -360,13 +378,15 @@ const RequestAccess: React.FC = () => {
               <span className="material-symbols-outlined">cancel</span>
               Cancelar Solicitud
             </button>
-            <button type="button" className="button-primary icon-button" onClick={handleSubmit} disabled={isSubmitting}>
+            <button type="button" className="button-primary icon-button" onClick={handleSubmit} disabled={isSubmitting || isSubmittedSuccessfully}>
               {isSubmitting ? 'Enviando...' : 'Enviar Solicitud'}
               {!isSubmitting && <span className="material-symbols-outlined">send</span>}
             </button>
           </div>
         </div>
       )}
+    </>
+  )}
     </div>
   );
 };

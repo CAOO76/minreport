@@ -1,10 +1,14 @@
+require('dotenv').config({ path: '../../.env' });
+
 import express from 'express';
 import * as admin from 'firebase-admin';
 import cors from 'cors';
 import { Resend } from 'resend';
 
 // Initialize Firebase Admin SDK
-admin.initializeApp();
+admin.initializeApp({
+  projectId: process.env.FIREBASE_PROJECT_ID,
+});
 
 const db = admin.firestore();
 const auth = admin.auth();
