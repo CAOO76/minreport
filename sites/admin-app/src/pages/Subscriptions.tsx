@@ -33,7 +33,7 @@ const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClar
     useEffect(() => {
         const fetchSubCollections = async () => {
             const historyQuery = query(collection(db, 'requests', request.id, 'history'), orderBy('timestamp', 'desc'));
-            const clarificationsQuery = query(collection(db, 'requests', request.id, 'clarifications'), orderBy('createdAt', 'desc'));
+            const clarificationsQuery = query(collection(db, 'requests', request.id, 'clarifications'), orderBy('createdAt', 'desc')); // Reverted to desc for display order
             const [historySnapshot, clarificationsSnapshot] = await Promise.all([getDocs(historyQuery), getDocs(clarificationsQuery)]);
             setHistory(historySnapshot.docs.map(d => ({ id: d.id, ...d.data() } as HistoryEntry)));
             setClarifications(clarificationsSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as Clarification)));
@@ -43,29 +43,31 @@ const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClar
 
     const renderDetails = () => (
         <div className="detail-content-section">
-            <h4>Datos del Solicitante</h4>
-            <p><span className="material-symbols-outlined icon-inline">person</span> <strong>Nombre:</strong> <span>{request.applicantName}</span></p>
-            <p><span className="material-symbols-outlined icon-inline">mail</span> <strong>Email:</strong> <span>{request.applicantEmail}</span></p>
-            <p><span className="material-symbols-outlined icon-inline">flag</span> <strong>País:</strong> <span>{request.country}</span></p>
-            {request.accountType === 'INDIVIDUAL' && <p><span className="material-symbols-outlined icon-inline">location_city</span> <strong>Ciudad:</strong> <span>{request.city}</span></p>}
-            {request.accountType !== 'INDIVIDUAL' && <p><span className="material-symbols-outlined icon-inline">business</span> <strong>Institución:</strong> <span>{request.institutionName}</span></p>}
-            {request.rut && <p><span className="material-symbols-outlined icon-inline">badge</span> <strong>RUT:</strong> <span>{request.rut}</span></p>}
-            {request.additionalData?.run && <p><span className="material-symbols-outlined icon-inline">badge</span> <strong>RUN:</strong> <span>{request.additionalData.run}</span></p>}
-            
+            <div className="data-card">
+                <h4>Datos del Solicitante</h4>
+                <p><span className="material-symbols-outlined icon-inline">person</span> <span>{request.applicantName}</span></p>
+                <p><span className="material-symbols-outlined icon-inline">mail</span> <span>{request.applicantEmail}</span></p>
+                <p><span className="material-symbols-outlined icon-inline">flag</span> <span>{request.country}</span></p>
+                {request.accountType === 'INDIVIDUAL' && <p><span className="material-symbols-outlined icon-inline">location_city</span> <span>{request.city}</span></p>}
+            </div>
             {request.additionalData && <>
-                <h4>Datos del Administrador Designado</h4>
-                <p><span className="material-symbols-outlined icon-inline">person</span> <strong>Nombre:</strong> <span>{request.additionalData.adminName}</span></p>
-                <p><span className="material-symbols-outlined icon-inline">mail</span> <strong>Email:</strong> <span>{request.additionalData.adminEmail}</span></p>
-                <p><span className="material-symbols-outlined icon-inline">phone</span> <strong>Celular:</strong> <a href={`tel:${request.additionalData.adminPhone}`}>{request.additionalData.adminPhone}</a></p>
-                {request.additionalData.adminRole && <p><span className="material-symbols-outlined icon-inline">work</span> <strong>Cargo:</strong> <span>{request.additionalData.adminRole}</span></p>}
+                <div className="data-card">
+                    <h4>Datos del Administrador Designado</h4>
+                <p><span className="material-symbols-outlined icon-inline">person</span> <span>{request.additionalData.adminName}</span></p>
+                <p><span className="material-symbols-outlined icon-inline">mail</span> <span>{request.additionalData.adminEmail}</span></p>
+                <p><span className="material-symbols-outlined icon-inline">phone</span> <a href={`tel:${request.additionalData.adminPhone}`}>{request.additionalData.adminPhone}</a></p>
+                {request.additionalData.adminRole && <p><span className="material-symbols-outlined icon-inline">work</span> <span>{request.additionalData.adminRole}</span></p>}
+                </div>
             </>}
 
             {request.additionalData?.streetAddress && <>
-                <h4>Dirección Comercial</h4>
-                <p><span className="material-symbols-outlined icon-inline">home</span> <strong>Dirección:</strong> <span>{request.additionalData.streetAddress}</span></p>
-                <p><span className="material-symbols-outlined icon-inline">location_city</span> <strong>Ciudad:</strong> <span>{request.additionalData.city}</span></p>
-                <p><span className="material-symbols-outlined icon-inline">map</span> <strong>Región/Estado:</strong> <span>{request.additionalData.state}</span></p>
-                <p><span className="material-symbols-outlined icon-inline">pin_drop</span> <strong>Cód. Postal:</strong> <span>{request.additionalData.postalCode}</span></p>
+                <div className="data-card">
+                    <h4>Dirección Comercial</h4>
+                <p><span className="material-symbols-outlined icon-inline">home</span> <span>{request.additionalData.streetAddress}</span></p>
+                <p><span className="material-symbols-outlined icon-inline">location_city</span> <span>{request.additionalData.city}</span></p>
+                <p><span className="material-symbols-outlined icon-inline">map</span> <span>{request.additionalData.state}</span></p>
+                <p><span className="material-symbols-outlined icon-inline">pin_drop</span> <span>{request.additionalData.postalCode}</span></p>
+                </div>
             </>}
         </div>
     );
@@ -75,10 +77,15 @@ const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClar
             <div className="detail-modal-content" onClick={(e) => e.stopPropagation()}>
                 <button onClick={onClose} className="close-button">&times;</button>
                 <div className="modal-header-with-actions">
-                    <h2>Detalle de Solicitud</h2>
+                    <div className="header-title-group">
+                        <h2>Detalle de Solicitud</h2>
+                        <p className="request-detail-subtitle">{request.accountType === 'INDIVIDUAL' ? request.applicantName : request.institutionName}</p>
+                        {request.rut && <p className="request-detail-subtitle">RUT: {request.rut}</p>}
+                        {request.additionalData?.run && <p className="request-detail-subtitle">RUN: {request.additionalData.run}</p>}
+                    </div>
                     <div className="header-icons">
-                        <button onClick={() => setView('history')} className="icon-button" title="Ver Historial"><span className="material-symbols-outlined">history</span></button>
-                        <button onClick={() => setView('clarifications')} className="icon-button" title={`Ver Aclaraciones (${clarifications.filter(c => c.status === 'pending_response').length})`}><span className="material-symbols-outlined">chat_bubble_outline</span></button>
+                        {view === 'details' && <button onClick={() => setView('history')} className="icon-button"><span className="material-symbols-outlined">history</span></button>}
+                        {view === 'details' && <button onClick={() => setView('clarifications')} className="icon-button"><span className="material-symbols-outlined">chat_bubble_outline</span></button>}
                     </div>
                 </div>
                 
@@ -90,6 +97,14 @@ const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClar
                 )}
 
                 {view === 'details' && (
+                    <div className="action-buttons" style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+                        {request.status === 'pending_review' && <button className="icon-button" onClick={() => onAction('approved')} disabled={isActionLoading}><span className="material-symbols-outlined">thumb_up</span></button>}
+                        {request.status === 'pending_final_review' && <button className="icon-button" onClick={() => onAction('activated')} disabled={isActionLoading}><span className="material-symbols-outlined">thumb_up</span></button>}
+                        {request.status !== 'activated' && request.status !== 'rejected' && <button className="icon-button" onClick={() => onAction('rejected')} disabled={isActionLoading}><span className="material-symbols-outlined">thumb_down</span></button>}
+                    </div>
+                )}
+
+                {view === 'details' && (
                     <>
                         {renderDetails()}
                     </>
@@ -97,26 +112,22 @@ const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClar
 
                 {view === 'history' && (
                     <>
-                        <button onClick={() => setView('details')} className="back-button">&larr; Volver a Detalles</button>
-                        <h3>Historial de Trazabilidad</h3>
-                        <ul className="history-list">{history.map(h => <li key={h.id}><strong>{h.action}</strong> por <em>{h.actor}</em> ({h.timestamp.toDate().toLocaleString()})<p>{h.details}</p></li>)}</ul>
+                        <button onClick={() => setView('details')} className="icon-button"><span className="material-symbols-outlined">arrow_back</span></button>
+                        <h3>HISTORIAL</h3>
+                        <ul className="history-list">{history.map((h, index) => <li key={h.id}><strong>{index + 1}. {h.action}</strong> por <em>{h.actor}</em> ({h.timestamp.toDate().toLocaleString()})<p>{h.details}</p></li>)}</ul>
                     </>
                 )}
 
                 {view === 'clarifications' && (
                     <>
-                        <button onClick={() => setView('details')} className="back-button">&larr; Volver a Detalles</button>
-                        <h3>Aclaraciones</h3>
-                        <div className="clarifications-list">{clarifications.map(c => <div key={c.id} className='clarification-item'><strong>Pregunta:</strong><p>{c.adminMessage}</p>{c.userReply && <><strong>Respuesta:</strong><p>{c.userReply}</p></>}</div>)}</div>
+                        <button onClick={() => setView('details')} className="icon-button"><span className="material-symbols-outlined">arrow_back</span></button>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                            <h3>Aclaraciones</h3>
+                            <button onClick={onRequestClarification} className="icon-button"><span className="material-symbols-outlined">add_comment</span></button>
+                        </div>
+                        <div className="clarifications-list">{clarifications.map((c, index) => <div key={c.id} className='clarification-item'><strong>{index + 1}. Pregunta:</strong><p>{c.adminMessage}</p>{c.userReply && <><strong>Respuesta:</strong><p>{c.userReply}</p></>}</div>)}</div>
                     </>
                 )}
-
-                <div className="action-buttons">
-                    {request.status === 'pending_review' && <button className="approve" onClick={() => onAction('approved')} disabled={isActionLoading}>Aprobar Inicialmente</button>}
-                    {request.status === 'pending_final_review' && <button className="approve" onClick={() => onAction('activated')} disabled={isActionLoading}>Activar Cuenta</button>}
-                    {request.status !== 'activated' && request.status !== 'rejected' && <button className="reject" onClick={() => onAction('rejected')} disabled={isActionLoading}>Rechazar</button>}
-                    <button className="secondary" onClick={onRequestClarification} disabled={isActionLoading}>Solicitar Aclaración</button>
-                </div>
             </div>
         </div>
     );
@@ -142,7 +153,7 @@ const Subscriptions = () => {
         console.error("Error fetching requests: ", err);
         setError(`Error al cargar solicitudes: ${err.message}`); 
     } finally { 
-        setIsLoading(false); 
+        setIsLoading(false);
     }
   }, []);
 

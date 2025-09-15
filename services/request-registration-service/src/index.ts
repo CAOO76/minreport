@@ -37,7 +37,20 @@ app.use(cors((req, callback) => {
 }));
 
 // --- Helper Functions (email, rut, etc.) ---
-// ... (These helpers are assumed to be here and correct)
+async function sendEmail(to: string, subject: string, htmlContent: string) {
+    if (!process.env.RESEND_API_KEY) {
+        console.log(`SIMULANDO EMAIL a ${to} con asunto: ${subject}`);
+        return { success: true };
+    }
+    try {
+        const { data, error } = await resend.emails.send({ from: 'MINREPORT <no-reply@minreport.com>', to: [to], subject, html: htmlContent });
+        if (error) throw error;
+        return { success: true, data };
+    } catch (error) {
+        console.error('Error enviando email:', error);
+        return { success: false, error };
+    }
+}
 
 // --- V4 Endpoints ---
 
