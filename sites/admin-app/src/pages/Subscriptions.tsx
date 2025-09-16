@@ -33,10 +33,16 @@ const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClar
     useEffect(() => {
         const fetchSubCollections = async () => {
             const historyQuery = query(collection(db, 'requests', request.id, 'history'), orderBy('timestamp', 'desc'));
-            const clarificationsQuery = query(collection(db, 'requests', request.id, 'clarifications'), orderBy('createdAt', 'desc')); // Reverted to desc for display order
-            const [historySnapshot, clarificationsSnapshot] = await Promise.all([getDocs(historyQuery), getDocs(clarificationsQuery)]);
+            const clarificationsQueryAsc = query(collection(db, 'requests', request.id, 'clarifications'), orderBy('createdAt', 'asc'));
+            const clarificationsSnapshotAsc = await getDocs(clarificationsQueryAsc);
+            const clarificationsWithOriginalIndex = clarificationsSnapshotAsc.docs.map((d, idx) => ({ id: d.id, ...d.data(), originalIndex: idx + 1 } as Clarification & { originalIndex: number }));
+
+            // Now sort for display (latest first)
+            const sortedClarifications = [...clarificationsWithOriginalIndex].sort((a, b) => b.createdAt.toDate().getTime() - a.createdAt.toDate().getTime());
+
+            const [historySnapshot] = await Promise.all([getDocs(historyQuery)]); // Only fetch history here
             setHistory(historySnapshot.docs.map(d => ({ id: d.id, ...d.data() } as HistoryEntry)));
-            setClarifications(clarificationsSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as Clarification)));
+            setClarifications(sortedClarifications);
         };
         fetchSubCollections();
     }, [request.id]);
@@ -83,9 +89,11 @@ const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClar
                         {request.rut && <p className="request-detail-subtitle">RUT: {request.rut}</p>}
                         {request.additionalData?.run && <p className="request-detail-subtitle">RUN: {request.additionalData.run}</p>}
                     </div>
-                    <div className="header-icons">
+                    <div className="header-icons" style={{ display: 'flex', gap: '1rem' }}>
                         {view === 'details' && <button onClick={() => setView('history')} className="icon-button"><span className="material-symbols-outlined">history</span></button>}
                         {view === 'details' && <button onClick={() => setView('clarifications')} className="icon-button"><span className="material-symbols-outlined">chat_bubble_outline</span></button>}
+                        {view === 'details' && request.status !== 'activated' && request.status !== 'rejected' && <button className="icon-button" onClick={() => onAction('rejected')} disabled={isActionLoading}><span className="material-symbols-outlined">unpublished</span></button>}
+                        {view === 'details' && request.status === 'pending_final_review' && <button className="icon-button" onClick={() => onAction('activated')} disabled={isActionLoading}><span className="material-symbols-outlined">done_all</span></button>}
                     </div>
                 </div>
                 
@@ -96,13 +104,7 @@ const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClar
                     </div>
                 )}
 
-                {view === 'details' && (
-                    <div className="action-buttons" style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-                        {request.status === 'pending_review' && <button className="icon-button" onClick={() => onAction('approved')} disabled={isActionLoading}><span className="material-symbols-outlined">thumb_up</span></button>}
-                        {request.status === 'pending_final_review' && <button className="icon-button" onClick={() => onAction('activated')} disabled={isActionLoading}><span className="material-symbols-outlined">thumb_up</span></button>}
-                        {request.status !== 'activated' && request.status !== 'rejected' && <button className="icon-button" onClick={() => onAction('rejected')} disabled={isActionLoading}><span className="material-symbols-outlined">thumb_down</span></button>}
-                    </div>
-                )}
+                
 
                 {view === 'details' && (
                     <>
@@ -125,7 +127,7 @@ const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClar
                             <h3>Aclaraciones</h3>
                             <button onClick={onRequestClarification} className="icon-button"><span className="material-symbols-outlined">add_comment</span></button>
                         </div>
-                        <div className="clarifications-list">{clarifications.map((c, index) => <div key={c.id} className='clarification-item'><strong>{index + 1}. Pregunta:</strong><p>{c.adminMessage}</p>{c.userReply && <><strong>Respuesta:</strong><p>{c.userReply}</p></>}</div>)}</div>
+                        <div className="clarifications-list">{clarifications.map((c) => <div key={c.id} className='clarification-item'><strong>{c.originalIndex}. Pregunta:</strong> <small>{c.createdAt.toDate().toLocaleString()}</small><p>{c.adminMessage}</p>{c.userReply && <><strong>Respuesta:</strong><p>{c.userReply}</p></>}</div>)}</div>
                     </>
                 )}
             </div>

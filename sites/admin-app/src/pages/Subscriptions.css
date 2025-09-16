@@ -157,8 +157,8 @@
 
 .modal-header-with-actions {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  justify-content: space-between; /* Push items to ends */
+  align-items: center; /* Vertically center items */
   margin-bottom: 1.5rem; /* Add some space below the header */
 }
 
@@ -213,4 +213,27 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.clarification-item {
+  background-color: var(--color-background); /* Use a slightly different background than the modal content */
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem; /* Space between clarification items */
+}
+
+.clarification-item strong {
+  color: var(--color-text-primary);
+  display: block; /* Make strong take full width for better readability */
+  margin-bottom: 0.5rem;
+}
+
+.clarification-item p {
+  margin: 0 0 0.5rem 0; /* Adjust margin for paragraphs within the item */
+  color: var(--color-text-secondary);
+}
+
+.clarification-item p:last-child {
+  margin-bottom: 0; /* No bottom margin for the last paragraph */
 }
