@@ -54,9 +54,265 @@ async function sendEmail(to: string, subject: string, htmlContent: string) {
 
 // --- V4 Endpoints ---
 
+app.post('/requestAccess', async (req, res) => {
+    const { applicantName, applicantEmail, rut, institutionName, accountType, country, city, entityType } = req.body;
+
+    if (!applicantName || !applicantEmail || !accountType || !country || !entityType) {
+        return res.status(400).json({ message: 'Faltan parámetros obligatorios.' });
+    }
+
+    try {
+        const requestRef = db.collection('requests').doc();
+        await requestRef.set({
+            applicantName,
+            applicantEmail,
+            rut: rut || null, // RUT is optional for individual
+            institutionName: institutionName || null, // Institution name is optional for individual
+            accountType,
+            country,
+            city: city || null, // City is optional for non-individual
+            entityType,
+            status: 'pending_review',
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+
+        // Log history for the request
+        await requestRef.collection('history').add({
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            action: 'request_submitted',
+            actor: 'applicant',
+            details: 'Solicitud de acceso enviada por el solicitante.',
+        });
+
+        res.status(200).json({ message: 'Solicitud de acceso registrada con éxito.' });
+    } catch (error) {
+        console.error('Error en /requestAccess:', error);
+        res.status(500).json({ message: 'Error interno del servidor.' });
+    }
+});
+
 // ... (/requestAccess endpoint is assumed to be here and correct)
 
+app.post('/processInitialDecision', async (req, res) => {
+    const { requestId, adminId, decision, reason } = req.body;
+
+    if (!requestId || !adminId || !decision) {
+        return res.status(400).json({ message: 'Faltan parámetros obligatorios (requestId, adminId, decision).' });
+    }
+
+    const requestRef = db.collection('requests').doc(requestId);
+    try {
+        const requestDoc = await requestRef.get();
+        if (!requestDoc.exists) return res.status(404).json({ message: 'Solicitud no encontrada.' });
+        const requestData = requestDoc.data()!; // Fetch requestData
+
+        let newStatus: string;
+        let actionDetails: string;
+
+        if (decision === 'approved') {
+            newStatus = 'pending_additional_data';
+            actionDetails = 'Aprobación inicial por administrador.';
+
+            // Generate token for additional data completion
+            const token = crypto.randomBytes(32).toString('hex');
+            const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+            const expiryDate = new Date();
+            expiryDate.setHours(expiryDate.getHours() + 24); // 24-hour expiry for data completion
+
+            await requestRef.update({
+                token: hashedToken,
+                tokenExpiry: admin.firestore.Timestamp.fromDate(expiryDate),
+            });
+
+            const clientAppUrl = process.env.CLIENT_APP_URL || 'http://localhost:5175';
+            const completeDataLink = `${clientAppUrl}/complete-data?token=${token}`;
+
+            await sendEmail(
+                requestData.applicantEmail,
+                'Tu Solicitud en MINREPORT ha sido Pre-Aprobada',
+                `<p>Hola ${requestData.applicantName},</p><p>Tu solicitud de acceso a MINREPORT ha sido pre-aprobada.</p><p>Por favor, completa la información adicional requerida a través del siguiente enlace:</p><p><a href="${completeDataLink}">Completar Datos Adicionales</a></p><p>Este enlace expirará en 24 horas.</p>`
+            );
+
+        } else if (decision === 'rejected') {
+            newStatus = 'rejected';
+            actionDetails = `Rechazo inicial por administrador. Motivo: ${reason || 'No especificado'}`;
+
+            await sendEmail(
+                requestData.applicantEmail,
+                'Actualización de tu Solicitud en MINREPORT',
+                `<p>Hola ${requestData.applicantName},</p><p>Lamentamos informarte que tu solicitud de acceso a MINREPORT ha sido rechazada.</p><p>Motivo: ${reason || 'No especificado'}</p><p>Si tienes alguna pregunta, por favor contáctanos.</p>`
+            );
+
+        } else {
+            return res.status(400).json({ message: 'Decisión inválida.' });
+        }
+
+        await requestRef.update({
+            status: newStatus,
+        });
+
+        await requestRef.collection('history').add({
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            action: `initial_decision_${decision}`,
+            actor: adminId,
+            details: actionDetails,
+        });
+
+        res.status(200).json({ message: 'Decisión inicial procesada con éxito.' });
+    } catch (error) {
+        console.error('Error en /processInitialDecision:', error);
+        res.status(500).json({ message: 'Error interno del servidor.' });
+    }
+});
+
 // ... (/processInitialDecision endpoint is assumed to be here and correct)
+
+app.post('/validate-data-token', async (req, res) => {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ isValid: false, message: 'Token no proporcionado.' });
+
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+    const snapshot = await db.collectionGroup('requests').where('token', '==', hashedToken).limit(1).get();
+
+    if (snapshot.empty) {
+        return res.status(404).json({ isValid: false, message: 'Enlace inválido o ya utilizado.' });
+    }
+
+    const requestDoc = snapshot.docs[0];
+    const requestData = requestDoc.data();
+
+    if (requestData.status !== 'pending_additional_data') {
+        return res.status(400).json({ isValid: false, message: 'Esta solicitud ya fue completada o no requiere datos adicionales.' });
+    }
+
+    if (requestData.tokenExpiry && requestData.tokenExpiry.toDate() < new Date()) {
+        return res.status(400).json({ isValid: false, message: 'El enlace ha expirado.' });
+    }
+
+    res.status(200).json({ isValid: true, requestData: { requestId: requestDoc.id, applicantName: requestData.applicantName, applicantEmail: requestData.applicantEmail, country: requestData.country, accountType: requestData.accountType } });
+});
+
+app.post('/submitAdditionalData', async (req, res) => {
+    const { token, additionalData } = req.body;
+
+    if (!token || !additionalData) {
+        return res.status(400).json({ message: 'Token y datos adicionales son requeridos.' });
+    }
+
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+    const snapshot = await db.collectionGroup('requests').where('token', '==', hashedToken).limit(1).get();
+
+    if (snapshot.empty) {
+        return res.status(404).json({ message: 'Enlace inválido o ya utilizado.' });
+    }
+
+    const requestDoc = snapshot.docs[0];
+    const requestData = requestDoc.data();
+
+    if (requestData.status !== 'pending_additional_data') {
+        return res.status(400).json({ message: 'Esta solicitud ya fue completada o no requiere datos adicionales.' });
+    }
+
+    if (requestData.tokenExpiry && requestData.tokenExpiry.toDate() < new Date()) {
+        return res.status(400).json({ message: 'El enlace ha expirado.' });
+    }
+
+    // Invalidate the token and save additional data
+    await requestDoc.ref.update({
+        additionalData: additionalData,
+        status: 'pending_final_review',
+        token: null, // Invalidate token
+        tokenExpiry: null, // Clear expiration
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // Log the action
+    await requestDoc.ref.collection('history').add({
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        actor: requestData.applicantEmail, // Assuming applicant is the actor
+        action: 'additional_data_submitted',
+        details: 'Usuario envió datos adicionales.',
+    });
+
+    res.status(200).json({ message: 'Datos adicionales enviados con éxito. Pendiente de revisión final.' });
+});
+
+
+
+app.post('/approveFinalRequest', async (req, res) => {
+    const { requestId, adminId } = req.body;
+
+    if (!requestId || !adminId) {
+        return res.status(400).json({ message: 'Faltan parámetros obligatorios (requestId, adminId).' });
+    }
+
+    const requestRef = db.collection('requests').doc(requestId);
+    try {
+        const requestDoc = await requestRef.get();
+
+        if (!requestDoc.exists) {
+            return res.status(404).json({ message: 'Solicitud no encontrada.' });
+        }
+
+        const requestData = requestDoc.data()!;
+
+        if (requestData.status !== 'pending_final_review') {
+            return res.status(400).json({ message: 'La solicitud no está en estado de revisión final.' });
+        }
+
+        const { applicantEmail, accountType, rut, additionalData } = requestData;
+
+        // 1. Create user in Firebase Auth
+        const userRecord = await auth.createUser({
+            email: applicantEmail,
+            emailVerified: false, // User will set password and verify email later
+            disabled: false,
+        });
+
+        // 2. Create account document
+        await db.collection('accounts').doc(userRecord.uid).set({
+            userId: userRecord.uid,
+            email: applicantEmail, // This is the applicant's email, not necessarily the admin's
+            accountType,
+            rut,
+            status: 'active',
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            institutionName: requestData.institutionName || null, // Add institutionName
+            designatedAdminEmail: requestData.additionalData?.adminEmail || applicantEmail, // Add designatedAdminEmail, default to applicantEmail if not provided
+            ...additionalData, // Merge additional data (this will include adminName, adminPhone, etc.)
+        });
+
+        // 3. Update request status
+        await requestRef.update({
+            status: 'activated',
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+
+        // Log the action
+        await requestRef.collection('history').add({
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            actor: adminId,
+            action: 'account_activated',
+            details: `Cuenta activada por admin ${adminId}. Usuario ${userRecord.uid} creado.`,
+        });
+
+        // Generate password reset link
+        const passwordResetLink = await auth.generatePasswordResetLink(applicantEmail);
+
+        await sendEmail(
+            applicantEmail,
+            '¡Tu cuenta MINREPORT ha sido activada!',
+            `<p>Hola ${requestData.applicantName},</p><p>¡Felicidades! Tu cuenta MINREPORT ha sido activada.</p><p>Para establecer tu contraseña y acceder a la plataforma, por favor haz clic en el siguiente enlace:</p><p><a href="${passwordResetLink}">Establecer Contraseña</a></p><p>Este enlace es válido por un tiempo limitado.</p>`
+        );
+
+        res.status(200).json({ message: 'Cuenta activada con éxito.', userId: userRecord.uid });
+
+    } catch (error) {
+        console.error('Error al aprobar la solicitud final:', error);
+        res.status(500).json({ message: 'Error interno del servidor al aprobar la solicitud final.' });
+    }
+});
 
 // ... (/validate-data-token endpoint is assumed to be here and correct)
 
@@ -189,6 +445,50 @@ app.post('/submit-clarification-response', async (req, res) => {
     res.status(200).json({ message: 'Respuesta enviada con éxito.' });
 });
 
+
+app.post('/clear-all-requests', async (req, res) => {
+    if (process.env.NODE_ENV === 'production') {
+        return res.status(403).json({ message: 'Esta operación no está permitida en producción.' });
+    }
+
+    try {
+        const requestsRef = db.collection('requests');
+        const snapshot = await requestsRef.get();
+
+        if (snapshot.empty) {
+            return res.status(200).json({ message: 'No hay solicitudes para eliminar.' });
+        }
+
+        const batch = db.batch();
+        let deletedCount = 0;
+
+        for (const doc of snapshot.docs) {
+            const requestRef = requestsRef.doc(doc.id);
+
+            // Delete history subcollection
+            const historySnapshot = await requestRef.collection('history').get();
+            historySnapshot.docs.forEach(historyDoc => {
+                batch.delete(historyDoc.ref);
+            });
+
+            // Delete clarifications subcollection
+            const clarificationsSnapshot = await requestRef.collection('clarifications').get();
+            clarificationsSnapshot.docs.forEach(clarificationDoc => {
+                batch.delete(clarificationDoc.ref);
+            });
+
+            // Delete the request document itself
+            batch.delete(requestRef);
+            deletedCount++;
+        }
+
+        await batch.commit();
+        res.status(200).json({ message: `Se eliminaron ${deletedCount} solicitudes y sus historiales/aclaraciones.` });
+    } catch (error) {
+        console.error('Error en /clear-all-requests:', error);
+        res.status(500).json({ message: 'Error interno del servidor al eliminar solicitudes.' });
+    }
+});
 
 const PORT = process.env.REGISTRATION_SERVICE_PORT || 8082;
 app.listen(PORT, () => {
