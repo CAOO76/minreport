@@ -125,6 +125,7 @@ Para cerrar una sesión de desarrollo de manera eficiente y económica, sigue es
     **¡IMPORTANTE!** Los pasos 1 y 2 son **OBLIGATORIOS** y deben completarse **ANTES** de cualquier `commit` o `push`.
 3.  **Consolidación en Git:** Haz un `commit` de tus cambios con un mensaje claro y siguiendo las "Normas de Contribución con Git".
 4.  **Subir a GitHub:** Haz un `git push` para subir tus cambios al repositorio.
+5.  **Actualizar Bitácora:** Añadir una entrada en `GEMINI_PLAN.md` resumiendo el trabajo completado y el estado final de la tarea.
 
 ## 3. Flujo de Registro y Ciclo de Vida de la Cuenta
 
@@ -399,3 +400,7 @@ Realizaré los cambios en el frontend en pequeños pasos, asegurando que la apli
 
 1.  **Acción:** Una vez que se confirme que todo el nuevo flujo funciona a la perfección durante un tiempo prudencial, procederé a eliminar del código los antiguos campos de dirección que fueron ocultados en el paso 2.2.
 2.  **Objetivo:** Dejar el código limpio y eliminar la deuda técnica, pero solo cuando sea 100% seguro hacerlo.
+
+### Estado (16/09/2025)
+
+**Estado:** Completado y consolidado en commit `064b04f`.

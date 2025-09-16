@@ -11,8 +11,9 @@ type Account = {
   status: AccountStatus;
   createdAt: { toDate: () => Date };
   institutionName: string;
-  accountType: 'B2B' | 'EDUCACIONALES' | 'INDIVIDUAL';
+  accountType: 'EMPRESARIAL' | 'EDUCACIONAL' | 'INDIVIDUAL';
   designatedAdminEmail: string;
+  adminName: string; // Nombre del admin/persona natural
 };
 
 // --- Main Component ---
@@ -66,7 +67,7 @@ const Accounts = () => {
             {accounts.length > 0 ? (
               accounts.map(acc => (
                 <tr key={acc.id}>
-                  <td>{acc.institutionName}</td>
+                  <td>{acc.accountType === 'INDIVIDUAL' ? acc.adminName : acc.institutionName}</td>
                   <td>{acc.designatedAdminEmail}</td>
                   <td>{acc.accountType}</td>
                   <td>{acc.createdAt.toDate().toLocaleDateString()}</td>

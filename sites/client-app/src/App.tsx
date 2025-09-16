@@ -9,6 +9,7 @@ import './App.css';
 import { signOut } from 'firebase/auth';
 import CompleteDataForm from './components/CompleteDataForm';
 import ClarificationResponse from './components/ClarificationResponse';
+import CreatePassword from './components/CreatePassword';
 
 function App() {
   const { user, claims, loading: authLoading } = useAuth(auth);
@@ -60,6 +61,7 @@ function App() {
           <Route path="/request-access" element={<RequestAccess />} />
           <Route path="/complete-data" element={<CompleteDataForm />} />
           <Route path="/clarification-response" element={<ClarificationResponse />} />
+          <Route path="/actions/create-password" element={<CreatePassword />} />
           <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
         </Routes>
       </main>

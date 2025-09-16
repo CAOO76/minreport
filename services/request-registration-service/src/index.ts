@@ -262,9 +262,15 @@ app.post('/approveFinalRequest', async (req, res) => {
 
         const { applicantEmail, accountType, rut, additionalData } = requestData;
 
+        // The user to be created is the designated admin from the additional data
+        const finalUserEmail = additionalData.adminEmail;
+        if (!finalUserEmail) {
+            return res.status(400).json({ message: 'No se proporcionó un email de administrador en los datos adicionales.' });
+        }
+
         // 1. Create user in Firebase Auth
         const userRecord = await auth.createUser({
-            email: applicantEmail,
+            email: finalUserEmail,
             emailVerified: false, // User will set password and verify email later
             disabled: false,
         });
@@ -272,14 +278,13 @@ app.post('/approveFinalRequest', async (req, res) => {
         // 2. Create account document
         await db.collection('accounts').doc(userRecord.uid).set({
             userId: userRecord.uid,
-            email: applicantEmail, // This is the applicant's email, not necessarily the admin's
+            email: finalUserEmail, 
             accountType,
             rut,
             status: 'active',
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             institutionName: requestData.institutionName || null, // Add institutionName
-            designatedAdminEmail: requestData.additionalData?.adminEmail || applicantEmail, // Add designatedAdminEmail, default to applicantEmail if not provided
             ...additionalData, // Merge additional data (this will include adminName, adminPhone, etc.)
         });
 
@@ -294,16 +299,25 @@ app.post('/approveFinalRequest', async (req, res) => {
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
             actor: adminId,
             action: 'account_activated',
-            details: `Cuenta activada por admin ${adminId}. Usuario ${userRecord.uid} creado.`,
+            details: `Cuenta activada por admin ${adminId}. Usuario ${userRecord.uid} creado para ${finalUserEmail}.`,
         });
 
-        // Generate password reset link
-        const passwordResetLink = await auth.generatePasswordResetLink(applicantEmail);
+        // Generate password reset link for the FINAL user
+        const actionCodeSettings = {
+            url: `${process.env.CLIENT_APP_URL || 'http://localhost:5175'}/actions/create-password`,
+            handleCodeInApp: true,
+        };
+        const rawPasswordLink = await auth.generatePasswordResetLink(finalUserEmail, actionCodeSettings);
+
+        // Extract oobCode and build the final user-facing link
+        const url = new URL(rawPasswordLink);
+        const oobCode = url.searchParams.get('oobCode');
+        const finalPasswordLink = `${actionCodeSettings.url}?oobCode=${oobCode}`;
 
         await sendEmail(
-            applicantEmail,
+            finalUserEmail,
             '¡Tu cuenta MINREPORT ha sido activada!',
-            `<p>Hola ${requestData.applicantName},</p><p>¡Felicidades! Tu cuenta MINREPORT ha sido activada.</p><p>Para establecer tu contraseña y acceder a la plataforma, por favor haz clic en el siguiente enlace:</p><p><a href="${passwordResetLink}">Establecer Contraseña</a></p><p>Este enlace es válido por un tiempo limitado.</p>`
+            `<p>Hola ${requestData.applicantName},</p><p>¡Felicidades! Tu cuenta MINREPORT ha sido activada.</p><p>Para establecer tu contraseña y acceder a la plataforma, por favor haz clic en el siguiente enlace:</p><p><a href="${finalPasswordLink}">Establecer Contraseña</a></p><p>Este enlace es válido por un tiempo limitado.</p>`
         );
 
         res.status(200).json({ message: 'Cuenta activada con éxito.', userId: userRecord.uid });
