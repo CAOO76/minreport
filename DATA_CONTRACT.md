@@ -6,30 +6,40 @@ Este documento define la estructura de los datos para las colecciones principale
 
 ## 1. Colección: `requests`
 
-Almacena todas las solicitudes de nuevas cuentas. Un mismo RUT puede tener múltiples solicitudes, pero solo una puede ser aprobada para crear una cuenta.
+Almacena todas las solicitudes de nuevas cuentas. Un mismo RUT/RUN puede tener múltiples solicitudes, pero solo una puede ser aprobada para crear una cuenta.
 
 ```typescript
 {
   // ID del documento: autogenerado por Firestore
 
   // --- Datos de la solicitud inicial ---
-  requesterName: string;         // Nombre de la persona que solicita
-  requesterEmail: string;        // Email de contacto para la solicitud
-  rut: string;                   // RUT de la institución o persona (para B2B o Educacional)
-  institutionName: string;       // Nombre de la institución
-  requestType: 'B2B' | 'EDUCATIONAL'; // Tipo de cuenta solicitada
+  applicantName: string;         // Nombre de la persona que solicita
+  applicantEmail: string;        // Email de contacto para la solicitud
+  institutionName?: string;      // Nombre de la institución (para Empresarial/Educacional)
+  rut?: string;                  // RUT de la institución (para Empresarial/Educacional)
+  country: string;               // Código ISO del país (ej: 'CL')
+  city: string;                  // Nombre de la ciudad
+  accountType: 'EMPRESARIAL' | 'EDUCACIONAL' | 'INDIVIDUAL'; // Tipo de cuenta solicitada
+  entityType: 'juridica' | 'natural'; // Derivado del accountType
 
   // --- Estado y Trazabilidad ---
-  status: 'pending_review' | 'pending_additional_data' | 'rejected' | 'approved';
+  status: 'pending_review' | 'pending_additional_data' | 'pending_final_review' | 'rejected' | 'activated';
   createdAt: Timestamp;          // Fecha de creación de la solicitud
   updatedAt: Timestamp;          // Última fecha de modificación
   rejectionReason?: string;      // Motivo del rechazo (opcional, añadido por un admin)
+  token?: {
+      value: string; // Hash del token para completar datos
+      expiresAt: Timestamp;
+  }
 
   // --- Datos Adicionales (segundo formulario) ---
   additionalData?: {
-    legalRepresentativeName: string;
-    address: string;
-    // ... otros campos requeridos por el admin
+    adminName: string;
+    adminEmail: string;
+    adminPhone: string;
+    adminRole?: string; // Opcional, solo para Empresarial/Educacional
+    run?: string; // Opcional, solo para Individual
+    commercialAddress?: string; // Opcional, dirección de Google para Empresarial/Educacional
   };
 }
 ```
@@ -45,12 +55,13 @@ Contiene la información de las cuentas aprobadas y activas. El ID de cada docum
   // ID del documento: UID del usuario en Firebase Auth
 
   email: string;                 // Email de inicio de sesión (coincide con Firebase Auth)
-  rut: string;                   // RUT asociado a la cuenta (único para cuentas activas)
-  accountType: 'B2B' | 'EDUCATIONAL';
+  rutOrRun: string;              // RUT o RUN asociado a la cuenta (único para cuentas activas)
+  accountType: 'EMPRESARIAL' | 'EDUCACIONAL' | 'INDIVIDUAL';
+  entityType: 'juridica' | 'natural';
   status: 'active' | 'suspended';// Estado actual de la cuenta
 
   displayName: string;           // Nombre para mostrar en la aplicación
-  institutionName: string;
+  institutionName?: string;      // Opcional, solo para Empresarial/Educacional
 
   // --- Plugins y Funcionalidades ---
   plugins: string[];             // Array con los IDs de los plugins activados para la cuenta

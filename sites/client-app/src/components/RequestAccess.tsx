@@ -215,19 +215,7 @@ const RequestAccess: React.FC = () => {
               
               {formData.accountType === 'INDIVIDUAL' ? (
                 <>
-                    <div className="form-group">
-                        <label htmlFor="country">País:</label>
-                        <select id="country" name="country" value={formData.country} onChange={handleCountryChange} required autoComplete="off">
-                            {countries.map(c => <option key={c.isoCode} value={c.isoCode}>{c.name}</option>)}
-                        </select>
-                    </div>
-                    <div className="form-group">
-                        <label htmlFor="city">Ciudad:</label>
-                        <select id="city" name="city" value={formData.city} onChange={handleChange} required autoComplete="off" disabled={!formData.country || cities.length === 0}>
-                            <option value="">{cities.length === 0 ? 'No hay ciudades para este país' : 'Selecciona una ciudad'}</option>
-                            {cities.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
-                        </select>
-                    </div>
+                    {/* Fields for INDIVIDUAL will go here, if any are specific */}
                 </>
               ) : (
                 <>
@@ -240,14 +228,22 @@ const RequestAccess: React.FC = () => {
                     <input type="text" id="rut" name="rut" value={formData.rut} onChange={handleRutChange} onBlur={handleRutBlur} required autoComplete="off" />
                     {rutError && <p className="error-message">{rutError}</p>}
                   </div>
-                  <div className="form-group">
-                      <label htmlFor="country">País:</label>
-                      <select id="country" name="country" value={formData.country} onChange={handleCountryChange} required autoComplete="off">
-                          {countries.map(c => <option key={c.isoCode} value={c.isoCode}>{c.name}</option>)}
-                      </select>
-                  </div>
                 </>
               )}
+
+              <div className="form-group">
+                  <label htmlFor="country">País:</label>
+                  <select id="country" name="country" value={formData.country} onChange={handleCountryChange} required autoComplete="off">
+                      {countries.map(c => <option key={c.isoCode} value={c.isoCode}>{c.name}</option>)}
+                  </select>
+              </div>
+              <div className="form-group">
+                  <label htmlFor="city">Ciudad:</label>
+                  <select id="city" name="city" value={formData.city} onChange={handleChange} required autoComplete="off" disabled={!formData.country || cities.length === 0}>
+                      <option value="">{cities.length === 0 ? 'Selecciona un país primero' : 'Selecciona una ciudad'}</option>
+                      {cities.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                  </select>
+              </div>
 
               <div className="form-actions">
                 <button type="button" className="button-secondary icon-button" onClick={handleCancel}><span className="material-symbols-outlined">cancel</span> Cancelar</button>
@@ -265,15 +261,14 @@ const RequestAccess: React.FC = () => {
           <div className="review-data-summary">
             <p><strong>Nombre Solicitante:</strong> <span>{formData.applicantName}</span></p>
             <p><strong>Email Solicitante:</strong> <span>{formData.applicantEmail}</span></p>
-            {formData.accountType !== 'INDIVIDUAL' ? (
+            {formData.accountType !== 'INDIVIDUAL' && (
               <>
                 <p><strong>Institución:</strong> <span>{formData.institutionName}</span></p>
                 <p><strong>{rutLabel}</strong> <span>{formData.rut}</span></p>
               </>
-            ) : (
-                <p><strong>Ciudad:</strong> <span>{formData.city}</span></p>
             )}
             <p><strong>País:</strong> <span>{countries.find(c => c.isoCode === formData.country)?.name}</span></p>
+            <p><strong>Ciudad:</strong> <span>{formData.city}</span></p>
             <p><strong>Tipo de Cuenta:</strong> <span>{selectedAccountTypeDetails?.label}</span></p>
           </div>
           <div className="form-actions">

@@ -1,9 +1,9 @@
 /* Subscriptions.css */
 
 .subscriptions-board {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 1.5rem;
+  display: flex;
+  flex-direction: column; /* Stack button and columns container vertically */
+  gap: 1.5rem; /* Space between stacked items */
   padding: 1rem;
 }
 
@@ -12,6 +12,7 @@
   border-radius: 12px;
   display: flex;
   flex-direction: column;
+  flex: 1; /* Ensure equal width for columns */
 }
 
 .board-column h3 {
@@ -120,13 +121,18 @@
   border-top: 1px solid var(--color-border);
 }
 
-.action-buttons button {
-  border: none;
+.button-toggle {
+  background-color: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
   padding: 0.75rem 1.5rem;
-  font-size: 1rem;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: all 0.2s ease;
+  font-family: 'Atkinson Hyperlegible', sans-serif; /* MINREPORT standard font */
+  display: flex; /* Align icon and text */
+  align-items: center; /* Vertically center icon and text */
+  gap: 0.5rem; /* Space between icon and text */
 }
 
 .action-buttons .approve {
@@ -169,9 +175,8 @@
 
 .header-title-group {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: left;
+  flex-direction: column; /* Stack title line and subtitles */
+  text-align: left; /* Keep text alignment for other content */
 }
 
 .header-icons .icon-button {
@@ -236,4 +241,17 @@
 
 .clarification-item p:last-child {
   margin-bottom: 0; /* No bottom margin for the last paragraph */
+}
+
+.back-to-details-button {
+  /* Removed absolute positioning */
+  z-index: 1001; /* Ensure it's above other content */
+  font-size: 1.5rem; /* Match close-button font size for consistent alignment */
+}
+
+.columns-container {
+  display: flex; /* Arrange columns horizontally */
+  justify-content: space-between; /* Distribute columns with space between them */
+  gap: 1.5rem; /* Space between columns */
+  width: 100%; /* Ensure it takes full width */
 }

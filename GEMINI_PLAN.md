@@ -356,3 +356,46 @@ Se ajusta el formulario de solicitud de acceso para ofrecer una experiencia más
 ### Información Adicional
 
 -   La definición específica de la información adicional para cada tipo de cuenta se realizará en una fase posterior.
+
+---
+## 13. Ajuste del Ciclo de Suscripción y Direcciones con Google Maps (16/09/2025)
+
+**Objetivo:** Modificar el ciclo de suscripción para diferenciar los datos requeridos por tipo de persona, simplificar la entrada de direcciones mediante la API de Google Maps y mantener intacta la operatividad del flujo de activación v4.
+
+### Plan de Trabajo Revisado y Cauteloso
+
+**Fase 1: Análisis de Código (Paso de solo lectura)**
+
+Antes de escribir o modificar una sola línea de código, realizaré un análisis exhaustivo para entender exactamente cómo funcionan los subtipos "B2B" y "EDUCACIONAL" y dónde se gestionan los datos de dirección actuales.
+
+1.  **Acción:** Usar la herramienta de búsqueda para localizar las apariciones de `B2B`, `EDUCACIONAL`, y campos de dirección (`direccion`, `calle`, `ciudad`, `pais`, etc.) en todo el proyecto, especialmente dentro de `sites/client-app` y `services/request-registration-service`.
+2.  **Objetivo:** Crear un mapa preciso de los componentes, estados y lógica de negocio involucrados en el formulario de suscripción actual. Esto permitirá identificar el lugar exacto para cada cambio sin afectar el flujo de notificaciones, creación de claves, etc.
+
+**Fase 2: Implementación Frontend Incremental (`sites/client-app`)**
+
+Realizaré los cambios en el frontend en pequeños pasos, asegurando que la aplicación siga siendo funcional después de cada uno.
+
+1.  **Paso 2.1: Añadir Campos de País y Ciudad.**
+    *   **Acción:** Modificar el formulario de solicitud para añadir los campos `select` de "País" y "Ciudad" para todos los tipos de persona. Implementar la lógica de dependencia entre ellos.
+    *   **Verificación:** Después de este cambio, el formulario deberá ser 100% funcional, simplemente ignorando los nuevos campos en el envío de datos hasta que el backend esté listo.
+
+2.  **Paso 2.2: Introducir Dirección Comercial con Google Maps (Condicionalmente).**
+    *   **Acción:**
+        *   Instalar `@react-google-maps/api` y configurar el acceso a la API Key mediante variables de entorno.
+        *   Identificar la condición que ya existe para diferenciar "Persona Jurídica" (y sus subtipos B2B/EDUCACIONAL).
+        *   Usando esa condición, mostrar el nuevo campo "Dirección Comercial" utilizando el componente de autocompletado de Google Maps.
+        *   Los campos de dirección antiguos (`calle`, `número`, etc.) serán **ocultados visualmente** (no eliminados del código) cuando aparezca el nuevo campo de Google Maps, para simplificar la UI sin romper nada.
+    *   **Verificación:** La aplicación seguirá funcionando. El nuevo campo solo aparecerá para personas jurídicas y los datos del formulario se seguirán enviando como antes.
+
+**Fase 3: Adaptación del Backend y Contrato de Datos**
+
+1.  **Acción:**
+    *   Actualizar `DATA_CONTRACT.md` para incluir los nuevos campos.
+    *   Modificar `request-registration-service` para que sea capaz de recibir `pais`, `ciudad` y la `direccionComercial` (proveniente de Google Maps).
+    *   La lógica del servicio se adaptará para manejar los datos de la nueva dirección y asociarlos correctamente a la cuenta.
+    *   **Verificación:** Probar el flujo completo de suscripción para una persona natural y una jurídica, asegurando que los datos llegan correctamente y el resto del proceso (notificaciones, etc.) no se ve afectado.
+
+**Fase 4: Limpieza de Código (Solo tras confirmación)**
+
+1.  **Acción:** Una vez que se confirme que todo el nuevo flujo funciona a la perfección durante un tiempo prudencial, procederé a eliminar del código los antiguos campos de dirección que fueron ocultados en el paso 2.2.
+2.  **Objetivo:** Dejar el código limpio y eliminar la deuda técnica, pero solo cuando sea 100% seguro hacerlo.

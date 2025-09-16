@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import RequestHistoryTable from '../components/RequestHistoryTable'; // Add this import
 import { db } from '../firebaseConfig';
 import { collection, getDocs, query, where, orderBy, doc, getDoc } from 'firebase/firestore';
 import './Subscriptions.css';
@@ -7,7 +8,7 @@ import './Subscriptions.css';
 type RequestStatus = 'pending_review' | 'pending_additional_data' | 'pending_final_review' | 'rejected' | 'activated' | 'expired';
 type Request = { id: string; status: RequestStatus; createdAt: { toDate: () => Date; }; applicantName: string; applicantEmail: string; rut?: string; institutionName?: string; accountType: 'B2B' | 'EDUCACIONALES' | 'INDIVIDUAL'; country: string; city?: string; entityType: 'natural' | 'juridica'; additionalData?: any; };
 type HistoryEntry = { id: string; timestamp: { toDate: () => Date; }; action: string; actor: string; details?: string; };
-type Clarification = { id: string; adminMessage: string; userReply?: string; status: string; createdAt: { toDate: () => Date; }; };
+type Clarification = { id: string; adminMessage: string; userReply?: string; status: string; createdAt: { toDate: () => Date; }; respondedAt?: { toDate: () => Date; }; };
 
 // --- Helper Components ---
 const RequestCard = ({ request, onClick }: { request: Request, onClick: () => void }) => (
@@ -84,15 +85,20 @@ const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClar
                 <button onClick={onClose} className="close-button">&times;</button>
                 <div className="modal-header-with-actions">
                     <div className="header-title-group">
-                        <h2>Detalle de Solicitud</h2>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            {view !== 'details' && <button onClick={() => setView('details')} className="icon-button back-to-details-button"><span className="material-symbols-outlined">arrow_back</span></button>}
+                            <h2>{view === 'clarifications' ? 'Aclaraciones de Solicitud' : 'Detalle de Solicitud'}</h2>
+                            {view === 'clarifications' && <button onClick={onRequestClarification} className="icon-button"><span className="material-symbols-outlined">add_comment</span></button>}
+                        </div>
                         <p className="request-detail-subtitle">{request.accountType === 'INDIVIDUAL' ? request.applicantName : request.institutionName}</p>
                         {request.rut && <p className="request-detail-subtitle">RUT: {request.rut}</p>}
                         {request.additionalData?.run && <p className="request-detail-subtitle">RUN: {request.additionalData.run}</p>}
                     </div>
                     <div className="header-icons" style={{ display: 'flex', gap: '1rem' }}>
                         {view === 'details' && <button onClick={() => setView('history')} className="icon-button"><span className="material-symbols-outlined">history</span></button>}
-                        {view === 'details' && <button onClick={() => setView('clarifications')} className="icon-button"><span className="material-symbols-outlined">chat_bubble_outline</span></button>}
-                        {view === 'details' && request.status !== 'activated' && request.status !== 'rejected' && <button className="icon-button" onClick={() => onAction('rejected')} disabled={isActionLoading}><span className="material-symbols-outlined">unpublished</span></button>}
+                        {view === 'details' && request.status !== 'pending_additional_data' && <button onClick={() => setView('clarifications')} className="icon-button"><span className="material-symbols-outlined">chat_bubble_outline</span></button>}
+                        {view === 'details' && request.status !== 'activated' && request.status !== 'rejected' && request.status !== 'pending_additional_data' && <button className="icon-button" onClick={() => onAction('rejected')} disabled={isActionLoading}><span className="material-symbols-outlined">unpublished</span></button>}
+                        {view === 'details' && request.status === 'pending_review' && <button className="icon-button" onClick={() => onAction('approved')} disabled={isActionLoading}><span className="material-symbols-outlined">check</span></button>}
                         {view === 'details' && request.status === 'pending_final_review' && <button className="icon-button" onClick={() => onAction('activated')} disabled={isActionLoading}><span className="material-symbols-outlined">done_all</span></button>}
                     </div>
                 </div>
@@ -114,7 +120,7 @@ const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClar
 
                 {view === 'history' && (
                     <>
-                        <button onClick={() => setView('details')} className="icon-button"><span className="material-symbols-outlined">arrow_back</span></button>
+                        <button onClick={() => setView('details')} className="icon-button back-to-details-button"><span className="material-symbols-outlined">arrow_back</span></button>
                         <h3>HISTORIAL</h3>
                         <ul className="history-list">{history.map((h, index) => <li key={h.id}><strong>{index + 1}. {h.action}</strong> por <em>{h.actor}</em> ({h.timestamp.toDate().toLocaleString()})<p>{h.details}</p></li>)}</ul>
                     </>
@@ -122,12 +128,9 @@ const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClar
 
                 {view === 'clarifications' && (
                     <>
-                        <button onClick={() => setView('details')} className="icon-button"><span className="material-symbols-outlined">arrow_back</span></button>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                            <h3>Aclaraciones</h3>
-                            <button onClick={onRequestClarification} className="icon-button"><span className="material-symbols-outlined">add_comment</span></button>
-                        </div>
-                        <div className="clarifications-list">{clarifications.map((c) => <div key={c.id} className='clarification-item'><strong>{c.originalIndex}. Pregunta:</strong> <small>{c.createdAt.toDate().toLocaleString()}</small><p>{c.adminMessage}</p>{c.userReply && <><strong>Respuesta:</strong><p>{c.userReply}</p></>}</div>)}</div>
+                        
+                        <p style={{ display: 'flex', alignItems: 'center' }}><span className="material-symbols-outlined icon-inline" style={{ marginRight: '0.5rem' }}>person</span> {request.applicantName} ({request.applicantEmail})</p>
+                        <div className="clarifications-list">{clarifications.map((c) => <div key={c.id} className='clarification-item'><strong>{c.originalIndex}. Pregunta:</strong> <small>{c.createdAt.toDate().toLocaleString()}</small><p>{c.adminMessage}</p>{c.userReply && <><strong>Respuesta:</strong> {c.respondedAt && <small>{c.respondedAt.toDate().toLocaleString()}</small>}<p>{c.userReply}</p></>}</div>)}</div>
                     </>
                 )}
             </div>
@@ -146,7 +149,10 @@ const Subscriptions = () => {
   const fetchRequests = useCallback(async () => {
     setIsLoading(true);
     try {
-      const q = query(collection(db, 'requests'), where('status', 'in', ['pending_review', 'pending_additional_data', 'pending_final_review']));
+      const statusFilter = showRequestHistory
+        ? ['activated', 'rejected']
+        : ['pending_review', 'pending_additional_data', 'pending_final_review'];
+      const q = query(collection(db, 'requests'), where('status', 'in', statusFilter));
       const snapshot = await getDocs(q);
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Request));
       setRequests(list);
@@ -163,6 +169,14 @@ const Subscriptions = () => {
 
   const handleAction = async (decision: string) => {
     if (!selectedRequest) return;
+
+    const confirmationText = decision === 'approved' || decision === 'activated' ? 'aprobar' : 'rechazar';
+    const userConfirmation = window.prompt(`Para confirmar la acción de ${confirmationText}, escribe "${confirmationText}" en el campo de abajo:`);
+
+    if (!userConfirmation || userConfirmation.toLowerCase() !== confirmationText) {
+      alert('Confirmación incorrecta o cancelada. La acción no se realizará.');
+      return;
+    }
     
     let url = '';
     let body: any = { requestId: selectedRequest.id, adminId: 'admin@minreport.com' };
@@ -178,8 +192,8 @@ const Subscriptions = () => {
       url = 'http://localhost:8082/processInitialDecision';
       body.decision = decision;
     } else if (selectedRequest.status === 'pending_final_review') {
-      url = 'http://localhost:8082/processFinalDecision';
-      body.decision = decision;
+      url = 'http://localhost:8082/approveFinalRequest'; // Use the correct endpoint for final approval
+      // No need to set body.decision here, as the backend endpoint expects requestId and adminId directly
     }
 
     if (!url) return;
@@ -220,27 +234,53 @@ const Subscriptions = () => {
       }
   };
 
+  const [showRequestHistory, setShowRequestHistory] = useState(false);
+
   const columns: { title: string, status: RequestStatus }[] = [
     { title: 'Nuevas Solicitudes', status: 'pending_review' },
     { title: 'Esperando Datos Adicionales', status: 'pending_additional_data' },
     { title: 'Revisión Final', status: 'pending_final_review' },
   ];
 
+  const historyColumns: { title: string, status: RequestStatus[] }[] = [
+    { title: 'Historial de Solicitudes', status: ['activated', 'rejected'] },
+  ];
+
   if (isLoading) return <p>Cargando solicitudes...</p>;
   if (error) return <p className="error">{error}</p>;
 
+  
+
+// ... (rest of the file) ...
+
   return (
     <div className="subscriptions-board">
-      {columns.map(col => (
-        <div key={col.status} className="board-column">
-          <h3>{col.title} ({requests.filter(r => r.status === col.status).length})</h3>
-          <div className="column-content">
-            {requests.filter(r => r.status === col.status).map(req => (
-              <RequestCard key={req.id} request={req} onClick={() => setSelectedRequest(req)} />
-            ))}
-          </div>
+      <div className="view-toggle-buttons">
+        <button 
+          className={`button-toggle ${showRequestHistory ? 'active' : ''}`} 
+          onClick={() => setShowRequestHistory(!showRequestHistory)}
+        >
+          <span className="material-symbols-outlined">history</span>
+          {showRequestHistory ? 'Ver Solicitudes Pendientes' : 'Historial de Solicitudes'}
+        </button>
+      </div>
+
+      {showRequestHistory ? (
+        <RequestHistoryTable />
+      ) : (
+        <div className="columns-container"> {/* New container for columns */}
+          {columns.map(col => (
+            <div key={col.status} className="board-column">
+              <h3>{col.title} ({requests.filter(r => r.status === col.status).length})</h3>
+              <div className="column-content">
+                {requests.filter(r => r.status === col.status).map(req => (
+                  <RequestCard key={req.id} request={req} onClick={() => setSelectedRequest(req)} />
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
       {selectedRequest && 
         <DetailView 
           request={selectedRequest} 
@@ -248,6 +288,7 @@ const Subscriptions = () => {
           onAction={handleAction}
           isActionLoading={isActionLoading}
           onRequestClarification={handleRequestClarification}
+          initialView={showRequestHistory ? 'history' : 'details'}
         />}
     </div>
   );

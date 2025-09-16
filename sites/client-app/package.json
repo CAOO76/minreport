@@ -13,12 +13,13 @@
   },
   "dependencies": {
     "@minreport/core": "workspace:*",
+    "@react-google-maps/api": "^2.20.7",
     "country-state-city": "^3.2.1",
     "firebase": "^12.2.1",
     "libphonenumber-js": "^1.11.4",
-    "react-phone-number-input": "^3.4.3",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "react-phone-number-input": "^3.4.3",
     "react-router-dom": "^6.23.1"
   },
   "devDependencies": {
