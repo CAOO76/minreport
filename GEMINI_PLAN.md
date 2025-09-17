@@ -140,12 +140,18 @@ El proceso de alta de una cuenta es un flujo de aprobación de varios pasos, dis
 7.  **Creación de la Cuenta:** Solo en este punto, un servicio de backend crea el usuario en Firebase Authentication, crea el documento en la colección `accounts` y actualiza la solicitud a `approved`.
 8.  **Trazabilidad:** Todas las acciones se registran en una colección `account_logs` para auditoría.
 
-## 4. Política de Desarrollo y Colaboración (Desde 13/09/2025)
+### 4. Hoja de Ruta para la Modularización (Federación de Módulos) - EN STANDBY
 
-Para optimizar el uso de cuotas del plan Gemini Pro y agilizar el desarrollo, se establece la siguiente separación de roles:
+**NOTA (17/09/2025):** Esta sección del plan está actualmente en standby debido a problemas de configuración y compatibilidad en el entorno de desarrollo. Se reevaluará y se retomará en una fase posterior.
 
--   **Rol de Gemini CLI (Generación de Código):** Responsable de **crear, editar y modificar** el código. No ejecutará comandos de terminal.
--   **Rol del Usuario (Ejecución de Comandos):** Responsable de **ejecutar manualmente** todos los comandos que Gemini CLI le indique.
+-   **Objetivo:** Refactorizar `client-app` para que actúe como "Núcleo Host" y extraer funcionalidades en "Plugins Remotos".
+-   **Herramienta:** Usaremos `@originjs/vite-plugin-federation` para Vite.
+-   **Plan:**
+    1.  **Preparar el Host:** Configurar el plugin de federación en la `client-app`.
+    2.  **Extraer el Primer Plugin:** Mover el código de una funcionalidad simple (ej. "Simulador de Flujo de Caja") a un nuevo paquete independiente.
+    3.  **Configurar el Remoto:** Configurar el nuevo paquete del plugin para que "exponga" su componente principal.
+    4.  **Integrar:** El "Núcleo Host" cargará dinámicamente el componente del plugin.
+    5.  **Despliegue Independiente:** Cada plugin se desplegará de forma autónoma.
 
 ## 5. Roadmap de Desarrollo (Fases)
 
