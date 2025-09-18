@@ -11,7 +11,7 @@ Se adopta una estrategia de desarrollo moderna, minimalista y funcional, basada 
 ### Reglas Arquitectónicas Fundamentales
 
 -   **Soberanía del Dato:** Todos los recursos en la nube deben residir exclusivamente en la región `southamerica-west1` (Santiago, Chile).
--   **Tecnología de Backend:** El backend se compone de servicios contenerizados en **Cloud Run**. No se utilizará App Engine ni Firebase Functions en la arquitectura.
+-   **Tecnología de Backend:** El backend se compondrá principalmente de servicios contenerizados en Cloud Run para la lógica de negocio compleja. Se permite el uso de Cloud Functions (2ª Gen), especialmente de tipo `onCall`, para acciones específicas que son invocadas directamente desde el cliente y se benefician de la capa de autenticación y contexto de Firebase Functions.
 
 ### Patrones y Tecnologías
 
@@ -109,12 +109,13 @@ Para mantener un historial de cambios limpio y legible, es mandatorio seguir est
     ```
 2.  **Mensajes de Commit Convencionales:** Todos los mensajes de commit deben seguir el estándar de [Conventional Commits](https://www.conventionalcommits.org/) (ej. `feat:`, `fix:`, `docs:`).
 
-### Principios de Verificación y Despliegue
+### Principios de Verificación y Despliegue (Actualizado 17/09/2025)
 
-Para asegurar la calidad y estabilidad del proyecto, se establecen los siguientes niveles de verificación:
+Para asegurar la calidad y la total funcionalidad del sistema en un contexto real, se establece la siguiente jerarquía de verificación, donde el despliegue completo es el criterio final de éxito.
 
--   **Verificación en Entorno Local (Desarrollo Diario):** Para el desarrollo y la validación de funcionalidades individuales, el **entorno de emuladores local** se considera el "entorno real" de trabajo. Toda nueva funcionalidad debe ser probada y validada exhaustivamente aquí antes de ser considerada "terminada" para un commit.
--   **Verificación en Entorno de Staging/Producción (Integración y Despliegue):** Para la validación de la integración de múltiples funcionalidades, pruebas de rendimiento o la preparación para un lanzamiento, se realizará un despliegue completo a un entorno de staging o directamente a producción. Este paso es crucial para asegurar el comportamiento en un escenario real de la nube y detectar posibles regresiones o diferencias entre emuladores y servicios reales.
+-   **Nivel 1: Verificación en Entorno Local (Prueba Preliminar):** El entorno de emuladores local (`pnpm dev`) se utilizará para el desarrollo inicial y la validación rápida de funcionalidades. Es una herramienta para agilizar el desarrollo, pero **no se considera una prueba suficiente** para dar por finalizada una tarea.
+
+-   **Nivel 2: Verificación en Entorno Desplegado (Prueba Mandatoria):** Como regla general, **toda implementación debe ser probada con todo el sistema desplegado** en un entorno de nube real (Staging o Producción). Una tarea solo se considerará "terminada" o "funcional" después de haber sido validada exitosamente en su URL pública o endpoint correspondiente tras un despliegue completo. Este paso es **mandatorio** para asegurar la compatibilidad, configuración y funcionamiento de todos los servicios integrados.
 
 ### Cierre de Sesión de Desarrollo
 
@@ -140,18 +141,27 @@ El proceso de alta de una cuenta es un flujo de aprobación de varios pasos, dis
 7.  **Creación de la Cuenta:** Solo en este punto, un servicio de backend crea el usuario en Firebase Authentication, crea el documento en la colección `accounts` y actualiza la solicitud a `approved`.
 8.  **Trazabilidad:** Todas las acciones se registran en una colección `account_logs` para auditoría.
 
-### 4. Hoja de Ruta para la Modularización (Federación de Módulos) - EN STANDBY
+## 4. Arquitectura de Plugins Aislada con <iframe> (17/09/2025)
 
-**NOTA (17/09/2025):** Esta sección del plan está actualmente en standby debido a problemas de configuración y compatibilidad en el entorno de desarrollo. Se reevaluará y se retomará en una fase posterior.
+**Decisión Estratégica:** Se abandona por completo el uso de Module Federation en favor de una arquitectura basada en `<iframe>`. 
 
--   **Objetivo:** Refactorizar `client-app` para que actúe como "Núcleo Host" y extraer funcionalidades en "Plugins Remotos".
--   **Herramienta:** Usaremos `@originjs/vite-plugin-federation` para Vite.
--   **Plan:**
-    1.  **Preparar el Host:** Configurar el plugin de federación en la `client-app`.
-    2.  **Extraer el Primer Plugin:** Mover el código de una funcionalidad simple (ej. "Simulador de Flujo de Caja") a un nuevo paquete independiente.
-    3.  **Configurar el Remoto:** Configurar el nuevo paquete del plugin para que "exponga" su componente principal.
-    4.  **Integrar:** El "Núcleo Host" cargará dinámicamente el componente del plugin.
-    5.  **Despliegue Independiente:** Cada plugin se desplegará de forma autónoma.
+**Justificación:** La prioridad absoluta es garantizar la estabilidad, seguridad y aislamiento total del núcleo de MINREPORT (`client-app`). El uso de `<iframe>` proporciona el máximo nivel de sandboxing que ofrece el navegador, impidiendo que cualquier error, conflicto de dependencias o vulnerabilidad en un plugin pueda afectar a la aplicación principal.
+
+### Modelo de Implementación
+
+1.  **Contenedor de Plugins (`PluginViewer.tsx`):**
+    *   Se ha creado un componente React (`PluginViewer`) en el núcleo (`client-app`) cuya única responsabilidad es renderizar un `<iframe>`.
+    *   Este componente ocupa toda el área de contenido disponible, proporcionando al plugin un lienzo completo para su interfaz.
+    *   Se utiliza el atributo `sandbox` en el `<iframe>` para restringir las capacidades del plugin a lo estrictamente necesario, aumentando la seguridad.
+
+2.  **Carga de Plugins:**
+    *   Cada plugin se desarrolla y despliega como una aplicación web completamente independiente (ej. en su propio subdominio o puerto).
+    *   El núcleo (`client-app`) simplemente carga la URL del plugin en el `src` del `<iframe>` a través de una ruta dedicada (ej. `/plugins/nombre-del-plugin`).
+
+3.  **Canal de Comunicación Seguro (`postMessage`):
+    *   La comunicación entre el núcleo y el plugin se realiza exclusivamente a través de la API `window.postMessage`.
+    *   **Núcleo hacia Plugin:** Al cargar el `<iframe>`, el `PluginViewer` envía un objeto con los datos de sesión (información del usuario, claims, etc.) al plugin. El origen del plugin se especifica explícitamente para evitar enviar datos a destinos no autorizados.
+    *   **Plugin hacia Núcleo:** El `PluginViewer` implementa un listener de eventos que solo acepta mensajes provenientes del origen conocido del plugin. Esto permite al plugin solicitar acciones al núcleo (ej. realizar una llamada a la API de MINREPORT, solicitar una navegación) de forma segura y controlada.
 
 ## 5. Roadmap de Desarrollo (Fases)
 
@@ -366,6 +376,81 @@ Se ajusta el formulario de solicitud de acceso para ofrecer una experiencia más
 
 ---
 ## 13. Ajuste del Ciclo de Suscripción y Direcciones con Google Maps (16/09/2025)
+
+**Objetivo:** Modificar el ciclo de suscripción para diferenciar los datos requeridos por tipo de persona, simplificar la entrada de direcciones mediante la API de Google Maps y mantener intacta la operatividad del flujo de activación v4.
+
+### Plan de Trabajo Revisado y Cauteloso
+
+**Fase 1: Análisis de Código (Paso de solo lectura)**
+
+Antes de escribir o modificar una sola línea de código, realizaré un análisis exhaustivo para entender exactamente cómo funcionan los subtipos "B2B" y "EDUCACIONAL" y dónde se gestionan los datos de dirección actuales.
+
+1.  **Acción:** Usar la herramienta de búsqueda para localizar las apariciones de `B2B`, `EDUCACIONAL`, y campos de dirección (`direccion`, `calle`, `ciudad`, `pais`, etc.) en todo el proyecto, especialmente dentro de `sites/client-app` y `services/request-registration-service`.
+2.  **Objetivo:** Crear un mapa preciso de los componentes, estados y lógica de negocio involucrados en el formulario de suscripción actual. Esto permitirá identificar el lugar exacto para cada cambio sin afectar el flujo de notificaciones, creación de claves, etc.
+
+**Fase 2: Implementación Frontend Incremental (`sites/client-app`)**
+
+Realizaré los cambios en el frontend en pequeños pasos, asegurando que la aplicación siga siendo funcional después de cada uno.
+
+1.  **Paso 2.1: Añadir Campos de País y Ciudad.**
+    *   **Acción:** Modificar el formulario de solicitud para añadir los campos `select` de "País" y "Ciudad" para todos los tipos de persona. Implementar la lógica de dependencia entre ellos.
+    *   **Verificación:** Después de este cambio, el formulario deberá ser 100% funcional, simplemente ignorando los nuevos campos en el envío de datos hasta que el backend esté listo.
+
+2.  **Paso 2.2: Introducir Dirección Comercial con Google Maps (Condicionalmente).**
+    *   **Acción:**
+        *   Instalar `@react-google-maps/api` y configurar el acceso a la API Key mediante variables de entorno.
+        *   Identificar la condición que ya existe para diferenciar "Persona Jurídica" (y sus subtipos B2B/EDUCACIONAL).
+        *   Usando esa condición, mostrar el nuevo campo "Dirección Comercial" utilizando el componente de autocompletado de Google Maps.
+        *   Los campos de dirección antiguos (`calle`, `número`, etc.) serán **ocultados visualmente** (no eliminados del código) cuando aparezca el nuevo campo de Google Maps, para simplificar la UI sin romper nada.
+    *   **Verificación:** La aplicación seguirá funcionando. El nuevo campo solo aparecerá para personas jurídicas y los datos del formulario se seguirán enviando como antes.
+
+**Fase 3: Adaptación del Backend y Contrato de Datos**
+
+1.  **Acción:**
+    *   Actualizar `DATA_CONTRACT.md` para incluir los nuevos campos.
+    *   Modificar `request-registration-service` para que sea capaz de recibir `pais`, `ciudad` y la `direccionComercial` (proveniente de Google Maps).
+    *   La lógica del servicio se adaptará para manejar los datos de la nueva dirección y asociarlos correctamente a la cuenta.
+    *   **Verificación:** Probar el flujo completo de suscripción para una persona natural y una jurídica, asegurando que los datos llegan correctamente y el resto del proceso (notificaciones, etc.) no se ve afectado.
+
+**Fase 4: Limpieza de Código (Solo tras confirmación)**
+
+1.  **Acción:** Una vez que se confirme que todo el nuevo flujo funciona a la perfección durante un tiempo prudencial, procederé a eliminar del código los antiguos campos de dirección que fueron ocultados en el paso 2.2.
+2.  **Objetivo:** Dejar el código limpio y eliminar la deuda técnica, pero solo cuando sea 100% seguro hacerlo.
+
+### Estado (16/09/2025)
+
+**Estado:** Completado y consolidado en commit `064b04f`.
+
+## 14. Gestión de Plugins a Nivel de Cuenta (17/09/2025)
+
+Para ofrecer flexibilidad y control granular sobre las funcionalidades de MINREPORT, se implementará un sistema de gestión de plugins a nivel de cuenta. Esto permitirá a los administradores activar o desactivar plugins específicos para cada cuenta de cliente, y los clientes solo verán y podrán utilizar los plugins que estén habilitados para ellos.
+
+### Principios Fundamentales
+
+*   **Control Centralizado:** La activación/desactivación de plugins se gestionará exclusivamente desde la UI de administración.
+*   **Visibilidad Condicional:** Los plugins solo serán visibles en la UI del cliente si están explícitamente activados para su cuenta.
+*   **Seguridad:** La lógica de acceso a los plugins en la UI del cliente verificará el estado de activación antes de permitir la carga o interacción.
+
+### Implementación
+
+1.  **Base de Datos (Firestore):**
+    *   La colección `accounts` (`accounts/{accountId}`) incluirá un nuevo campo `activePlugins: string[]` (o similar) que contendrá una lista de los IDs de los plugins activos para esa cuenta.
+
+2.  **UI de Administración (`admin-app`):**
+    *   **Navegación:** Se añadirá un nuevo elemento en la barra lateral de navegación (`Sidebar.tsx`) con un icono representativo para acceder a la sección de "Gestión de Plugins".
+    *   **Página de Gestión de Plugins:** Se creará una nueva página (`PluginsManagement.tsx`) donde los administradores podrán:
+        *   Ver una lista de todos los plugins disponibles en el sistema.
+        *   Acceder a la configuración de plugins para cuentas individuales.
+    *   **Gestión por Cuenta:** En la sección de "Cuentas Activas" (`Accounts.tsx`), se integrará una interfaz (ej. un modal o una sección expandible) que permitirá a los administradores:
+        *   Seleccionar y deseleccionar plugins para una cuenta específica.
+        *   Requerir una **confirmación por texto** (ej. "Escriba 'CONFIRMAR' para guardar los cambios") antes de aplicar las modificaciones.
+        *   Actualizar el campo `activePlugins` en el documento de la cuenta en Firestore.
+
+3.  **UI del Cliente (`client-app`):**
+    *   **Visibilidad del Menú:** El componente `Sidebar.tsx` del cliente consultará el campo `activePlugins` de la cuenta del usuario actual (obtenido a través del `useAuth` o un mecanismo similar) para renderizar condicionalmente los enlaces a los plugins.
+    *   **Acceso a Plugins:** El componente `PluginViewer.tsx` (o la lógica de enrutamiento de plugins) verificará el estado de activación del plugin solicitado para el usuario. Si el plugin no está activo, se mostrará un mensaje de acceso denegado o se redirigirá al usuario.
+
+Esta actualización asegura que la gestión de plugins sea robusta y controlada, alineándose con los principios de seguridad y flexibilidad de MINREPORT.
 
 **Objetivo:** Modificar el ciclo de suscripción para diferenciar los datos requeridos por tipo de persona, simplificar la entrada de direcciones mediante la API de Google Maps y mantener intacta la operatividad del flujo de activación v4.
 

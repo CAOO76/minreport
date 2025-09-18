@@ -1,0 +1,70 @@
+.plugins-page h1 {
+    margin-bottom: 0.5rem;
+}
+
+.plugins-page > p {
+    margin-top: 0;
+    color: var(--color-text-secondary);
+    margin-bottom: 2rem;
+}
+
+.plugin-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1.5rem;
+}
+
+.plugin-card {
+    display: flex;
+    flex-direction: column;
+    background-color: var(--color-background);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    text-decoration: none;
+    color: inherit;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.plugin-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+}
+
+.plugin-card-icon {
+    padding: 2rem;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.plugin-card-icon .material-symbols-outlined {
+    font-size: 48px;
+    color: var(--color-primary);
+}
+
+.plugin-card-body {
+    padding: 1.5rem;
+    flex-grow: 1;
+}
+
+.plugin-card-body h3 {
+    margin-top: 0;
+    margin-bottom: 0.5rem;
+}
+
+.plugin-card-body p {
+    font-size: 0.9rem;
+    color: var(--color-text-secondary);
+    line-height: 1.5;
+}
+
+.plugin-card-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--color-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 500;
+    color: var(--color-primary);
+}

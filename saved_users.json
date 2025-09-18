@@ -1,0 +1,24 @@
+{"users": [
+{
+  "localId": "EsZrKrYzG1ab8UUyRG2XLTCTT652",
+  "email": "app_dev@minreport.com",
+  "emailVerified": false,
+  "passwordHash": "sBGAErcDr3m0rXh1a5Zv4utCwlRYRTpdSjlhJlhn0IjEaZv16BfH56z6+GsV+iUQc1x7AhrMD2u+fWW03C7pPg==",
+  "salt": "uNBISB0NfO1NTg==",
+  "lastSignedInAt": "1757718649828",
+  "createdAt": "1757621363915",
+  "disabled": false,
+  "customAttributes": "{\"admin\":true}",
+  "providerUserInfo": []
+},
+{
+  "localId": "XZIyBSlkArRtZLFA5lKueDYsfHg2",
+  "email": "test@example.com",
+  "emailVerified": false,
+  "passwordHash": "M+cs81HYUxTrF9QAwrQMdC/OUdiR6l7ZpWFfzZDPKQPLI/tjs/cRtzHUkGIWoAqmNtVYZa0Jw5V6q493Q/BBLA==",
+  "salt": "cyL9Cxqd57dtjg==",
+  "lastSignedInAt": "1757699317244",
+  "createdAt": "1757641133660",
+  "disabled": false,
+  "providerUserInfo": []
+}]}

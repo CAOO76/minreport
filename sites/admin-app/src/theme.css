@@ -16,6 +16,7 @@
   /* Paleta de Acento (Branding) */
   --color-primary: #005f73;
   --color-primary-dark: #004d61;
+  --color-on-primary: #ffffff; /* Color de texto sobre el color primario */
 
   /* Paleta Semántica para Estados */
   --color-success-bg: #d4edda;
@@ -27,6 +28,14 @@
 
   /* Tipografía */
   --font-main: 'Atkinson Hyperlegible', sans-serif;
+
+  /* Mapeo de Colores Material Design 3 */
+  --md-sys-color-primary: var(--color-primary);
+  --md-sys-color-on-primary: var(--color-on-primary);
+  --md-sys-color-surface-container-highest: var(--color-surface);
+  --md-sys-color-outline: var(--color-border);
+  --md-sys-color-on-surface: var(--color-text-primary);
+  --md-sys-color-primary-container: rgba(0, 95, 115, 0.2); /* Transparencia para focus */
 }
 
 [data-theme='dark'] {
@@ -45,6 +54,7 @@
   /* Paleta de Acento (Branding) */
   --color-primary: #00a9c7;
   --color-primary-dark: #008c9e;
+  --color-on-primary: #000000; /* Color de texto sobre el color primario en dark mode */
 
   /* Paleta Semántica para Estados */
   --color-success-bg: #1a3a24;
@@ -53,6 +63,14 @@
   --color-danger-text: #fc8181;
   --color-pending-bg: var(--color-surface-hover);
   --color-pending-text: var(--color-text-secondary);
+
+  /* Mapeo de Colores Material Design 3 */
+  --md-sys-color-primary: var(--color-primary);
+  --md-sys-color-on-primary: var(--color-on-primary);
+  --md-sys-color-surface-container-highest: var(--color-surface);
+  --md-sys-color-outline: var(--color-border);
+  --md-sys-color-on-surface: var(--color-text-primary);
+  --md-sys-color-primary-container: rgba(0, 169, 199, 0.2); /* Transparencia para focus */
 }
 
 body {

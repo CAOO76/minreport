@@ -1,63 +1,71 @@
+.app-container {
+    display: flex;
+    height: 100vh;
+}
+
 .app-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1rem 2rem;
-  background-color: var(--color-surface);
-  border-bottom: 1px solid var(--color-border);
-  transition: background-color 0.3s ease, border-color 0.3s ease;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 1rem;
+    height: 60px;
+    border-bottom: 1px solid var(--color-border);
+    background-color: var(--color-background);
+    position: sticky;
+    top: 0;
+    z-index: 10;
 }
 
-.main-nav {
-  display: flex;
-  align-items: center;
-  gap: 1rem; /* Use gap for spacing */
-}
-
-.main-nav a {
-  color: var(--color-text-secondary);
-  text-decoration: none;
-  /* margin-right is removed in favor of gap */
-  font-weight: 500;
-  transition: color 0.3s ease;
-}
-
-.main-nav a:hover,
-.main-nav a.active {
-  color: var(--color-primary);
+.main-content-area {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow-y: auto;
 }
 
 .app-main {
-  padding: 2rem;
+    padding: 2rem;
+    flex-grow: 1;
 }
 
-/* Eliminando estilos de demo de Vite que ya no se usan */
-.logo {
-  display: none;
+/* Otros estilos de App.css */
+.loading-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    font-size: 1.2rem;
 }
 
-/* Styles for header icon buttons */
+.main-nav {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
 .header-icon-button {
-  background-color: transparent;
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.3s ease;
-  text-decoration: none; /* For 'a' tags styled as buttons */
+    color: var(--color-text-secondary);
+    text-decoration: none;
+    padding: 0.5rem;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s;
+    /* --- Correcciones para el botón --- */
+    border: none;
+    background-color: transparent;
+    cursor: pointer;
 }
 
 .header-icon-button:hover {
-  background-color: var(--color-surface);
-  color: var(--color-text-primary);
-  border-color: var(--color-primary);
+    background-color: var(--color-background-mute);
+    color: var(--color-text-primary);
 }
 
-.header-icon-button .material-symbols-outlined {
-  font-size: 20px;
+.user-display-name {
+    color: var(--color-text-secondary);
+    font-size: 0.9rem;
+    text-align: right;
 }

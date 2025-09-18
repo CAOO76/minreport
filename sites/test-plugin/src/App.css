@@ -1,0 +1,42 @@
+:root {
+    font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+    font-weight: 400;
+    color-scheme: light dark;
+    color: rgba(255, 255, 255, 0.87);
+    background-color: #242424;
+}
+
+body {
+    margin: 0;
+    display: flex;
+    place-items: center;
+    min-width: 320px;
+    min-height: 100vh;
+}
+
+.plugin-container {
+    width: 100%;
+    text-align: center;
+    padding: 2rem;
+}
+
+.plugin-header h1 {
+    font-size: 2em;
+    font-weight: 500;
+    color: #c3e8ff;
+}
+
+.status-waiting {
+    color: #f0ad4e;
+    font-style: italic;
+}
+
+.status-success {
+    color: #5cb85c;
+    font-size: 1.2em;
+}
+
+.status-error {
+    color: #d9534f;
+}

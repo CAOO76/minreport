@@ -5,3 +5,4 @@ packages:
   - 'mobile-app'
   
   - 'services/*'
+  - 'services/functions' # Nuevo paquete de Cloud Functions

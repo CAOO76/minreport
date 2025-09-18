@@ -5,6 +5,7 @@ const navItems = [
   { to: '/', icon: 'dashboard', label: 'Dashboard' },
   { to: '/subscriptions', icon: 'assignment_ind', label: 'Solicitudes' },
   { to: '/accounts', icon: 'manage_accounts', label: 'Cuentas' },
+  { to: '/plugins', icon: 'extension', label: 'Plugins' }, // Nuevo elemento para Plugins
   { to: '/settings', icon: 'settings', label: 'Configuración' },
 ];
 

@@ -40,8 +40,23 @@
       ]
     },
     {
-      "target": "x-minreport",
+      "site": "minreport-x",
       "public": "sites/admin-app/dist",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ]
+    },
+    {
+      "site": "minreport-test-plugin",
+      "public": "sites/test-plugin/dist",
       "ignore": [
         "firebase.json",
         "**/.*",
@@ -55,12 +70,30 @@
       ]
     }
   ],
+  "functions": {
+    "source": "services/functions",
+    "runtime": "nodejs20",
+    "headers": [
+      {
+        "source": "**",
+        "headers": [
+          { "key": "Access-Control-Allow-Origin", "value": "http://localhost:5174" },
+          { "key": "Access-Control-Allow-Methods", "value": "GET, POST, PUT, DELETE, OPTIONS" },
+          { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization" }
+        ]
+      }
+    ]
+  },
   "emulators": {
     "auth": {
       "port": 9190
     },
     "firestore": {
       "port": 8085
+    },
+    "functions": {
+      "port": 5001,
+      "cors": ["http://localhost:5174"] // Explicitly allow frontend origin for functions emulator
     },
     "hosting": {
       "port": 5010

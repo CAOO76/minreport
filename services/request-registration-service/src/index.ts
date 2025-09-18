@@ -40,14 +40,19 @@ app.use(cors((req, callback) => {
 async function sendEmail(to: string, subject: string, htmlContent: string) {
     if (!process.env.RESEND_API_KEY) {
         console.log(`SIMULANDO EMAIL a ${to} con asunto: ${subject}`);
+        console.log(`SIMULACIÓN: Asunto: ${subject}, Destinatario: ${to}`); // Log simulation outcome
         return { success: true };
     }
     try {
         const { data, error } = await resend.emails.send({ from: 'MINREPORT <no-reply@minreport.com>', to: [to], subject, html: htmlContent });
-        if (error) throw error;
+        if (error) {
+            console.error('Error enviando email (Resend API):', error); // Log Resend API error
+            throw error; // Re-throw to be caught by caller
+        }
+        console.log(`EMAIL ENVIADO: Asunto: ${subject}, Destinatario: ${to}, Resend Data:`, data); // Log success
         return { success: true, data };
-    } catch (error) {
-        console.error('Error enviando email:', error);
+    } catch (error: any) {
+        console.error('Error general enviando email:', error.message); // Log general error
         return { success: false, error };
     }
 }
@@ -248,6 +253,7 @@ app.post('/approveFinalRequest', async (req, res) => {
 
     const requestRef = db.collection('requests').doc(requestId);
     try {
+        console.log('[/approveFinalRequest] Iniciando proceso de aprobación final.');
         const requestDoc = await requestRef.get();
 
         if (!requestDoc.exists) {
@@ -265,8 +271,10 @@ app.post('/approveFinalRequest', async (req, res) => {
         // The user to be created is the designated admin from the additional data
         const finalUserEmail = additionalData.adminEmail;
         if (!finalUserEmail) {
+            console.error('[/approveFinalRequest] Error: No se proporcionó un email de administrador en los datos adicionales.');
             return res.status(400).json({ message: 'No se proporcionó un email de administrador en los datos adicionales.' });
         }
+        console.log(`[/approveFinalRequest] finalUserEmail: ${finalUserEmail}`);
 
         // 1. Create user in Firebase Auth
         const userRecord = await auth.createUser({
@@ -274,6 +282,7 @@ app.post('/approveFinalRequest', async (req, res) => {
             emailVerified: false, // User will set password and verify email later
             disabled: false,
         });
+        console.log(`[/approveFinalRequest] Usuario creado en Auth: ${userRecord.uid}`);
 
         // 2. Create account document
         await db.collection('accounts').doc(userRecord.uid).set({
@@ -287,12 +296,14 @@ app.post('/approveFinalRequest', async (req, res) => {
             institutionName: requestData.institutionName || null, // Add institutionName
             ...additionalData, // Merge additional data (this will include adminName, adminPhone, etc.)
         });
+        console.log('[/approveFinalRequest] Documento de cuenta creado en Firestore.');
 
         // 3. Update request status
         await requestRef.update({
             status: 'activated',
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
+        console.log('[/approveFinalRequest] Estado de solicitud actualizado a "activated".');
 
         // Log the action
         await requestRef.collection('history').add({
@@ -301,6 +312,7 @@ app.post('/approveFinalRequest', async (req, res) => {
             action: 'account_activated',
             details: `Cuenta activada por admin ${adminId}. Usuario ${userRecord.uid} creado para ${finalUserEmail}.`,
         });
+        console.log('[/approveFinalRequest] Historial de solicitud registrado.');
 
         // Generate password reset link for the FINAL user
         const actionCodeSettings = {
@@ -313,12 +325,14 @@ app.post('/approveFinalRequest', async (req, res) => {
         const url = new URL(rawPasswordLink);
         const oobCode = url.searchParams.get('oobCode');
         const finalPasswordLink = `${actionCodeSettings.url}?oobCode=${oobCode}`;
+        console.log(`[/approveFinalRequest] Enlace de contraseña generado: ${finalPasswordLink}`);
 
-        await sendEmail(
+        const emailResult = await sendEmail(
             finalUserEmail,
             '¡Tu cuenta MINREPORT ha sido activada!',
             `<p>Hola ${requestData.applicantName},</p><p>¡Felicidades! Tu cuenta MINREPORT ha sido activada.</p><p>Para establecer tu contraseña y acceder a la plataforma, por favor haz clic en el siguiente enlace:</p><p><a href="${finalPasswordLink}">Establecer Contraseña</a></p><p>Este enlace es válido por un tiempo limitado.</p>`
         );
+        console.log('[/approveFinalRequest] Resultado de sendEmail:', emailResult);
 
         res.status(200).json({ message: 'Cuenta activada con éxito.', userId: userRecord.uid });
 
