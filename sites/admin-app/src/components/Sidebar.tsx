@@ -6,6 +6,7 @@ const navItems = [
   { to: '/subscriptions', icon: 'assignment_ind', label: 'Solicitudes' },
   { to: '/accounts', icon: 'manage_accounts', label: 'Cuentas' },
   { to: '/plugins', icon: 'extension', label: 'Plugins' }, // Nuevo elemento para Plugins
+  { to: '/developers', icon: 'integration_instructions', label: 'Desarrolladores' },
   { to: '/settings', icon: 'settings', label: 'Configuración' },
 ];
 

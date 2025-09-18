@@ -13,6 +13,8 @@ import CreatePassword from './components/CreatePassword';
 import PluginViewer from './components/PluginViewer';
 import Sidebar from './components/Sidebar'; // Importar Sidebar
 import Plugins from './pages/Plugins'; // Importar la nueva página de plugins
+import DeveloperPortal from './pages/DeveloperPortal';
+
 
 // Layout para usuarios no autenticados
 const PublicLayout = ({ children }: { children: React.ReactNode }) => (
@@ -79,10 +81,8 @@ function App() {
           <Routes>
             <Route path="/" element={<h1>Dashboard (Privado)</h1>} />
             <Route path="/plugins" element={<Plugins />} />
-            <Route path="/plugins/:pluginId" element={<PluginViewer activePlugins={activePlugins} />} /> {/* Pasar activePlugins al PluginViewer */}
+            <Route path="/plugins/:pluginId" element={<PluginViewer activePlugins={activePlugins} />} />
             {/* Redirigir rutas públicas a la raíz si el usuario está logueado */}
-            <Route path="/login" element={<Navigate to="/" replace />} />
-            <Route path="/request-access" element={<Navigate to="/" replace />} />
           </Routes>
         </PrivateLayout>
       ) : (
@@ -99,6 +99,7 @@ function App() {
             <Route path="/clarification-response" element={<ClarificationResponse />} />
             <Route path="/actions/create-password" element={<CreatePassword />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/developer-portal" element={<DeveloperPortal />} />
             {/* Si un usuario no logueado intenta ir a una ruta privada, lo mandamos al login */}
             <Route path="*" element={<Navigate to="/login" replace />} />
           </Routes>

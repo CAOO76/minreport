@@ -10,6 +10,7 @@ import Subscriptions from './pages/Subscriptions';
 import Accounts from './pages/Accounts';
 import PluginsManagement from './pages/PluginsManagement';
 import AccountDetails from './pages/AccountDetails'; // Importar el nuevo componente
+import Developers from './pages/Developers';
 import './App.css';
 
 function App() {
@@ -55,6 +56,7 @@ function App() {
           <Route path="/accounts" element={<Accounts />} />
           <Route path="/accounts/:accountId" element={<AccountDetails />} /> {/* Nueva ruta para detalles de cuenta */}
           <Route path="/plugins" element={<PluginsManagement />} />
+          <Route path="/developers" element={<Developers />} />
           {/* Añadir una ruta para settings y una página 404 sería una buena práctica */}
         </Routes>
       </main>

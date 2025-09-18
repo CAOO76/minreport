@@ -1,25 +1,27 @@
 import { useState } from 'react';
-import useAuth from '@minreport/core/hooks/useAuth'; // Importar useAuth desde packages/core
-import { auth } from '../firebaseConfig'; // Importar auth de firebaseConfig para pasarlo al hook
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { auth } from '../firebaseConfig';
 import './forms.css';
 
 const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-
-  const { login, loading } = useAuth(auth); // Pasar la instancia de auth al hook
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null); // Limpiar errores previos
+    setError(null);
+    setLoading(true);
     try {
-      await login(email, password);
-      // Si el inicio de sesión es exitoso, el usuario será redirigido por el listener de auth en App.tsx
+      await signInWithEmailAndPassword(auth, email, password);
+      // onAuthStateChanged en useAuth se encargará de la redirección
     } catch (err: any) {
       console.error('Error de inicio de sesión (client):', err.code);
       setError('Credenciales inválidas o acceso no autorizado.');
+    } finally {
+      setLoading(false);
     }
   };
 

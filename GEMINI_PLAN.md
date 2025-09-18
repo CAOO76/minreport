@@ -293,7 +293,6 @@ Se establece un nuevo flujo de activación que elimina el concepto de "cuenta pr
     *   El `request-registration-service` **no crea un usuario**.
     *   Genera un **token criptográficamente seguro** y de un solo uso.
     *   Almacena el *hash* de este token en el documento de la solicitud junto con una fecha de expiración de 24 horas.
-    *   Actualiza el estado de la solicitud a `pending_additional_data`.
     *   Envía un email al solicitante con un enlace público a la `client-app` que contiene el token en la URL (ej: `https://minreport-access.web.app/complete-data?token=...`).
 
 3.  **Completar Datos por el Usuario (Sin Sesión):**
@@ -409,7 +408,7 @@ Realizaré los cambios en el frontend en pequeños pasos, asegurando que la apli
 1.  **Acción:**
     *   Actualizar `DATA_CONTRACT.md` para incluir los nuevos campos.
     *   Modificar `request-registration-service` para que sea capaz de recibir `pais`, `ciudad` y la `direccionComercial` (proveniente de Google Maps).
-    *   La lógica del servicio se adaptará para manejar los datos de la nueva dirección y asociarlos correctamente a la cuenta.
+    *   La lógica del servicio se adaptará para manejar los datos de la new dirección y asociarlos correctamente a la cuenta.
     *   **Verificación:** Probar el flujo completo de suscripción para una persona natural y una jurídica, asegurando que los datos llegan correctamente y el resto del proceso (notificaciones, etc.) no se ve afectado.
 
 **Fase 4: Limpieza de Código (Solo tras confirmación)**
@@ -484,7 +483,7 @@ Realizaré los cambios en el frontend en pequeños pasos, asegurando que la apli
 1.  **Acción:**
     *   Actualizar `DATA_CONTRACT.md` para incluir los nuevos campos.
     *   Modificar `request-registration-service` para que sea capaz de recibir `pais`, `ciudad` y la `direccionComercial` (proveniente de Google Maps).
-    *   La lógica del servicio se adaptará para manejar los datos de la nueva dirección y asociarlos correctamente a la cuenta.
+    *   La lógica del servicio se adaptará para manejar los datos de la new dirección y asociarlos correctamente a la cuenta.
     *   **Verificación:** Probar el flujo completo de suscripción para una persona natural y una jurídica, asegurando que los datos llegan correctamente y el resto del proceso (notificaciones, etc.) no se ve afectado.
 
 **Fase 4: Limpieza de Código (Solo tras confirmación)**
@@ -495,3 +494,121 @@ Realizaré los cambios en el frontend en pequeños pasos, asegurando que la apli
 ### Estado (16/09/2025)
 
 **Estado:** Completado y consolidado en commit `064b04f`.
+
+## 15. Plan de Evolución: Arquitectura de Plugins a SDK (18/09/2025)
+
+**Objetivo:** Formalizar la arquitectura de comunicación de plugins en un SDK distribuible (`@minreport/sdk`) para mejorar la experiencia de desarrollo de terceros, la seguridad y la mantenibilidad.
+
+### Fase 1: Creación del Paquete `@minreport/sdk` y Abstracción de Comunicación
+
+**Meta:** Eliminar la necesidad de que los desarrolladores de plugins interactúen directamente con la API `postMessage`.
+
+-   **1.1.** Crear una nueva carpeta de paquete en `packages/sdk`.
+-   **1.2.** Inicializar un `package.json` para `@minreport/sdk`, configurándolo para la compilación de una librería TypeScript.
+-   **1.3.** Implementar la función `initialize(allowedOrigins)`:
+    -   Esta función será lo primero que un plugin debe llamar.
+    -   Establecerá un `listener` de `message` para recibir datos del núcleo.
+    -   Validará que el `event.origin` esté en la lista `allowedOrigins` proporcionada.
+    -   Almacenará los datos de sesión (`user`, `claims`) en una variable interna segura.
+-   **1.4.** Implementar la función `getSession()`:
+    -   Devolverá los datos de sesión almacenados, permitiendo al plugin acceder a la información del usuario de forma síncrona después de la inicialización.
+-   **1.5.** Definir y exportar todas las interfaces de TypeScript relevantes (ej. `MinreportUser`, `MinreportClaims`) para una experiencia de desarrollo tipada.
+-   **1.6. [Verificación]** Refactorizar `sites/test-plugin` para que importe y utilice el nuevo SDK `@minreport/sdk` en lugar de su lógica manual de `postMessage`.
+
+### Fase 2: Gestión Centralizada y Carga Dinámica de Plugins
+
+**Meta:** Eliminar las URLs hardcodeadas del código y gestionarlas desde una base de datos central.
+
+-   **2.1.** Actualizar `DATA_CONTRACT.md` para definir una nueva colección `plugins` en Firestore. Cada documento contendrá `pluginId`, `name`, `description`, `url` y `version`.
+-   **2.2.** Crear una nueva página en `admin-app` para la gestión (CRUD) de los documentos en esta nueva colección `plugins`.
+-   **2.3. [Verificación]** Refactorizar el componente `PluginViewer.tsx` en `client-app`:
+    -   Eliminar el objeto `PLUGIN_URLS` hardcodeado.
+    -   Al montarse, deberá obtener la `url` del plugin desde la colección `plugins` en Firestore usando el `pluginId` de los parámetros de la ruta.
+
+### Fase 3: Habilitación de Comunicación Bidireccional (Plugin -> Núcleo)
+
+**Meta:** Permitir que los plugins soliciten acciones al núcleo de forma segura y controlada.
+
+-   **3.1.** Definir un nuevo tipo de mensaje, `MINREPORT_ACTION`, con una estructura `{ type: 'MINREPORT_ACTION', payload: { action: string, data: any } }`.
+-   **3.2.** Implementar en el SDK (`@minreport/sdk`) funciones de acción seguras. Por ejemplo:
+    -   `requestNavigation(path: string)`: Enviará una acción `{ action: 'navigate', data: { path } }`.
+    -   `showNotification(level: 'info' | 'success' | 'error', message: string)`: Enviará una acción `{ action: 'showNotification', data: { level, message } }`.
+-   **3.3.** Actualizar el `listener` de eventos en `PluginViewer.tsx` para que:
+    -   Escuche los mensajes de tipo `MINREPORT_ACTION`.
+    -   Valide rigurosamente el origen y la estructura del mensaje.
+    -   Utilice un `switch` en `payload.action` para ejecutar **únicamente un conjunto predefinido y seguro de acciones** (ej. usar `react-router` para navegar, o un sistema de notificaciones para mostrar un mensaje).
+-   **3.4. [Verificación]** Añadir botones en `sites/test-plugin` que utilicen las nuevas funciones del SDK (`requestNavigation`, `showNotification`) para demostrar y probar la comunicación bidireccional.
+
+## 16. Plan de Estabilización: Refactorización de Gestión de Plugins (18/09/2025)
+
+**Objetivo:** Corregir un bug crítico que causa la pérdida de datos al asignar plugins y alinear el componente `ManageClientPlugins.tsx` con la arquitectura de datos centralizada. **Esta tarea tiene la máxima prioridad sobre cualquier otra.**
+
+### Fase 1: Eliminación de Lógica Obsoleta y Peligrosa (Backend)
+
+-   **1.1.** Localizar la Cloud Function `togglePluginStatus` en el directorio `services/functions/src`.
+-   **1.2.** Eliminar el archivo o el código correspondiente a la función `togglePluginStatus` para erradicar la causa del borrado de datos. ✅
+-   **1.3.** Actualizar el `index.ts` de las funciones para remover la exportación de `togglePluginStatus`. ✅
+
+### Fase 2: Refactorización del Componente de Gestión (Frontend)
+
+-   **2.1.** Modificar `ManageClientPlugins.tsx` para que obtenga la lista de plugins disponibles desde la colección `plugins` de Firestore, en lugar de la lista estática `availablePlugins`. ✅
+-   **2.2.** Reemplazar la llamada a la Cloud Function `togglePluginStatus` con una llamada directa y segura a Firestore desde el propio componente. ✅
+-   **2.3.** Implementar la lógica de guardado usando `updateDoc` para modificar únicamente el campo `activePlugins` en el documento de la cuenta. ✅
+-   **2.4. [Verificación]** Probar el flujo completo en el `admin-app`: la lista de plugins debe aparecer dinámicamente, y al activar/desactivar un plugin, solo el campo correspondiente en el documento de la cuenta debe cambiar, sin pérdida de datos. ✅
+
+## 17. Plan de Implementación: Portal de Desarrolladores de Plugins (v1) (18/09/2025)
+
+**Objetivo:** Crear un sistema robusto dentro del `admin-app` para registrar desarrolladores de plugins, enviarles acceso seguro al SDK y mantener una trazabilidad completa de su ciclo de vida, sentando las bases para una futura gestión de plugins.
+
+### Fase 1: Fundamentos de Datos y Lógica de Negocio
+
+-   **1.1. [Contrato de Datos] Actualizar `DATA_CONTRACT.md`:**
+    -   Definir una nueva colección principal: `plugin_developers`. Cada documento representará a un desarrollador o empresa externa.
+        -   **Campos:** `developerName`, `developerEmail`, `companyName`, `status` (ej: `pending_invitation`, `invited`, `active`, `revoked`), `invitationToken` (hash y expiración), `createdAt`.
+    -   Definir una subcolección `development_logs` dentro de cada documento de desarrollador para registrar un historial inmutable de eventos.
+        -   **Campos del log:** `timestamp`, `event` (ej: `developer_registered`, `invitation_sent`, `portal_accessed`), `details`.
+    -   Añadir un campo opcional `developerId` a la definición de la colección `plugins` existente para vincular un plugin a su creador. ✅
+
+-   **1.2. [Backend] Crear Cloud Function `managePluginDeveloper`:**
+    -   Crear una nueva **Cloud Function de tipo `onCall`** que centralice las operaciones de gestión.
+    -   **Acción `registerDeveloper`:** Recibirá los datos del nuevo desarrollador, creará el documento correspondiente en la colección `plugin_developers` y registrará el evento `developer_registered` en su historial.
+    -   **Acción `sendDeveloperInvitation`:**
+        1.  Recibirá el ID del desarrollador.
+        2.  Generará un **token seguro, de un solo uso y con 24h de expiración** (usando la misma lógica del flujo de activación de cuentas v4).
+        3.  Almacenará el *hash* de dicho token en el documento del desarrollador.
+        4.  Enviará un email (vía Resend) al `developerEmail` con un enlace único al futuro portal de desarrollador (ej: `.../developer-portal?token=...`).
+        5.  Registrará el evento `invitation_sent`.
+    -   **Acción `validateDeveloperToken`:** Recibirá un token, buscará su hash en la colección, verificará que no haya expirado y, si es válido, lo marcará como utilizado y registrará el evento `portal_accessed`. ✅
+
+### Fase 2: Interfaz de Administración (`admin-app`)
+
+-   **2.1. [UI] Crear Página de Gestión `Developers.tsx`:**
+    -   Crear el componente de página `sites/admin-app/src/pages/Developers.tsx`.
+    -   Esta página mostrará una tabla o lista de todos los desarrolladores registrados, obteniendo los datos de la colección `plugin_developers`.
+    -   Incluirá un formulario (en un modal) para registrar un nuevo desarrollador, que llamará a la acción `registerDeveloper` del backend. ✅
+
+-   **2.2. [UI] Implementar Acciones y Navegación:**
+    -   En la lista de desarrolladores, añadir un botón "Enviar Invitación" para cada uno que esté en estado `pending_invitation`. Este botón llamará a la acción `sendDeveloperInvitation`.
+    -   Añadir una nueva ruta `/developers` en el `App.tsx` del `admin-app`.
+    -   Añadir un nuevo enlace en el menú `Sidebar.tsx` con el texto "Desarrolladores" y un icono apropiado (ej: `code` o `integration_instructions`). ✅
+
+-   **2.3. [Verificación]** Probar el flujo completo desde la UI del administrador: registrar un nuevo desarrollador, verlo en la lista, enviarle una invitación y verificar en Firestore que el estado y el log de eventos se actualizan correctamente.
+
+### Fase 3: Portal Básico para Desarrolladores (`client-app`)
+
+-   **3.1. [UI] Crear Página Segura `DeveloperPortal.tsx`:**
+    -   Crear el componente de página `sites/client-app/src/pages/DeveloperPortal.tsx`.
+    -   Esta página será accesible a través de una ruta pública que no requiere login: `/developer-portal`. ✅
+
+-   **3.2. [Lógica] Implementar Verificación de Token:**
+    -   Al cargar, la página leerá el `token` de los parámetros de la URL.
+    -   Llamará a la acción `validateDeveloperToken` del backend para verificar su validez.
+    -   Si el token no es válido o ya fue usado, mostrará un mensaje de "Acceso Denegado" o "Enlace Expirado".
+
+-   **3.3. [Contenido] Mostrar Recursos del SDK:**
+    -   Si el token es válido, la página mostrará:
+        *   Un mensaje de bienvenida personalizado.
+        *   Una sección de "Primeros Pasos" con una breve explicación.
+        *   Un botón destacado: **"Descargar Paquete SDK (`@minreport/sdk`)"**. Por ahora, este botón puede apuntar a una URL temporal o simplemente registrar un evento. ✅
+
+-   **3.4. [Verificación]** Probar el flujo completo del desarrollador: recibir el email, hacer clic en el enlace, aterrizar en el portal, y que el sistema muestre el contenido correcto y registre el acceso en el log de eventos.

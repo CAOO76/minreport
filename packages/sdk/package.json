@@ -1,0 +1,21 @@
+{
+  "name": "@minreport/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "lint": "eslint . --ext .ts,.tsx"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "@typescript-eslint/parser": "^5.36.1",
+    "@typescript-eslint/eslint-plugin": "^5.36.1",
+    "eslint": "^8.57.1"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0"
+  }
+}

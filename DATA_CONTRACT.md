@@ -64,7 +64,7 @@ Contiene la información de las cuentas aprobadas y activas. El ID de cada docum
   institutionName?: string;      // Opcional, solo para Empresarial/Educacional
 
   // --- Plugins y Funcionalidades ---
-  plugins: string[];             // Array con los IDs de los plugins activados para la cuenta
+  plugins: { [pluginId: string]: boolean }; // Mapa de plugins activados/desactivados
 
   // --- Trazabilidad ---
   createdAt: Timestamp;          // Fecha de creación del usuario en Firebase Auth
@@ -91,5 +91,62 @@ Registro inmutable de todas las acciones importantes que ocurren en una cuenta. 
     type: 'admin' | 'user' | 'system'; // Tipo de actor
   };
   details?: object;              // Objeto con datos contextuales sobre el evento (ej: { pluginId: '...' })
+}
+```
+
+---
+
+## 4. Colección: `plugins`
+
+Almacena la configuración y metadatos de todos los plugins disponibles en el ecosistema MINREPORT. Esta colección es gestionada por los administradores.
+
+```typescript
+{
+  // ID del documento: un 'slug' legible por humanos (ej: 'test-plugin', 'georeport-pro')
+
+  pluginId: string;              // Coincide con el ID del documento.
+  name: string;                  // Nombre completo del plugin para mostrar en la UI (ej: 'Plugin de Prueba').
+  description: string;           // Descripción de lo que hace el plugin.
+  url: string;                   // La URL completa donde está alojado el plugin.
+  version: string;               // Versión semántica del plugin (ej: '1.0.0').
+  status: 'enabled' | 'disabled'; // Estado global del plugin.
+  developerId?: string;          // (Opcional) ID del documento del desarrollador que creó este plugin.
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+```
+
+---
+
+## 5. Colección: `plugin_developers`
+
+Almacena información sobre los desarrolladores de plugins de terceros. Esencial para la gestión y trazabilidad del ecosistema de plugins.
+
+```typescript
+{
+  // ID del documento: autogenerado por Firestore
+
+  developerName: string;         // Nombre del desarrollador principal o de contacto.
+  developerEmail: string;        // Email de contacto.
+  companyName: string;           // Nombre de la empresa o equipo desarrollador.
+  status: 'pending_invitation' | 'invited' | 'active' | 'revoked'; // Estado del desarrollador.
+  
+  invitationToken?: {            // Token para el acceso inicial al portal de desarrollador.
+    hash: string;
+    expiresAt: Timestamp;
+  }
+
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+
+  // Subcolección: development_logs
+  // documents: `plugin_developers/{developerId}/development_logs/{logId}`
+  /*
+    {
+      timestamp: Timestamp;
+      event: 'developer_registered' | 'invitation_sent' | 'portal_accessed';
+      details?: object;
+    }
+  */
 }
 ```

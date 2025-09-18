@@ -1,25 +1,55 @@
-
-import React, { useEffect, useRef } from 'react';
-import { useParams } from 'react-router-dom';
+import React, { useEffect, useRef, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import useAuth from '@minreport/core/hooks/useAuth';
-import { auth } from '../firebaseConfig';
+import { auth, db } from '../firebaseConfig';
+import { doc, getDoc } from 'firebase/firestore';
 import './PluginViewer.css';
 
 interface PluginViewerProps {
   activePlugins: string[] | null;
 }
 
-// TODO: Esto debería venir de una configuración central
-const PLUGIN_URLS: Record<string, string> = {
-  'test-plugin': 'http://127.0.0.1:5017' // Apuntar al emulador de hosting
-};
-
 const PluginViewer: React.FC<PluginViewerProps> = ({ activePlugins }) => {
   const { pluginId } = useParams<{ pluginId: string }>();
+  const navigate = useNavigate();
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const { user, claims } = useAuth(auth);
+  const { user, claims } = useAuth();
+  const [pluginSrc, setPluginSrc] = useState<string | undefined>(undefined);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const pluginSrc = pluginId ? PLUGIN_URLS[pluginId] : undefined;
+  useEffect(() => {
+    if (!pluginId) {
+      setLoading(false);
+      setError('No se ha especificado un ID de plugin.');
+      return;
+    }
+
+    const fetchPluginUrl = async () => {
+      try {
+        const pluginDocRef = doc(db, 'plugins', pluginId);
+        const pluginDoc = await getDoc(pluginDocRef);
+
+        if (pluginDoc.exists()) {
+          const pluginData = pluginDoc.data();
+          if (pluginData.status === 'enabled') {
+            setPluginSrc(pluginData.url);
+          } else {
+            setError(`El plugin "${pluginId}" está deshabilitado.`);
+          }
+        } else {
+          setError(`El plugin "${pluginId}" no se encuentra en la configuración del sistema.`);
+        }
+      } catch (err) {
+        console.error("Error al obtener la configuración del plugin:", err);
+        setError('No se pudo cargar la configuración del plugin.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchPluginUrl();
+  }, [pluginId]);
 
   useEffect(() => {
     const iframe = iframeRef.current;
@@ -34,8 +64,6 @@ const PluginViewer: React.FC<PluginViewerProps> = ({ activePlugins }) => {
           emailVerified: user.emailVerified,
         } : null;
 
-        console.log('Sending serializableUser:', serializableUser);
-
         const sessionData = {
           user: serializableUser,
           claims,
@@ -48,16 +76,54 @@ const PluginViewer: React.FC<PluginViewerProps> = ({ activePlugins }) => {
     return () => iframe.removeEventListener('load', handleLoad);
   }, [user, claims, pluginSrc]);
 
+  useEffect(() => {
+    if (!pluginSrc) return;
+
+    const handlePluginAction = (event: MessageEvent) => {
+      if (event.origin !== new URL(pluginSrc).origin) {
+        return;
+      }
+      if (event.data?.type !== 'MINREPORT_ACTION') return;
+
+      const { action, data } = event.data.payload;
+
+      switch (action) {
+        case 'navigate':
+          if (data.path && typeof data.path === 'string') {
+            navigate(data.path);
+          }
+          break;
+        case 'showNotification':
+          if (data.message && typeof data.message === 'string') {
+            alert(`[Plugin] ${data.level?.toUpperCase() || 'INFO'}: ${data.message}`);
+          }
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener('message', handlePluginAction);
+    return () => window.removeEventListener('message', handlePluginAction);
+  }, [pluginSrc, navigate]);
+
+  if (loading) {
+    return <h2>Cargando plugin...</h2>;
+  }
+
+  if (error) {
+    return <h2>Error: {error}</h2>;
+  }
+
   if (!pluginId || !pluginSrc) {
     return <h2>Plugin no encontrado</h2>;
   }
 
-  // Check if the plugin is active for the current user
   if (!activePlugins || !activePlugins.includes(pluginId)) {
     return (
       <div className="plugin-viewer-container">
         <h2>Acceso Denegado</h2>
-        <p>No tienes permiso para acceder a este plugin o no está activado para tu cuenta.</p>
+        <p>No tienes permiso para acceder a este plugin.</p>
       </div>
     );
   }

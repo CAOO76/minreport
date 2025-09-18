@@ -1,64 +1,66 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import useAuth from '@minreport/core/hooks/useAuth'; // Adjust path as needed
-import './Plugins.css'; // We will create this CSS file
-import { getAuth } from 'firebase/auth'; // Import getAuth
-import { auth } from '../firebaseConfig'; // Import auth instance
+import useAuth from '@minreport/core/hooks/useAuth';
+import { auth, db } from '../firebaseConfig';
+import { collection, getDocs } from 'firebase/firestore';
+import './Plugins.css';
 
-// Define a list of all possible plugins with their IDs, names, and descriptions
-// This should ideally come from a central configuration or API
-const ALL_AVAILABLE_PLUGINS_INFO = [
-  { id: 'cash-flow', name: 'Flujo de Caja', description: 'Gestiona tus ingresos y gastos.', icon: 'account_balance_wallet' },
-  { id: 'inventory', name: 'Gestor de Inventario', description: 'Controla tu stock y productos.', icon: 'inventory_2' },
-  { id: 'reports', name: 'Reportes Fotográficos', description: 'Genera reportes visuales de tus proyectos.', icon: 'image' },
-  // Add more plugin info here
-];
+interface PluginMetadata {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+}
 
 const Plugins: React.FC = () => {
-  const { activePlugins, loading, user } = useAuth(); // Get user from useAuth hook
+  const { user, activePlugins, loading: authLoading } = useAuth(auth);
+  const [allPlugins, setAllPlugins] = useState<PluginMetadata[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const handleForceTokenRefresh = async () => {
-    if (user && auth) { // Ensure user and auth instance exist
+  useEffect(() => {
+    const fetchAllPlugins = async () => {
       try {
-        console.log('Intentando obtener token sin forzar refresh...');
-        const idTokenResultNoForce = await user.getIdTokenResult(); // No force refresh
-        console.log('Token sin forzar refresh. Claims:', idTokenResultNoForce.claims);
-
-        console.log('Intentando obtener token forzando refresh (false)...');
-        const idTokenResultFalse = await user.getIdTokenResult(false); // Explicitly false
-        console.log('Token con force=false. Claims:', idTokenResultFalse.claims);
-
-        console.log('Intentando obtener token forzando refresh (true)...');
-        const idTokenResultTrue = await user.getIdTokenResult(true); // Force refresh
-        console.log('Token con force=true. Claims:', idTokenResultTrue.claims);
-        // Optionally, you might want to re-trigger useAuth's state update here
-        // but useAuth should already be listening to onAuthStateChanged
-      } catch (error: any) {
-        console.error('Error al forzar actualización de token:', error);
+        const pluginsCollectionRef = collection(db, 'plugins');
+        const pluginsSnapshot = await getDocs(pluginsCollectionRef);
+        const pluginsList = pluginsSnapshot.docs.map(doc => ({
+          id: doc.id,
+          name: doc.data().name,
+          description: doc.data().description,
+          icon: doc.data().icon || 'extension',
+        }));
+        setAllPlugins(pluginsList);
+      } catch (error) {
+        console.error("Error fetching all plugins metadata:", error);
+        // No seteamos un error en la UI, simplemente no se mostrarán plugins.
+      } finally {
+        // Una vez que se han cargado los plugins (o ha fallado), dejamos de cargar.
+        setIsLoading(false);
       }
-    }
-  };
+    };
 
-  if (loading) {
-    return <p>Cargando plugins...</p>;
+    fetchAllPlugins();
+  }, []);
+
+  // Esperamos tanto a la autenticación como a la carga de la lista de plugins
+  if (isLoading) {
+    return <div className="plugins-page-container"><h1>Mis Plugins</h1><p>Cargando...</p></div>;
   }
 
-  console.log('Plugins.tsx: activePlugins (from useAuth):', activePlugins);
-  const userActivePlugins = activePlugins || [];
-  console.log('Plugins.tsx: userActivePlugins (after || []):', userActivePlugins);
-  const pluginsToDisplay = ALL_AVAILABLE_PLUGINS_INFO.filter(plugin =>
-    userActivePlugins.includes(plugin.id)
+  if (!user) {
+    return <div className="plugins-page-container"><h1>Mis Plugins</h1><p>Error de autenticación.</p></div>;
+  }
+
+  // Filtramos la lista de TODOS los plugins disponibles contra la lista de plugins ACTIVOS del usuario
+  const pluginsToDisplay = allPlugins.filter(plugin => 
+    (activePlugins || []).includes(plugin.id)
   );
-  console.log('Plugins.tsx: pluginsToDisplay (after filter):', pluginsToDisplay);
 
   return (
     <div className="plugins-page-container">
       <h1>Mis Plugins</h1>
-      <button onClick={handleForceTokenRefresh}>Forzar Actualización de Token</button>
-
       {pluginsToDisplay.length === 0 ? (
         <p className="no-plugins-message">
-          Actualmente no tienes plugins activados. Contacta con soporte para más información.
+          Actualmente no tienes plugins activados o disponibles.
         </p>
       ) : (
         <div className="plugins-grid">
