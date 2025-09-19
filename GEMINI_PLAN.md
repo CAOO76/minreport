@@ -10,34 +10,34 @@ Se adopta una estrategia de desarrollo moderna, minimalista y funcional, basada 
 
 ### Reglas Arquitectónicas Fundamentales
 
--   **Soberanía del Dato:** Todos los recursos en la nube deben residir exclusivamente en la región `southamerica-west1` (Santiago, Chile).
--   **Tecnología de Backend:** El backend se compondrá principalmente de servicios contenerizados en Cloud Run para la lógica de negocio compleja. Se permite el uso de Cloud Functions (2ª Gen), especialmente de tipo `onCall`, para acciones específicas que son invocadas directamente desde el cliente y se benefician de la capa de autenticación y contexto de Firebase Functions.
+- **Soberanía del Dato:** Todos los recursos en la nube deben residir exclusivamente en la región `southamerica-west1` (Santiago, Chile).
+- **Tecnología de Backend:** El backend se compondrá principalmente de servicios contenerizados en Cloud Run para la lógica de negocio compleja. Se permite el uso de Cloud Functions (2ª Gen), especialmente de tipo `onCall`, para acciones específicas que son invocadas directamente desde el cliente y se benefician de la capa de autenticación y contexto de Firebase Functions.
 
 ### Patrones y Tecnologías
 
--   **Monorepo:** Se utiliza `pnpm workspaces` para gestionar todo el código base (frontends, backends, librerías compartidas) en un único repositorio, facilitando la coherencia y el desarrollo.
--   **Backend:** Servicios desacoplados escritos en **TypeScript** y desplegados como contenedores en **Cloud Run**.
--   **Frontend:** Aplicaciones **React (TypeScript) con Vite**. Se mantienen dos sitios separados:
+- **Monorepo:** Se utiliza `pnpm workspaces` para gestionar todo el código base (frontends, backends, librerías compartidas) en un único repositorio, facilitando la coherencia y el desarrollo.
+- **Backend:** Servicios desacoplados escritos en **TypeScript** y desplegados como contenedores en **Cloud Run**.
+- **Frontend:** Aplicaciones **React (TypeScript) con Vite**. Se mantienen dos sitios separados:
     -   `client-app`: Portal público para solicitudes de cuenta y acceso de clientes (`minreport-access.web.app`).
     -   `admin-app`: Panel de administración para la gestión interna de MINREPORT (`minreport-x.web.app`).
--   **Base de Datos:** **Firestore** (NoSQL) para almacenar todos los datos.
--   **Despliegue:** **Firebase Hosting** para los frontends y **Cloud Run** para los servicios de backend.
--   **Desarrollo de Componentes:** **Storybook** se utiliza en `client-app` para desarrollar y documentar componentes de UI de forma aislada.
+- **Base de Datos:** **Firestore** (NoSQL) para almacenar todos los datos.
+- **Despliegue:** **Firebase Hosting** para los frontends y **Cloud Run** para los servicios de backend.
+- **Desarrollo de Componentes:** **Storybook** se utiliza en `client-app` para desarrollar y documentar componentes de UI de forma aislada.
 
 ### Principios de Seguridad y Acceso
 
 Se establecen los siguientes principios de seguridad como inalterables:
 
--   **Secretismo del Portal de Administración:** La URL de acceso para administradores (`minreport-x.web.app`) es confidencial. No debe ser enlazada o mencionada en ninguna web pública.
--   **Fallo de Autenticación Silencioso:** Si un usuario intenta acceder a un portal que no le corresponde, el sistema no proporcionará mensajes de error específicos.
--   **No Autocompletado en Formularios:** Todos los campos en formularios de inicio de sesión deben tener el autocompletado deshabilitado.
+- **Secretismo del Portal de Administración:** La URL de acceso para administradores (`minreport-x.web.app`) es confidencial. No debe ser enlazada o mencionada en ninguna web pública.
+- **Fallo de Autenticación Silencioso:** Si un usuario intenta acceder a un portal que no le corresponde, el sistema no proporcionará mensajes de error específicos.
+- **No Autocompletado en Formularios:** Todos los campos en formularios de inicio de sesión deben tener el autocompletado deshabilitado.
 
 ### Gestión de Entorno y Configuración
 
 Para permitir el trabajo colaborativo en diferentes máquinas sin conflictos, se utiliza un sistema de variables de entorno:
 
--   **Archivo `.env` (Local):** Cada desarrollador debe crear un archivo `.env` en la raíz del proyecto para definir sus configuraciones locales (ej. puertos). Este archivo no se sube a GitHub.
--   **Archivo `.env.example` (Plantilla):** Existe un archivo `.env.example` en el repositorio que sirve como plantilla.
+- **Archivo `.env` (Local):** Cada desarrollador debe crear un archivo `.env` en la raíz del proyecto para definir sus configuraciones locales (ej. puertos). Este archivo no se sube a GitHub.
+- **Archivo `.env.example` (Plantilla):** Existe un archivo `.env.example` en el repositorio que sirve como plantilla.
 
 ### Configuración del Entorno de Desarrollo Local (Colaborativo)
 
@@ -122,11 +122,25 @@ Para asegurar la calidad y la total funcionalidad del sistema en un contexto rea
 Para cerrar una sesión de desarrollo de manera eficiente y económica, sigue estos pasos:
 
 1.  **Verificación Manual en Entorno Local:** Prueba manualmente la funcionalidad en la que trabajaste en la `client-app` o `admin-app` usando los emuladores.
-2.  **Ejecución de Pruebas Automatizadas (si existen):** Si hay tests unitarios o de integración, ejecútalos localmente.
+2.  **Ejecución de Pruebas Automatizadas:** Ejecuta el conjunto de pruebas completo para asegurar que no hay regresiones.
+    ```bash
+    pnpm -r test
+    ```
     **¡IMPORTANTE!** Los pasos 1 y 2 son **OBLIGATORIOS** y deben completarse **ANTES** de cualquier `commit` o `push`.
-3.  **Consolidación en Git:** Haz un `commit` de tus cambios con un mensaje claro y siguiendo las "Normas de Contribución con Git".
-4.  **Subir a GitHub:** Haz un `git push` para subir tus cambios al repositorio.
-5.  **Actualizar Bitácora:** Añadir una entrada en `GEMINI_PLAN.md` resumiendo el trabajo completado y el estado final de la tarea.
+
+3.  **Consolidación y Subida a GitHub:** Prepara, consolida y sube tus cambios al repositorio. Sigue el estándar de [Conventional Commits](https://www.conventionalcommits.org/) para el mensaje.
+    ```bash
+    # 1. Añadir todos los cambios al área de preparación (staging)
+    git add .
+
+    # 2. Hacer commit con un mensaje descriptivo (ejemplo)
+    git commit -m "feat: Add CI workflow and test comment"
+
+    # 3. Subir los cambios a la rama principal
+    git push origin main
+    ```
+
+4.  **Actualizar Bitácora:** Añadir una entrada en `GEMINI_PLAN.md` resumiendo el trabajo completado y el estado final de la tarea.
 
 ## 3. Flujo de Registro y Ciclo de Vida de la Cuenta
 
@@ -542,3 +556,57 @@ Realizaré los cambios en el frontend en pequeños pasos, asegurando que la apli
         *   Un botón destacado: **"Descargar Paquete SDK (`@minreport/sdk`)"**. Por ahora, este botón puede apuntar a una URL temporal o simplemente registrar un evento.
 
 -   **3.4. [Verificación]** Probar el flujo completo del desarrollador: recibir el email, hacer clic en el enlace, aterrizar en el portal, y que el sistema muestre el contenido correcto y registre el acceso en el log de eventos.
+
+## 18. Protocolo de Emergencia: Persistencia de Datos en Emuladores (19/09/2025)
+
+Esta sección documenta la solución definitiva al problema recurrente de pérdida de datos en la Firebase Emulator Suite durante el desarrollo local.
+
+### Síntoma Principal
+
+Al reiniciar el entorno de desarrollo (usando `pnpm dev`), los datos creados en la sesión anterior (usuarios en Authentication, documentos en Firestore, etc.) desaparecen. Esto provoca la pérdida del super admin y bloquea el acceso a la plataforma.
+
+### Diagnóstico de la Causa Raíz
+
+Tras un análisis exhaustivo con logs de depuración, se determinó que la causa raíz **no es** un problema de propagación de señales (`SIGINT`) en `pnpm` o `concurrently`, sino un **comportamiento anómalo en `firebase-tools`**.
+
+-   **El Problema:** Al especificar la ruta de exportación en el flag `--export-on-exit` (ej: `--export-on-exit=./ruta`), el emulador intenta un mecanismo interno de "intercambio" de directorios que falla silenciosamente en algunos sistemas, resultando en que los datos se escriben en una carpeta temporal que nunca llega a su destino final.
+-   **La Solución:** La forma correcta y robusta de configurar la persistencia es especificar la ruta de datos **únicamente** en el flag `--import` y usar `--export-on-exit` como un simple flag booleano (sin asignarle una ruta). Esto le indica al emulador que debe exportar los datos al mismo directorio del que los importó, evitando el mecanismo de "intercambio".
+
+### Configuración Correcta y Definitiva (`package.json`)
+
+Para que la persistencia funcione correctamente, los scripts en el `package.json` raíz deben tener la siguiente estructura:
+
+```json
+{
+  "scripts": {
+    "emulators:start": "firebase emulators:start --import=./firebase-emulators-data --export-on-exit",
+    "dev": "concurrently --kill-others --kill-signal SIGINT --raw \"pnpm:emulators:start\" \"pnpm:dev:services\" \"pnpm:dev:client\" ...",
+    "db:seed": "cross-env FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' ts-node services/functions/src/seed-emulators.ts"
+  }
+}
+```
+
+-   `emulators:start`: Define la configuración de persistencia correcta.
+-   `dev`: Asegura que la señal de cierre (`Ctrl+C`) se propague correctamente a los emuladores para que puedan guardar los datos.
+-   `db:seed`: Permite (re)crear el estado inicial de la base de datos, incluyendo el super admin.
+
+### Protocolo de Reseteo y Siembra (Para un Inicio Limpio)
+
+Este es el procedimiento para resetear la base de datos del emulador a un estado inicial conocido y válido.
+
+1.  **Detener Emuladores:** Asegúrate de que ningún proceso de `pnpm dev` o emuladores esté corriendo.
+2.  **(Opcional) Limpieza Total:** Para un reseteo completo, elimina la carpeta de datos existente.
+    ```bash
+    rm -rf firebase-emulators-data
+    ```
+3.  **Iniciar Emuladores:** En una **primera terminal**, inicia los emuladores en modo de espera.
+    ```bash
+    pnpm emulators:start
+    ```
+4.  **Sembrar Datos:** En una **segunda terminal**, ejecuta el script de siembra para crear el super admin y cualquier otro dato inicial.
+    ```bash
+    pnpm db:seed
+    ```
+5.  **Guardar Estado Inicial:** Una vez que la siembra termine, vuelve a la **primera terminal** y presiona `Ctrl+C`. Los emuladores se cerrarán y guardarán este nuevo estado inicial en la carpeta `firebase-emulators-data`.
+
+A partir de este punto, se puede usar `pnpm dev` para el trabajo diario con la certeza de que los datos persistirán.
