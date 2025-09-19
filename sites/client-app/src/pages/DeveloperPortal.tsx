@@ -21,11 +21,20 @@ const DeveloperPortal: React.FC = () => {
   }, [searchParams]);
 
   if (status === 'validating') {
-    return <div className="portal-container"><h2>Validando acceso...</h2></div>;
+    return (
+      <div className="portal-container">
+        <h2>Validando acceso...</h2>
+      </div>
+    );
   }
 
   if (status === 'invalid') {
-    return <div className="portal-container"><h2>Acceso Denegado</h2><p>El enlace de acceso no es válido o ha expirado.</p></div>;
+    return (
+      <div className="portal-container">
+        <h2>Acceso Denegado</h2>
+        <p>El enlace de acceso no es válido o ha expirado.</p>
+      </div>
+    );
   }
 
   return (
@@ -36,16 +45,20 @@ const DeveloperPortal: React.FC = () => {
       <main className="portal-content">
         <h2>¡Bienvenido!</h2>
         <p>Has accedido al portal de recursos para desarrolladores de plugins de MINREPORT.</p>
-        
+
         <section className="portal-section">
           <h3>Primeros Pasos</h3>
           <p>Para comenzar, descarga nuestro SDK y consulta la documentación.</p>
-          <a href="#" className="download-sdk-btn">Descargar Paquete SDK (@minreport/sdk)</a>
+          <a href="/sdk/minreport-sdk.js" className="download-sdk-btn">
+            Descargar Paquete SDK (@minreport/sdk)
+          </a>
         </section>
 
         <section className="portal-section">
           <h3>Documentación</h3>
-          <p>Consulta la documentación completa para aprender a crear, probar y publicar tu plugin.</p>
+          <p>
+            Consulta la documentación completa para aprender a crear, probar y publicar tu plugin.
+          </p>
           {/* Enlace a la futura documentación */}
         </section>
       </main>

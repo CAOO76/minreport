@@ -6,22 +6,25 @@
   "scripts": {
     "build": "node_modules/.bin/tsc",
     "start": "node lib/index.js",
-    "dev": "dotenv ts-node-dev --notify=false src/index.ts"
+    "dev": "dotenv ts-node-dev --notify=false src/index.ts",
+    "test": "vitest run"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@minreport/core": "file:../../packages/core",
-    "cross-env": "^7.0.3",
-    "express": "^4.19.2",
-    "firebase-admin": "^12.7.0"
+    "cross-env": "^10.0.0",
+    "express": "^5.1.0",
+    "firebase-admin": "^13.5.0"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
-    "@types/node": "^20.14.10",
-    "dotenv-cli": "^7.4.2",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.5.2",
+    "@vitest/coverage-v8": "^3.2.4",
+    "dotenv-cli": "^10.0.0",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.5.3"
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
   }
 }

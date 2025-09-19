@@ -6,3 +6,4 @@ packages:
   
   - 'services/*'
   - 'services/functions' # Nuevo paquete de Cloud Functions
+  - 'services/transactions-service'

@@ -41,7 +41,7 @@ const PluginViewer: React.FC<PluginViewerProps> = ({ activePlugins }) => {
           setError(`El plugin "${pluginId}" no se encuentra en la configuración del sistema.`);
         }
       } catch (err) {
-        console.error("Error al obtener la configuración del plugin:", err);
+        console.error('Error al obtener la configuración del plugin:', err);
         setError('No se pudo cargar la configuración del plugin.');
       } finally {
         setLoading(false);
@@ -57,18 +57,23 @@ const PluginViewer: React.FC<PluginViewerProps> = ({ activePlugins }) => {
 
     const handleLoad = () => {
       if (iframe.contentWindow) {
-        const serializableUser = user ? {
-          uid: user.uid,
-          email: user.email,
-          displayName: user.displayName,
-          emailVerified: user.emailVerified,
-        } : null;
+        const serializableUser = user
+          ? {
+              uid: user.uid,
+              email: user.email,
+              displayName: user.displayName,
+              emailVerified: user.emailVerified,
+            }
+          : null;
 
         const sessionData = {
           user: serializableUser,
           claims,
         };
-        iframe.contentWindow.postMessage({ type: 'MINREPORT_SESSION_DATA', data: sessionData }, new URL(pluginSrc).origin);
+        iframe.contentWindow.postMessage(
+          { type: 'MINREPORT_SESSION_DATA', data: sessionData },
+          new URL(pluginSrc).origin,
+        );
       }
     };
 

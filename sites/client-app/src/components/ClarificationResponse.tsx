@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import './forms.css';
@@ -50,8 +49,8 @@ const ClarificationResponse: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token || !userReply) {
-        alert('Por favor, escribe una respuesta.');
-        return;
+      alert('Por favor, escribe una respuesta.');
+      return;
     }
     setIsSubmitting(true);
     setMessage(null);
@@ -77,51 +76,73 @@ const ClarificationResponse: React.FC = () => {
   };
 
   if (isLoading) {
-    return <div className="form-container"><p>Validando enlace...</p></div>;
+    return (
+      <div className="form-container">
+        <p>Validando enlace...</p>
+      </div>
+    );
   }
 
   if (isError) {
-    return <div className="form-container"><p style={{ color: 'red' }}>{message}</p></div>;
+    return (
+      <div className="form-container">
+        <p style={{ color: 'red' }}>{message}</p>
+      </div>
+    );
   }
 
   if (isSubmitted) {
-      return (
-        <div className="success-container">
-            <span className="material-symbols-outlined success-icon">check_circle</span>
-            <h2>¡Respuesta Enviada!</h2>
-            <p className="success-subtitle">Gracias por tu aclaración. Nuestro equipo continuará con la revisión de tu solicitud.</p>
-            <Link to="/" className="button-primary icon-button" style={{ marginTop: '2rem', textDecoration: 'none' }}>
-                <span className="material-symbols-outlined">home</span>
-                Volver al portal de clientes MINREPORT
-            </Link>
-        </div>
-      );
+    return (
+      <div className="success-container">
+        <span className="material-symbols-outlined success-icon">check_circle</span>
+        <h2>¡Respuesta Enviada!</h2>
+        <p className="success-subtitle">
+          Gracias por tu aclaración. Nuestro equipo continuará con la revisión de tu solicitud.
+        </p>
+        <Link
+          to="/"
+          className="button-primary icon-button"
+          style={{ marginTop: '2rem', textDecoration: 'none' }}
+        >
+          <span className="material-symbols-outlined">home</span>
+          Volver al portal de clientes MINREPORT
+        </Link>
+      </div>
+    );
   }
 
   return (
     <div className="form-container">
       <h2>Responder Aclaración</h2>
       <div className="admin-message-box">
-        <p><strong>Un administrador ha solicitado la siguiente aclaración sobre tu solicitud:</strong></p>
+        <p>
+          <strong>
+            Un administrador ha solicitado la siguiente aclaración sobre tu solicitud:
+          </strong>
+        </p>
         <blockquote>{adminMessage}</blockquote>
       </div>
-      
+
       <form onSubmit={handleSubmit} className="form-layout">
         <div className="form-group">
           <label htmlFor="userReply">Tu Respuesta:</label>
-          <textarea 
-            id="userReply" 
-            name="userReply" 
+          <textarea
+            id="userReply"
+            name="userReply"
             rows={6}
             value={userReply}
             onChange={(e) => setUserReply(e.target.value)}
-            required 
+            required
           />
         </div>
 
         <div className="form-actions">
-            <Link to="/" className="button-secondary icon-button" style={{textDecoration: 'none'}}>Cancelar</Link>
-            <button type="submit" className="button-primary" disabled={isSubmitting}>{isSubmitting ? 'Enviando...' : 'Enviar Respuesta'}</button>
+          <Link to="/" className="button-secondary icon-button" style={{ textDecoration: 'none' }}>
+            Cancelar
+          </Link>
+          <button type="submit" className="button-primary" disabled={isSubmitting}>
+            {isSubmitting ? 'Enviando...' : 'Enviar Respuesta'}
+          </button>
         </div>
       </form>
     </div>

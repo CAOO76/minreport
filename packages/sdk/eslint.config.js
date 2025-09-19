@@ -1,8 +1,8 @@
-const baseConfig = require('../../eslint.config.base.js');
+import baseConfig from "../../eslint.config.js";
 
-module.exports = [
+export default [
   ...baseConfig,
   {
-    ignores: ['lib/*']
-  }
+    ignores: ['lib/*'],
+  },
 ];

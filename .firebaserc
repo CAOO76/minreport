@@ -23,6 +23,9 @@
         ],
         "x-minreport": [
           "x-minreport"
+        ],
+        "minreport-sdk": [
+          "minreport-8f2a8"
         ]
       }
     }

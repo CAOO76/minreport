@@ -27,6 +27,9 @@ const Developers: React.FC = () => {
       <header className="developers-header">
         <h1>Gestión de Desarrolladores</h1>
         <button onClick={() => setShowAddModal(true)} className="add-developer-btn">Añadir Desarrollador</button>
+        <a href="/sdk/minreport-sdk.js" className="download-sdk-btn" style={{ marginLeft: '10px' }} download>
+          Descargar SDK
+        </a>
       </header>
 
       <div className="developers-list">

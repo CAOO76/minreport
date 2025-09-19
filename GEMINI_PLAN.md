@@ -293,6 +293,7 @@ Se establece un nuevo flujo de activación que elimina el concepto de "cuenta pr
     *   El `request-registration-service` **no crea un usuario**.
     *   Genera un **token criptográficamente seguro** y de un solo uso.
     *   Almacena el *hash* de este token en el documento de la solicitud junto con una fecha de expiración de 24 horas.
+    *   Actualiza el estado de la solicitud a `pending_additional_data`.
     *   Envía un email al solicitante con un enlace público a la `client-app` que contiene el token en la URL (ej: `https://minreport-access.web.app/complete-data?token=...`).
 
 3.  **Completar Datos por el Usuario (Sin Sesión):**
@@ -420,81 +421,6 @@ Realizaré los cambios en el frontend en pequeños pasos, asegurando que la apli
 
 **Estado:** Completado y consolidado en commit `064b04f`.
 
-## 14. Gestión de Plugins a Nivel de Cuenta (17/09/2025)
-
-Para ofrecer flexibilidad y control granular sobre las funcionalidades de MINREPORT, se implementará un sistema de gestión de plugins a nivel de cuenta. Esto permitirá a los administradores activar o desactivar plugins específicos para cada cuenta de cliente, y los clientes solo verán y podrán utilizar los plugins que estén habilitados para ellos.
-
-### Principios Fundamentales
-
-*   **Control Centralizado:** La activación/desactivación de plugins se gestionará exclusivamente desde la UI de administración.
-*   **Visibilidad Condicional:** Los plugins solo serán visibles en la UI del cliente si están explícitamente activados para su cuenta.
-*   **Seguridad:** La lógica de acceso a los plugins en la UI del cliente verificará el estado de activación antes de permitir la carga o interacción.
-
-### Implementación
-
-1.  **Base de Datos (Firestore):**
-    *   La colección `accounts` (`accounts/{accountId}`) incluirá un nuevo campo `activePlugins: string[]` (o similar) que contendrá una lista de los IDs de los plugins activos para esa cuenta.
-
-2.  **UI de Administración (`admin-app`):**
-    *   **Navegación:** Se añadirá un nuevo elemento en la barra lateral de navegación (`Sidebar.tsx`) con un icono representativo para acceder a la sección de "Gestión de Plugins".
-    *   **Página de Gestión de Plugins:** Se creará una nueva página (`PluginsManagement.tsx`) donde los administradores podrán:
-        *   Ver una lista de todos los plugins disponibles en el sistema.
-        *   Acceder a la configuración de plugins para cuentas individuales.
-    *   **Gestión por Cuenta:** En la sección de "Cuentas Activas" (`Accounts.tsx`), se integrará una interfaz (ej. un modal o una sección expandible) que permitirá a los administradores:
-        *   Seleccionar y deseleccionar plugins para una cuenta específica.
-        *   Requerir una **confirmación por texto** (ej. "Escriba 'CONFIRMAR' para guardar los cambios") antes de aplicar las modificaciones.
-        *   Actualizar el campo `activePlugins` en el documento de la cuenta en Firestore.
-
-3.  **UI del Cliente (`client-app`):**
-    *   **Visibilidad del Menú:** El componente `Sidebar.tsx` del cliente consultará el campo `activePlugins` de la cuenta del usuario actual (obtenido a través del `useAuth` o un mecanismo similar) para renderizar condicionalmente los enlaces a los plugins.
-    *   **Acceso a Plugins:** El componente `PluginViewer.tsx` (o la lógica de enrutamiento de plugins) verificará el estado de activación del plugin solicitado para el usuario. Si el plugin no está activo, se mostrará un mensaje de acceso denegado o se redirigirá al usuario.
-
-Esta actualización asegura que la gestión de plugins sea robusta y controlada, alineándose con los principios de seguridad y flexibilidad de MINREPORT.
-
-**Objetivo:** Modificar el ciclo de suscripción para diferenciar los datos requeridos por tipo de persona, simplificar la entrada de direcciones mediante la API de Google Maps y mantener intacta la operatividad del flujo de activación v4.
-
-### Plan de Trabajo Revisado y Cauteloso
-
-**Fase 1: Análisis de Código (Paso de solo lectura)**
-
-Antes de escribir o modificar una sola línea de código, realizaré un análisis exhaustivo para entender exactamente cómo funcionan los subtipos "B2B" y "EDUCACIONAL" y dónde se gestionan los datos de dirección actuales.
-
-1.  **Acción:** Usar la herramienta de búsqueda para localizar las apariciones de `B2B`, `EDUCACIONAL`, y campos de dirección (`direccion`, `calle`, `ciudad`, `pais`, etc.) en todo el proyecto, especialmente dentro de `sites/client-app` y `services/request-registration-service`.
-2.  **Objetivo:** Crear un mapa preciso de los componentes, estados y lógica de negocio involucrados en el formulario de suscripción actual. Esto permitirá identificar el lugar exacto para cada cambio sin afectar el flujo de notificaciones, creación de claves, etc.
-
-**Fase 2: Implementación Frontend Incremental (`sites/client-app`)**
-
-Realizaré los cambios en el frontend en pequeños pasos, asegurando que la aplicación siga siendo funcional después de cada uno.
-
-1.  **Paso 2.1: Añadir Campos de País y Ciudad.**
-    *   **Acción:** Modificar el formulario de solicitud para añadir los campos `select` de "País" y "Ciudad" para todos los tipos de persona. Implementar la lógica de dependencia entre ellos.
-    *   **Verificación:** Después de este cambio, el formulario deberá ser 100% funcional, simplemente ignorando los nuevos campos en el envío de datos hasta que el backend esté listo.
-
-2.  **Paso 2.2: Introducir Dirección Comercial con Google Maps (Condicionalmente).**
-    *   **Acción:**
-        *   Instalar `@react-google-maps/api` y configurar el acceso a la API Key mediante variables de entorno.
-        *   Identificar la condición que ya existe para diferenciar "Persona Jurídica" (y sus subtipos B2B/EDUCACIONAL).
-        *   Usando esa condición, mostrar el nuevo campo "Dirección Comercial" utilizando el componente de autocompletado de Google Maps.
-        *   Los campos de dirección antiguos (`calle`, `número`, etc.) serán **ocultados visualmente** (no eliminados del código) cuando aparezca el nuevo campo de Google Maps, para simplificar la UI sin romper nada.
-    *   **Verificación:** La aplicación seguirá funcionando. El nuevo campo solo aparecerá para personas jurídicas y los datos del formulario se seguirán enviando como antes.
-
-**Fase 3: Adaptación del Backend y Contrato de Datos**
-
-1.  **Acción:**
-    *   Actualizar `DATA_CONTRACT.md` para incluir los nuevos campos.
-    *   Modificar `request-registration-service` para que sea capaz de recibir `pais`, `ciudad` y la `direccionComercial` (proveniente de Google Maps).
-    *   La lógica del servicio se adaptará para manejar los datos de la new dirección y asociarlos correctamente a la cuenta.
-    *   **Verificación:** Probar el flujo completo de suscripción para una persona natural y una jurídica, asegurando que los datos llegan correctamente y el resto del proceso (notificaciones, etc.) no se ve afectado.
-
-**Fase 4: Limpieza de Código (Solo tras confirmación)**
-
-1.  **Acción:** Una vez que se confirme que todo el nuevo flujo funciona a la perfección durante un tiempo prudencial, procederé a eliminar del código los antiguos campos de dirección que fueron ocultados en el paso 2.2.
-2.  **Objetivo:** Dejar el código limpio y eliminar la deuda técnica, pero solo cuando sea 100% seguro hacerlo.
-
-### Estado (16/09/2025)
-
-**Estado:** Completado y consolidado en commit `064b04f`.
-
 ## 15. Plan de Evolución: Arquitectura de Plugins a SDK (18/09/2025)
 
 **Objetivo:** Formalizar la arquitectura de comunicación de plugins en un SDK distribuible (`@minreport/sdk`) para mejorar la experiencia de desarrollo de terceros, la seguridad y la mantenibilidad.
@@ -546,15 +472,15 @@ Realizaré los cambios en el frontend en pequeños pasos, asegurando que la apli
 ### Fase 1: Eliminación de Lógica Obsoleta y Peligrosa (Backend)
 
 -   **1.1.** Localizar la Cloud Function `togglePluginStatus` en el directorio `services/functions/src`.
--   **1.2.** Eliminar el archivo o el código correspondiente a la función `togglePluginStatus` para erradicar la causa del borrado de datos. ✅
--   **1.3.** Actualizar el `index.ts` de las funciones para remover la exportación de `togglePluginStatus`. ✅
+-   **1.2.** Eliminar el archivo o el código correspondiente a la función `togglePluginStatus` para erradicar la causa del borrado de datos.
+-   **1.3.** Actualizar el `index.ts` de las funciones para remover la exportación de `togglePluginStatus`.
 
 ### Fase 2: Refactorización del Componente de Gestión (Frontend)
 
--   **2.1.** Modificar `ManageClientPlugins.tsx` para que obtenga la lista de plugins disponibles desde la colección `plugins` de Firestore, en lugar de la lista estática `availablePlugins`. ✅
--   **2.2.** Reemplazar la llamada a la Cloud Function `togglePluginStatus` con una llamada directa y segura a Firestore desde el propio componente. ✅
--   **2.3.** Implementar la lógica de guardado usando `updateDoc` para modificar únicamente el campo `activePlugins` en el documento de la cuenta. ✅
--   **2.4. [Verificación]** Probar el flujo completo en el `admin-app`: la lista de plugins debe aparecer dinámicamente, y al activar/desactivar un plugin, solo el campo correspondiente en el documento de la cuenta debe cambiar, sin pérdida de datos. ✅
+-   **2.1.** Modificar `ManageClientPlugins.tsx` para que obtenga la lista de plugins disponibles desde la colección `plugins` de Firestore, en lugar de la lista estática `availablePlugins`.
+-   **2.2.** Reemplazar la llamada a la Cloud Function `togglePluginStatus` con una llamada directa y segura a Firestore desde el propio componente.
+-   **2.3.** Implementar la lógica de guardado usando `updateDoc` para modificar únicamente el campo `activePlugins` en el documento de la cuenta. Esto garantiza que no se sobrescriban otros campos.
+-   **2.4. [Verificación]** Probar el flujo completo en el `admin-app`: la lista de plugins debe aparecer dinámicamente, y al activar/desactivar un plugin, solo el campo correspondiente en el documento de la cuenta debe cambiar, sin pérdida de datos.
 
 ## 17. Plan de Implementación: Portal de Desarrolladores de Plugins (v1) (18/09/2025)
 
@@ -567,7 +493,7 @@ Realizaré los cambios en el frontend en pequeños pasos, asegurando que la apli
         -   **Campos:** `developerName`, `developerEmail`, `companyName`, `status` (ej: `pending_invitation`, `invited`, `active`, `revoked`), `invitationToken` (hash y expiración), `createdAt`.
     -   Definir una subcolección `development_logs` dentro de cada documento de desarrollador para registrar un historial inmutable de eventos.
         -   **Campos del log:** `timestamp`, `event` (ej: `developer_registered`, `invitation_sent`, `portal_accessed`), `details`.
-    -   Añadir un campo opcional `developerId` a la definición de la colección `plugins` existente para vincular un plugin a su creador. ✅
+    -   Añadir un campo opcional `developerId` a la definición de la colección `plugins` existente para vincular un plugin a su creador.
 
 -   **1.2. [Backend] Crear Cloud Function `managePluginDeveloper`:**
     -   Crear una nueva **Cloud Function de tipo `onCall`** que centralice las operaciones de gestión.
@@ -578,27 +504,31 @@ Realizaré los cambios en el frontend en pequeños pasos, asegurando que la apli
         3.  Almacenará el *hash* de dicho token en el documento del desarrollador.
         4.  Enviará un email (vía Resend) al `developerEmail` con un enlace único al futuro portal de desarrollador (ej: `.../developer-portal?token=...`).
         5.  Registrará el evento `invitation_sent`.
-    -   **Acción `validateDeveloperToken`:** Recibirá un token, buscará su hash en la colección, verificará que no haya expirado y, si es válido, lo marcará como utilizado y registrará el evento `portal_accessed`. ✅
+    -   **Acción `validateDeveloperToken`:** Recibirá un token, buscará su hash en la colección, verificará que no haya expirado y, si es válido, lo marcará como utilizado y registrará el evento `portal_accessed`.
 
 ### Fase 2: Interfaz de Administración (`admin-app`)
+
+**Meta:** Proveer a los administradores de MINREPORT una UI para gestionar el ciclo de vida de los desarrolladores de plugins.
 
 -   **2.1. [UI] Crear Página de Gestión `Developers.tsx`:**
     -   Crear el componente de página `sites/admin-app/src/pages/Developers.tsx`.
     -   Esta página mostrará una tabla o lista de todos los desarrolladores registrados, obteniendo los datos de la colección `plugin_developers`.
-    -   Incluirá un formulario (en un modal) para registrar un nuevo desarrollador, que llamará a la acción `registerDeveloper` del backend. ✅
+    -   Incluirá un formulario (en un modal) para registrar un nuevo desarrollador, que llamará a la acción `registerDeveloper` del backend.
 
 -   **2.2. [UI] Implementar Acciones y Navegación:**
     -   En la lista de desarrolladores, añadir un botón "Enviar Invitación" para cada uno que esté en estado `pending_invitation`. Este botón llamará a la acción `sendDeveloperInvitation`.
     -   Añadir una nueva ruta `/developers` en el `App.tsx` del `admin-app`.
-    -   Añadir un nuevo enlace en el menú `Sidebar.tsx` con el texto "Desarrolladores" y un icono apropiado (ej: `code` o `integration_instructions`). ✅
+    -   Añadir un nuevo enlace en el menú `Sidebar.tsx` con el texto "Desarrolladores" y un icono apropiado (ej: `code` o `integration_instructions`).
 
 -   **2.3. [Verificación]** Probar el flujo completo desde la UI del administrador: registrar un nuevo desarrollador, verlo en la lista, enviarle una invitación y verificar en Firestore que el estado y el log de eventos se actualizan correctamente.
 
 ### Fase 3: Portal Básico para Desarrolladores (`client-app`)
 
+**Meta:** Crear un punto de entrada seguro y controlado para que el desarrollador invitado acceda a los recursos del SDK.
+
 -   **3.1. [UI] Crear Página Segura `DeveloperPortal.tsx`:**
     -   Crear el componente de página `sites/client-app/src/pages/DeveloperPortal.tsx`.
-    -   Esta página será accesible a través de una ruta pública que no requiere login: `/developer-portal`. ✅
+    -   Esta página será accesible a través de una ruta pública que no requiere login: `/developer-portal`.
 
 -   **3.2. [Lógica] Implementar Verificación de Token:**
     -   Al cargar, la página leerá el `token` de los parámetros de la URL.
@@ -609,6 +539,6 @@ Realizaré los cambios en el frontend en pequeños pasos, asegurando que la apli
     -   Si el token es válido, la página mostrará:
         *   Un mensaje de bienvenida personalizado.
         *   Una sección de "Primeros Pasos" con una breve explicación.
-        *   Un botón destacado: **"Descargar Paquete SDK (`@minreport/sdk`)"**. Por ahora, este botón puede apuntar a una URL temporal o simplemente registrar un evento. ✅
+        *   Un botón destacado: **"Descargar Paquete SDK (`@minreport/sdk`)"**. Por ahora, este botón puede apuntar a una URL temporal o simplemente registrar un evento.
 
 -   **3.4. [Verificación]** Probar el flujo completo del desarrollador: recibir el email, hacer clic en el enlace, aterrizar en el portal, y que el sistema muestre el contenido correcto y registre el acceso en el log de eventos.

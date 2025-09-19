@@ -29,7 +29,7 @@ const Login = () => {
     <div className="form-container">
       <h2>Iniciar Sesión</h2>
       <p>Bienvenido de nuevo. Ingresa tus credenciales para acceder a tu cuenta.</p>
-      
+
       <form onSubmit={handleSubmit} className="form-layout" autoComplete="off">
         {error && <p className="error-message">{error}</p>}
         <div className="form-group">
@@ -71,7 +71,9 @@ const Login = () => {
         </div>
 
         <div style={{ textAlign: 'right', marginTop: '-1rem' }}>
-          <a href="#" style={{ fontSize: '0.9rem', color: 'var(--color-primary)' }}>¿Olvidaste tu contraseña?</a>
+          <a href="#" style={{ fontSize: '0.9rem', color: 'var(--color-primary)' }}>
+            ¿Olvidaste tu contraseña?
+          </a>
         </div>
 
         <button type="submit" className="button-primary" disabled={loading}>

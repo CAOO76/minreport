@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { auth } from '../firebaseConfig'; // Assuming you have this export
@@ -45,9 +44,9 @@ const CreatePassword = () => {
       return;
     }
     if (newPassword.length < 6) {
-        setMessage('La contraseña debe tener al menos 6 caracteres.');
-        setIsError(true);
-        return;
+      setMessage('La contraseña debe tener al menos 6 caracteres.');
+      setIsError(true);
+      return;
     }
     if (!oobCode) return;
 
@@ -60,7 +59,9 @@ const CreatePassword = () => {
       setMessage('¡Tu contraseña ha sido creada con éxito!');
       setIsSuccess(true);
     } catch (error) {
-      setMessage('Ocurrió un error al crear la contraseña. Por favor, intenta solicitar un nuevo enlace.');
+      setMessage(
+        'Ocurrió un error al crear la contraseña. Por favor, intenta solicitar un nuevo enlace.',
+      );
       setIsError(true);
     } finally {
       setIsSubmitting(false);
@@ -68,24 +69,36 @@ const CreatePassword = () => {
   };
 
   if (isVerifying) {
-    return <div className="form-container"><p>Verificando enlace...</p></div>;
+    return (
+      <div className="form-container">
+        <p>Verificando enlace...</p>
+      </div>
+    );
   }
 
   if (isError && !isSuccess) {
-    return <div className="form-container"><p className="error-message">{message}</p></div>;
+    return (
+      <div className="form-container">
+        <p className="error-message">{message}</p>
+      </div>
+    );
   }
 
   if (isSuccess) {
     return (
-        <div className="success-container">
-            <span className="material-symbols-outlined success-icon">check_circle</span>
-            <h2>¡Contraseña Creada!</h2>
-            <p className="success-subtitle">{message}</p>
-            <Link to="/login" className="button-primary icon-button" style={{ marginTop: '2rem', textDecoration: 'none' }}>
-                <span className="material-symbols-outlined">login</span>
-                Ir a Iniciar Sesión
-            </Link>
-        </div>
+      <div className="success-container">
+        <span className="material-symbols-outlined success-icon">check_circle</span>
+        <h2>¡Contraseña Creada!</h2>
+        <p className="success-subtitle">{message}</p>
+        <Link
+          to="/login"
+          className="button-primary icon-button"
+          style={{ marginTop: '2rem', textDecoration: 'none' }}
+        >
+          <span className="material-symbols-outlined">login</span>
+          Ir a Iniciar Sesión
+        </Link>
+      </div>
     );
   }
 

@@ -15,13 +15,16 @@ import Sidebar from './components/Sidebar'; // Importar Sidebar
 import Plugins from './pages/Plugins'; // Importar la nueva página de plugins
 import DeveloperPortal from './pages/DeveloperPortal';
 
-
 // Layout para usuarios no autenticados
 const PublicLayout = ({ children }: { children: React.ReactNode }) => (
   <div className="app-container-public">
     <header className="app-header">
       <nav className="main-nav">
-        <a href="http://localhost:5176" className="header-icon-button" title="Ir a la página principal">
+        <a
+          href="http://localhost:5176"
+          className="header-icon-button"
+          title="Ir a la página principal"
+        >
           <span className="material-symbols-outlined">home</span>
         </a>
         <Link to="/request-access">Solicitar Acceso</Link>
@@ -38,12 +41,20 @@ const PublicLayout = ({ children }: { children: React.ReactNode }) => (
 );
 
 // Layout para usuarios autenticados
-const PrivateLayout = ({ user, activePlugins, children }: { user: User, activePlugins: string[] | null, children: React.ReactNode }) => {
+const PrivateLayout = ({
+  user,
+  activePlugins,
+  children,
+}: {
+  user: User;
+  activePlugins: string[] | null;
+  children: React.ReactNode;
+}) => {
   const handleLogout = async () => {
     try {
       await signOut(auth);
     } catch (error) {
-      console.error("Error al cerrar sesión:", error);
+      console.error('Error al cerrar sesión:', error);
     }
   };
 
@@ -77,23 +88,33 @@ function App() {
   return (
     <BrowserRouter>
       {user ? (
-        <PrivateLayout user={user} activePlugins={activePlugins}> {/* Pasar activePlugins */}
+        <PrivateLayout user={user} activePlugins={activePlugins}>
+          {' '}
+          {/* Pasar activePlugins */}
           <Routes>
             <Route path="/" element={<h1>Dashboard (Privado)</h1>} />
             <Route path="/plugins" element={<Plugins />} />
-            <Route path="/plugins/:pluginId" element={<PluginViewer activePlugins={activePlugins} />} />
+            <Route
+              path="/plugins/:pluginId"
+              element={<PluginViewer activePlugins={activePlugins} />}
+            />
             {/* Redirigir rutas públicas a la raíz si el usuario está logueado */}
           </Routes>
         </PrivateLayout>
       ) : (
         <PublicLayout>
           <Routes>
-            <Route path="/" element={
-              <div style={{ textAlign: 'center', marginTop: '2rem' }}>
-                <h1>Portal de Clientes MINREPORT</h1>
-                <p>Por favor, inicia sesión para ver el estado de tu solicitud o crear una nueva.</p>
-              </div>
-            } />
+            <Route
+              path="/"
+              element={
+                <div style={{ textAlign: 'center', marginTop: '2rem' }}>
+                  <h1>Portal de Clientes MINREPORT</h1>
+                  <p>
+                    Por favor, inicia sesión para ver el estado de tu solicitud o crear una nueva.
+                  </p>
+                </div>
+              }
+            />
             <Route path="/request-access" element={<RequestAccess />} />
             <Route path="/complete-data" element={<CompleteDataForm />} />
             <Route path="/clarification-response" element={<ClarificationResponse />} />

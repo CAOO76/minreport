@@ -22,7 +22,7 @@ const Plugins: React.FC = () => {
       try {
         const pluginsCollectionRef = collection(db, 'plugins');
         const pluginsSnapshot = await getDocs(pluginsCollectionRef);
-        const pluginsList = pluginsSnapshot.docs.map(doc => ({
+        const pluginsList = pluginsSnapshot.docs.map((doc) => ({
           id: doc.id,
           name: doc.data().name,
           description: doc.data().description,
@@ -30,7 +30,7 @@ const Plugins: React.FC = () => {
         }));
         setAllPlugins(pluginsList);
       } catch (error) {
-        console.error("Error fetching all plugins metadata:", error);
+        console.error('Error fetching all plugins metadata:', error);
         // No seteamos un error en la UI, simplemente no se mostrarán plugins.
       } finally {
         // Una vez que se han cargado los plugins (o ha fallado), dejamos de cargar.
@@ -43,25 +43,31 @@ const Plugins: React.FC = () => {
 
   // Esperamos tanto a la autenticación como a la carga de la lista de plugins
   if (isLoading) {
-    return <div className="plugins-page-container"><h1>Mis Plugins</h1><p>Cargando...</p></div>;
+    return (
+      <div className="plugins-page-container">
+        <h1>Mis Plugins</h1>
+        <p>Cargando...</p>
+      </div>
+    );
   }
 
   if (!user) {
-    return <div className="plugins-page-container"><h1>Mis Plugins</h1><p>Error de autenticación.</p></div>;
+    return (
+      <div className="plugins-page-container">
+        <h1>Mis Plugins</h1>
+        <p>Error de autenticación.</p>
+      </div>
+    );
   }
 
   // Filtramos la lista de TODOS los plugins disponibles contra la lista de plugins ACTIVOS del usuario
-  const pluginsToDisplay = allPlugins.filter(plugin => 
-    (activePlugins || []).includes(plugin.id)
-  );
+  const pluginsToDisplay = allPlugins.filter((plugin) => (activePlugins || []).includes(plugin.id));
 
   return (
     <div className="plugins-page-container">
       <h1>Mis Plugins</h1>
       {pluginsToDisplay.length === 0 ? (
-        <p className="no-plugins-message">
-          Actualmente no tienes plugins activados o disponibles.
-        </p>
+        <p className="no-plugins-message">Actualmente no tienes plugins activados o disponibles.</p>
       ) : (
         <div className="plugins-grid">
           {pluginsToDisplay.map((plugin) => (

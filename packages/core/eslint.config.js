@@ -1,8 +1,8 @@
-import js from '@eslint/js';
-import tseslint from 'typescript-eslint';
+import baseConfig from "../../eslint.config.js";
 
-export default tseslint.config([
-  { ignores: ['lib/**'] },
-  js.configs.recommended,
-  tseslint.configs.recommended,
-]);
+export default [
+  ...baseConfig,
+  {
+    ignores: ['lib/**'],
+  },
+];
