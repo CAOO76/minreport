@@ -8,7 +8,6 @@
 
 /**
  * Representa un usuario de MINREPORT autenticado.
- * La información es una versión segura y serializable del objeto de usuario de Firebase.
  */
 export interface MinreportUser {
   uid: string;
@@ -19,20 +18,20 @@ export interface MinreportUser {
 
 /**
  * Representa los claims personalizados de un usuario en MINREPORT.
- * Determina los roles y permisos.
  */
 export interface MinreportClaims {
-  [key: string]: any; // Flexible para futuros claims
+  [key: string]: any;
   isAdmin?: boolean;
   isClient?: boolean;
 }
 
 /**
- * Contiene toda la información de la sesión del usuario.
+ * Contiene toda la información de la sesión del usuario, incluyendo el token de autenticación.
  */
 export interface MinreportSession {
   user: MinreportUser | null;
   claims: MinreportClaims | null;
+  token: string | null; // El Firebase ID Token del usuario
 }
 
 // --- Estado Interno del SDK ---
@@ -40,19 +39,33 @@ export interface MinreportSession {
 let session: MinreportSession = {
   user: null,
   claims: null,
+  token: null,
 };
 
 let isInitialized = false;
+
+// --- REGISTRO DE SERVICIOS ---
+// En un entorno real, esto podría venir de una configuración remota.
+const serviceRegistry = {
+  development: {
+    'transactions-service': 'http://localhost:8080',
+  },
+  production: {
+    // TODO: Añadir URLs de producción cuando estén disponibles
+    'transactions-service': 'https://transactions-service-url.on.run',
+  },
+};
+
+// Determina el entorno actual (simplificado)
+const env = window.location.hostname === 'localhost' ? 'development' : 'production';
+
 
 // --- API del SDK ---
 
 /**
  * Inicializa el SDK y establece la comunicación con el núcleo de MINREPORT.
- * Esta función DEBE ser llamada una sola vez al iniciar el plugin.
- * 
- * @param allowedOrigins Un array de strings con los orígenes permitidos para recibir mensajes.
- *                       Por seguridad, debe ser lo más restrictivo posible.
- * @returns Una promesa que se resuelve cuando el SDK ha recibido los datos de sesión.
+ * @param allowedOrigins Un array de orígenes permitidos para recibir mensajes.
+ * @returns Una promesa que se resuelve con los datos de sesión.
  */
 export const initialize = (allowedOrigins: string[]): Promise<MinreportSession> => {
   if (isInitialized) {
@@ -64,44 +77,37 @@ export const initialize = (allowedOrigins: string[]): Promise<MinreportSession> 
 
   return new Promise((resolve, reject) => {
     const handleMessage = (event: MessageEvent) => {
-      // Medida de Seguridad: Validar el origen del mensaje
       if (!allowedOrigins.includes(event.origin)) {
-        console.warn(`MINREPORT SDK: Mensaje bloqueado de origen no permitido: ${event.origin}`);
         return;
       }
 
-      // Medida de Seguridad: Validar la estructura del mensaje
       if (event.data && event.data.type === 'MINREPORT_SESSION_DATA') {
         const sessionData = event.data.data;
-        if (sessionData && sessionData.user) {
+        if (sessionData && sessionData.user && sessionData.token) {
           console.log('MINREPORT SDK: Datos de sesión recibidos y validados.');
           session = sessionData;
           resolve(session);
         } else {
-          console.error('MINREPORT SDK: Los datos de sesión recibidos no tienen el formato esperado.');
+          console.error('MINREPORT SDK: Los datos de sesión recibidos no incluyen el token o el usuario.');
           reject(new Error('Formato de datos de sesión inválido.'));
         }
-        // Una vez recibidos los datos, podemos remover el listener si no esperamos más mensajes de este tipo.
         window.removeEventListener('message', handleMessage);
       }
     };
 
     window.addEventListener('message', handleMessage);
 
-    // Timeout por si el núcleo nunca envía los datos
     setTimeout(() => {
       if (!session.user) {
         reject(new Error('MINREPORT SDK: Timeout esperando los datos de sesión del núcleo.'));
       }
-    }, 10000); // 10 segundos de espera
+    }, 10000);
   });
 };
 
 /**
  * Devuelve la información de la sesión del usuario.
- * Solo funciona después de que `initialize` se haya resuelto exitosamente.
- * 
- * @returns El objeto de sesión de MINREPORT, o null si no está inicializado.
+ * @returns El objeto de sesión de MINREPORT.
  */
 export const getSession = (): MinreportSession => {
   if (!isInitialized || !session.user) {
@@ -110,37 +116,59 @@ export const getSession = (): MinreportSession => {
   return session;
 };
 
+/**
+ * Realiza una llamada autenticada a un microservicio de MINREPORT.
+ * @param serviceName El nombre del servicio (ej. 'transactions-service').
+ * @param endpoint El endpoint a llamar (ej. '/projects/123/transactions').
+ * @param options Opciones de Fetch API (method, body, etc.).
+ * @returns Una promesa que se resuelve con la respuesta del servicio.
+ */
+export const callService = async (serviceName: keyof typeof serviceRegistry[typeof env], endpoint: string, options: RequestInit = {}): Promise<any> => {
+  if (!isInitialized || !session.token) {
+    throw new Error('MINREPORT SDK no está inicializado o no se ha recibido un token de sesión.');
+  }
+
+  const baseUrl = serviceRegistry[env][serviceName];
+  if (!baseUrl) {
+    throw new Error(`Servicio '${serviceName}' no encontrado en el registro para el entorno '${env}'.`);
+  }
+
+  const url = `${baseUrl}${endpoint}`;
+
+  const fetchOptions: RequestInit = {
+    ...options,
+    headers: {
+      ...options.headers,
+      'Authorization': `Bearer ${session.token}`,
+      'Content-Type': 'application/json',
+    },
+  };
+
+  const response = await fetch(url, fetchOptions);
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Error en la llamada al servicio ${serviceName}: ${response.status} ${response.statusText} - ${errorText}`);
+  }
+
+  return response.json();
+};
+
 
 // --- Funciones de Acción (Plugin -> Núcleo) ---
 
-/**
- * Envía un mensaje al núcleo de MINREPORT para solicitar una acción.
- * @param action El tipo de acción a solicitar.
- * @param data Los datos asociados a la acción.
- */
 const requestAction = (action: string, data: any) => {
   if (!isInitialized) {
     console.error('MINREPORT SDK: Debe inicializar el SDK antes de solicitar una acción.');
     return;
   }
-  // El origen del núcleo se infiere del primer mensaje recibido, pero por ahora usamos '*'.
-  // TODO: Almacenar el origen del núcleo de forma segura para usarlo aquí.
   window.parent.postMessage({ type: 'MINREPORT_ACTION', payload: { action, data } }, '*');
 };
 
-/**
- * Solicita al núcleo de MINREPORT que navegue a una nueva ruta interna.
- * @param path La ruta a la que navegar (ej. '/dashboard').
- */
 export const requestNavigation = (path: string) => {
   requestAction('navigate', { path });
 };
 
-/**
- * Solicita al núcleo de MINREPORT que muestre una notificación en la UI principal.
- * @param level El tipo de notificación.
- * @param message El mensaje a mostrar.
- */
 export const showNotification = (level: 'info' | 'success' | 'error', message: string) => {
   requestAction('showNotification', { level, message });
 };

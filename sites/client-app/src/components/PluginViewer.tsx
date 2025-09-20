@@ -55,25 +55,34 @@ const PluginViewer: React.FC<PluginViewerProps> = ({ activePlugins }) => {
     const iframe = iframeRef.current;
     if (!iframe || !pluginSrc || !user) return;
 
-    const handleLoad = () => {
+    const handleLoad = async () => {
       if (iframe.contentWindow) {
-        const serializableUser = user
-          ? {
-              uid: user.uid,
-              email: user.email,
-              displayName: user.displayName,
-              emailVerified: user.emailVerified,
-            }
-          : null;
+        try {
+          // Obtener el token de ID de Firebase
+          const token = await user.getIdToken();
 
-        const sessionData = {
-          user: serializableUser,
-          claims,
-        };
-        iframe.contentWindow.postMessage(
-          { type: 'MINREPORT_SESSION_DATA', data: sessionData },
-          new URL(pluginSrc).origin,
-        );
+          const serializableUser = {
+            uid: user.uid,
+            email: user.email,
+            displayName: user.displayName,
+            emailVerified: user.emailVerified,
+          };
+
+          const sessionData = {
+            user: serializableUser,
+            claims,
+            token, // <-- Token añadido al objeto de sesión
+          };
+
+          iframe.contentWindow.postMessage(
+            { type: 'MINREPORT_SESSION_DATA', data: sessionData },
+            new URL(pluginSrc).origin
+          );
+        } catch (error) {
+          console.error('Error al obtener el token de sesión para el plugin:', error);
+          // Opcional: enviar un mensaje de error al plugin
+          iframe.contentWindow.postMessage({ type: 'MINREPORT_SESSION_ERROR' }, new URL(pluginSrc).origin);
+        }
       }
     };
 
