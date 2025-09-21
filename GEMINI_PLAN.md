@@ -345,7 +345,6 @@ Se establecen los siguientes lineamientos para la captura y validación de datos
 ---
 
 
-
 ## 9. Manejo de RUT/RUN y Clasificación de Entidades (14/09/2025)
 
 Se establecen nuevas directrices para el manejo del identificador tributario chileno (RUT/RUN) y la clasificación de las entidades solicitantes.
@@ -446,12 +445,12 @@ Realizaré los cambios en el frontend en pequeños pasos, asegurando que la apli
 -   **1.1.** Crear una nueva carpeta de paquete en `packages/sdk`.
 -   **1.2.** Inicializar un `package.json` para `@minreport/sdk`, configurándolo para la compilación de una librería TypeScript.
 -   **1.3.** Implementar la función `initialize(allowedOrigins)`:
-    -   Esta función será lo primero que un plugin debe llamar.
-    -   Establecerá un `listener` de `message` para recibir datos del núcleo.
-    -   Validará que el `event.origin` esté en la lista `allowedOrigins` proporcionada.
-    -   Almacenará los datos de sesión (`user`, `claims`) en una variable interna segura.
+    *   Esta función será lo primero que un plugin debe llamar.
+    *   Establecerá un `listener` de `message` para recibir datos del núcleo.
+    *   Validará que el `event.origin` esté en la lista `allowedOrigins` proporcionada.
+    *   Almacenará los datos de sesión (`user`, `claims`) en una variable interna segura.
 -   **1.4.** Implementar la función `getSession()`:
-    -   Devolverá los datos de sesión almacenados, permitiendo al plugin acceder a la información del usuario de forma síncrona después de la inicialización.
+    *   Devolverá los datos de sesión almacenados, permitiendo al plugin acceder a la información del usuario de forma síncrona después de la inicialización.
 -   **1.5.** Definir y exportar todas las interfaces de TypeScript relevantes (ej. `MinreportUser`, `MinreportClaims`) para una experiencia de desarrollo tipada.
 -   **1.6. [Verificación]** Refactorizar `sites/test-plugin` para que importe y utilice el nuevo SDK `@minreport/sdk` en lugar de su lógica manual de `postMessage`.
 
@@ -462,8 +461,8 @@ Realizaré los cambios en el frontend en pequeños pasos, asegurando que la apli
 -   **2.1.** Actualizar `DATA_CONTRACT.md` para definir una nueva colección `plugins` en Firestore. Cada documento contendrá `pluginId`, `name`, `description`, `url` y `version`.
 -   **2.2.** Crear una nueva página en `admin-app` para la gestión (CRUD) de los documentos en esta nueva colección `plugins`.
 -   **2.3. [Verificación]** Refactorizar el componente `PluginViewer.tsx` en `client-app`:
-    -   Eliminar el objeto `PLUGIN_URLS` hardcodeado.
-    -   Al montarse, deberá obtener la `url` del plugin desde la colección `plugins` en Firestore usando el `pluginId` de los parámetros de la ruta.
+    *   Eliminar el objeto `PLUGIN_URLS` hardcodeado.
+    *   Al montarse, deberá obtener la `url` del plugin desde la colección `plugins` en Firestore usando el `pluginId` de los parámetros de la ruta.
 
 ### Fase 3: Habilitación de Comunicación Bidireccional (Plugin -> Núcleo)
 
@@ -474,9 +473,9 @@ Realizaré los cambios en el frontend en pequeños pasos, asegurando que la apli
     -   `requestNavigation(path: string)`: Enviará una acción `{ action: 'navigate', data: { path } }`.
     -   `showNotification(level: 'info' | 'success' | 'error', message: string)`: Enviará una acción `{ action: 'showNotification', data: { level, message } }`.
 -   **3.3.** Actualizar el `listener` de eventos en `PluginViewer.tsx` para que:
-    -   Escuche los mensajes de tipo `MINREPORT_ACTION`.
-    -   Valide rigurosamente el origen y la estructura del mensaje.
-    -   Utilice un `switch` en `payload.action` para ejecutar **únicamente un conjunto predefinido y seguro de acciones** (ej. usar `react-router` para navegar, o un sistema de notificaciones para mostrar un mensaje).
+    *   Escuche los mensajes de tipo `MINREPORT_ACTION`.
+    *   Valide rigurosamente el origen y la estructura del mensaje.
+    *   Utilice un `switch` en `payload.action` para ejecutar **únicamente un conjunto predefinido y seguro de acciones** (ej. usar `react-router` para navegar, o un sistema de notificaciones para mostrar un mensaje).
 -   **3.4. [Verificación]** Añadir botones en `sites/test-plugin` que utilicen las nuevas funciones del SDK (`requestNavigation`, `showNotification`) para demostrar y probar la comunicación bidireccional.
 
 ## 16. Plan de Estabilización: Refactorización de Gestión de Plugins (18/09/2025)
@@ -550,7 +549,7 @@ Realizaré los cambios en el frontend en pequeños pasos, asegurando que la apli
     -   Si el token no es válido o ya fue usado, mostrará un mensaje de "Acceso Denegado" o "Enlace Expirado".
 
 -   **3.3. [Contenido] Mostrar Recursos del SDK:**
-    -   Si el token es válido, la página mostrará:
+    *   Si el token es válido, la página mostrará:
         *   Un mensaje de bienvenida personalizado.
         *   Una sección de "Primeros Pasos" con una breve explicación.
         *   Un botón destacado: **"Descargar Paquete SDK (`@minreport/sdk`)"**. Por ahora, este botón puede apuntar a una URL temporal o simplemente registrar un evento.
@@ -581,7 +580,7 @@ Para que la persistencia funcione correctamente, los scripts en el `package.json
   "scripts": {
     "emulators:start": "firebase emulators:start --import=./firebase-emulators-data --export-on-exit",
     "dev": "concurrently --kill-others --kill-signal SIGINT --raw \"pnpm:emulators:start\" \"pnpm:dev:services\" \"pnpm:dev:client\" ...",
-    "db:seed": "cross-env FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' ts-node services/functions/src/seed-emulators.ts"
+    "db:seed": "cross-env FIREBASE_AUTH_EMULATOR_HOST=\'127.0.0.1:9190\' ts-node services/functions/src/seed-emulators.ts"
   }
 }
 ```
@@ -610,3 +609,12 @@ Este es el procedimiento para resetear la base de datos del emulador a un estado
 5.  **Guardar Estado Inicial:** Una vez que la siembra termine, vuelve a la **primera terminal** y presiona `Ctrl+C`. Los emuladores se cerrarán y guardarán este nuevo estado inicial en la carpeta `firebase-emulators-data`.
 
 A partir de este punto, se puede usar `pnpm dev` para el trabajo diario con la certeza de que los datos persistirán.
+## 19. Estabilización de CI y Entorno de Test (21/09/2025)
+
+Se resuelven una serie de errores que impedían la correcta ejecución del pipeline de CI y los tests locales.
+
+- **Corrección de Dependencia:** Se corrige una dependencia de workspace incorrecta en `test-plugin` (de `@minreport/sdk` a `@minreport/core`), solucionando un error `ERR_PNPM_WORKSPACE_PKG_NOT_FOUND` durante la instalación.
+- **Limpieza de Submódulo Obsoleto:** Se elimina por completo el registro del submódulo de git `minreport-plugin-sdk-template`, que estaba mal configurado y causaba un error fatal en el post-job de la CI.
+- **Habilitación de Tests de Navegador:** Se asegura la instalación de los navegadores de Playwright, requisito indispensable para la ejecución de los tests de `sites/client-app`, solucionando un error de `Executable doesn't exist`.
+
+Estos cambios restauran la integridad del pipeline de integración continua y la fiabilidad de la ejecución de tests en el entorno local.
