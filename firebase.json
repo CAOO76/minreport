@@ -10,15 +10,6 @@
   },
   "hosting": [
     {
-      "public": "public/sdk",
-      "ignore": [
-        "firebase.json",
-        "**/.*",
-        "**/node_modules/**"
-      ],
-      "target": "minreport-sdk"
-    },
-    {
       "target": "public-site",
       "public": "sites/public-site/dist",
       "ignore": [

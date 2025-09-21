@@ -11,6 +11,7 @@ import Accounts from './pages/Accounts';
 import PluginsManagement from './pages/PluginsManagement';
 import AccountDetails from './pages/AccountDetails'; // Importar el nuevo componente
 import Developers from './pages/Developers';
+import PluginSandbox from './pages/PluginSandbox'; // New import
 import './App.css';
 
 function App() {
@@ -57,6 +58,7 @@ function App() {
           <Route path="/accounts/:accountId" element={<AccountDetails />} /> {/* Nueva ruta para detalles de cuenta */}
           <Route path="/plugins" element={<PluginsManagement />} />
           <Route path="/developers" element={<Developers />} />
+          <Route path="/plugin-sandbox" element={<PluginSandbox />} /> {/* New route */}
           {/* Añadir una ruta para settings y una página 404 sería una buena práctica */}
         </Routes>
       </main>

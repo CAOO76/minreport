@@ -75,7 +75,7 @@ const PluginViewer: React.FC<PluginViewerProps> = ({ activePlugins }) => {
           };
 
           iframe.contentWindow.postMessage(
-            { type: 'MINREPORT_SESSION_DATA', data: sessionData },
+            { type: 'CONTEXT_UPDATE', payload: sessionData },
             new URL(pluginSrc).origin
           );
         } catch (error) {
@@ -133,7 +133,8 @@ const PluginViewer: React.FC<PluginViewerProps> = ({ activePlugins }) => {
     return <h2>Plugin no encontrado</h2>;
   }
 
-  if (!activePlugins || !activePlugins.includes(pluginId)) {
+  // Allow access if user is admin, regardless of activePlugins
+  if (!claims?.admin && (!activePlugins || !activePlugins.includes(pluginId))) {
     return (
       <div className="plugin-viewer-container">
         <h2>Acceso Denegado</h2>
