@@ -1,14 +1,4 @@
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "types": ["node"],  // SOLO tipos esenciales
-    "skipLibCheck": true  // IGNORA tipos faltantes de dependencias
-  },
-  "exclude": [
-    "node_modules",
-    "**/node_modules/*",
-    "dist",
-    "test",
-    "**/*.test.ts"
-  ]
+  "exclude": ["node_modules", "lib", "src/**/*.test.ts", "src/**/*.test.tsx"]
 }

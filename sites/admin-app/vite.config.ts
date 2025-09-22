@@ -12,6 +12,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@minreport/core': path.resolve(__dirname, '../../packages/core/src'),
+      'firebase/auth': path.resolve(__dirname, '../../__mocks__/firebase/auth.ts'), // Add this line
     },
   },
   optimizeDeps: {

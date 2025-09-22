@@ -1,66 +1,55 @@
 import React, { useState, useEffect } from 'react';
-import { initialize, getSession, MinreportUser, requestNavigation, showNotification } from '@minreport/sdk';
-import './App.css';
+import * as sdk from '@minreport/sdk';
+import './App.css'; // Asumiremos que este archivo existirá para el theming
 
-// Orígenes permitidos para la comunicación con el núcleo.
-const ALLOWED_CORE_ORIGINS = ['http://localhost:5175', 'http://127.0.0.1:5015'];
+// Orígenes permitidos para la comunicación con el núcleo de MINREPORT.
+// En un entorno real, esto vendría de una variable de entorno.
+const ALLOWED_CORE_ORIGINS = ['http://localhost:5175'];
 
 const App: React.FC = () => {
-  const [user, setUser] = useState<MinreportUser | null>(null);
+  const [session, setSession] = useState<sdk.MinreportSession | null>(null);
   const [status, setStatus] = useState('Initializing SDK...');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    console.log('Plugin cargado. Inicializando SDK de MINREPORT...');
-    
-    initialize(ALLOWED_CORE_ORIGINS)
-      .then(session => {
-        console.log('SDK inicializado exitosamente.', session);
-        if (session.user) {
-          setUser(session.user);
-          setStatus(`¡Plugin conectado! Hola, ${session.user.email}`);
-          setError(null);
-        } else {
-          setError('La sesión fue recibida pero no contiene un usuario.');
-          setStatus('Error de conexión');
-        }
+    console.log('[Plugin] Component mounted. Initializing SDK...');
+
+    sdk.init(ALLOWED_CORE_ORIGINS)
+      .then(sessionData => {
+        console.log('[Plugin] SDK initialized successfully!', sessionData);
+        setSession(sessionData);
+        setStatus(`Connected as ${sessionData.user.email}`);
+        setError(null);
       })
       .catch(err => {
-        console.error('Error al inicializar el SDK:', err);
+        console.error('[Plugin] SDK initialization failed:', err);
         setError(err.message);
-        setStatus('Error al conectar con el núcleo');
+        setStatus('SDK Connection Failed');
       });
+  }, []); // El array vacío asegura que esto se ejecute solo una vez.
 
-  }, []);
-
-  const handleNavigate = () => {
-    console.log('Solicitando navegación a /subscriptions');
-    requestNavigation('/subscriptions');
-  };
-
-  const handleNotify = () => {
-    console.log('Solicitando mostrar notificación');
-    showNotification('success', '¡El plugin ha enviado una notificación al núcleo!');
-  };
+  // TODO: Aquí irá el componente DataForm que crearemos en el siguiente paso.
 
   return (
     <div className="plugin-container">
       <header className="plugin-header">
-        <h1>🔌 Plugin de Prueba (usando SDK)</h1>
+        <h1>🔌 Plugin de Prueba (SDK v2)</h1>
       </header>
       <main className="plugin-content">
+        <h2>Estado de Conexión</h2>
         {error ? (
-          <p className="status-error">Error: {error}</p>
+          <p className="status-error">{status}: {error}</p>
         ) : (
-          <p className={user ? 'status-success' : 'status-waiting'}>
+          <p className={session ? 'status-success' : 'status-waiting'}>
             {status}
           </p>
         )}
-        {user && (
-          <div className="plugin-actions">
-            <p>Prueba la comunicación con el núcleo:</p>
-            <button onClick={handleNavigate}>Navegar a "Solicitudes"</button>
-            <button onClick={handleNotify}>Mostrar Notificación</button>
+        {session && (
+          <div>
+            <h3>Datos de Sesión Recibidos:</h3>
+            <pre><code>{JSON.stringify(session.user, null, 2)}</code></pre>
+            <hr />
+            <DataForm />
           </div>
         )}
       </main>

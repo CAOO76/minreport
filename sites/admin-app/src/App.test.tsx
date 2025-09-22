@@ -4,6 +4,11 @@ import App from './App';
 import useAuth from '@minreport/core/hooks/useAuth';
 import { ThemeProvider } from './contexts/ThemeContext'; // Importa tu ThemeProvider real
 
+// Simula firebase/auth para resolver el error de importación
+vi.mock('firebase/auth');
+vi.mock('firebase/firestore'); // Add this line
+vi.mock('firebase/functions'); // Add this line
+
 // Simula el hook useAuth
 vi.mock('@minreport/core/hooks/useAuth');
 

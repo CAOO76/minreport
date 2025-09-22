@@ -13,6 +13,7 @@ const dirname =
 export default defineConfig({
   server: {
     port: 5175,
+    strictPort: true, // Force Vite to use this port or fail
   },
   plugins: [react()],
   resolve: {

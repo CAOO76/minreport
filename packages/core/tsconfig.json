@@ -1,22 +1,11 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "noImplicitReturns": true,
-    "noUnusedLocals": true,
-    "outDir": "lib",
-    "sourceMap": true,
-    "strict": true,
-    "target": "es2017",
-    "declaration": true,
-    "baseUrl": ".",
-    "paths": {
-      "*": ["node_modules/*"],
-      "firebase-admin": ["node_modules/firebase-admin"]
-    }
+    "outDir": "./lib",
+    "jsx": "react-jsx",
+    "moduleResolution": "node", // Explicitly set here
+    "types": ["react", "vitest"]
   },
-  "compileOnSave": true,
-  "include": [
-    "src"
-  ]
+  "include": ["src"],
+  "exclude": ["node_modules", "lib"]
 }

@@ -4,12 +4,13 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port 5177",
+    "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
     "@minreport/core": "workspace:*",
+    "@minreport/sdk": "workspace:*",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },

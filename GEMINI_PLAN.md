@@ -155,7 +155,7 @@ El proceso de alta de una cuenta es un flujo de aprobación de varios pasos, dis
 7.  **Creación de la Cuenta:** Solo en este punto, un servicio de backend crea el usuario en Firebase Authentication, crea el documento en la colección `accounts` y actualiza la solicitud a `approved`.
 8.  **Trazabilidad:** Todas las acciones se registran en una colección `account_logs` para auditoría.
 
-## 4. Arquitectura de Plugins Aislada con <iframe> (17/09/2025)
+## 4. Arquitectura de Plugins Aislada con `<iframe>` (17/09/2025)
 
 **Decisión Estratégica:** Se abandona por completo el uso de Module Federation en favor de una arquitectura basada en `<iframe>`. 
 
@@ -544,9 +544,9 @@ Realizaré los cambios en el frontend en pequeños pasos, asegurando que la apli
     -   Esta página será accesible a través de una ruta pública que no requiere login: `/developer-portal`.
 
 -   **3.2. [Lógica] Implementar Verificación de Token:**
-    -   Al cargar, la página leerá el `token` de los parámetros de la URL.
-    -   Llamará a la acción `validateDeveloperToken` del backend para verificar su validez.
-    -   Si el token no es válido o ya fue usado, mostrará un mensaje de "Acceso Denegado" o "Enlace Expirado".
+    *   Al cargar, la página leerá el `token` de los parámetros de la URL.
+    *   Llamará a la acción `validateDeveloperToken` del backend para verificar su validez.
+    *   Si el token no es válido o ya fue usado, mostrará un mensaje de "Acceso Denegado" o "Enlace Expirado".
 
 -   **3.3. [Contenido] Mostrar Recursos del SDK:**
     *   Si el token es válido, la página mostrará:
@@ -579,8 +579,8 @@ Para que la persistencia funcione correctamente, los scripts en el `package.json
 {
   "scripts": {
     "emulators:start": "firebase emulators:start --import=./firebase-emulators-data --export-on-exit",
-    "dev": "concurrently --kill-others --kill-signal SIGINT --raw \"pnpm:emulators:start\" \"pnpm:dev:services\" \"pnpm:dev:client\" ...",
-    "db:seed": "cross-env FIREBASE_AUTH_EMULATOR_HOST=\'127.0.0.1:9190\' ts-node services/functions/src/seed-emulators.ts"
+    "dev": "concurrently --kill-others --kill-signal SIGINT --raw "pnpm:emulators:start" "pnpm:dev:services" "pnpm:dev:client" ...",
+    "db:seed": "cross-env FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' ts-node services/functions/src/seed-emulators.ts"
   }
 }
 ```
@@ -618,3 +618,134 @@ Se resuelven una serie de errores que impedían la correcta ejecución del pipel
 - **Habilitación de Tests de Navegador:** Se asegura la instalación de los navegadores de Playwright, requisito indispensable para la ejecución de los tests de `sites/client-app`, solucionando un error de `Executable doesn't exist`.
 
 Estos cambios restauran la integridad del pipeline de integración continua y la fiabilidad de la ejecución de tests en el entorno local.
+
+---
+
+### **Plan de Trabajo Detallado: Arquitectura de Plugins Híbridos MINREPORT**
+
+**Épica 1: El Núcleo - Módulo de Carga Segura y Comunicación**
+
+*   **Objetivo:** Crear un `PluginViewer` centralizado y seguro, y refactorizar la aplicación principal para usarlo.
+*   **Requerimientos:**
+    *   Debe usar un sistema de "tickets" para la carga inicial del `<iframe>`.
+    *   Debe inyectar el tema visual y el `idToken` de forma segura.
+    *   Debe actuar como proxy para las acciones que el plugin solicite al backend.
+
+*   **Tareas a Realizar:**
+    *   `[X]` **Crear el paquete `@minreport/core`:** Si no existe, inicializar la estructura de carpetas y `package.json` en `packages/core`.
+    *   `[X]` **Crear `PluginViewer.tsx` en `@minreport/core`:**
+        *   `[X]` Implementar la lógica que acepta un `pluginId`.
+        *   `[X]` Llamar a la nueva Cloud Function `generatePluginLoadToken` para obtener un "ticket" de carga.
+        *   `[X]` Renderizar un `<iframe>` cuyo `src` incluya el ticket como query param (`?ticket=...`).
+        *   `[X]` Añadir el atributo `sandbox="allow-scripts allow-same-origin allow-forms"` al `<iframe>`.
+    *   `[X]` **Implementar el canal de comunicación en `PluginViewer.tsx`:**
+        *   `[X]` En el evento `onLoad` del iframe, enviar un `postMessage` de tipo `MINREPORT_INIT` al plugin, conteniendo el `idToken` del usuario y un objeto `theme` con las variables de diseño.
+        *   `[X]` Crear un listener de `message` que escuche por eventos de tipo `MINREPORT_ACTION` provenientes del plugin.
+        *   `[X]` Validar siempre que `event.origin` coincida con el origen de la URL del plugin.
+        *   `[X]` Implementar un `switch` para las acciones (`saveData`, `getData`). Dentro de cada `case`, llamar a la Cloud Function correspondiente (ej. `savePluginData`) y pasarle el payload.
+        *   `[X]` Al recibir la respuesta de la Cloud Function, enviarla de vuelta al plugin con un `postMessage` de tipo `MINREPORT_RESPONSE`, incluyendo el `correlationId` original.
+    *   `[X]` **Refactorizar `sites/client-app`:**
+        *   `[X]` Eliminar el archivo local `sites/client-app/src/components/PluginViewer.tsx`.
+        *   `[X]` Actualizar `sites/client-app/src/App.tsx` para importar y usar el nuevo `PluginViewer` desde `@minreport/core`.
+
+**Épica 2: El Backend - Servicios de Seguridad y API de Plugins**
+
+*   **Objetivo:** Construir los endpoints necesarios para el ciclo de vida seguro del plugin.
+*   **Requerimientos:**
+    *   Todas las funciones deben desplegarse en `southamerica-west1`.
+    *   Deben usar el modelo de Callable Functions para validación automática de `idToken`.
+
+*   **Tareas a Realizar:**
+    *   `[X]` **Crear el "Bouncer" (`generatePluginLoadToken`):**
+        *   `[X]` Crear el archivo `services/functions/src/tokens.ts`.
+        *   `[X]` Implementar una **Callable Function** `generatePluginLoadToken({ pluginId })`.
+        *   `[X]` La función debe generar un JWT de un solo uso con expiración corta (60s) que contenga el `uid` y el `pluginId`.
+        *   `[X]` La función debe retornar el JWT (el "ticket") al cliente.
+    *   `[X]` **Crear la "Caja Fuerte" (Ejemplo `savePluginData`):**
+        *   `[X]` Crear el archivo `services/functions/src/pluginApi.ts`.
+        *   `[X]` Implementar una **Callable Function** `savePluginData({ pluginId, data })`.
+        *   `[X]` La función debe verificar que `context.auth` no sea nulo.
+        *   `[X]` La función debe verificar que `context.auth.token.activePlugins` sea un array que incluya el `pluginId` recibido. Si no, lanzar error `permission-denied`.
+        *   `[X]` Realizar la operación de escritura simulada en Firestore.
+        *   `[X]` Retornar un objeto de éxito.
+    *   `[X]` **Actualizar el punto de entrada del backend:**
+        *   `[X]` En `services/functions/src/index.ts`, importar y exportar las nuevas funciones `generatePluginLoadToken` y `savePluginData`.
+
+**Épica 3: El SDK - El Canal de Comunicación Oficial**
+
+*   **Objetivo:** Crear un paquete NPM que abstraiga toda la comunicación para los desarrolladores de plugins.
+*   **Requerimientos:**
+    *   Debe ser un cliente de `postMessage` puro.
+    *   Debe usar un sistema de promesas con IDs de correlación.
+
+*   **Tareas a Realizar:**
+    *   `[X]` **Crear el paquete `@minreport/sdk`:**
+        *   `[X]` Crear la estructura de carpetas y `package.json` en `packages/sdk`.
+    *   `[X]` **Implementar `sdk.init(callback)`:**
+        *   `[X]` Crear el archivo `packages/sdk/src/index.ts`.
+        *   `[X]` La función `init` debe crear un listener de `message` que espere el evento `MINREPORT_INIT` del Núcleo.
+        *   `[X]` Al recibirlo, debe guardar internamente el `idToken` y el `theme`.
+        *   `[X]` Debe aplicar dinámicamente el objeto `theme` como variables CSS en el `:root` del documento.
+        *   `[X]` Debe ejecutar el `callback` del usuario pasándole la sesión.
+    *   `[X]` **Implementar funciones de acción (ej. `sdk.saveData`):**
+        *   `[X]` La función debe generar un ID de correlación único (`correlationId`).
+        *   `[X]` Debe enviar un `postMessage` al `window.parent` con `{ type: 'MINREPORT_ACTION', payload: { action: 'saveData', data: ..., correlationId } }`.
+        *   `[X]` Debe retornar una `Promise` que se resolverá o rechazará cuando reciba un mensaje `MINREPORT_RESPONSE` con el mismo `correlationId`.
+
+**Épica 4: El Plugin - Adaptación al Nuevo Modelo**
+
+*   **Objetivo:** Refactorizar el plugin de prueba para que sea un ejemplo funcional de la nueva arquitectura.
+*   **Requerimientos:**
+    *   Debe usar exclusivamente el SDK para comunicarse.
+    *   Su UI debe ser 100% "themeable".
+
+*   **Tareas a Realizar:**
+    *   `[X]` **Refactorizar `sites/test-plugin/src/App.tsx`:**
+        *   `[X]` Eliminar todo el código actual del `useEffect`.
+        *   `[X]` Implementar la inicialización usando la nueva función `sdk.init()`.
+    *   `[X]` **Crear `DataForm.tsx` y `DataForm.css` en `test-plugin`:**
+        *   `[X]` `DataForm.tsx` debe renderizar un formulario y llamar a `sdk.saveData()` en el evento `onClick`.
+        *   `[X]` `DataForm.css` debe estilizar el formulario usando **exclusivamente** variables CSS (ej. `var(--theme-primary-color)`).
+    *   `[X]` **Añadir `manifest.json`:**
+        *   `[X]` Crear un archivo `sites/test-plugin/public/manifest.json` con información básica del plugin (nombre, id, etc.).
+
+**Épica 5: Alojamiento Seguro para Plugins Externos**
+
+*   **Objetivo:** Crear un ejemplo de servidor que proteja el código fuente de un plugin externo.
+*   **Requerimientos:**
+    *   Debe validar el "ticket" de carga antes de servir los archivos.
+
+*   **Tareas a Realizar:**
+    *   `[X]` **Crear un servidor Express.js de ejemplo:**
+        *   `[X]` Crear una nueva carpeta `examples/external-plugin-server`.
+        *   `[X]` Implementar un middleware que intercepte todas las peticiones.
+        *   `[X]` El middleware debe extraer el `ticket` de la URL.
+        *   `[X]` Debe simular una llamada a un endpoint de MINREPORT para validar el ticket.
+        *   `[X]` Si el ticket es inválido, retorna `403 Forbidden`. Si es válido, llama a `next()`.
+        *   `[X]` Configurar el servidor para servir los archivos estáticos de una carpeta `build` después del middleware.
+
+---
+
+### **Épica 6: Actualización y Cobertura de Pruebas**
+
+*   **Objetivo:** Asegurar que la nueva arquitectura de plugins esté cubierta por pruebas automáticas robustas, validando cada componente de forma aislada y el flujo completo de extremo a extremo.
+
+*   **Tareas a Realizar:**
+    *   `[ ]` **Pruebas Unitarias para el SDK (`@minreport/sdk`):**
+        *   `[ ]` Crear mocks para `window.postMessage` y el DOM.
+        *   `[ ]` Escribir pruebas que verifiquen que la función `init` resuelve la promesa correctamente al recibir el mensaje `MINREPORT_INIT`.
+        *   `[ ]` Escribir pruebas que verifiquen que las funciones de acción (ej. `savePluginData`) envían el mensaje `MINREPORT_ACTION` con el formato y `correlationId` correctos.
+    *   `[ ]` **Pruebas de Integración para el Núcleo (`@minreport/core`):**
+        *   `[ ]` Escribir pruebas para el componente `PluginViewer` que simulen el renderizado dentro de un anfitrión de React.
+        *   `[ ]` Validar que, al montarse, llama correctamente a la función para obtener el ticket de carga.
+        *   `[ ]` Validar que envía el mensaje `MINREPORT_INIT` cuando el `iframe` emite el evento `load`.
+    *   `[ ]` **Pruebas Unitarias para el Backend (Cloud Functions):**
+        *   `[ ]` Configurar el entorno de pruebas de Firebase para emular las Cloud Functions.
+        *   `[ ]` Escribir pruebas para `generatePluginLoadToken` que validen que solo los usuarios autenticados y con los permisos correctos pueden generar un token.
+        *   `[ ]` Escribir pruebas para `savePluginData` que verifiquen la lógica de autorización basada en `custom claims`.
+    *   `[ ]` **Pruebas de Extremo a Extremo (E2E con Playwright):**
+        *   `[ ]` Modificar o crear un nuevo flujo de prueba en Playwright para `sites/client-app`.
+        *   `[ ]` El test debe simular el login de un usuario.
+        *   `[ ]` El test debe navegar a la URL de un plugin (ej. `/plugins/test-plugin`).
+        *   `[ ]` El test debe verificar que el `iframe` se carga correctamente.
+        *   `[ ]` El test debe verificar que un elemento dentro del `iframe` (del `test-plugin`) que depende del contexto del SDK (ej. el email del usuario) se renderiza correctamente.

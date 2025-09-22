@@ -60,5 +60,49 @@ async function seedSuperAdmin() {
   }
 }
 
-// Llama a la función para que se ejecute
+// --- CONFIGURACIÓN DE USUARIO DE PRUEBA ---
+const TEST_USER_EMAIL = 'test@example.com';
+const TEST_USER_PASSWORD = 'password123';
+const TEST_USER_ACTIVE_PLUGINS = ['test-plugin'];
+
+async function seedTestUser() {
+  console.log('\n🌱 Iniciando el proceso de siembra del usuario de prueba...');
+  try {
+    let userRecord = await admin.auth().getUserByEmail(TEST_USER_EMAIL).catch(() => null);
+
+    if (!userRecord) {
+      console.log(`El usuario ${TEST_USER_EMAIL} no existe. Creándolo...`);
+      userRecord = await admin.auth().createUser({
+        email: TEST_USER_EMAIL,
+        password: TEST_USER_PASSWORD,
+        emailVerified: true,
+        displayName: 'Test User',
+      });
+      console.log(`✔️ Usuario ${TEST_USER_EMAIL} creado con UID: ${userRecord.uid}`);
+    } else {
+      console.log(`El usuario ${TEST_USER_EMAIL} ya existe con UID: ${userRecord.uid}.`);
+    }
+
+    // Asignar custom claims (activePlugins)
+    if (userRecord.customClaims?.['activePlugins']?.length !== TEST_USER_ACTIVE_PLUGINS.length ||
+        !TEST_USER_ACTIVE_PLUGINS.every(p => userRecord.customClaims?.['activePlugins']?.includes(p))) {
+      console.log('Asignando custom claims (activePlugins)...');
+      await admin.auth().setCustomUserClaims(userRecord.uid, { activePlugins: TEST_USER_ACTIVE_PLUGINS });
+      console.log('✔️ Custom claims asignados.');
+    } else {
+      console.log('Los custom claims ya están asignados.');
+    }
+
+    console.log('✅ Proceso de siembra de usuario de prueba completado con éxito.');
+    console.log(`\n   Usuario: ${TEST_USER_EMAIL}`);
+    console.log(`   Contraseña: ${TEST_USER_PASSWORD}`);
+
+  } catch (error: any) {
+    console.error('❌ Error durante el proceso de siembra del usuario de prueba:', error.message);
+    process.exit(1);
+  }
+}
+
+// Llama a las funciones para que se ejecuten
 seedSuperAdmin();
+seedTestUser();

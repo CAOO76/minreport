@@ -1,0 +1,7 @@
+{
+  "id": "test-plugin",
+  "name": "Plugin de Prueba",
+  "version": "1.0.0",
+  "description": "Un plugin de ejemplo para demostrar la arquitectura de MINREPORT.",
+  "entrypoint": "index.html"
+}

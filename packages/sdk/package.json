@@ -1,5 +1,5 @@
 {
-  "name": "@minreport/core",
+  "name": "@minreport/sdk",
   "version": "0.1.0",
   "private": true,
   "main": "./lib/index.js",
@@ -12,10 +12,6 @@
   "devDependencies": {
     "typescript": "^5.0.0",
     "vitest": "^1.0.0",
-    "jsdom": "^24.0.0",
-    "@testing-library/react": "^16.0.0"
-  },
-  "peerDependencies": {
-    "react": "^18.2.0"
+    "jsdom": "^24.0.0"
   }
 }
