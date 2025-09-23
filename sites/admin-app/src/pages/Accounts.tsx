@@ -84,17 +84,17 @@ const Accounts = () => {
                   <td>
                     <button 
                       className="icon-button" 
-                      title="Ver Detalles de Cuenta" // Cambiar el título
-                      onClick={() => handleViewAccountDetails(acc.id)} // Navegar a detalles
+                      title="Ver Detalles de Cuenta" 
+                      onClick={() => handleViewAccountDetails(acc.id)} 
                     >
-                      <span className="material-symbols-outlined">info</span> {/* Cambiar el icono */}
+                      <span className="material-symbols-outlined">info</span>
                     </button>
                   </td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td colSpan={6}><>No hay cuentas en estado "{filter}".</></td> {/* Colspan ajustado */}
+                <td colSpan={6}><>No hay cuentas en estado "{filter}".</></td>
               </tr>
             )}
           </tbody>

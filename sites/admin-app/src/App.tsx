@@ -58,7 +58,7 @@ function App() {
           <Route path="/accounts/:accountId" element={<AccountDetails />} /> {/* Nueva ruta para detalles de cuenta */}
           <Route path="/plugins" element={<PluginsManagement />} />
           <Route path="/developers" element={<Developers />} />
-          <Route path="/plugin-sandbox" element={<PluginSandbox />} /> {/* New route */}
+          <Route path="/plugin-sandbox" element={<PluginSandbox />} />
           {/* Añadir una ruta para settings y una página 404 sería una buena práctica */}
         </Routes>
       </main>

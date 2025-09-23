@@ -508,7 +508,7 @@ Realizaré los cambios en el frontend en pequeños pasos, asegurando que la apli
         -   **Campos del log:** `timestamp`, `event` (ej: `developer_registered`, `invitation_sent`, `portal_accessed`), `details`.
     -   Añadir un campo opcional `developerId` a la definición de la colección `plugins` existente para vincular un plugin a su creador.
 
--   **1.2. [Backend] Crear Cloud Function `managePluginDeveloper`:**
+
     -   Crear una nueva **Cloud Function de tipo `onCall`** que centralice las operaciones de gestión.
     -   **Acción `registerDeveloper`:** Recibirá los datos del nuevo desarrollador, creará el documento correspondiente en la colección `plugin_developers` y registrará el evento `developer_registered` en su historial.
     -   **Acción `sendDeveloperInvitation`:**

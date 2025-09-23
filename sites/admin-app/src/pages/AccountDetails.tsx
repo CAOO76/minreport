@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../firebaseConfig';
 import { doc, getDoc } from 'firebase/firestore';
-import ManageClientPlugins from '../components/ManageClientPlugins'; // Importar el nuevo componente
 import './AccountDetails.css'; // Asegúrate de crear este archivo CSS
 
 // --- Type Definitions ---
@@ -83,9 +82,7 @@ const AccountDetails: React.FC = () => {
         {/* Aquí se pueden añadir otras secciones de gestión de la cuenta (métricas, etc.) */}
       </div>
 
-      <div className="account-details-sidebar"> {/* Columna lateral derecha */}
-        <ManageClientPlugins accountId={accountId!} /> {/* Usar el nuevo componente */}
-      </div>
+      {/* Columna lateral derecha */}
     </div>
   );
 };

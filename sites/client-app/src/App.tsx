@@ -21,13 +21,7 @@ const PublicLayout = ({ children }: { children: React.ReactNode }) => (
   <div className="app-container-public">
     <header className="app-header">
       <nav className="main-nav">
-        <a
-          href="http://localhost:5176"
-          className="header-icon-button"
-          title="Ir a la página principal"
-        >
-          <span className="material-symbols-outlined">home</span>
-        </a>
+          <a href="http://localhost:5179/">Home</a> {/* Corrected link to public-site */}
         <Link to="/request-access">Solicitar Acceso</Link>
       </nav>
       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
@@ -155,6 +149,9 @@ function App() {
       ) : (
         <PublicLayout>
           <Routes>
+            <Route path="/request-access" element={<RequestAccess />} /> {/* Add this line */}
+            <Route path="/complete-data" element={<CompleteDataForm />} /> {/* Add this line */}
+            <Route path="/actions/create-password" element={<CreatePassword />} /> {/* Add this line */}
             <Route path="/login" element={<Login />} />
             <Route path="*" element={<Navigate to="/login" replace />} />
           </Routes>

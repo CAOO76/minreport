@@ -19,9 +19,7 @@
     "gulp": "^5.0.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4",
-    "@firebase/testing": "^0.20.1",
-    "firebase-functions-test": "^0.3.3"
+    "vitest": "^3.2.4"
   },
   "scripts": {
     "test": "vitest run",

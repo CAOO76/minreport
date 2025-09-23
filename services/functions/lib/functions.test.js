@@ -1,5 +1,4 @@
-
-
+"use strict";
 /*
 describe('Cloud Functions', () => {
   let test: any;
@@ -92,4 +91,5 @@ describe('Cloud Functions', () => {
     });
   });
 });
-*/
+*/ 
+//# sourceMappingURL=functions.test.js.map

@@ -73,16 +73,7 @@
   "functions": {
     "source": "services/functions",
     "runtime": "nodejs20",
-    "headers": [
-      {
-        "source": "**",
-        "headers": [
-          { "key": "Access-Control-Allow-Origin", "value": "http://localhost:5174" },
-          { "key": "Access-Control-Allow-Methods", "value": "GET, POST, PUT, DELETE, OPTIONS" },
-          { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization" }
-        ]
-      }
-    ]
+    "region": "southamerica-west1"
   },
   "emulators": {
     "auth": {

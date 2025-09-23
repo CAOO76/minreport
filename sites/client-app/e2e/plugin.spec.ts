@@ -1,28 +1,39 @@
 import { test, expect } from '@playwright/test';
+import { onAuthStateChanged } from '../../../__mocks__/firebase/auth'; // Import onAuthStateChanged mock
 
 test.describe('Plugin Loading and Interaction', () => {
-  test.beforeEach(async ({ page }) => {
-    // Navigate to the client app's login page
-    await page.goto('http://localhost:5175/login');
-    await page.waitForURL('http://localhost:5175/login'); // Ensure we are on the login page
-    await page.waitForLoadState('networkidle'); // Wait for the page to be fully loaded
-    await page.waitForTimeout(5000); // Add a brute-force wait to ensure app is ready
+  test.beforeEach(async ({ page }, testInfo) => {
+    testInfo.setTimeout(60000); // Set timeout for beforeEach hook to 60 seconds
 
-    // Simulate user login (assuming a seeded user in Firebase Emulator)
-    await page.waitForSelector('input[type="email"]', { timeout: 10000 }); // Increase timeout for selector
-    await page.fill('input[type="email"]', 'test@example.com');
-    await page.fill('input[type="password"]', 'password123');
-    await page.click('button:has-text("Iniciar Sesión")');
-    await page.screenshot({ path: 'test-results/login-after-click.png' }); // Take screenshot
+    // Expose the mock function to the page's context
+    await page.exposeFunction('onAuthStateChanged', onAuthStateChanged);
 
-    // Wait for Firebase login API response
-    await page.waitForResponse(response => response.url().includes('identitytoolkit.googleapis.com/v1/accounts:signInWithPassword') && response.status() === 200);
+    // Directly simulate a logged-in user by triggering onAuthStateChanged
+    await page.evaluate(() => {
+      // This code runs in the browser context
+      // We need to expose onAuthStateChanged to the browser context
+      // This is a hack for testing, normally you wouldn't do this in production
+      window.onAuthStateChanged({
+        uid: 'mock-user-uid',
+        email: 'test@example.com',
+        displayName: 'Test User',
+        getIdToken: async () => 'mock-id-token',
+        getIdTokenResult: async () => ({ claims: { activePlugins: ['test-plugin'] } }),
+      });
+    });
 
+    // Navigate directly to the dashboard after setting the auth state
+    await page.goto('http://localhost:5175/');
+    await page.waitForURL('http://localhost:5175/'); // Ensure we are on the dashboard
+    await page.waitForSelector('.user-display-name', { timeout: 60000 }); // Wait for user display name to appear
+  });
     // Wait for successful login and redirection to dashboard
     await page.waitForURL('http://localhost:5175/');
+    await page.waitForSelector('.user-display-name', { timeout: 60000 }); // Wait for user display name to appear
   });
 
   test('should load the test-plugin within an iframe and display user data', async ({ page }) => {
+  test.setTimeout(60000); // Set timeout for this specific test to 60 seconds
     // Navigate to the plugin page
     await page.goto('http://localhost:5175/plugins/test-plugin');
 

@@ -3,7 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "main": "./lib/index.js",
+  "module": "./lib/index.js",
   "types": "./lib/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./lib/index.js",
+      "require": "./lib/index.js",
+      "types": "./lib/index.d.ts"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.prod.json",
     "dev": "tsc -w -p tsconfig.json",

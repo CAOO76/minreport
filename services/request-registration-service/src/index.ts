@@ -19,6 +19,8 @@ const auth = admin.auth();
 const resend = new Resend(process.env.RESEND_API_KEY);
 if (!process.env.RESEND_API_KEY) {
     console.warn('ATENCIÓN: RESEND_API_KEY no está configurada. El envío de correos está deshabilitado.');
+} else {
+    console.log('RESEND_API_KEY está configurada.'); // Add this line
 }
 
 const app = express();

@@ -4,8 +4,7 @@ if (!admin.apps.length) {
   admin.initializeApp();
 }
 
-export * from "./manage-developers";
+// export * from "./manage-developers"; // Commented out
 export * from "./tokens";
 export * from "./pluginApi";
-export * from "./tokens";
-export * from "./pluginApi";
+export * from "./dummy";

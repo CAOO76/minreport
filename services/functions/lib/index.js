@@ -40,5 +40,8 @@ const admin = __importStar(require("firebase-admin"));
 if (!admin.apps.length) {
     admin.initializeApp();
 }
-__exportStar(require("./manage-developers"), exports);
+// export * from "./manage-developers"; // Commented out
+__exportStar(require("./tokens"), exports);
+__exportStar(require("./pluginApi"), exports);
+__exportStar(require("./dummy"), exports);
 //# sourceMappingURL=index.js.map
