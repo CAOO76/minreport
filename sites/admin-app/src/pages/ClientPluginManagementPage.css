@@ -1,0 +1,69 @@
+/* sites/admin-app/src/pages/ClientPluginManagementPage.css */
+
+.client-plugin-management-page {
+    padding: 20px;
+    max-width: 900px;
+    margin: 0 auto;
+    background-color: var(--color-background-alt);
+    border-radius: 8px;
+    box-shadow: var(--shadow-elevation-low);
+}
+
+.client-plugin-management-page h2 {
+    color: var(--color-primary);
+    margin-bottom: 10px;
+}
+
+.client-plugin-management-page p {
+    color: var(--color-text-secondary);
+    margin-bottom: 20px;
+}
+
+.plugins-list {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.plugin-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background-color: var(--color-surface);
+    transition: all 0.2s ease-in-out;
+}
+
+.plugin-item:hover {
+    box-shadow: var(--shadow-elevation-medium);
+    transform: translateY(-2px);
+}
+
+.plugin-info h3 {
+    margin: 0;
+    color: var(--color-text-primary);
+    font-size: 1.1rem;
+}
+
+.plugin-info p {
+    margin: 5px 0 0;
+    color: var(--color-text-tertiary);
+    font-size: 0.9rem;
+}
+
+.plugin-toggle {
+    /* Estilos para el switch si es necesario */
+}
+
+.loading-container,
+.error-container {
+    padding: 20px;
+    text-align: center;
+    color: var(--color-text-primary);
+}
+
+.error-container {
+    color: var(--color-error);
+}

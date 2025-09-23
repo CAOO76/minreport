@@ -71,6 +71,14 @@ const AccountDetails: React.FC = () => {
 
         <div className="account-info-section">
           <h3>Información General</h3>
+          <button
+            onClick={() => navigate(`/accounts/${accountId}/manage-plugins`)}
+            className="button-secondary icon-button"
+            title="Gestionar Plugins del Cliente"
+          >
+            <span className="material-symbols-outlined">extension</span>
+            Gestionar Plugins
+          </button>
           <p><strong>ID:</strong> {account.id}</p>
           <p><strong>Email Administrador:</strong> {account.designatedAdminEmail}</p>
           <p><strong>Tipo de Cuenta:</strong> {account.accountType}</p>

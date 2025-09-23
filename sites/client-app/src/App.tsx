@@ -132,6 +132,8 @@ const PluginPage = () => {
 function App() {
   const { user, loading: authLoading, activePlugins } = useAuth(auth);
 
+  console.log('App State:', { user: user?.uid, authLoading, activePlugins });
+
   if (authLoading) {
     return <div className="loading-container">Cargando aplicación...</div>;
   }

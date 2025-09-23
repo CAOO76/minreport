@@ -10,7 +10,7 @@
     "dev:services": "pnpm --filter \"./services/*\" dev",
     "dev": "concurrently --kill-others --kill-signal SIGINT --raw \"pnpm:emulators:start\" \"pnpm:dev:services\" \"pnpm:dev:client\" \"pnpm:dev:admin\" \"pnpm:dev:public\" \"pnpm:dev:plugin\"",
     "set-admin": "cross-env FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' ts-node services/functions/src/manage-admin.ts",
-    "db:seed": "cross-env FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' ts-node services/functions/src/seed-emulators.ts"
+    "db:seed": "cross-env FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' FIRESTORE_EMULATOR_HOST='127.0.0.1:8085' ts-node services/functions/src/seed-emulators.ts"
   },
   "pnpm": {
     "overrides": {

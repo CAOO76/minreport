@@ -44,4 +44,5 @@ if (!admin.apps.length) {
 __exportStar(require("./tokens"), exports);
 __exportStar(require("./pluginApi"), exports);
 __exportStar(require("./dummy"), exports);
+__exportStar(require("./clientPluginManagement"), exports);
 //# sourceMappingURL=index.js.map

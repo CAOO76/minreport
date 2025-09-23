@@ -8,3 +8,4 @@ if (!admin.apps.length) {
 export * from "./tokens";
 export * from "./pluginApi";
 export * from "./dummy";
+export * from "./clientPluginManagement";

@@ -131,7 +131,38 @@ async function seedTestUser() {
         process.exit(1);
     }
 }
+async function seedPlugins() {
+    console.log('\n🌱 Iniciando el proceso de siembra de plugins...');
+    const pluginsCollection = admin.firestore().collection('plugins');
+    const testPluginData = {
+        pluginId: 'test-plugin',
+        name: 'Plugin de Prueba',
+        description: 'Un plugin de ejemplo para probar la arquitectura de plugins.',
+        url: 'http://localhost:5176', // URL del test-plugin
+        version: '1.0.0',
+        status: 'enabled',
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    try {
+        const docRef = pluginsCollection.doc(testPluginData.pluginId);
+        const docSnap = await docRef.get();
+        if (!docSnap.exists) {
+            await docRef.set(testPluginData);
+            console.log(`✔️ Plugin '${testPluginData.name}' (${testPluginData.pluginId}) sembrado.`);
+        }
+        else {
+            console.log(`El plugin '${testPluginData.name}' (${testPluginData.pluginId}) ya existe.`);
+        }
+        console.log('✅ Proceso de siembra de plugins completado con éxito.');
+    }
+    catch (error) {
+        console.error('❌ Error durante el proceso de siembra de plugins:', error.message);
+        process.exit(1);
+    }
+}
 // Llama a las funciones para que se ejecuten
 seedSuperAdmin();
 seedTestUser();
+seedPlugins();
 //# sourceMappingURL=seed-emulators.js.map

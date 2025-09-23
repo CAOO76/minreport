@@ -64,7 +64,7 @@ Contiene la información de las cuentas aprobadas y activas. El ID de cada docum
   institutionName?: string;      // Opcional, solo para Empresarial/Educacional
 
   // --- Plugins y Funcionalidades ---
-  plugins: { [pluginId: string]: boolean }; // Mapa de plugins activados/desactivados
+  activePlugins: string[]; // Array de IDs de plugins activos para esta cuenta
 
   // --- Trazabilidad ---
   createdAt: Timestamp;          // Fecha de creación del usuario en Firebase Auth

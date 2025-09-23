@@ -84,7 +84,7 @@
     },
     "functions": {
       "port": 5001,
-      "cors": ["http://localhost:5174"] // Explicitly allow frontend origin for functions emulator
+      "cors": ["*"] // Temporarily allow all origins for functions emulator
     },
     "hosting": {
       "port": 5010

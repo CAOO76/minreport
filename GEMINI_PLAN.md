@@ -280,7 +280,7 @@ Se redefine por completo el flujo de creación y activación de cuentas, reempla
         *   Se crea (o se actualiza) el usuario definitivo con los datos del **Administrador de la Cuenta** designado.
         *   Se crea el documento final en la colección `accounts`.
         *   El estado de la solicitud cambia a `activated`.
-        *   Se envía un correo de bienvenida al **Administrador de la Cuenta** con un enlace para que **cree su contraseña definitiva**.
+        *   Se envía un correo de bienvenida al **Administrador de la Cuenta** con un enlace para que **cree su contraseña por primera vez**. (Este enlace también debe ser seguro contra pre-fetching).
     *   **Si es rechazada:** El estado de la solicitud cambia a `rejected`.
     *   **Trazabilidad:** Se registra `account_activated` o `final_rejection`.
 
@@ -749,3 +749,63 @@ Estos cambios restauran la integridad del pipeline de integración continua y la
         *   `[ ]` El test debe navegar a la URL de un plugin (ej. `/plugins/test-plugin`).
         *   `[ ]` El test debe verificar que el `iframe` se carga correctamente.
         *   `[ ]` El test debe verificar que un elemento dentro del `iframe` (del `test-plugin`) que depende del contexto del SDK (ej. el email del usuario) se renderiza correctamente.
+## 20. Plan de Implementación: Nueva Mecánica de Activación de Plugins (23/09/2025)
+
+**Objetivo:** Actualizar la mecánica de uso de plugins para que la visibilidad en la UI del cliente sea controlada por el administrador, manteniendo los plugins vinculados por defecto.
+
+**Reglas de Implementación:**
+*   No utilizar funciones preexistentes (solo nuevas con nuevos nombres).
+*   No utilizar App Engine.
+*   Utilizar únicamente la región `southamerica-west1`.
+
+### Fase 1: Backend - Nuevas Cloud Functions para la Gestión de Plugins de Clientes
+
+*   **Objetivo:** Crear una nueva Cloud Function para gestionar la lista `activePlugins` en los documentos de las cuentas.
+
+1.  **[X] Tarea 1.1: Crear archivo `clientPluginManagement.ts`**
+    *   Crear el archivo `services/functions/src/clientPluginManagement.ts`.
+2.  **[X] Tarea 1.2: Implementar `manageClientPluginsCallable`**
+    *   Dentro de `clientPluginManagement.ts`, implementar la Cloud Function `onCall` `manageClientPluginsCallable`.
+    *   Asegurar la verificación de autenticación y permisos de administrador.
+    *   Implementar la lógica para añadir/eliminar `pluginId` del array `activePlugins` en el documento de la cuenta.
+    *   Asegurar la idempotencia.
+3.  **[X] Tarea 1.3: Exportar función**
+    *   Exportar `manageClientPluginsCallable` desde `services/functions/src/index.ts`.
+
+### Fase 2: Frontend - Interfaz de Activación de Plugins en Admin App
+
+*   **Objetivo:** Implementar la interfaz de usuario en la `admin-app` para que los administradores gestionen los plugins de los clientes.
+
+1.  **[X] Tarea 2.1: Crear `ClientPluginManagementPage.tsx`**
+    *   Crear el archivo `sites/admin-app/src/pages/ClientPluginManagementPage.tsx`.
+    *   Implementar la lógica para obtener `accountId` de los parámetros de la URL.
+    *   Implementar la obtención de todos los plugins de la colección `plugins` de Firestore.
+    *   Implementar la obtención de la lista `activePlugins` del documento de la cuenta.
+    *   Renderizar la lista de plugins con un `M3Switch` para cada uno, reflejando el estado de activación.
+    *   Implementar la llamada a `manageClientPluginsCallable` al cambiar el `M3Switch`.
+2.  **[X] Tarea 2.2: Añadir ruta en `admin-app`**
+    *   Añadir la ruta `/accounts/:accountId/manage-plugins` en `sites/admin-app/src/App.tsx`.
+3.  **[X] Tarea 2.3: Modificar `AccountDetailsPage.tsx`**
+    *   Identificar el componente de detalles de la cuenta (ej. `sites/admin-app/src/pages/AccountDetailsPage.tsx`).
+    *   Insertar un icono/botón para navegar a `/accounts/:accountId/manage-plugins`.
+
+### Fase 3: Frontend - Visibilidad de Plugins en Client App
+
+*   **Objetivo:** Asegurar que los plugins solo sean visibles en la UI del cliente si han sido activados por un administrador.
+
+1.  **[X] Tarea 3.1: Verificar `PluginViewer.tsx`**
+    *   Confirmar que la lógica existente en `packages/core/src/components/PluginViewer.tsx` (`if (!claims?.admin && (!activePlugins || !activePlugins.includes(pluginId)))`) es suficiente para controlar la visibilidad. (No se esperan cambios de código aquí).
+
+### Fase 4: Data Model - Firestore
+
+*   **Objetivo:** Asegurar que el documento de la cuenta (`accounts`) incluya el array `activePlugins`.
+
+1.  **[X] Tarea 4.1: Actualizar `DATA_CONTRACT.md`**
+    *   Añadir la definición del campo `activePlugins: string[]` (por defecto array vacío) a la colección `accounts` en `DATA_CONTRACT.md`.
+
+### Fase 5: Test Plugin - Vinculación por Defecto
+
+*   **Objetivo:** Asegurar que el plugin de prueba esté siempre disponible para activación.
+
+1.  **[X] Tarea 5.1: Confirmar disponibilidad**
+    *   Verificar que el plugin de prueba se lista como un plugin disponible en la `ClientPluginManagementPage` (no se requieren cambios de código, es una verificación de la lógica de la Fase 2.1).

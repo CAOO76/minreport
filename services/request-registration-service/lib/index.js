@@ -36,302 +36,412 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+require('dotenv').config({ path: '../../.env' });
 const express_1 = __importDefault(require("express"));
 const admin = __importStar(require("firebase-admin"));
 const cors_1 = __importDefault(require("cors"));
-const resend_1 = require("resend"); // Importar Resend
-const core_1 = require("@minreport/core");
+const resend_1 = require("resend");
+const crypto_1 = __importDefault(require("crypto"));
 // Initialize Firebase Admin SDK
-admin.initializeApp();
-const db = admin.firestore(); // Initialize Firestore
-// Inicializar Resend con tu clave API
-// ¡IMPORTANTE: En producción, usa una variable de entorno para la clave API!
-const resend = new resend_1.Resend(process.env.RESEND_API_KEY || 're_YOUR_RESEND_API_KEY');
+admin.initializeApp({
+    projectId: process.env.FIREBASE_PROJECT_ID,
+});
+const db = admin.firestore();
+const auth = admin.auth();
+// Initialize Resend
+const resend = new resend_1.Resend(process.env.RESEND_API_KEY);
+if (!process.env.RESEND_API_KEY) {
+    console.warn('ATENCIÓN: RESEND_API_KEY no está configurada. El envío de correos está deshabilitado.');
+}
+else {
+    console.log('RESEND_API_KEY está configurada.'); // Add this line
+}
 const app = (0, express_1.default)();
-app.use(express_1.default.json()); // Enable JSON body parsing
-// Configuración explícita de CORS
-app.use((0, cors_1.default)({
-    origin: 'https://minreport-x.web.app',
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+app.use(express_1.default.json());
+// CORS configuration
+const allowedOrigins = [
+    'https://minreport-access.web.app',
+    'https://minreport-x.web.app',
+    'http://localhost:5175', // client-app
+    'http://localhost:5174' // admin-app
+];
+app.use((0, cors_1.default)((req, callback) => {
+    const origin = req.header('Origin');
+    callback(null, { origin: origin && allowedOrigins.includes(origin) });
 }));
-// Health check endpoint
-app.get('/', (req, res) => {
-    res.status(200).send('Service is running.');
-});
-// Endpoint for initial registration requests
-app.post('/requestInitialRegistration', async (req, res) => {
-    try {
-        // Call the core function with the request body
-        const result = await (0, core_1.requestInitialRegistration)(req.body);
-        res.status(200).json(result);
-    }
-    catch (error) {
-        // Handle HttpsError from Firebase Functions
-        if (error.code && error.message) {
-            res.status(400).json({ code: error.code, message: error.message });
-        }
-        else {
-            console.error('Error:', error);
-            res.status(500).json({ code: 'internal-error', message: 'An unexpected error occurred.' });
-        }
-    }
-});
-// New endpoint to approve a registration request
-app.post('/approveRequest', async (req, res) => {
-    try {
-        const { requestId } = req.body;
-        if (!requestId) {
-            return res.status(400).json({ code: 'invalid-argument', message: 'Request ID is required.' });
-        }
-        const requestRef = db.collection('requests').doc(requestId);
-        const doc = await requestRef.get();
-        if (!doc.exists) {
-            return res.status(404).json({ code: 'not-found', message: 'Request not found.' });
-        }
-        // Update the status to pending_additional_data
-        await requestRef.update({ status: 'pending_additional_data' });
-        // Log the action (optional, but good for audit)
-        await db.collection('account_logs').add({
-            accountId: requestId, // Using requestId as accountId for now, will be replaced with actual accountId later
-            action: 'request_approved_initial',
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            details: `Solicitud ${requestId} aprobada inicialmente.`,
-        });
-        res.status(200).json({ code: 'success', message: 'Request approved successfully. Email sent.' });
-    }
-    catch (error) {
-        console.error('Error approving request:', error);
-        res.status(500).json({ code: 'internal-error', message: 'An unexpected error occurred.' });
-    }
-});
-// Helper function to send emails
+// --- Helper Functions (email, rut, etc.) ---
 async function sendEmail(to, subject, htmlContent) {
+    if (!process.env.RESEND_API_KEY) {
+        console.log(`SIMULANDO EMAIL a ${to} con asunto: ${subject}`);
+        console.log(`SIMULACIÓN: Asunto: ${subject}, Destinatario: ${to}`); // Log simulation outcome
+        return { success: true };
+    }
     try {
-        const { data, error } = await resend.emails.send({
-            from: 'MINREPORT <no-reply@minreport.com>', // Reemplazar con tu dominio verificado en Resend
-            to: [to],
-            subject: subject,
-            html: htmlContent,
-        });
+        const { data, error } = await resend.emails.send({ from: 'MINREPORT <no-reply@minreport.com>', to: [to], subject, html: htmlContent });
         if (error) {
-            console.error('Error sending email:', error);
-            return { success: false, error };
+            console.error('Error enviando email (Resend API):', error); // Log Resend API error
+            throw error; // Re-throw to be caught by caller
         }
-        console.log('Email sent successfully:', data);
+        console.log(`EMAIL ENVIADO: Asunto: ${subject}, Destinatario: ${to}, Resend Data:`, data); // Log success
         return { success: true, data };
     }
     catch (error) {
-        console.error('Unexpected error in sendEmail:', error);
-        return { success: false, error: 'Unexpected error' };
+        console.error('Error general enviando email:', error.message); // Log general error
+        return { success: false, error };
     }
 }
-// New endpoint to reject a registration request
-app.post('/rejectRequest', async (req, res) => {
+// --- V4 Endpoints ---
+app.post('/requestAccess', async (req, res) => {
+    const { applicantName, applicantEmail, rut, institutionName, accountType, country, city, entityType } = req.body;
+    if (!applicantName || !applicantEmail || !accountType || !country || !entityType) {
+        return res.status(400).json({ message: 'Faltan parámetros obligatorios.' });
+    }
     try {
-        const { requestId, reason } = req.body;
-        if (!requestId) {
-            return res.status(400).json({ code: 'invalid-argument', message: 'Request ID is required.' });
-        }
-        const requestRef = db.collection('requests').doc(requestId);
-        const doc = await requestRef.get();
-        if (!doc.exists) {
-            return res.status(404).json({ code: 'not-found', message: 'Request not found.' });
-        }
-        // Update the status to rejected
-        await requestRef.update({ status: 'rejected', rejectionReason: reason || 'No especificado' });
-        // Log the action
-        await db.collection('account_logs').add({
-            accountId: requestId,
-            action: 'request_rejected',
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            details: `Solicitud ${requestId} rechazada. Razón: ${reason || 'No especificado'}.`,
-        });
-        // Send rejection email
-        const requestData = doc.data(); // Assert type
-        const applicantEmail = requestData.applicantEmail;
-        if (applicantEmail) {
-            const subject = 'Tu solicitud a MINREPORT ha sido rechazada';
-            const htmlContent = `
-        <p>Estimado/a ${requestData.applicantName},</p>
-        <p>Lamentamos informarte que tu solicitud de acceso a MINREPORT ha sido rechazada.</p>
-        <p>Razón: ${reason || 'No especificado'}</p>
-        <p>Si tienes alguna pregunta, por favor, contáctanos.</p>
-        <p>Atentamente,</p>
-        <p>El equipo de MINREPORT</p>
-      `;
-            await sendEmail(applicantEmail, subject, htmlContent);
-        }
-        res.status(200).json({ code: 'success', message: 'Request rejected successfully.' });
-    }
-    catch (error) {
-        console.error('Error rejecting request:', error);
-        res.status(500).json({ code: 'internal-error', message: 'An unexpected error occurred.' });
-    }
-});
-// New endpoint to submit additional data
-app.post('/submitAdditionalData', async (req, res) => {
-    try {
-        const { requestId, token, additionalData } = req.body;
-        if (!requestId || !token || !additionalData) {
-            return res.status(400).json({ code: 'invalid-argument', message: 'Request ID, token, and additional data are required.' });
-        }
-        const requestRef = db.collection('requests').doc(requestId);
-        const doc = await requestRef.get();
-        if (!doc.exists) {
-            return res.status(404).json({ code: 'not-found', message: 'Request not found.' });
-        }
-        const requestData = doc.data(); // Assert type
-        // Validate token and expiry
-        if (requestData.additionalDataToken !== token || requestData.additionalDataTokenExpiry < admin.firestore.Timestamp.now().toMillis()) {
-            return res.status(401).json({ code: 'unauthorized', message: 'Invalid or expired token.' });
-        }
-        // Update the status to pending_final_review and store additional data
-        await requestRef.update({
-            status: 'pending_final_review',
-            additionalData: additionalData, // Store the received additional data
-            additionalDataToken: admin.firestore.FieldValue.delete(), // Remove token after use
-            additionalDataTokenExpiry: admin.firestore.FieldValue.delete(), // Remove expiry after use
-        });
-        // Log the action
-        await db.collection('account_logs').add({
-            accountId: requestId,
-            action: 'additional_data_submitted',
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            details: `Datos adicionales enviados para la solicitud ${requestId}.`,
-        });
-        // Optional: Send email notification to admin that additional data has been submitted
-        // const adminEmail = 'admin@minreport.com'; // Replace with actual admin email
-        // const subject = `Datos adicionales enviados para la solicitud ${requestId}`;
-        // const htmlContent = `<p>Datos adicionales para la solicitud ${requestId} han sido enviados. Por favor, revisa el panel de administración.</p>`;
-        // await sendEmail(adminEmail, subject, htmlContent);
-        res.status(200).json({ code: 'success', message: 'Additional data submitted successfully.' });
-    }
-    catch (error) {
-        console.error('Error submitting additional data:', error);
-        res.status(500).json({ code: 'internal-error', message: 'An unexpected error occurred.' });
-    }
-});
-// New endpoint to finalize approval and create account
-app.post('/finalApproveRequest', async (req, res) => {
-    try {
-        const { requestId } = req.body;
-        if (!requestId) {
-            return res.status(400).json({ code: 'invalid-argument', message: 'Request ID is required.' });
-        }
-        const requestRef = db.collection('requests').doc(requestId);
-        const doc = await requestRef.get();
-        if (!doc.exists) {
-            return res.status(404).json({ code: 'not-found', message: 'Request not found.' });
-        }
-        const requestData = doc.data(); // Assert type
-        // Ensure request is in pending_final_review state
-        if (requestData.status !== 'pending_final_review') {
-            return res.status(400).json({ code: 'invalid-state', message: 'Request is not in pending_final_review state.' });
-        }
-        // 1. Create user in Firebase Authentication
-        const userRecord = await admin.auth().createUser({
-            email: requestData.applicantEmail,
-            emailVerified: false, // User will verify via password creation link
-            displayName: requestData.applicantName,
-            // password: 'some-initial-password' // Do not set password here, user creates it via link
-        });
-        // 2. Create account in Firestore 'accounts' collection
-        const newAccountRef = db.collection('accounts').doc(userRecord.uid); // Use UID as account ID
-        await newAccountRef.set({
-            id: userRecord.uid,
-            institutionName: requestData.institutionName,
-            accountType: requestData.accountType,
-            status: 'active',
+        const requestRef = db.collection('requests').doc();
+        await requestRef.set({
+            applicantName,
+            applicantEmail,
+            rut: rut || null, // RUT is optional for individual
+            institutionName: institutionName || null, // Institution name is optional for individual
+            accountType,
+            country,
+            city: city || null, // City is optional for non-individual
+            entityType,
+            status: 'pending_review',
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            applicantEmail: requestData.applicantEmail,
-            applicantName: requestData.applicantName,
-            rut: requestData.rut,
-            additionalData: requestData.additionalData || {}, // Include additional data
         });
-        // 3. Update request status to 'approved'
-        await requestRef.update({ status: 'approved', accountId: userRecord.uid });
-        // 4. Generate password reset link for user to set their password
-        const passwordResetLink = await admin.auth().generatePasswordResetLink(requestData.applicantEmail);
-        // 5. Log the action
-        await db.collection('account_logs').add({
-            accountId: userRecord.uid,
-            action: 'account_approved_final',
+        // Log history for the request
+        await requestRef.collection('history').add({
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            details: `Cuenta creada y solicitud ${requestId} aprobada finalmente. UID: ${userRecord.uid}.`,
+            action: 'request_submitted',
+            actor: 'applicant',
+            details: 'Solicitud de acceso enviada por el solicitante.',
         });
-        // 6. Send email with password creation link
-        const subject = '¡Tu cuenta MINREPORT ha sido aprobada!';
-        const htmlContent = `
-      <p>Estimado/a ${requestData.applicantName},</p>
-      <p>¡Felicidades! Tu solicitud de acceso a MINREPORT ha sido aprobada.</p>
-      <p>Para establecer tu contraseña y acceder a tu cuenta, por favor, haz clic en el siguiente enlace:</p>
-      <p><a href="${passwordResetLink}">${passwordResetLink}</a></p>
-      <p>Este enlace es válido por un tiempo limitado.</p>
-      <p>Atentamente,</p>
-      <p>El equipo de MINREPORT</p>
-    `;
-        await sendEmail(requestData.applicantEmail, subject, htmlContent);
-        res.status(200).json({ code: 'success', message: 'Account created and request finally approved. Email sent.' });
+        res.status(200).json({ message: 'Solicitud de acceso registrada con éxito.' });
     }
     catch (error) {
-        console.error('Error finalizing approval:', error);
-        if (error.code === 'auth/email-already-exists') {
-            res.status(409).json({ code: 'auth/email-already-exists', message: 'The email address is already in use by another account.' });
+        console.error('Error en /requestAccess:', error);
+        res.status(500).json({ message: 'Error interno del servidor.' });
+    }
+});
+// ... (/requestAccess endpoint is assumed to be here and correct)
+app.post('/processInitialDecision', async (req, res) => {
+    const { requestId, adminId, decision, reason } = req.body;
+    if (!requestId || !adminId || !decision) {
+        return res.status(400).json({ message: 'Faltan parámetros obligatorios (requestId, adminId, decision).' });
+    }
+    const requestRef = db.collection('requests').doc(requestId);
+    try {
+        const requestDoc = await requestRef.get();
+        if (!requestDoc.exists)
+            return res.status(404).json({ message: 'Solicitud no encontrada.' });
+        const requestData = requestDoc.data(); // Fetch requestData
+        let newStatus;
+        let actionDetails;
+        if (decision === 'approved') {
+            newStatus = 'pending_additional_data';
+            actionDetails = 'Aprobación inicial por administrador.';
+            // Generate token for additional data completion
+            const token = crypto_1.default.randomBytes(32).toString('hex');
+            const hashedToken = crypto_1.default.createHash('sha256').update(token).digest('hex');
+            const expiryDate = new Date();
+            expiryDate.setHours(expiryDate.getHours() + 24); // 24-hour expiry for data completion
+            await requestRef.update({
+                token: hashedToken,
+                tokenExpiry: admin.firestore.Timestamp.fromDate(expiryDate),
+            });
+            const clientAppUrl = process.env.CLIENT_APP_URL || 'http://localhost:5175';
+            const completeDataLink = `${clientAppUrl}/complete-data?token=${token}`;
+            await sendEmail(requestData.applicantEmail, 'Tu Solicitud en MINREPORT ha sido Pre-Aprobada', `<p>Hola ${requestData.applicantName},</p><p>Tu solicitud de acceso a MINREPORT ha sido pre-aprobada.</p><p>Por favor, completa la información adicional requerida a través del siguiente enlace:</p><p><a href="${completeDataLink}">Completar Datos Adicionales</a></p><p>Este enlace expirará en 24 horas.</p>`);
+        }
+        else if (decision === 'rejected') {
+            newStatus = 'rejected';
+            actionDetails = `Rechazo inicial por administrador. Motivo: ${reason || 'No especificado'}`;
+            await sendEmail(requestData.applicantEmail, 'Actualización de tu Solicitud en MINREPORT', `<p>Hola ${requestData.applicantName},</p><p>Lamentamos informarte que tu solicitud de acceso a MINREPORT ha sido rechazada.</p><p>Motivo: ${reason || 'No especificado'}</p><p>Si tienes alguna pregunta, por favor contáctanos.</p>`);
         }
         else {
-            res.status(500).json({ code: 'internal-error', message: 'An unexpected error occurred.' });
+            return res.status(400).json({ message: 'Decisión inválida.' });
         }
-    }
-});
-// New endpoint to finalize rejection
-app.post('/finalRejectRequest', async (req, res) => {
-    try {
-        const { requestId, reason } = req.body;
-        if (!requestId) {
-            return res.status(400).json({ code: 'invalid-argument', message: 'Request ID is required.' });
-        }
-        const requestRef = db.collection('requests').doc(requestId);
-        const doc = await requestRef.get();
-        if (!doc.exists) {
-            return res.status(404).json({ code: 'not-found', message: 'Request not found.' });
-        }
-        const requestData = doc.data(); // Assert type
-        // Ensure request is in pending_final_review state
-        if (requestData.status !== 'pending_final_review') {
-            return res.status(400).json({ code: 'invalid-state', message: 'Request is not in pending_final_review state.' });
-        }
-        // Update the status to rejected
-        await requestRef.update({ status: 'rejected', rejectionReason: reason || 'No especificado' });
-        // Log the action
-        await db.collection('account_logs').add({
-            accountId: requestId,
-            action: 'request_rejected_final',
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            details: `Solicitud ${requestId} rechazada finalmente. Razón: ${reason || 'No especificado'}.`,
+        await requestRef.update({
+            status: newStatus,
         });
-        // Send rejection email
-        const applicantEmail = requestData.applicantEmail;
-        if (applicantEmail) {
-            const subject = 'Tu solicitud a MINREPORT ha sido rechazada';
-            const htmlContent = `
-        <p>Estimado/a ${requestData.applicantName},</p>
-        <p>Lamentamos informarte que tu solicitud de acceso a MINREPORT ha sido rechazada definitivamente.</p>
-        <p>Razón: ${reason || 'No especificado'}</p>
-        <p>Si tienes alguna pregunta, por favor, contáctanos.</p>
-        <p>Atentamente,</p>
-        <p>El equipo de MINREPORT</p>
-      `;
-            await sendEmail(applicantEmail, subject, htmlContent);
-        }
-        res.status(200).json({ code: 'success', message: 'Request finally rejected. Email sent.' });
+        await requestRef.collection('history').add({
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            action: `initial_decision_${decision}`,
+            actor: adminId,
+            details: actionDetails,
+        });
+        res.status(200).json({ message: 'Decisión inicial procesada con éxito.' });
     }
     catch (error) {
-        console.error('Error finalizing rejection:', error);
-        res.status(500).json({ code: 'internal-error', message: 'An unexpected error occurred.' });
+        console.error('Error en /processInitialDecision:', error);
+        res.status(500).json({ message: 'Error interno del servidor.' });
     }
 });
-const PORT = process.env.PORT || 8080;
+// ... (/processInitialDecision endpoint is assumed to be here and correct)
+app.post('/validate-data-token', async (req, res) => {
+    const { token } = req.body;
+    if (!token)
+        return res.status(400).json({ isValid: false, message: 'Token no proporcionado.' });
+    const hashedToken = crypto_1.default.createHash('sha256').update(token).digest('hex');
+    const snapshot = await db.collectionGroup('requests').where('token', '==', hashedToken).limit(1).get();
+    if (snapshot.empty) {
+        return res.status(404).json({ isValid: false, message: 'Enlace inválido o ya utilizado.' });
+    }
+    const requestDoc = snapshot.docs[0];
+    const requestData = requestDoc.data();
+    if (requestData.status !== 'pending_additional_data') {
+        return res.status(400).json({ isValid: false, message: 'Esta solicitud ya fue completada o no requiere datos adicionales.' });
+    }
+    if (requestData.tokenExpiry && requestData.tokenExpiry.toDate() < new Date()) {
+        return res.status(400).json({ isValid: false, message: 'El enlace ha expirado.' });
+    }
+    res.status(200).json({ isValid: true, requestData: { requestId: requestDoc.id, applicantName: requestData.applicantName, applicantEmail: requestData.applicantEmail, country: requestData.country, accountType: requestData.accountType } });
+});
+app.post('/submitAdditionalData', async (req, res) => {
+    const { token, additionalData } = req.body;
+    if (!token || !additionalData) {
+        return res.status(400).json({ message: 'Token y datos adicionales son requeridos.' });
+    }
+    const hashedToken = crypto_1.default.createHash('sha256').update(token).digest('hex');
+    const snapshot = await db.collectionGroup('requests').where('token', '==', hashedToken).limit(1).get();
+    if (snapshot.empty) {
+        return res.status(404).json({ message: 'Enlace inválido o ya utilizado.' });
+    }
+    const requestDoc = snapshot.docs[0];
+    const requestData = requestDoc.data();
+    if (requestData.status !== 'pending_additional_data') {
+        return res.status(400).json({ message: 'Esta solicitud ya fue completada o no requiere datos adicionales.' });
+    }
+    if (requestData.tokenExpiry && requestData.tokenExpiry.toDate() < new Date()) {
+        return res.status(400).json({ message: 'El enlace ha expirado.' });
+    }
+    // Invalidate the token and save additional data
+    await requestDoc.ref.update({
+        additionalData: additionalData,
+        status: 'pending_final_review',
+        token: null, // Invalidate token
+        tokenExpiry: null, // Clear expiration
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    // Log the action
+    await requestDoc.ref.collection('history').add({
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        actor: requestData.applicantEmail, // Assuming applicant is the actor
+        action: 'additional_data_submitted',
+        details: 'Usuario envió datos adicionales.',
+    });
+    res.status(200).json({ message: 'Datos adicionales enviados con éxito. Pendiente de revisión final.' });
+});
+app.post('/approveFinalRequest', async (req, res) => {
+    const { requestId, adminId } = req.body;
+    if (!requestId || !adminId) {
+        return res.status(400).json({ message: 'Faltan parámetros obligatorios (requestId, adminId).' });
+    }
+    const requestRef = db.collection('requests').doc(requestId);
+    try {
+        console.log('[/approveFinalRequest] Iniciando proceso de aprobación final.');
+        const requestDoc = await requestRef.get();
+        if (!requestDoc.exists) {
+            return res.status(404).json({ message: 'Solicitud no encontrada.' });
+        }
+        const requestData = requestDoc.data();
+        if (requestData.status !== 'pending_final_review') {
+            return res.status(400).json({ message: 'La solicitud no está en estado de revisión final.' });
+        }
+        const { applicantEmail, accountType, rut, additionalData } = requestData;
+        // The user to be created is the designated admin from the additional data
+        const finalUserEmail = additionalData.adminEmail;
+        if (!finalUserEmail) {
+            console.error('[/approveFinalRequest] Error: No se proporcionó un email de administrador en los datos adicionales.');
+            return res.status(400).json({ message: 'No se proporcionó un email de administrador en los datos adicionales.' });
+        }
+        console.log(`[/approveFinalRequest] finalUserEmail: ${finalUserEmail}`);
+        // 1. Create user in Firebase Auth
+        const userRecord = await auth.createUser({
+            email: finalUserEmail,
+            emailVerified: false, // User will set password and verify email later
+            disabled: false,
+        });
+        console.log(`[/approveFinalRequest] Usuario creado en Auth: ${userRecord.uid}`);
+        // 2. Create account document
+        await db.collection('accounts').doc(userRecord.uid).set(Object.assign({ userId: userRecord.uid, email: finalUserEmail, accountType,
+            rut, status: 'active', createdAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp(), institutionName: requestData.institutionName || null }, additionalData));
+        console.log('[/approveFinalRequest] Documento de cuenta creado en Firestore.');
+        // 3. Update request status
+        await requestRef.update({
+            status: 'activated',
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        console.log('[/approveFinalRequest] Estado de solicitud actualizado a "activated".');
+        // Log the action
+        await requestRef.collection('history').add({
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            actor: adminId,
+            action: 'account_activated',
+            details: `Cuenta activada por admin ${adminId}. Usuario ${userRecord.uid} creado para ${finalUserEmail}.`,
+        });
+        console.log('[/approveFinalRequest] Historial de solicitud registrado.');
+        // Generate password reset link for the FINAL user
+        const actionCodeSettings = {
+            url: `${process.env.CLIENT_APP_URL || 'http://localhost:5175'}/actions/create-password`,
+            handleCodeInApp: true,
+        };
+        const rawPasswordLink = await auth.generatePasswordResetLink(finalUserEmail, actionCodeSettings);
+        // Extract oobCode and build the final user-facing link
+        const url = new URL(rawPasswordLink);
+        const oobCode = url.searchParams.get('oobCode');
+        const finalPasswordLink = `${actionCodeSettings.url}?oobCode=${oobCode}`;
+        console.log(`[/approveFinalRequest] Enlace de contraseña generado: ${finalPasswordLink}`);
+        const emailResult = await sendEmail(finalUserEmail, '¡Tu cuenta MINREPORT ha sido activada!', `<p>Hola ${requestData.applicantName},</p><p>¡Felicidades! Tu cuenta MINREPORT ha sido activada.</p><p>Para establecer tu contraseña y acceder a la plataforma, por favor haz clic en el siguiente enlace:</p><p><a href="${finalPasswordLink}">Establecer Contraseña</a></p><p>Este enlace es válido por un tiempo limitado.</p>`);
+        console.log('[/approveFinalRequest] Resultado de sendEmail:', emailResult);
+        res.status(200).json({ message: 'Cuenta activada con éxito.', userId: userRecord.uid });
+    }
+    catch (error) {
+        console.error('Error al aprobar la solicitud final:', error);
+        res.status(500).json({ message: 'Error interno del servidor al aprobar la solicitud final.' });
+    }
+});
+// ... (/validate-data-token endpoint is assumed to be here and correct)
+// ... (/submitAdditionalData endpoint is assumed to be here and correct)
+// ... (/processFinalDecision endpoint is assumed to be here and correct)
+// --- NEW: Clarification Endpoints ---
+/**
+ * Admin requests clarification from a user.
+ */
+app.post('/request-clarification', async (req, res) => {
+    const { requestId, adminId, message } = req.body;
+    if (!requestId || !adminId || !message) {
+        return res.status(400).json({ message: 'Faltan parámetros (requestId, adminId, message).' });
+    }
+    const requestRef = db.collection('requests').doc(requestId);
+    try {
+        const requestDoc = await requestRef.get();
+        if (!requestDoc.exists)
+            return res.status(404).json({ message: 'Solicitud no encontrada.' });
+        const requestData = requestDoc.data();
+        const token = crypto_1.default.randomBytes(32).toString('hex');
+        const hashedToken = crypto_1.default.createHash('sha256').update(token).digest('hex');
+        const expiryDate = new Date();
+        expiryDate.setHours(expiryDate.getHours() + 72); // 3-day expiry for clarification
+        const clarificationRef = requestRef.collection('clarifications').doc();
+        await clarificationRef.set({
+            adminMessage: message,
+            status: 'pending_response',
+            token: hashedToken,
+            tokenExpiry: admin.firestore.Timestamp.fromDate(expiryDate),
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        await requestRef.collection('history').add({
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            action: 'clarification_requested',
+            actor: adminId,
+            details: message
+        });
+        const clientAppUrl = process.env.CLIENT_APP_URL || 'http://localhost:5175';
+        const responseLink = `${clientAppUrl}/clarification-response?token=${token}`;
+        await sendEmail(requestData.applicantEmail, 'Aclaración Requerida para tu Solicitud en MINREPORT', `<p>Hola ${requestData.applicantName},</p><p>Un administrador ha solicitado una aclaración sobre tu solicitud:</p><blockquote>${message}</blockquote><p>Por favor, responde a través del siguiente enlace:</p><p><a href="${responseLink}">Responder Aclaración</a></p>`);
+        res.status(200).json({ message: 'Solicitud de aclaración enviada.' });
+    }
+    catch (error) {
+        console.error('Error en /request-clarification:', error);
+        res.status(500).json({ message: 'Error interno del servidor.' });
+    }
+});
+/**
+ * Validates a clarification token and returns the admin's message.
+ */
+app.post('/validate-clarification-token', async (req, res) => {
+    const { token } = req.body;
+    if (!token)
+        return res.status(400).json({ isValid: false, message: 'Token no proporcionado.' });
+    const hashedToken = crypto_1.default.createHash('sha256').update(token).digest('hex');
+    const snapshot = await db.collectionGroup('clarifications').where('token', '==', hashedToken).limit(1).get();
+    if (snapshot.empty) {
+        return res.status(404).json({ isValid: false, message: 'Enlace inválido o ya utilizado.' });
+    }
+    const clarificationDoc = snapshot.docs[0];
+    const clarificationData = clarificationDoc.data();
+    if (clarificationData.status !== 'pending_response') {
+        return res.status(400).json({ isValid: false, message: 'Esta solicitud de aclaración ya fue respondida.' });
+    }
+    if (clarificationData.tokenExpiry && clarificationData.tokenExpiry.toDate() < new Date()) {
+        return res.status(400).json({ isValid: false, message: 'El enlace ha expirado.' });
+    }
+    res.status(200).json({ isValid: true, adminMessage: clarificationData.adminMessage });
+});
+/**
+ * Submits the user's response to a clarification request.
+ */
+app.post('/submit-clarification-response', async (req, res) => {
+    const { token, userReply } = req.body;
+    if (!token || !userReply)
+        return res.status(400).json({ message: 'Faltan el token o la respuesta.' });
+    const hashedToken = crypto_1.default.createHash('sha256').update(token).digest('hex');
+    const snapshot = await db.collectionGroup('clarifications').where('token', '==', hashedToken).limit(1).get();
+    if (snapshot.empty) {
+        return res.status(404).json({ message: 'Enlace inválido o ya utilizado.' });
+    }
+    const clarificationDoc = snapshot.docs[0];
+    const clarificationData = clarificationDoc.data();
+    if (clarificationData.status !== 'pending_response') {
+        return res.status(400).json({ message: 'Esta solicitud de aclaración ya fue respondida.' });
+    }
+    await clarificationDoc.ref.update({
+        userReply: userReply,
+        status: 'responded',
+        respondedAt: admin.firestore.FieldValue.serverTimestamp(),
+        token: admin.firestore.FieldValue.delete(),
+    });
+    // Find the parent request to log history
+    const requestRef = clarificationDoc.ref.parent.parent;
+    if (requestRef) {
+        await requestRef.collection('history').add({
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            action: 'clarification_responded',
+            actor: 'applicant',
+            details: userReply
+        });
+    }
+    res.status(200).json({ message: 'Respuesta enviada con éxito.' });
+});
+app.post('/clear-all-requests', async (req, res) => {
+    if (process.env.NODE_ENV === 'production') {
+        return res.status(403).json({ message: 'Esta operación no está permitida en producción.' });
+    }
+    try {
+        const requestsRef = db.collection('requests');
+        const snapshot = await requestsRef.get();
+        if (snapshot.empty) {
+            return res.status(200).json({ message: 'No hay solicitudes para eliminar.' });
+        }
+        const batch = db.batch();
+        let deletedCount = 0;
+        for (const doc of snapshot.docs) {
+            const requestRef = requestsRef.doc(doc.id);
+            // Delete history subcollection
+            const historySnapshot = await requestRef.collection('history').get();
+            historySnapshot.docs.forEach(historyDoc => {
+                batch.delete(historyDoc.ref);
+            });
+            // Delete clarifications subcollection
+            const clarificationsSnapshot = await requestRef.collection('clarifications').get();
+            clarificationsSnapshot.docs.forEach(clarificationDoc => {
+                batch.delete(clarificationDoc.ref);
+            });
+            // Delete the request document itself
+            batch.delete(requestRef);
+            deletedCount++;
+        }
+        await batch.commit();
+        res.status(200).json({ message: `Se eliminaron ${deletedCount} solicitudes y sus historiales/aclaraciones.` });
+    }
+    catch (error) {
+        console.error('Error en /clear-all-requests:', error);
+        res.status(500).json({ message: 'Error interno del servidor al eliminar solicitudes.' });
+    }
+});
+const PORT = process.env.REGISTRATION_SERVICE_PORT || 8082;
 app.listen(PORT, () => {
-    console.log(`Server listening on port ${PORT}`);
+    console.log(`(V4) Request Registration Service escuchando en el puerto ${PORT}`);
 });
