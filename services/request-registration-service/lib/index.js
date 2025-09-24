@@ -1,47 +1,9 @@
-"use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
 require('dotenv').config({ path: '../../.env' });
-const express_1 = __importDefault(require("express"));
-const admin = __importStar(require("firebase-admin"));
-const cors_1 = __importDefault(require("cors"));
-const resend_1 = require("resend");
-const crypto_1 = __importDefault(require("crypto"));
+import express from 'express';
+import * as admin from 'firebase-admin';
+import cors from 'cors';
+import { Resend } from 'resend';
+import crypto from 'crypto';
 // Initialize Firebase Admin SDK
 admin.initializeApp({
     projectId: process.env.FIREBASE_PROJECT_ID,
@@ -49,15 +11,15 @@ admin.initializeApp({
 const db = admin.firestore();
 const auth = admin.auth();
 // Initialize Resend
-const resend = new resend_1.Resend(process.env.RESEND_API_KEY);
+const resend = new Resend(process.env.RESEND_API_KEY);
 if (!process.env.RESEND_API_KEY) {
     console.warn('ATENCIÓN: RESEND_API_KEY no está configurada. El envío de correos está deshabilitado.');
 }
 else {
     console.log('RESEND_API_KEY está configurada.'); // Add this line
 }
-const app = (0, express_1.default)();
-app.use(express_1.default.json());
+const app = express();
+app.use(express.json());
 // CORS configuration
 const allowedOrigins = [
     'https://minreport-access.web.app',
@@ -65,7 +27,7 @@ const allowedOrigins = [
     'http://localhost:5175', // client-app
     'http://localhost:5174' // admin-app
 ];
-app.use((0, cors_1.default)((req, callback) => {
+app.use(cors((req, callback) => {
     const origin = req.header('Origin');
     callback(null, { origin: origin && allowedOrigins.includes(origin) });
 }));
@@ -142,8 +104,8 @@ app.post('/processInitialDecision', async (req, res) => {
             newStatus = 'pending_additional_data';
             actionDetails = 'Aprobación inicial por administrador.';
             // Generate token for additional data completion
-            const token = crypto_1.default.randomBytes(32).toString('hex');
-            const hashedToken = crypto_1.default.createHash('sha256').update(token).digest('hex');
+            const token = crypto.randomBytes(32).toString('hex');
+            const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
             const expiryDate = new Date();
             expiryDate.setHours(expiryDate.getHours() + 24); // 24-hour expiry for data completion
             await requestRef.update({
@@ -183,7 +145,7 @@ app.post('/validate-data-token', async (req, res) => {
     const { token } = req.body;
     if (!token)
         return res.status(400).json({ isValid: false, message: 'Token no proporcionado.' });
-    const hashedToken = crypto_1.default.createHash('sha256').update(token).digest('hex');
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
     const snapshot = await db.collectionGroup('requests').where('token', '==', hashedToken).limit(1).get();
     if (snapshot.empty) {
         return res.status(404).json({ isValid: false, message: 'Enlace inválido o ya utilizado.' });
@@ -203,7 +165,7 @@ app.post('/submitAdditionalData', async (req, res) => {
     if (!token || !additionalData) {
         return res.status(400).json({ message: 'Token y datos adicionales son requeridos.' });
     }
-    const hashedToken = crypto_1.default.createHash('sha256').update(token).digest('hex');
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
     const snapshot = await db.collectionGroup('requests').where('token', '==', hashedToken).limit(1).get();
     if (snapshot.empty) {
         return res.status(404).json({ message: 'Enlace inválido o ya utilizado.' });
@@ -257,17 +219,31 @@ app.post('/approveFinalRequest', async (req, res) => {
             return res.status(400).json({ message: 'No se proporcionó un email de administrador en los datos adicionales.' });
         }
         console.log(`[/approveFinalRequest] finalUserEmail: ${finalUserEmail}`);
-        // 1. Create user in Firebase Auth
-        const userRecord = await auth.createUser({
-            email: finalUserEmail,
-            emailVerified: false, // User will set password and verify email later
-            disabled: false,
-        });
-        console.log(`[/approveFinalRequest] Usuario creado en Auth: ${userRecord.uid}`);
-        // 2. Create account document
-        await db.collection('accounts').doc(userRecord.uid).set(Object.assign({ userId: userRecord.uid, email: finalUserEmail, accountType,
-            rut, status: 'active', createdAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp(), institutionName: requestData.institutionName || null }, additionalData));
-        console.log('[/approveFinalRequest] Documento de cuenta creado en Firestore.');
+        let userRecord;
+        try {
+            userRecord = await auth.getUserByEmail(finalUserEmail);
+            console.log(`[/approveFinalRequest] Usuario existente encontrado en Auth: ${userRecord.uid}`);
+        }
+        catch (error) {
+            if (error.code === 'auth/user-not-found') {
+                // User does not exist, create a new one
+                userRecord = await auth.createUser({
+                    email: finalUserEmail,
+                    emailVerified: false, // User will set password and verify email later
+                    disabled: false,
+                });
+                console.log(`[/approveFinalRequest] Nuevo usuario creado en Auth: ${userRecord.uid}`);
+            }
+            else {
+                // Other error during getUserByEmail
+                console.error('[/approveFinalRequest] Error al buscar usuario por email:', error);
+                throw error;
+            }
+        }
+        // 2. Create or update account document
+        await db.collection('accounts').doc(userRecord.uid).set(Object.assign({ email: finalUserEmail, accountType,
+            rut, status: 'active', createdAt: admin.firestore.FieldValue.serverTimestamp(), updatedAt: admin.firestore.FieldValue.serverTimestamp(), institutionName: requestData.institutionName || null }, additionalData), { merge: true }); // Use merge to update if document already exists
+        console.log('[/approveFinalRequest] Documento de cuenta creado/actualizado en Firestore.');
         // 3. Update request status
         await requestRef.update({
             status: 'activated',
@@ -283,16 +259,30 @@ app.post('/approveFinalRequest', async (req, res) => {
         });
         console.log('[/approveFinalRequest] Historial de solicitud registrado.');
         // Generate password reset link for the FINAL user
-        const actionCodeSettings = {
-            url: `${process.env.CLIENT_APP_URL || 'http://localhost:5175'}/actions/create-password`,
-            handleCodeInApp: true,
-        };
-        const rawPasswordLink = await auth.generatePasswordResetLink(finalUserEmail, actionCodeSettings);
+        const clientAppBaseUrl = process.env.CLIENT_APP_URL || 'http://localhost:5175';
+        console.log(`[/approveFinalRequest] CLIENT_APP_URL base: ${clientAppBaseUrl}`);
+        let rawPasswordLink;
+        try {
+            const actionCodeSettings = {
+                url: `${clientAppBaseUrl}/actions/create-password`,
+                handleCodeInApp: true,
+            };
+            rawPasswordLink = await auth.generatePasswordResetLink(finalUserEmail, actionCodeSettings);
+            console.log(`[/approveFinalRequest] Enlace de restablecimiento de contraseña RAW generado por Firebase: ${rawPasswordLink}`);
+        }
+        catch (linkError) {
+            console.error('[/approveFinalRequest] Error al generar el enlace de restablecimiento de contraseña:', linkError);
+            return res.status(500).json({ message: 'Error interno del servidor al generar el enlace de contraseña.' });
+        }
         // Extract oobCode and build the final user-facing link
         const url = new URL(rawPasswordLink);
         const oobCode = url.searchParams.get('oobCode');
-        const finalPasswordLink = `${actionCodeSettings.url}?oobCode=${oobCode}`;
-        console.log(`[/approveFinalRequest] Enlace de contraseña generado: ${finalPasswordLink}`);
+        if (!oobCode) {
+            console.error('[/approveFinalRequest] oobCode no encontrado en el enlace generado.');
+            return res.status(500).json({ message: 'Error interno del servidor: oobCode faltante.' });
+        }
+        const finalPasswordLink = `${clientAppBaseUrl}/actions/create-password?oobCode=${oobCode}`;
+        console.log(`[/approveFinalRequest] Enlace de contraseña FINAL para el usuario: ${finalPasswordLink}`);
         const emailResult = await sendEmail(finalUserEmail, '¡Tu cuenta MINREPORT ha sido activada!', `<p>Hola ${requestData.applicantName},</p><p>¡Felicidades! Tu cuenta MINREPORT ha sido activada.</p><p>Para establecer tu contraseña y acceder a la plataforma, por favor haz clic en el siguiente enlace:</p><p><a href="${finalPasswordLink}">Establecer Contraseña</a></p><p>Este enlace es válido por un tiempo limitado.</p>`);
         console.log('[/approveFinalRequest] Resultado de sendEmail:', emailResult);
         res.status(200).json({ message: 'Cuenta activada con éxito.', userId: userRecord.uid });
@@ -320,8 +310,8 @@ app.post('/request-clarification', async (req, res) => {
         if (!requestDoc.exists)
             return res.status(404).json({ message: 'Solicitud no encontrada.' });
         const requestData = requestDoc.data();
-        const token = crypto_1.default.randomBytes(32).toString('hex');
-        const hashedToken = crypto_1.default.createHash('sha256').update(token).digest('hex');
+        const token = crypto.randomBytes(32).toString('hex');
+        const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
         const expiryDate = new Date();
         expiryDate.setHours(expiryDate.getHours() + 72); // 3-day expiry for clarification
         const clarificationRef = requestRef.collection('clarifications').doc();
@@ -355,7 +345,7 @@ app.post('/validate-clarification-token', async (req, res) => {
     const { token } = req.body;
     if (!token)
         return res.status(400).json({ isValid: false, message: 'Token no proporcionado.' });
-    const hashedToken = crypto_1.default.createHash('sha256').update(token).digest('hex');
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
     const snapshot = await db.collectionGroup('clarifications').where('token', '==', hashedToken).limit(1).get();
     if (snapshot.empty) {
         return res.status(404).json({ isValid: false, message: 'Enlace inválido o ya utilizado.' });
@@ -377,7 +367,7 @@ app.post('/submit-clarification-response', async (req, res) => {
     const { token, userReply } = req.body;
     if (!token || !userReply)
         return res.status(400).json({ message: 'Faltan el token o la respuesta.' });
-    const hashedToken = crypto_1.default.createHash('sha256').update(token).digest('hex');
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
     const snapshot = await db.collectionGroup('clarifications').where('token', '==', hashedToken).limit(1).get();
     if (snapshot.empty) {
         return res.status(404).json({ message: 'Enlace inválido o ya utilizado.' });

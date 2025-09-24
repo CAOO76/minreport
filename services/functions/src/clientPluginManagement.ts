@@ -1,6 +1,6 @@
-// services/functions/src/clientPluginManagement.ts
-import * as functions from 'firebase-functions/v1';
+import * as functions from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
+import { CallableRequest } from 'firebase-functions/v2/https';
 
 // Initialize Firebase Admin if not already initialized
 if (!admin.apps.length) {
@@ -15,18 +15,16 @@ interface ManageClientPluginsCallableData {
   action: 'activate' | 'deactivate';
 }
 
-export const manageClientPluginsCallable = functions
-  .region('southamerica-west1')
-  .https.onCall(async (data: ManageClientPluginsCallableData, context: functions.https.CallableContext) => {
+export const manageClientPluginsCallable = functions.https.onCall({ region: 'southamerica-west1' }, async (request: CallableRequest<ManageClientPluginsCallableData>) => {
     // 1. Verificar autenticación y permisos de administrador
-    if (!context.auth) {
+    if (!request.auth) {
       throw new functions.https.HttpsError(
         'unauthenticated',
         'La solicitud debe estar autenticada.'
       );
     }
 
-    const callerUid = context.auth.uid;
+    const callerUid = request.auth.uid;
     const userRecord = await admin.auth().getUser(callerUid);
     if (!userRecord.customClaims?.admin) {
       throw new functions.https.HttpsError(
@@ -36,7 +34,7 @@ export const manageClientPluginsCallable = functions
     }
 
     // 2. Validar datos de entrada
-    const { accountId, pluginId, action } = data;
+    const { accountId, pluginId, action } = request.data;
 
     if (typeof accountId !== 'string' || accountId.trim() === '') {
       throw new functions.https.HttpsError(
@@ -59,8 +57,12 @@ export const manageClientPluginsCallable = functions
 
     const accountRef = db.collection('accounts').doc(accountId);
 
+    let currentActivePlugins: string[] = [];
+    let newActivePlugins: string[] = [];
+    let updatedInTransaction = false;
+
     try {
-      await db.runTransaction(async (transaction) => {
+      await db.runTransaction(async (transaction: admin.firestore.Transaction) => {
         const accountDoc = await transaction.get(accountRef);
 
         if (!accountDoc.exists) {
@@ -70,35 +72,36 @@ export const manageClientPluginsCallable = functions
           );
         }
 
-        const currentActivePlugins: string[] = accountDoc.data()?.activePlugins || [];
-        let newActivePlugins = [...currentActivePlugins];
-        let updated = false;
+        currentActivePlugins = accountDoc.data()?.adminActivatedPlugins || []; // Use adminActivatedPlugins
+        newActivePlugins = [...currentActivePlugins];
 
         if (action === 'activate') {
           if (!newActivePlugins.includes(pluginId)) {
             newActivePlugins.push(pluginId);
-            updated = true;
+            updatedInTransaction = true;
           }
         } else { // action === 'deactivate'
           const index = newActivePlugins.indexOf(pluginId);
           if (index > -1) {
             newActivePlugins.splice(index, 1);
-            updated = true;
+            updatedInTransaction = true;
           }
         }
 
-        if (updated) {
-          transaction.update(accountRef, { activePlugins: newActivePlugins });
+        if (updatedInTransaction) {
+          transaction.update(accountRef, { adminActivatedPlugins: newActivePlugins }); // Use adminActivatedPlugins
         }
       });
 
       // 3. Actualizar los custom claims del usuario en Firebase Authentication
       // El accountId es el UID del usuario en Firebase Auth
-      await admin.auth().setCustomUserClaims(accountId, { activePlugins: newActivePlugins });
+      // Solo actualizamos si hubo un cambio en la transacción
+      if (updatedInTransaction) {
+        await admin.auth().setCustomUserClaims(accountId, { adminActivatedPlugins: newActivePlugins });
 
-      // Opcional: Forzar la actualización del token del usuario para que los cambios sean inmediatos
-      // Esto invalidará el token actual del usuario, forzándolo a obtener uno nuevo en su próxima solicitud
-      // await admin.auth().revokeRefreshTokens(accountId);
+        // Opcional: Forzar la actualización del token del usuario para que los cambios sean inmediatos
+        await admin.auth().revokeRefreshTokens(accountId);
+      }
 
       return { status: 'success', message: `Plugin ${pluginId} ${action}d for account ${accountId}.` };
     } catch (error: any) {

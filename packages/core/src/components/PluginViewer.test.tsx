@@ -40,6 +40,13 @@ describe('PluginViewer', () => {
       writable: true,
     });
 
+    // Mock HTMLIFrameElement.prototype.contentWindow
+    Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+      get: vi.fn(() => ({
+        postMessage: mockPostMessage,
+      })),
+    });
+
     // Reset modules to ensure a clean state for each test
     vi.resetModules();
   });
@@ -92,13 +99,14 @@ describe('PluginViewer', () => {
 
     const iframe = await waitFor(() => screen.getByTitle('Plugin: test-plugin')) as HTMLIFrameElement;
 
+    // Explicitly mock contentWindow on this specific iframe instance to ensure the spy is attached
+    Object.defineProperty(iframe, 'contentWindow', {
+      value: { postMessage: mockPostMessage },
+      writable: true,
+    });
+
     // Simular el evento de carga del iframe
-    await waitFor(() => {
-      // Mock contentWindow.postMessage of the iframe
-      Object.defineProperty(iframe, 'contentWindow', {
-        value: { postMessage: mockPostMessage },
-        writable: true,
-      });
+    await act(async () => {
       iframe.dispatchEvent(new Event('load'));
     });
 
@@ -149,7 +157,6 @@ describe('PluginViewer', () => {
     mockPostMessage.mockClear(); // Clear calls from MINREPORT_INIT
 
     // Simular que el iframe envía un mensaje MINREPORT_ACTION
-    // No necesitamos un waitFor aquí porque ya esperamos la inicialización
     const iframe = screen.getByTitle('Plugin: test-plugin') as HTMLIFrameElement;
     await act(async () => {
       window.dispatchEvent(
@@ -175,5 +182,133 @@ describe('PluginViewer', () => {
       },
       'http://mock-plugin.com'
     );
+  });
+
+  it('should handle MINREPORT_ACTION messages from iframe with error', async () => {
+    const pluginUrl = 'http://mock-plugin.com/plugin?ticket=abc';
+    (getSecurePluginUrl as ReturnType<typeof vi.fn>).mockResolvedValue(pluginUrl);
+    mockOnActionProxy.mockRejectedValue(new Error('Proxy error'));
+
+    render(
+      <PluginViewer
+        pluginId="test-plugin"
+        user={MOCK_USER}
+        claims={MOCK_CLAIMS}
+        idToken={MOCK_ID_TOKEN}
+        theme={MOCK_THEME}
+        onActionProxy={mockOnActionProxy}
+      />
+    );
+
+    await waitFor(() => {
+      const iframe = screen.getByTitle('Plugin: test-plugin') as HTMLIFrameElement;
+      Object.defineProperty(iframe, 'contentWindow', {
+        value: { postMessage: mockPostMessage },
+        writable: true,
+      });
+      iframe.dispatchEvent(new Event('load'));
+      expect(mockPostMessage).toHaveBeenCalledWith(
+        {
+          type: 'MINREPORT_INIT',
+          payload: { user: MOCK_USER, claims: MOCK_CLAIMS, idToken: MOCK_ID_TOKEN, theme: MOCK_THEME },
+        },
+        'http://mock-plugin.com'
+      );
+    });
+
+    mockPostMessage.mockClear();
+
+    const iframe = screen.getByTitle('Plugin: test-plugin') as HTMLIFrameElement;
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'MINREPORT_ACTION',
+            payload: { action: 'saveData', data: { key: 'value' }, correlationId: '123' },
+          },
+          origin: 'http://mock-plugin.com',
+          source: iframe.contentWindow,
+        })
+      );
+    });
+
+    expect(mockOnActionProxy).toHaveBeenCalledWith('saveData', { key: 'value' });
+
+    expect(mockPostMessage).toHaveBeenCalledWith(
+      {
+        type: 'MINREPORT_RESPONSE',
+        payload: { error: 'Proxy error', correlationId: '123' },
+      },
+      'http://mock-plugin.com'
+    );
+  });
+
+  it('should ignore messages from invalid origins', async () => {
+    const pluginUrl = 'http://mock-plugin.com/plugin?ticket=abc';
+    (getSecurePluginUrl as ReturnType<typeof vi.fn>).mockResolvedValue(pluginUrl);
+
+    render(
+      <PluginViewer
+        pluginId="test-plugin"
+        user={MOCK_USER}
+        claims={MOCK_CLAIMS}
+        idToken={MOCK_ID_TOKEN}
+        theme={MOCK_THEME}
+        onActionProxy={mockOnActionProxy}
+      />
+    );
+
+    await waitFor(() => {
+      const iframe = screen.getByTitle('Plugin: test-plugin') as HTMLIFrameElement;
+      Object.defineProperty(iframe, 'contentWindow', {
+        value: { postMessage: mockPostMessage },
+        writable: true,
+      });
+      iframe.dispatchEvent(new Event('load'));
+    });
+
+    mockPostMessage.mockClear();
+    mockOnActionProxy.mockClear();
+
+    // Simular mensaje de un origen no válido
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'MINREPORT_ACTION',
+            payload: { action: 'saveData', data: { key: 'value' }, correlationId: '123' },
+          },
+          origin: 'http://malicious.com',
+          source: window.parent,
+        })
+      );
+    });
+
+    expect(mockOnActionProxy).not.toHaveBeenCalled();
+    expect(mockPostMessage).not.toHaveBeenCalled();
+  });
+
+  it('should display error message if getSecurePluginUrl fails', async () => {
+    (getSecurePluginUrl as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Failed to get secure URL'));
+
+    render(
+      <PluginViewer
+        pluginId="test-plugin"
+        user={MOCK_USER}
+        claims={MOCK_CLAIMS}
+        idToken={MOCK_ID_TOKEN}
+        theme={MOCK_THEME}
+        onActionProxy={mockOnActionProxy}
+      />
+    );
+
+    // Use findByText to wait for the error message to appear.
+    // This is more robust than waitFor + queryByText.
+    // We match a substring of the error message to make the test less brittle.
+    const errorMessageElement = await screen.findByText(/No se pudo obtener la URL segura/i);
+    expect(errorMessageElement).toBeInTheDocument();
+
+    // Ensure the iframe was not rendered
+    expect(screen.queryByTitle('Plugin: test-plugin')).not.toBeInTheDocument();
   });
 });

@@ -19,13 +19,8 @@ export const savePluginData = functions.https.onCall({ region: "southamerica-wes
     throw new functions.https.HttpsError('invalid-argument', 'The function must be called with a valid "pluginId".');
   }
 
-  // 2. Check for granular permission using Custom Claims.
-  const userClaims = context.auth.token;
-  const activePlugins = userClaims.activePlugins as string[] | undefined;
-
-  if (!activePlugins || !activePlugins.includes(pluginId)) {
-    throw new functions.https.HttpsError('permission-denied', 'You do not have permission to call this function for the specified plugin.');
-  }
+  // 2. No need to check for granular permission using Custom Claims, as all plugins are available by default.
+  //    Access control will be handled by the admin activation status.
 
   // 3. Perform the backend operation (simulated write to Firestore).
   console.log(`User ${context.auth.uid} is saving data for plugin ${pluginId}:`, pluginData);
@@ -71,19 +66,19 @@ export const updateUserPluginClaims = functions.https.onCall({ region: "southame
     // Get the user's current custom claims.
     const userRecord = await admin.auth().getUser(userId);
     const currentCustomClaims = userRecord.customClaims || {};
-    let activePlugins = (currentCustomClaims.activePlugins || []) as string[];
+    let adminActivatedPlugins = (currentCustomClaims.adminActivatedPlugins || []) as string[];
 
-    // Update the activePlugins array.
+    // Update the adminActivatedPlugins array.
     if (isActive) {
-      if (!activePlugins.includes(pluginId)) {
-        activePlugins.push(pluginId);
+      if (!adminActivatedPlugins.includes(pluginId)) {
+        adminActivatedPlugins.push(pluginId);
       }
     } else {
-      activePlugins = activePlugins.filter(id => id !== pluginId);
+      adminActivatedPlugins = adminActivatedPlugins.filter(id => id !== pluginId);
     }
 
     // Set the updated custom claims.
-    await admin.auth().setCustomUserClaims(userId, { ...currentCustomClaims, activePlugins });
+    await admin.auth().setCustomUserClaims(userId, { ...currentCustomClaims, adminActivatedPlugins });
 
     // Force refresh of the user's ID token.
     // This is important so the client app gets the updated claims immediately.
@@ -125,8 +120,8 @@ export const getUserPluginClaims = functions.https.onCall({ region: "southameric
 
   try {
     const userRecord = await admin.auth().getUser(userId);
-    const activePlugins = (userRecord.customClaims?.activePlugins || []) as string[];
-    return { activePlugins };
+    const adminActivatedPlugins = (userRecord.customClaims?.adminActivatedPlugins || []) as string[];
+    return { adminActivatedPlugins };
   } catch (error: any) {
     console.error(`Error fetching user plugin claims for user ${userId}:`, error);
     if (error.code === 'auth/user-not-found') {

@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Cloud Run service for managing user accounts (suspend, activate, etc.).",
   "main": "lib/index.js",
+  "type": "module",
   "scripts": {
     "build": "node_modules/.bin/tsc",
     "start": "node lib/index.js",

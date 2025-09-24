@@ -1,48 +1,67 @@
+import { renderHook, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
 import useAuth from './useAuth';
-import { getAuth, signOut, onAuthStateChanged, __simulateAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged } from 'firebase/auth';
+import type { User } from 'firebase/auth';
 
-describe('useAuth', () => {
-  const mockOnAuthStateChanged = onAuthStateChanged as vi.Mock;
-  const mockSignOut = signOut as vi.Mock;
-  const mockGetAuth = getAuth as vi.Mock;
+// Mock the entire firebase/auth module to control onAuthStateChanged
+const mockUnsubscribe = vi.fn();
+vi.mock('firebase/auth', () => ({
+  onAuthStateChanged: vi.fn(() => mockUnsubscribe), // By default, return a mock unsubscribe function
+  getIdTokenResult: vi.fn(),
+}));
 
+describe('useAuth Hook', () => {
   beforeEach(() => {
+    // Reset mocks before each test
     vi.clearAllMocks();
   });
 
-  it('should return loading true initially', () => {
-    const { result } = renderHook(() => useAuth(mockGetAuth()));
+  it('should initially return a loading state', () => {
+    const { result } = renderHook(() => useAuth({} as any));
     expect(result.current.loading).toBe(true);
-    expect(result.current.user).toBeNull();
+    expect(result.current.user).toBe(null);
   });
 
-  it('should update user when auth state changes', async () => {
-    const fakeUser = { 
-      uid: '123', 
-      email: 'test@example.com',
-      getIdTokenResult: () => Promise.resolve({ claims: { admin: false, activePlugins: [] } })
-    };
-
-    const { result } = renderHook(() => useAuth(mockGetAuth()));
-
-    await act(async () => {
-      __simulateAuthStateChanged(fakeUser);
+  it('should return a non-loading state with a null user when not authenticated', async () => {
+    // Setup mock for this specific test
+    (onAuthStateChanged as ReturnType<typeof vi.fn>).mockImplementation((auth, callback) => {
+      // Simulate Firebase calling the callback asynchronously with a null user
+      Promise.resolve().then(() => callback(null));
+      return mockUnsubscribe;
     });
 
-    expect(result.current.user?.uid).toBe('123');
-    expect(result.current.loading).toBe(false);
+    const { result } = renderHook(() => useAuth({} as any));
+
+    // Wait for the async state update
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(result.current.user).toBe(null);
   });
 
-  it('should set user to null on logout', async () => {
-    const { result } = renderHook(() => useAuth(mockGetAuth()));
+  it('should return a user and claims when authenticated', async () => {
+    const mockUser = { uid: 'user123', getIdTokenResult: vi.fn() } as unknown as User;
+    const mockClaims = { claims: { role: 'admin', adminActivatedPlugins: ['pluginA', 'pluginB'] } };
 
-    await act(async () => {
-      __simulateAuthStateChanged(null);
+    // Mock the user object and its token result
+    (mockUser.getIdTokenResult as ReturnType<typeof vi.fn>).mockResolvedValue(mockClaims as any);
+
+    // Setup mock for this specific test
+    (onAuthStateChanged as ReturnType<typeof vi.fn>).mockImplementation((auth, callback) => {
+      Promise.resolve().then(() => callback(mockUser));
+      return mockUnsubscribe;
     });
 
-    expect(result.current.user).toBeNull();
-    expect(result.current.loading).toBe(false);
+    const { result } = renderHook(() => useAuth({} as any));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(result.current.user).toEqual(mockUser);
+    expect(result.current.claims).toEqual(mockClaims.claims);
+    expect(result.current.adminActivatedPlugins).toEqual(['pluginA', 'pluginB']);
   });
 });

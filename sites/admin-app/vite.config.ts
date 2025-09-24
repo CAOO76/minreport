@@ -32,10 +32,12 @@ export default defineConfig({
     alias: {
       '@minreport/core': path.resolve(__dirname, '../../packages/core/src'),
     },
+    preserveSymlinks: false,
   },
   optimizeDeps: {
     include: [
       'firebase/app',
+      'firebase/auth', // Add this line
       'firebase/firestore',
       'firebase/functions' 
     ],
@@ -50,5 +52,12 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.ts'],
+    deps: {
+      optimizer: {
+        ssr: {
+          include: [/@minreport\//],
+        },
+      },
+    },
   },
 });

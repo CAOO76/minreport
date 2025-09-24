@@ -14,11 +14,11 @@ export const generatePluginLoadToken = functions.https.onCall({ region: "southam
     throw new functions.https.HttpsError('invalid-argument', 'The function must be called with a valid "pluginId".');
   }
 
-  // 2. Check for granular permission using Custom Claims.
+  // 2. Check for granular permission using Custom Claims (adminActivatedPlugins).
   const userClaims = context.auth.token;
-  const activePlugins = userClaims.activePlugins as string[] | undefined;
+  const adminActivatedPlugins = userClaims.adminActivatedPlugins as string[] | undefined;
 
-  if (!activePlugins || !activePlugins.includes(pluginId)) {
+  if (!adminActivatedPlugins || !adminActivatedPlugins.includes(pluginId)) {
     throw new functions.https.HttpsError('permission-denied', 'You do not have permission to load this plugin.');
   }
 

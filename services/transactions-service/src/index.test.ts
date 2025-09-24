@@ -2,29 +2,42 @@ import { describe, it, expect, vi, afterAll, beforeEach } from 'vitest';
 import request from 'supertest';
 import http from 'http';
 import { createApp } from './index';
+import * as admin from 'firebase-admin';
 
-// --- Creación de Dependencias Falsas (Mocks) ---
+// Mock Firebase Admin SDK
 const mockAuth = {
   verifyIdToken: vi.fn(),
 };
 
-const mockDb = {
-  collection: vi.fn(() => ({
-    doc: vi.fn(() => ({
-      get: vi.fn(),
-      set: vi.fn(),
-    })),
-    add: vi.fn(),
-    orderBy: vi.fn(() => ({
-      get: vi.fn(),
-    })),
-  })),
+const mockFirestore = {
+  collection: vi.fn(() => mockFirestore),
+  doc: vi.fn(() => mockFirestore),
+  get: vi.fn(),
+  set: vi.fn(),
+  add: vi.fn(),
+  orderBy: vi.fn(() => mockFirestore),
+  // Mock for transaction
+  runTransaction: vi.fn((callback) => callback(mockFirestore)),
 };
 
+vi.mock('firebase-admin', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    initializeApp: vi.fn(),
+    auth: vi.fn(() => mockAuth),
+    firestore: Object.assign(vi.fn(() => mockFirestore), {
+      FieldValue: {
+        serverTimestamp: vi.fn(() => 'MOCKED_TIMESTAMP'),
+      },
+    }),
+  };
+});
+
 // Inyectamos nuestros "actores falsos" al crear la app de prueba
-const app = createApp(mockAuth as any, mockDb as any);
+// createApp now expects admin.auth() and admin.firestore()
+const app = createApp(admin.auth() as any, admin.firestore() as any);
 const server = http.createServer(app);
-// --- Fin de la Preparación ---
 
 describe('Transactions Service API', () => {
 
@@ -33,9 +46,30 @@ describe('Transactions Service API', () => {
   });
 
   beforeEach(() => {
-    mockAuth.verifyIdToken.mockReset();
-    // Resetear mocks de Firestore
-    mockDb.collection.mockReset();
+    vi.clearAllMocks(); // Clear all mocks before each test
+
+    // Reset mock implementations for Firestore and Auth
+    mockAuth.verifyIdToken.mockResolvedValue({ uid: 'user-abc' }); // Default valid user
+
+    // Default Firestore mocks
+    mockFirestore.collection.mockReturnThis();
+    mockFirestore.doc.mockReturnThis();
+    mockFirestore.get.mockResolvedValue({ exists: true, data: () => ({ members: ['user-abc'] }) }); // Default project member
+    mockFirestore.set.mockResolvedValue(true);
+    mockFirestore.add.mockResolvedValue({ id: 'new-txn-id' });
+    mockFirestore.orderBy.mockReturnThis();
+    mockFirestore.runTransaction.mockImplementation((callback) => callback(mockFirestore));
+
+    // Mock for docs in get calls
+    mockFirestore.get.mockImplementation(function() {
+      if (this.__isCollection) {
+        // If it's a collection get, return docs array
+        return Promise.resolve({ docs: [] });
+      } else {
+        // If it's a doc get, return single doc
+        return Promise.resolve({ exists: true, data: () => ({ members: ['user-abc'] }) });
+      }
+    });
   });
 
   describe('Security Middleware', () => {
@@ -45,7 +79,6 @@ describe('Transactions Service API', () => {
     });
 
     it('should return 403 Forbidden if the token is invalid', async () => {
-      // Configuramos el mock para que simule un token inválido
       mockAuth.verifyIdToken.mockRejectedValue(new Error('Token inválido!'));
 
       const response = await request(server)
@@ -67,16 +100,7 @@ describe('Transactions Service API', () => {
     });
 
     it('should return 403 Forbidden if user is not a member of the project', async () => {
-      mockDb.collection.mockImplementation((path: string) => {
-        if (path === 'projects') {
-          return {
-            doc: vi.fn((docId: string) => ({
-              get: vi.fn(() => Promise.resolve({ exists: true, data: () => ({ members: ['user-xyz'] }) })),
-            })),
-          };
-        }
-        return {};
-      });
+      mockFirestore.get.mockResolvedValueOnce({ exists: true, data: () => ({ members: ['user-xyz'] }) }); // Project exists, but user not member
 
       const response = await request(server)
         .get(`/projects/${projectId}/transactions`)
@@ -92,10 +116,11 @@ describe('Transactions Service API', () => {
         { id: 'txn-2', type: 'expense', amount: 50, description: 'Groceries', createdAt: new Date().toISOString() },
       ];
 
-      mockDb.collection.mockImplementation((path: string) => {
+      // Mock project member check
+      mockFirestore.collection.mockImplementation((path: string) => {
         if (path === 'projects') {
           return {
-            doc: vi.fn((docId: string) => ({
+            doc: vi.fn(() => ({
               get: vi.fn(() => Promise.resolve({ exists: true, data: () => ({ members: [validUser.uid] }) })),
               collection: vi.fn((subCollectionPath: string) => {
                 if (subCollectionPath === 'transactions') {
@@ -110,12 +135,12 @@ describe('Transactions Service API', () => {
                     })),
                   };
                 }
-                return {};
+                return mockFirestore; // Return mockFirestore for other collections
               }),
             })),
           };
         }
-        return {};
+        return mockFirestore; // Return mockFirestore for other collections
       });
 
       const response = await request(server)
@@ -127,10 +152,11 @@ describe('Transactions Service API', () => {
     });
 
     it('should return 200 OK and an empty array if no transactions are found', async () => {
-      mockDb.collection.mockImplementation((path: string) => {
+      // Mock project member check
+      mockFirestore.collection.mockImplementation((path: string) => {
         if (path === 'projects') {
           return {
-            doc: vi.fn((docId: string) => ({
+            doc: vi.fn(() => ({
               get: vi.fn(() => Promise.resolve({ exists: true, data: () => ({ members: [validUser.uid] }) })),
               collection: vi.fn((subCollectionPath: string) => {
                 if (subCollectionPath === 'transactions') {
@@ -142,12 +168,12 @@ describe('Transactions Service API', () => {
                     })),
                   };
                 }
-                return {};
+                return mockFirestore; // Return mockFirestore for other collections
               }),
             })),
           };
         }
-        return {};
+        return mockFirestore; // Return mockFirestore for other collections
       });
 
       const response = await request(server)
@@ -159,10 +185,11 @@ describe('Transactions Service API', () => {
     });
 
     it('should return 500 Internal Server Error if Firestore operation fails', async () => {
-      mockDb.collection.mockImplementation((path: string) => {
+      // Mock project member check
+      mockFirestore.collection.mockImplementation((path: string) => {
         if (path === 'projects') {
           return {
-            doc: vi.fn((docId: string) => ({
+            doc: vi.fn(() => ({
               get: vi.fn(() => Promise.resolve({ exists: true, data: () => ({ members: [validUser.uid] }) })),
               collection: vi.fn((subCollectionPath: string) => {
                 if (subCollectionPath === 'transactions') {
@@ -172,12 +199,12 @@ describe('Transactions Service API', () => {
                     })),
                   };
                 }
-                return {};
+                return mockFirestore; // Return mockFirestore for other collections
               }),
             })),
           };
         }
-        return {};
+        return mockFirestore; // Return mockFirestore for other collections
       });
 
       const response = await request(server)
@@ -200,16 +227,7 @@ describe('Transactions Service API', () => {
     });
 
     it('should return 403 Forbidden if user is not a member of the project', async () => {
-      mockDb.collection.mockImplementation((path: string) => {
-        if (path === 'projects') {
-          return {
-            doc: vi.fn((docId: string) => ({
-              get: vi.fn(() => Promise.resolve({ exists: true, data: () => ({ members: ['user-xyz'] }) })),
-            })),
-          };
-        }
-        return {};
-      });
+      mockFirestore.get.mockResolvedValueOnce({ exists: true, data: () => ({ members: ['user-xyz'] }) }); // Project exists, but user not member
 
       const response = await request(server)
         .post(`/projects/${projectId}/transactions`)
@@ -221,27 +239,22 @@ describe('Transactions Service API', () => {
     });
 
     it('should return 201 Created if user is authorized and data is valid', async () => {
-      const mockDocRef = { id: 'new-txn-id' };
-      let addMock: any; // Declare addMock here
-
-      mockDb.collection.mockImplementation((path: string) => {
+      // Mock project member check
+      mockFirestore.collection.mockImplementation((path: string) => {
         if (path === 'projects') {
           return {
-            doc: vi.fn((docId: string) => ({
+            doc: vi.fn(() => ({
               get: vi.fn(() => Promise.resolve({ exists: true, data: () => ({ members: [validUser.uid] }) })),
               collection: vi.fn((subCollectionPath: string) => {
                 if (subCollectionPath === 'transactions') {
-                  addMock = vi.fn(() => Promise.resolve(mockDocRef)); // Assign to addMock
-                  return {
-                    add: addMock,
-                  };
+                  return mockFirestore; // Return the global mockFirestore for transactions collection
                 }
-                return {};
+                return mockFirestore; // Return mockFirestore for other collections
               }),
             })),
           };
         }
-        return {};
+        return mockFirestore; // Return mockFirestore for other collections
       });
 
       const response = await request(server)
@@ -250,23 +263,24 @@ describe('Transactions Service API', () => {
         .send(newTransaction);
 
       expect(response.status).toBe(201);
-      expect(response.body).toEqual({ id: mockDocRef.id, ...newTransaction, createdAt: expect.any(String) });
-      expect(addMock).toHaveBeenCalledWith({ // Assert on captured addMock
+      expect(response.body).toEqual({ id: 'new-txn-id', ...newTransaction, createdAt: expect.any(String) });
+      expect(mockFirestore.add).toHaveBeenCalledWith({
         ...newTransaction,
-        createdAt: expect.any(Object), // admin.firestore.FieldValue.serverTimestamp() is an object
+        createdAt: 'MOCKED_TIMESTAMP',
       });
     });
 
     it.each(['type', 'description'])('should return 400 Bad Request if %s is missing', async (field) => {
-      mockDb.collection.mockImplementation((path: string) => {
+      // Mock project member check
+      mockFirestore.collection.mockImplementation((path: string) => {
         if (path === 'projects') {
           return {
-            doc: vi.fn((docId: string) => ({
+            doc: vi.fn(() => ({
               get: vi.fn(() => Promise.resolve({ exists: true, data: () => ({ members: [validUser.uid] }) })),
             })),
           };
         }
-        return {};
+        return mockFirestore; // Return mockFirestore for other collections
       });
 
       const invalidTransaction = { ...newTransaction };
@@ -282,15 +296,16 @@ describe('Transactions Service API', () => {
     });
 
     it('should return 400 Bad Request if amount is missing', async () => {
-      mockDb.collection.mockImplementation((path: string) => {
+      // Mock project member check
+      mockFirestore.collection.mockImplementation((path: string) => {
         if (path === 'projects') {
           return {
-            doc: vi.fn((docId: string) => ({
+            doc: vi.fn(() => ({
               get: vi.fn(() => Promise.resolve({ exists: true, data: () => ({ members: [validUser.uid] }) })),
             })),
           };
         }
-        return {};
+        return mockFirestore; // Return mockFirestore for other collections
       });
 
       const invalidTransaction = { ...newTransaction };
@@ -306,15 +321,16 @@ describe('Transactions Service API', () => {
     });
 
     it.each([0, -10, 'not-a-number'])('should return 400 Bad Request for invalid amount: %s', async (invalidAmount) => {
-      mockDb.collection.mockImplementation((path: string) => {
+      // Mock project member check
+      mockFirestore.collection.mockImplementation((path: string) => {
         if (path === 'projects') {
           return {
-            doc: vi.fn((docId: string) => ({
+            doc: vi.fn(() => ({
               get: vi.fn(() => Promise.resolve({ exists: true, data: () => ({ members: [validUser.uid] }) })),
             })),
           };
         }
-        return {};
+        return mockFirestore; // Return mockFirestore for other collections
       });
 
       const invalidTransaction = { ...newTransaction, amount: invalidAmount };
@@ -329,10 +345,11 @@ describe('Transactions Service API', () => {
     });
 
     it('should return 500 Internal Server Error if Firestore operation fails', async () => {
-      mockDb.collection.mockImplementation((path: string) => {
+      // Mock project member check
+      mockFirestore.collection.mockImplementation((path: string) => {
         if (path === 'projects') {
           return {
-            doc: vi.fn((docId: string) => ({
+            doc: vi.fn(() => ({
               get: vi.fn(() => Promise.resolve({ exists: true, data: () => ({ members: [validUser.uid] }) })),
               collection: vi.fn((subCollectionPath: string) => {
                 if (subCollectionPath === 'transactions') {
@@ -340,12 +357,12 @@ describe('Transactions Service API', () => {
                     add: vi.fn(() => Promise.reject(new Error('Firestore error'))),
                   };
                 }
-                return {};
+                return mockFirestore; // Return mockFirestore for other collections
               }),
             })),
           };
         }
-        return {};
+        return mockFirestore; // Return mockFirestore for other collections
       });
 
       const response = await request(server)

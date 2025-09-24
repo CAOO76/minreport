@@ -6,7 +6,7 @@ export interface AuthState {
   user: User | null;
   claims: IdTokenResult['claims'] | null;
   loading: boolean;
-  activePlugins: string[] | null;
+  adminActivatedPlugins: string[] | null;
 }
 
 const useAuth = (authInstance: Auth): AuthState => {
@@ -14,29 +14,30 @@ const useAuth = (authInstance: Auth): AuthState => {
     user: null,
     claims: null,
     loading: true,
-    activePlugins: null,
+    adminActivatedPlugins: null,
   });
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(authInstance, async (user) => {
       if (user) {
-        const idTokenResult = await user.getIdTokenResult(true);
+        const idTokenResult = await user.getIdTokenResult();
         setAuthState({
           user,
           claims: idTokenResult.claims,
-          activePlugins: (idTokenResult.claims.activePlugins || []) as string[],
+          adminActivatedPlugins: (idTokenResult.claims.adminActivatedPlugins || []) as string[],
           loading: false,
         });
       } else {
         setAuthState({
           user: null,
           claims: null,
-          activePlugins: null,
+          adminActivatedPlugins: null,
           loading: false,
         });
       }
     });
 
+    // Cleanup subscription on unmount
     return () => unsubscribe();
   }, [authInstance]);
 

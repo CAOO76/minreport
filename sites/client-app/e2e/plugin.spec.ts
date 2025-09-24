@@ -8,11 +8,17 @@ test.describe('Plugin Loading and Interaction', () => {
     // Expose the mock function to the page's context
     await page.exposeFunction('onAuthStateChanged', onAuthStateChanged);
 
-    // Directly simulate a logged-in user by triggering onAuthStateChanged
+    // Navigate directly to the dashboard after setting the auth state
+    await page.goto('http://localhost:5175/');
+    await page.waitForURL('http://localhost:5175/'); // Ensure we are on the dashboard
+    await page.waitForSelector('.user-display-name', { timeout: 60000 }); // Wait for user display name to appear
+  });
+
+  test('should load the test-plugin within an iframe and display user data', async ({ page }) => {
+    test.setTimeout(60000); // Set timeout for this specific test to 60 seconds
+
+    // Directly simulate a logged-in user with active plugin
     await page.evaluate(() => {
-      // This code runs in the browser context
-      // We need to expose onAuthStateChanged to the browser context
-      // This is a hack for testing, normally you wouldn't do this in production
       window.onAuthStateChanged({
         uid: 'mock-user-uid',
         email: 'test@example.com',
@@ -22,18 +28,6 @@ test.describe('Plugin Loading and Interaction', () => {
       });
     });
 
-    // Navigate directly to the dashboard after setting the auth state
-    await page.goto('http://localhost:5175/');
-    await page.waitForURL('http://localhost:5175/'); // Ensure we are on the dashboard
-    await page.waitForSelector('.user-display-name', { timeout: 60000 }); // Wait for user display name to appear
-  });
-    // Wait for successful login and redirection to dashboard
-    await page.waitForURL('http://localhost:5175/');
-    await page.waitForSelector('.user-display-name', { timeout: 60000 }); // Wait for user display name to appear
-  });
-
-  test('should load the test-plugin within an iframe and display user data', async ({ page }) => {
-  test.setTimeout(60000); // Set timeout for this specific test to 60 seconds
     // Navigate to the plugin page
     await page.goto('http://localhost:5175/plugins/test-plugin');
 
@@ -51,5 +45,28 @@ test.describe('Plugin Loading and Interaction', () => {
 
     // Verify feedback from the plugin
     await expect(iframe.locator('text=Estado: Data saved successfully.')).toBeVisible();
+  });
+
+  test('should not load the test-plugin if not active for the user', async ({ page }) => {
+    test.setTimeout(60000); // Set timeout for this specific test to 60 seconds
+
+    // Directly simulate a logged-in user WITHOUT active plugin
+    await page.evaluate(() => {
+      window.onAuthStateChanged({
+        uid: 'mock-user-uid',
+        email: 'test@example.com',
+        displayName: 'Test User',
+        getIdToken: async () => 'mock-id-token',
+        getIdTokenResult: async () => ({ claims: { activePlugins: [] } }), // No active plugins
+      });
+    });
+
+    // Navigate to the plugin page
+    await page.goto('http://localhost:5175/plugins/test-plugin');
+
+    // Expect the iframe not to be visible, or an error message
+    await expect(page.locator('iframe[title="Plugin: test-plugin"]')).not.toBeVisible();
+    // Depending on the UI, you might expect a specific error message
+    await expect(page.getByText('Error al cargar el plugin: No se pudo obtener la URL segura para el plugin.')).toBeVisible();
   });
 });

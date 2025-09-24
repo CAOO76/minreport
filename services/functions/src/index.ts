@@ -5,7 +5,7 @@ if (!admin.apps.length) {
 }
 
 // export * from "./manage-developers"; // Commented out
-export * from "./tokens";
-export * from "./pluginApi";
-export * from "./dummy";
-export * from "./clientPluginManagement";
+export * from "./tokens.js";
+export * from "./pluginApi.js";
+export * from "./dummy.js";
+export * from "./clientPluginManagement.js";

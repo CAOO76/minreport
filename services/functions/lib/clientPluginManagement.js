@@ -1,62 +1,23 @@
-"use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.manageClientPluginsCallable = void 0;
-// services/functions/src/clientPluginManagement.ts
-const functions = __importStar(require("firebase-functions/v1"));
-const admin = __importStar(require("firebase-admin"));
+import * as functions from 'firebase-functions/v2';
+import * as admin from 'firebase-admin';
 // Initialize Firebase Admin if not already initialized
 if (!admin.apps.length) {
     admin.initializeApp();
 }
 const db = admin.firestore();
-exports.manageClientPluginsCallable = functions
-    .region('southamerica-west1')
-    .https.onCall(async (data, context) => {
+export const manageClientPluginsCallable = functions.https.onCall({ region: 'southamerica-west1' }, async (request) => {
     var _a;
     // 1. Verificar autenticación y permisos de administrador
-    if (!context.auth) {
+    if (!request.auth) {
         throw new functions.https.HttpsError('unauthenticated', 'La solicitud debe estar autenticada.');
     }
-    const callerUid = context.auth.uid;
+    const callerUid = request.auth.uid;
     const userRecord = await admin.auth().getUser(callerUid);
     if (!((_a = userRecord.customClaims) === null || _a === void 0 ? void 0 : _a.admin)) {
         throw new functions.https.HttpsError('permission-denied', 'Solo los administradores pueden realizar esta acción.');
     }
     // 2. Validar datos de entrada
-    const { accountId, pluginId, action } = data;
+    const { accountId, pluginId, action } = request.data;
     if (typeof accountId !== 'string' || accountId.trim() === '') {
         throw new functions.https.HttpsError('invalid-argument', 'El ID de la cuenta es requerido.');
     }
@@ -67,6 +28,9 @@ exports.manageClientPluginsCallable = functions
         throw new functions.https.HttpsError('invalid-argument', 'La acción debe ser "activate" o "deactivate".');
     }
     const accountRef = db.collection('accounts').doc(accountId);
+    let currentActivePlugins = [];
+    let newActivePlugins = [];
+    let updatedInTransaction = false;
     try {
         await db.runTransaction(async (transaction) => {
             var _a;
@@ -74,26 +38,33 @@ exports.manageClientPluginsCallable = functions
             if (!accountDoc.exists) {
                 throw new functions.https.HttpsError('not-found', 'La cuenta especificada no existe.');
             }
-            const currentActivePlugins = ((_a = accountDoc.data()) === null || _a === void 0 ? void 0 : _a.activePlugins) || [];
-            let newActivePlugins = [...currentActivePlugins];
-            let updated = false;
+            currentActivePlugins = ((_a = accountDoc.data()) === null || _a === void 0 ? void 0 : _a.adminActivatedPlugins) || []; // Use adminActivatedPlugins
+            newActivePlugins = [...currentActivePlugins];
             if (action === 'activate') {
                 if (!newActivePlugins.includes(pluginId)) {
                     newActivePlugins.push(pluginId);
-                    updated = true;
+                    updatedInTransaction = true;
                 }
             }
             else { // action === 'deactivate'
                 const index = newActivePlugins.indexOf(pluginId);
                 if (index > -1) {
                     newActivePlugins.splice(index, 1);
-                    updated = true;
+                    updatedInTransaction = true;
                 }
             }
-            if (updated) {
-                transaction.update(accountRef, { activePlugins: newActivePlugins });
+            if (updatedInTransaction) {
+                transaction.update(accountRef, { adminActivatedPlugins: newActivePlugins }); // Use adminActivatedPlugins
             }
         });
+        // 3. Actualizar los custom claims del usuario en Firebase Authentication
+        // El accountId es el UID del usuario en Firebase Auth
+        // Solo actualizamos si hubo un cambio en la transacción
+        if (updatedInTransaction) {
+            await admin.auth().setCustomUserClaims(accountId, { adminActivatedPlugins: newActivePlugins });
+            // Opcional: Forzar la actualización del token del usuario para que los cambios sean inmediatos
+            await admin.auth().revokeRefreshTokens(accountId);
+        }
         return { status: 'success', message: `Plugin ${pluginId} ${action}d for account ${accountId}.` };
     }
     catch (error) {

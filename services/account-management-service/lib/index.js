@@ -1,15 +1,10 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-const express_1 = __importDefault(require("express"));
-const firebase_admin_1 = __importDefault(require("firebase-admin"));
+import express from 'express';
+import admin from 'firebase-admin';
 // Inicializar Firebase Admin SDK
-firebase_admin_1.default.initializeApp();
-const app = (0, express_1.default)();
-app.use(express_1.default.json());
-const firestore = firebase_admin_1.default.firestore();
+admin.initializeApp();
+const app = express();
+app.use(express.json());
+const firestore = admin.firestore();
 /**
  * Endpoint para suspender una cuenta.
  * Cambia el estado de la cuenta a 'suspended'.
@@ -28,7 +23,7 @@ app.post('/suspend', async (req, res) => {
         await accountRef.update({
             status: 'suspended',
             suspensionReason: reason || 'No se especificó una razón',
-            suspendedAt: firebase_admin_1.default.firestore.FieldValue.serverTimestamp(),
+            suspendedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         res.status(200).send({ message: `Cuenta ${accountId} ha sido suspendida.` });
     }

@@ -10,6 +10,8 @@ export default defineConfig({
   resolve: {
     alias: {
       'firebase/auth': path.resolve(__dirname, '../../__mocks__/firebase/auth.ts'),
+      'firebase/functions': path.resolve(__dirname, '../../__mocks__/firebase/functions.ts'),
+      'firebase/app': path.resolve(__dirname, '../../__mocks__/firebase/app.ts'),
     },
   },
 });
