@@ -278,17 +278,28 @@ app.post('/approveFinalRequest', async (req, res) => {
         }
         console.log(`[/approveFinalRequest] finalUserEmail: ${finalUserEmail}`);
 
-        // 1. Create user in Firebase Auth
-        const userRecord = await auth.createUser({
-            email: finalUserEmail,
-            emailVerified: false, // User will set password and verify email later
-            disabled: false,
-        });
-        console.log(`[/approveFinalRequest] Usuario creado en Auth: ${userRecord.uid}`);
+        let userRecord: admin.auth.UserRecord;
+        try {
+            userRecord = await auth.getUserByEmail(finalUserEmail);
+            console.log(`[/approveFinalRequest] Usuario existente encontrado en Auth: ${userRecord.uid}`);
+        } catch (error: any) {
+            if (error.code === 'auth/user-not-found') {
+                // User does not exist, create a new one
+                userRecord = await auth.createUser({
+                    email: finalUserEmail,
+                    emailVerified: false, // User will set password and verify email later
+                    disabled: false,
+                });
+                console.log(`[/approveFinalRequest] Nuevo usuario creado en Auth: ${userRecord.uid}`);
+            } else {
+                // Other error during getUserByEmail
+                console.error('[/approveFinalRequest] Error al buscar usuario por email:', error);
+                throw error;
+            }
+        }
 
-        // 2. Create account document
+        // 2. Create or update account document
         await db.collection('accounts').doc(userRecord.uid).set({
-            userId: userRecord.uid,
             email: finalUserEmail, 
             accountType,
             rut,
@@ -297,8 +308,8 @@ app.post('/approveFinalRequest', async (req, res) => {
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             institutionName: requestData.institutionName || null, // Add institutionName
             ...additionalData, // Merge additional data (this will include adminName, adminPhone, etc.)
-        });
-        console.log('[/approveFinalRequest] Documento de cuenta creado en Firestore.');
+        }, { merge: true }); // Use merge to update if document already exists
+        console.log('[/approveFinalRequest] Documento de cuenta creado/actualizado en Firestore.');
 
         // 3. Update request status
         await requestRef.update({
@@ -317,17 +328,31 @@ app.post('/approveFinalRequest', async (req, res) => {
         console.log('[/approveFinalRequest] Historial de solicitud registrado.');
 
         // Generate password reset link for the FINAL user
-        const actionCodeSettings = {
-            url: `${process.env.CLIENT_APP_URL || 'http://localhost:5175'}/actions/create-password`,
-            handleCodeInApp: true,
-        };
-        const rawPasswordLink = await auth.generatePasswordResetLink(finalUserEmail, actionCodeSettings);
+        const clientAppBaseUrl = process.env.CLIENT_APP_URL || 'http://localhost:5175';
+        console.log(`[/approveFinalRequest] CLIENT_APP_URL base: ${clientAppBaseUrl}`);
+
+        let rawPasswordLink: string;
+        try {
+            const actionCodeSettings = {
+                url: `${clientAppBaseUrl}/actions/create-password`,
+                handleCodeInApp: true,
+            };
+            rawPasswordLink = await auth.generatePasswordResetLink(finalUserEmail, actionCodeSettings);
+            console.log(`[/approveFinalRequest] Enlace de restablecimiento de contraseña RAW generado por Firebase: ${rawPasswordLink}`);
+        } catch (linkError) {
+            console.error('[/approveFinalRequest] Error al generar el enlace de restablecimiento de contraseña:', linkError);
+            return res.status(500).json({ message: 'Error interno del servidor al generar el enlace de contraseña.' });
+        }
 
         // Extract oobCode and build the final user-facing link
         const url = new URL(rawPasswordLink);
         const oobCode = url.searchParams.get('oobCode');
-        const finalPasswordLink = `${actionCodeSettings.url}?oobCode=${oobCode}`;
-        console.log(`[/approveFinalRequest] Enlace de contraseña generado: ${finalPasswordLink}`);
+        if (!oobCode) {
+            console.error('[/approveFinalRequest] oobCode no encontrado en el enlace generado.');
+            return res.status(500).json({ message: 'Error interno del servidor: oobCode faltante.' });
+        }
+        const finalPasswordLink = `${clientAppBaseUrl}/actions/create-password?oobCode=${oobCode}`;
+        console.log(`[/approveFinalRequest] Enlace de contraseña FINAL para el usuario: ${finalPasswordLink}`);
 
         const emailResult = await sendEmail(
             finalUserEmail,
