@@ -866,7 +866,7 @@ Estos cambios restauran la integridad del pipeline de integración continua y la
    * Errores de Ejecución (Vitest/Runtime):
        * AssertionError: La prueba espera algo diferente a lo que 
          recibe.
-       * TypeError: ... is not a function: Mock incompleto, mock 
+       * TypeError: ... is not not a function: Mock incompleto, mock 
          asíncrono mal manejado o lógica de código incorrecta.
        * Test timed out / Test stuck: Mocks asíncronos mal manejados o 
          condiciones de waitFor que nunca se cumplen.
@@ -950,7 +950,7 @@ Estos cambios restauran la integridad del pipeline de integración continua y la
      -r test para verificar que no se han introducido regresiones en 
      otros paquetes.
 
-  ---
+  --- 
 
   Conclusión:
 
@@ -958,3 +958,98 @@ Estos cambios restauran la integridad del pipeline de integración continua y la
   aplicación metódica de soluciones "bit a bit" son esenciales. No 
   hay que perder la esperanza, incluso cuando el problema parece 
   irresoluble.
+
+## 21. Manual para la Estabilización de Entornos de Desarrollo (Código, Tests y `pnpm dev`) - (25/09/2025)
+
+Este manual documenta la estrategia "bit a bit" y las lecciones aprendidas para diagnosticar y resolver fallos complejos en el entorno de desarrollo de MINREPORT, especialmente aquellos relacionados con la interacción entre PNPM, Vite, Vitest, TypeScript y Firebase en un monorepo.
+
+### Principios Clave de Depuración:
+
+1.  **Estrategia "Bit a Bit":** Nunca intentes arreglar múltiples cosas a la vez. Aísla el problema más pequeño, resuélvelo y verifica antes de pasar al siguiente.
+2.  **Verificación Constante:** Tras cada cambio mínimo, ejecuta las pruebas relevantes (`pnpm --filter <paquete> test`) para confirmar el efecto. Si las pruebas pasan, el cambio se mantiene. Si fallan, se revierte o reconsidera.
+3.  **No Asumir:** Siempre verifica las configuraciones (`package.json`, `tsconfig.json`, `vite.config.ts`) y las dependencias.
+4.  **Leer Errores Completos:** No ignores advertencias. Los mensajes de error de la consola son tu mejor guía.
+5.  **Contexto del Monorepo:** Entiende que PNPM usa symlinks y que Vite/Vitest pueden tener comportamientos específicos en este entorno.
+6.  **Consistencia del Entorno:** Asegúrate de que tu entorno local (versiones de Node.js, `firebase-tools`, etc.) sea consistente.
+
+### Flujo de Diagnóstico y Solución (Paso a Paso):
+
+#### 1. Identificación y Aislamiento del Fallo
+
+*   **Ejecutar Pruebas Generales:** `pnpm -r test`
+*   **Identificar el Primer Fallo:** El log se detendrá en el primer paquete que falle. Concéntrate solo en ese paquete.
+*   **Aislar la Suite de Pruebas:** Si el fallo es en un paquete específico, ejecuta las pruebas solo para ese paquete: `pnpm --filter <nombre_paquete> test`.
+*   **Aislar el Archivo de Prueba:** Si el fallo persiste, aísla el archivo de prueba específico: `pnpm --filter <nombre_paquete> test <ruta/al/archivo.test.ts>`.
+
+#### 2. Análisis Detallado del Error
+
+*   **Errores de Compilación/Transformación (TypeScript/Vite/ESBuild):**
+    *   `TSxxxx: ...`: Errores de TypeScript (sintaxis, tipos, configuración).
+    *   `Transform failed with 1 error`: Error de sintaxis o configuración en un archivo que Vite/Vitest intenta procesar.
+    *   `Unmenterminated string literal`, `',' expected`: Típicamente errores de sintaxis o codificación de caracteres.
+*   **Errores de Ejecución (Vitest/Runtime):**
+    *   `AssertionError`: La prueba espera algo diferente a lo que recibe.
+    *   `TypeError: ... is not a function`: Mock incompleto, mock asíncrono mal manejado o lógica de código incorrecta.
+    *   `Cannot read properties of undefined`: Acceso a una propiedad de un objeto `undefined`, a menudo por mocks incompletos o contexto de ejecución incorrecto.
+    *   `The default Firebase app does not exist. Make sure you call initializeApp()`: Firebase Admin SDK no inicializado correctamente en el entorno de prueba o ejecución.
+*   **Errores de Entorno/Herramientas:**
+    *   `Authentication Error: Your credentials are no longer valid`: Necesidad de `firebase login --reauth`.
+    *   `Cannot find module '...'`: Problemas de resolución de módulos o archivos eliminados/movidos.
+
+#### 3. Estrategias de Solución (Aplicar "Bit a Bit")
+
+##### A. Errores de Inicialización de Firebase Admin SDK (`The default Firebase app does not exist`)
+
+*   **Causa:** El código intenta usar `getFirestore()` o `getAuth()` antes de que `firebase-admin` haya sido inicializado con `initializeApp()`. Esto es común en entornos de prueba o en módulos que se cargan prematuramente.
+*   **Solución:**
+    1.  **Inicialización Diferida (Lazy Initialization):** Mover las llamadas a `getFirestore()`/`getAuth()` dentro de las funciones que las utilizan, en lugar de a nivel de módulo.
+    2.  **Inyección de Dependencias:** Refactorizar las funciones para que `db` (Firestore) y `auth` (Auth) se pasen como parámetros a las funciones de lógica de negocio. Esto permite que las pruebas inyecten mocks y el código de producción inyecte las instancias reales.
+
+##### B. Errores de Mocks en Tests (Ej: `TypeError: ... is not a function`, `expected spy to be called`)
+
+*   **Causa:** Los mocks no están interceptando correctamente las llamadas a las dependencias externas, o no están configurados para devolver el valor esperado.
+*   **Solución:**
+    1.  **Mocks Autocontenidos:** Para cada archivo de prueba, definir los mocks de `vi.mock` directamente en la parte superior del archivo. Esto asegura que los mocks se apliquen antes de que el código bajo prueba sea importado.
+    2.  **Mocks Completos:** Asegurarse de que los mocks de módulos exporten todas las funciones que el código real espera.
+    3.  **Mocks de Dependencias Inyectadas:** Si se usa Inyección de Dependencias, crear objetos falsos (`fakeAuth`, `fakeDb`) con `vi.fn()` para los métodos que se llamarán, y pasarlos directamente a las funciones de lógica de negocio.
+
+##### C. Conflictos de Mocks / Entorno de Test (Ej: `vitest.setup.ts` rompe otros tests)
+
+*   **Causa:** Múltiples archivos de prueba o un archivo de configuración de test global (`vitest.setup.ts`) están interfiriendo entre sí, causando que los mocks de un test afecten a otro.
+*   **Solución:**
+    1.  **Eliminar Agregadores de Tests:** Evitar archivos como `index.test.ts` que simplemente importan otros archivos de prueba. Vitest está diseñado para descubrir y ejecutar todos los `*.test.ts` de forma aislada.
+    2.  **Centralizar Mocks Globales (con precaución):** Si es absolutamente necesario tener mocks globales (ej. para `firebase-admin`), usar `vitest.setup.ts` para definirlos. Sin embargo, este archivo debe ser mínimo y solo definir los `vi.mock` globales, sin exportar nada que pueda causar errores de "unused imports" en `tsc`.
+    3.  **Priorizar Mocks Autocontenidos:** La estrategia más robusta es que cada archivo de prueba defina sus propios mocks, eliminando la necesidad de mocks globales complejos.
+
+##### D. Errores de Sintaxis / Codificación (`Unmenterminated string literal`, `',' expected`)
+
+*   **Causa:** Errores tipográficos, código corrupto o problemas de codificación de caracteres (ej. emojis) que el compilador (`tsc`) no puede procesar.
+*   **Solución:**
+    1.  **Revisión Manual:** Inspeccionar el código alrededor de la línea indicada por el error.
+    2.  **Sobreescritura Forzada:** Si el archivo parece correcto pero el compilador falla, sobreescribir el archivo con una versión conocida como buena (ej. desde el historial de Git o una copia limpia).
+    3.  **Eliminar Caracteres Especiales:** Si el error persiste y hay caracteres no ASCII (como emojis) en cadenas, reemplazarlos por equivalentes ASCII.
+
+##### E. Errores de Configuración de TypeScript (`tsconfig.json`)
+
+*   **Causa:** La configuración del compilador (`module`, `moduleResolution`) no es compatible con el entorno de ejecución (ej. Firebase Emulator).
+*   **Solución:** Ajustar `compilerOptions` en `tsconfig.json` para usar un formato de módulo más compatible, como `module: "commonjs"` y `moduleResolution: "node"`.
+
+##### F. Errores de Entorno / Runtime del Emulador (`TypeError: admin.firestore is not a function`)
+
+*   **Causa:** Incompatibilidad entre la forma en que el compilador genera el JavaScript y cómo el entorno de ejecución del emulador de Firebase espera cargar los módulos. Esto puede ser muy sutil y difícil de diagnosticar.
+*   **Solución (Último Recurso):**
+    1.  **Reinstalar Dependencias Forzadamente:** `pnpm install --force` para limpiar cualquier posible corrupción o enlace simbólico incorrecto en `node_modules`.
+    2.  **Revisar Versiones:** Asegurarse de que las versiones de `firebase-tools`, Node.js y `pnpm` sean compatibles y estén actualizadas.
+    3.  **Patrón de Importación Robusto:** Si el emulador falla con importaciones modulares (`import { getFirestore } from ...`), cambiar a un patrón de importación más antiguo pero robusto: `import * as admin from 'firebase-admin';` y luego usar `admin.firestore()`/`admin.auth()`. Asegurarse de que `admin.initializeApp()` se llame una vez.
+
+### 4. Verificación Final
+
+*   Una vez que se aplica una solución, ejecutar `pnpm --filter <paquete> test` para el paquete afectado.
+*   Si pasa, ejecutar `pnpm -r test` para verificar que no se han introducido regresiones en otros paquetes.
+*   Finalmente, ejecutar `pnpm dev` para confirmar que el entorno de desarrollo completo se inicia sin errores.
+
+---
+
+**Estado de Tareas Checkeables (si aplica):**
+
+*   [X] Documentar estrategia de estabilización de entorno en `GEMINI_PLAN.md`.
