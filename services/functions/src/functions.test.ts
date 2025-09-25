@@ -2,26 +2,12 @@ import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import functionsTest from 'firebase-functions-test';
 import { generatePluginLoadToken } from './tokens.js';
 import { savePluginData } from './pluginApi.js';
-import * as admin from 'firebase-admin'; // Import admin for type inference and direct mocking
+import { adminMock } from '../vitest.setup';
 
-// Mock firebase-admin as a whole
-const mockAuth = {
-  getUser: vi.fn(),
-  setCustomUserClaims: vi.fn(),
-  revokeRefreshTokens: vi.fn(),
-};
-const mockFirestore = {
-  doc: vi.fn(() => mockFirestore), // Self-referential for chaining
-  set: vi.fn(),
-  get: vi.fn(),
-};
 
-vi.mock('firebase-admin', () => ({
-  initializeApp: vi.fn(),
-  auth: () => mockAuth,
-  firestore: () => mockFirestore,
-  apps: [], // Ensure apps is an empty array initially
-}));
+
+
+
 
 const test = functionsTest();
 
@@ -34,8 +20,12 @@ describe('Cloud Functions', () => {
     vi.stubEnv('JWT_SECRET', 'test_secret');
 
     // Ensure Firebase Admin is initialized for each test
-    (admin.apps as any[]).length = 0; // Reset apps array before initializing
-    admin.initializeApp();
+    // The mock in __mocks__/firebase-admin.ts handles initializeApp and apps
+    // We just need to ensure the mock is reset
+    adminMock.initializeApp(); // Call initializeApp on the mocked admin
+
+    const mockedAuth = vi.mocked(adminMock.auth());
+    const mockedFirestore = vi.mocked(adminMock.firestore());
 
     wrappedGeneratePluginLoadToken = test.wrap(generatePluginLoadToken);
     wrappedSavePluginData = test.wrap(savePluginData);
