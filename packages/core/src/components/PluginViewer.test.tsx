@@ -28,15 +28,27 @@ const MOCK_ID_TOKEN = 'mock-firebase-id-token';
 const MOCK_THEME = { '--theme-primary-color': '#ff0000' };
 
 describe('PluginViewer', () => {
+  let messageEventListener: any;
+
   beforeEach(() => {
     // Reset mocks before each test
     vi.clearAllMocks(); // Clears all mocks, including getSecurePluginUrl
     mockOnActionProxy.mockClear();
     mockPostMessage.mockClear();
 
-    // Mock window.parent.postMessage
-    Object.defineProperty(window, 'parent', {
-      value: { postMessage: mockPostMessage },
+    // Mock window.postMessage
+    Object.defineProperty(window, 'postMessage', {
+      value: mockPostMessage,
+      writable: true,
+    });
+
+    // Mock window.addEventListener to capture the message event listener
+    Object.defineProperty(window, 'addEventListener', {
+      value: vi.fn((event, listener) => {
+        if (event === 'message') {
+          messageEventListener = listener;
+        }
+      }),
       writable: true,
     });
 
@@ -46,9 +58,6 @@ describe('PluginViewer', () => {
         postMessage: mockPostMessage,
       })),
     });
-
-    // Reset modules to ensure a clean state for each test
-    vi.resetModules();
   });
 
   afterEach(() => {
@@ -86,6 +95,13 @@ describe('PluginViewer', () => {
     const pluginUrl = 'http://mock-plugin.com/plugin?ticket=abc';
     (getSecurePluginUrl as ReturnType<typeof vi.fn>).mockResolvedValue(pluginUrl);
 
+    // Mock HTMLIFrameElement.prototype.contentWindow before rendering
+    Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+      get: vi.fn(() => ({
+        postMessage: mockPostMessage,
+      })),
+    });
+
     render(
       <PluginViewer
         pluginId="test-plugin"
@@ -98,12 +114,6 @@ describe('PluginViewer', () => {
     );
 
     const iframe = await waitFor(() => screen.getByTitle('Plugin: test-plugin')) as HTMLIFrameElement;
-
-    // Explicitly mock contentWindow on this specific iframe instance to ensure the spy is attached
-    Object.defineProperty(iframe, 'contentWindow', {
-      value: { postMessage: mockPostMessage },
-      writable: true,
-    });
 
     // Simular el evento de carga del iframe
     await act(async () => {
@@ -159,16 +169,16 @@ describe('PluginViewer', () => {
     // Simular que el iframe envía un mensaje MINREPORT_ACTION
     const iframe = screen.getByTitle('Plugin: test-plugin') as HTMLIFrameElement;
     await act(async () => {
-      window.dispatchEvent(
-        new MessageEvent('message', {
-          data: {
-            type: 'MINREPORT_ACTION',
-            payload: { action: 'saveData', data: { key: 'value' }, correlationId: '123' },
-          },
-          origin: 'http://mock-plugin.com',
-          source: iframe.contentWindow, // Simular que viene del iframe
-        })
-      );
+      const event = new MessageEvent('message', {
+        data: {
+          type: 'MINREPORT_ACTION',
+          payload: { action: 'saveData', data: { key: 'value' }, correlationId: '123' },
+        },
+        origin: 'http://mock-plugin.com',
+        source: iframe.contentWindow, // Simular que viene del iframe
+      });
+      // Manually call the captured event listener
+      messageEventListener(event);
     });
 
     // Verificar que onActionProxy fue llamado
@@ -220,16 +230,15 @@ describe('PluginViewer', () => {
 
     const iframe = screen.getByTitle('Plugin: test-plugin') as HTMLIFrameElement;
     await act(async () => {
-      window.dispatchEvent(
-        new MessageEvent('message', {
-          data: {
-            type: 'MINREPORT_ACTION',
-            payload: { action: 'saveData', data: { key: 'value' }, correlationId: '123' },
-          },
-          origin: 'http://mock-plugin.com',
-          source: iframe.contentWindow,
-        })
-      );
+      const event = new MessageEvent('message', {
+        data: {
+          type: 'MINREPORT_ACTION',
+          payload: { action: 'saveData', data: { key: 'value' }, correlationId: '123' },
+        },
+        origin: 'http://mock-plugin.com',
+        source: iframe.contentWindow,
+      });
+      messageEventListener(event);
     });
 
     expect(mockOnActionProxy).toHaveBeenCalledWith('saveData', { key: 'value' });

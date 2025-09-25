@@ -1,61 +1,37 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import functionsTest from 'firebase-functions-test';
 import { savePluginData, updateUserPluginClaims, getUserPluginClaims } from './pluginApi.js';
-import * as admin from 'firebase-admin'; // Import admin
-// Mock firebase-admin/auth
-const mockSetCustomUserClaims = vi.fn().mockResolvedValue(undefined);
-const mockGetUser = vi.fn().mockImplementation(async (uid) => {
-    const baseUserRecord = {
-        uid: uid,
-        email: `${uid}@example.com`,
-        emailVerified: true,
-        displayName: `User ${uid}`,
-        photoURL: '',
-        phoneNumber: undefined,
-        disabled: false,
-        metadata: {},
-        providerData: [],
-        toJSON: () => ({}),
-    };
-    if (uid === 'admin-uid')
-        return Object.assign(Object.assign({}, baseUserRecord), { customClaims: { admin: true } });
-    if (uid === 'user-no-claims')
-        return Object.assign(Object.assign({}, baseUserRecord), { customClaims: {} });
-    if (uid === 'user1')
-        return Object.assign(Object.assign({}, baseUserRecord), { customClaims: { adminActivatedPlugins: ['pluginA', 'pluginC'] } });
-    return Object.assign(Object.assign({}, baseUserRecord), { customClaims: {} });
-});
-const mockRevokeRefreshTokens = vi.fn().mockResolvedValue(undefined);
-vi.mock('firebase-admin/auth', () => ({
-    getAuth: () => ({
-        setCustomUserClaims: mockSetCustomUserClaims,
-        getUser: mockGetUser,
-        revokeRefreshTokens: mockRevokeRefreshTokens,
-    }),
-}));
-// Mock firebase-admin/firestore
-const mockFirestoreDoc = vi.fn(() => ({
-    get: vi.fn(),
-    set: vi.fn(),
-}));
-vi.mock('firebase-admin/firestore', () => ({
-    getFirestore: () => ({
-        doc: mockFirestoreDoc,
-    }),
-}));
-// Mock firebase-admin/app (for initializeApp and apps)
-vi.mock('firebase-admin/app', () => ({
-    initializeApp: vi.fn(),
-    getApps: () => ([{}]), // Simulate an initialized app
-}));
+import { adminMock, mockSetCustomUserClaims } from '../vitest.setup';
 const test = functionsTest();
 describe('pluginApi Cloud Functions', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         // Ensure Firebase Admin is initialized for each test
-        if (!admin.apps.length) {
-            admin.initializeApp();
-        }
+        // The mock in __mocks__/firebase-admin.ts handles initializeApp and apps
+        // We just need to ensure the mock is reset
+        adminMock.initializeApp(); // Call initializeApp on the mocked admin
+        // Mock specific user claims for testing getUserPluginClaims
+        vi.mocked(adminMock.auth()).getUser.mockImplementation(async (uid) => {
+            if (uid === 'user1') {
+                return {
+                    uid: 'user1',
+                    email: 'user1@example.com',
+                    customClaims: { adminActivatedPlugins: ['pluginA', 'pluginC'] },
+                };
+            }
+            else if (uid === 'user-no-claims') {
+                return {
+                    uid: 'user-no-claims',
+                    email: 'user-no-claims@example.com',
+                    customClaims: {},
+                };
+            }
+            return {
+                uid: uid,
+                email: `${uid}@example.com`,
+                customClaims: {},
+            };
+        });
     });
     describe('savePluginData', () => {
         const wrapped = test.wrap(savePluginData);

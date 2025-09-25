@@ -1,9 +1,5 @@
 import * as functions from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
-// Initialize Firebase Admin if not already initialized
-if (!admin.apps.length) {
-    admin.initializeApp();
-}
 const db = admin.firestore();
 export const manageClientPluginsCallable = functions.https.onCall({ region: 'southamerica-west1' }, async (request) => {
     var _a;

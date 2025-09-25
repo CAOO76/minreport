@@ -1,51 +1,12 @@
-"use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.createApp = void 0;
 /// <reference types="./types/express.d.ts" />
-const express_1 = __importDefault(require("express"));
-const admin = __importStar(require("firebase-admin"));
-const cors_1 = __importDefault(require("cors"));
+import express from 'express';
+import * as admin from 'firebase-admin';
+import cors from 'cors';
 // Esta función CREA la app, aceptando las dependencias como parámetros
-const createApp = (auth, db) => {
-    const app = (0, express_1.default)();
-    app.use(express_1.default.json());
-    app.use((0, cors_1.default)());
+export const createApp = (auth, db, adminInstance, FieldValue) => {
+    const app = express();
+    app.use(express.json());
+    app.use(cors());
     // Middleware de seguridad que usa la dependencia "auth" inyectada
     const securityMiddleware = async (req, res, next) => {
         const { authorization } = req.headers;
@@ -70,7 +31,7 @@ const createApp = (auth, db) => {
             return res.status(403).send({ message: 'Prohibido: Token inválido.' });
         }
     };
-    const router = express_1.default.Router();
+    const router = express.Router();
     router.get('/transactions', async (req, res) => {
         const { projectId } = req.params; // Use type assertion
         try {
@@ -99,7 +60,7 @@ const createApp = (auth, db) => {
                 type,
                 amount,
                 description,
-                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                createdAt: FieldValue.serverTimestamp(),
             };
             const docRef = await transactionsRef.add(newTransaction);
             const createdTransaction = { id: docRef.id, ...newTransaction, createdAt: new Date().toISOString() }; // Simulate timestamp for immediate response
@@ -113,15 +74,15 @@ const createApp = (auth, db) => {
     app.use('/projects/:projectId', securityMiddleware, router);
     return app;
 };
-exports.createApp = createApp;
 // --- Bloque de Arranque (Solo para desarrollo y producción) ---
 if (process.env.NODE_ENV !== 'test') {
-    if (admin.apps.length === 0) {
-        admin.initializeApp();
+    // Initialize Firebase Admin if not already initialized
+    if (admin.default.apps.length === 0) { // Check if an app is already initialized
+        admin.default.initializeApp();
     }
-    const dbInstance = admin.firestore();
-    const authInstance = admin.auth();
-    const app = (0, exports.createApp)(authInstance, dbInstance);
+    const dbInstance = admin.default.firestore();
+    const authInstance = admin.default.auth();
+    const app = createApp(authInstance, dbInstance, admin, admin.default.firestore.FieldValue);
     const PORT = process.env.TRANSACTIONS_SERVICE_PORT || 8080;
     app.listen(PORT, () => {
         console.log(`Transactions Service escuchando en el puerto ${PORT}`);

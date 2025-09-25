@@ -15,3 +15,15 @@ serviceAccountKey.json
 firebase-emulators-data/
 .firebase/
 firebase-export-*/
+
+# Compiled output
+lib
+**/lib
+*.js
+*.js.map
+
+# Caches and Reports
+.eslintcache
+playwright-report/
+/test-results/
+*.tsbuildinfo
