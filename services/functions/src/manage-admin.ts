@@ -6,13 +6,13 @@ const targetEmail = process.argv[2]; // Lee el email del argumento
 
 // Conexión al Emulador de Autenticación
 if (process.env.FIREBASE_AUTH_EMULATOR_HOST) {
-  if (admin.apps.length === 0) {
-    admin.initializeApp({ projectId });
+  if (admin.default.apps.length === 0) {
+    admin.default.initializeApp({ projectId });
   }
 } else {
   // Conexión a producción
-  if (admin.apps.length === 0) {
-    admin.initializeApp();
+  if (admin.default.apps.length === 0) {
+    admin.default.initializeApp();
   }
 }
 // --- FIN DE LA CONFIGURACIÓN ---
@@ -26,10 +26,10 @@ async function manageAdminRole() {
 
   try {
     console.log(`Buscando usuario con email: ${targetEmail}...`);
-    const user = await admin.auth().getUserByEmail(targetEmail);
+    const user = await admin.default.auth().getUserByEmail(targetEmail);
     console.log(`Usuario encontrado con UID: ${user.uid}.`);
 
-    await admin.auth().setCustomUserClaims(user.uid, { admin: true });
+    await admin.default.auth().setCustomUserClaims(user.uid, { admin: true });
 
     console.log(`\n✅ ¡Éxito! El usuario ${targetEmail} ahora es administrador.`);
     console.log('\nEl usuario deberá cerrar y volver a iniciar sesión para que los cambios tomen efecto.');

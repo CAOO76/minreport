@@ -25,7 +25,7 @@ export const savePluginData = functions.https.onCall({ region: "southamerica-wes
   // 3. Perform the backend operation (simulated write to Firestore).
   console.log(`User ${context.auth.uid} is saving data for plugin ${pluginId}:`, pluginData);
 
-  const firestore = admin.firestore();
+  const firestore = admin.default.firestore();
   const docPath = `plugin_data/${context.auth.uid}/${pluginId}/user_data`;
 
   try {
@@ -64,7 +64,7 @@ export const updateUserPluginClaims = functions.https.onCall({ region: "southame
 
   try {
     // Get the user's current custom claims.
-    const userRecord = await admin.auth().getUser(userId);
+    const userRecord = await admin.default.auth().getUser(userId);
     const currentCustomClaims = userRecord.customClaims || {};
     let adminActivatedPlugins = (currentCustomClaims.adminActivatedPlugins || []) as string[];
 
@@ -78,11 +78,11 @@ export const updateUserPluginClaims = functions.https.onCall({ region: "southame
     }
 
     // Set the updated custom claims.
-    await admin.auth().setCustomUserClaims(userId, { ...currentCustomClaims, adminActivatedPlugins });
+    await admin.default.auth().setCustomUserClaims(userId, { ...currentCustomClaims, adminActivatedPlugins });
 
     // Force refresh of the user's ID token.
     // This is important so the client app gets the updated claims immediately.
-    await admin.auth().revokeRefreshTokens(userId);
+    await admin.default.auth().revokeRefreshTokens(userId);
 
     console.log(`Admin ${context.auth.uid} updated plugin claims for user ${userId}: plugin ${pluginId} set to ${isActive}.`);
     return { success: true, message: 'User plugin claims updated successfully.' };
@@ -119,7 +119,7 @@ export const getUserPluginClaims = functions.https.onCall({ region: "southameric
   }
 
   try {
-    const userRecord = await admin.auth().getUser(userId);
+    const userRecord = await admin.default.auth().getUser(userId);
     const adminActivatedPlugins = (userRecord.customClaims?.adminActivatedPlugins || []) as string[];
     return { adminActivatedPlugins };
   } catch (error: any) {

@@ -2,12 +2,8 @@ import * as functions from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { CallableRequest } from 'firebase-functions/v2/https';
 
-// Initialize Firebase Admin if not already initialized
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
 
-const db = admin.firestore();
+const db = admin.default.firestore();
 
 interface ManageClientPluginsCallableData {
   accountId: string;
@@ -25,7 +21,7 @@ export const manageClientPluginsCallable = functions.https.onCall({ region: 'sou
     }
 
     const callerUid = request.auth.uid;
-    const userRecord = await admin.auth().getUser(callerUid);
+    const userRecord = await admin.default.auth().getUser(callerUid);
     if (!userRecord.customClaims?.admin) {
       throw new functions.https.HttpsError(
         'permission-denied',
@@ -97,10 +93,10 @@ export const manageClientPluginsCallable = functions.https.onCall({ region: 'sou
       // El accountId es el UID del usuario en Firebase Auth
       // Solo actualizamos si hubo un cambio en la transacción
       if (updatedInTransaction) {
-        await admin.auth().setCustomUserClaims(accountId, { adminActivatedPlugins: newActivePlugins });
+        await admin.default.auth().setCustomUserClaims(accountId, { adminActivatedPlugins: newActivePlugins });
 
         // Opcional: Forzar la actualización del token del usuario para que los cambios sean inmediatos
-        await admin.auth().revokeRefreshTokens(accountId);
+        await admin.default.auth().revokeRefreshTokens(accountId);
       }
 
       return { status: 'success', message: `Plugin ${pluginId} ${action}d for account ${accountId}.` };

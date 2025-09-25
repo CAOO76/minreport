@@ -4,7 +4,7 @@ import * as admin from 'firebase-admin';
 import cors from 'cors';
 
 // Esta función CREA la app, aceptando las dependencias como parámetros
-export const createApp = (auth: admin.auth.Auth, db: admin.firestore.Firestore) => {
+export const createApp = (auth: admin.auth.Auth, db: admin.firestore.Firestore, adminInstance: typeof admin, FieldValue: typeof admin.firestore.FieldValue) => {
   const app = express();
   app.use(express.json());
   app.use(cors());
@@ -69,7 +69,7 @@ export const createApp = (auth: admin.auth.Auth, db: admin.firestore.Firestore) 
         type,
         amount,
         description,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
       };
       const docRef = await transactionsRef.add(newTransaction);
       const createdTransaction = { id: docRef.id, ...newTransaction, createdAt: new Date().toISOString() }; // Simulate timestamp for immediate response
@@ -87,13 +87,14 @@ export const createApp = (auth: admin.auth.Auth, db: admin.firestore.Firestore) 
 
 // --- Bloque de Arranque (Solo para desarrollo y producción) ---
 if (process.env.NODE_ENV !== 'test') {
-  if (admin.apps.length === 0) {
-    admin.initializeApp();
+  // Initialize Firebase Admin if not already initialized
+  if (admin.default.apps.length === 0) { // Check if an app is already initialized
+    admin.default.initializeApp();
   }
-  const dbInstance = admin.firestore();
-  const authInstance = admin.auth();
+  const dbInstance = admin.default.firestore();
+  const authInstance = admin.default.auth();
 
-  const app = createApp(authInstance, dbInstance);
+  const app = createApp(authInstance, dbInstance, admin, admin.default.firestore.FieldValue);
   
   const PORT = process.env.TRANSACTIONS_SERVICE_PORT || 8080;
   app.listen(PORT, () => {

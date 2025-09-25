@@ -13,6 +13,11 @@
   },
   "compileOnSave": true,
   "include": [
-    "src"
+    "src",
+    "vitest.setup.ts"
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "node_modules"
   ]
 }

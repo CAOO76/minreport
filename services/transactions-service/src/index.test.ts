@@ -7,6 +7,7 @@ import * as admin from 'firebase-admin';
 // Mock Firebase Admin SDK
 const mockAuth = {
   verifyIdToken: vi.fn(),
+  getUser: vi.fn(), // Add this line
 };
 
 const mockFirestore = {
@@ -36,7 +37,7 @@ vi.mock('firebase-admin', async (importOriginal) => {
 
 // Inyectamos nuestros "actores falsos" al crear la app de prueba
 // createApp now expects admin.auth() and admin.firestore()
-const app = createApp(admin.auth() as any, admin.firestore() as any);
+const app = createApp(admin.auth() as any, admin.firestore() as any, admin, admin.firestore.FieldValue);
 const server = http.createServer(app);
 
 describe('Transactions Service API', () => {
@@ -50,6 +51,12 @@ describe('Transactions Service API', () => {
 
     // Reset mock implementations for Firestore and Auth
     mockAuth.verifyIdToken.mockResolvedValue({ uid: 'user-abc' }); // Default valid user
+
+    // Add mock for admin.auth().getUser
+    mockAuth.getUser.mockResolvedValue({
+      uid: 'user-abc',
+      customClaims: { admin: true }, // Add customClaims
+    } as any);
 
     // Default Firestore mocks
     mockFirestore.collection.mockReturnThis();

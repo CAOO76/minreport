@@ -1,6 +1,7 @@
 import { vi } from 'vitest';
 import type { Auth } from 'firebase-admin/auth';
 import type { Firestore } from 'firebase-admin/firestore';
+import type { FieldValue } from 'firebase-admin/firestore'; // Import FieldValue type
 
 // Local mocks for firebase-admin
 export const mockSetCustomUserClaims = vi.fn();
@@ -26,6 +27,10 @@ export const mockAuth = {
   revokeRefreshTokens: mockRevokeRefreshTokens,
 } as unknown as Auth;
 
+export const mockFirestoreFieldValue = { // Define mock FieldValue separately
+  serverTimestamp: vi.fn(() => 'MOCKED_TIMESTAMP'),
+} as unknown as typeof FieldValue; // Cast to typeof FieldValue
+
 export const mockFirestore = {
   collection: vi.fn(() => mockFirestore),
   doc: vi.fn(() => mockFirestore),
@@ -40,16 +45,14 @@ export const mockFirestore = {
     };
     return callback(mockTransaction);
   }),
-  FieldValue: {
-    serverTimestamp: vi.fn(() => 'MOCKED_TIMESTAMP'),
-  },
+  // Remove FieldValue from here
 } as unknown as Firestore;
 
 export const adminMock = {
   initializeApp: vi.fn(),
   auth: vi.fn(() => mockAuth),
   firestore: Object.assign(vi.fn(() => mockFirestore), {
-    FieldValue: mockFirestore.FieldValue,
+    FieldValue: mockFirestoreFieldValue, // Assign the separate mockFieldValue
   }),
   apps: [],
 };
@@ -58,5 +61,8 @@ vi.mock('firebase-admin', () => {
   return {
     default: adminMock,
     ...adminMock,
+    firestore: Object.assign(vi.fn(() => mockFirestore), {
+      FieldValue: mockFirestoreFieldValue, // Ensure it's also in the returned mock
+    }),
   };
 });

@@ -1,5 +1,4 @@
 
-require('dotenv').config({ path: '../../.env' });
 
 import express from 'express';
 import * as admin from 'firebase-admin';
@@ -8,12 +7,12 @@ import { Resend } from 'resend';
 import crypto from 'crypto';
 
 // Initialize Firebase Admin SDK
-admin.initializeApp({
+admin.default.initializeApp({
   projectId: process.env.FIREBASE_PROJECT_ID,
 });
 
-const db = admin.firestore();
-const auth = admin.auth();
+const db = admin.default.firestore();
+const auth = admin.default.auth();
 
 // Initialize Resend
 const resend = new Resend(process.env.RESEND_API_KEY);

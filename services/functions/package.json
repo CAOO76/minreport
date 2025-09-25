@@ -25,6 +25,7 @@
   },
   "scripts": {
     "test": "vitest run",
+    "dev": "tsc && tsc -w",
     "build": "tsc",
     "lint": "eslint --ext .js,.ts .",
     "serve": "npm run build && firebase emulators:start --only functions",
