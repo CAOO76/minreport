@@ -19,6 +19,7 @@ firebase-export-*/
 # Compiled output
 lib
 **/lib
+!services/functions/lib
 *.js
 *.js.map
 

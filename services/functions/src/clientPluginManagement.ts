@@ -2,8 +2,6 @@ import * as functions from 'firebase-functions/v2';
 import { CallableRequest } from 'firebase-functions/v2/https';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
-import type { Auth } from 'firebase-admin/auth';
-import type { Firestore } from 'firebase-admin/firestore';
 
 interface ManageClientPluginsCallableData {
   accountId: string;
@@ -11,12 +9,13 @@ interface ManageClientPluginsCallableData {
   action: 'activate' | 'deactivate';
 }
 
-// Handler for manageClientPlugins with dependency injection
+// Handler for manageClientPluginsCallable
 export async function handleManageClientPlugins(
-  db: Firestore,
-  auth: Auth,
   request: CallableRequest<ManageClientPluginsCallableData>
 ) {
+  const db = getFirestore();
+  const auth = getAuth();
+
   if (!request.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'La solicitud debe estar autenticada.');
   }
@@ -79,7 +78,7 @@ export async function handleManageClientPlugins(
   }
 }
 
-// Exported Cloud Function that injects dependencies
+// Exported Cloud Function
 export const manageClientPluginsCallable = functions.https.onCall({ region: 'southamerica-west1' }, (request: CallableRequest<ManageClientPluginsCallableData>) => {
-  return handleManageClientPlugins(getFirestore(), getAuth(), request);
+  return handleManageClientPlugins(request);
 });

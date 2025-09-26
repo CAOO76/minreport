@@ -1,6 +1,6 @@
-import * as admin from 'firebase-admin';
-if (!admin.apps.length) {
-    admin.initializeApp();
+import { initializeApp, getApps } from 'firebase-admin/app';
+if (!getApps().length) {
+    initializeApp();
 }
 // export * from "./manage-developers"; // Commented out
 export * from "./tokens.js";

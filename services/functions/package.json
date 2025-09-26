@@ -4,6 +4,7 @@
   "description": "",
   "main": "lib/index.js",
   "type": "module",
+  
   "keywords": [],
   "author": "",
   "license": "ISC",

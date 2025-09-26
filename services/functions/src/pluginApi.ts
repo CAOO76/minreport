@@ -2,14 +2,12 @@ import * as functions from 'firebase-functions/v2';
 import { CallableRequest } from 'firebase-functions/v2/https';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
-import type { Auth } from 'firebase-admin/auth';
-import type { Firestore } from 'firebase-admin/firestore';
 
-// Handler for savePluginData with dependency injection
+// Handler for savePluginData
 export async function handleSavePluginData(
-  db: Firestore,
   request: CallableRequest<{ pluginId: string; data: any }>
 ) {
+  const db = getFirestore();
   const { pluginId, data: pluginData } = request.data;
   if (!request.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'The function must be called while authenticated.');
@@ -28,11 +26,11 @@ export async function handleSavePluginData(
   }
 }
 
-// Handler for updateUserPluginClaims with dependency injection
+// Handler for updateUserPluginClaims
 export async function handleUpdateUserPluginClaims(
-  auth: Auth,
   request: CallableRequest<{ userId: string; pluginId: string; isActive: boolean }>
 ) {
+  const auth = getAuth();
   const { userId, pluginId, isActive } = request.data;
   if (!request.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'The function must be called while authenticated.');
@@ -65,11 +63,11 @@ export async function handleUpdateUserPluginClaims(
   }
 }
 
-// Handler for getUserPluginClaims with dependency injection
+// Handler for getUserPluginClaims
 export async function handleGetUserPluginClaims(
-  auth: Auth,
   request: CallableRequest<{ userId: string }>
 ) {
+  const auth = getAuth();
   const { userId } = request.data;
   if (!request.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'The function must be called while authenticated.');
@@ -91,15 +89,15 @@ export async function handleGetUserPluginClaims(
   }
 }
 
-// Exported Cloud Functions that inject dependencies
+// Exported Cloud Functions
 export const savePluginData = functions.https.onCall({ region: "southamerica-west1" }, (request) => {
-  return handleSavePluginData(getFirestore(), request);
+  return handleSavePluginData(request);
 });
 
 export const updateUserPluginClaims = functions.https.onCall({ region: "southamerica-west1" }, (request) => {
-  return handleUpdateUserPluginClaims(getAuth(), request);
+  return handleUpdateUserPluginClaims(request);
 });
 
 export const getUserPluginClaims = functions.https.onCall({ region: "southamerica-west1" }, (request) => {
-  return handleGetUserPluginClaims(getAuth(), request);
+  return handleGetUserPluginClaims(request);
 });
