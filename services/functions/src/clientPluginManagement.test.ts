@@ -3,7 +3,18 @@ import { handleManageClientPlugins } from './clientPluginManagement';
 import type { CallableRequest } from 'firebase-functions/v2/https';
 import type { DecodedIdToken } from 'firebase-admin/auth';
 
-// Create fake dependencies
+// Mock firebase-admin modules
+vi.mock('firebase-admin/firestore', () => ({
+  getFirestore: vi.fn(),
+}));
+vi.mock('firebase-admin/auth', () => ({
+  getAuth: vi.fn(),
+}));
+
+import { getFirestore } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
+
+// Create fake implementations for the mocked functions
 const createFakeAuth = () => ({
   getUser: vi.fn(),
   setCustomUserClaims: vi.fn(),
@@ -24,6 +35,8 @@ describe('handleManageClientPlugins', () => {
     fakeAuth = createFakeAuth();
     fakeDb = createFakeDb();
     vi.clearAllMocks();
+    getFirestore.mockReturnValue(fakeDb);
+    getAuth.mockReturnValue(fakeAuth);
   });
 
   it('should throw permission-denied if user is not an admin', async () => {
@@ -33,7 +46,7 @@ describe('handleManageClientPlugins', () => {
       auth: { uid: 'non-admin-uid' },
     } as CallableRequest<{ accountId: string; pluginId: string; action: 'activate' | 'deactivate' }>;
 
-    await expect(handleManageClientPlugins(fakeDb, fakeAuth, request)).rejects.toThrow(/Solo los administradores pueden realizar esta acción/);
+    await expect(handleManageClientPlugins(request)).rejects.toThrow(/Solo los administradores pueden realizar esta acción/);
   });
 
   it('should activate a plugin', async () => {
@@ -54,7 +67,7 @@ describe('handleManageClientPlugins', () => {
       data: { accountId: 'acc1', pluginId: 'pluginA', action: 'activate' },
     } as CallableRequest<{ accountId: string; pluginId: string; action: 'activate' | 'deactivate' }>;
 
-    await handleManageClientPlugins(fakeDb, fakeAuth, request);
+    await handleManageClientPlugins(request);
 
     expect(fakeAuth.setCustomUserClaims).toHaveBeenCalledWith('acc1', { adminActivatedPlugins: ['pluginA'] });
     expect(fakeAuth.revokeRefreshTokens).toHaveBeenCalledWith('acc1');
@@ -78,7 +91,7 @@ describe('handleManageClientPlugins', () => {
       data: { accountId: 'acc1', pluginId: 'pluginA', action: 'deactivate' },
     } as CallableRequest<{ accountId: string; pluginId: string; action: 'activate' | 'deactivate' }>;
 
-    await handleManageClientPlugins(fakeDb, fakeAuth, request);
+    await handleManageClientPlugins(request);
 
     expect(fakeAuth.setCustomUserClaims).toHaveBeenCalledWith('acc1', { adminActivatedPlugins: ['pluginB'] });
   });

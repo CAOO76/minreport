@@ -3,7 +3,14 @@ import { handleSavePluginData, handleUpdateUserPluginClaims, handleGetUserPlugin
 import type { CallableRequest } from 'firebase-functions/v2/https';
 import type { DecodedIdToken } from 'firebase-admin/auth';
 
-// Create fake dependencies
+// Mock firebase-admin modules
+vi.mock('firebase-admin/firestore');
+vi.mock('firebase-admin/auth');
+
+import { getFirestore } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
+
+// Create fake implementations for the mocked functions
 const createFakeAuth = () => ({
   getUser: vi.fn(),
   setCustomUserClaims: vi.fn(),
@@ -24,6 +31,8 @@ describe('pluginApi Handlers', () => {
     fakeAuth = createFakeAuth();
     fakeDb = createFakeDb();
     vi.clearAllMocks();
+    getFirestore.mockReturnValue(fakeDb);
+    getAuth.mockReturnValue(fakeAuth);
   });
 
   describe('handleSavePluginData', () => {
@@ -35,14 +44,14 @@ describe('pluginApi Handlers', () => {
 
       fakeDb.set.mockResolvedValue(undefined);
 
-      await handleSavePluginData(fakeDb as any, request);
+      await handleSavePluginData(request);
       expect(fakeDb.doc).toHaveBeenCalledWith('plugin_data/user1/pluginA/user_data');
       expect(fakeDb.set).toHaveBeenCalledWith(expect.objectContaining({ setting: 'value' }), { merge: true });
     });
 
     it('should throw if not authenticated', async () => {
         const request = { data: { pluginId: 'pluginA', data: {} } } as CallableRequest<{ pluginId: string; data: any; }>;
-        await expect(handleSavePluginData(fakeDb as any, request)).rejects.toThrow(/must be called while authenticated/);
+        await expect(handleSavePluginData(request)).rejects.toThrow(/must be called while authenticated/);
     });
   });
 
@@ -53,7 +62,7 @@ describe('pluginApi Handlers', () => {
         auth: { uid: 'not-admin-uid', token: { admin: false } as DecodedIdToken },
       } as CallableRequest<{ userId: string; pluginId: string; isActive: boolean; }>;
 
-      await expect(handleUpdateUserPluginClaims(fakeAuth as any, request)).rejects.toThrow(/Only administrators can perform this action/);
+      await expect(handleUpdateUserPluginClaims(request)).rejects.toThrow(/Only administrators can perform this action/);
     });
 
     it('should allow admin to activate a plugin', async () => {
@@ -63,7 +72,7 @@ describe('pluginApi Handlers', () => {
             auth: { uid: 'admin-uid', token: { admin: true } as DecodedIdToken },
         } as CallableRequest<{ userId: string; pluginId: string; isActive: boolean; }>;
 
-        await handleUpdateUserPluginClaims(fakeAuth as any, request);
+        await handleUpdateUserPluginClaims(request);
         expect(fakeAuth.setCustomUserClaims).toHaveBeenCalledWith('user-no-claims', { adminActivatedPlugins: ['pluginB'] });
     });
 
@@ -74,7 +83,7 @@ describe('pluginApi Handlers', () => {
             auth: { uid: 'admin-uid', token: { admin: true } as DecodedIdToken },
         } as CallableRequest<{ userId: string; pluginId: string; isActive: boolean; }>;
 
-        await handleUpdateUserPluginClaims(fakeAuth as any, request);
+        await handleUpdateUserPluginClaims(request);
         expect(fakeAuth.setCustomUserClaims).toHaveBeenCalledWith('user1', { adminActivatedPlugins: ['pluginC'] });
     });
   });
@@ -85,7 +94,7 @@ describe('pluginApi Handlers', () => {
             data: { userId: 'user1' },
             auth: { uid: 'not-admin-uid', token: { admin: false } as DecodedIdToken },
         } as CallableRequest<{ userId: string; }>;
-        await expect(handleGetUserPluginClaims(fakeAuth as any, request)).rejects.toThrow(/Only administrators can perform this action/);
+        await expect(handleGetUserPluginClaims(request)).rejects.toThrow(/Only administrators can perform this action/);
     });
 
     it('should return plugins for a user', async () => {
@@ -95,7 +104,7 @@ describe('pluginApi Handlers', () => {
             auth: { uid: 'admin-uid', token: { admin: true } as DecodedIdToken },
         } as CallableRequest<{ userId: string; }>;
 
-        const result = await handleGetUserPluginClaims(fakeAuth as any, request);
+        const result = await handleGetUserPluginClaims(request);
         expect(result).toEqual({ adminActivatedPlugins: ['pluginA', 'pluginC'] });
     });
   });
