@@ -18,8 +18,10 @@ import { getSecurePluginUrl } from '../utils/plugin-loader';
 // Mock of external or simulated functions
 const mockOnActionProxy = vi.fn();
 
-// Mock of window.parent.postMessage
-const mockPostMessage = vi.fn();
+// Mock of window.parent.postMessage (for messages from parent to iframe)
+const mockParentPostMessage = vi.fn();
+// Mock of iframe's contentWindow.postMessage (for messages from iframe to parent)
+const mockIframePostMessage = vi.fn();
 
 // Datos de sesión de ejemplo
 const MOCK_USER = { uid: 'user123', email: 'test@example.com', displayName: 'Test User' };
@@ -34,11 +36,12 @@ describe('PluginViewer', () => {
     // Reset mocks before each test
     vi.clearAllMocks(); // Clears all mocks, including getSecurePluginUrl
     mockOnActionProxy.mockClear();
-    mockPostMessage.mockClear();
+    mockParentPostMessage.mockClear();
+    mockIframePostMessage.mockClear();
 
     // Mock window.postMessage
     Object.defineProperty(window, 'postMessage', {
-      value: mockPostMessage,
+      value: mockParentPostMessage,
       writable: true,
     });
 
@@ -55,7 +58,7 @@ describe('PluginViewer', () => {
     // Mock HTMLIFrameElement.prototype.contentWindow
     Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
       get: vi.fn(() => ({
-        postMessage: mockPostMessage,
+        postMessage: mockIframePostMessage,
       })),
     });
   });
@@ -95,12 +98,7 @@ describe('PluginViewer', () => {
     const pluginUrl = 'http://mock-plugin.com/plugin?ticket=abc';
     (getSecurePluginUrl as ReturnType<typeof vi.fn>).mockResolvedValue(pluginUrl);
 
-    // Mock HTMLIFrameElement.prototype.contentWindow before rendering
-    Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
-      get: vi.fn(() => ({
-        postMessage: mockPostMessage,
-      })),
-    });
+
 
     render(
       <PluginViewer
@@ -115,13 +113,20 @@ describe('PluginViewer', () => {
 
     const iframe = await waitFor(() => screen.getByTitle('Plugin: test-plugin')) as HTMLIFrameElement;
 
+    // Ensure iframe.contentWindow is correctly mocked for this specific iframe instance
+    Object.defineProperty(iframe, 'contentWindow', {
+      get: vi.fn(() => ({
+        postMessage: mockIframePostMessage,
+      })),
+    });
+
     // Simular el evento de carga del iframe
     await act(async () => {
       iframe.dispatchEvent(new Event('load'));
     });
 
     // Verificar que postMessage fue llamado con el mensaje MINREPORT_INIT
-    expect(mockPostMessage).toHaveBeenCalledWith(
+    expect(mockIframePostMessage).toHaveBeenCalledWith(
       {
         type: 'MINREPORT_INIT',
         payload: { user: MOCK_USER, claims: MOCK_CLAIMS, idToken: MOCK_ID_TOKEN, theme: MOCK_THEME },
@@ -149,13 +154,9 @@ describe('PluginViewer', () => {
     // Wait for the iframe to load and be ready, and for MINREPORT_INIT to be sent
     await waitFor(() => {
       const iframe = screen.getByTitle('Plugin: test-plugin') as HTMLIFrameElement;
-      Object.defineProperty(iframe, 'contentWindow', {
-        value: { postMessage: mockPostMessage },
-        writable: true,
-      });
       iframe.dispatchEvent(new Event('load')); // Ensure the load event has fired to set up the listener
       // Ensure MINREPORT_INIT has been sent, indicating the iframe is ready to receive messages
-      expect(mockPostMessage).toHaveBeenCalledWith(
+      expect(mockIframePostMessage).toHaveBeenCalledWith(
         {
           type: 'MINREPORT_INIT',
           payload: { user: MOCK_USER, claims: MOCK_CLAIMS, idToken: MOCK_ID_TOKEN, theme: MOCK_THEME },
@@ -164,7 +165,7 @@ describe('PluginViewer', () => {
       );
     });
 
-    mockPostMessage.mockClear(); // Clear calls from MINREPORT_INIT
+    mockParentPostMessage.mockClear(); // Clear calls from MINREPORT_INIT
 
     // Simular que el iframe envía un mensaje MINREPORT_ACTION
     const iframe = screen.getByTitle('Plugin: test-plugin') as HTMLIFrameElement;
@@ -185,7 +186,7 @@ describe('PluginViewer', () => {
     expect(mockOnActionProxy).toHaveBeenCalledWith('saveData', { key: 'value' });
 
     // Verificar que se envió una respuesta al iframe
-    expect(mockPostMessage).toHaveBeenCalledWith(
+    expect(mockIframePostMessage).toHaveBeenCalledWith(
       {
         type: 'MINREPORT_RESPONSE',
         payload: { result: { status: 'success' }, correlationId: '123' },
@@ -212,12 +213,9 @@ describe('PluginViewer', () => {
 
     await waitFor(() => {
       const iframe = screen.getByTitle('Plugin: test-plugin') as HTMLIFrameElement;
-      Object.defineProperty(iframe, 'contentWindow', {
-        value: { postMessage: mockPostMessage },
-        writable: true,
-      });
+
       iframe.dispatchEvent(new Event('load'));
-      expect(mockPostMessage).toHaveBeenCalledWith(
+      expect(mockIframePostMessage).toHaveBeenCalledWith(
         {
           type: 'MINREPORT_INIT',
           payload: { user: MOCK_USER, claims: MOCK_CLAIMS, idToken: MOCK_ID_TOKEN, theme: MOCK_THEME },
@@ -226,7 +224,7 @@ describe('PluginViewer', () => {
       );
     });
 
-    mockPostMessage.mockClear();
+    mockParentPostMessage.mockClear();
 
     const iframe = screen.getByTitle('Plugin: test-plugin') as HTMLIFrameElement;
     await act(async () => {
@@ -243,8 +241,7 @@ describe('PluginViewer', () => {
 
     expect(mockOnActionProxy).toHaveBeenCalledWith('saveData', { key: 'value' });
 
-    expect(mockPostMessage).toHaveBeenCalledWith(
-      {
+    expect(mockIframePostMessage).toHaveBeenCalledWith(      {
         type: 'MINREPORT_RESPONSE',
         payload: { error: 'Proxy error', correlationId: '123' },
       },
@@ -269,14 +266,11 @@ describe('PluginViewer', () => {
 
     await waitFor(() => {
       const iframe = screen.getByTitle('Plugin: test-plugin') as HTMLIFrameElement;
-      Object.defineProperty(iframe, 'contentWindow', {
-        value: { postMessage: mockPostMessage },
-        writable: true,
-      });
+
       iframe.dispatchEvent(new Event('load'));
     });
 
-    mockPostMessage.mockClear();
+    mockParentPostMessage.mockClear();
     mockOnActionProxy.mockClear();
 
     // Simular mensaje de un origen no válido
@@ -294,7 +288,7 @@ describe('PluginViewer', () => {
     });
 
     expect(mockOnActionProxy).not.toHaveBeenCalled();
-    expect(mockPostMessage).not.toHaveBeenCalled();
+    expect(mockParentPostMessage).not.toHaveBeenCalled();
   });
 
   it('should display error message if getSecurePluginUrl fails', async () => {

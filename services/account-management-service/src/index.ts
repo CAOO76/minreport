@@ -2,7 +2,11 @@ import express from 'express';
 import admin from 'firebase-admin';
 
 // Inicializar Firebase Admin SDK
-admin.initializeApp();
+import { initializeApp, getApps } from 'firebase-admin/app';
+
+if (!getApps().length) {
+    initializeApp();
+}
 
 const app = express();
 app.use(express.json());

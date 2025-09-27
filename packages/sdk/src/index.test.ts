@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as sdk from './index';
+import { INIT_ERROR_NO_ID_TOKEN } from './index';
 
 // Mock de la respuesta que el Core enviaría
 const MOCK_SESSION = {
@@ -109,7 +110,7 @@ describe('@minreport/sdk', () => {
         })
       );
 
-      await expect(initPromise).rejects.toThrow('Initialization failed: No idToken received from Core.');
+      await expect(initPromise).rejects.toThrow(INIT_ERROR_NO_ID_TOKEN);
     });
 
     it('should remove init listener after successful initialization', async () => {

@@ -14,8 +14,7 @@
     "resolveJsonModule": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "typeRoots": ["./node_modules/@types", "./node_modules"],
-    "types": ["react", "vitest"]
+    "typeRoots": ["./node_modules/@types"]
   },
   "exclude": ["node_modules"]
 }

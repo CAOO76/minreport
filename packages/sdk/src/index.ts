@@ -22,6 +22,8 @@ export interface MinreportSession {
 type ResolveFunction = (value: any) => void;
 type RejectFunction = (reason?: any) => void;
 
+export const INIT_ERROR_NO_ID_TOKEN = 'Initialization failed: No idToken received from Core.';
+
 // --- Internal State ---
 
 let coreOrigin: string | null = null;
@@ -112,7 +114,7 @@ export const init = (allowedCoreOrigins: string[]): Promise<MinreportSession> =>
  * @returns A promise with the result from the Core.
  */
 const sendAction = <T = any>(action: string, data: any): Promise<T> => {
-  if (!coreOrigin || !window.parent) {
+  if (coreOrigin === null || !window.parent) {
     return Promise.reject(new Error('SDK not initialized. Please call init() first.'));
   }
 
@@ -125,7 +127,7 @@ const sendAction = <T = any>(action: string, data: any): Promise<T> => {
         type: 'MINREPORT_ACTION',
         payload: { action, data, correlationId },
       },
-      coreOrigin
+      coreOrigin!
     );
 
     // Timeout to prevent memory leaks

@@ -15,11 +15,16 @@
   "scripts": {
     "build": "tsc -p tsconfig.prod.json",
     "dev": "tsc -w -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "lint": "eslint . --cache --fix"
   },
   "devDependencies": {
-    "typescript": "^5.0.0",
-    "vitest": "^1.0.0",
-    "jsdom": "^24.0.0"
+    "@typescript-eslint/eslint-plugin": "^8.44.1",
+    "@typescript-eslint/parser": "^8.44.1",
+    "eslint": "^9.36.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.22",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
   }
 }

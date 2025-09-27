@@ -10,8 +10,6 @@ import Subscriptions from './pages/Subscriptions';
 import Accounts from './pages/Accounts';
 import PluginsManagement from './pages/PluginsManagement';
 import AccountDetails from './pages/AccountDetails'; // Importar el nuevo componente
-import ClientPluginManagementPage from './pages/ClientPluginManagementPage'; // New import for plugin management
-import Developers from './pages/Developers';
 import PluginSandbox from './pages/PluginSandbox'; // New import
 import './App.css';
 
@@ -57,9 +55,7 @@ function App() {
           <Route path="/subscriptions" element={<Subscriptions />} />
           <Route path="/accounts" element={<Accounts />} />
           <Route path="/accounts/:accountId" element={<AccountDetails />} /> {/* Nueva ruta para detalles de cuenta */}
-          <Route path="/accounts/:accountId/manage-plugins" element={<ClientPluginManagementPage />} /> {/* New route for client plugin management */}
           <Route path="/plugins" element={<PluginsManagement />} />
-          <Route path="/developers" element={<Developers />} />
           <Route path="/plugin-sandbox" element={<PluginSandbox />} />
           {/* Añadir una ruta para settings y una página 404 sería una buena práctica */}
         </Routes>

@@ -5,10 +5,11 @@
   "main": "lib/index.js",
   "type": "module",
   "scripts": {
-    "build": "node_modules/.bin/tsc",
+    "build": "tsc",
     "start": "node lib/index.js",
     "dev": "pnpm run build && cross-env FIREBASE_PROJECT_ID=minreport-8f2a8 node -r dotenv/config --env-file=../../.env --no-warnings=ExperimentalWarning --experimental-specifier-resolution=node lib/index.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "lint": "eslint --ext .js,.ts ."
   },
   "keywords": [],
   "author": "",

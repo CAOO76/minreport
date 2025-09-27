@@ -110,43 +110,9 @@ Almacena la configuración y metadatos de todos los plugins disponibles en el ec
   url: string;                   // La URL completa donde está alojado el plugin.
   version: string;               // Versión semántica del plugin (ej: '1.0.0').
   status: 'enabled' | 'disabled'; // Estado global del plugin.
-  developerId?: string;          // (Opcional) ID del documento del desarrollador que creó este plugin.
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
 ```
 
----
-
-## 5. Colección: `plugin_developers`
-
-Almacena información sobre los desarrolladores de plugins de terceros. Esencial para la gestión y trazabilidad del ecosistema de plugins.
-
-```typescript
-{
-  // ID del documento: autogenerado por Firestore
-
-  developerName: string;         // Nombre del desarrollador principal o de contacto.
-  developerEmail: string;        // Email de contacto.
-  companyName: string;           // Nombre de la empresa o equipo desarrollador.
-  status: 'pending_invitation' | 'invited' | 'active' | 'revoked'; // Estado del desarrollador.
-  
-  invitationToken?: {            // Token para el acceso inicial al portal de desarrollador.
-    hash: string;
-    expiresAt: Timestamp;
-  }
-
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
-
-  // Subcolección: development_logs
-  // documents: `plugin_developers/{developerId}/development_logs/{logId}`
-  /*
-    {
-      timestamp: Timestamp;
-      event: 'developer_registered' | 'invitation_sent' | 'portal_accessed';
-      details?: object;
-    }
-  */
-}
 ```

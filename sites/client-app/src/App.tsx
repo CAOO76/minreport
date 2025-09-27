@@ -14,7 +14,6 @@ import CreatePassword from './components/CreatePassword';
 import { PluginViewer } from '@minreport/core';
 import Sidebar from './components/Sidebar';
 import Plugins from './pages/Plugins';
-import DeveloperPortal from './pages/DeveloperPortal';
 
 // Layout para usuarios no autenticados
 const PublicLayout = ({ children }: { children: React.ReactNode }) => (

@@ -8,9 +8,8 @@ export default defineConfig({
     strictPort: true, // Force Vite to use this port or fail
   },
   plugins: [react()],
-  test: {
-    globals: true,
+  test: { // Add Vitest configuration
     environment: 'jsdom',
-    setupFiles: ['./vitest.setup.ts'],
+    setupFiles: './vitest.setup.ts', // Path to setup file
   },
 });

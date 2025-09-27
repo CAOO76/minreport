@@ -7,9 +7,11 @@ import { Resend } from 'resend';
 import crypto from 'crypto';
 
 // Initialize Firebase Admin SDK
-admin.default.initializeApp({
-  projectId: process.env.FIREBASE_PROJECT_ID,
-});
+import { initializeApp, getApps } from 'firebase-admin/app';
+
+if (!getApps().length) {
+    initializeApp();
+}
 
 const db = admin.default.firestore();
 const auth = admin.default.auth();

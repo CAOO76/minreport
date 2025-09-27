@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import * as sdk from '@minreport/sdk';
 import './App.css'; // Asumiremos que este archivo existirá para el theming
+import { DataForm } from './DataForm';
 
 // Orígenes permitidos para la comunicación con el núcleo de MINREPORT.
 // En un entorno real, esto vendría de una variable de entorno.
@@ -15,13 +16,13 @@ const App: React.FC = () => {
     console.log('[Plugin] Component mounted. Initializing SDK...');
 
     sdk.init(ALLOWED_CORE_ORIGINS)
-      .then(sessionData => {
+      .then((sessionData: sdk.MinreportSession) => {
         console.log('[Plugin] SDK initialized successfully!', sessionData);
         setSession(sessionData);
         setStatus(`Connected as ${sessionData.user.email}`);
         setError(null);
       })
-      .catch(err => {
+      .catch((err: any) => {
         console.error('[Plugin] SDK initialization failed:', err);
         setError(err.message);
         setStatus('SDK Connection Failed');

@@ -14,17 +14,40 @@ vi.mock('firebase-admin/auth', () => ({
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 
+// Define interfaces for fake Firebase Admin SDK objects
+interface FakeAuth {
+  getUser: ReturnType<typeof vi.fn>;
+  setCustomUserClaims: ReturnType<typeof vi.fn>;
+  revokeRefreshTokens: ReturnType<typeof vi.fn>;
+}
+
+interface FakeDb {
+  collection: ReturnType<typeof vi.fn>;
+  doc: ReturnType<typeof vi.fn>;
+  runTransaction: ReturnType<typeof vi.fn>;
+}
+
 // Create fake implementations for the mocked functions
-const createFakeAuth = () => ({
+const createFakeAuth = (): FakeAuth => ({
   getUser: vi.fn(),
   setCustomUserClaims: vi.fn(),
   revokeRefreshTokens: vi.fn(),
 });
 
-const createFakeDb = () => ({
+const createFakeDb = (): FakeDb => ({
   collection: vi.fn().mockReturnThis(),
   doc: vi.fn().mockReturnThis(),
   runTransaction: vi.fn(),
+});
+
+// Helper function to create a mock CallableRequest
+const createMockRequest = (
+  data: { accountId: string; pluginId: string; action: 'activate' | 'deactivate' },
+  authUid?: string,
+  isAdmin: boolean = false
+): CallableRequest<typeof data> => ({
+  data,
+  auth: authUid ? { uid: authUid, token: { admin: isAdmin } as DecodedIdToken } : undefined,
 });
 
 describe('handleManageClientPlugins', () => {
@@ -41,32 +64,25 @@ describe('handleManageClientPlugins', () => {
 
   it('should throw permission-denied if user is not an admin', async () => {
     fakeAuth.getUser.mockResolvedValue({ customClaims: { admin: false } });
-    const request = {
-      data: { accountId: 'acc1', pluginId: 'pluginA', action: 'activate' },
-      auth: { uid: 'non-admin-uid' },
-    } as CallableRequest<{ accountId: string; pluginId: string; action: 'activate' | 'deactivate' }>;
+    const request = createMockRequest({ accountId: 'acc1', pluginId: 'pluginA', action: 'activate' }, 'non-admin-uid', false);
 
     await expect(handleManageClientPlugins(request)).rejects.toThrow(/Solo los administradores pueden realizar esta acción/);
   });
 
   it('should activate a plugin', async () => {
     fakeAuth.getUser.mockResolvedValue({ customClaims: { admin: true } });
-    fakeDb.runTransaction.mockImplementation(async (updateFunction: any) => {
-      const mockTransaction = {
-        get: vi.fn().mockResolvedValue({ 
-          exists: true, 
-          data: () => ({ adminActivatedPlugins: [] }),
-        }),
-        update: vi.fn(),
-      };
-      await updateFunction(mockTransaction);
-    });
-
-    const request = {
-      auth: { uid: 'admin-uid' },
-      data: { accountId: 'acc1', pluginId: 'pluginA', action: 'activate' },
-    } as CallableRequest<{ accountId: string; pluginId: string; action: 'activate' | 'deactivate' }>;
-
+        fakeDb.runTransaction.mockImplementation(async (updateFunction: any) => {
+          const mockTransaction = {
+            get: vi.fn().mockResolvedValue({
+              exists: true,
+              data: () => ({ adminActivatedPlugins: [] }),
+            }),
+            update: vi.fn(),
+          };
+          await updateFunction(mockTransaction);
+        });
+    
+        const request = createMockRequest({ accountId: 'acc1', pluginId: 'pluginA', action: 'activate' }, 'admin-uid', true);
     await handleManageClientPlugins(request);
 
     expect(fakeAuth.setCustomUserClaims).toHaveBeenCalledWith('acc1', { adminActivatedPlugins: ['pluginA'] });
@@ -86,13 +102,82 @@ describe('handleManageClientPlugins', () => {
       await updateFunction(mockTransaction);
     });
 
-    const request = {
-      auth: { uid: 'admin-uid' },
-      data: { accountId: 'acc1', pluginId: 'pluginA', action: 'deactivate' },
-    } as CallableRequest<{ accountId: string; pluginId: string; action: 'activate' | 'deactivate' }>;
+    const request = createMockRequest({ accountId: 'acc1', pluginId: 'pluginA', action: 'deactivate' }, 'admin-uid', true);
 
     await handleManageClientPlugins(request);
 
     expect(fakeAuth.setCustomUserClaims).toHaveBeenCalledWith('acc1', { adminActivatedPlugins: ['pluginB'] });
+  });
+
+  it('should throw unauthenticated if not authenticated', async () => {
+    const request = createMockRequest({ accountId: 'acc1', pluginId: 'pluginA', action: 'activate' });
+
+    await expect(handleManageClientPlugins(request)).rejects.toThrow(/La solicitud debe estar autenticada./);
+  });
+
+  it('should throw invalid-argument for missing accountId', async () => {
+    fakeAuth.getUser.mockResolvedValue({ customClaims: { admin: true } });
+    const request = createMockRequest({ accountId: '', pluginId: 'pluginA', action: 'activate' }, 'admin-uid', true);
+
+    await expect(handleManageClientPlugins(request)).rejects.toThrow(/Argumentos inválidos./);
+  });
+
+  it('should throw not-found if account does not exist', async () => {
+    fakeAuth.getUser.mockResolvedValue({ customClaims: { admin: true } });
+    fakeDb.runTransaction.mockImplementation(async (updateFunction: any) => {
+      const mockTransaction = {
+        get: vi.fn().mockResolvedValue({ exists: false }),
+        update: vi.fn(),
+      };
+      await updateFunction(mockTransaction);
+    });
+
+    const request = createMockRequest({ accountId: 'non-existent-acc', pluginId: 'pluginA', action: 'activate' }, 'admin-uid', true);
+
+    await expect(handleManageClientPlugins(request)).rejects.toThrow(/La cuenta especificada no existe./);
+  });
+
+  it('should not update if activating an already active plugin', async () => {
+    fakeAuth.getUser.mockResolvedValue({ customClaims: { admin: true } });
+    fakeDb.runTransaction.mockImplementation(async (updateFunction: any) => {
+      const mockTransaction = {
+        get: vi.fn().mockResolvedValue({ 
+          exists: true, 
+          data: () => ({ adminActivatedPlugins: ['pluginA'] }),
+        }),
+        update: vi.fn(),
+      };
+      await updateFunction(mockTransaction);
+    });
+
+    const request = createMockRequest({ accountId: 'acc1', pluginId: 'pluginA', action: 'activate' }, 'admin-uid', true);
+
+    await handleManageClientPlugins(request);
+
+    expect(fakeDb.runTransaction).toHaveBeenCalled();
+    expect(fakeAuth.setCustomUserClaims).not.toHaveBeenCalled(); // No change, so no update
+    expect(fakeAuth.revokeRefreshTokens).not.toHaveBeenCalled(); // No change, so no update
+  });
+
+  it('should not update if deactivating an inactive plugin', async () => {
+    fakeAuth.getUser.mockResolvedValue({ customClaims: { admin: true } });
+    fakeDb.runTransaction.mockImplementation(async (updateFunction: any) => {
+      const mockTransaction = {
+        get: vi.fn().mockResolvedValue({ 
+          exists: true, 
+          data: () => ({ adminActivatedPlugins: ['pluginB'] }),
+        }),
+        update: vi.fn(),
+      };
+      await updateFunction(mockTransaction);
+    });
+
+    const request = createMockRequest({ accountId: 'acc1', pluginId: 'pluginA', action: 'deactivate' }, 'admin-uid', true);
+
+    await handleManageClientPlugins(request);
+
+    expect(fakeDb.runTransaction).toHaveBeenCalled();
+    expect(fakeAuth.setCustomUserClaims).not.toHaveBeenCalled(); // No change, so no update
+    expect(fakeAuth.revokeRefreshTokens).not.toHaveBeenCalled(); // No change, so no update
   });
 });

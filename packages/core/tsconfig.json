@@ -4,7 +4,13 @@
     "outDir": "./lib",
     "jsx": "react-jsx",
     "moduleResolution": "node", // Explicitly set here
-    "types": ["react", "vitest"]
+    "baseUrl": ".",
+    "paths": {
+      "@minreport/core/utils/*": ["./src/utils/*"]
+    },
+    "composite": true,
+    "declaration": true,
+    "noEmit": false
   },
   "include": ["src"],
   "exclude": ["node_modules", "lib"]

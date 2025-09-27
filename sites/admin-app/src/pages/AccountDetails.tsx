@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { db } from '../firebaseConfig';
+import { db, functions } from '../firebaseConfig';
 import { doc, getDoc } from 'firebase/firestore';
-import './AccountDetails.css'; // Asegúrate de crear este archivo CSS
+import { httpsCallable } from 'firebase/functions';
+import './AccountDetails.css';
 
 // --- Type Definitions ---
 type AccountStatus = 'active' | 'suspended';
@@ -14,10 +15,72 @@ type Account = {
   institutionName: string;
   accountType: 'EMPRESARIAL' | 'EDUCACIONAL' | 'INDIVIDUAL';
   designatedAdminEmail: string;
-  adminName: string; // Nombre del admin/persona natural
-  activePlugins?: string[];
+  adminName: string;
+  adminActivatedPlugins?: string[]; // Correct field name
 };
 
+// As per business rule: use a mock array for all available plugins
+const ALL_AVAILABLE_PLUGINS = [
+  { id: 'test-plugin', name: 'Plugin de Prueba Interno' },
+  { id: 'metrics-v1', name: 'Dashboard de Métricas v1' },
+  { id: 'reports-basic', name: 'Generador de Reportes Básico' },
+  { id: 'data-importer', name: 'Importador de Datos Externos' },
+];
+
+// --- Sub-component for Plugin Management ---
+interface ManageClientPluginsProps {
+  accountId: string;
+  activePlugins: string[];
+  onPluginsUpdated: () => void; // Callback to refresh account data
+}
+
+const ManageClientPlugins: React.FC<ManageClientPluginsProps> = ({ accountId, activePlugins, onPluginsUpdated }) => {
+  const [loadingPluginId, setLoadingPluginId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const manageClientPlugins = httpsCallable(functions, 'manageClientPluginsCallable');
+
+  const handleTogglePlugin = async (pluginId: string, isActive: boolean) => {
+    setLoadingPluginId(pluginId);
+    setError(null);
+    try {
+      const action = isActive ? 'deactivate' : 'activate';
+      await manageClientPlugins({ accountId, pluginId, action });
+      onPluginsUpdated(); // Refresh the parent component's data
+    } catch (err: any) {
+      console.error('Error toggling plugin:', err);
+      setError(`Error al cambiar estado del plugin ${pluginId}: ${err.message}`);
+    } finally {
+      setLoadingPluginId(null);
+    }
+  };
+
+  return (
+    <div className="plugin-management-section">
+      <h3>Gestión de Plugins</h3>
+      {error && <p className="error">{error}</p>}
+      <ul className="plugins-list">
+        {ALL_AVAILABLE_PLUGINS.map((plugin) => {
+          const isActive = activePlugins.includes(plugin.id);
+          const isLoading = loadingPluginId === plugin.id;
+          return (
+            <li key={plugin.id} className="plugin-item">
+              <span className="plugin-name">{plugin.name}</span>
+              <md-switch
+                selected={isActive}
+                disabled={isLoading}
+                onClick={() => handleTogglePlugin(plugin.id, isActive)}
+              ></md-switch>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+};
+
+
+// --- Main Account Details Component ---
 const AccountDetails: React.FC = () => {
   const { accountId } = useParams<{ accountId: string }>();
   const navigate = useNavigate();
@@ -61,8 +124,8 @@ const AccountDetails: React.FC = () => {
   if (!account) return <p>No se pudo cargar la información de la cuenta.</p>;
 
   return (
-    <div className="account-details-page"> {/* Usar la clase de layout principal */}
-      <div className="account-details-main"> {/* Contenido principal */}
+    <div className="account-details-page">
+      <div className="account-details-main">
         <button onClick={() => navigate('/accounts')} className="back-button">
           <span className="material-symbols-outlined">arrow_back</span>
           Volver a Cuentas
@@ -71,26 +134,20 @@ const AccountDetails: React.FC = () => {
 
         <div className="account-info-section">
           <h3>Información General</h3>
-          <button
-            onClick={() => navigate(`/accounts/${accountId}/manage-plugins`)}
-            className="button-secondary icon-button"
-            title="Gestionar Plugins del Cliente"
-          >
-            <span className="material-symbols-outlined">extension</span>
-            Gestionar Plugins
-          </button>
           <p><strong>ID:</strong> {account.id}</p>
           <p><strong>Email Administrador:</strong> {account.designatedAdminEmail}</p>
           <p><strong>Tipo de Cuenta:</strong> {account.accountType}</p>
           <p><strong>Estado:</strong> <span className={`status-badge status-${account.status}`}>{account.status}</span></p>
           <p><strong>Fecha de Creación:</strong> {account.createdAt.toDate().toLocaleDateString()}</p>
-          {/* Aquí se pueden añadir más campos de información de la cuenta */}
         </div>
 
-        {/* Aquí se pueden añadir otras secciones de gestión de la cuenta (métricas, etc.) */}
+        <ManageClientPlugins
+          accountId={account.id}
+          activePlugins={account.adminActivatedPlugins || []}
+          onPluginsUpdated={fetchAccountDetails}
+        />
+        
       </div>
-
-      {/* Columna lateral derecha */}
     </div>
   );
 };
