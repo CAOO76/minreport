@@ -6,10 +6,10 @@ export async function handleSavePluginData(request) {
     const db = getFirestore();
     const { pluginId, data: pluginData } = request.data;
     if (!request.auth) {
-        throw new functions.https.HttpsError('unauthenticated', 'The function must be called while authenticated.');
+        throw new functions.https.HttpsError('unauthenticated', 'La función debe ser llamada con autenticación.');
     }
     if (typeof pluginId !== 'string' || !pluginId) {
-        throw new functions.https.HttpsError('invalid-argument', 'The function must be called with a valid "pluginId".');
+        throw new functions.https.HttpsError('invalid-argument', 'La función debe ser llamada con un "pluginId" válido.');
     }
     const docPath = `plugin_data/${request.auth.uid}/${pluginId}/user_data`;
     try {
@@ -18,7 +18,7 @@ export async function handleSavePluginData(request) {
     }
     catch (error) {
         console.error(`Error saving data to Firestore at ${docPath}:`, error);
-        throw new functions.https.HttpsError('internal', 'An error occurred while saving the data.');
+        throw new functions.https.HttpsError('internal', 'Ocurrió un error al guardar los datos.');
     }
 }
 // Handler for updateUserPluginClaims
@@ -26,13 +26,13 @@ export async function handleUpdateUserPluginClaims(request) {
     const auth = getAuth();
     const { userId, pluginId, isActive } = request.data;
     if (!request.auth) {
-        throw new functions.https.HttpsError('unauthenticated', 'The function must be called while authenticated.');
+        throw new functions.https.HttpsError('unauthenticated', 'La función debe ser llamada con autenticación.');
     }
     if (!request.auth.token.admin) {
-        throw new functions.https.HttpsError('permission-denied', 'Only administrators can perform this action.');
+        throw new functions.https.HttpsError('permission-denied', 'Solo los administradores pueden realizar esta acción.');
     }
     if (typeof userId !== 'string' || !userId || typeof pluginId !== 'string' || !pluginId || typeof isActive !== 'boolean') {
-        throw new functions.https.HttpsError('invalid-argument', 'Invalid arguments provided.');
+        throw new functions.https.HttpsError('invalid-argument', 'Argumentos inválidos proporcionados.');
     }
     try {
         const userRecord = await auth.getUser(userId);
@@ -51,7 +51,7 @@ export async function handleUpdateUserPluginClaims(request) {
     }
     catch (error) {
         console.error(`Error updating user plugin claims for user ${userId}:`, error);
-        throw new functions.https.HttpsError('internal', 'An error occurred while updating user plugin claims.', error.message);
+        throw new functions.https.HttpsError('internal', 'Ocurrió un error al actualizar los claims del plugin del usuario.', error.message);
     }
 }
 // Handler for getUserPluginClaims
@@ -60,13 +60,13 @@ export async function handleGetUserPluginClaims(request) {
     const auth = getAuth();
     const { userId } = request.data;
     if (!request.auth) {
-        throw new functions.https.HttpsError('unauthenticated', 'The function must be called while authenticated.');
+        throw new functions.https.HttpsError('unauthenticated', 'La función debe ser llamada con autenticación.');
     }
     if (!request.auth.token.admin) {
-        throw new functions.https.HttpsError('permission-denied', 'Only administrators can perform this action.');
+        throw new functions.https.HttpsError('permission-denied', 'Solo los administradores pueden realizar esta acción.');
     }
     if (typeof userId !== 'string' || !userId) {
-        throw new functions.https.HttpsError('invalid-argument', 'Invalid arguments provided.');
+        throw new functions.https.HttpsError('invalid-argument', 'Argumentos inválidos proporcionados.');
     }
     try {
         const userRecord = await auth.getUser(userId);
@@ -75,7 +75,7 @@ export async function handleGetUserPluginClaims(request) {
     }
     catch (error) {
         console.error(`Error fetching user plugin claims for user ${userId}:`, error);
-        throw new functions.https.HttpsError('internal', 'An error occurred while fetching user plugin claims.', error.message);
+        throw new functions.https.HttpsError('internal', 'Ocurrió un error al obtener los claims del plugin del usuario.', error.message);
     }
 }
 // Exported Cloud Functions

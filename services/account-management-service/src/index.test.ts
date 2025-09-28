@@ -1,46 +1,69 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
-import admin from 'firebase-admin';
+import * as admin from 'firebase-admin';
 
-// Mock Firebase Admin SDK
+// 1. Define las funciones "controladoras" que usaremos en los tests
 const mockUpdate = vi.fn();
 const mockGet = vi.fn();
 const mockDoc = vi.fn(() => ({
   get: mockGet,
   update: mockUpdate,
 }));
-const mockCollection = vi.fn(() => ({
+const mockCollection = vi.fn((path: string) => ({
   doc: mockDoc,
 }));
-const mockFirestore = vi.fn(() => ({
-  collection: mockCollection,
-}));
 
-const mockAuth = vi.fn();
+// 2. Mockea 'firebase-admin'. La fábrica NO HACE REFERENCIA a las variables de arriba.
+// En su lugar, devuelve funciones que las llaman. Esto rompe el problema de hoisting.
+vi.mock('firebase-admin', () => {
+  const mockFirestore = {
+    FieldValue: {
+      serverTimestamp: () => 'MOCK_TIMESTAMP',
+    },
+    collection: (path: string) => mockCollection(path),
+  };
 
-vi.mock('firebase-admin', async (importOriginal) => {
-  const actual = await importOriginal();
-  return {
-    ...actual,
+  const mockAdmin = {
     initializeApp: vi.fn(),
-    firestore: Object.assign(mockFirestore, { FieldValue: actual.firestore.FieldValue }),
-    auth: mockAuth,
+    firestore: () => mockFirestore,
+    apps: [],
+  };
+
+  return {
+    ...mockAdmin,
+    default: mockAdmin,
   };
 });
 
-// Import the app after mocking firebase-admin
-const { app } = await import('./index');
+vi.mock('firebase-admin/firestore', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    getFirestore: vi.fn(() => ({
+      collection: (path: string) => mockCollection(path),
+    })),
+  };
+});
+
+vi.mock('firebase-admin/auth', () => ({
+  getAuth: vi.fn(() => ({
+    // Mock any methods of Auth that are used in src/index.ts if necessary
+    // For now, an empty object might be enough if no methods are called on 'auth'
+  })),
+}));
+
+// Asignar FieldValue por separado ya que es un objeto estático
+(admin.default as any).firestore.FieldValue = {
+  serverTimestamp: () => 'MOCK_TIMESTAMP',
+};
+
+
+// 3. Importa la app DESPUÉS de que todos los mocks estén en su lugar.
+const { app } = await import('./index.js');
 
 describe('Account Management Service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset mock implementations for each test
-    mockGet.mockReset();
-    mockUpdate.mockReset();
-    mockCollection.mockReset();
-    mockDoc.mockReset();
-    mockFirestore.mockReset();
-    mockAuth.mockReset();
   });
 
   describe('POST /suspend', () => {
@@ -70,7 +93,7 @@ describe('Account Management Service', () => {
       expect(mockUpdate).toHaveBeenCalledWith({
         status: 'suspended',
         suspensionReason: 'Test Reason',
-        suspendedAt: expect.any(admin.firestore.FieldValue),
+        suspendedAt: expect.any(Object),
       });
     });
 
@@ -84,7 +107,7 @@ describe('Account Management Service', () => {
       expect(mockUpdate).toHaveBeenCalledWith({
         status: 'suspended',
         suspensionReason: 'No se especificó una razón',
-        suspendedAt: expect.any(admin.firestore.FieldValue),
+        suspendedAt: expect.any(Object),
       });
     });
 

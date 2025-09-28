@@ -1,11 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import App from './App';
-import { BrowserRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router-dom';
 import * as firebaseAuth from 'firebase/auth'; // Import firebase/auth as a module
-import { useAuth } from '@minreport/core';
-import { useAuth } from '@minreport/core'; // Add this import
-import { useAuth } from '@minreport/core'; // Add this import
+import useAuth from './hooks/useAuth';
 
 // Mock firebase/auth - Declare and initialize mockSignOut here, at the very top
 
@@ -21,23 +19,17 @@ vi.mock('firebase/auth', async (importOriginal) => {
   };
 });
 
-// Mock @minreport/core
-vi.mock('@minreport/core', () => ({
-  useAuth: vi.fn(),
+// Mock the local useAuth hook
+vi.mock('./hooks/useAuth', () => ({
+  default: vi.fn(),
+}));
+
+// Mock ThemeToggleButton from its actual location
+vi.mock('./components/ThemeToggleButton', () => ({
   ThemeToggleButton: () => null,
 }));
 
-// Mock react-router-dom for routing components
-vi.mock('react-router-dom', async (importOriginal) => {
-  const actual = await importOriginal();
-  return {
-    ...actual,
-    BrowserRouter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>, // Mock BrowserRouter for testing
-    Routes: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-    Route: ({ element }: { element: React.ReactElement }) => element,
-    useNavigate: vi.fn(),
-  };
-});
+
 
 // Mock route components
 vi.mock('./pages/Dashboard', () => ({ default: () => <div>Dashboard Page</div> }));
@@ -46,6 +38,10 @@ vi.mock('./pages/Accounts', () => ({ default: () => <div>Accounts Page</div> }))
 vi.mock('./pages/PluginsManagement', () => ({ default: () => <div>Plugins Management Page</div> }));
 vi.mock('./pages/AccountDetails', () => ({ default: () => <div>Account Details Page</div> }));
 vi.mock('./pages/PluginSandbox', () => ({ default: () => <div>Plugin Sandbox Page</div> }));
+
+// Mock child components for simpler App testing
+vi.mock('./components/Login', () => ({ default: () => <div>Login Component</div> }));
+vi.mock('./components/Sidebar', () => ({ Sidebar: () => <div>Sidebar Component</div> }));
 
 describe('Admin App Component', () => {
   let signOutSpy: vi.SpyInstance; // Declare the spy instance
@@ -75,7 +71,11 @@ describe('Admin App Component', () => {
 
     it('renders main app layout when authenticated as admin', () => {
       (useAuth as vi.Mock).mockReturnValue({ user: { uid: '123' }, isAdmin: true, loading: false, adminActivatedPlugins: [] });
-      render(<App />);
+      render(
+        <MemoryRouter>
+          <App />
+        </MemoryRouter>
+      );
       expect(screen.getByText('Panel de Administración')).toBeInTheDocument();
       expect(screen.getByText('Sidebar Component')).toBeInTheDocument();
     });
@@ -83,52 +83,50 @@ describe('Admin App Component', () => {
 
   describe('Navigation and Routing', () => {
     beforeEach(() => {
-      (useAuth as vi.Mock).mockReturnValue({ user: { uid: '123' }, isAdmin: true, loading: false, adminActivatedPlugins: [] });
+      (useAuth as vi.Mock).mockReturnValue({ user: { uid: '123' }, isAdmin: true, loading: false });
     });
 
     it('renders Dashboard for / route', () => {
       render(
-        <BrowserRouter>
+        <MemoryRouter initialEntries={['/']}>
           <App />
-        </BrowserRouter>
+        </MemoryRouter>
       );
       expect(screen.getByText('Dashboard Page')).toBeInTheDocument();
     });
 
     it('renders Accounts for /accounts route', () => {
       render(
-        <BrowserRouter>
+        <MemoryRouter initialEntries={['/accounts']}>
           <App />
-        </BrowserRouter>
+        </MemoryRouter>
       );
-      // Simulate navigation (this is a simplified approach, actual navigation would use MemoryRouter or similar)
-      // For now, we just check if the component is rendered when the route is conceptually active
       expect(screen.getByText('Accounts Page')).toBeInTheDocument();
     });
 
     it('renders AccountDetails for /accounts/:accountId route', () => {
       render(
-        <BrowserRouter>
+        <MemoryRouter initialEntries={['/accounts/some-id']}>
           <App />
-        </BrowserRouter>
+        </MemoryRouter>
       );
       expect(screen.getByText('Account Details Page')).toBeInTheDocument();
     });
 
     it('renders PluginsManagement for /plugins route', () => {
       render(
-        <BrowserRouter>
+        <MemoryRouter initialEntries={['/plugins']}>
           <App />
-        </BrowserRouter>
+        </MemoryRouter>
       );
       expect(screen.getByText('Plugins Management Page')).toBeInTheDocument();
     });
 
     it('renders PluginSandbox for /plugin-sandbox route', () => {
       render(
-        <BrowserRouter>
+        <MemoryRouter initialEntries={['/plugin-sandbox']}>
           <App />
-        </BrowserRouter>
+        </MemoryRouter>
       );
       expect(screen.getByText('Plugin Sandbox Page')).toBeInTheDocument();
     });
@@ -136,16 +134,16 @@ describe('Admin App Component', () => {
 
   describe('Logout Functionality', () => {
     beforeEach(() => {
-      (useAuth as vi.Mock).mockReturnValue({ user: { uid: '123' }, isAdmin: true, loading: false, adminActivatedPlugins: [] });
+      (useAuth as vi.Mock).mockReturnValue({ user: { uid: '123' }, isAdmin: true, loading: false });
       signOutSpy.mockClear();
       signOutSpy.mockImplementation(() => Promise.resolve());
     });
 
     it('calls signOut when logout button is clicked', async () => {
       render(
-        <BrowserRouter>
+        <MemoryRouter>
           <App />
-        </BrowserRouter>
+        </MemoryRouter>
       );
 
       const logoutButton = screen.getByLabelText('Cerrar Sesión');
@@ -161,9 +159,9 @@ describe('Admin App Component', () => {
       const mockAlert = vi.spyOn(window, 'alert').mockImplementation(() => {});
 
       render(
-        <BrowserRouter>
+        <MemoryRouter>
           <App />
-        </BrowserRouter>
+        </MemoryRouter>
       );
 
       const logoutButton = screen.getByLabelText('Cerrar Sesión');

@@ -9,6 +9,7 @@ export default defineConfig({
   },
   plugins: [react()],
   test: { // Add Vitest configuration
+    globals: true, // Make expect, it, etc. global
     environment: 'jsdom',
     setupFiles: './vitest.setup.ts', // Path to setup file
   },

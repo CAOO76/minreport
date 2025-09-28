@@ -31,6 +31,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@minreport/core': path.resolve(__dirname, '../../packages/core/src'),
+      '@minreport/sdk': path.resolve(__dirname, '../../packages/sdk/src'), // Map alias to sdk package src
     },
     preserveSymlinks: false,
   },

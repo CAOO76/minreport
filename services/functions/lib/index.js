@@ -2,7 +2,6 @@ import { initializeApp, getApps } from 'firebase-admin/app';
 if (!getApps().length) {
     initializeApp();
 }
-// export * from "./manage-developers"; // Commented out
 export * from "./tokens.js";
 export * from "./pluginApi.js";
 export * from "./dummy.js";

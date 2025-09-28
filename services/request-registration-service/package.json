@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "node lib/index.js",
     "dev": "pnpm run build && cross-env FIREBASE_PROJECT_ID=minreport-8f2a8 node -r dotenv/config --env-file=../../.env --no-warnings=ExperimentalWarning --experimental-specifier-resolution=node lib/index.js",
-    "test": "vitest run",
+    "test": "cross-env GCLOUD_PROJECT=minreport-8f2a8 vitest run",
     "lint": "eslint --ext .js,.ts ."
   },
   "keywords": [],
@@ -26,8 +26,10 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
     "@types/node": "^24.5.2",
+    "@types/supertest": "^6.0.3",
     "@vitest/coverage-v8": "^3.2.4",
     "dotenv-cli": "^10.0.0",
+    "supertest": "^7.1.4",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"

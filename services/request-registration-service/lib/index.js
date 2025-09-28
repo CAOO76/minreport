@@ -1,14 +1,15 @@
 import express from 'express';
-import * as admin from 'firebase-admin';
+import admin from 'firebase-admin';
 import cors from 'cors';
 import { Resend } from 'resend';
 import crypto from 'crypto';
 // Initialize Firebase Admin SDK
-admin.default.initializeApp({
-    projectId: process.env.FIREBASE_PROJECT_ID,
-});
-const db = admin.default.firestore();
-const auth = admin.default.auth();
+import { FieldValue } from 'firebase-admin/firestore';
+if (!admin.apps.length) {
+    admin.initializeApp();
+}
+const db = admin.firestore();
+const auth = admin.auth();
 // Initialize Resend
 const resend = new Resend(process.env.RESEND_API_KEY);
 if (!process.env.RESEND_API_KEY) {
@@ -69,7 +70,7 @@ app.post('/requestAccess', async (req, res) => {
             city: city || null, // City is optional for non-individual
             entityType,
             status: 'pending_review',
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: FieldValue.serverTimestamp(),
         });
         // Log history for the request
         await requestRef.collection('history').add({
@@ -123,11 +124,8 @@ app.post('/processInitialDecision', async (req, res) => {
         else {
             return res.status(400).json({ message: 'Decisión inválida.' });
         }
-        await requestRef.update({
-            status: newStatus,
-        });
         await requestRef.collection('history').add({
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            timestamp: FieldValue.serverTimestamp(),
             action: `initial_decision_${decision}`,
             actor: adminId,
             details: actionDetails,
@@ -246,7 +244,7 @@ app.post('/approveFinalRequest', async (req, res) => {
         // 3. Update request status
         await requestRef.update({
             status: 'activated',
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
         });
         console.log('[/approveFinalRequest] Estado de solicitud actualizado a "activated".');
         // Log the action
@@ -322,7 +320,7 @@ app.post('/request-clarification', async (req, res) => {
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         await requestRef.collection('history').add({
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            timestamp: FieldValue.serverTimestamp(),
             action: 'clarification_requested',
             actor: adminId,
             details: message
@@ -434,3 +432,4 @@ const PORT = process.env.REGISTRATION_SERVICE_PORT || 8082;
 app.listen(PORT, () => {
     console.log(`(V4) Request Registration Service escuchando en el puerto ${PORT}`);
 });
+export { app };
