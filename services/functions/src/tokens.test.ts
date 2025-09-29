@@ -43,4 +43,37 @@ describe('generatePluginLoadToken', () => {
     };
     await expect(wrapped(request)).rejects.toThrow('You do not have permission to load this plugin.');
   });
+
+  it('should throw unauthenticated if user is not authenticated', async () => {
+    const request = {
+      data: { pluginId: 'pluginA' },
+      auth: undefined, // No authentication context
+    };
+    await expect(wrapped(request)).rejects.toThrow('The function must be called while authenticated.');
+  });
+
+  it('should throw invalid-argument if pluginId is missing', async () => {
+    const request = {
+      data: {}, // Missing pluginId
+      auth: { uid: 'user1', token: { adminActivatedPlugins: ['pluginA'] } },
+    };
+    await expect(wrapped(request)).rejects.toThrow('The function must be called with a valid "pluginId".');
+  });
+
+  it('should throw invalid-argument if pluginId is not a string', async () => {
+    const request = {
+      data: { pluginId: 123 }, // Invalid pluginId type
+      auth: { uid: 'user1', token: { adminActivatedPlugins: ['pluginA'] } },
+    };
+    await expect(wrapped(request)).rejects.toThrow('The function must be called with a valid "pluginId".');
+  });
+
+  it('should throw internal error if JWT_SECRET is not configured', async () => {
+    vi.unstubAllEnvs(); // Unstub to simulate missing JWT_SECRET
+    const request = {
+      data: { pluginId: 'pluginA' },
+      auth: { uid: 'user1', token: { adminActivatedPlugins: ['pluginA'] } },
+    };
+    await expect(wrapped(request)).rejects.toThrow('JWT_SECRET is not configured.');
+  });
 });

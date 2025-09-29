@@ -11,7 +11,14 @@ if (!getApps().length) {
 const app = express();
 app.use(express.json());
 
-const firestore = admin.firestore();
+// Permitir inyección de dependencias para tests
+let firestore: any = admin.firestore();
+let fieldValue: any = admin.firestore.FieldValue;
+
+if (process.env.USE_MOCK_FIRESTORE === '1' && (global as any).mockFirestore) {
+    firestore = (global as any).mockFirestore;
+    fieldValue = (global as any).mockFieldValue;
+}
 
 /**
  * Endpoint para suspender una cuenta.
@@ -35,7 +42,7 @@ app.post('/suspend', async (req, res) => {
         await accountRef.update({
             status: 'suspended',
             suspensionReason: reason || 'No se especificó una razón',
-            suspendedAt: admin.firestore.FieldValue.serverTimestamp(),
+            suspendedAt: fieldValue.serverTimestamp(),
         });
 
         res.status(200).send({ message: `Cuenta ${accountId} ha sido suspendida.` });
@@ -45,6 +52,8 @@ app.post('/suspend', async (req, res) => {
         res.status(500).send({ error: 'Ocurrió un error en el servidor.' });
     }
 });
+
+export { app };
 
 const PORT = process.env.ACCOUNT_SERVICE_PORT || 8081;
 app.listen(PORT, () => {

@@ -243,5 +243,51 @@ describe('@minreport/sdk', () => {
 
       expect(sdkInstance.getSession()).toEqual(MOCK_SESSION);
     });
+
+    it('should ignore MINREPORT_RESPONSE messages with invalid correlationId', async () => {
+      const actionPromise = sdkInstance.savePluginData({ myData: 'test' });
+
+      // Simulate response with invalid correlationId
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'MINREPORT_RESPONSE',
+            payload: { result: { status: 'ok' }, correlationId: 'invalid-id' },
+          },
+          origin: CORE_ORIGIN,
+          source: window.parent,
+        })
+      );
+
+      // The promise should still be pending as no valid message was received
+      const resolved = await Promise.race([
+        actionPromise.then(() => true).catch(() => false),
+        new Promise(resolve => setTimeout(() => resolve(false), 100)) // Short timeout
+      ]);
+      expect(resolved).toBe(false);
+    });
+
+    it('should ignore messages with unknown types', async () => {
+      const actionPromise = sdkInstance.savePluginData({ myData: 'test' });
+
+      // Simulate message with unknown type
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'UNKNOWN_MESSAGE_TYPE',
+            payload: { someData: 'value' },
+          },
+          origin: CORE_ORIGIN,
+          source: window.parent,
+        })
+      );
+
+      // The promise should still be pending as no valid message was received
+      const resolved = await Promise.race([
+        actionPromise.then(() => true).catch(() => false),
+        new Promise(resolve => setTimeout(() => resolve(false), 100)) // Short timeout
+      ]);
+      expect(resolved).toBe(false);
+    });
   });
 });

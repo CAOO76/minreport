@@ -1,4 +1,3 @@
-import React from 'react';
 import { ThemeToggleButton } from './components/ThemeToggleButton';
 import './App.css';
 

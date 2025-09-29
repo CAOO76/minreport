@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./lib",
+    "moduleResolution": "node",
+    "baseUrl": ".",
+    "composite": true,
+    "declaration": true,
+    "noEmit": false
+  },
+  "include": ["index.ts", "interfaces.ts", "inMemoryUserRepository.ts", "inMemoryPluginConnector.ts"],
+  "exclude": ["node_modules", "lib"],
+  "types": []
+}

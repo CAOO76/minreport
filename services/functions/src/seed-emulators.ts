@@ -59,7 +59,7 @@ async function seedSuperAdmin() {
 // --- CONFIGURACIÓN DE USUARIO DE PRUEBA ---
 const TEST_USER_EMAIL = 'test@example.com';
 const TEST_USER_PASSWORD = 'password123';
-const TEST_USER_ACTIVE_PLUGINS = ['test-plugin'];
+// const TEST_USER_ACTIVE_PLUGINS = ['test-plugin'];
 
 async function seedTestUser() {
   console.log('\nIniciando el proceso de siembra del usuario de prueba...');
@@ -79,14 +79,14 @@ async function seedTestUser() {
       console.log(`El usuario ${TEST_USER_EMAIL} ya existe con UID: ${userRecord.uid}.`);
     }
 
-    if (userRecord.customClaims?.['activePlugins']?.length !== TEST_USER_ACTIVE_PLUGINS.length ||
-        !TEST_USER_ACTIVE_PLUGINS.every(p => userRecord.customClaims?.['activePlugins']?.includes(p))) {
-      console.log('Asignando custom claims (activePlugins)...');
-      await admin.auth().setCustomUserClaims(userRecord.uid, { activePlugins: TEST_USER_ACTIVE_PLUGINS });
-      console.log('Custom claims asignados.');
-    } else {
-      console.log('Los custom claims ya están asignados.');
-    }
+    // if (userRecord.customClaims?.['activePlugins']?.length !== TEST_USER_ACTIVE_PLUGINS.length ||
+    //     !TEST_USER_ACTIVE_PLUGINS.every(p => userRecord.customClaims?.['activePlugins']?.includes(p))) {
+    //   console.log('Asignando custom claims (activePlugins)...');
+    //   await admin.auth().setCustomUserClaims(userRecord.uid, { activePlugins: TEST_USER_ACTIVE_PLUGINS });
+    //   console.log('Custom claims asignados.');
+    // } else {
+    //   console.log('Los custom claims ya están asignados.');
+    // }
 
     console.log('Proceso de siembra de usuario de prueba completado con éxito.');
     console.log(`
@@ -101,35 +101,12 @@ async function seedTestUser() {
 
 async function seedPlugins() {
   console.log('\nIniciando el proceso de siembra de plugins...');
-  const pluginsCollection = admin.firestore().collection('plugins');
+  // const pluginsCollection = admin.firestore().collection('plugins');
 
-  const testPluginData = {
-    pluginId: 'test-plugin',
-    name: 'Plugin de Prueba',
-    description: 'Un plugin de ejemplo para probar la arquitectura de plugins.',
-    url: 'http://localhost:5176', // URL del test-plugin
-    version: '1.0.0',
-    status: 'enabled',
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  };
-
-  try {
-    const docRef = pluginsCollection.doc(testPluginData.pluginId);
-    const doc = await docRef.get();
-
-    if (!doc.exists) {
-      console.log(`El plugin '${testPluginData.pluginId}' no existe. Creándolo...`);
-      await docRef.set(testPluginData);
-      console.log(`Plugin '${testPluginData.pluginId}' creado.`);
-    } else {
-      console.log(`El plugin '${testPluginData.pluginId}' ya existe.`);
-    }
-    console.log('Proceso de siembra de plugins completado con éxito.');
-  } catch (error: any) {
-    console.error('Error durante el proceso de siembra de plugins:', error.message);
-    process.exit(1);
-  }
+  // Siembra aquí solo plugins externos reales, no test-plugin
+  // Ejemplo:
+  // const pluginData = { ... };
+  // await pluginsCollection.doc(pluginData.pluginId).set(pluginData);
 }
 
 async function main() {

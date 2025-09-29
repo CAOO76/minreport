@@ -19,9 +19,8 @@ type Account = {
   adminActivatedPlugins?: string[]; // Correct field name
 };
 
-// As per business rule: use a mock array for all available plugins
+// As per business rule: use a mock array for all available plugins (solo externos)
 const ALL_AVAILABLE_PLUGINS = [
-  { id: 'test-plugin', name: 'Plugin de Prueba Interno' },
   { id: 'metrics-v1', name: 'Dashboard de Métricas v1' },
   { id: 'reports-basic', name: 'Generador de Reportes Básico' },
   { id: 'data-importer', name: 'Importador de Datos Externos' },
@@ -66,11 +65,11 @@ const ManageClientPlugins: React.FC<ManageClientPluginsProps> = ({ accountId, ac
           return (
             <li key={plugin.id} className="plugin-item">
               <span className="plugin-name">{plugin.name}</span>
-              <md-switch
-                selected={isActive}
-                disabled={isLoading}
-                onClick={() => handleTogglePlugin(plugin.id, isActive)}
-              ></md-switch>
+              {React.createElement('md-switch' as any, {
+                selected: isActive,
+                disabled: isLoading,
+                onClick: () => handleTogglePlugin(plugin.id, isActive)
+              })}
             </li>
           );
         })}

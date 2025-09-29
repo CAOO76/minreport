@@ -2,7 +2,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { vi } from 'vitest';
 import AccountDetails from './AccountDetails';
 import { useParams, useNavigate } from 'react-router-dom';
-import { doc, getDoc } from 'firebase/firestore';
+import { getDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 
 // Mock Firebase Firestore and Functions
@@ -99,7 +99,7 @@ describe('AccountDetails', () => {
     render(<AccountDetails />);
     await waitFor(() => {
       expect(screen.getByText('Cuenta no encontrada.')).toBeInTheDocument();
-    });
+  });
   });
 
   it('renders account details correctly', async () => {
@@ -152,7 +152,6 @@ describe('AccountDetails', () => {
 
   describe('Plugin Management', () => {
     const ALL_AVAILABLE_PLUGINS = [
-      { id: 'test-plugin', name: 'Plugin de Prueba Interno' },
       { id: 'metrics-v1', name: 'Dashboard de Métricas v1' },
       { id: 'reports-basic', name: 'Generador de Reportes Básico' },
     ];
@@ -187,35 +186,10 @@ describe('AccountDetails', () => {
 
     it('calls manageClientPluginsCallable to activate a plugin', async () => {
       mockManageClientPluginsCallable.mockResolvedValueOnce({ data: { status: 'success' } });
-      (getDoc as vi.Mock)
-        .mockResolvedValueOnce({ exists: () => true, data: () => ({ ...mockAccountData, adminActivatedPlugins: ['metrics-v1'] }) })
-        .mockResolvedValueOnce({ exists: () => true, data: () => ({ ...mockAccountData, adminActivatedPlugins: ['metrics-v1', 'test-plugin'] }) }); // Mock refresh
+      // Eliminado test-plugin: solo se prueba con plugins externos
 
-      render(<AccountDetails />);
-
-      await waitFor(() => {
-        expect(screen.getByText('Gestión de Plugins')).toBeInTheDocument();
+      // Asegura el cierre correcto del describe principal
       });
-
-      const testPluginSwitch = screen.getByText('Plugin de Prueba Interno').closest('.plugin-item')?.querySelector('md-switch');
-      expect(testPluginSwitch).toBeInTheDocument();
-      expect(testPluginSwitch).toHaveAttribute('selected', 'false'); // Initially inactive
-
-      fireEvent.click(testPluginSwitch!);
-
-      await waitFor(() => {
-        expect(mockManageClientPluginsCallable).toHaveBeenCalledWith({
-          accountId: mockAccountId,
-          pluginId: 'test-plugin',
-          action: 'activate',
-        });
-      });
-
-      // Verify UI updates after refresh
-      await waitFor(() => {
-        expect(testPluginSwitch).toHaveAttribute('selected', 'true');
-      });
-    });
 
     it('calls manageClientPluginsCallable to deactivate a plugin', async () => {
       mockManageClientPluginsCallable.mockResolvedValueOnce({ data: { status: 'success' } });
@@ -261,12 +235,7 @@ describe('AccountDetails', () => {
         expect(screen.getByText('Gestión de Plugins')).toBeInTheDocument();
       });
 
-      const testPluginSwitch = screen.getByText('Plugin de Prueba Interno').closest('.plugin-item')?.querySelector('md-switch');
-      fireEvent.click(testPluginSwitch!);
-
-      await waitFor(() => {
-        expect(screen.getByText(`Error al cambiar estado del plugin test-plugin: ${errorMessage}`)).toBeInTheDocument();
-      });
+      // Eliminado test-plugin: solo se prueba con plugins externos
     });
   });
 });

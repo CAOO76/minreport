@@ -1,18 +1,7 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import { db } from '../firebaseConfig';
 import { collection, onSnapshot } from 'firebase/firestore';
-import useAuth from '@minreport/core/hooks/useAuth';
-import { auth } from '../firebaseConfig';
-import { useNavigate } from 'react-router-dom';
-import { getFunctions, httpsCallable } from 'firebase/functions'; // Import for Cloud Functions
 
-// Define the test plugin metadata
-const TEST_PLUGIN_METADATA = {
-  id: 'test-plugin',
-  name: 'Plugin de Prueba (Built-in)',
-  url: 'http://localhost:5177', // Assuming this is the dev server URL for test-plugin
-  status: 'enabled',
-};
 
 interface PluginData {
   id: string;
@@ -22,11 +11,9 @@ interface PluginData {
 }
 
 const PluginSandbox: React.FC = () => {
-  const { user, claims } = useAuth(auth);
   const [allPlugins, setAllPlugins] = useState<PluginData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const navigate = useNavigate();
 
   // 1. Fetch all plugins from Firestore
   useEffect(() => {
@@ -39,16 +26,9 @@ const PluginSandbox: React.FC = () => {
         status: doc.data().status,
       }));
 
-      // Filter out the test plugin if it's fetched from Firestore to avoid duplicates
-      pluginsList = pluginsList.filter(p => p.id !== TEST_PLUGIN_METADATA.id);
-
-      // Only show enabled plugins with a URL, and prepend the test plugin
-      const filteredAndSortedPlugins = [
-        TEST_PLUGIN_METADATA as PluginData, // Always include the test plugin at the top
-        ...pluginsList.filter(p => p.status === 'enabled' && p.url)
-      ];
-
-      setAllPlugins(filteredAndSortedPlugins);
+      // Only show enabled plugins with a URL
+      const filteredPlugins = pluginsList.filter(p => p.status === 'enabled' && p.url);
+      setAllPlugins(filteredPlugins);
       setLoading(false);
     }, (err) => {
       console.error("Error fetching all plugins for sandbox:", err);

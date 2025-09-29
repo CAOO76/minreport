@@ -180,4 +180,73 @@ describe('handleManageClientPlugins', () => {
     expect(fakeAuth.setCustomUserClaims).not.toHaveBeenCalled(); // No change, so no update
     expect(fakeAuth.revokeRefreshTokens).not.toHaveBeenCalled(); // No change, so no update
   });
+
+  it('should throw invalid-argument for invalid pluginId', async () => {
+    fakeAuth.getUser.mockResolvedValue({ customClaims: { admin: true } });
+    const request = createMockRequest({ accountId: 'acc1', pluginId: '', action: 'activate' }, 'admin-uid', true);
+
+    await expect(handleManageClientPlugins(request)).rejects.toThrow(/Argumentos inválidos./);
+  });
+
+  it('should throw invalid-argument for invalid action', async () => {
+    fakeAuth.getUser.mockResolvedValue({ customClaims: { admin: true } });
+    const request = createMockRequest({ accountId: 'acc1', pluginId: 'pluginA', action: 'invalid-action' as any }, 'admin-uid', true);
+
+    await expect(handleManageClientPlugins(request)).rejects.toThrow(/Argumentos inválidos./);
+  });
+
+  it('should throw internal error if Firestore transaction fails', async () => {
+    fakeAuth.getUser.mockResolvedValue({ customClaims: { admin: true } });
+    fakeDb.runTransaction.mockRejectedValue(new Error('Firestore transaction error'));
+
+    const request = createMockRequest({ accountId: 'acc1', pluginId: 'pluginA', action: 'activate' }, 'admin-uid', true);
+
+    await expect(handleManageClientPlugins(request)).rejects.toThrow(/Error al gestionar el plugin del cliente./);
+  });
+
+  it('should throw internal error if auth.getUser(callerUid) fails', async () => {
+    fakeAuth.getUser.mockRejectedValue(new Error('Caller user not found'));
+
+    const request = createMockRequest({ accountId: 'acc1', pluginId: 'pluginA', action: 'activate' }, 'admin-uid', true);
+
+    await expect(handleManageClientPlugins(request)).rejects.toThrow('Caller user not found');
+  });
+
+  it('should throw internal error if setCustomUserClaims fails', async () => {
+    fakeAuth.getUser.mockResolvedValue({ customClaims: { admin: true } });
+    fakeDb.runTransaction.mockImplementation(async (updateFunction: any) => {
+      const mockTransaction = {
+        get: vi.fn().mockResolvedValue({ 
+          exists: true, 
+          data: () => ({ adminActivatedPlugins: [] }),
+        }),
+        update: vi.fn(),
+      };
+      await updateFunction(mockTransaction);
+    });
+    fakeAuth.setCustomUserClaims.mockRejectedValue(new Error('Claims update failed'));
+
+    const request = createMockRequest({ accountId: 'acc1', pluginId: 'pluginA', action: 'activate' }, 'admin-uid', true);
+
+    await expect(handleManageClientPlugins(request)).rejects.toThrow(/Error al gestionar el plugin del cliente./);
+  });
+
+  it('should throw internal error if revokeRefreshTokens fails', async () => {
+    fakeAuth.getUser.mockResolvedValue({ customClaims: { admin: true } });
+    fakeDb.runTransaction.mockImplementation(async (updateFunction: any) => {
+      const mockTransaction = {
+        get: vi.fn().mockResolvedValue({ 
+          exists: true, 
+          data: () => ({ adminActivatedPlugins: [] }),
+        }),
+        update: vi.fn(),
+      };
+      await updateFunction(mockTransaction);
+    });
+    fakeAuth.revokeRefreshTokens.mockRejectedValue(new Error('Revoke tokens failed'));
+
+    const request = createMockRequest({ accountId: 'acc1', pluginId: 'pluginA', action: 'activate' }, 'admin-uid', true);
+
+    await expect(handleManageClientPlugins(request)).rejects.toThrow(/Error al gestionar el plugin del cliente./);
+  });
 });

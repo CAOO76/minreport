@@ -10,7 +10,7 @@ export default defineConfig({
     strictPort: true, // Force Vite to use this port or fail
   },
   optimizeDeps: {
-    exclude: [path.resolve(__dirname, '../../__mocks__/**')], // Exclude all files in __mocks__
+    exclude: [path.resolve(__dirname, '../../__mocks__/*')], // Exclude all files in __mocks__
   },
   resolve: {
     alias: {

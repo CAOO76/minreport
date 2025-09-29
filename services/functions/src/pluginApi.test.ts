@@ -68,6 +68,18 @@ describe('pluginApi Handlers', () => {
         const request = createMockRequest({ pluginId: 'pluginA', data: {} });
         await expect(handleSavePluginData(request)).rejects.toThrow(/La función debe ser llamada con autenticación./);
     });
+
+    it('should throw if pluginId is invalid', async () => {
+      const request = createMockRequest({ pluginId: '', data: {} }, 'user1');
+      await expect(handleSavePluginData(request)).rejects.toThrow(/La función debe ser llamada con un "pluginId" válido./);
+    });
+
+    it('should throw an internal error if Firestore operation fails', async () => {
+      const request = createMockRequest({ pluginId: 'pluginA', data: { setting: 'value' } }, 'user1');
+      fakeDb.set.mockRejectedValue(new Error('Firestore write error'));
+
+      await expect(handleSavePluginData(request)).rejects.toThrow(/Ocurrió un error al guardar los datos./);
+    });
   });
 
   describe('handleUpdateUserPluginClaims', () => {
@@ -77,12 +89,18 @@ describe('pluginApi Handlers', () => {
       await expect(handleUpdateUserPluginClaims(request)).rejects.toThrow(/Solo los administradores pueden realizar esta acción./);
     });
 
+    it('should throw if arguments are invalid', async () => {
+      const request = createMockRequest({ userId: '', pluginId: 'pluginB', isActive: true }, 'admin-uid', true);
+      await expect(handleUpdateUserPluginClaims(request)).rejects.toThrow(/Argumentos inválidos proporcionados./);
+    });
+
     it('should allow admin to activate a plugin', async () => {
         fakeAuth.getUser.mockResolvedValue({ customClaims: { adminActivatedPlugins: [] } });
         const request = createMockRequest({ userId: 'user-no-claims', pluginId: 'pluginB', isActive: true }, 'admin-uid', true);
 
         await handleUpdateUserPluginClaims(request);
         expect(fakeAuth.setCustomUserClaims).toHaveBeenCalledWith('user-no-claims', { adminActivatedPlugins: ['pluginB'] });
+        expect(fakeAuth.revokeRefreshTokens).toHaveBeenCalledWith('user-no-claims');
     });
 
     it('should allow admin to deactivate a plugin', async () => {
@@ -91,6 +109,14 @@ describe('pluginApi Handlers', () => {
 
         await handleUpdateUserPluginClaims(request);
         expect(fakeAuth.setCustomUserClaims).toHaveBeenCalledWith('user1', { adminActivatedPlugins: ['pluginC'] });
+        expect(fakeAuth.revokeRefreshTokens).toHaveBeenCalledWith('user1');
+    });
+
+    it('should throw an internal error if getUser fails', async () => {
+      fakeAuth.getUser.mockRejectedValue(new Error('User not found'));
+      const request = createMockRequest({ userId: 'non-existent', pluginId: 'pluginB', isActive: true }, 'admin-uid', true);
+
+      await expect(handleUpdateUserPluginClaims(request)).rejects.toThrow(/Ocurrió un error al actualizar los claims del plugin del usuario./);
     });
   });
 
@@ -100,12 +126,24 @@ describe('pluginApi Handlers', () => {
         await expect(handleGetUserPluginClaims(request)).rejects.toThrow(/Solo los administradores pueden realizar esta acción./);
     });
 
+    it('should throw if arguments are invalid', async () => {
+      const request = createMockRequest({ userId: '' }, 'admin-uid', true);
+      await expect(handleGetUserPluginClaims(request)).rejects.toThrow(/Argumentos inválidos proporcionados./);
+    });
+
     it('should return plugins for a user', async () => {
         fakeAuth.getUser.mockResolvedValue({ customClaims: { adminActivatedPlugins: ['pluginA', 'pluginC'] } });
         const request = createMockRequest({ userId: 'user1' }, 'admin-uid', true);
 
         const result = await handleGetUserPluginClaims(request);
         expect(result).toEqual({ adminActivatedPlugins: ['pluginA', 'pluginC'] });
+    });
+
+    it('should throw an internal error if getUser fails', async () => {
+      fakeAuth.getUser.mockRejectedValue(new Error('User not found'));
+      const request = createMockRequest({ userId: 'non-existent' }, 'admin-uid', true);
+
+      await expect(handleGetUserPluginClaims(request)).rejects.toThrow(/Ocurrió un error al obtener los claims del plugin del usuario./);
     });
   });
 });

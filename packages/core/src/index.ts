@@ -1,1 +1,1 @@
-export * from './components/PluginViewer';
+// Only export domain types, interfaces, and pure utilities here

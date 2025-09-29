@@ -2,13 +2,14 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "clean:emulators": "bash ./clean-emulators.sh",
     "emulators:start": "firebase emulators:start --import=./firebase-emulators-data --export-on-exit",
     "dev:client": "pnpm --filter client-app dev",
     "dev:admin": "pnpm --filter admin-app dev",
     "dev:public": "pnpm --filter public-site dev",
     "dev:plugin": "pnpm --filter test-plugin dev",
     "dev:services": "pnpm --filter \"./services/*\" dev",
-    "dev": "./pre-dev.sh && concurrently --kill-others --kill-signal SIGINT --raw \"pnpm:emulators:start\" \"pnpm:dev:services\" \"pnpm:dev:client\" \"pnpm:dev:admin\" \"pnpm:dev:public\" \"pnpm:dev:plugin\"",
+  "dev": "pnpm clean:emulators && ./pre-dev.sh && concurrently --kill-others --kill-signal SIGINT --raw \"pnpm:emulators:start\" \"pnpm:dev:services\" \"pnpm:dev:client\" \"pnpm:dev:admin\" \"pnpm:dev:public\" \"pnpm:dev:plugin\"",
     "set-admin": "cross-env FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' ts-node services/functions/src/manage-admin.ts",
     "db:seed": "cross-env FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' FIRESTORE_EMULATOR_HOST='127.0.0.1:8085' ts-node services/functions/src/seed-emulators.ts"
   },
@@ -20,13 +21,18 @@
     }
   },
   "dependencies": {
-    "firebase-admin": "^13.5.0"
+    "@types/express": "^5.0.3",
+    "express": "^5.1.0",
+    "firebase-admin": "^13.5.0",
+    "supertest": "^7.1.4"
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",
     "@playwright/test": "^1.44.0",
     "@testing-library/jest-dom": "^6.8.0",
     "@types/eslint": "^9.6.1",
+    "@types/jest": "^30.0.0",
+    "@types/supertest": "^6.0.3",
     "concurrently": "^9.2.1",
     "cross-env": "^10.0.0",
     "eslint-config-prettier": "^10.1.8",
@@ -35,8 +41,11 @@
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^16.4.0",
+    "jsdom": "^27.0.0",
+    "patch-package": "^8.0.0",
     "prettier": "^3.6.2",
     "ts-node": "^10.9.2",
-    "typescript-eslint": "^8.44.0"
+    "typescript-eslint": "^8.44.0",
+    "vitest": "^3.2.4"
   }
 }

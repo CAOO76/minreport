@@ -11,22 +11,10 @@
     "lint": "eslint . --cache --fix"
   },
   "devDependencies": {
-    "@testing-library/react": "^16.0.0",
-    "@types/react": "^19.1.13",
     "@typescript-eslint/eslint-plugin": "^8.44.1",
     "@typescript-eslint/parser": "^8.44.1",
     "eslint": "^9.36.0",
-    "eslint-plugin-react-hooks": "^5.2.0",
-    "eslint-plugin-react-refresh": "^0.4.21",
-    "jsdom": "^24.0.0",
-    "react-router-dom": "^7.9.2",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
-  },
-  "peerDependencies": {
-    "react": "^18.2.0"
-  },
-  "dependencies": {
-    "firebase": "^12.3.0"
   }
 }

@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import request from 'supertest';
-import admin from 'firebase-admin';
 
-// Mock Firebase Admin SDK
+// --- MOCKS ---
 const mockUpdate = vi.fn();
 const mockGet = vi.fn();
 const mockDoc = vi.fn(() => ({
@@ -12,24 +10,40 @@ const mockDoc = vi.fn(() => ({
 const mockCollection = vi.fn(() => ({
   doc: mockDoc,
 }));
-const mockFirestore = vi.fn(() => ({
+const mockFirestore = {
   collection: mockCollection,
-}));
-
+};
 const mockAuth = vi.fn();
 
+// Mock for Firestore Timestamp
+class MockTimestamp {
+  constructor(public seconds: number, public nanoseconds: number) {}
+}
+
+// Mock for Firestore FieldValue
+const mockFieldValue = {
+  serverTimestamp: () => 'mocked_serverTimestamp',
+  delete: () => 'mocked_deleteField',
+};
+
+// Set global mocks for dependency injection
+(global as any).mockFirestore = mockFirestore;
+(global as any).mockFieldValue = mockFieldValue;
+process.env.USE_MOCK_FIRESTORE = '1';
+
 vi.mock('firebase-admin', async (importOriginal) => {
-  const actual = await importOriginal();
+  const actual = (await importOriginal()) as any;
   return {
     ...actual,
     initializeApp: vi.fn(),
-    firestore: Object.assign(mockFirestore, { FieldValue: actual.firestore.FieldValue }),
+    firestore: mockFirestore,
     auth: mockAuth,
   };
 });
 
-// Import the app after mocking firebase-admin
-const { app } = await import('./index');
+import request from 'supertest';
+
+const { app } = await import('./index.js');
 
 describe('Account Management Service', () => {
   beforeEach(() => {
@@ -39,7 +53,6 @@ describe('Account Management Service', () => {
     mockUpdate.mockReset();
     mockCollection.mockReset();
     mockDoc.mockReset();
-    mockFirestore.mockReset();
     mockAuth.mockReset();
   });
 
@@ -70,7 +83,7 @@ describe('Account Management Service', () => {
       expect(mockUpdate).toHaveBeenCalledWith({
         status: 'suspended',
         suspensionReason: 'Test Reason',
-        suspendedAt: expect.any(admin.firestore.FieldValue),
+        suspendedAt: 'mocked_serverTimestamp',
       });
     });
 
@@ -84,7 +97,7 @@ describe('Account Management Service', () => {
       expect(mockUpdate).toHaveBeenCalledWith({
         status: 'suspended',
         suspensionReason: 'No se especificó una razón',
-        suspendedAt: expect.any(admin.firestore.FieldValue),
+        suspendedAt: 'mocked_serverTimestamp',
       });
     });
 

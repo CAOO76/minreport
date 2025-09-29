@@ -1,0 +1,24 @@
+{
+  "name": "user-management-service",
+  "version": "1.0.0",
+  "description": "Minimal Cloud Run service for user management.",
+  "main": "lib/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node lib/index.js",
+    "dev": "pnpm run build && node lib/index.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@minreport/core": "file:../../packages/core",
+    "@minreport/user-management": "file:../../packages/user-management",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
