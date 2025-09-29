@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "main": "lib/index.js",
   "module": "lib/index.js",
+  "module": "lib/index.js",
   "private": true,
   "type": "module",
   "description": "Minimal user management and plugin connection core for minreport.",
