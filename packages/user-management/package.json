@@ -2,11 +2,15 @@
   "name": "@minreport/user-management",
   "version": "0.1.0",
   "main": "lib/index.js",
+  "module": "lib/index.js",
   "private": true,
   "type": "module",
   "description": "Minimal user management and plugin connection core for minreport.",
   "exports": {
-    ".": "./lib/index.js"
+    ".": {
+      "import": "./lib/index.js",
+      "require": "./lib/index.js"
+    }
   },
   "scripts": {
   "build": "tsc -p tsconfig.build.json",
