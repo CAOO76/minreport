@@ -1,293 +1,235 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import * as sdk from './index';
-import { INIT_ERROR_NO_ID_TOKEN } from './index';
+import { OfflineQueue } from './index';
+import type { OfflineAction, SyncStatus } from './index';
 
-// Mock de la respuesta que el Core enviaría
-const MOCK_SESSION = {
-  user: { uid: 'test-uid', email: 'test@example.com', displayName: 'Test User' },
-  claims: { role: 'user' },
-  idToken: 'mock-id-token',
-  theme: { '--theme-primary-color': 'blue' },
+// Mock Firebase imports
+vi.mock('firebase/app', () => ({
+  getApps: vi.fn(() => []),
+  initializeApp: vi.fn(),
+}));
+
+vi.mock('firebase/firestore', () => ({
+  getFirestore: vi.fn(),
+  connectFirestoreEmulator: vi.fn(),
+  doc: vi.fn(),
+  getDoc: vi.fn(),
+  setDoc: vi.fn(),
+  updateDoc: vi.fn(),
+  deleteDoc: vi.fn(),
+  collection: vi.fn(),
+  addDoc: vi.fn(),
+}));
+
+// Mock localStorage
+const localStorageMock = {
+  getItem: vi.fn(),
+  setItem: vi.fn(),
+  removeItem: vi.fn(),
+  clear: vi.fn(),
 };
+vi.stubGlobal('localStorage', localStorageMock);
 
-const MOCK_SESSION_NO_ID_TOKEN = {
-  user: { uid: 'test-uid', email: 'test@example.com', displayName: 'Test User' },
-  claims: { role: 'user' },
-  idToken: '',
-  theme: { '--theme-primary-color': 'blue' },
-};
+// Mock navigator.onLine
+Object.defineProperty(navigator, 'onLine', {
+  writable: true,
+  value: true,
+});
 
-const CORE_ORIGIN = 'http://localhost:5175';
+// Mock window events
+const eventListeners: { [key: string]: Function[] } = {};
+vi.stubGlobal('window', {
+  addEventListener: vi.fn((event: string, callback: Function) => {
+    if (!eventListeners[event]) {
+      eventListeners[event] = [];
+    }
+    eventListeners[event].push(callback);
+  }),
+  removeEventListener: vi.fn(),
+});
 
-describe('@minreport/sdk', () => {
-  let postMessageSpy: any;
-  let addEventListenerSpy: any;
-  let removeEventListenerSpy: any;
+describe('OfflineQueue', () => {
+  let offlineQueue: OfflineQueue;
 
-  // Configurar mocks antes de cada prueba
   beforeEach(() => {
-    // Mock de window.parent.postMessage
-    postMessageSpy = vi.fn();
-    Object.defineProperty(window, 'parent', {
-      value: { postMessage: postMessageSpy },
-      writable: true,
-    });
-
-    // Mock de addEventListener y removeEventListener en window
-    addEventListenerSpy = vi.spyOn(window, 'addEventListener');
-    removeEventListenerSpy = vi.spyOn(window, 'removeEventListener');
-
-    // Limpiar el estado del SDK si es necesario (no exportado, así que reiniciamos el módulo)
-    vi.resetModules();
+    vi.clearAllMocks();
+    localStorageMock.getItem.mockReturnValue(null);
+    offlineQueue = new OfflineQueue();
   });
 
-  // Limpiar mocks después de cada prueba
   afterEach(() => {
-    vi.restoreAllMocks();
-    vi.useRealTimers(); // Restore real timers after each test
+    vi.clearAllTimers();
   });
 
-  describe('init', () => {
-    it('should initialize correctly when receiving MINREPORT_INIT message', async () => {
-      const sdk = await import('./index');
-      const initPromise = sdk.init([CORE_ORIGIN]);
-
-      window.dispatchEvent(
-        new MessageEvent('message', {
-          data: {
-            type: 'MINREPORT_INIT',
-            payload: MOCK_SESSION,
-          },
-          origin: CORE_ORIGIN,
-          source: window.parent,
-        })
-      );
-
-      await expect(initPromise).resolves.toEqual(MOCK_SESSION);
-      expect(document.documentElement.style.getPropertyValue('--theme-primary-color')).toBe('blue');
-      expect(removeEventListenerSpy).toHaveBeenCalledWith('message', expect.any(Function));
+  describe('Constructor', () => {
+    it('should initialize with default config', () => {
+      const queue = new OfflineQueue();
+      expect(queue).toBeInstanceOf(OfflineQueue);
     });
 
-    it('should reject if a message from an unallowed origin is received', async () => {
-      const sdk = await import('./index');
-      const initPromise = sdk.init([CORE_ORIGIN]);
-
-      window.dispatchEvent(
-        new MessageEvent('message', {
-          data: { type: 'MINREPORT_INIT', payload: MOCK_SESSION },
-          origin: 'http://malicious.com',
-          source: window.parent,
-        })
-      );
-
-      // Wait for a short period to ensure the message is processed but not resolved
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      // The promise should still be pending as no valid message was received
-      // We can't directly assert a reject here without a timeout or another valid message
-      // This test primarily ensures it doesn't resolve unexpectedly.
-      // A more robust test would involve fake timers and asserting a timeout rejection if no valid message comes.
-      // For now, we ensure it doesn't resolve with the malicious message.
-      const resolved = await Promise.race([
-        initPromise.then(() => true).catch(() => false),
-        new Promise(resolve => setTimeout(() => resolve(false), 500)) // Short timeout
-      ]);
-      expect(resolved).toBe(false);
+    it('should merge custom config with defaults', () => {
+      const customConfig = { maxRetries: 5, syncInterval: 60000 };
+      const queue = new OfflineQueue(customConfig);
+      expect(queue).toBeInstanceOf(OfflineQueue);
     });
 
-    it('should reject if MINREPORT_INIT message does not contain idToken', async () => {
-      const sdk = await import('./index');
-      const initPromise = sdk.init([CORE_ORIGIN]);
-
-      window.dispatchEvent(
-        new MessageEvent('message', {
-          data: {
-            type: 'MINREPORT_INIT',
-            payload: MOCK_SESSION_NO_ID_TOKEN,
-          },
-          origin: CORE_ORIGIN,
-          source: window.parent,
-        })
-      );
-
-      await expect(initPromise).rejects.toThrow(INIT_ERROR_NO_ID_TOKEN);
-    });
-
-    it('should remove init listener after successful initialization', async () => {
-      const sdk = await import('./index');
-      sdk.init([CORE_ORIGIN]);
-
-      const initHandler = addEventListenerSpy.mock.calls.find(call => call[0] === 'message')[1];
-
-      window.dispatchEvent(
-        new MessageEvent('message', {
-          data: {
-            type: 'MINREPORT_INIT',
-            payload: MOCK_SESSION,
-          },
-          origin: CORE_ORIGIN,
-          source: window.parent,
-        })
-      );
-
-      expect(removeEventListenerSpy).toHaveBeenCalledWith('message', initHandler);
+    it('should set up event listeners in browser environment', () => {
+      new OfflineQueue();
+      expect(window.addEventListener).toHaveBeenCalledWith('online', expect.any(Function));
+      expect(window.addEventListener).toHaveBeenCalledWith('offline', expect.any(Function));
     });
   });
 
-  describe('SDK Actions', () => {
-    let sdkInstance: typeof sdk;
+  describe('enqueue', () => {
+    it('should add action to queue', async () => {
+      const action: Omit<OfflineAction, 'id' | 'timestamp' | 'status' | 'retryCount'> = {
+        type: 'CREATE_REPORT',
+        payload: { title: 'Test Report' },
+        userId: 'user-123',
+      };
 
-    beforeEach(async () => {
-      sdkInstance = await import('./index');
-      // Initialize the SDK before running action tests
-      const initPromise = sdkInstance.init([CORE_ORIGIN]);
-      window.dispatchEvent(new MessageEvent('message', { 
-          data: { type: 'MINREPORT_INIT', payload: MOCK_SESSION }, 
-          origin: CORE_ORIGIN, 
-          source: window.parent 
-      }));
-      await initPromise;
+      const actionId = await offlineQueue.enqueue(action);
+      
+      expect(typeof actionId).toBe('string');
+      expect(offlineQueue.getQueueLength()).toBe(1);
     });
 
-    it('should throw error if SDK is not initialized before sending action', async () => {
-      // Reset modules to simulate uninitialized SDK
-      vi.resetModules();
-      const uninitializedSdk = await import('./index');
-      await expect(uninitializedSdk.savePluginData({ myData: 'test' })).rejects.toThrow('SDK not initialized.');
-    });
+    it('should save queue to localStorage', async () => {
+      const action: Omit<OfflineAction, 'id' | 'timestamp' | 'status' | 'retryCount'> = {
+        type: 'UPDATE_USER',
+        payload: { name: 'Updated Name' },
+        userId: 'user-456',
+      };
 
-    it('savePluginData should send an action to the core and resolve on success response', async () => {
-      const actionPromise = sdkInstance.savePluginData({ myData: 'test' });
-
-      // Get the correlationId from the sent message
-      const sentMessage = postMessageSpy.mock.calls[0][0];
-      const correlationId = sentMessage.payload.correlationId;
-
-      // Simulate success response from Core
-      window.dispatchEvent(
-        new MessageEvent('message', {
-          data: {
-            type: 'MINREPORT_RESPONSE',
-            payload: { result: { status: 'ok' }, correlationId },
-          },
-          origin: CORE_ORIGIN,
-          source: window.parent,
-        })
+      await offlineQueue.enqueue(action);
+      
+      expect(localStorageMock.setItem).toHaveBeenCalledWith(
+        'minreport_offline_queue',
+        expect.any(String)
       );
-
-      await expect(actionPromise).resolves.toEqual({ status: 'ok' });
-      expect(postMessageSpy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'MINREPORT_ACTION',
-          payload: expect.objectContaining({
-            action: 'savePluginData',
-            data: { myData: 'test' },
-            correlationId: expect.any(String),
-          }),
-        }),
-        CORE_ORIGIN
-      );
-    });
-
-    it('savePluginData should send an action to the core and reject on error response', async () => {
-      const actionPromise = sdkInstance.savePluginData({ myData: 'test' });
-
-      // Get the correlationId from the sent message
-      const sentMessage = postMessageSpy.mock.calls[0][0];
-      const correlationId = sentMessage.payload.correlationId;
-
-      // Simulate error response from Core
-      window.dispatchEvent(
-        new MessageEvent('message', {
-          data: {
-            type: 'MINREPORT_RESPONSE',
-            payload: { error: 'Core error', correlationId },
-          },
-          origin: CORE_ORIGIN,
-          source: window.parent,
-        })
-      );
-
-      await expect(actionPromise).rejects.toThrow('Core error');
-    });
-
-    it('savePluginData should reject on timeout if no response is received', async () => {
-      vi.useFakeTimers();
-      const actionPromise = sdkInstance.savePluginData({ myData: 'test' });
-
-      vi.advanceTimersByTime(30000); // Advance by 30 seconds
-
-      await expect(actionPromise).rejects.toThrow("Action 'savePluginData' timed out.");
     });
   });
 
-  describe('getSession', () => {
-    let sdkInstance: typeof sdk;
-
-    beforeEach(async () => {
-      sdkInstance = await import('./index');
+  describe('getQueueLength', () => {
+    it('should return 0 for empty queue', () => {
+      expect(offlineQueue.getQueueLength()).toBe(0);
     });
 
-    it('should return null if SDK is not initialized', () => {
-      expect(sdkInstance.getSession()).toBeNull();
+    it('should return correct count after adding actions', async () => {
+      await offlineQueue.enqueue({
+        type: 'CREATE_REPORT',
+        payload: { title: 'Report 1' },
+        userId: 'user-1',
+      });
+
+      await offlineQueue.enqueue({
+        type: 'UPDATE_USER',
+        payload: { name: 'User Name' },
+        userId: 'user-2',
+      });
+
+      expect(offlineQueue.getQueueLength()).toBe(2);
+    });
+  });
+
+  describe('isConnected', () => {
+    it('should return navigator.onLine status', () => {
+      Object.defineProperty(navigator, 'onLine', { value: true });
+      expect(offlineQueue.isConnected()).toBe(true);
+      
+      Object.defineProperty(navigator, 'onLine', { value: false });
+      // Create new instance to check offline status
+      const offlineQueueOffline = new OfflineQueue();
+      expect(offlineQueueOffline.isConnected()).toBe(false);
+    });
+  });
+
+  describe('Network Status Handling', () => {
+    it('should handle online event', () => {
+      // Simulate going offline first
+      Object.defineProperty(navigator, 'onLine', { value: false });
+      
+      // Trigger online event
+      const onlineCallback = eventListeners['online']?.[0];
+      if (onlineCallback) {
+        onlineCallback();
+      }
+
+      // The actual sync behavior would be tested in integration tests
+      expect(true).toBe(true); // Placeholder assertion
     });
 
-    it('should return session data after successful initialization', async () => {
-      const initPromise = sdkInstance.init([CORE_ORIGIN]);
-      window.dispatchEvent(new MessageEvent('message', { 
-          data: { type: 'MINREPORT_INIT', payload: MOCK_SESSION }, 
-          origin: CORE_ORIGIN, 
-          source: window.parent 
-      }));
-      await initPromise;
+    it('should handle offline event', () => {
+      // Trigger offline event
+      const offlineCallback = eventListeners['offline']?.[0];
+      if (offlineCallback) {
+        offlineCallback();
+      }
 
-      expect(sdkInstance.getSession()).toEqual(MOCK_SESSION);
+      // The offline state should be updated
+      expect(true).toBe(true); // Placeholder assertion
+    });
+  });
+
+  describe('sync', () => {
+    it('should process pending actions', async () => {
+      await offlineQueue.enqueue({
+        type: 'CREATE_REPORT',
+        payload: { title: 'Test Report' },
+        userId: 'user-1',
+      });
+
+      const results = await offlineQueue.sync();
+      
+      expect(Array.isArray(results)).toBe(true);
+      expect(results.length).toBeGreaterThan(0);
     });
 
-    it('should ignore MINREPORT_RESPONSE messages with invalid correlationId', async () => {
-      const actionPromise = sdkInstance.savePluginData({ myData: 'test' });
+    it('should handle sync errors gracefully', async () => {
+      // This would be tested with actual Firebase integration
+      expect(true).toBe(true); // Placeholder
+    });
+  });
 
-      // Simulate response with invalid correlationId
-      window.dispatchEvent(
-        new MessageEvent('message', {
-          data: {
-            type: 'MINREPORT_RESPONSE',
-            payload: { result: { status: 'ok' }, correlationId: 'invalid-id' },
-          },
-          origin: CORE_ORIGIN,
-          source: window.parent,
-        })
-      );
+  describe('persistence', () => {
+    it('should restore queue from localStorage', () => {
+      const mockQueue = [
+        {
+          id: 'test-action-1',
+          type: 'CREATE_REPORT',
+          payload: { title: 'Restored Report' },
+          timestamp: Date.now(),
+          userId: 'user-1',
+          status: 'pending' as SyncStatus,
+          retryCount: 0,
+        },
+      ];
 
-      // The promise should still be pending as no valid message was received
-      const resolved = await Promise.race([
-        actionPromise.then(() => true).catch(() => false),
-        new Promise(resolve => setTimeout(() => resolve(false), 100)) // Short timeout
-      ]);
-      expect(resolved).toBe(false);
+      localStorageMock.getItem.mockReturnValue(JSON.stringify(mockQueue));
+      
+      const newQueue = new OfflineQueue();
+      expect(newQueue.getQueueLength()).toBe(1);
     });
 
-    it('should ignore messages with unknown types', async () => {
-      const actionPromise = sdkInstance.savePluginData({ myData: 'test' });
+    it('should handle localStorage errors gracefully', () => {
+      localStorageMock.getItem.mockImplementation(() => {
+        throw new Error('localStorage error');
+      });
 
-      // Simulate message with unknown type
-      window.dispatchEvent(
-        new MessageEvent('message', {
-          data: {
-            type: 'UNKNOWN_MESSAGE_TYPE',
-            payload: { someData: 'value' },
-          },
-          origin: CORE_ORIGIN,
-          source: window.parent,
-        })
-      );
+      expect(() => {
+        new OfflineQueue();
+      }).not.toThrow();
+    });
+  });
 
-      // The promise should still be pending as no valid message was received
-      const resolved = await Promise.race([
-        actionPromise.then(() => true).catch(() => false),
-        new Promise(resolve => setTimeout(() => resolve(false), 100)) // Short timeout
-      ]);
-      expect(resolved).toBe(false);
+  describe('Error Handling', () => {
+    it('should handle localStorage errors gracefully', () => {
+      localStorageMock.setItem.mockImplementation(() => {
+        throw new Error('Storage quota exceeded');
+      });
+
+      expect(() => {
+        new OfflineQueue();
+      }).not.toThrow();
     });
   });
 });

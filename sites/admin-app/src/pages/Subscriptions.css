@@ -45,9 +45,65 @@
   box-shadow: 0 4px 12px rgba(0,0,0,0.08);
 }
 
+/* Estilo especial para solicitudes con email inválido */
+.request-card.email-invalid {
+  border-left: 4px solid #dc3545;
+  background-color: #fff8f8;
+}
+
+.request-card.email-invalid:hover {
+  background-color: #fff5f5;
+}
+
 .card-header {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.status-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.email-status {
+  font-size: 1rem;
+  cursor: help;
+}
+
+.email-status.delivered {
+  color: #4CAF50;
+}
+
+.email-status.failed {
+  color: #F44336;
+}
+
+.email-status.pending {
+  color: #FF9800;
+}
+
+.email-status.unknown {
+  color: #9E9E9E;
+}
+
+.card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.5rem;
+  gap: 1rem;
+}
+
+.email-id {
+  font-family: monospace;
+  background: rgba(0,0,0,0.05);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
   align-items: center;
   margin-bottom: 0.5rem;
 }
@@ -197,7 +253,7 @@
 }
 
 .detail-content-section .icon-inline {
-  margin-right: 0.5rem;
+  margin-right: 0.75rem;
 }
 
 .data-card {
@@ -254,4 +310,26 @@
   justify-content: space-between; /* Distribute columns with space between them */
   gap: 1.5rem; /* Space between columns */
   width: 100%; /* Ensure it takes full width */
+}
+
+/* Badge para email inválido */
+.invalid-email-badge {
+  display: inline-flex;
+  align-items: center;
+  background-color: #dc3545;
+  color: white;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  margin-left: 0.5rem;
+}
+
+.invalid-email-badge .material-symbols-outlined {
+  font-size: 14px;
+}
+
+/* Estilo para sub-tarjeta de email inválido */
+.data-card.email-invalid {
+  border-left: 4px solid #dc3545;
+  background-color: #fff8f8;
 }

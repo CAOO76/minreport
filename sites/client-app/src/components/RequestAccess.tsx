@@ -1,6 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Country, City } from 'country-state-city';
+import { functions, httpsCallable } from '../firebaseConfig.ts';
+import { offlineQueue } from '@minreport/sdk';
 import './RequestAccess.css';
 import './forms.css';
 
@@ -76,20 +78,34 @@ const SuccessDisplay: React.FC<{
         __html: `Hemos recibido correctamente tu solicitud para la cuenta ${accountType !== 'INDIVIDUAL' && institutionName ? `de <strong>${institutionName}</strong>` : '<strong>Individual</strong>'}.`,
       }}
     />
+    
+    <div className="email-notification-info" style={{
+      backgroundColor: '#fff3cd',
+      padding: '15px',
+      borderRadius: '8px',
+      margin: '20px 0',
+      borderLeft: '4px solid #ffc107'
+    }}>
+      <p style={{ margin: 0, color: '#856404' }}>
+        📧 <strong>Procesamiento en curso:</strong> Si los datos proporcionados son correctos, recibirá una notificación de confirmación por correo electrónico en <strong>{applicantEmail}</strong>
+      </p>
+    </div>
+    
     <div className="next-steps">
       <h4>Siguientes Pasos:</h4>
       <ol>
         <li>
+          <strong>Espera la confirmación:</strong> Solo recibirás un email si los datos son válidos y el correo puede recibir mensajes.
+        </li>
+        <li>
+          <strong>Si no recibes nada:</strong> Revisa que la dirección de email sea correcta y que puedas recibir mensajes de dominios externos.
+        </li>
+        <li>
           Nuestro equipo revisará tu solicitud. Este proceso suele tardar entre 24 y 48 horas
-          hábiles.
+          hábiles después de la confirmación por email.
         </li>
         <li>
-          Recibirás un correo electrónico en <strong>{applicantEmail}</strong> con la decisión
-          inicial.
-        </li>
-        <li>
-          Si tu solicitud es pre-aprobada, el correo incluirá un enlace para que completes la
-          información de tu cuenta.
+          Si tu solicitud es pre-aprobada, recibirás un enlace para que completes la información de tu cuenta.
         </li>
       </ol>
     </div>
@@ -124,7 +140,7 @@ const RequestAccess: React.FC = () => {
 
   const countries = useMemo(() => Country.getAllCountries(), []);
   const cities = useMemo(
-    () => (formData.country ? City.getCitiesOfCountry(formData.country) : []),
+    () => (formData.country ? City.getCitiesOfCountry(formData.country) || [] : []),
     [formData.country],
   );
 
@@ -205,17 +221,70 @@ const RequestAccess: React.FC = () => {
     setSubmitMessage(null);
     setIsError(false);
 
-    try {
-      const response = await fetch('http://localhost:8082/requestAccess', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formData, entityType: getEntityType(formData.accountType) }),
+    if (!navigator.onLine) {
+      // Si está offline, encola la acción para sincronizar luego
+      offlineQueue.enqueue({
+        type: 'requestAccess',
+        payload: { ...formData, entityType: getEntityType(formData.accountType) },
+        timestamp: Date.now(),
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || 'Ocurrió un error.');
       setIsSubmittedSuccessfully(true);
+      setIsSubmitting(false);
+      return;
+    }
+
+    try {
+      // Usar la nueva función que valida email y envía notificación antes de registrar
+      const requestAccess = httpsCallable(functions, 'validateEmailAndStartProcess');
+      const result = await requestAccess({ ...formData, entityType: getEntityType(formData.accountType) });
+      const { status, message } = result.data as { status: string, message: string };
+
+      // La nueva función retorna 'received' en lugar de 'success'
+      if (status === 'received') {
+        // Mostrar mensaje informativo y continuar al éxito
+        setSubmitMessage(message);
+        setIsError(false);
+        setIsSubmittedSuccessfully(true);
+      } else if (status !== 'success') {
+        throw new Error(message || 'Ocurrió un error al registrar la solicitud.');
+      } else {
+        setIsSubmittedSuccessfully(true);
+      }
     } catch (error: any) {
-      setSubmitMessage(error.message);
+      console.error('Error en solicitud:', error);
+      
+      // Manejo mejorado de errores específicos
+      let errorMessage = 'Ocurrió un error al procesar tu solicitud.';
+      
+      // Errores de validación de email
+      if (error.message?.includes('formato del correo') || 
+          error.message?.includes('correo electrónico no es válido')) {
+        errorMessage = '📧 El formato de tu correo electrónico no es válido. Por favor, revísalo cuidadosamente.';
+      } else if (error.message?.includes('Quiso decir')) {
+        errorMessage = `📧 ${error.message}`;
+      } else if (error.message?.includes('demasiado largo')) {
+        errorMessage = '📧 Tu dirección de correo es demasiado larga. Por favor, usa una más corta.';
+      } else if (error.message?.includes('contener espacios')) {
+        errorMessage = '📧 Tu dirección de correo no puede contener espacios. Por favor, elimínalos.';
+      } else if (error.message?.includes('dominio del correo') || 
+                 error.message?.includes('no parece ser válido')) {
+        errorMessage = '📧 El dominio de tu correo no parece ser válido. Por favor, usa un correo de un proveedor real.';
+      } 
+      // Errores de envío de email
+      else if (error.message?.includes('notificación por email') || 
+               error.message?.includes('No se pudo enviar')) {
+        errorMessage = '📧 No pudimos enviar la notificación a tu correo. Verifica que la dirección sea correcta y que puedas recibir emails.';
+      }
+      // Error genérico mejorado
+      else if (error.message?.includes('invalid-argument')) {
+        errorMessage = '⚠️ Hay un problema con los datos proporcionados. Por favor, revísalos e intenta nuevamente.';
+      } else if (error.message?.includes('internal')) {
+        errorMessage = '🔧 Error interno del sistema. Por favor, intenta nuevamente en unos momentos.';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      setSubmitMessage(errorMessage);
       setIsError(true);
       setCurrentStep('form');
     } finally {
@@ -446,7 +515,7 @@ const RequestAccess: React.FC = () => {
               onClick={handleSubmit}
               disabled={isSubmitting}
             >
-              {isSubmitting ? 'Enviando...' : 'Confirmar y Enviar Solicitud'}{' '}
+              {isSubmitting ? 'Validando email y enviando...' : 'Confirmar y Enviar Solicitud'}{' '}
               <span className="material-symbols-outlined">send</span>
             </button>
           </div>

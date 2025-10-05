@@ -1,9 +1,5 @@
 packages:
   - 'packages/*'
-  - 'packages/plugins/*'
   - 'sites/*'
-  - 'mobile-app'
-  
   - 'services/*'
-  - 'services/functions' # Nuevo paquete de Cloud Functions
-  - 'services/transactions-service'
+  - 'examples/*'

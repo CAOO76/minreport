@@ -1,6 +1,7 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { vi } from 'vitest';
-import AccountDetails from './AccountDetails';
+import type { Mock } from 'vitest';
+import AccountDetails from './AccountDetails.tsx';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
@@ -68,13 +69,11 @@ customElements.define('md-switch', class extends HTMLElement {
 describe('AccountDetails', () => {
   const mockAccountId = 'testAccountId123';
   const mockNavigate = vi.fn();
-  const mockManageClientPluginsCallable = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
-    (useParams as vi.Mock).mockReturnValue({ accountId: mockAccountId });
-    (useNavigate as vi.Mock).mockReturnValue(mockNavigate);
-    (httpsCallable as vi.Mock).mockReturnValue(mockManageClientPluginsCallable);
+    (useParams as Mock).mockReturnValue({ accountId: mockAccountId });
+    (useNavigate as Mock).mockReturnValue(mockNavigate);
   });
 
   const mockAccountData = {
@@ -85,17 +84,16 @@ describe('AccountDetails', () => {
     accountType: 'EMPRESARIAL',
     designatedAdminEmail: 'admin@test.com',
     adminName: 'Admin Test',
-    adminActivatedPlugins: ['metrics-v1'], // Initially active plugin
   };
 
   it('renders loading state initially', () => {
-    (getDoc as vi.Mock).mockReturnValueOnce(new Promise(() => {})); // Never resolve to keep loading
+  (getDoc as Mock).mockReturnValueOnce(new Promise(() => {})); // Never resolve to keep loading
     render(<AccountDetails />);
     expect(screen.getByText('Cargando detalles de la cuenta...')).toBeInTheDocument();
   });
 
   it('renders error state if account not found', async () => {
-    (getDoc as vi.Mock).mockResolvedValueOnce({ exists: () => false });
+  (getDoc as Mock).mockResolvedValueOnce({ exists: () => false });
     render(<AccountDetails />);
     await waitFor(() => {
       expect(screen.getByText('Cuenta no encontrada.')).toBeInTheDocument();
@@ -103,7 +101,7 @@ describe('AccountDetails', () => {
   });
 
   it('renders account details correctly', async () => {
-    (getDoc as vi.Mock).mockResolvedValueOnce({
+  (getDoc as Mock).mockResolvedValueOnce({
       exists: () => true,
       data: () => mockAccountData,
     });
@@ -113,14 +111,14 @@ describe('AccountDetails', () => {
       await screen.findByText(`Detalles de la Cuenta: ${mockAccountData.institutionName}`);
 
       // For ID
-      const idParagraph = screen.getByText((content, element) => {
+      const idParagraph = screen.getByText((_, element) => {
         return element?.tagName.toLowerCase() === 'p' && element.textContent?.includes('ID:');
       });
       const idText = idParagraph.textContent?.replace('ID:', '').trim();
       expect(idText).toBe('testAccountId123');
 
       // For Email Administrador
-      const emailParagraph = screen.getByText((content, element) => {
+      const emailParagraph = screen.getByText((_, element) => {
         return element?.tagName.toLowerCase() === 'p' && element.textContent?.includes('Email Administrador:');
       });
       const emailText = emailParagraph.textContent?.replace('Email Administrador:', '').trim();
@@ -128,21 +126,21 @@ describe('AccountDetails', () => {
 
       // Keep other assertions as they are
       // For Tipo de Cuenta
-      const accountTypeParagraph = screen.getByText((content, element) => {
+      const accountTypeParagraph = screen.getByText((_, element) => {
         return element?.tagName.toLowerCase() === 'p' && element.textContent?.includes('Tipo de Cuenta:');
       });
       const accountTypeText = accountTypeParagraph.textContent?.replace('Tipo de Cuenta:', '').trim();
       expect(accountTypeText).toBe(mockAccountData.accountType);
 
       // For Estado
-      const statusParagraph = screen.getByText((content, element) => {
+      const statusParagraph = screen.getByText((_, element) => {
         return element?.tagName.toLowerCase() === 'p' && element.textContent?.includes('Estado:');
       });
       const statusText = statusParagraph.textContent?.replace('Estado:', '').trim();
       expect(statusText).toBe(mockAccountData.status);
 
       // For Fecha de Creación
-      const createdAtParagraph = screen.getByText((content, element) => {
+      const createdAtParagraph = screen.getByText((_, element) => {
         return element?.tagName.toLowerCase() === 'p' && element.textContent?.includes('Fecha de Creación:');
       });
       const createdAtText = createdAtParagraph.textContent?.replace('Fecha de Creación:', '').trim();
@@ -150,92 +148,4 @@ describe('AccountDetails', () => {
     });
   });
 
-  describe('Plugin Management', () => {
-    const ALL_AVAILABLE_PLUGINS = [
-      { id: 'metrics-v1', name: 'Dashboard de Métricas v1' },
-      { id: 'reports-basic', name: 'Generador de Reportes Básico' },
-    ];
-
-    beforeEach(() => {
-      (getDoc as vi.Mock).mockResolvedValue({
-        exists: () => true,
-        data: () => ({ ...mockAccountData, adminActivatedPlugins: ['metrics-v1'] }),
-      });
-    });
-
-    it('renders all available plugins with correct initial switch states', async () => {
-      render(<AccountDetails />);
-
-      await waitFor(() => {
-        expect(screen.getByText('Gestión de Plugins')).toBeInTheDocument();
-      });
-
-      ALL_AVAILABLE_PLUGINS.forEach(plugin => {
-        expect(screen.getByText(plugin.name)).toBeInTheDocument();
-        const switchElement = screen.getByText(plugin.name).closest('.plugin-item')?.querySelector('md-switch');
-        expect(switchElement).toBeInTheDocument();
-        if (switchElement) {
-          if (mockAccountData.adminActivatedPlugins.includes(plugin.id)) {
-            expect(switchElement).toHaveAttribute('selected', 'true');
-          } else {
-            expect(switchElement).toHaveAttribute('selected', 'false');
-          }
-        }
-      });
-    });
-
-    it('calls manageClientPluginsCallable to activate a plugin', async () => {
-      mockManageClientPluginsCallable.mockResolvedValueOnce({ data: { status: 'success' } });
-      // Eliminado test-plugin: solo se prueba con plugins externos
-
-      // Asegura el cierre correcto del describe principal
-      });
-
-    it('calls manageClientPluginsCallable to deactivate a plugin', async () => {
-      mockManageClientPluginsCallable.mockResolvedValueOnce({ data: { status: 'success' } });
-      (getDoc as vi.Mock)
-        .mockResolvedValueOnce({ exists: () => true, data: () => ({ ...mockAccountData, adminActivatedPlugins: ['metrics-v1'] }) })
-        .mockResolvedValueOnce({ exists: () => true, data: () => ({ ...mockAccountData, adminActivatedPlugins: [] }) }); // Mock refresh
-
-      render(<AccountDetails />);
-
-      await waitFor(() => {
-        expect(screen.getByText('Gestión de Plugins')).toBeInTheDocument();
-      });
-
-      const metricsPluginSwitch = screen.getByText('Dashboard de Métricas v1').closest('.plugin-item')?.querySelector('md-switch');
-      expect(metricsPluginSwitch).toBeInTheDocument();
-      expect(metricsPluginSwitch).toHaveAttribute('selected', 'true'); // Initially active
-
-      fireEvent.click(metricsPluginSwitch!);
-
-      await waitFor(() => {
-        expect(mockManageClientPluginsCallable).toHaveBeenCalledWith({
-          accountId: mockAccountId,
-          pluginId: 'metrics-v1',
-          action: 'deactivate',
-        });
-      });
-
-      // Verify UI updates after refresh
-      await waitFor(() => {
-        const updatedMetricsPluginSwitch = screen.getByText('Dashboard de Métricas v1').closest('.plugin-item')?.querySelector('md-switch');
-        expect(updatedMetricsPluginSwitch).toHaveAttribute('selected', 'false');
-      });
-    });
-
-    it('shows an error message if plugin toggle fails', async () => {
-      const errorMessage = 'Failed to toggle plugin';
-      mockManageClientPluginsCallable.mockRejectedValueOnce(new Error(errorMessage));
-      (getDoc as vi.Mock).mockResolvedValue({ exists: () => true, data: () => mockAccountData });
-
-      render(<AccountDetails />);
-
-      await waitFor(() => {
-        expect(screen.getByText('Gestión de Plugins')).toBeInTheDocument();
-      });
-
-      // Eliminado test-plugin: solo se prueba con plugins externos
-    });
-  });
 });

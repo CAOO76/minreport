@@ -1,13 +1,13 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
+    "target": "ES2022",
     "module": "ESNext",
-    "lib": ["ES2020", "dom"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "baseUrl": ".",
     "allowSyntheticDefaultImports": true,
     "isolatedModules": true,
@@ -15,8 +15,14 @@
     "noEmit": false,
     "typeRoots": ["./node_modules/@types"],
     "paths": {
-      "@minreport/user-management": ["packages/user-management/index.ts"]
-    }
+      "@minreport/core": ["packages/core/src/index.ts"],
+      "@minreport/core-ui": ["packages/core-ui/src/index.ts"],
+      "@minreport/sdk": ["packages/sdk/src/index.ts"],
+      "@minreport/ui-components": ["packages/ui-components/src/index.ts"],
+      "@minreport/user-management": ["packages/user-management/src/index.ts"]
+    },
+    "jsx": "react-jsx",
+  "types": ["react", "react-dom"]
   },
   "exclude": ["node_modules"]
 }

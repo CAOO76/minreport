@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../firebaseConfig';
+import { db } from '../firebaseConfig.ts';
 import { collection, query, where, orderBy, getDocs } from 'firebase/firestore';
 
 type RequestStatus = 'pending_review' | 'pending_additional_data' | 'pending_final_review' | 'rejected' | 'activated' | 'expired';

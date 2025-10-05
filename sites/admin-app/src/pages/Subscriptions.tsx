@@ -1,30 +1,147 @@
 import { useState, useEffect, useCallback } from 'react';
-import RequestHistoryTable from '../components/RequestHistoryTable'; // Add this import
-import { db } from '../firebaseConfig';
-import { collection, getDocs, query, where, orderBy, doc, getDoc } from 'firebase/firestore';
+import { db, functions, httpsCallable } from '../firebaseConfig.ts';
+import { collection, getDocs, query, where, orderBy, doc, updateDoc } from 'firebase/firestore';
 import './Subscriptions.css';
 
 // --- Type Definitions ---
-type RequestStatus = 'pending_review' | 'pending_additional_data' | 'pending_final_review' | 'rejected' | 'activated' | 'expired';
-type Request = { id: string; status: RequestStatus; createdAt: { toDate: () => Date; }; applicantName: string; applicantEmail: string; rut?: string; institutionName?: string; accountType: 'B2B' | 'EDUCACIONALES' | 'INDIVIDUAL'; country: string; city?: string; entityType: 'natural' | 'juridica'; additionalData?: any; };
+type RequestStatus = 'pending_review' | 'pending_additional_data' | 'pending_final_review' | 'rejected' | 'activated' | 'expired' | 'email_confirmed' | 'archived';
+type Request = { 
+  id: string; 
+  status: RequestStatus; 
+  createdAt: { toDate: () => Date; }; 
+  applicantName: string; 
+  applicantEmail: string; 
+  rut?: string; 
+  institutionName?: string; 
+  accountType: 'B2B' | 'EDUCACIONALES' | 'INDIVIDUAL'; 
+  country: string; 
+  city?: string; 
+  entityType: 'natural' | 'juridica'; 
+  additionalData?: any;
+  emailStatus?: string;
+  emailId?: string;
+  resendLastEvent?: string;
+};
 type HistoryEntry = { id: string; timestamp: { toDate: () => Date; }; action: string; actor: string; details?: string; };
 type Clarification = { id: string; adminMessage: string; userReply?: string; status: string; createdAt: { toDate: () => Date; }; respondedAt?: { toDate: () => Date; }; };
 
 // --- Helper Components ---
-const RequestCard = ({ request, onClick }: { request: Request, onClick: () => void }) => (
-  <div className="request-card" onClick={onClick}>
-    <div className="card-header">
-      <strong>{request.accountType === 'INDIVIDUAL' ? request.applicantName : request.institutionName}</strong>
-      <span className={`status-badge status-${request.status}`}>{request.status.replace('_', ' ')}</span>
-    </div>
-    <div className="card-body">
-      <p>{request.applicantEmail}</p>
-      <small>{request.createdAt.toDate().toLocaleDateString()}</small>
-    </div>
-  </div>
-);
+// Component para mostrar íconos de estado de email
+const EmailStatusIcon = ({ emailStatus, resendLastEvent }: { emailStatus?: string, resendLastEvent?: string }) => {
+    // Determinar el estado basado en emailStatus y resendLastEvent
+    const getEmailStatus = () => {
+        if (!emailStatus) return 'unknown';
+        
+        // Si tenemos resendLastEvent, usarlo para determinar el estado
+        if (resendLastEvent) {
+            switch (resendLastEvent.toLowerCase()) {
+                case 'delivered':
+                    return 'delivered';
+                case 'bounce':
+                case 'bounced':
+                case 'failed':
+                    return 'failed';
+                case 'sent':
+                    return 'pending';
+                default:
+                    return 'unknown';
+            }
+        }
+        
+        // Si no tenemos resendLastEvent, usar emailStatus
+        switch (emailStatus.toLowerCase()) {
+            case 'delivered':
+                return 'delivered';
+            case 'bounce':
+            case 'bounced':
+            case 'failed':
+                return 'failed';
+            case 'sent':
+            case 'pending':
+                return 'pending';
+            default:
+                return 'unknown';
+        }
+    };
 
-const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClarification }: any) => {
+    const status = getEmailStatus();
+    
+    switch (status) {
+        case 'delivered':
+            return (
+                <span className="email-status email-delivered">
+                    <span className="material-symbols-outlined">mark_email_read</span>
+                </span>
+            );
+        case 'failed':
+            return (
+                <span className="email-status email-failed">
+                    <span className="material-symbols-outlined">error</span>
+                </span>
+            );
+        case 'pending':
+            return (
+                <span className="email-status email-pending">
+                    <span className="material-symbols-outlined">schedule</span>
+                </span>
+            );
+        default:
+            return (
+                <span className="email-status email-unknown">
+                    <span className="material-symbols-outlined">help</span>
+                </span>
+            );
+    }
+};
+
+// Función para obtener el icono según el tipo de cuenta
+const getAccountTypeIcon = (accountType: string) => {
+  switch(accountType) {
+    case 'EMPRESARIAL':
+      return 'business';
+    case 'EDUCACIONAL':
+      return 'school';
+    case 'INDIVIDUAL':
+      return 'person';
+    default:
+      return 'help_outline';
+  }
+};
+
+const RequestCard = ({ request, onClick }: { request: Request, onClick: () => void }) => {
+  const isEmailInvalid = request.emailStatus === 'failed_invalid_email';
+  
+  return (
+    <div className={`request-card ${isEmailInvalid ? 'email-invalid' : ''}`} onClick={onClick}>
+      <div className="card-header">
+        <strong>{request.accountType === 'INDIVIDUAL' ? request.applicantName : request.institutionName}</strong>
+              <div className="status-group">
+        {/* Icono del tipo de cuenta */}
+        <span className="account-type-icon" title={`Tipo: ${request.accountType}`}>
+          <span className="material-symbols-outlined">{getAccountTypeIcon(request.accountType)}</span>
+        </span>
+        
+        {request.status !== 'pending_review' && request.status !== 'email_confirmed' && (
+          <span className={`status-badge status-${request.status}`}>{request.status.replace('_', ' ')}</span>
+        )}
+        {isEmailInvalid && request.status !== 'rejected' && (
+          <span className="invalid-email-badge" title="Email inválido - Interacciones bloqueadas">
+            <span className="material-symbols-outlined">block</span>
+          </span>
+        )}
+      </div>
+      </div>
+      <div className="card-body">
+        <p>{request.applicantEmail}</p>
+        <div className="card-footer">
+          <small>{request.createdAt.toDate().toLocaleDateString()}</small>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClarification, onImportEmailResult }: any) => {
     const [history, setHistory] = useState<HistoryEntry[]>([]);
     const [clarifications, setClarifications] = useState<Clarification[]>([]);
     const [view, setView] = useState('details'); // 'details', 'history', 'clarifications'
@@ -48,36 +165,110 @@ const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClar
         fetchSubCollections();
     }, [request.id]);
 
-    const renderDetails = () => (
+    const renderDetails = () => {
+        // Debug: mostrar información COMPLETA de la solicitud
+        console.log('🔍 DEBUG COMPLETO - Solicitud:', {
+            id: request.id,
+            status: request.status,
+            emailStatus: request.emailStatus,
+            resendLastEvent: request.resendLastEvent,
+            isEmailFalse: request.emailStatus === 'failed_invalid_email' || request.resendLastEvent === 'bounced' || request.resendLastEvent === 'complained' || request.resendLastEvent === 'failed'
+        });
+        
+        console.log('📋 TODOS LOS DATOS DEL REQUEST:', request);
+        console.log('📦 ADDITIONAL DATA COMPLETO:', request.additionalData);
+        
+        // Mostrar TODOS los campos del objeto request
+        console.log('🔑 TODAS LAS CLAVES DEL REQUEST:', Object.keys(request));
+        if (request.additionalData) {
+            console.log('🔑 TODAS LAS CLAVES DE ADDITIONAL DATA:', Object.keys(request.additionalData));
+        }
+        
+        return (
         <div className="detail-content-section">
-            <div className="data-card">
-                <h4>Datos del Solicitante</h4>
-                <p><span className="material-symbols-outlined icon-inline">person</span> <span>{request.applicantName}</span></p>
-                <p><span className="material-symbols-outlined icon-inline">mail</span> <span>{request.applicantEmail}</span></p>
-                <p><span className="material-symbols-outlined icon-inline">flag</span> <span>{request.country}</span></p>
-                {request.accountType === 'INDIVIDUAL' && <p><span className="material-symbols-outlined icon-inline">location_city</span> <span>{request.city}</span></p>}
+            {/* Para personas jurídicas (EMPRESARIAL/EDUCACIONAL): dividir en dos subtarjetas */}
+            {(request.accountType === 'EMPRESARIAL' || request.accountType === 'EDUCACIONAL') ? (
+                <>
+                    {/* Subtarjeta 1: Datos del Solicitante */}
+                    <div className="data-card">
+                        <h4>Datos del Solicitante</h4>
+                        {request.applicantName && <p><span className="material-symbols-outlined icon-inline">person</span> <span>{request.applicantName}</span></p>}
+                        {request.applicantEmail && <p><span className="material-symbols-outlined icon-inline">mail</span> <span>{request.applicantEmail}</span></p>}
+                        {/* Ubicación básica: ciudad, país */}
+                        {(request.city || request.country) && (
+                            <p><span className="material-symbols-outlined icon-inline">globe_location_pin</span> 
+                               <span>{[request.city, request.country].filter(Boolean).join(', ')}</span></p>
+                        )}
+                    </div>
+                    
+                    {/* Subtarjeta 2: Datos Corporativos */}
+                    <div className="data-card">
+                        <h4>Datos Corporativos</h4>
+                        {request.accountType && <p><span className="material-symbols-outlined icon-inline">business</span> <span>Tipo: {request.accountType}</span></p>}
+                        {request.institutionName && <p><span className="material-symbols-outlined icon-inline">business</span> <span>Institución: {request.institutionName}</span></p>}
+                        {request.rut && <p><span className="material-symbols-outlined icon-inline">badge</span> <span>RUT: {request.rut}</span></p>}
+                    </div>
+                </>
+            ) : (
+                /* Para personas naturales (INDIVIDUAL): tarjeta única como antes */
+                <div className="data-card">
+                    <h4>Datos del Solicitante</h4>
+                    {request.applicantName && <p><span className="material-symbols-outlined icon-inline">person</span> <span>{request.applicantName}</span></p>}
+                    {request.applicantEmail && <p><span className="material-symbols-outlined icon-inline">mail</span> <span>{request.applicantEmail}</span></p>}
+                    {/* Ubicación básica: ciudad, país */}
+                    {(request.city || request.country) && (
+                        <p><span className="material-symbols-outlined icon-inline">globe_location_pin</span> 
+                           <span>{[request.city, request.country].filter(Boolean).join(', ')}</span></p>
+                    )}
+                    {request.accountType && <p><span className="material-symbols-outlined icon-inline">person</span> <span>Tipo: {request.accountType}</span></p>}
+                    {request.rut && <p><span className="material-symbols-outlined icon-inline">badge</span> <span>RUN: {request.rut}</span></p>}
+                </div>
+            )}
+            
+            {/* Sección de Estado del Email - SOLO para solicitudes falsas/problemáticas */}
+            {(request.emailStatus === 'failed_invalid_email' || 
+              request.resendLastEvent === 'bounced' || 
+              request.resendLastEvent === 'complained' || 
+              request.resendLastEvent === 'failed') && (
+            <div className={`data-card email-status-card email-invalid`}>
+                <h4>Estado del Email</h4>
+                <div className="email-status-details">
+                    {request.emailId ? (
+                        <>
+                            <p><span className="material-symbols-outlined icon-inline">alternate_email</span> 
+                               <code>{request.emailId}</code></p>
+                            {(request.resendLastEvent || request.emailStatus) && (
+                                <p><EmailStatusIcon emailStatus={request.emailStatus} resendLastEvent={request.resendLastEvent} />
+                                   <span>{request.resendLastEvent || request.emailStatus}</span></p>
+                            )}
+                        </>
+                    ) : (
+                        <p><span className="material-symbols-outlined icon-inline">mail_off</span> 
+                           <span>No se envió email</span></p>
+                    )}
+                </div>
             </div>
+            )}
             {request.additionalData && <>
                 <div className="data-card">
                     <h4>Datos del Administrador Designado</h4>
-                <p><span className="material-symbols-outlined icon-inline">person</span> <span>{request.additionalData.adminName}</span></p>
-                <p><span className="material-symbols-outlined icon-inline">mail</span> <span>{request.additionalData.adminEmail}</span></p>
-                <p><span className="material-symbols-outlined icon-inline">phone</span> <a href={`tel:${request.additionalData.adminPhone}`}>{request.additionalData.adminPhone}</a></p>
-                {request.additionalData.adminRole && <p><span className="material-symbols-outlined icon-inline">work</span> <span>{request.additionalData.adminRole}</span></p>}
+                    {request.additionalData.adminName && <p><span className="material-symbols-outlined icon-inline">person</span> <span>{request.additionalData.adminName}</span></p>}
+                    {request.additionalData.adminEmail && <p><span className="material-symbols-outlined icon-inline">mail</span> <span>{request.additionalData.adminEmail}</span></p>}
+                    {request.additionalData.adminPhone && <p><span className="material-symbols-outlined icon-inline">phone</span> <a href={`tel:${request.additionalData.adminPhone}`}>{request.additionalData.adminPhone}</a></p>}
+                    {request.additionalData.adminRole && <p><span className="material-symbols-outlined icon-inline">work</span> <span>{request.additionalData.adminRole}</span></p>}
+                    {request.additionalData.run && <p><span className="material-symbols-outlined icon-inline">fingerprint</span> <span>RUN: {request.additionalData.run}</span></p>}
                 </div>
             </>}
 
             {request.additionalData?.streetAddress && <>
                 <div className="data-card">
                     <h4>Dirección Comercial</h4>
-                <p><span className="material-symbols-outlined icon-inline">home</span> <span>{request.additionalData.streetAddress}</span></p>
-                <p><span className="material-symbols-outlined icon-inline">location_city</span> <span>{request.additionalData.city}</span></p>
-                <p><span className="material-symbols-outlined icon-inline">map</span> <span>{request.additionalData.state}</span></p>
-                <p><span className="material-symbols-outlined icon-inline">pin_drop</span> <span>{request.additionalData.postalCode}</span></p>
+                    {request.additionalData.streetAddress && <p><span className="material-symbols-outlined icon-inline">home</span> <span>{request.additionalData.streetAddress}</span></p>}
                 </div>
             </>}
         </div>
-    );
+        );
+    };
 
     return (
         <div className="detail-modal-overlay" onClick={onClose}>
@@ -96,10 +287,44 @@ const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClar
                     </div>
                     <div className="header-icons" style={{ display: 'flex', gap: '1rem' }}>
                         {view === 'details' && <button onClick={() => setView('history')} className="icon-button"><span className="material-symbols-outlined">history</span></button>}
-                        {view === 'details' && request.status !== 'pending_additional_data' && <button onClick={() => setView('clarifications')} className="icon-button"><span className="material-symbols-outlined">chat_bubble_outline</span></button>}
-                        {view === 'details' && request.status !== 'activated' && request.status !== 'rejected' && request.status !== 'pending_additional_data' && <button className="icon-button" onClick={() => onAction('rejected')} disabled={isActionLoading}><span className="material-symbols-outlined">unpublished</span></button>}
-                        {view === 'details' && request.status === 'pending_review' && <button className="icon-button" onClick={() => onAction('approved')} disabled={isActionLoading}><span className="material-symbols-outlined">check</span></button>}
-                        {view === 'details' && request.status === 'pending_final_review' && <button className="icon-button" onClick={() => onAction('activated')} disabled={isActionLoading}><span className="material-symbols-outlined">done_all</span></button>}
+                        {view === 'details' && request.status !== 'pending_additional_data' && request.emailStatus !== 'failed_invalid_email' && <button onClick={() => setView('clarifications')} className="icon-button"><span className="material-symbols-outlined">chat_bubble_outline</span></button>}
+                        
+
+                        {/* Botón de rechazar - SIMPLE: aparece para cualquier solicitud no finalizada */}
+                        {view === 'details' && request.status !== 'activated' && request.status !== 'rejected' && request.status !== 'archived' && (
+                            <button 
+                                className="icon-button" 
+                                onClick={() => onAction('rejected')} 
+                                disabled={isActionLoading}
+                                title={request.emailStatus === 'failed_invalid_email' ? "Rechazar solicitud falsa" : "Rechazar solicitud"}
+                                style={{ backgroundColor: request.emailStatus === 'failed_invalid_email' ? '#ffebee' : '' }}
+                            >
+                                <span className="material-symbols-outlined">unpublished</span>
+                            </button>
+                        )}
+                        
+                        {/* Botón de aprobar - solo para emails válidos */}
+                        {view === 'details' && request.status === 'pending_review' && request.emailStatus !== 'failed_invalid_email' && (
+                            <button 
+                                className="icon-button" 
+                                onClick={() => onAction('approved')} 
+                                disabled={isActionLoading}
+                                title="Aprobar solicitud"
+                            >
+                                <span className="material-symbols-outlined">check</span>
+                            </button>
+                        )}
+                        
+                        {view === 'details' && request.status === 'pending_final_review' && request.emailStatus !== 'failed_invalid_email' && (
+                            <button 
+                                className="icon-button" 
+                                onClick={() => onAction('activated')} 
+                                disabled={isActionLoading}
+                                title="Activar cuenta"
+                            >
+                                <span className="material-symbols-outlined">done_all</span>
+                            </button>
+                        )}
                     </div>
                 </div>
                 
@@ -130,7 +355,7 @@ const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClar
                     <>
                         
                         <p style={{ display: 'flex', alignItems: 'center' }}><span className="material-symbols-outlined icon-inline" style={{ marginRight: '0.5rem' }}>person</span> {request.applicantName} ({request.applicantEmail})</p>
-                        <div className="clarifications-list">{clarifications.map((c) => <div key={c.id} className='clarification-item'><strong>{c.originalIndex}. Pregunta:</strong> <small>{c.createdAt.toDate().toLocaleString()}</small><p>{c.adminMessage}</p>{c.userReply && <><strong>Respuesta:</strong> {c.respondedAt && <small>{c.respondedAt.toDate().toLocaleString()}</small>}<p>{c.userReply}</p></>}</div>)}</div>
+                        <div className="clarifications-list">{clarifications.map((c, idx) => <div key={c.id} className='clarification-item'><strong>{idx + 1}. Pregunta:</strong> <small>{c.createdAt.toDate().toLocaleString()}</small><p>{c.adminMessage}</p>{c.userReply && <><strong>Respuesta:</strong> {c.respondedAt && <small>{c.respondedAt.toDate().toLocaleString()}</small>}<p>{c.userReply}</p></>}</div>)}</div>
                     </>
                 )}
             </div>
@@ -144,28 +369,64 @@ const Subscriptions = () => {
   const [selectedRequest, setSelectedRequest] = useState<Request | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isActionLoading, setIsActionLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string>('');
+  const [showRequestHistory, setShowRequestHistory] = useState(false);
 
   const fetchRequests = useCallback(async () => {
     setIsLoading(true);
     try {
-      const statusFilter = showRequestHistory
-        ? ['activated', 'rejected']
-        : ['pending_review', 'pending_additional_data', 'pending_final_review'];
-      const q = query(collection(db, 'requests'), where('status', 'in', statusFilter));
+      // ABSOLUTAMENTE SIN FILTROS - TODAS LAS SOLICITUDES SIN EXCEPCIÓN
+      const q = query(collection(db, 'requests'));
       const snapshot = await getDocs(q);
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Request));
+      
+      console.log('� CARGANDO ABSOLUTAMENTE TODAS LAS SOLICITUDES - TOTAL:', list.length);
+      console.log('🔍 DETALLE DE TODAS LAS SOLICITUDES:', list.map(r => ({ 
+        id: r.id, 
+        status: r.status, 
+        email: r.applicantEmail, 
+        emailStatus: r.emailStatus,
+        name: r.applicantName || r.institutionName,
+        createdAt: r.createdAt?.toDate?.()?.toLocaleString() || 'Sin fecha'
+      })));
+      
       setRequests(list);
-      setError(null);
+  setError('');
     } catch (err: any) { 
         console.error("Error fetching requests: ", err);
         setError(`Error al cargar solicitudes: ${err.message}`); 
     } finally { 
         setIsLoading(false);
     }
-  }, []);
+  }, [showRequestHistory]);
 
   useEffect(() => { fetchRequests(); }, [fetchRequests]);
+
+  const handleImportEmailResult = async (emailId: string) => {
+    try {
+      console.log('🔄 Importando resultado de email:', emailId);
+      
+      const importEmailResult = httpsCallable(functions, 'importEmailResult');
+      const result = await importEmailResult({ emailId });
+      
+      const data = result.data as any;
+      
+      if (data.success) {
+        console.log('✅ Resultado importado:', data);
+        alert(`Estado del email actualizado: ${data.lastEvent || 'actualizado'}`);
+        
+        // Recargar las solicitudes para mostrar el estado actualizado
+        fetchRequests();
+      } else {
+        console.error('❌ Error importando:', data.error);
+        alert(`Error al importar resultado: ${data.error || 'Error desconocido'}`);
+      }
+    } catch (error) {
+      console.error('❌ Error en importación:', error);
+      alert('Error al importar el resultado del email');
+    }
+  };
+
 
   const handleAction = async (decision: string) => {
     if (!selectedRequest) return;
@@ -178,32 +439,50 @@ const Subscriptions = () => {
       return;
     }
     
-    let url = '';
+    let callableFunction: any; // functions.HttpsCallable<any, any>;
     let body: any = { requestId: selectedRequest.id, adminId: 'admin@minreport.com' };
-    let reason = '';
+    let actionMessage = '';
 
     if (decision === 'rejected') {
-        reason = window.prompt('Por favor, especifica el motivo del rechazo:');
-        if (!reason) return; // User cancelled the prompt
-        body.reason = reason;
+      // Para solicitudes con email falso/inválido, usar razón automática
+      if (selectedRequest.emailStatus === 'failed_invalid_email' || 
+          selectedRequest.resendLastEvent === 'bounced' ||
+          selectedRequest.resendLastEvent === 'complained' ||
+          selectedRequest.resendLastEvent === 'failed') {
+        body.reason = 'email falso';
+        console.log('🚫 Usando razón automática para email falso:', body.reason);
+      } else {
+        const promptResult = window.prompt('Por favor, especifica el motivo del rechazo:');
+        if (!promptResult) return; // User cancelled the prompt
+        body.reason = promptResult;
+      }
+      actionMessage = 'rechazar';
+    } else if (decision === 'approved') {
+      actionMessage = 'aprobar';
+    } else if (decision === 'activated') {
+      actionMessage = 'activar';
     }
 
     if (selectedRequest.status === 'pending_review') {
-      url = 'http://localhost:8082/processInitialDecision';
+      callableFunction = httpsCallable(functions, 'processInitialDecisionFunction');
       body.decision = decision;
     } else if (selectedRequest.status === 'pending_final_review') {
-      url = 'http://localhost:8082/approveFinalRequest'; // Use the correct endpoint for final approval
-      // No need to set body.decision here, as the backend endpoint expects requestId and adminId directly
+      callableFunction = httpsCallable(functions, 'processFinalDecisionFunction');
+      body.decision = decision; // Agregar la decisión para el procesamiento final
+    } else {
+      alert('Acción no válida para el estado actual de la solicitud.');
+      return;
     }
-
-    if (!url) return;
 
     setIsActionLoading(true);
     try {
-      const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message);
-      alert('Acción completada con éxito.');
+      const result = await callableFunction(body);
+      const { status, message } = result.data as { status: string, message: string };
+
+      if (status !== 'success') {
+        throw new Error(message || `Ocurrió un error al ${actionMessage} la solicitud.`);
+      }
+      alert(`Acción completada con éxito: ${message}`);
       setSelectedRequest(null);
       fetchRequests(); // Refresh list
     } catch (err: any) { 
@@ -220,13 +499,14 @@ const Subscriptions = () => {
 
       setIsActionLoading(true);
       try {
-          const response = await fetch('http://localhost:8082/request-clarification', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ requestId: selectedRequest.id, adminId: 'admin@minreport.com', message })
-          });
-          if (!response.ok) throw new Error('Falló el envío de la aclaración.');
-          alert('Solicitud de aclaración enviada.');
+          const requestClarification = httpsCallable(functions, 'requestClarificationFunction');
+          const result = await requestClarification({ requestId: selectedRequest.id, adminId: 'admin@minreport.com', message });
+          const { status, message: resultMessage } = result.data as { status: string, message: string };
+
+          if (status !== 'success') {
+            throw new Error(resultMessage || 'Falló el envío de la aclaración.');
+          }
+          alert(`Solicitud de aclaración enviada: ${resultMessage}`);
       } catch (err: any) { 
           alert(`Error al enviar la solicitud de aclaración: ${err.message}`); 
       } finally { 
@@ -234,16 +514,11 @@ const Subscriptions = () => {
       }
   };
 
-  const [showRequestHistory, setShowRequestHistory] = useState(false);
-
-  const columns: { title: string, status: RequestStatus }[] = [
-    { title: 'Nuevas Solicitudes', status: 'pending_review' },
-    { title: 'Esperando Datos Adicionales', status: 'pending_additional_data' },
-    { title: 'Revisión Final', status: 'pending_final_review' },
-  ];
-
-  const historyColumns: { title: string, status: RequestStatus[] }[] = [
-    { title: 'Historial de Solicitudes', status: ['activated', 'rejected'] },
+  // COLUMNAS ORIGINALES DEL PROCESO RESTAURADAS
+  const columns: { title: string, statuses: RequestStatus[] }[] = [
+    { title: 'Nuevas Solicitudes', statuses: ['pending_review', 'pending_additional_data', 'pending_final_review', 'rejected', 'activated'] },
+    { title: 'Esperando Datos Adicionales', statuses: ['pending_additional_data'] },
+    { title: 'Revisión Final', statuses: ['pending_final_review'] },
   ];
 
   if (isLoading) return <p>Cargando solicitudes...</p>;
@@ -265,20 +540,41 @@ const Subscriptions = () => {
         </button>
       </div>
 
+      {/* Historial de solicitudes deshabilitado temporalmente */}
       {showRequestHistory ? (
-        <RequestHistoryTable />
-      ) : (
-        <div className="columns-container"> {/* New container for columns */}
-          {columns.map(col => (
-            <div key={col.status} className="board-column">
-              <h3>{col.title} ({requests.filter(r => r.status === col.status).length})</h3>
-              <div className="column-content">
-                {requests.filter(r => r.status === col.status).map(req => (
-                  <RequestCard key={req.id} request={req} onClick={() => setSelectedRequest(req)} />
-                ))}
-              </div>
+        <div className="columns-container">
+          <div className="board-column">
+            <h3>Solicitudes Archivadas ({requests.length})</h3>
+            <div className="column-content">
+              {requests.map(req => (
+                <RequestCard key={req.id} request={req} onClick={() => setSelectedRequest(req)} />
+              ))}
             </div>
-          ))}
+          </div>
+        </div>
+      ) : (
+        <div className="columns-container">
+          {columns.map((col, index) => {
+            // PRIMERA COLUMNA (Nuevas Solicitudes): TODAS las solicitudes
+            // OTRAS COLUMNAS: filtros normales por estado
+            const filteredRequests = index === 0 
+              ? requests  // TODAS LAS SOLICITUDES en primera columna
+              : requests.filter(r => col.statuses.includes(r.status));
+            
+            console.log(`🔍 Debug - Columna "${col.title}" ${index === 0 ? '(TODAS)' : '(FILTRADA)'}:`, filteredRequests.length, 'requests');
+            console.log('Solicitudes en esta columna:', filteredRequests.map(r => ({ name: r.applicantName, status: r.status, emailStatus: r.emailStatus })));
+            
+            return (
+              <div key={col.title} className="board-column">
+                <h3>{col.title} ({filteredRequests.length})</h3>
+                <div className="column-content">
+                  {filteredRequests.map(req => (
+                    <RequestCard key={req.id} request={req} onClick={() => setSelectedRequest(req)} />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
       {selectedRequest && 
@@ -288,6 +584,7 @@ const Subscriptions = () => {
           onAction={handleAction}
           isActionLoading={isActionLoading}
           onRequestClarification={handleRequestClarification}
+          onImportEmailResult={handleImportEmailResult}
           initialView={showRequestHistory ? 'history' : 'details'}
         />}
     </div>
@@ -295,3 +592,26 @@ const Subscriptions = () => {
 };
 
 export default Subscriptions;
+
+/* Estilos para icono de tipo de cuenta */
+const styles = `
+.account-type-icon {
+  color: #4b5563;
+  display: flex;
+  align-items: center;
+  margin-right: 8px;
+}
+
+.account-type-icon .material-symbols-outlined {
+  font-size: 20px;
+  font-weight: 500;
+}
+`;
+
+// Insertar estilos en el head
+if (typeof document !== 'undefined') {
+  const styleSheet = document.createElement("style");
+  styleSheet.type = "text/css";
+  styleSheet.innerText = styles;
+  document.head.appendChild(styleSheet);
+}

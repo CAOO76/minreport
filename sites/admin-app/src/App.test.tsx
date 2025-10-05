@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import * as firestore from 'firebase/firestore';
 import { BrowserRouter, MemoryRouter } from 'react-router-dom';
 import * as firebaseAuth from 'firebase/auth'; // Import firebase/auth as a module
 import '@testing-library/jest-dom';
@@ -14,7 +13,7 @@ vi.mock('./hooks/useAuth', () => {
   };
 });
 
-import useAuth from './hooks/useAuth';
+import useAuth from './hooks/useAuth.js';
 // Helper para tipado de mock (debe ir después de importar useAuth y vi)
 const useAuthMock = useAuth as unknown as ReturnType<typeof vi.fn> & import('vitest').Mock;
 
@@ -118,14 +117,14 @@ describe('Admin App Component', () => {
   describe('Authentication States', () => {
     it('renders loading state initially', async () => {
   useAuthMock.mockReturnValue({ user: null, isAdmin: false, loading: true, adminActivatedPlugins: [] });
-      const { default: App } = await import('./App');
+  const { default: App } = await import('./App.js');
       render(<App />);
       expect(screen.getByText('Cargando...')).toBeInTheDocument();
     });
 
     it('renders Login UI when not authenticated', async () => {
   useAuthMock.mockReturnValue({ user: null, isAdmin: false, loading: false, adminActivatedPlugins: [] });
-      const { default: App } = await import('./App');
+  const { default: App } = await import('./App.js');
       render(<App />);
       expect(screen.getByText('Iniciar Sesión - Panel de Administración')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /Iniciar Sesión/i })).toBeInTheDocument();
@@ -133,14 +132,14 @@ describe('Admin App Component', () => {
 
     it('renders Login UI when authenticated but not admin', async () => {
   useAuthMock.mockReturnValue({ user: { uid: '123' }, isAdmin: false, loading: false, adminActivatedPlugins: [] });
-      const { default: App } = await import('./App');
+  const { default: App } = await import('./App.js');
       render(<App />);
       expect(screen.getByText('Iniciar Sesión - Panel de Administración')).toBeInTheDocument();
     });
 
     it('renders main app layout when authenticated as admin', async () => {
   useAuthMock.mockReturnValue({ user: { uid: '123' }, isAdmin: true, loading: false, adminActivatedPlugins: [] });
-      const { default: App } = await import('./App');
+  const { default: App } = await import('./App.js');
       render(<App />);
       expect(screen.getByText('Panel de Administración')).toBeInTheDocument();
       expect(screen.getByText('MINREPORT')).toBeInTheDocument(); // Sidebar header
@@ -153,7 +152,7 @@ describe('Admin App Component', () => {
       });
 
     it('renders Dashboard for / route', async () => {
-      const { default: App } = await import('./App');
+  const { default: App } = await import('./App.js');
       render(
         <BrowserRouter>
           <App />
@@ -164,7 +163,7 @@ describe('Admin App Component', () => {
     });
 
     it('renders Accounts for /accounts route', async () => {
-      const { default: App } = await import('./App');
+  const { default: App } = await import('./App.js');
       render(
         <BrowserRouter>
           <App />
@@ -174,7 +173,7 @@ describe('Admin App Component', () => {
     });
 
     it('renders AccountDetails for /accounts/:accountId route', async () => {
-      const { default: App } = await import('./App');
+  const { default: App } = await import('./App.js');
       render(
         <BrowserRouter>
           <App />
@@ -184,7 +183,7 @@ describe('Admin App Component', () => {
     });
 
     it('renders PluginsManagement for /plugins route', async () => {
-      const { default: App } = await import('./App');
+  const { default: App } = await import('./App.js');
       render(
         <BrowserRouter>
           <App />
@@ -216,7 +215,7 @@ describe('PluginSandbox integration', () => {
         }
       };
     });
-    const { default: App } = await import('./App');
+  const { default: App } = await import('./App.js');
     render(
       <MemoryRouter initialEntries={['/plugin-sandbox']}>
         <App />
@@ -241,7 +240,7 @@ describe('PluginSandbox integration', () => {
     });
 
     it('calls signOut when logout button is clicked', async () => {
-      const { default: App } = await import('./App');
+  const { default: App } = await import('./App.js');
       render(
         <BrowserRouter>
           <App />
@@ -257,7 +256,7 @@ describe('PluginSandbox integration', () => {
     it('shows an alert if signOut fails', async () => {
       (firebaseAuth.signOut as any).mockImplementation(() => Promise.reject(new Error('Logout failed')));
       const mockAlert = vi.spyOn(window, 'alert').mockImplementation(() => {});
-      const { default: App } = await import('./App');
+  const { default: App } = await import('./App.js');
       render(
         <BrowserRouter>
           <App />

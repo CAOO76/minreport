@@ -1,16 +1,15 @@
 import { Routes, Route } from 'react-router-dom';
-import Login from './components/Login';
-import useAuth from './hooks/useAuth';
-import { ThemeToggleButton } from './components/ThemeToggleButton';
+import { auth } from './firebaseConfig.ts';
 import { signOut } from 'firebase/auth';
-import { auth } from './firebaseConfig';
-import { Sidebar } from './components/Sidebar';
-import Dashboard from './pages/Dashboard';
-import Subscriptions from './pages/Subscriptions';
-import Accounts from './pages/Accounts';
-import PluginsManagement from './pages/PluginsManagement';
-import AccountDetails from './pages/AccountDetails'; // Importar el nuevo componente
-import PluginSandbox from './pages/PluginSandbox'; // New import
+import Login from './components/Login.tsx';
+import useAuth from './hooks/useAuth.ts';
+import { ThemeToggleButton } from './components/ThemeToggleButton.tsx';
+import { Sidebar } from './components/Sidebar.tsx'; // Verificar que Sidebar no tenga rutas/plugins
+import Dashboard from './pages/Dashboard.tsx';
+import Subscriptions from './pages/Subscriptions.tsx';
+import Accounts from './pages/Accounts.tsx';
+import AccountDetails from './pages/AccountDetails.tsx'; // Importar el nuevo componente
+// ...existing code...
 import './App.css';
 
 function App() {
@@ -55,9 +54,8 @@ function App() {
           <Route path="/subscriptions" element={<Subscriptions />} />
           <Route path="/accounts" element={<Accounts />} />
           <Route path="/accounts/:accountId" element={<AccountDetails />} /> {/* Nueva ruta para detalles de cuenta */}
-          <Route path="/plugins" element={<PluginsManagement />} />
-          <Route path="/plugin-sandbox" element={<PluginSandbox />} />
-          {/* Añadir una ruta para settings y una página 404 sería una buena práctica */}
+            {/* ...existing code... */}
+          {/* Eliminar rutas de plugins si existen */}
         </Routes>
       </main>
     </div>

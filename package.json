@@ -3,15 +3,29 @@
   "type": "module",
   "scripts": {
     "clean:emulators": "bash ./clean-emulators.sh",
+    "backup:emulators": "bash ./backup-emulator-data.sh",
     "emulators:start": "firebase emulators:start --import=./firebase-emulators-data --export-on-exit",
+    "emulators:persist": "firebase emulators:start --import=./firebase-emulators-data --export-on-exit",
+    "dev:clean": "bash ./dev-clean-start.sh",
     "dev:client": "pnpm --filter client-app dev",
     "dev:admin": "pnpm --filter admin-app dev",
     "dev:public": "pnpm --filter public-site dev",
-    "dev:plugin": "pnpm --filter test-plugin dev",
-    "dev:services": "pnpm --filter \"./services/*\" dev",
-  "dev": "pnpm clean:emulators && ./pre-dev.sh && concurrently --kill-others --kill-signal SIGINT --raw \"pnpm:emulators:start\" \"pnpm:dev:services\" \"pnpm:dev:client\" \"pnpm:dev:admin\" \"pnpm:dev:public\" \"pnpm:dev:plugin\"",
+    "dev:services": "pnpm --filter \"./services/*\" dev && pnpm --filter request-registration-service dev",
+    "dev": "./pre-dev.sh && concurrently --kill-others --kill-signal SIGINT --raw \"pnpm:emulators:start\" \"pnpm:dev:client\" \"pnpm:dev:admin\" \"pnpm:dev:public\"",
+    "dev:safe": "pnpm clean:emulators && concurrently --kill-others --kill-signal SIGINT --raw \"pnpm:emulators:start\" \"pnpm:dev:client\" \"pnpm:dev:admin\" \"pnpm:dev:public\"",
+    "dev:persist": "concurrently --kill-others --kill-signal SIGINT --raw \"pnpm:emulators:persist\" \"pnpm:dev:client\" \"pnpm:dev:admin\" \"pnpm:dev:public\"",
+    "dev:apps-only": "concurrently --kill-others --kill-signal SIGINT --raw \"pnpm:dev:client\" \"pnpm:dev:admin\" \"pnpm:dev:public\"",
+    "dev:full": "pnpm clean:emulators && ./pre-dev.sh && concurrently --kill-others --kill-signal SIGINT --raw \"pnpm:emulators:start\" \"pnpm:dev:services\" \"pnpm:dev:client\" \"pnpm:dev:admin\" \"pnpm:dev:public\"",
     "set-admin": "cross-env FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' ts-node services/functions/src/manage-admin.ts",
-    "db:seed": "cross-env FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' FIRESTORE_EMULATOR_HOST='127.0.0.1:8085' ts-node services/functions/src/seed-emulators.ts"
+    "db:seed": "cross-env FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' FIRESTORE_EMULATOR_HOST='127.0.0.1:8085' node services/functions/lib/seed-emulators.js",
+    "create:superadmin": "cross-env FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' FIRESTORE_EMULATOR_HOST='127.0.0.1:8085' node create-super-admin.cjs",
+    "test": "pnpm -r test",
+    "test:unit": "pnpm --filter \"./packages/*\" test",
+    "test:services": "pnpm --filter \"./services/*\" test",
+    "test:sites": "pnpm --filter \"./sites/*\" test",
+    "test:e2e": "pnpm --filter client-app test:e2e",
+    "test:coverage": "pnpm -r test --coverage",
+    "test:watch": "pnpm -r test --watch"
   },
   "pnpm": {
     "overrides": {
@@ -22,6 +36,9 @@
   },
   "dependencies": {
     "@types/express": "^5.0.3",
+    "@types/react": "^19.1.16",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.4",
     "express": "^5.1.0",
     "firebase-admin": "^13.5.0",
     "supertest": "^7.1.4"
@@ -46,6 +63,7 @@
     "prettier": "^3.6.2",
     "ts-node": "^10.9.2",
     "typescript-eslint": "^8.44.0",
+    "vite": "^7.1.7",
     "vitest": "^3.2.4"
   }
 }

@@ -14,9 +14,13 @@
     "jsx": "react-jsx",
 
     /* Path mapping for monorepo */
-    "baseUrl": ".", // Explicitly set baseUrl to current directory
+    "baseUrl": ".",
     "paths": {
-      "@minreport/core/*": ["../../packages/core/src/*"]
+      "@minreport/core": ["../../packages/core/src/index.ts"],
+      "@minreport/core-ui": ["../../packages/core-ui/src/index.ts"],
+      "@minreport/sdk": ["../../packages/sdk/src/index.ts"],
+      "@minreport/ui-components": ["../../packages/ui-components/src/index.ts"],
+      "@minreport/user-management": ["../../packages/user-management/src/index.ts"]
     },
 
     /* Linting */

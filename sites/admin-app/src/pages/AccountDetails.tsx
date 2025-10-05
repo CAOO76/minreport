@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { db, functions } from '../firebaseConfig';
+import { db } from '../firebaseConfig.ts';
 import { doc, getDoc } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
 import './AccountDetails.css';
+// ...existing code...
 
 // --- Type Definitions ---
 type AccountStatus = 'active' | 'suspended';
@@ -16,67 +16,11 @@ type Account = {
   accountType: 'EMPRESARIAL' | 'EDUCACIONAL' | 'INDIVIDUAL';
   designatedAdminEmail: string;
   adminName: string;
-  adminActivatedPlugins?: string[]; // Correct field name
 };
 
-// As per business rule: use a mock array for all available plugins (solo externos)
-const ALL_AVAILABLE_PLUGINS = [
-  { id: 'metrics-v1', name: 'Dashboard de Métricas v1' },
-  { id: 'reports-basic', name: 'Generador de Reportes Básico' },
-  { id: 'data-importer', name: 'Importador de Datos Externos' },
-];
+// ...existing code...
 
-// --- Sub-component for Plugin Management ---
-interface ManageClientPluginsProps {
-  accountId: string;
-  activePlugins: string[];
-  onPluginsUpdated: () => void; // Callback to refresh account data
-}
-
-const ManageClientPlugins: React.FC<ManageClientPluginsProps> = ({ accountId, activePlugins, onPluginsUpdated }) => {
-  const [loadingPluginId, setLoadingPluginId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const manageClientPlugins = httpsCallable(functions, 'manageClientPluginsCallable');
-
-  const handleTogglePlugin = async (pluginId: string, isActive: boolean) => {
-    setLoadingPluginId(pluginId);
-    setError(null);
-    try {
-      const action = isActive ? 'deactivate' : 'activate';
-      await manageClientPlugins({ accountId, pluginId, action });
-      onPluginsUpdated(); // Refresh the parent component's data
-    } catch (err: any) {
-      console.error('Error toggling plugin:', err);
-      setError(`Error al cambiar estado del plugin ${pluginId}: ${err.message}`);
-    } finally {
-      setLoadingPluginId(null);
-    }
-  };
-
-  return (
-    <div className="plugin-management-section">
-      <h3>Gestión de Plugins</h3>
-      {error && <p className="error">{error}</p>}
-      <ul className="plugins-list">
-        {ALL_AVAILABLE_PLUGINS.map((plugin) => {
-          const isActive = activePlugins.includes(plugin.id);
-          const isLoading = loadingPluginId === plugin.id;
-          return (
-            <li key={plugin.id} className="plugin-item">
-              <span className="plugin-name">{plugin.name}</span>
-              {React.createElement('md-switch' as any, {
-                selected: isActive,
-                disabled: isLoading,
-                onClick: () => handleTogglePlugin(plugin.id, isActive)
-              })}
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-};
+// ...existing code...
 
 
 // --- Main Account Details Component ---
@@ -86,6 +30,7 @@ const AccountDetails: React.FC = () => {
   const [account, setAccount] = useState<Account | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // ...existing code...
 
   const fetchAccountDetails = useCallback(async () => {
     if (!accountId) {
@@ -133,6 +78,7 @@ const AccountDetails: React.FC = () => {
 
         <div className="account-info-section">
           <h3>Información General</h3>
+          {/* ...existing code... */}
           <p><strong>ID:</strong> {account.id}</p>
           <p><strong>Email Administrador:</strong> {account.designatedAdminEmail}</p>
           <p><strong>Tipo de Cuenta:</strong> {account.accountType}</p>
@@ -140,11 +86,7 @@ const AccountDetails: React.FC = () => {
           <p><strong>Fecha de Creación:</strong> {account.createdAt.toDate().toLocaleDateString()}</p>
         </div>
 
-        <ManageClientPlugins
-          accountId={account.id}
-          activePlugins={account.adminActivatedPlugins || []}
-          onPluginsUpdated={fetchAccountDetails}
-        />
+        {/* ...existing code... */}
         
       </div>
     </div>

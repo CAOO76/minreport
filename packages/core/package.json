@@ -2,8 +2,9 @@
   "name": "@minreport/core",
   "version": "0.1.0",
   "private": true,
-  "main": "./lib/index.js",
-  "types": "./lib/index.d.ts",
+  "type": "module",
+  "main": "./lib/src/index.js",
+  "types": "./lib/src/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.prod.json",
     "dev": "tsc -w -p tsconfig.json",
@@ -11,9 +12,6 @@
     "lint": "eslint . --cache --fix"
   },
   "devDependencies": {
-    "@typescript-eslint/eslint-plugin": "^8.44.1",
-    "@typescript-eslint/parser": "^8.44.1",
-    "eslint": "^9.36.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }

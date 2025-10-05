@@ -12,7 +12,7 @@ const dirname =
 // More info at: https://storybook.js.org/docs/next/writing-tests/integrations/vitest-addon
 export default defineConfig({
   server: {
-    port: 5175,
+    port: 5175, // CLIENT APP - app.minreport.com
     strictPort: true, // Force Vite to use this port or fail
   },
   plugins: [react()],

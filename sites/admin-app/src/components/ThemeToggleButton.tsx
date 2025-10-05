@@ -1,4 +1,4 @@
-import { useTheme } from '../contexts/ThemeContext';
+import { useTheme } from '../contexts/ThemeContext.tsx';
 import './ThemeToggleButton.css';
 
 export const ThemeToggleButton = () => {

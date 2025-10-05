@@ -53,28 +53,23 @@
           "destination": "/index.html"
         }
       ]
-    },
+    }
+  ],
+  "functions": [
     {
-      "site": "minreport-test-plugin",
-      "public": "sites/test-plugin/dist",
+      "codebase": "default",
+      "region": "southamerica-west1",
+      "source": "services/functions",
+      "runtime": "nodejs20",
       "ignore": [
-        "firebase.json",
-        "**/.*",
-        "**/node_modules/**"
-      ],
-      "rewrites": [
-        {
-          "source": "**",
-          "destination": "/index.html"
-        }
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
       ]
     }
   ],
-  "functions": {
-    "source": "services/functions",
-    "runtime": "nodejs20",
-    "region": "southamerica-west1"
-  },
   "emulators": {
     "auth": {
       "port": 9190
@@ -83,8 +78,8 @@
       "port": 8085
     },
     "functions": {
-      "port": 5001,
-      "cors": ["*"] // Temporarily allow all origins for functions emulator
+      "port": 9196,
+      "env": "services/functions/.env.local"
     },
     "hosting": {
       "port": 5010

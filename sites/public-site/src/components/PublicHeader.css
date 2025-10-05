@@ -1,0 +1,119 @@
+.public-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-8);
+  height: 70px;
+  background: var(--header-bg);
+  border-bottom: var(--border-width) solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+}
+
+.brand-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  text-decoration: none;
+  color: var(--color-text-primary);
+  cursor: default;
+}
+
+.brand-icon {
+  font-size: var(--font-size-4xl);
+  color: var(--color-primary);
+}
+
+.brand-text {
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+}
+
+.header-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.nav-button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-6);
+  background: transparent;
+  border: var(--border-width) solid var(--color-primary);
+  border-radius: var(--border-radius);
+  color: var(--color-primary);
+  text-decoration: none;
+  font-family: var(--font-family-primary);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  transition: all var(--transition-fast);
+  cursor: pointer;
+}
+
+.nav-button:hover {
+  background: var(--color-primary);
+  color: var(--color-text-on-primary);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.nav-button .material-symbols-outlined {
+  font-size: var(--font-size-xl);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.theme-toggle {
+  background: transparent;
+  border: none;
+  padding: var(--space-3);
+  border-radius: var(--border-radius-full);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+.theme-toggle:hover {
+  background: var(--nav-hover-bg);
+  transform: scale(1.1);
+}
+
+.theme-toggle .material-symbols-outlined {
+  font-size: var(--font-size-2xl);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .public-header {
+    padding: var(--space-4);
+  }
+  
+  .nav-text {
+    display: none;
+  }
+  
+  .brand-text {
+    font-size: var(--font-size-xl);
+  }
+  
+  .header-nav {
+    gap: var(--space-2);
+  }
+}

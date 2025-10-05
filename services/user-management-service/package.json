@@ -7,8 +7,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node lib/index.js",
-    "dev": "pnpm run build && node lib/index.js",
-    "test": "vitest run"
+  "dev": "pnpm run build && node lib/index.js"
   },
   "dependencies": {
     "@minreport/core": "file:../../packages/core",

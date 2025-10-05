@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./lib",
+    "jsx": "react-jsx",
+  "moduleResolution": "nodenext",
+  "module": "NodeNext",
+    "baseUrl": ".",
+    "composite": true,
+    "declaration": true,
+    "noEmit": false
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "lib"]
+}

@@ -8,6 +8,8 @@
 :root {
   /* Paleta de Colores - Modo Claro (Default) */
   --color-background: #ffffff; /* Fondo principal */
+  --color-background-secondary: #f8fafc; /* Fondo secundario para hovers */
+  --color-background-card: #ffffff; /* Fondo para tarjetas */
   --color-surface: #f4f6f8;    /* Fondo para tarjetas, inputs, etc. */
   --color-text-primary: #1a202c; /* Texto principal */
   --color-text-secondary: #4a5568; /* Texto más suave, placeholders */
@@ -28,6 +30,8 @@
 [data-theme='dark'] {
   /* Paleta de Colores - Modo Oscuro */
   --color-background: #121212; /* Fondo principal oscuro */
+  --color-background-secondary: #1a1a1a; /* Fondo secundario para hovers */
+  --color-background-card: #1e1e1e; /* Fondo para tarjetas */
   --color-surface: #1e1e1e;    /* Superficies como tarjetas, etc. */
   --color-text-primary: #e2e8f0; /* Texto principal claro */
   --color-text-secondary: #a0aec0; /* Texto secundario más suave */

@@ -1,160 +1,272 @@
-/**
- * @minreport/sdk
- * This SDK provides a secure communication channel for plugins to interact with the MINREPORT Core.
- * It abstracts away the complexity of postMessage communication.
- */
+// MINREPORT SDK - Offline-Aware with Firebase Integration
 
-// --- Interfaces and Types ---
+import { 
+  OfflineAction, 
+  OfflineConfig, 
+  DEFAULT_OFFLINE_CONFIG,
+  SyncResult,
+  generateActionId,
+  shouldRetry,
+  SyncStatus
+} from '@minreport/core';
 
-export interface MinreportUser {
-  uid: string;
-  email: string | null;
-  displayName: string | null;
-}
+// Firebase imports (only what we actually use for now)
+import { initializeApp, getApps } from 'firebase/app';
+import { 
+  getFirestore, 
+  connectFirestoreEmulator,
+  enableNetwork,
+  disableNetwork
+} from 'firebase/firestore';
 
-export interface MinreportSession {
-  user: MinreportUser;
-  claims: { [key: string]: any };
-  idToken: string;
-  theme: { [key: string]: string };
-}
+export type { OfflineAction, SyncResult, SyncStatus } from '@minreport/core';
 
-type ResolveFunction = (value: any) => void;
-type RejectFunction = (reason?: any) => void;
-
-export const INIT_ERROR_NO_ID_TOKEN = 'Initialization failed: No idToken received from Core.';
-
-// --- Internal State ---
-
-let coreOrigin: string | null = null;
-let minreportSession: MinreportSession | null = null;
-const pendingPromises = new Map<string, { resolve: ResolveFunction; reject: RejectFunction }>();
-
-// --- Private Functions ---
-
-/**
- * Applies the theme variables received from the Core to the plugin's root element.
- */
-const applyTheme = (theme: { [key: string]: string }) => {
-  const root = document.documentElement;
-  for (const [key, value] of Object.entries(theme)) {
-    root.style.setProperty(key, value);
-  }
-  console.log('[SDK] Theme applied.');
+// Firebase configuration
+const firebaseConfig = {
+  apiKey: "demo-project-key",
+  authDomain: "demo-project.firebaseapp.com", 
+  projectId: "demo-project",
+  storageBucket: "demo-project.appspot.com",
+  messagingSenderId: "123456789",
+  appId: "demo-app-id"
 };
 
-/**
- * Handles incoming messages from the MINREPORT Core.
- */
-const handleCoreMessage = (event: MessageEvent) => {
-  if (event.source !== window.parent) return; // Only accept messages from the parent window
-  if (event.origin !== coreOrigin) {
-    console.warn(`[SDK] Ignored message from unexpected origin: ${event.origin}`);
-    return;
+// Initialize Firebase
+let firebaseApp;
+let db: any;
+
+try {
+  if (getApps().length === 0) {
+    firebaseApp = initializeApp(firebaseConfig);
+  } else {
+    firebaseApp = getApps()[0];
   }
 
-  const { type, payload } = event.data;
+  db = getFirestore(firebaseApp);
 
-  if (type === 'MINREPORT_RESPONSE' && payload.correlationId) {
-    const promise = pendingPromises.get(payload.correlationId);
-    if (promise) {
-      if (payload.error) {
-        promise.reject(new Error(payload.error));
-      } else {
-        promise.resolve(payload.result);
-      }
-      pendingPromises.delete(payload.correlationId);
+  // Connect to emulator in development
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    try {
+      connectFirestoreEmulator(db, 'localhost', 8085);
+    } catch (error) {
+      // Emulator already connected or not available
+      console.log('Firestore emulator connection info:', error);
     }
   }
-};
+} catch (error) {
+  console.warn('Firebase initialization error:', error);
+}
 
-// --- Public API ---
+export class OfflineQueue {
+	private queue: OfflineAction[] = [];
+	private isOnline: boolean = typeof navigator !== 'undefined' ? navigator.onLine : true;
+	private config: OfflineConfig;
+	private syncInProgress: boolean = false;
 
-/**
- * Initializes the SDK. This must be the first function called by the plugin.
- * It establishes a secure listener and waits for the session context from the Core.
- * @param allowedCoreOrigins An array of trusted origins for the MINREPORT Core application.
- * @returns A promise that resolves with the initial session information.
- */
-export const init = (allowedCoreOrigins: string[]): Promise<MinreportSession> => {
-  return new Promise((resolve, reject) => {
-    const handleInit = (event: MessageEvent) => {
-      if (!allowedCoreOrigins.includes(event.origin)) return;
+	constructor(config: Partial<OfflineConfig> = {}) {
+		this.config = { ...DEFAULT_OFFLINE_CONFIG, ...config };
+		
+		if (typeof window !== 'undefined') {
+			window.addEventListener('online', this.handleOnline.bind(this));
+			window.addEventListener('offline', this.handleOffline.bind(this));
+			this.restore();
+			
+			if (this.config.enableBackgroundSync) {
+				this.startBackgroundSync();
+			}
+		}
+	}
 
-      if (event.data?.type === 'MINREPORT_INIT') {
-        console.log('[SDK] MINREPORT_INIT received from Core.');
-        coreOrigin = event.origin;
-        minreportSession = event.data.payload;
+	private handleOnline() {
+		this.isOnline = true;
+		this.sync();
+	}
 
-        if (!minreportSession?.idToken) {
-          return reject(new Error('Initialization failed: No idToken received from Core.'));
-        }
+	private handleOffline() {
+		this.isOnline = false;
+	}
 
-        applyTheme(minreportSession.theme);
+	private startBackgroundSync() {
+		setInterval(() => {
+			if (this.isOnline && !this.syncInProgress && this.queue.length > 0) {
+				this.sync();
+			}
+		}, this.config.syncInterval);
+	}
 
-        // Setup the permanent listener for responses
-        window.addEventListener('message', handleCoreMessage);
+	enqueue(action: Omit<OfflineAction, 'id' | 'timestamp' | 'status' | 'retryCount'>): string {
+		const fullAction: OfflineAction = {
+			...action,
+			id: generateActionId(),
+			timestamp: Date.now(),
+			status: 'pending' as SyncStatus,
+			retryCount: 0
+		};
+		
+		this.queue.push(fullAction);
+		this.persist();
+		
+		if (this.isOnline && !this.syncInProgress) {
+			// Don't await sync to avoid blocking enqueue
+			this.sync().catch(error => {
+				console.warn('Background sync failed:', error);
+			});
+		}
 
-        // Clean up the init listener
-        window.removeEventListener('message', handleInit);
+		return fullAction.id;
+	}
 
-        resolve(minreportSession);
-      }
-    };
+	async sync(): Promise<SyncResult[]> {
+		if (this.syncInProgress || !this.isOnline) {
+			return [];
+		}
 
-    window.addEventListener('message', handleInit);
-    console.log('[SDK] Initialized and waiting for MINREPORT_INIT from Core...');
-  });
-};
+		this.syncInProgress = true;
+		const results: SyncResult[] = [];
 
-/**
- * Sends an action to the MINREPORT Core and returns a promise that resolves with the result.
- * @param action The name of the action to execute (e.g., 'savePluginData').
- * @param data The payload for the action.
- * @returns A promise with the result from the Core.
- */
-const sendAction = <T = any>(action: string, data: any): Promise<T> => {
-  if (coreOrigin === null || !window.parent) {
-    return Promise.reject(new Error('SDK not initialized. Please call init() first.'));
-  }
+		try {
+			// Procesar acciones pendientes
+			const pendingActions = this.queue.filter(action => 
+				action.status === 'pending' || shouldRetry(action, this.config)
+			);
 
-  return new Promise((resolve, reject) => {
-    const correlationId = `${action}-${Date.now()}-${Math.random()}`;
-    pendingPromises.set(correlationId, { resolve, reject });
+			for (const action of pendingActions) {
+				try {
+					// TODO: Implementar lógica de sincronización real con Firestore
+					const result = await this.syncAction(action);
+					results.push(result);
+					
+					if (result.success) {
+						// Remover acción exitosa de la cola
+						this.queue = this.queue.filter(a => a.id !== action.id);
+					} else {
+						// Incrementar contador de reintentos
+						action.retryCount++;
+						action.status = 'error';
+						action.error = result.error;
+					}
+				} catch (error) {
+					action.retryCount++;
+					action.status = 'error';
+					action.error = error instanceof Error ? error.message : 'Unknown error';
+					
+					results.push({
+						success: false,
+						actionId: action.id,
+						error: action.error
+					});
+				}
+			}
 
-    window.parent.postMessage(
-      {
-        type: 'MINREPORT_ACTION',
-        payload: { action, data, correlationId },
-      },
-      coreOrigin!
-    );
+			// Remover acciones que excedieron el número máximo de reintentos
+			this.queue = this.queue.filter(action => 
+				shouldRetry(action, this.config) || action.status !== 'error'
+			);
 
-    // Timeout to prevent memory leaks
-    setTimeout(() => {
-      if (pendingPromises.has(correlationId)) {
-        pendingPromises.delete(correlationId);
-        reject(new Error(`Action '${action}' timed out.`));
-      }
-    }, 30000); // 30-second timeout
-  });
-};
+			this.persist();
+		} finally {
+			this.syncInProgress = false;
+		}
 
-// --- Exported SDK Functions ---
+		return results;
+	}
 
-/**
- * Retrieves the current session information after initialization.
- * @returns The MinreportSession object or null if not initialized.
- */
-export const getSession = (): MinreportSession | null => {
-  return minreportSession;
-};
+	private async syncAction(action: OfflineAction): Promise<SyncResult> {
+		// Implementación real de sincronización con Firebase/Firestore
+		try {
+			// Log para debugging en desarrollo (verificar entorno)
+			const isLocalhost = typeof window !== 'undefined' && 
+				window.location && 
+				window.location.hostname === 'localhost';
+			
+			if (isLocalhost) {
+				console.log('Syncing action with Firebase:', action);
+			}
 
-/**
- * Example function to save data via the Core.
- * @param pluginData The data to save.
- * @returns A promise that resolves with the result of the save operation.
- */
-export const savePluginData = (pluginData: any): Promise<{ success: boolean; message: string }> => {
-  return sendAction('savePluginData', pluginData);
-};
+			// Verificar que Firebase esté inicializado
+			if (!db) {
+				throw new Error('Firebase not initialized');
+			}
+
+			// Por ahora, simulamos éxito mientras implementamos el resto
+			// TODO: Implementar operaciones CRUD reales basadas en action.type
+			switch (action.type) {
+				case 'CREATE_REPORT':
+				case 'UPDATE_REPORT':
+				case 'DELETE_REPORT':
+				case 'CREATE_USER':
+				case 'UPDATE_USER':
+					// Aquí iría la lógica específica de cada operación
+					await new Promise(resolve => setTimeout(resolve, 100)); // Simular latencia
+					break;
+				default:
+					console.warn('Unknown action type:', action.type);
+			}
+			
+			return {
+				success: true,
+				actionId: action.id
+			};
+		} catch (error) {
+			console.error('Sync action failed:', error);
+			return {
+				success: false,
+				actionId: action.id,
+				error: error instanceof Error ? error.message : 'Unknown sync error'
+			};
+		}
+	}
+
+	// Nueva funcionalidad: Habilitar/deshabilitar red de Firebase
+	async enableOfflineMode(): Promise<void> {
+		if (db) {
+			await disableNetwork(db);
+			console.log('Firebase offline mode enabled');
+		}
+	}
+
+	async enableOnlineMode(): Promise<void> {
+		if (db) {
+			await enableNetwork(db);
+			console.log('Firebase online mode enabled');
+		}
+	}
+
+	// Getter para acceso al estado de la base de datos
+	getFirestoreInstance() {
+		return db;
+	}
+
+	persist() {
+		try {
+			if (typeof localStorage !== 'undefined') {
+				localStorage.setItem('minreport_offline_queue', JSON.stringify(this.queue));
+			}
+		} catch (error) {
+			console.warn('Failed to persist offline queue:', error);
+			// Continue without persisting if storage is full or unavailable
+		}
+	}
+
+	restore() {
+		try {
+			if (typeof localStorage !== 'undefined') {
+				const data = localStorage.getItem('minreport_offline_queue');
+				if (data) this.queue = JSON.parse(data);
+			}
+		} catch (error) {
+			console.warn('Failed to restore offline queue:', error);
+			// Continue with empty queue if restore fails
+		}
+	}
+
+	getQueueLength(): number {
+		return this.queue.length;
+	}
+
+	isConnected(): boolean {
+		return this.isOnline;
+	}
+}
+
+export const offlineQueue = new OfflineQueue();

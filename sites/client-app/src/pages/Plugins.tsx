@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import useAuth from '@minreport/core/hooks/useAuth';
 import { auth, db } from '../firebaseConfig';
 import { collection, getDocs } from 'firebase/firestore';
 import './Plugins.css';
+import useAuth from '@minreport/ui-components';
 
 interface PluginMetadata {
   id: string;
@@ -13,7 +13,7 @@ interface PluginMetadata {
 }
 
 const Plugins: React.FC = () => {
-  const { user, activePlugins, loading: authLoading } = useAuth(auth);
+  const { user, activePlugins } = useAuth(auth);
   const [allPlugins, setAllPlugins] = useState<PluginMetadata[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 

@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@minreport/user-management": ["../../packages/user-management/src/index.ts"],
+      "@minreport/user-management/*": ["../../packages/user-management/src/*"]
+    }
+  }
+}

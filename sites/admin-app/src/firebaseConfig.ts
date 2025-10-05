@@ -17,11 +17,14 @@ const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-export const functions = getFunctions(app, 'southamerica-west1'); // Define la región de producción
-export { httpsCallable };
 
+// Primero verificar si estamos en desarrollo
+let functions_instance;
 if (import.meta.env.DEV) {
   console.log('Development mode: Connecting to Firebase Emulators');
+  
+  // Crear functions CON región para desarrollo
+  functions_instance = getFunctions(app, 'southamerica-west1');
   
   const host = 'localhost';
   const authPort = 9190;
@@ -30,5 +33,11 @@ if (import.meta.env.DEV) {
 
   connectAuthEmulator(auth, `http://${host}:${authPort}`);
   connectFirestoreEmulator(db, host, firestorePort);
-  connectFunctionsEmulator(functions, host, functionsPort);
+  connectFunctionsEmulator(functions_instance, host, functionsPort);
+} else {
+  // En producción, usar la región específica
+  functions_instance = getFunctions(app, 'southamerica-west1');
 }
+
+export const functions = functions_instance;
+export { httpsCallable };

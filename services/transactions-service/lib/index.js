@@ -1,14 +1,16 @@
-/// <reference types="./types/express.d.ts" />
 import express from 'express';
-import * as admin from 'firebase-admin';
 import cors from 'cors';
+import * as admin from 'firebase-admin';
+import { initializeApp, getApps } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
+import { getFirestore } from 'firebase-admin/firestore';
 // Esta función CREA la app, aceptando las dependencias como parámetros
-export const createApp = (auth, db, adminInstance, FieldValue) => {
+export const createApp = (auth, db, FieldValue) => {
     const app = express();
     app.use(express.json());
     app.use(cors());
     // Middleware de seguridad que usa la dependencia "auth" inyectada
-    const securityMiddleware = async (req, res, next) => {
+    const middleware = async (req, res, next) => {
         const { authorization } = req.headers;
         if (!authorization || !authorization.startsWith('Bearer ')) {
             return res.status(401).send({ message: 'No autorizado: Falta el token.' });
@@ -71,20 +73,35 @@ export const createApp = (auth, db, adminInstance, FieldValue) => {
             return res.status(500).send({ message: 'Error al crear transacción.' });
         }
     });
-    app.use('/projects/:projectId', securityMiddleware, router);
+    app.use('/projects/:projectId', middleware, router);
     return app;
 };
 // --- Bloque de Arranque (Solo para desarrollo y producción) ---
 if (process.env.NODE_ENV !== 'test') {
-    // Initialize Firebase Admin if not already initialized
-    if (admin.default.apps.length === 0) { // Check if an app is already initialized
-        admin.default.initializeApp();
+    try {
+        // Initialize Firebase Admin if not already initialized
+        if (getApps().length === 0) {
+            console.log('Inicializando Firebase Admin...');
+            initializeApp();
+        }
+        const dbInstance = getFirestore();
+        const authInstance = getAuth();
+        // Verificar que las instancias se inicializaron correctamente
+        if (!authInstance) {
+            throw new Error('No se pudo inicializar Firebase Auth');
+        }
+        if (!dbInstance) {
+            throw new Error('No se pudo inicializar Firestore');
+        }
+        console.log('Firebase Admin inicializado correctamente');
+        const app = createApp(authInstance, dbInstance, admin.firestore.FieldValue);
+        const PORT = process.env.TRANSACTIONS_SERVICE_PORT || 8080;
+        app.listen(PORT, () => {
+            console.log(`Transactions Service escuchando en el puerto ${PORT}`);
+        });
     }
-    const dbInstance = admin.default.firestore();
-    const authInstance = admin.default.auth();
-    const app = createApp(authInstance, dbInstance, admin, admin.default.firestore.FieldValue);
-    const PORT = process.env.TRANSACTIONS_SERVICE_PORT || 8080;
-    app.listen(PORT, () => {
-        console.log(`Transactions Service escuchando en el puerto ${PORT}`);
-    });
+    catch (error) {
+        console.error('Error inicializando el servicio de transacciones:', error);
+        process.exit(1);
+    }
 }

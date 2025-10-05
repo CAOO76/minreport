@@ -1,0 +1,14 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/core/tsconfig.json" },
+    { "path": "./packages/sdk/tsconfig.json" },
+    { "path": "./packages/user-management/tsconfig.json" },
+    { "path": "./sites/admin-app/tsconfig.json" },
+    { "path": "./sites/client-app/tsconfig.json" },
+    { "path": "./sites/public-site/tsconfig.json" },
+    { "path": "./services/account-management-service/tsconfig.json" },
+    { "path": "./services/request-registration-service/tsconfig.json" },
+    { "path": "./services/transactions-service/tsconfig.json" }
+  ]
+}

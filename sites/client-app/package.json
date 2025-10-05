@@ -10,10 +10,16 @@
     "preview": "vite preview",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {
-    "@minreport/core": "workspace:*",
+  "@minreport/core": "workspace:*",
+  "@minreport/sdk": "workspace:*",
+  "@minreport/ui-components": "workspace:*",
     "@react-google-maps/api": "^2.20.7",
     "country-state-city": "^3.2.1",
     "firebase": "^12.3.0",

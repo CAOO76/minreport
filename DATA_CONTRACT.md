@@ -63,8 +63,6 @@ Contiene la información de las cuentas aprobadas y activas. El ID de cada docum
   displayName: string;           // Nombre para mostrar en la aplicación
   institutionName?: string;      // Opcional, solo para Empresarial/Educacional
 
-  // --- Plugins y Funcionalidades ---
-  activePlugins: string[]; // Array de IDs de plugins activos para esta cuenta
 
   // --- Trazabilidad ---
   createdAt: Timestamp;          // Fecha de creación del usuario en Firebase Auth
@@ -85,34 +83,17 @@ Registro inmutable de todas las acciones importantes que ocurren en una cuenta. 
 
   accountId: string;             // UID de la cuenta afectada
   timestamp: Timestamp;          // Momento exacto del evento
-  event: string;                 // Tipo de evento, ej: 'ACCOUNT_CREATED', 'PLUGIN_ACTIVATED', 'ACCOUNT_SUSPENDED'
+  event: string;                 // Tipo de evento, ej: 'ACCOUNT_CREATED', 'ACCOUNT_SUSPENDED'
   actor: {
     id: string;                  // UID del usuario que realiza la acción (puede ser un admin o el propio usuario)
     type: 'admin' | 'user' | 'system'; // Tipo de actor
   };
-  details?: object;              // Objeto con datos contextuales sobre el evento (ej: { pluginId: '...' })
+  details?: object;              // Objeto con datos contextuales sobre el evento
 }
 ```
 
 ---
 
-## 4. Colección: `plugins`
 
-Almacena la configuración y metadatos de todos los plugins disponibles en el ecosistema MINREPORT. Esta colección es gestionada por los administradores.
-
-```typescript
-{
-  // ID del documento: un 'slug' legible por humanos (ej: 'test-plugin', 'georeport-pro')
-
-  pluginId: string;              // Coincide con el ID del documento.
-  name: string;                  // Nombre completo del plugin para mostrar en la UI (ej: 'Plugin de Prueba').
-  description: string;           // Descripción de lo que hace el plugin.
-  url: string;                   // La URL completa donde está alojado el plugin.
-  version: string;               // Versión semántica del plugin (ej: '1.0.0').
-  status: 'enabled' | 'disabled'; // Estado global del plugin.
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
-}
-```
 
 ```

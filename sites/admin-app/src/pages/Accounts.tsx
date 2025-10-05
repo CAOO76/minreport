@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { db } from '../firebaseConfig';
+import { db } from '../firebaseConfig.ts';
 import { collection, getDocs, query, where } from 'firebase/firestore';
-import { useNavigate } from 'react-router-dom'; // Importar useNavigate
-// import PluginManagementModal from '../components/PluginManagementModal'; // Ya no se usa
-import './Accounts.css'; // Asegúrate de crear este archivo CSS
+import { useNavigate } from 'react-router-dom';
+import './Accounts.css';
 
 // --- Type Definitions ---
 type AccountStatus = 'active' | 'suspended';
@@ -15,8 +14,7 @@ type Account = {
   institutionName: string;
   accountType: 'EMPRESARIAL' | 'EDUCACIONAL' | 'INDIVIDUAL';
   email: string;
-  adminName: string; // Nombre del admin/persona natural
-  activePlugins?: string[]; // Nuevo campo para almacenar los IDs de los plugins activos
+  adminName: string;
 };
 
 // --- Main Component ---
@@ -100,7 +98,7 @@ const Accounts = () => {
           </tbody>
         </table>
       </div>
-      {/* El modal de gestión de plugins ya no se renderiza aquí */}
+  {/* ...existing code... */}
     </div>
   );
 };

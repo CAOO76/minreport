@@ -5,8 +5,8 @@ const navItems = [
   { to: '/', icon: 'dashboard', label: 'Dashboard' },
   { to: '/subscriptions', icon: 'assignment_ind', label: 'Solicitudes' },
   { to: '/accounts', icon: 'manage_accounts', label: 'Cuentas' },
-  { to: '/plugin-sandbox', icon: 'widgets', label: 'Sandbox de Plugins' }, // Nuevo elemento para Sandbox
-  { to: '/settings', icon: 'settings', label: 'Configuración' },
+  // ...existing code...
+  { to: '/settings', icon: 'settings', label: 'Configuración' }, // Verificar que no existan rutas/plugins
 ];
 
 export const Sidebar = () => {

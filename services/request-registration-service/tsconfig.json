@@ -1,11 +1,14 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "lib",
-    "strict": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "module": "NodeNext",
+    "moduleResolution": "nodenext",
+    "target": "ES2022",
     "esModuleInterop": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules"]
+  "include": ["src", "src/**/*.ts"],
+  "exclude": ["vite.config.ts"]
 }

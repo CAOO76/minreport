@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+  "module": "nodenext",
+  "target": "ES2022",
+  "lib": ["ES2022", "DOM", "DOM.Iterable"],
+  "moduleResolution": "nodenext",
+  "types": ["react", "react-dom", "vite/client"],
+  "esModuleInterop": true,
+  "skipLibCheck": true,
+  "jsx": "react-jsx"
+  },
+  "include": ["vite.config.ts"]
+}

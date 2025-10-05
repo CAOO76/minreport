@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # List of ports to kill
-PORTS=(4000 5000 5001 8080 8085 9000 9099 3000 5173) # Add more ports as needed
+PORTS=(4000 4001 5000 5001 8080 8085 9000 9099 9195 9196 3000 5173 5175 5177 5179) # Add more ports as needed
 
 echo "Attempting to kill processes on specified ports..."
 

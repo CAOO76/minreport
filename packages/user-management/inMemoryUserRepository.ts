@@ -1,4 +1,5 @@
-import { User, UserRepository } from './interfaces';
+// Deleted: not needed for subscriptions
+import { User, UserRepository } from './interfaces.js';
 
 // In-memory implementation of UserRepository
 export class InMemoryUserRepository implements UserRepository {

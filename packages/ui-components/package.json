@@ -1,0 +1,35 @@
+{
+  "name": "@minreport/ui-components",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./lib/index.js",
+      "require": "./lib/index.js",
+      "types": "./lib/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.prod.json",
+    "dev": "tsc -w -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "eslint . --cache --fix"
+  },
+  "dependencies": {
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4",
+    "@typescript-eslint/eslint-plugin": "^8.44.1",
+    "@typescript-eslint/parser": "^8.44.1",
+    "eslint": "^9.36.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.22"
+  }
+}

@@ -2,12 +2,9 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./lib",
-    "jsx": "react-jsx",
-    "moduleResolution": "node", // Explicitly set here
+    "moduleResolution": "bundler",
+    "module": "ESNext",
     "baseUrl": ".",
-    "paths": {
-      "@minreport/core/utils/*": ["./src/utils/*"]
-    },
     "composite": true,
     "declaration": true,
     "noEmit": false

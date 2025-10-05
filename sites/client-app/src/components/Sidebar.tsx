@@ -11,10 +11,6 @@ const Sidebar: React.FC = () => {
           <span className="sidebar-link-text">Dashboard</span>
         </NavLink>
 
-        <NavLink to="/plugins" className="sidebar-link" title="Plugins">
-          <span className="material-symbols-outlined">extension</span>
-          <span className="sidebar-link-text">Plugins</span>
-        </NavLink>
       </nav>
     </aside>
   );

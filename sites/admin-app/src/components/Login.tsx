@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { signInWithEmailAndPassword } from 'firebase/auth';
-import { auth } from '../firebaseConfig';
-import { ThemeToggleButton } from './ThemeToggleButton';
+import { auth } from '../firebaseConfig.ts';
+// ...existing code...
+import { ThemeToggleButton } from './ThemeToggleButton.tsx';
 import './Login.css';
 import './forms.css'; // Importar los estilos de formulario comunes
 
