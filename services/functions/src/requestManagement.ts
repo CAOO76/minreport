@@ -1,12 +1,10 @@
 import { onCall } from 'firebase-functions/v2/https';
-import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { Resend } from 'resend';
 import * as dns from 'dns/promises';
 
-// Inicializar Firebase Admin
-const app = initializeApp();
-const db = getFirestore(app);
+// Usar la instancia de Firestore (Firebase Admin ya está inicializado en index.ts)
+const db = getFirestore();
 
 // Configurar Resend
 const resend = new Resend('re_9677oKjq_5nk7raGE8x7wFrLgHPFFNJ65');
