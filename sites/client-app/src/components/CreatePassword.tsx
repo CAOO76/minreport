@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { auth } from '../firebaseConfig'; // Assuming you have this export
 import { confirmPasswordReset, verifyPasswordResetCode } from 'firebase/auth';
-import { apiCall, getApiUrl } from '../config/api';
+import { apiCall } from '../config/api';
 import './forms.css';
 
 const CreatePassword = () => {
