@@ -10,6 +10,11 @@
     "preview": "vite preview",
     "test": "vitest run --environment=jsdom"
   },
+  "vitest": {
+    "setupFiles": ["./src/test-setup.ts"],
+    "environment": "jsdom",
+    "globals": true
+  },
   "dependencies": {
   "@emotion/react": "^11.14.0",
   "@emotion/styled": "^11.14.1",

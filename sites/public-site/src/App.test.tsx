@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import App from './App';
 import { ThemeProvider } from './contexts/ThemeContext';
 
@@ -14,9 +15,11 @@ describe('Public Site', () => {
     vi.stubEnv('VITE_CLIENT_APP_URL', 'https://mock-client-app.web.app');
 
     render(
-      <ThemeProvider>
-        <App />
-      </ThemeProvider>
+      <MemoryRouter>
+        <ThemeProvider>
+          <App />
+        </ThemeProvider>
+      </MemoryRouter>
     );
 
     expect(screen.getByText('MINREPORT')).toBeInTheDocument();

@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { BrowserRouter, MemoryRouter } from 'react-router-dom';
 import * as firebaseAuth from 'firebase/auth'; // Import firebase/auth as a module
-import '@testing-library/jest-dom';
 
 
 // Mock './hooks/useAuth' to control auth state in tests

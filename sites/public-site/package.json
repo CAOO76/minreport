@@ -10,6 +10,11 @@
     "preview": "vite preview",
     "test": "vitest run --environment=jsdom"
   },
+  "vitest": {
+    "setupFiles": ["./src/test-setup.ts"],
+    "environment": "jsdom",
+    "globals": true
+  },
   "dependencies": {
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
