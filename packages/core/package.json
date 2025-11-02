@@ -5,6 +5,12 @@
   "type": "module",
   "main": "./lib/src/index.js",
   "types": "./lib/src/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./lib/src/index.js",
+      "types": "./lib/src/index.d.ts"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.prod.json",
     "dev": "tsc -w -p tsconfig.json",
