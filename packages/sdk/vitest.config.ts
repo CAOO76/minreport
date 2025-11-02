@@ -4,7 +4,7 @@ import path from 'path';
 export default defineConfig({
   resolve: {
     alias: {
-      '@minreport/core': path.resolve(__dirname, '../core/lib/src/index.js'),
+      '@minreport/core': path.resolve(__dirname, '../core/src/index.ts'),
     },
   },
   test: {
