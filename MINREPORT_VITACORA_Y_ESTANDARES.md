@@ -971,68 +971,683 @@ INFRASTRUCTURE:
 
 # ESTÁNDARES DE UI/UX
 
-## 🎨 Diseño Visual
+## 🎨 SISTEMA DE DISEÑO MINREPORT (Design System v2.0)
 
-### Tipografía
-- **Sistema:** Atkinson Hyper Legible
-- **Peso Principal:** 400 (Regular)
-- **Títulos:** 700 (Bold)
-- **Pequeño:** 300 (Light)
-- **Archivo:** `atkinson-typography.css`
+### A. FILOSOFÍA DE DISEÑO
 
-### Colores
-- **Primario:** Azul (Brand color)
-- **Secundario:** Gris (Neutral)
-- **Éxito:** Verde
-- **Error:** Rojo
-- **Advertencia:** Naranja
-- **Info:** Azul claro
+**Principios Rectores:**
+1. **Minimalista:** Solo lo necesario, sin adornos
+2. **Funcional:** Forma sigue función
+3. **Accesible:** WCAG AA mínimo, preferible AAA
+4. **Responsive:** Mobile-first, escalable
+5. **Consistente:** Patrones repetibles y predecibles
+6. **Rápido:** Performance priorizado
 
-### Sistema de Diseño
+**Inspiración:** Google Material Design 3 + Atkinson Hyper Legible + Minimalismo suizo
 
-```
-design-system.css (Estilos base)
-├── Variables CSS (colores, espaciado)
-├── Componentes base (botones, inputs)
-├── Tipografía
-└── Responsive utilities
-```
+---
 
-### Componentes React
+## B. TIPOGRAFÍA
 
-**Ubicación:** `packages/ui-components/`
+### B.1 Sistema Tipográfico (Atkinson Hyper Legible)
+
+**Font Principal:** Atkinson Hyper Legible
+- **Ubicación:** `atkinson-typography.css`
+- **Razón:** Optimizada para legibilidad en pantallas (dyslexia-friendly)
+- **Importancia:** Accesibilidad crítica para usuarios minería chilena
+
+### B.2 Escala Tipográfica
 
 ```
-src/
-├── Button/
-├── Input/
-├── Card/
-├── Modal/
-├── Navigation/
-├── Form/
-└── Layout/
+Aplicación:              Tamaño        Peso      Line-height   Uso
+────────────────────────────────────────────────────────────────────
+Display (muy grande)     48px          700       56px          Hero sections
+Headline 1 (h1)          40px          700       48px          Títulos principales
+Headline 2 (h2)          32px          700       40px          Subtítulos principales
+Headline 3 (h3)          28px          700       36px          Secciones
+Title 1 (large)          22px          700       28px          Card titles
+Title 2 (medium)         18px          600       24px          Section headers
+Title 3 (small)          16px          600       22px          Subtítulos
+Body 1 (large)           16px          400       24px          Párrafos principales
+Body 2 (medium)          14px          400       20px          Texto estándar (DEFAULT)
+Body 3 (small)           12px          400       18px          Descripciones, labels
+Caption                  11px          400       16px          Captions, hints
+Overline                 10px          600       14px          Tags, badges
+Mono (code)              13px          400       20px          Código, tokens
 ```
 
-**Estándares:**
-- TypeScript strict mode
-- Props bien tipadas
-- Accessibility (a11y) considerada
-- Responsive mobile-first
-- Dark mode compatible
-
-### Responsive Design
+### B.3 Pesos Tipográficos
 
 ```
-Mobile:    0px - 640px   (sm)
-Tablet:    641px - 1024px (md)
-Desktop:   1025px+        (lg)
+Peso     CSS Value   Uso
+─────────────────────────────────────────────
+Light    300         Texto secundario, muted
+Regular  400         Texto estándar (DEFAULT)
+Medium   500         Énfasis suave
+SemiBold 600         Subtítulos, labels importantes
+Bold     700         Títulos, acciones importantes
 ```
 
-### Accesibilidad
-- ARIA labels en inputs
-- Color contrast WCAG AA
-- Keyboard navigation
-- Screen reader friendly
+### B.4 Implementación CSS
+
+```css
+/* variables.css */
+:root {
+  /* Tipografía */
+  --font-family-primary: 'Atkinson Hyper Legible', sans-serif;
+  --font-family-mono: 'Monaco', 'Courier New', monospace;
+  
+  /* Scales */
+  --text-size-display: 48px;
+  --text-size-h1: 40px;
+  --text-size-h2: 32px;
+  --text-size-h3: 28px;
+  --text-size-title-lg: 22px;
+  --text-size-title-md: 18px;
+  --text-size-title-sm: 16px;
+  --text-size-body-lg: 16px;
+  --text-size-body-md: 14px;
+  --text-size-body-sm: 12px;
+  --text-size-caption: 11px;
+  
+  --text-weight-light: 300;
+  --text-weight-regular: 400;
+  --text-weight-medium: 500;
+  --text-weight-semibold: 600;
+  --text-weight-bold: 700;
+  
+  --line-height-tight: 1.2;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.75;
+}
+```
+
+---
+
+## C. SISTEMA DE COLORES
+
+### C.1 Paleta de Colores Principal
+
+```
+Rol              Color     Hex       RGB             Uso
+────────────────────────────────────────────────────────────────
+Primary          Azul      #0066CC   rgb(0, 102, 204)   CTAs, links, activos
+Primary Light    Azul Clr  #E3F2FD   rgb(227, 242, 253) Backgrounds hover
+Primary Dark     Azul Osc  #003366   rgb(0, 51, 102)    Text enlaces visitados
+
+Secondary        Gris      #666666   rgb(102, 102, 102) Texto secundario
+Secondary Light  Gris Clr  #F5F5F5   rgb(245, 245, 245) Backgrounds
+Secondary Dark   Gris Osc  #333333   rgb(51, 51, 51)    Texto primario
+
+Success          Verde     #4CAF50   rgb(76, 175, 80)   Completado, activo
+Success Light    Verde Clr #F1F8E9   rgb(241, 248, 233) Backgrounds success
+Success Dark     Verde Osc #2E7D32   rgb(46, 125, 50)   Text success
+
+Error            Rojo      #F44336   rgb(244, 67, 54)   Errores, destructivas
+Error Light      Rojo Clr  #FFEBEE   rgb(255, 235, 238) Backgrounds error
+Error Dark       Rojo Osc  #B71C1C   rgb(183, 28, 28)   Text error
+
+Warning          Naranja   #FF9800   rgb(255, 152, 0)   Advertencias, cuidado
+Warning Light    Nar Clr   #FFF3E0   rgb(255, 243, 224) Backgrounds warning
+Warning Dark     Nar Osc   #E65100   rgb(230, 81, 0)    Text warning
+
+Info             Cian      #00BCD4   rgb(0, 188, 212)   Información
+Info Light       Cian Clr  #E0F2F1   rgb(224, 242, 241) Backgrounds info
+Info Dark        Cian Osc  #00838F   rgb(0, 131, 143)   Text info
+
+Neutral          Blanco    #FFFFFF   rgb(255, 255, 255) Backgrounds
+Neutral 100      Gris 100  #F9F9F9   rgb(249, 249, 249) Subtle backgrounds
+Neutral 200      Gris 200  #EEEEEE   rgb(238, 238, 238) Borders
+Neutral 300      Gris 300  #E0E0E0   rgb(224, 224, 224) Dividers
+Neutral 500      Gris 500  #999999   rgb(153, 153, 153) Disabled text
+Neutral 700      Gris 700  #444444   rgb(68, 68, 68)    Secondary text
+Neutral 900      Negro     #000000   rgb(0, 0, 0)       Primary text (light mode)
+```
+
+### C.2 Modo Oscuro (Dark Mode)
+
+```
+El diseño soporta dark mode automático.
+
+Light Mode:                       Dark Mode:
+─────────────────────────────────────────────────
+Background: #FFFFFF              Background: #1A1A1A
+Text: #000000                     Text: #FFFFFF
+Primary: #0066CC                  Primary: #66B3FF
+Secondary: #666666                Secondary: #AAAAAA
+Borders: #EEEEEE                  Borders: #333333
+```
+
+### C.3 Implementación CSS
+
+```css
+:root {
+  /* Colores Primarios */
+  --color-primary: #0066CC;
+  --color-primary-light: #E3F2FD;
+  --color-primary-dark: #003366;
+  
+  /* Colores Neutrales */
+  --color-bg-primary: #FFFFFF;
+  --color-bg-secondary: #F5F5F5;
+  --color-text-primary: #000000;
+  --color-text-secondary: #666666;
+  --color-border: #EEEEEE;
+  
+  /* Estados */
+  --color-success: #4CAF50;
+  --color-error: #F44336;
+  --color-warning: #FF9800;
+  --color-info: #00BCD4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg-primary: #1A1A1A;
+    --color-text-primary: #FFFFFF;
+    --color-text-secondary: #AAAAAA;
+    --color-border: #333333;
+  }
+}
+```
+
+---
+
+## D. ESPACIADO (SPACING SYSTEM)
+
+### D.1 Escala de Espaciado
+
+```
+Token    px   Múltiplos   Uso Típico
+────────────────────────────────────────────
+xs       4    4 × 1       Espacios muy pequeños
+sm       8    4 × 2       Espacios dentro de componentes
+md       16   4 × 4       Espacios normales (DEFAULT)
+lg       24   4 × 6       Espacios grandes
+xl       32   4 × 8       Espacios muy grandes
+2xl      48   4 × 12      Espacios de sección
+3xl      64   4 × 16      Espacios entre secciones
+```
+
+### D.2 Implementación
+
+```css
+:root {
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+  --space-3xl: 64px;
+}
+
+/* Ejemplos de uso */
+.button { padding: var(--space-sm) var(--space-md); }
+.card { padding: var(--space-lg); }
+.section { margin-bottom: var(--space-2xl); }
+```
+
+---
+
+## E. ICONOGRAFÍA (Google Material Design Icons)
+
+### E.1 Sistema de Iconos
+
+**Librería:** `@mui/icons-material` (Google Material Icons v5)
+**Size Estándar:** 24px (small: 18px, large: 32px)
+**Peso:** 400 (Regular)
+**Color:** Hereda del texto (salvo especificación)
+
+### E.2 Iconos Más Usados
+
+```
+Acción              Ícono         Material ID
+─────────────────────────────────────────────────────
+Agregar             +             Add
+Editar              Lápiz         Edit
+Eliminar            Papelera      Delete
+Guardar             Disquete      Save
+Cancelar            X             Close
+Volver              Flecha Izq    ArrowBack
+Siguiente           Flecha Der    ArrowForward
+Búsqueda            Lupa          Search
+Filtro              Embudo        FilterList
+Descargar           ↓             Download
+Compartir           Compartir     Share
+Configuración       Engranaje     Settings
+Usuario             Usuario       Person
+Logout              Exit          Logout
+Notificación        Campana       Notifications
+Menú                ≡             Menu
+Cerrar              X             Close
+Éxito               ✓             Check / CheckCircle
+Error               ✕             Error / ErrorOutline
+Advertencia         !             Warning
+Info                i             Info
+Link                Enlace        OpenInNew
+PDF                 PDF           Description
+Excel               XLS           Assessment
+Reportes            Gráfico       BarChart
+Dashboard           Panel         Dashboard
+Cuentas             Usuario       AccountBalance
+Plugins             Extensión     Extension
+Más opciones        ⋮             MoreVert / MoreHoriz
+Expand              ↓             ExpandMore
+Collapse            ↑             ExpandLess
+```
+
+### E.3 Implementación React
+
+```tsx
+import AddIcon from '@mui/icons-material/Add';
+import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
+
+// Uso en componentes
+<Button
+  startIcon={<AddIcon />}
+  variant="contained"
+  color="primary"
+>
+  Agregar Nueva Cuenta
+</Button>
+
+// Tamaños
+<AddIcon fontSize="small" />   {/* 18px */}
+<AddIcon />                     {/* 24px (default) */}
+<AddIcon fontSize="large" />   {/* 32px */}
+```
+
+---
+
+## F. COMPONENTES BASE (Material Design 3)
+
+### F.1 Botones
+
+**Tipos:**
+```
+Tipo         Descripción                    Uso
+────────────────────────────────────────────────────────────────
+Filled       Color primario, texto blanco   CTAs principales
+Outlined     Borde primario, fondo blanco   CTAs secundarias
+Text         Solo texto, sin fondo          CTAs terciarias
+Elevated     Sutil elevation (shadow)       CTAs con énfasis suave
+Tonal        Fondo tonal primario           CTAs con menos énfasis
+```
+
+**Especificaciones:**
+```
+Altura:      40px (normal), 36px (small), 48px (large)
+Padding:     12px 24px (normal), 8px 16px (small)
+Border-radius: 8px
+Font-weight:  600 (SemiBold)
+Transition:   200ms ease
+```
+
+**Estados:**
+```
+Normal  →  Hover (opacity 0.92)  →  Active (opacity 0.8)  →  Disabled (gray + opacity 0.5)
+```
+
+### F.2 Inputs & Fields
+
+**Tipo:** Outlined (recomendado en Material Design 3)
+
+```
+Altura:        40px
+Padding:       12px 16px
+Border:        1px solid #E0E0E0
+Border-radius: 8px
+Font:          14px, weight 400
+
+Estados:
+├─ Normal:     Border gris, texto negro
+├─ Focus:      Border azul (2px), shadow suave
+├─ Filled:     Border gris, background #F9F9F9
+├─ Error:      Border rojo, icon error a derecha
+├─ Disabled:   Border gris claro, texto gris, no interactivo
+└─ Loading:    Spinner a derecha
+
+Labels:
+├─ Posición:   Arriba del input (floating label)
+├─ Animación:  Escala 0.75 al hacer focus
+└─ Color:      Gris en normal, azul en focus, rojo en error
+```
+
+### F.3 Cards
+
+```
+Estructura:
+┌─────────────────────┐
+│ Header (opcional)   │  height: 56px (con ícono)
+├─────────────────────┤
+│ Content (padding)   │  padding: 16px 24px
+├─────────────────────┤
+│ Actions (opcional)  │  height: 52px
+└─────────────────────┘
+
+Especificaciones:
+- Border-radius: 12px
+- Box-shadow: 0 2px 4px rgba(0,0,0,0.1)
+- Background: #FFFFFF
+- Hover: box-shadow: 0 4px 8px rgba(0,0,0,0.15)
+- Elevation: Suave, no invasivo
+```
+
+### F.4 Modal / Dialog
+
+```
+Overlay:
+- Background: rgba(0,0,0,0.5)
+- Backdrop-filter: blur(2px)
+
+Modal Box:
+- Max-width: 480px (mobile: 90vw)
+- Border-radius: 12px
+- Box-shadow: 0 20px 25px rgba(0,0,0,0.15)
+- Padding: 24px
+
+Título:     28px, Bold, color text-primary
+Contenido:  14px, Regular, color text-secondary
+Acciones:   Botones en fila, alineados derecha
+
+Animation:
+- Entrada: Scale 0.9 → 1 (300ms ease-out)
+- Salida: Fade out (200ms ease-in)
+```
+
+### F.5 Navigation
+
+```
+Top App Bar:
+- Altura: 64px (desktop), 56px (mobile)
+- Background: color-primary
+- Text: color-white
+- Icons: 24px, blanco
+- Elevation: 4px shadow
+
+Bottom Navigation (mobile):
+- Altura: 56px
+- Items: 3-5 máximo
+- Icons: 24px
+- Labels: 12px bajo icono
+- Active: color-primary, inactive: color-secondary
+
+Side Navigation (desktop):
+- Ancho: 256px (collapsed: 64px)
+- Items: Con ícono + label
+- Hover: background #F5F5F5
+- Active: Left border 4px azul
+```
+
+---
+
+## G. SHADOW & ELEVATION
+
+```
+Elevation   Box-shadow                              Uso
+─────────────────────────────────────────────────────────────────
+0           none                                   Plano
+1           0 2px 4px rgba(0,0,0,0.1)             Subtle (default)
+2           0 4px 8px rgba(0,0,0,0.12)            Cards
+3           0 8px 16px rgba(0,0,0,0.15)           Modals
+4           0 12px 24px rgba(0,0,0,0.15)          Floating actions
+5           0 16px 28px rgba(0,0,0,0.20)          Popovers
+```
+
+---
+
+## H. ANIMACIONES & TRANSICIONES
+
+### H.1 Timings (Material Design)
+
+```
+Duration      Uso
+─────────────────────────────────────────────
+100ms         Interacciones rápidas (opacity)
+200ms         Estado cambios (hover, active)
+300ms         Apariciones (modals, drawers)
+500ms         Transitions de página
+```
+
+### H.2 Easing Functions
+
+```
+ease-out     Rápido inicio, final suave        (Entrada de elementos)
+ease-in      Comienzo suave, final rápido     (Salida de elementos)
+ease-in-out  Suave inicio y final             (Movements)
+linear       Velocidad constante               (Progress bars)
+
+Recomendado: cubic-bezier(0.4, 0, 0.2, 1)    (Material standard)
+```
+
+### H.3 Ejemplos
+
+```css
+/* Button hover */
+.button {
+  transition: background-color 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Modal entry */
+.modal {
+  animation: modalEnter 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes modalEnter {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+```
+
+---
+
+## I. RESPONSIVE DESIGN
+
+### I.1 Breakpoints
+
+```
+Breakpoint  Width Range      Device Type  Usar para
+─────────────────────────────────────────────────────────────
+xs          0 - 480px        Mobile       Phones
+sm          481 - 768px      Tablet       Small tablets
+md          769 - 1024px     Tablet       Large tablets
+lg          1025 - 1440px    Desktop      Desktop normal
+xl          1441 - 1920px    Desktop      Wide screens
+2xl         1921px+          Desktop      Ultra-wide
+```
+
+### I.2 Mobile-First Approach
+
+```scss
+// Base (mobile)
+.container {
+  display: block;
+  width: 100%;
+  padding: 16px;
+}
+
+// Tablet and up
+@media (min-width: 769px) {
+  .container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    padding: 24px;
+  }
+}
+
+// Desktop and up
+@media (min-width: 1025px) {
+  .container {
+    grid-template-columns: 1fr 1fr 1fr;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+}
+```
+
+---
+
+## J. ACCESIBILIDAD (A11Y)
+
+### J.1 Color Contrast
+
+```
+WCAG AA (mínimo):
+- Normal text:     4.5:1
+- Large text:      3:1
+- UI components:   3:1
+
+WCAG AAA (recomendado):
+- Normal text:     7:1
+- Large text:      4.5:1
+```
+
+### J.2 ARIA & Semantic HTML
+
+```tsx
+// ✅ Correcto
+<button aria-label="Cerrar diálogo" onClick={onClose}>
+  <CloseIcon />
+</button>
+
+// ❌ Incorrecto
+<div onClick={onClose}>✕</div>
+
+// ✅ Inputs
+<label htmlFor="email">Email:</label>
+<input id="email" type="email" aria-required="true" />
+
+// ✅ Navs
+<nav aria-label="Navegación principal">
+  <ul>
+    <li><a href="/">Home</a></li>
+  </ul>
+</nav>
+```
+
+### J.3 Keyboard Navigation
+
+```
+Tab              Navegar entre elementos (forward)
+Shift + Tab      Navegar entre elementos (backward)
+Enter            Activar buttons/links
+Space            Activar buttons/checkboxes
+Escape           Cerrar modals/popovers
+Arrow Keys       Navegar en menus/listas
+```
+
+### J.4 Focus Visible
+
+```css
+/* Indicador de focus visible */
+*:focus-visible {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+button:focus-visible {
+  box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+```
+
+---
+
+## K. ARCHIVOS DE IMPLEMENTACIÓN
+
+### K.1 Ubicación en Proyecto
+
+```
+packages/
+├─ core-ui/
+│  ├─ src/
+│  │  ├─ theme/
+│  │  │  ├─ colors.ts       # Paleta de colores
+│  │  │  ├─ typography.ts   # Escala tipográfica
+│  │  │  ├─ spacing.ts      # Espaciado
+│  │  │  └─ shadows.ts      # Elevaciones
+│  │  │
+│  │  ├─ components/
+│  │  │  ├─ Button/
+│  │  │  ├─ Input/
+│  │  │  ├─ Card/
+│  │  │  ├─ Modal/
+│  │  │  ├─ Navigation/
+│  │  │  └─ ...
+│  │  │
+│  │  └─ styles/
+│  │     ├─ global.css      # Estilos globales
+│  │     ├─ variables.css   # CSS variables
+│  │     └─ reset.css       # CSS reset
+│  │
+│  └─ design-system.css    # Documento de sistema
+│
+├─ ui-components/         # Componentes especializados
+│  ├─ ReportBuilder/
+│  ├─ PluginViewer/
+│  └─ ...
+```
+
+### K.2 CSS Architecture
+
+```
+styles/
+├─ reset/
+│  └─ normalize.css        # Reset de estilos
+├─ variables/
+│  ├─ colors.css           # Variables de color
+│  ├─ typography.css       # Variables tipográficas
+│  └─ spacing.css          # Variables de espaciado
+├─ base/
+│  ├─ html.css             # HTML base
+│  ├─ typography.css       # Tipografía base
+│  └─ form.css             # Estilos de formas
+├─ components/
+│  ├─ button.css
+│  ├─ input.css
+│  └─ card.css
+├─ utilities/
+│  ├─ flex.css             # Flexbox helpers
+│  ├─ grid.css             # Grid helpers
+│  └─ responsive.css       # Responsive utilities
+└─ themes/
+   ├─ light.css            # Tema claro
+   └─ dark.css             # Tema oscuro
+```
+
+---
+
+## L. GUÍA DE ESTILO EN VIVO
+
+**Acceso:** Ver `atkinson-typography.css` y `design-system.css` en raíz del proyecto
+
+**Para Desarrolladores:**
+```css
+/* Siempre usa variables CSS, nunca hard-code valores */
+✅ padding: var(--space-md);
+❌ padding: 16px;
+
+✅ color: var(--color-primary);
+❌ color: #0066CC;
+
+✅ font-size: var(--text-size-body-md);
+❌ font-size: 14px;
+```
+
+---
+
+## M. COMPONENTES DOCUMENTADOS EN STORYBOOK
+
+**Acceso:** `cd sites/client-app && pnpm storybook`
+
+Todos los componentes tienen:
+- ✅ Ejemplo en uso
+- ✅ Props documentadas
+- ✅ Estados (normal, hover, active, disabled)
+- ✅ Variantes (size, color, etc.)
+- ✅ Accesibilidad validada
+- ✅ Responsive preview
 
 ---
 
