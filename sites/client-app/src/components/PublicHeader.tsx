@@ -7,7 +7,7 @@ const PublicHeader: React.FC = () => {
   // Cargar tema desde localStorage al iniciar
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme');
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const prefersDark = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)').matches : false;
     const shouldUseDark = savedTheme === 'dark' || (!savedTheme && prefersDark);
 
     setIsDarkMode(shouldUseDark);
