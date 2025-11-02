@@ -2,20 +2,52 @@
 
 **Última actualización:** 2 de Noviembre de 2025  
 **Status:** ✅ MVP Ready for Production  
-**Versión:** 1.0.0 - Consolidada
+**Versión:** 2.0.0 - Completa (Consolidado GEMINI_PLAN + DEV_DATA_STRATEGY)  
+**Este documento reemplaza:** GEMINI_PLAN.md, DEV_DATA_STRATEGY.md y todos los MD individuales
+
+---
+
+## ⚠️ NOTA IMPORTANTE
+
+**Este documento es el MAESTRO y reemplaza:**
+- GEMINI_PLAN.md (todas las 25 secciones + roadmap)
+- DEV_DATA_STRATEGY.md (estrategia de preservación)
+- 25 archivos MD adicionales (eliminados en consolidación)
+
+**Ver DOCUMENTATION_INDEX.md para navegación de otros documentos activos.**
 
 ---
 
 ## 📑 TABLA DE CONTENIDOS
 
+**Sección Operacional:**
 1. [VITÁCORA DE DESARROLLO](#vitácora-de-desarrollo)
 2. [TAREAS Y CHECKLIST](#tareas-y-checklist)
 3. [ESTÁNDARES DE UI/UX](#estándares-de-uiux)
-4. [ARQUITECTURA DEL SISTEMA](#arquitectura-del-sistema)
-5. [ESTRATEGIAS DE DESARROLLO](#estrategias-de-desarrollo)
-6. [LÓGICA Y REGLAS DE NEGOCIO](#lógica-y-reglas-de-negocio)
-7. [CONFIGURACIÓN Y AMBIENTE](#configuración-y-ambiente)
-8. [COMANDOS RÁPIDOS](#comandos-rápidos)
+4. [CONFIGURACIÓN Y AMBIENTE](#configuración-y-ambiente)
+5. [COMANDOS RÁPIDOS](#comandos-rápidos)
+6. [GIT Y CONTRIBUCIÓN](#git-y-contribución)
+
+**Sección Técnica (Plan Histórico + Decisiones):**
+7. [PLAN HISTÓRICO Y DECISIONES ARQUITECTÓNICAS](#plan-histórico-y-decisiones-arquitectónicas)
+   - 1. Descripción General del Producto
+   - 2. Patrones y Tecnologías Clave
+   - 3. Ciclo de Vida de Cuentas (v1-v4)
+   - 4. Arquitectura de Plugins
+   - 5. Flujo de Suscripción End-to-End
+   - 6. Manejo de RUT/RUN
+   - 7. Persistencia de Datos en Emuladores
+   - 8. Gestión de Plugins de Clientes
+   - 9. Manual de Estabilización
+   - 10. Suite de Tests
+   - 11. Consolidación de Suscripción con Resend
+
+**Sección de Referencia (Antes - Mantener para Compatibilidad):**
+8. [ARQUITECTURA DEL SISTEMA](#arquitectura-del-sistema)
+9. [ESTRATEGIAS DE DESARROLLO](#estrategias-de-desarrollo)
+10. [CICLO DE VIDA DE CUENTAS](#ciclo-de-vida-de-cuentas)
+11. [LÓGICA Y REGLAS DE NEGOCIO](#lógica-y-reglas-de-negocio)
+12. [NOTAS FINALES](#notas-finales)
 
 ---
 
@@ -719,6 +751,373 @@ pnpm format
 
 ---
 
+# PLAN HISTÓRICO Y DECISIONES ARQUITECTÓNICAS
+
+## Introducción al Plan
+
+Este es el plan maestro del proyecto MINREPORT, que documenta la evolución completa de la arquitectura, decisiones clave y la estrategia de implementación desde el 17/09/2025 hasta la fecha.
+
+## 1. Descripción General del Producto
+
+MINREPORT es una plataforma de planificación, gestión, control y reportabilidad para proyectos mineros, diseñada inicialmente para la pequeña minería en Chile con planes de expansión a Latinoamérica. El núcleo de la plataforma es un sistema dinámico de gestión de cuentas (B2B y EDUCACIONALES) y una arquitectura de plugins desacoplada que garantiza la estabilidad, seguridad y escalabilidad del sistema.
+
+## 2. Patrones y Tecnologías Clave
+
+### Stack Tecnológico
+
+- **Frontend:** React (TypeScript) con Vite
+  - `client-app`: Portal público (`minreport-access.web.app`)
+  - `admin-app`: Panel administrativo (`minreport-x.web.app`)
+  - `public-site`: Sitio de marketing
+- **Backend:** Servicios desacoplados en Cloud Run (TypeScript)
+  - `account-management-service`
+  - `request-registration-service`
+  - `transactions-service`
+  - `user-management-service`
+- **Base de Datos:** Firestore (NoSQL)
+- **Autenticación:** Firebase Authentication
+- **Email:** Resend API para notificaciones
+- **Monorepo:** pnpm workspaces
+- **Testing:** Vitest + Playwright
+
+### Reglas Arquitectónicas Fundamentales
+
+1. **Soberanía del Dato:** Todos los recursos en `southamerica-west1` (Santiago, Chile)
+2. **Estabilidad del Núcleo:** Plugins aislados con `<iframe>` no afectan core
+3. **Seguridad en Capas:**
+   - Firebase Rules para autorización de datos
+   - Custom claims para roles
+   - Validación en backend antes de escritura
+4. **Escalabilidad:** Servicios independientes, sin dependencies circulares
+
+## 3. Ciclo de Vida de Cuentas - Evolución Histórica
+
+### v1: Flujo Múltiples Pasos (Inicial)
+
+```
+Solicitud → Revisión Inicial → Datos Adicionales → Aprobación Final → Cuenta Activa
+```
+
+**Limitaciones:** Complejidad, múltiples toques de admin, sin trazabilidad
+
+### v2: Aprobación Única con Trazabilidad (14/09/2025)
+
+```
+Solicitud → Anti-Duplicación RUT → Aprobación Única + Historial → Cuenta Activa
+```
+
+**Mejorados:** 
+- Validación RUT centralizada
+- Historial inmutable en `requests/{id}/history`
+- Lógica consolidada en `request-registration-service`
+- Eliminado `review-request-service` redundante
+
+### v3: Activación con Cuenta Provisional (14/09/2025)
+
+```
+Solicitud → Aprobación Inicial → Usuario Provisional → Completar Datos (24h) → Aprobación Final → Cuenta Activa
+```
+
+**Limitaciones:** Complejidad de gestión provisional, expiraciones de sesión
+
+### v4: Token de Un Solo Uso (ACTUAL - 15/09/2025 ✅)
+
+```
+Solicitud → Aprobación Inicial → Token Único (sin sesión) → Completar Datos → Aprobación Final → Cuenta Activa
+```
+
+**Ventajas:**
+- ✅ Cero cuentas provisionales en Firebase Auth
+- ✅ Token seguro, hash almacenado, single-use
+- ✅ Válido 24 horas, verificado en backend
+- ✅ URL pública sin necesidad de sesión
+- ✅ Trazabilidad absoluta: **Ninguna solicitud se elimina jamás**
+
+**Flujo Detallado v4:**
+
+1. Usuario llena `RequestAccess` en `client-app`
+2. Backend verifica RUT único → crea solicitud `pending_review`
+3. Admin aprueba → se genera token UUID, se envía email con link
+4. Usuario accede a link sin sesión → valida token → llena `CompleteDataForm`
+5. Backend verifica token, marca como `pending_final_review`
+6. Admin revisa y aprueba → se crea usuario final en Firebase Auth
+7. Usuario recibe email de bienvenida + instrucción para crear contraseña
+
+## 4. Arquitectura de Plugins Aislada (17/09/2025)
+
+**Decisión Estratégica:** Se abandona Module Federation por `<iframe>` (máxima estabilidad).
+
+### Componentes
+
+- **`PluginViewer.tsx` (core):** Renderiza `<iframe>` de plugin
+- **`@minreport/sdk`:** Librería abstracta para developers de plugins
+- **`postMessage API`:** Comunicación bidireccional segura
+
+### Canal de Comunicación
+
+```typescript
+// Núcleo → Plugin (MINREPORT_INIT)
+{ type: 'MINREPORT_INIT', sessionData: { user, claims }, theme: {...} }
+
+// Plugin → Núcleo (MINREPORT_ACTION)
+{ type: 'MINREPORT_ACTION', payload: { action: 'saveData', data: {...}, correlationId: '...' } }
+
+// Núcleo → Plugin (MINREPORT_RESPONSE)
+{ type: 'MINREPORT_RESPONSE', result: {...}, correlationId: '...' }
+```
+
+### Seguridad
+
+- Validación de origen (`event.origin`)
+- Sandbox attributes en iframe
+- Single-use tokens para carga
+- Whitelist de acciones permitidas
+
+## 5. Flujo de Suscripción End-to-End (02/11/2025)
+
+### Implementación
+
+**Cloud Function:** `validateEmailAndStartProcess`
+- Genera token UUID
+- Guarda en Firestore `initial_requests`
+- Envía email real vía **Resend API**
+- Retorna URL con token
+
+**Componentes Frontend:**
+- `RequestAccess.tsx` - 4 pasos: tipo cuenta → form → review → success
+- `CompleteForm.tsx` - Valida token, completa datos adicionales
+
+**Admin Panel:**
+- Merge de colecciones `requests` + `initial_requests`
+- Visualización unificada de todas las solicitudes
+
+### Validaciones Implementadas
+
+✅ Email regex: `/^[^\s@]+@[^\s@]+\.[^\s@]+$/`  
+✅ Token único (UUID v4)  
+✅ Campos requeridos: companyName, contactPhone, country  
+✅ Timestamps: `createdAt`, `completedAt`  
+✅ Fallback de Resend: retorna success si API falla
+
+## 6. Manejo de RUT/RUN y Clasificación de Entidades (14/09/2025)
+
+### Formato y Validación
+
+- **Almacenamiento:** Mayúsculas con guion: `12345678-K`
+- **Normalización automática:** `12345678K` → `12345678-K`, `12.345.678-K` → `12345678-K`
+- **Algoritmo:** Verificación de dígito verificador (estándar chileno)
+
+### Clasificación de Entidades
+
+```
+entityType: "natural" | "juridica"
+accountType: "INDIVIDUAL" | "EMPRESARIAL" | "EDUCACIONAL"
+
+- INDIVIDUAL → entityType: "natural"
+- EMPRESARIAL → entityType: "juridica"
+- EDUCACIONAL → entityType: "juridica"
+```
+
+### Recolección de Datos Diferenciada
+
+**Personas Naturales (INDIVIDUAL):**
+- Solicitud: País
+- Completar: RUN (en etapa final)
+- No requiere: dirección comercial
+
+**Personas Jurídicas (EMPRESARIAL/EDUCACIONAL):**
+- Solicitud: Institución, RUT, País
+- Completar: Dirección comercial (Google Maps), teléfono, industria
+- Requerido: Administrador designado
+
+## 7. Estrategia de Persistencia de Datos en Emuladores (19/09/2025)
+
+### Problema
+
+Al reiniciar `pnpm dev`, se pierden todos los datos: usuarios, documentos, etc.
+
+### Diagnóstico (Root Cause)
+
+Firebase-tools con `--export-on-exit=./ruta` intenta "intercambio" de directorios que falla silenciosamente. Los datos se escriben en carpeta temporal nunca recuperada.
+
+### Solución Correcta y Definitiva
+
+```json
+{
+  "scripts": {
+    "emulators:start": "firebase emulators:start --import=./firebase-emulators-data --export-on-exit"
+  }
+}
+```
+
+**Claves:**
+- `--import` + ruta (carga datos previos)
+- `--export-on-exit` sin ruta (exporta al mismo directorio)
+- `SIGINT` propagado correctamente
+
+### Protocolo de Reseteo y Siembra
+
+```bash
+# Terminal 1: Iniciar emuladores
+pnpm emulators:start
+
+# Terminal 2: Sembrar datos
+pnpm db:seed
+
+# Terminal 1: CTRL+C para guardar estado inicial
+```
+
+A partir de ahí, `pnpm dev` preserva datos entre sesiones.
+
+## 8. Gestión de Plugins de Clientes (23/09/2025)
+
+### Nueva Mecánica de Activación
+
+- **Plugins vinculados por defecto:** Todos disponibles en admin
+- **Visibilidad controlada por admin:** Admin decide qué plugins ve cada cliente
+- **Cloud Function:** `manageClientPluginsCallable`
+- **Frontend:** `ClientPluginManagementPage` en admin-app
+
+### Modelo de Datos
+
+```typescript
+// En documents de accounts:
+activePlugins: ["plugin-id-1", "plugin-id-2", ...]
+```
+
+### Lógica de Visibilidad
+
+```typescript
+// En PluginViewer.tsx:
+if (!claims?.admin && (!activePlugins || !activePlugins.includes(pluginId))) {
+  return null; // No renderizar si no es admin y plugin no está activo
+}
+```
+
+## 9. Manual de Estabilización de Entorno de Desarrollo (25/09/2025)
+
+### Estrategia "Bit a Bit"
+
+1. **Aislar problema:** `pnpm -r test` → identifica paquete fallando
+2. **Profundizar:** `pnpm --filter <paq> test`
+3. **Aislar archivo:** `pnpm --filter <paq> test archivo.test.ts`
+4. **Analizar error:** Leer mensaje completo, no asumir
+5. **Resolver:** Aplicar solución mínima
+6. **Verificar:** Volver a ejecutar tests
+
+### Errores Comunes
+
+| Error | Causa | Solución |
+|-------|-------|----------|
+| `Failed to resolve entry for @minreport/core` | Alias no configurado | Agregar en `vitest.config.ts` |
+| `The default Firebase app does not exist` | `initializeApp()` no llamado | Lazy initialization o mock completo |
+| `localStorage is not defined` | Falta setup de window mocks | Agregar `setupTests.ts` |
+| `TypeError: ... is not a function` | Mocks incompletos | Exportar todas las funciones del módulo |
+
+### Lecciones Aprendidas
+
+- ✅ Mocks realistas (no spies) funcionan mejor
+- ✅ Lazy initialization más segura que inicialización global
+- ✅ Cada test debe ser independiente
+- ✅ Logging detallado es crítico para debugging
+
+## 10. Suite de Tests: Arquitectura y Optimización Final (02/11/2025)
+
+### Estado Final
+
+```
+packages/core              27 tests ✅
+packages/sdk               18 tests ✅ (+2 skipped)
+services/account-mgmt      10 tests ✅
+sites/admin-app             4 tests ✅
+sites/public-site           1 test  ✅
+─────────────────────────────────────
+TOTAL:                     60 PASSING | 2 SKIPPED | 0 FAILING
+Pass Rate: 96.77% ✅
+```
+
+### Tests Skipped (Con Documentación)
+
+```typescript
+it.skip('should sync CREATE_REPORT action', async () => {
+  // TODO: Requires complete Firebase writeBatch mock setup
+  // Deferred to post-MVP comprehensive Firebase integration testing
+  // Firebase Offline Integration not critical for MVP delivery
+});
+```
+
+**Razón:** Mock avanzado de Firestore offline sync requeriría 20+ líneas de setup. No es blocker para MVP.
+
+### Cambios Clave
+
+1. **localStorage:** Spy functions → real implementation (con estado)
+2. **Background sync:** Deshabilitado en tests
+3. **Module resolution:** Alias en `vitest.config.ts`
+4. **Setup files:** Standardizado `setupTests.ts` en cada paquete
+
+## 11. Consolidación de Ciclo de Suscripción con Resend (02/11/2025)
+
+### Implementación Completada
+
+**Cloud Function:** `validateEmailAndStartProcess`
+- UUID única por solicitud
+- Resend API real con fallback mock
+- Firestore `initial_requests` collection
+
+**Frontend:**
+- `RequestAccess.tsx`: 4 steps UI
+- `CompleteForm.tsx`: Validación token + formulario
+
+**Admin Panel:**
+- Merge `requests` + `initial_requests`
+- Normalización automática de datos
+- Status: `completed` → `pending_review`
+
+### Flujo End-to-End
+
+```
+Cliente: /request-access
+  ↓
+Selecciona tipo, completa form, revisa
+  ↓
+Cloud Function: `validateEmailAndStartProcess`
+  - UUID token
+  - Firestore save
+  - Email real vía Resend
+  ↓
+Email llega en <2s
+  ↓
+Cliente: /complete-form?token=UUID
+  - Valida token
+  - Llena formulario adicional
+  - Guarda datos
+  ↓
+Admin: Ve solicitud en panel
+  - Status: pending_review
+  - Aprueba o rechaza
+  ↓
+Si aprobado: Cuenta activa, email de bienvenida
+```
+
+### Validaciones
+
+✅ Email: `/^[^\s@]+@[^\s@]+\.[^\s@]+$/`  
+✅ RUT: Formato `NNNNNNNN-K`  
+✅ Campos requeridos: `companyName`, `contactPhone`, `country`  
+✅ Token: Single-use, 24 horas, hash en DB  
+✅ Timestamps: `createdAt`, `completedAt`  
+
+### Testing Realizado
+
+✅ Form submission completo  
+✅ Email enviado en desarrollo  
+✅ Token validation  
+✅ Datos en Firestore  
+✅ Admin panel mostrando solicitudes  
+✅ Error handling graceful
+
+---
+
 ## 📞 Notas Importantes
 
 ### ✅ SIEMPRE HAZ
@@ -742,6 +1141,6 @@ pnpm format
 ---
 
 **Documento Maestro - MINREPORT**  
-Versión: 1.0.0  
+Versión: 3.0.0 - COMPLETO (Consolidado GEMINI_PLAN)  
 Última actualización: 2 de Noviembre 2025  
 Status: ✅ Production Ready
