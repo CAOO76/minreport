@@ -23,7 +23,7 @@ sleep 5
 # 3. Restaurar datos si hay backup
 if [ -f "./super-admin-backup.json" ]; then
     echo "🔄 Restaurando super admin..."
-    FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' FIRESTORE_EMULATOR_HOST='127.0.0.1:8085' node restore-super-admin.cjs
+    FIREBASE_AUTH_EMULATOR_HOST='localhost:9190' FIRESTORE_EMULATOR_HOST='localhost:8085' node restore-super-admin.cjs
 fi
 
 # 4. Iniciar aplicaciones
@@ -33,8 +33,8 @@ APPS_PID=$!
 
 echo "✅ Todo iniciado!"
 echo "🔑 Si no tienes super admin, ejecuta: node create-super-admin.cjs"
-echo "🌐 ADMIN: http://localhost:5177"
-echo "🌐 CLIENT: http://localhost:5173"
+echo "🌐 ADMIN: http://localhost:5173"
+echo "🌐 CLIENT: http://localhost:5175"
 echo "🌐 HOME: http://localhost:5179"
 
 # Función para limpiar al salir
@@ -44,7 +44,7 @@ cleanup() {
     # Exportar datos manualmente
     if [ ! -z "$FIREBASE_PID" ]; then
         # Hacer backup de la cuenta admin
-        FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' FIRESTORE_EMULATOR_HOST='127.0.0.1:8085' node backup-super-admin.cjs 2>/dev/null || true
+        FIREBASE_AUTH_EMULATOR_HOST='localhost:9190' FIRESTORE_EMULATOR_HOST='localhost:8085' node backup-super-admin.cjs 2>/dev/null || true
         
         kill $FIREBASE_PID 2>/dev/null || true
     fi

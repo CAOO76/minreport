@@ -72,24 +72,30 @@
   ],
   "emulators": {
     "auth": {
-      "port": 9190
+      "port": 9190,
+      "host": "localhost"
     },
     "firestore": {
-      "port": 8085
+      "port": 8085,
+      "host": "localhost"
     },
     "functions": {
       "port": 9196,
+  "host": "0.0.0.0",
       "env": "services/functions/.env.local"
     },
     "hosting": {
-      "port": 5010
+      "port": 5010,
+      "host": "localhost"
     },
     "storage": {
-      "port": 9195
+      "port": 9195,
+      "host": "localhost"
     },
     "ui": {
       "enabled": true,
-      "port": 4001
+      "port": 4002,
+      "host": "localhost"
     }
   }
 }

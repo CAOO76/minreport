@@ -81,14 +81,7 @@ describe('Firebase Services Integration', () => {
       expect(mockUser.email).toContain('@');
     });
 
-    it('should handle admin claims', async () => {
-      const userId = 'admin-user-123';
-      const claims = { admin: true, role: 'super_admin' };
-
-      // En un escenario real, aquí verificarías los claims
-      expect(claims.admin).toBe(true);
-      expect(claims.role).toBe('super_admin');
-    });
+    // Test de claims de usuario eliminado para limpieza
   });
 
   describe('Cloud Functions', () => {

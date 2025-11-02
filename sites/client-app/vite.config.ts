@@ -13,6 +13,7 @@ const dirname =
 export default defineConfig({
   server: {
     port: 5175, // CLIENT APP - app.minreport.com
+    host: 'localhost', // Forzar host para evitar problemas de CORS
     strictPort: true, // Force Vite to use this port or fail
   },
   plugins: [react()],

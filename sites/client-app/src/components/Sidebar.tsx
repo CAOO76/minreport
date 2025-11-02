@@ -10,7 +10,6 @@ const Sidebar: React.FC = () => {
           <span className="material-symbols-outlined">dashboard</span>
           <span className="sidebar-link-text">Dashboard</span>
         </NavLink>
-
       </nav>
     </aside>
   );

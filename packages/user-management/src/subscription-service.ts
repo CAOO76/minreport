@@ -5,8 +5,6 @@ import {
   SubscriptionPlan, 
   SubscriptionStatus,
   SUBSCRIPTION_LIMITS,
-  PaymentMethod,
-  Invoice
 } from '@minreport/core';
 
 export interface SubscriptionService {
@@ -27,24 +25,12 @@ export interface SubscriptionService {
     canProceed: boolean;
   }>;
   
-  // Payment methods
-  addPaymentMethod(userId: string, paymentMethod: Omit<PaymentMethod, 'id' | 'userId'>): Promise<PaymentMethod>;
-  getPaymentMethods(userId: string): Promise<PaymentMethod[]>;
-  setDefaultPaymentMethod(userId: string, paymentMethodId: string): Promise<void>;
-  removePaymentMethod(paymentMethodId: string): Promise<void>;
-  
-  // Invoices
-  getInvoices(subscriptionId: string): Promise<Invoice[]>;
-  getInvoice(invoiceId: string): Promise<Invoice | null>;
-  
   // Feature access
   hasFeatureAccess(userId: string, feature: string): Promise<boolean>;
 }
 
 export class MockSubscriptionService implements SubscriptionService {
   private subscriptions: Map<string, Subscription> = new Map();
-  private paymentMethods: Map<string, PaymentMethod> = new Map();
-  private invoices: Map<string, Invoice> = new Map();
   private usage: Map<string, Record<string, number>> = new Map();
 
   async createSubscription(userId: string, plan: SubscriptionPlan): Promise<Subscription> {
@@ -143,44 +129,6 @@ export class MockSubscriptionService implements SubscriptionService {
     };
   }
 
-  async addPaymentMethod(userId: string, paymentMethod: Omit<PaymentMethod, 'id' | 'userId'>): Promise<PaymentMethod> {
-    const method: PaymentMethod = {
-      ...paymentMethod,
-      id: `pm_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      userId,
-    };
-
-    this.paymentMethods.set(method.id, method);
-    return method;
-  }
-
-  async getPaymentMethods(userId: string): Promise<PaymentMethod[]> {
-    return Array.from(this.paymentMethods.values())
-      .filter(pm => pm.userId === userId);
-  }
-
-  async setDefaultPaymentMethod(userId: string, paymentMethodId: string): Promise<void> {
-    const methods = await this.getPaymentMethods(userId);
-    
-    for (const method of methods) {
-      method.isDefault = method.id === paymentMethodId;
-      this.paymentMethods.set(method.id, method);
-    }
-  }
-
-  async removePaymentMethod(paymentMethodId: string): Promise<void> {
-    this.paymentMethods.delete(paymentMethodId);
-  }
-
-  async getInvoices(subscriptionId: string): Promise<Invoice[]> {
-    return Array.from(this.invoices.values())
-      .filter(invoice => invoice.subscriptionId === subscriptionId);
-  }
-
-  async getInvoice(invoiceId: string): Promise<Invoice | null> {
-    return this.invoices.get(invoiceId) || null;
-  }
-
   async hasFeatureAccess(userId: string, feature: string): Promise<boolean> {
     const subscription = await this.getUserSubscription(userId);
     if (!subscription) {
@@ -189,13 +137,6 @@ export class MockSubscriptionService implements SubscriptionService {
 
     const limits = subscription.limits as any;
     return limits[feature] === true;
-  }
-
-  // Helper method to increment usage (for testing)
-  incrementUsage(userId: string, resource: string, amount: number = 1): void {
-    const userUsage = this.usage.get(userId) || {};
-    userUsage[resource] = (userUsage[resource] || 0) + amount;
-    this.usage.set(userId, userUsage);
   }
 }
 

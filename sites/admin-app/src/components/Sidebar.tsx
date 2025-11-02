@@ -6,7 +6,7 @@ const navItems = [
   { to: '/subscriptions', icon: 'assignment_ind', label: 'Solicitudes' },
   { to: '/accounts', icon: 'manage_accounts', label: 'Cuentas' },
   // ...existing code...
-  { to: '/settings', icon: 'settings', label: 'Configuración' }, // Verificar que no existan rutas/plugins
+  { to: '/settings', icon: 'settings', label: 'Configuración' },
 ];
 
 export const Sidebar = () => {

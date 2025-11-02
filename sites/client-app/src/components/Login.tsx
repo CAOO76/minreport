@@ -17,8 +17,11 @@ const Login = () => {
     try {
       await signInWithEmailAndPassword(auth, email, password);
       // onAuthStateChanged en useAuth se encargará de la redirección
-    } catch (err: any) {
-      console.error('Error de inicio de sesión (client):', err.code);
+    } catch (err) {
+      if (typeof err === 'object' && err !== null && 'code' in err) {
+        console.error('Error de inicio de sesión (client):', err.code);
+        console.error('Error de inicio de sesión (client):', err.code);
+      }
       setError('Credenciales inválidas o acceso no autorizado.');
     } finally {
       setLoading(false);

@@ -166,23 +166,9 @@ const DetailView = ({ request, onClose, onAction, isActionLoading, onRequestClar
     }, [request.id]);
 
     const renderDetails = () => {
-        // Debug: mostrar información COMPLETA de la solicitud
-        console.log('🔍 DEBUG COMPLETO - Solicitud:', {
-            id: request.id,
-            status: request.status,
-            emailStatus: request.emailStatus,
-            resendLastEvent: request.resendLastEvent,
-            isEmailFalse: request.emailStatus === 'failed_invalid_email' || request.resendLastEvent === 'bounced' || request.resendLastEvent === 'complained' || request.resendLastEvent === 'failed'
-        });
+    // Limpieza: se eliminó debug de consola
         
-        console.log('📋 TODOS LOS DATOS DEL REQUEST:', request);
-        console.log('📦 ADDITIONAL DATA COMPLETO:', request.additionalData);
-        
-        // Mostrar TODOS los campos del objeto request
-        console.log('🔑 TODAS LAS CLAVES DEL REQUEST:', Object.keys(request));
-        if (request.additionalData) {
-            console.log('🔑 TODAS LAS CLAVES DE ADDITIONAL DATA:', Object.keys(request.additionalData));
-        }
+    // Limpieza: se eliminó debug de consola
         
         return (
         <div className="detail-content-section">
@@ -375,23 +361,71 @@ const Subscriptions = () => {
   const fetchRequests = useCallback(async () => {
     setIsLoading(true);
     try {
-      // ABSOLUTAMENTE SIN FILTROS - TODAS LAS SOLICITUDES SIN EXCEPCIÓN
-      const q = query(collection(db, 'requests'));
-      const snapshot = await getDocs(q);
-      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Request));
-      
-      console.log('� CARGANDO ABSOLUTAMENTE TODAS LAS SOLICITUDES - TOTAL:', list.length);
-      console.log('🔍 DETALLE DE TODAS LAS SOLICITUDES:', list.map(r => ({ 
-        id: r.id, 
-        status: r.status, 
-        email: r.applicantEmail, 
-        emailStatus: r.emailStatus,
-        name: r.applicantName || r.institutionName,
-        createdAt: r.createdAt?.toDate?.()?.toLocaleString() || 'Sin fecha'
-      })));
-      
-      setRequests(list);
-  setError('');
+      // Fetch both 'requests' (admin collection) and 'initial_requests' (completed by user)
+      const [requestsSnap, initialSnap] = await Promise.all([
+        getDocs(query(collection(db, 'requests'))),
+        getDocs(query(collection(db, 'initial_requests'))),
+      ]);
+
+      // Map existing `requests` documents
+      const listFromRequests = requestsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Request));
+
+      // Normalize `initial_requests` into the same Request shape so admin can see them
+      const listFromInitial = initialSnap.docs.map(d => {
+        const data: any = d.data();
+        // Map status: if user completed the form, surface as 'pending_review' for admins
+        const statusMap: any = {
+          completed: 'pending_review',
+        };
+        const mappedStatus = statusMap[data.status] || (data.status as any) || 'pending_review';
+
+        // Ensure createdAt has toDate() API
+        const createdAtVal = data.createdAt;
+        const createdAtWrapper = {
+          toDate: () => {
+            if (!createdAtVal) return new Date();
+            if (typeof createdAtVal.toDate === 'function') return createdAtVal.toDate();
+            if (createdAtVal instanceof Date) return createdAtVal;
+            return new Date(createdAtVal);
+          }
+        };
+
+        return ({
+          id: d.id,
+          status: mappedStatus,
+          createdAt: createdAtWrapper,
+          applicantName: data.applicantName || data.name || '',
+          applicantEmail: data.applicantEmail || data.email || '',
+          rut: data.rut,
+          institutionName: data.companyName || data.institutionName,
+          accountType: data.accountType || 'INDIVIDUAL',
+          country: data.country || '',
+          city: data.city || '',
+          entityType: data.entityType || 'natural',
+          additionalData: {
+            ...data
+          },
+          emailStatus: data.emailStatus,
+          emailId: data.emailId,
+          resendLastEvent: data.resendLastEvent,
+        } as Request);
+      });
+
+      // Merge both lists, avoiding duplicates (prefer entries from `requests` when id collides)
+      const mergedById: Record<string, Request> = {};
+      for (const r of [...listFromInitial, ...listFromRequests]) {
+        mergedById[r.id] = { ...(mergedById[r.id] || {}), ...r };
+      }
+
+      const mergedList = Object.values(mergedById).sort((a, b) => {
+        const aTime = a.createdAt && typeof a.createdAt.toDate === 'function' ? a.createdAt.toDate().getTime() : 0;
+        const bTime = b.createdAt && typeof b.createdAt.toDate === 'function' ? b.createdAt.toDate().getTime() : 0;
+        return bTime - aTime;
+      });
+
+      console.log('⚡ Cargando solicitudes (requests + initial_requests) - TOTAL:', mergedList.length);
+      setRequests(mergedList);
+      setError('');
     } catch (err: any) { 
         console.error("Error fetching requests: ", err);
         setError(`Error al cargar solicitudes: ${err.message}`); 
@@ -404,7 +438,7 @@ const Subscriptions = () => {
 
   const handleImportEmailResult = async (emailId: string) => {
     try {
-      console.log('🔄 Importando resultado de email:', emailId);
+  // Limpieza: se eliminó debug de consola
       
       const importEmailResult = httpsCallable(functions, 'importEmailResult');
       const result = await importEmailResult({ emailId });
@@ -412,7 +446,7 @@ const Subscriptions = () => {
       const data = result.data as any;
       
       if (data.success) {
-        console.log('✅ Resultado importado:', data);
+  // Limpieza: se eliminó debug de consola
         alert(`Estado del email actualizado: ${data.lastEvent || 'actualizado'}`);
         
         // Recargar las solicitudes para mostrar el estado actualizado

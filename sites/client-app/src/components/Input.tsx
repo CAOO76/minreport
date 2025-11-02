@@ -1,7 +1,7 @@
 // sites/client-app/src/components/Input.tsx
 import React from 'react';
 
-interface InputProps {
+export interface InputProps {
   label: string;
   type: 'text' | 'email' | 'password';
   placeholder?: string;

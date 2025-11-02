@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports, no-undef */
 const { defineConfig } = require('@playwright/test');
 
 module.exports = defineConfig({
@@ -18,6 +19,6 @@ module.exports = defineConfig({
   },
   // Add paths mapping for vitest
   paths: {
-    'vitest': require.resolve('vitest'),
+    vitest: require.resolve('vitest'),
   },
 });

@@ -7,7 +7,6 @@ export interface SubscriptionLimits {
     maxReportsPerMonth: number;
     offlineCapabilities: boolean;
     advancedAnalytics: boolean;
-    customPlugins: boolean;
     prioritySupport: boolean;
 }
 export interface Subscription {

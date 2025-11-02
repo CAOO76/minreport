@@ -9,21 +9,20 @@ export type AuthUser = {
 };
 
 export type AuthClaims = {
-	admin?: boolean;
+	// admin?: boolean; // Eliminado para limpieza
 	[key: string]: any;
 };
 
 export function useAuth(_auth?: any): {
 	user: AuthUser | null;
 	loading: boolean;
-	activePlugins: string[];
+		// activePlugins removed
 	claims: AuthClaims;
 } {
 	return {
 		user: null,
 		loading: false,
-		activePlugins: [],
-		claims: { admin: false },
+	claims: {}, // admin eliminado para limpieza
 	};
 }
 

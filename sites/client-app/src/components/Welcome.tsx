@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+// import { Link } from 'react-router-dom';
 import './Welcome.css';
 
 const Welcome: React.FC = () => {
@@ -10,20 +10,6 @@ const Welcome: React.FC = () => {
           <span className="material-symbols-outlined welcome-icon">business</span>
           <h1>Portal de Clientes</h1>
           <p>Bienvenido al portal de acceso de MINREPORT</p>
-        </div>
-
-        <div className="welcome-actions">
-          <Link to="/request-access" className="action-card request-card">
-            <span className="material-symbols-outlined">person_add</span>
-            <h3>Solicitar Acceso</h3>
-            <p>¿Primera vez? Solicita acceso a la plataforma completando un breve formulario.</p>
-          </Link>
-
-          <Link to="/login" className="action-card login-card">
-            <span className="material-symbols-outlined">login</span>
-            <h3>Iniciar Sesión</h3>
-            <p>¿Ya tienes cuenta? Accede a tu panel de administración.</p>
-          </Link>
         </div>
 
         <div className="welcome-info">

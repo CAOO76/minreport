@@ -9,7 +9,7 @@ pnpm dev:safe
 
 ### 2. Crear Super Admin (en terminal separada):
 ```bash
-cd "/Volumes/CODE/MINREPORT iMac/minreport" && FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' FIRESTORE_EMULATOR_HOST='127.0.0.1:8085' /Users/wortogbase/.nvm/versions/node/v20.19.5/bin/node create-super-admin.cjs
+cd "/Volumes/CODE/MINREPORT iMac/minreport" && FIREBASE_AUTH_EMULATOR_HOST='localhost:9190' FIRESTORE_EMULATOR_HOST='localhost:8085' /Users/wortogbase/.nvm/versions/node/v20.19.5/bin/node create-super-admin.cjs
 ```
 
 ### 3. Credenciales Super Admin:
@@ -17,8 +17,8 @@ cd "/Volumes/CODE/MINREPORT iMac/minreport" && FIREBASE_AUTH_EMULATOR_HOST='127.
 - **Password**: password-seguro-local
 
 ### 4. URLs del Sistema:
-- **CLIENT**: http://localhost:5173/
-- **ADMIN**: http://localhost:5177/
+- **CLIENT**: http://localhost:5175/
+- **ADMIN**: http://localhost:5173/
 - **HOME**: http://localhost:5179/
 
 ## 🔧 Solución a Procesos Zombi:

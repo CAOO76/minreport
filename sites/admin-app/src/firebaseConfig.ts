@@ -21,7 +21,7 @@ export const db = getFirestore(app);
 // Primero verificar si estamos en desarrollo
 let functions_instance;
 if (import.meta.env.DEV) {
-  console.log('Development mode: Connecting to Firebase Emulators');
+  // Development mode: Connecting to Firebase Emulators
   
   // Crear functions CON región para desarrollo
   functions_instance = getFunctions(app, 'southamerica-west1');

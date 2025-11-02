@@ -1,7 +1,7 @@
 declare module '@minreport/sdk' {
   export type OfflineAction = {
     type: string;
-    payload: any;
+    payload: unknown;
     timestamp: number;
   };
   class OfflineQueue {

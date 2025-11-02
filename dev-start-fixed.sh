@@ -24,7 +24,7 @@ echo "✅ Puertos libres"
 # Limpiar al salir
 cleanup() {
     echo "🛑 Cerrando..."
-    FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' FIRESTORE_EMULATOR_HOST='127.0.0.1:8085' node backup-super-admin.cjs 2>/dev/null || true
+    FIREBASE_AUTH_EMULATOR_HOST='localhost:9190' FIRESTORE_EMULATOR_HOST='localhost:8085' node backup-super-admin.cjs 2>/dev/null || true
     pkill -f "firebase\|vite\|pnpm" 2>/dev/null || true
     echo "🔒 Guardado"
     exit 0
@@ -43,9 +43,9 @@ while ! curl -s http://localhost:9190 >/dev/null 2>&1; do
 done
 
 echo "🔑 Configurando super admin..."
-FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' FIRESTORE_EMULATOR_HOST='127.0.0.1:8085' node create-super-admin.cjs
+FIREBASE_AUTH_EMULATOR_HOST='localhost:9190' FIRESTORE_EMULATOR_HOST='localhost:8085' node create-super-admin.cjs
 
-echo "✅ LISTO! 🌐 http://localhost:5177"
+echo "✅ LISTO! 🌐 http://localhost:5173"
 echo "🔑 app_dev@minreport.com / password-seguro-local"
 
 wait

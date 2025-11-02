@@ -37,7 +37,7 @@ done
 echo "✅ Emuladores listos. Creando super admin..."
 
 # Crear super admin
-FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' FIRESTORE_EMULATOR_HOST='127.0.0.1:8085' node create-super-admin.cjs
+FIREBASE_AUTH_EMULATOR_HOST='localhost:9190' FIRESTORE_EMULATOR_HOST='localhost:8085' node create-super-admin.cjs
 
 echo ""
 echo "🎉 Sistema completamente listo:"

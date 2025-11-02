@@ -1,12 +1,11 @@
-import { initializeApp } from 'firebase-admin/app';
+import { initializeApp, getApps } from 'firebase-admin/app';
 
-// Inicializar Firebase Admin
-initializeApp();
+// Initialize Firebase Admin only if it hasn't been initialized yet.
+if (!getApps().length) {
+    initializeApp();
+}
 
-// Exportar las funciones
-export { 
-    validateEmailAndStartProcess, 
-    submitCompleteData, 
-    processRequestAction, 
-    importEmailResult 
-} from './requestManagement';
+// Firebase Admin initialized.
+
+// Export all functions from their respective files.
+export * from "./requestManagement";

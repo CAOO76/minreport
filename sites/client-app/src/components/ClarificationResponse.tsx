@@ -35,8 +35,8 @@ const ClarificationResponse: React.FC = () => {
         }
         setToken(urlToken);
         setAdminMessage(result.adminMessage);
-      } catch (err: any) {
-        setMessage(err.message);
+      } catch (err) {
+        setMessage(err instanceof Error ? err.message : 'Error desconocido');
         setIsError(true);
       } finally {
         setIsLoading(false);
@@ -67,8 +67,8 @@ const ClarificationResponse: React.FC = () => {
       setMessage('¡Respuesta enviada con éxito! Gracias por la aclaración.');
       setIsError(false);
       setIsSubmitted(true);
-    } catch (err: any) {
-      setMessage(err.message);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Error desconocido');
       setIsError(true);
     } finally {
       setIsSubmitting(false);

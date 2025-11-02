@@ -50,41 +50,6 @@ vi.mock('./pages/Dashboard', () => ({ default: () => (
 ) }));
 vi.mock('./pages/Subscriptions', () => ({ default: () => <div>Suscripciones</div> }));
 vi.mock('./pages/Accounts', () => ({ default: () => <div>Cuentas</div> }));
-vi.mock('./pages/PluginsManagement', () => ({ default: () => (
-  <div className="plugins-management-container">
-    <header className="plugins-management-header">
-      <h1>Gestión de Plugins</h1>
-      <button className="add-plugin-btn">Añadir Nuevo Plugin</button>
-    </header>
-    <div className="plugins-list">
-      <table>
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Nombre</th>
-            <th>Versión</th>
-            <th>URL</th>
-            <th>Estado</th>
-            <th>Acciones</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>plugin-externo</td>
-            <td>Plugin Externo</td>
-            <td>N/A</td>
-            <td>http://localhost</td>
-            <td><span className="status-badge status-enabled">enabled</span></td>
-            <td>
-              <button>Editar</button>
-              <button className="delete-btn">Desactivar</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-) }));
 vi.mock('./pages/AccountDetails', () => ({ default: () => <div>Detalles de la Cuenta</div> }));
 // Mock ThemeToggleButton y Sidebar para evitar errores de contexto
 vi.mock('./components/ThemeToggleButton', () => ({

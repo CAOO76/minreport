@@ -21,7 +21,7 @@ export async function createAuthFile() {
 
   // Configurar el emulador de autenticación para el Admin SDK
   if (!process.env.FIREBASE_AUTH_EMULATOR_HOST) {
-    process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9190';
+    process.env.FIREBASE_AUTH_EMULATOR_HOST = 'localhost:9190';
   }
 
   try {
@@ -40,40 +40,48 @@ export async function createAuthFile() {
     await page.addScriptTag({ url: 'https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js' });
     await page.addScriptTag({ url: 'https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js' });
 
-    await page.evaluate(async (args) => {
-      const { customToken, firebaseClientConfig } = args;
+    await page.evaluate(
+      async (args) => {
+        const { customToken, firebaseClientConfig } = args;
 
-      const waitForFirebase = () => new Promise(resolve => {
-        if (typeof window.firebase !== 'undefined') {
-          resolve(window.firebase);
-        } else {
-          const interval = setInterval(() => {
+        const waitForFirebase = () =>
+          new Promise((resolve) => {
             if (typeof window.firebase !== 'undefined') {
-              clearInterval(interval);
               resolve(window.firebase);
+            } else {
+              const interval = setInterval(() => {
+                if (typeof window.firebase !== 'undefined') {
+                  clearInterval(interval);
+                  resolve(window.firebase);
+                }
+              }, 100);
             }
-          }, 100);
-        }
-      });
+          });
 
-      await waitForFirebase();
+        await waitForFirebase();
 
-      const app = window.firebase.initializeApp(firebaseClientConfig);
-      const auth = app.auth();
-      auth.useEmulator('http://127.0.0.1:9190');
-      console.log('Attempting signInWithCustomToken...');
-      await auth.signInWithCustomToken(customToken);
-      console.log('signInWithCustomToken completed.');
-    }, { customToken, firebaseClientConfig, timeout: 60000 });
+        const app = window.firebase.initializeApp(firebaseClientConfig);
+        const auth = app.auth();
+        auth.useEmulator('http://localhost:9190');
+        console.log('Attempting signInWithCustomToken...');
+        await auth.signInWithCustomToken(customToken);
+        console.log('signInWithCustomToken completed.');
+      },
+      { customToken, firebaseClientConfig, timeout: 60000 },
+    );
 
     const storageState = await page.context().storageState();
 
     fs.writeFileSync(authFile, JSON.stringify(storageState, null, 2));
     console.log(`✔️ Archivo de autenticación creado en: ${authFile}`);
-
-  } catch (e: any) {
-    console.error('❌ Error creando el archivo de autenticación:', e.message || e);
-    throw e;
+  } catch (e) {
+    if (e instanceof Error) {
+      console.error('❌ Error creando el archivo de autenticación:', e.message);
+      throw e;
+    } else {
+      console.error('❌ Error creando el archivo de autenticación:', e);
+      throw new Error(String(e));
+    }
   } finally {
     if (browser) {
       console.log('✔️ Cerrando navegador...');

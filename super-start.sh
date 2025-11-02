@@ -8,7 +8,7 @@ echo "🚀 MINREPORT - Desarrollo con super admin auto-restore"
 # Limpiar al salir
 cleanup() {
     echo "🛑 Cerrando y guardando datos..."
-    FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' FIRESTORE_EMULATOR_HOST='127.0.0.1:8085' node backup-super-admin.cjs 2>/dev/null &
+    FIREBASE_AUTH_EMULATOR_HOST='localhost:9190' FIRESTORE_EMULATOR_HOST='localhost:8085' node backup-super-admin.cjs 2>/dev/null &
     sleep 2
     pkill -f "firebase emulators" 2>/dev/null || true
     pkill -f "vite" 2>/dev/null || true
@@ -43,14 +43,14 @@ echo "✅ Emuladores listos!"
 echo "🔑 Configurando super admin..."
 if [ -f "./super-admin-backup.json" ]; then
     echo "🔄 Restaurando..."
-    FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' FIRESTORE_EMULATOR_HOST='127.0.0.1:8085' node restore-super-admin.cjs
+    FIREBASE_AUTH_EMULATOR_HOST='localhost:9190' FIRESTORE_EMULATOR_HOST='localhost:8085' node restore-super-admin.cjs
 else
     echo "🆕 Creando nuevo..."
-    FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' FIRESTORE_EMULATOR_HOST='127.0.0.1:8085' node create-super-admin.cjs
+    FIREBASE_AUTH_EMULATOR_HOST='localhost:9190' FIRESTORE_EMULATOR_HOST='localhost:8085' node create-super-admin.cjs
 fi
 
 echo ""
-echo "✅ LISTO! 🌐 http://localhost:5177"
+echo "✅ LISTO! 🌐 http://localhost:5173"
 echo "🔑 app_dev@minreport.com / password-seguro-local"
 echo "💡 Ctrl+C para cerrar y guardar"
 

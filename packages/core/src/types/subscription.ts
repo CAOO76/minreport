@@ -17,7 +17,6 @@ export interface SubscriptionLimits {
   maxReportsPerMonth: number;
   offlineCapabilities: boolean;
   advancedAnalytics: boolean;
-  customPlugins: boolean;
   prioritySupport: boolean;
 }
 
@@ -66,7 +65,6 @@ export const SUBSCRIPTION_LIMITS: Record<SubscriptionPlan, SubscriptionLimits> =
     maxReportsPerMonth: 10,
     offlineCapabilities: false,
     advancedAnalytics: false,
-    customPlugins: false,
     prioritySupport: false,
   },
   basic: {
@@ -76,7 +74,6 @@ export const SUBSCRIPTION_LIMITS: Record<SubscriptionPlan, SubscriptionLimits> =
     maxReportsPerMonth: 100,
     offlineCapabilities: true,
     advancedAnalytics: false,
-    customPlugins: false,
     prioritySupport: false,
   },
   premium: {
@@ -86,7 +83,6 @@ export const SUBSCRIPTION_LIMITS: Record<SubscriptionPlan, SubscriptionLimits> =
     maxReportsPerMonth: 1000,
     offlineCapabilities: true,
     advancedAnalytics: true,
-    customPlugins: true,
     prioritySupport: false,
   },
   enterprise: {
@@ -96,7 +92,6 @@ export const SUBSCRIPTION_LIMITS: Record<SubscriptionPlan, SubscriptionLimits> =
     maxReportsPerMonth: -1, // unlimited
     offlineCapabilities: true,
     advancedAnalytics: true,
-    customPlugins: true,
     prioritySupport: true,
   },
 };

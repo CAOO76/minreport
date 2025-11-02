@@ -4,10 +4,10 @@ const isDevelopment = import.meta.env.MODE === 'development';
 
 export const API_CONFIG = {
   // Firebase Functions URL base
-  FUNCTIONS_BASE_URL: isDevelopment 
+  FUNCTIONS_BASE_URL: isDevelopment
     ? 'http://localhost:9196/minreport-8f2a8/southamerica-west1'
     : 'https://southamerica-west1-minreport-42b14.cloudfunctions.net',
-  
+
   // Endpoints específicos
   ENDPOINTS: {
     VALIDATE_ACTIVATION_TOKEN: '/validateActivationToken',
@@ -16,8 +16,8 @@ export const API_CONFIG = {
     SUBMIT_COMPLETE_DATA: '/submitCompleteData',
     PROCESS_INITIAL_DECISION: '/processInitialDecisionFunction',
     PROCESS_FINAL_DECISION: '/processFinalDecisionFunction',
-    REQUEST_CLARIFICATION: '/requestClarificationFunction'
-  }
+    REQUEST_CLARIFICATION: '/requestClarificationFunction',
+  },
 };
 
 // Helper para construir URLs completas
@@ -26,26 +26,26 @@ export const getApiUrl = (endpoint: keyof typeof API_CONFIG.ENDPOINTS): string =
 };
 
 // Helper para realizar fetch con configuración consistente
-export const apiCall = async (
+export const apiCall = async <T = unknown, R = unknown>(
   endpoint: keyof typeof API_CONFIG.ENDPOINTS,
-  data: any,
-  options: RequestInit = {}
-): Promise<any> => {
+  data: T,
+  options: RequestInit = {},
+): Promise<R> => {
   const url = getApiUrl(endpoint);
-  
+
   const defaultOptions: RequestInit = {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(data)
+    body: JSON.stringify(data),
   };
 
   const response = await fetch(url, { ...defaultOptions, ...options });
-  
+
   if (!response.ok) {
     throw new Error(`API call failed: ${response.status} ${response.statusText}`);
   }
-  
-  return response.json();
+
+  return response.json() as Promise<R>;
 };

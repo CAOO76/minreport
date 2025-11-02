@@ -1,5 +1,5 @@
 // sites/client-app/src/stories/Input.stories.tsx
-import type { Meta, StoryObj } from '@storybook/react';
+import type { Meta, StoryObj } from '@storybook/react-vite';
 import { Input } from '../components/Input';
 import type { InputProps } from '../components/Input'; // Explicitly import InputProps
 

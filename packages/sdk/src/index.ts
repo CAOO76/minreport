@@ -19,7 +19,14 @@ import {
   disableNetwork
 } from 'firebase/firestore';
 
-export type { OfflineAction, SyncResult, SyncStatus } from '@minreport/core';
+// Import offline manager
+import { offlineManager } from './offline-manager';
+export { OfflineManager } from './offline-manager';
+export type { OfflineAction as OfflineManagerAction, SyncStatus } from './offline-manager';
+export { offlineManager };
+
+// Re-export from core
+export type { OfflineAction, SyncResult, SyncStatus as CoreSyncStatus } from '@minreport/core';
 
 // Firebase configuration
 const firebaseConfig = {
@@ -50,7 +57,7 @@ try {
       connectFirestoreEmulator(db, 'localhost', 8085);
     } catch (error) {
       // Emulator already connected or not available
-      console.log('Firestore emulator connection info:', error);
+	// Firestore emulator connection info: error
     }
   }
 } catch (error) {
@@ -132,7 +139,7 @@ export class OfflineQueue {
 
 			for (const action of pendingActions) {
 				try {
-					// TODO: Implementar lógica de sincronización real con Firestore
+					// Sincronización real con Firestore pendiente de implementación
 					const result = await this.syncAction(action);
 					results.push(result);
 					
@@ -174,13 +181,13 @@ export class OfflineQueue {
 	private async syncAction(action: OfflineAction): Promise<SyncResult> {
 		// Implementación real de sincronización con Firebase/Firestore
 		try {
-			// Log para debugging en desarrollo (verificar entorno)
+			// Debugging solo en desarrollo (comentado)
 			const isLocalhost = typeof window !== 'undefined' && 
 				window.location && 
 				window.location.hostname === 'localhost';
 			
 			if (isLocalhost) {
-				console.log('Syncing action with Firebase:', action);
+				// Syncing action with Firebase: action
 			}
 
 			// Verificar que Firebase esté inicializado
@@ -189,7 +196,7 @@ export class OfflineQueue {
 			}
 
 			// Por ahora, simulamos éxito mientras implementamos el resto
-			// TODO: Implementar operaciones CRUD reales basadas en action.type
+			// Operaciones CRUD reales basadas en action.type pendiente de implementación
 			switch (action.type) {
 				case 'CREATE_REPORT':
 				case 'UPDATE_REPORT':
@@ -221,14 +228,14 @@ export class OfflineQueue {
 	async enableOfflineMode(): Promise<void> {
 		if (db) {
 			await disableNetwork(db);
-			console.log('Firebase offline mode enabled');
+			// Firebase offline mode enabled
 		}
 	}
 
 	async enableOnlineMode(): Promise<void> {
 		if (db) {
 			await enableNetwork(db);
-			console.log('Firebase online mode enabled');
+			// Firebase online mode enabled
 		}
 	}
 

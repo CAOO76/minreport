@@ -21,7 +21,7 @@ const CreatePassword = () => {
   useEffect(() => {
     const code = searchParams.get('oobCode');
     const token = searchParams.get('token');
-    
+
     if (token) {
       // Flujo de configuración inicial de cuenta
       setFlowType('setup');
@@ -50,7 +50,7 @@ const CreatePassword = () => {
   const validateActivationToken = async (token: string) => {
     try {
       const result = await apiCall('VALIDATE_ACTIVATION_TOKEN', { token });
-      
+
       if (result.success) {
         setIsVerifying(false);
       } else {
@@ -58,7 +58,7 @@ const CreatePassword = () => {
         setIsError(true);
         setIsVerifying(false);
       }
-    } catch (error) {
+    } catch {
       setMessage('Error al validar el token de activación.');
       setIsError(true);
       setIsVerifying(false);
@@ -85,11 +85,11 @@ const CreatePassword = () => {
     try {
       if (flowType === 'setup' && activationToken) {
         // Flujo de configuración inicial de cuenta
-        const result = await apiCall('SETUP_ACCOUNT_PASSWORD', { 
-          token: activationToken, 
-          password: newPassword 
+        const result = await apiCall('SETUP_ACCOUNT_PASSWORD', {
+          token: activationToken,
+          password: newPassword,
         });
-        
+
         if (result.success) {
           setMessage('¡Tu cuenta ha sido configurada con éxito! Ya puedes iniciar sesión.');
           setIsSuccess(true);
@@ -106,10 +106,11 @@ const CreatePassword = () => {
         setMessage('Error: Tipo de operación no válido.');
         setIsError(true);
       }
-    } catch (error) {
-      const errorMessage = flowType === 'setup' 
-        ? 'Ocurrió un error al configurar la cuenta. Por favor, solicita un nuevo enlace de activación.'
-        : 'Ocurrió un error al actualizar la contraseña. Por favor, intenta solicitar un nuevo enlace.';
+    } catch {
+      const errorMessage =
+        flowType === 'setup'
+          ? 'Ocurrió un error al configurar la cuenta. Por favor, solicita un nuevo enlace de activación.'
+          : 'Ocurrió un error al actualizar la contraseña. Por favor, intenta solicitar un nuevo enlace.';
       setMessage(errorMessage);
       setIsError(true);
     } finally {
@@ -154,12 +155,14 @@ const CreatePassword = () => {
   return (
     <div className="form-container">
       <h2>{flowType === 'setup' ? 'Configurar Tu Cuenta' : 'Crear Nueva Contraseña'}</h2>
-      <p>{flowType === 'setup' 
-        ? 'Tu cuenta ha sido aprobada. Configura una contraseña segura para acceder al sistema.' 
-        : 'Ingresa una contraseña segura para tu cuenta.'}</p>
+      <p>
+        {flowType === 'setup'
+          ? 'Tu cuenta ha sido aprobada. Configura una contraseña segura para acceder al sistema.'
+          : 'Ingresa una contraseña segura para tu cuenta.'}
+      </p>
       <form onSubmit={handleSubmit} className="form-layout">
         {message && <p className={`submit-message ${isError ? 'error' : 'success'}`}>{message}</p>}
-        
+
         {flowType === 'setup' && (
           <div className="password-requirements">
             <h4>Requisitos de contraseña:</h4>
@@ -170,9 +173,11 @@ const CreatePassword = () => {
             </ul>
           </div>
         )}
-        
+
         <div className="form-group">
-          <label htmlFor="newPassword">{flowType === 'setup' ? 'Contraseña' : 'Nueva Contraseña'}</label>
+          <label htmlFor="newPassword">
+            {flowType === 'setup' ? 'Contraseña' : 'Nueva Contraseña'}
+          </label>
           <input
             type="password"
             id="newPassword"
@@ -193,14 +198,22 @@ const CreatePassword = () => {
             minLength={6}
           />
           {confirmPassword && newPassword && (
-            <span className={newPassword === confirmPassword ? "password-match" : "password-mismatch"}>
-              {newPassword === confirmPassword ? "✓ Las contraseñas coinciden" : "✗ Las contraseñas no coinciden"}
+            <span
+              className={newPassword === confirmPassword ? 'password-match' : 'password-mismatch'}
+            >
+              {newPassword === confirmPassword
+                ? '✓ Las contraseñas coinciden'
+                : '✗ Las contraseñas no coinciden'}
             </span>
           )}
         </div>
         <div className="form-actions">
           <button type="submit" className="button-primary" disabled={isSubmitting}>
-            {isSubmitting ? 'Guardando...' : (flowType === 'setup' ? 'Configurar Cuenta' : 'Guardar Contraseña')}
+            {isSubmitting
+              ? 'Guardando...'
+              : flowType === 'setup'
+                ? 'Configurar Cuenta'
+                : 'Guardar Contraseña'}
           </button>
         </div>
       </form>

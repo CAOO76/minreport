@@ -1,4 +1,4 @@
-import { FullConfig } from '@playwright/test';
+// import { FullConfig } from '@playwright/test';
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const EMULATORS_DATA_DIR = path.resolve(__dirname, '../../firebase-emulators-data');
-const AUTH_FILE = path.resolve(__dirname, 'auth.json');
+// const AUTH_FILE = path.resolve(__dirname, 'auth.json');
 
 const EMULATOR_PORTS = [4001, 9190, 8085, 5010, 9195, 4400, 4500]; // Puertos comunes de emuladores
 
@@ -18,27 +18,29 @@ let emulatorsProcess: ChildProcess | null = null;
 async function killProcessOnPort(port: number): Promise<void> {
   return new Promise((resolve) => {
     const command = `lsof -t -i :${port}`;
-    spawn(command, { shell: true, stdio: 'pipe' }).stdout?.on('data', (data) => {
-      const pid = data.toString().trim();
-      if (pid) {
-        console.log(`[Global Setup] Matando proceso ${pid} en puerto ${port}...`);
-        try {
-          process.kill(parseInt(pid, 10));
-        } catch (e) {
-          console.warn(`[Global Setup] No se pudo matar el proceso ${pid}: ${e}`);
+    spawn(command, { shell: true, stdio: 'pipe' })
+      .stdout?.on('data', (data) => {
+        const pid = data.toString().trim();
+        if (pid) {
+          console.log(`[Global Setup] Matando proceso ${pid} en puerto ${port}...`);
+          try {
+            process.kill(parseInt(pid, 10));
+          } catch (e) {
+            console.warn(`[Global Setup] No se pudo matar el proceso ${pid}: ${e}`);
+          }
         }
-      }
-    }).on('close', () => resolve());
+      })
+      .on('close', () => resolve());
   });
 }
 
-async function globalSetup(config: FullConfig) {
+async function globalSetup() {
   console.log('\n[Global Setup] Iniciando setup global de Playwright...');
 
   // 0. Asegurar que los puertos estén libres
   console.log('[Global Setup] Verificando y liberando puertos de emuladores...');
   await Promise.all(EMULATOR_PORTS.map(killProcessOnPort));
-  await new Promise(resolve => setTimeout(resolve, 1000)); // Pequeña espera para que los puertos se liberen completamente
+  await new Promise((resolve) => setTimeout(resolve, 1000)); // Pequeña espera para que los puertos se liberen completamente
 
   // 1. Limpiar datos de emuladores anteriores
   console.log('[Global Setup] Limpiando datos de emuladores...');
@@ -94,9 +96,20 @@ async function globalSetup(config: FullConfig) {
   try {
     await createAuthFile();
     console.log('[Global Setup] Archivo de autenticación creado con éxito.');
-  } catch (error: any) {
-    console.error('[Global Setup ERROR] Falló la generación del archivo de autenticación:', error.message);
-    throw error; // Re-lanzar el error para que Playwright lo capture
+  } catch (error) {
+    if (error instanceof Error) {
+      console.error(
+        '[Global Setup ERROR] Falló la generación del archivo de autenticación:',
+        error.message,
+      );
+      throw error;
+    } else {
+      console.error(
+        '[Global Setup ERROR] Falló la generación del archivo de autenticación:',
+        error,
+      );
+      throw new Error(String(error));
+    }
   }
 
   console.log('[Global Setup] Setup global completado. Iniciando pruebas...');

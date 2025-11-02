@@ -10,8 +10,8 @@ pnpm dev:clean
 - 🔥 Inicia todos los servicios  
 - 🔑 Crea super admin automáticamente
 - 💾 Guarda datos al cerrar (Ctrl+C)
-- 🌐 ADMIN: http://localhost:5177
-- 🌐 CLIENT: http://localhost:5173
+- 🌐 ADMIN: http://localhost:5173
+- 🌐 CLIENT: http://localhost:5175
 - 🌐 HOME: http://localhost:5179
 
 ### ⚠️ Solo si necesitas borrar TODO:

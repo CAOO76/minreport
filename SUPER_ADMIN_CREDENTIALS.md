@@ -7,7 +7,7 @@ Esta cuenta se crea automáticamente en código y debe existir siempre en el sis
 - **📧 Email:** `app_dev@minreport.com`
 - **🔐 Contraseña:** `password-seguro-local`
 - **👑 Rol:** Super Admin (claim: `admin: true`)
-- **🌐 URL Acceso:** http://localhost:5177/
+- **🌐 URL Acceso:** http://localhost:5173/
 
 ## 🚀 **CÓMO CREAR LA CUENTA**
 
@@ -23,7 +23,7 @@ pnpm db:seed
 
 ### Opción 3: Manual
 ```bash
-FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' node create-super-admin.cjs
+FIREBASE_AUTH_EMULATOR_HOST='localhost:9190' node create-super-admin.cjs
 ```
 
 ## ⚠️  **IMPORTANTE**

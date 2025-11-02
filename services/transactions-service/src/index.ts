@@ -13,8 +13,8 @@ interface AuthenticatedRequest extends Request {
 
 // Esta función CREA la app, aceptando las dependencias como parámetros
 export const createApp = (
-  auth: admin.auth.Auth, 
-  db: admin.firestore.Firestore, 
+  auth: admin.auth.Auth,
+  db: admin.firestore.Firestore,
   FieldValue: typeof admin.firestore.FieldValue
 ) => {
   const app = express();
@@ -102,7 +102,7 @@ if (process.env.NODE_ENV !== 'test') {
   try {
     // Initialize Firebase Admin if not already initialized
     if (getApps().length === 0) {
-      console.log('Inicializando Firebase Admin...');
+  // Inicializando Firebase Admin...
       initializeApp();
     }
     
@@ -117,13 +117,13 @@ if (process.env.NODE_ENV !== 'test') {
       throw new Error('No se pudo inicializar Firestore');
     }
     
-    console.log('Firebase Admin inicializado correctamente');
+  // Firebase Admin inicializado correctamente
     
     const app = createApp(authInstance, dbInstance, admin.firestore.FieldValue);
     
     const PORT = process.env.TRANSACTIONS_SERVICE_PORT || 8080;
     app.listen(PORT, () => {
-      console.log(`Transactions Service escuchando en el puerto ${PORT}`);
+  // Transactions Service escuchando en el puerto
     });
   } catch (error) {
     console.error('Error inicializando el servicio de transacciones:', error);

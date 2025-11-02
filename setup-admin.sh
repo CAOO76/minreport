@@ -22,13 +22,13 @@ echo "⏳ Esperando que los emuladores estén listos (30 segundos)..."
 sleep 30
 
 echo "🔐 Creando cuenta super admin..."
-FIREBASE_AUTH_EMULATOR_HOST='127.0.0.1:9190' FIRESTORE_EMULATOR_HOST='127.0.0.1:8085' node create-super-admin.cjs
+FIREBASE_AUTH_EMULATOR_HOST='localhost:9190' FIRESTORE_EMULATOR_HOST='localhost:8085' node create-super-admin.cjs
 
 echo ""
 echo "✅ ¡Proceso completado!"
 echo "📧 Email: app_dev@minreport.com"
 echo "🔐 Contraseña: password-seguro-local"
-echo "🌐 URL Admin: http://localhost:5177/"
+echo "🌐 URL Admin: http://localhost:5173/"
 echo ""
 echo "Los emuladores siguen ejecutándose en segundo plano (PID: $EMULATOR_PID)"
 echo "Para detenerlos: kill $EMULATOR_PID"

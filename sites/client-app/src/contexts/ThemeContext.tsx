@@ -1,27 +1,6 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-
-// Define el tipo para el valor del contexto
-type ThemeContextType = {
-  theme: string;
-  toggleTheme: () => void;
-};
-
-// Crea el contexto con un valor inicial undefined
-const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
-
-// Define el hook para usar el contexto de forma segura
-export const useTheme = () => {
-  const context = useContext(ThemeContext);
-  if (!context) {
-    throw new Error('useTheme debe ser usado dentro de un ThemeProvider');
-  }
-  return context;
-};
-
-// Define las props para el proveedor
-type ThemeProviderProps = {
-  children: ReactNode;
-};
+import { useEffect, useState } from 'react';
+import type { ThemeProviderProps } from './themeConstants';
+import { ThemeContext } from './ThemeContextInstance';
 
 // Crea el componente proveedor
 export const ThemeProvider = ({ children }: ThemeProviderProps) => {
