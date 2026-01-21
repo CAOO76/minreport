@@ -1,30 +1,45 @@
-# System Files
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Testing
+coverage/
+
+# Production
+dist/
+build/
+
+# Misc
 .DS_Store
+*.pem
 
-# dependencies
-node_modules
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
 
+# Local env files
 .env
-# .env.*
-/dist
-/build
-*.log
-firebase-debug.log
-.firebase/emulators/storage/blobs
-serviceAccountKey.json
-firebase-emulators-data/
-.firebase/
-firebase-export-*/
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
-# Compiled output
-lib
-**/lib
-!services/functions/lib
-*.js
-*.js.map
+# Firebase logs
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+data/
 
-# Caches and Reports
-.eslintcache
-playwright-report/
-/test-results/
-*.tsbuildinfo
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.vs/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

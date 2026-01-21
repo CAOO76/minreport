@@ -1,27 +1,8 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // Solicitudes iniciales - permitir lectura y escritura (sin autenticación en desarrollo)
-    // En producción, agregar validación de token
-    match /initial_requests/{document=**} {
+    match /{document=**} {
       allow read, write: if true;
     }
-
-    // Los Admins tienen permiso de LECTURA a "requests" y TODO lo que contenga dentro.
-    // La escritura se deniega para forzar que solo el backend pueda modificar datos.
-    match /requests/{document=**} {
-      allow read: if request.auth.token.admin == true;
-      allow write: if false;
-    }
-
-    // Misma lógica para las cuentas.
-    match /accounts/{document=**} {
-      allow read: if request.auth.token.admin == true;
-      allow write: if false;
-    }
-
-    // ...existing code...
   }
 }

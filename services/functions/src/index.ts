@@ -1,11 +1,7 @@
-import { initializeApp, getApps } from 'firebase-admin/app';
+import { onRequest } from "firebase-functions/v2/https";
+import * as logger from "firebase-functions/logger";
 
-// Initialize Firebase Admin only if it hasn't been initialized yet.
-if (!getApps().length) {
-    initializeApp();
-}
-
-// Firebase Admin initialized.
-
-// Export all functions from their respective files.
-export * from "./requestManagement";
+export const helloWorld = onRequest((request, response) => {
+    logger.info("Hello logs!", { structuredData: true });
+    response.send("Hello from Firebase!");
+});
