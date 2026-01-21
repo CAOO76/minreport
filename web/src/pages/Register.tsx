@@ -244,7 +244,7 @@ export const Register = () => {
                                 {renderInput(t('form.company_name'), 'company_name')}
                                 {renderInput(activeCountry.taxLabel, 'rut', 'text', activeCountry.placeholder)}
                                 {renderInput(t('form.industry'), 'industry')}
-                                {renderInput(`${t('form.website')} (${t('form.optional')})`, 'website', 'url', 'https://', false)}
+                                {renderInput(`${t('form.website')} (${t('form.optional')})`, 'website', 'text', 'www.company.com', false)}
                             </>
                         )}
 
@@ -253,7 +253,7 @@ export const Register = () => {
                             <>
                                 {renderInput(t('form.applicant_name'), 'applicant_name')}
                                 {renderInput(t('form.institution_name'), 'institution_name')}
-                                {renderInput(t('form.institution_web'), 'institution_website', 'url', 'https://')}
+                                {renderInput(t('form.institution_web'), 'institution_website', 'text', 'www.edu.cl')}
                                 {renderInput(t('form.program_name'), 'program_name')}
                                 {renderInput(t('form.graduation_date'), 'graduation_date', 'date')}
                             </>

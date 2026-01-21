@@ -21,6 +21,12 @@ const validateTaxId = (val: string, country: string) => {
     return val.length >= 5; // Default for others
 };
 
+const ensureProtocol = (url: string) => {
+    if (!url) return url;
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    return `https://${url}`;
+};
+
 // Profile specific schemas
 const enterpriseProfile = z.object({
     type: z.literal('ENTERPRISE'),
@@ -28,14 +34,29 @@ const enterpriseProfile = z.object({
     company_name: z.string().min(2, "Company name is required"),
     industry: z.string().min(2, "Industry is required"),
     rut: z.string(), // Validated in superRefine
-    website: z.string().url("Invalid website URL").optional().or(z.literal('')),
+    website: z.string().transform(ensureProtocol).refine(val => {
+        if (!val) return true;
+        try {
+            new URL(val);
+            return true;
+        } catch {
+            return false;
+        }
+    }, { message: "Invalid website URL" }).optional().or(z.literal('')),
 });
 
 const educationalProfile = z.object({
     type: z.literal('EDUCATIONAL'),
     applicant_name: z.string().min(2, "Applicant name is required"),
     institution_name: z.string().min(2, "Institution name is required"),
-    institution_website: z.string().url("Valid institution website is required"),
+    institution_website: z.string().transform(ensureProtocol).refine(val => {
+        try {
+            new URL(val);
+            return true;
+        } catch {
+            return false;
+        }
+    }, { message: "Valid institution website is required" }),
     program_name: z.string().min(2, "Program name (Major) is required"),
     graduation_date: z.string().refine(val => new Date(val) > new Date(), {
         message: "Graduation date must be in the future"
