@@ -60,7 +60,14 @@ i18n
                         run: "RUN",
                         usage_profile: "Perfil de Uso",
                         country: "País",
-                        tax_id: "ID Fiscal / Tributario"
+                        tax_id: "ID Fiscal / Tributario",
+                        institution_web: "Web Institucional",
+                        program_name: "Carrera / Programa",
+                        graduation_date: "Fecha de Graduación",
+                        optional: "Opcional"
+                    },
+                    errors: {
+                        public_email: "Por favor use un correo institucional académico."
                     },
                     dashboard: {
                         welcome: "¡Hola de nuevo!",
@@ -119,7 +126,14 @@ i18n
                         run: "RUN",
                         usage_profile: "Usage Profile",
                         country: "Country",
-                        tax_id: "Tax ID"
+                        tax_id: "Tax ID",
+                        institution_web: "Institution Website",
+                        program_name: "Degree / Program",
+                        graduation_date: "Graduation Date",
+                        optional: "Optional"
+                    },
+                    errors: {
+                        public_email: "Please use an institutional academic email address."
                     },
                     dashboard: {
                         welcome: "Welcome back!",
@@ -179,7 +193,14 @@ i18n
                         run: "CPF / CNPJ",
                         usage_profile: "Perfil de Uso",
                         country: "País",
-                        tax_id: "ID Fiscal / Tributário"
+                        tax_id: "ID Fiscal / Tributário",
+                        institution_web: "Site da Instituição",
+                        program_name: "Curso / Programa",
+                        graduation_date: "Data de Graduação",
+                        optional: "Opcional"
+                    },
+                    errors: {
+                        public_email: "Por favor, use um e-mail institucional acadêmico."
                     },
                     dashboard: {
                         welcome: "Bem-vindo de volta!",

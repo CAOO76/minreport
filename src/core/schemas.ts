@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { validateRut } from '../utils/rut';
+import { PUBLIC_EMAIL_DOMAINS } from './constants';
 
 // Base schema for shared fields
 const baseSchema = z.object({
@@ -34,8 +35,11 @@ const educationalProfile = z.object({
     type: z.literal('EDUCATIONAL'),
     applicant_name: z.string().min(2, "Applicant name is required"),
     institution_name: z.string().min(2, "Institution name is required"),
-    institution_type: z.enum(['UNIVERSITY', 'INSTITUTE', 'SCHOOL']),
-    rut: z.string(), // Validated in superRefine
+    institution_website: z.string().url("Valid institution website is required"),
+    program_name: z.string().min(2, "Program name (Major) is required"),
+    graduation_date: z.string().refine(val => new Date(val) > new Date(), {
+        message: "Graduation date must be in the future"
+    }),
 });
 
 const personalProfile = z.object({
@@ -45,7 +49,7 @@ const personalProfile = z.object({
     usage_profile: z.enum(['PERSONAL', 'PROFESSIONAL']),
 });
 
-// Discriminated Union with refinement for dynamic tax ID validation
+// Discriminated Union with refinement for dynamic validation
 export const registerSchema = baseSchema.and(
     z.discriminatedUnion('type', [
         enterpriseProfile,
@@ -53,15 +57,30 @@ export const registerSchema = baseSchema.and(
         personalProfile,
     ])
 ).superRefine((data, ctx) => {
-    const taxIdField = data.type === 'PERSONAL' ? 'run' : 'rut';
-    const taxIdValue = (data as any)[taxIdField];
+    // 1. Strict Email Validation for EDUCATIONAL
+    if (data.type === 'EDUCATIONAL') {
+        const domain = data.email.split('@')[1]?.toLowerCase();
+        if (domain && PUBLIC_EMAIL_DOMAINS.includes(domain)) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Institutional email required (.edu, .cl, etc)",
+                path: ['email'],
+            });
+        }
+    }
 
-    if (!validateTaxId(taxIdValue, data.country)) {
-        ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: `Invalid Tax ID for ${data.country}`,
-            path: [taxIdField],
-        });
+    // 2. Tax ID Validation (Only for ENTERPRISE and PERSONAL)
+    if (data.type !== 'EDUCATIONAL') {
+        const taxIdField = data.type === 'PERSONAL' ? 'run' : 'rut';
+        const taxIdValue = (data as any)[taxIdField];
+
+        if (!validateTaxId(taxIdValue, data.country)) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: `Invalid Tax ID for ${data.country}`,
+                path: [taxIdField],
+            });
+        }
     }
 });
 

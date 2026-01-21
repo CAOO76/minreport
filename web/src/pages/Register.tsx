@@ -25,7 +25,9 @@ export const Register = () => {
         rut: '',
         website: '',
         institution_name: '',
-        institution_type: 'UNIVERSITY',
+        institution_website: '',
+        program_name: '',
+        graduation_date: '',
         full_name: '',
         run: '',
         usage_profile: 'PROFESSIONAL'
@@ -38,7 +40,7 @@ export const Register = () => {
     const handleTypeChange = (newType: AccountType) => {
         setType(newType);
         setError('');
-        setFormData(prev => ({ ...prev, email: prev.email })); // Keep common fields
+        // We keep email and country, but reset per-profile fields if needed
     };
 
     const handleChange = (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -46,12 +48,17 @@ export const Register = () => {
 
         let finalValue = value;
 
-        // Auto-format RUT/RUN
-        if (name === 'rut' || name === 'run') {
+        // Auto-format RUT/RUN for Chile
+        if ((name === 'rut' || name === 'run') && formData.country === 'CL') {
             finalValue = formatRut(value);
         }
 
         setFormData(prev => ({ ...prev, [name]: finalValue }));
+    };
+
+    const isPublicEmail = (email: string) => {
+        const domain = email.split('@')[1]?.toLowerCase();
+        return domain && ['gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com'].includes(domain);
     };
 
     const handleSubmit = async (e: FormEvent) => {
@@ -60,12 +67,20 @@ export const Register = () => {
         setSuccess(false);
 
         // Basic Frontend Validation
-        const idField = type === 'PERSONAL' ? 'run' : 'rut';
-        const idValue = formData[idField];
-
-        if (!validateRut(idValue || '')) {
-            setError(`Invalid ${type === 'PERSONAL' ? 'RUN' : 'RUT'} format`);
+        if (type === 'EDUCATIONAL' && isPublicEmail(formData.email || '')) {
+            setError(t('errors.public_email'));
             return;
+        }
+
+        if (type !== 'EDUCATIONAL') {
+            const idField = type === 'PERSONAL' ? 'run' : 'rut';
+            const idValue = formData[idField];
+
+            // Only strict validate for CL
+            if (formData.country === 'CL' && !validateRut(idValue || '')) {
+                setError(`Invalid ${type === 'PERSONAL' ? 'RUN' : 'RUT'} format`);
+                return;
+            }
         }
 
         setLoading(true);
@@ -76,7 +91,6 @@ export const Register = () => {
                 email: formData.email,
                 country: formData.country,
                 type,
-                // Common/Specific mappings
                 ...(type === 'ENTERPRISE' && {
                     applicant_name: formData.applicant_name,
                     company_name: formData.company_name,
@@ -87,8 +101,9 @@ export const Register = () => {
                 ...(type === 'EDUCATIONAL' && {
                     applicant_name: formData.applicant_name,
                     institution_name: formData.institution_name,
-                    institution_type: formData.institution_type,
-                    rut: formData.rut
+                    institution_website: formData.institution_website,
+                    program_name: formData.program_name,
+                    graduation_date: formData.graduation_date
                 }),
                 ...(type === 'PERSONAL' && {
                     full_name: formData.full_name,
@@ -211,7 +226,16 @@ export const Register = () => {
                         </div>
 
                         {/* Common Fields */}
-                        {renderInput(t('form.email'), 'email', 'email', 'name@company.com')}
+                        <div className="space-y-4">
+                            {renderInput(t('form.email'), 'email', 'email', 'name@company.com')}
+
+                            {type === 'EDUCATIONAL' && (
+                                <div className="p-3 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-xs rounded-md flex items-start gap-2 border border-blue-100 dark:border-blue-800">
+                                    <span className="material-symbols-rounded text-base mt-0.5">info</span>
+                                    <p>{t('errors.public_email')}</p>
+                                </div>
+                            )}
+                        </div>
 
                         {/* Enterprise Fields */}
                         {type === 'ENTERPRISE' && (
@@ -220,7 +244,7 @@ export const Register = () => {
                                 {renderInput(t('form.company_name'), 'company_name')}
                                 {renderInput(activeCountry.taxLabel, 'rut', 'text', activeCountry.placeholder)}
                                 {renderInput(t('form.industry'), 'industry')}
-                                {renderInput(`${t('form.website')} (${t('form.optional', 'Opcional')})`, 'website', 'url', 'https://', false)}
+                                {renderInput(`${t('form.website')} (${t('form.optional')})`, 'website', 'url', 'https://', false)}
                             </>
                         )}
 
@@ -229,12 +253,9 @@ export const Register = () => {
                             <>
                                 {renderInput(t('form.applicant_name'), 'applicant_name')}
                                 {renderInput(t('form.institution_name'), 'institution_name')}
-                                {renderSelect(t('form.type', 'Tipo'), 'institution_type', [
-                                    { value: 'UNIVERSITY', label: t('form.university', 'Universidad') },
-                                    { value: 'INSTITUTE', label: t('form.institute', 'Instituto') },
-                                    { value: 'SCHOOL', label: t('form.school', 'Colegio') }
-                                ])}
-                                {renderInput(activeCountry.taxLabel, 'rut', 'text', activeCountry.placeholder)}
+                                {renderInput(t('form.institution_web'), 'institution_website', 'url', 'https://')}
+                                {renderInput(t('form.program_name'), 'program_name')}
+                                {renderInput(t('form.graduation_date'), 'graduation_date', 'date')}
                             </>
                         )}
 
