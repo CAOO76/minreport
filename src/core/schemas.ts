@@ -106,3 +106,21 @@ export const registerSchema = baseSchema.and(
 });
 
 export type RegisterInput = z.infer<typeof registerSchema>;
+
+// Setup Schema for Onboarding Wizard
+export const setupSchema = z.object({
+    first_name: z.string().min(2, "First name is required"),
+    last_name: z.string().min(2, "Last name is required"),
+    phone: z.string().min(8, "Valid phone number is required"),
+    otp_code: z.string().length(6, "OTP must be 6 digits"),
+    address_object: z.object({
+        address: z.string(),
+        lat: z.number(),
+        lng: z.number(),
+        city: z.string(),
+        country: z.string(),
+    }),
+    cargo: z.string().optional(), // Only for B2B
+});
+
+export type SetupInput = z.infer<typeof setupSchema>;

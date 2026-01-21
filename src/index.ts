@@ -5,7 +5,9 @@ import './config/firebase'; // Import to trigger initialization
 import { env } from './config/env';
 import { register } from './api/auth.controller';
 import { adminLogin, listTenants, updateTenantStatus } from './api/admin.controller'; // [UPDATED]
+import { sendOTP, completeSetup } from './api/user.controller';
 import { requireSuperAdmin } from './middleware/admin';
+import { authenticate } from './middleware/auth';
 
 const app = express();
 
@@ -29,6 +31,10 @@ app.get('/health', (req, res) => {
 // Routes
 app.post('/api/auth/register', register);
 app.post('/api/admin/login', adminLogin); // [NEW]
+
+// User Setup Routes
+app.post('/api/user/otp', sendOTP);
+app.post('/api/user/setup', authenticate, completeSetup);
 
 // Admin Routes (Protected)
 app.get('/api/admin/tenants', requireSuperAdmin, listTenants);
