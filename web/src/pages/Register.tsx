@@ -8,6 +8,7 @@ export { ThemeSwitch };
 import { LanguageSwitch } from '../components/LanguageSwitch';
 import { registerUser, RegisterData } from '../services/auth';
 import { formatRut, validateRut } from '../utils/rut';
+import { SUPPORTED_COUNTRIES } from '../../../src/core/constants';
 import clsx from 'clsx';
 
 type AccountType = 'ENTERPRISE' | 'EDUCATIONAL' | 'PERSONAL';
@@ -17,12 +18,12 @@ export const Register = () => {
     const [type, setType] = useState<AccountType>('ENTERPRISE');
     const [formData, setFormData] = useState<Partial<RegisterData>>({
         email: '',
+        country: 'CL',
         applicant_name: '',
         company_name: '',
         industry: '',
         rut: '',
         website: '',
-        city: '',
         institution_name: '',
         institution_type: 'UNIVERSITY',
         full_name: '',
@@ -73,6 +74,7 @@ export const Register = () => {
             // Prepare payload based on type
             const payload: any = {
                 email: formData.email,
+                country: formData.country,
                 type,
                 // Common/Specific mappings
                 ...(type === 'ENTERPRISE' && {
@@ -80,15 +82,13 @@ export const Register = () => {
                     company_name: formData.company_name,
                     industry: formData.industry,
                     rut: formData.rut,
-                    website: formData.website,
-                    city: formData.city
+                    website: formData.website
                 }),
                 ...(type === 'EDUCATIONAL' && {
                     applicant_name: formData.applicant_name,
                     institution_name: formData.institution_name,
                     institution_type: formData.institution_type,
-                    rut: formData.rut,
-                    city: formData.city
+                    rut: formData.rut
                 }),
                 ...(type === 'PERSONAL' && {
                     full_name: formData.full_name,
@@ -99,13 +99,15 @@ export const Register = () => {
 
             await registerUser(payload);
             setSuccess(true);
-            setFormData({ email: '' }); // Reset email field
+            setFormData(prev => ({ ...prev, email: '' })); // Reset email field
         } catch (err: any) {
             setError(err.message || 'Registration failed');
         } finally {
             setLoading(false);
         }
     };
+
+    const activeCountry = SUPPORTED_COUNTRIES.find(c => c.code === formData.country) || SUPPORTED_COUNTRIES[0];
 
     const renderInput = (label: string, name: string, type = 'text', placeholder = '', required = true) => (
         <div className="flex flex-col gap-1">
@@ -189,6 +191,25 @@ export const Register = () => {
                     </div>
                 ) : (
                     <form onSubmit={handleSubmit} className="space-y-5">
+                        {/* Country Selector */}
+                        <div className="flex flex-col gap-1">
+                            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('form.country')}</label>
+                            <select
+                                name="country"
+                                value={formData.country}
+                                onChange={handleChange}
+                                className={clsx(
+                                    "w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700 font-medium",
+                                    "focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all",
+                                    "text-slate-900 dark:text-slate-100 placeholder-slate-400"
+                                )}
+                            >
+                                {SUPPORTED_COUNTRIES.map(c => (
+                                    <option key={c.code} value={c.code}>{c.name}</option>
+                                ))}
+                            </select>
+                        </div>
+
                         {/* Common Fields */}
                         {renderInput(t('form.email'), 'email', 'email', 'name@company.com')}
 
@@ -197,9 +218,8 @@ export const Register = () => {
                             <>
                                 {renderInput(t('form.applicant_name'), 'applicant_name')}
                                 {renderInput(t('form.company_name'), 'company_name')}
-                                {renderInput(t('form.rut'), 'rut', 'text', '12.345.678-9')}
+                                {renderInput(activeCountry.taxLabel, 'rut', 'text', activeCountry.placeholder)}
                                 {renderInput(t('form.industry'), 'industry')}
-                                {renderInput(t('form.city'), 'city')}
                                 {renderInput(`${t('form.website')} (${t('form.optional', 'Opcional')})`, 'website', 'url', 'https://', false)}
                             </>
                         )}
@@ -214,8 +234,7 @@ export const Register = () => {
                                     { value: 'INSTITUTE', label: t('form.institute', 'Instituto') },
                                     { value: 'SCHOOL', label: t('form.school', 'Colegio') }
                                 ])}
-                                {renderInput(t('form.rut'), 'rut', 'text', '12.345.678-9')}
-                                {renderInput(t('form.city'), 'city')}
+                                {renderInput(activeCountry.taxLabel, 'rut', 'text', activeCountry.placeholder)}
                             </>
                         )}
 
@@ -223,7 +242,7 @@ export const Register = () => {
                         {type === 'PERSONAL' && (
                             <>
                                 {renderInput(t('form.full_name'), 'full_name')}
-                                {renderInput(t('form.run'), 'run', 'text', '12.345.678-9')}
+                                {renderInput(activeCountry.taxLabel, 'run', 'text', activeCountry.placeholder)}
                                 {renderSelect(t('form.usage_profile'), 'usage_profile', [
                                     { value: 'PROFESSIONAL', label: t('form.professional', 'Profesional') },
                                     { value: 'PERSONAL', label: t('form.personal', 'Proyecto Personal') }
