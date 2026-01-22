@@ -7,11 +7,8 @@ import { CustomPhoneInput } from '../components/ui/PhoneInput';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useLoadScript, Libraries } from '@react-google-maps/api';
 import { useTranslation } from 'react-i18next';
 import { auth } from '../firebase';
-
-const libraries: Libraries = ["places"];
 
 export const SetupWizard = () => {
     const { t } = useTranslation();
@@ -29,12 +26,6 @@ export const SetupWizard = () => {
         address_object: null as any,
         otp_code: '',
         cargo: ''
-    });
-
-    // Load Google Maps Script
-    const { isLoaded, loadError } = useLoadScript({
-        googleMapsApiKey: (import.meta as any).env.VITE_GOOGLE_MAPS_API_KEY || "",
-        libraries,
     });
 
     const nextStep = () => setStep(prev => prev + 1);
@@ -146,20 +137,12 @@ export const SetupWizard = () => {
                                     user?.type === 'EDUCATIONAL' ? t('setup.location_edu', 'Dirección Sede') :
                                         t('setup.location_personal', 'Dirección Domicilio')}
                             </h2>
-                            <p className="text-slate-500 text-sm">{t('setup.location_desc', 'Busca tu dirección para geolocalización.')}</p>
+                            <p className="text-slate-500 text-sm">{t('setup.location_desc', 'Ingresa tu dirección para geolocalización.')}</p>
                         </div>
-                        {loadError ? (
-                            <div className="text-red-500 text-sm bg-red-50 p-3 rounded">
-                                Error al cargar Google Maps. Por favor verifica la API Key.
-                            </div>
-                        ) : !isLoaded ? (
-                            <div className="text-slate-500 text-sm text-center py-10">Cargando mapa...</div>
-                        ) : (
-                            <AddressAutocomplete
-                                onAddressSelect={(data) => setFormData({ ...formData, address_object: data })}
-                                placeholder={t('setup.address_placeholder', 'Escribe tu dirección...')}
-                            />
-                        )}
+                        <AddressAutocomplete
+                            onAddressSelect={(data) => setFormData({ ...formData, address_object: data })}
+                            placeholder={t('setup.address_placeholder', 'Escribe tu dirección...')}
+                        />
                         <div className="flex gap-3">
                             <Button variant="secondary" className="flex-1" onClick={prevStep}>
                                 {t('form.back', 'Atrás')}
