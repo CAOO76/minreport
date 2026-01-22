@@ -10,12 +10,15 @@ import { registerUser, RegisterData } from '../services/auth';
 import { formatRut, validateRut } from '../utils/rut';
 import { SUPPORTED_COUNTRIES } from '../../../src/core/constants';
 import clsx from 'clsx';
+import { HardHat, CreditCard } from 'lucide-react';
 
 type AccountType = 'ENTERPRISE' | 'EDUCATIONAL' | 'PERSONAL';
+type AccountIntent = 'OPERATIONAL' | 'BILLING' | '';
 
 export const Register = () => {
     const { t } = useTranslation();
     const [type, setType] = useState<AccountType>('ENTERPRISE');
+    const [accountIntent, setAccountIntent] = useState<AccountIntent>('');
     const [formData, setFormData] = useState<Partial<RegisterData>>({
         email: '',
         country: 'CL',
@@ -66,6 +69,12 @@ export const Register = () => {
         setError('');
         setSuccess(false);
 
+        // Validar que se seleccione un rol
+        if (!accountIntent) {
+            setError('Por favor selecciona tu rol inicial');
+            return;
+        }
+
         // Basic Frontend Validation
         if (type === 'EDUCATIONAL' && isPublicEmail(formData.email || '')) {
             setError(t('errors.public_email'));
@@ -91,6 +100,7 @@ export const Register = () => {
                 email: formData.email,
                 country: formData.country,
                 type,
+                accountIntent,
                 ...(type === 'ENTERPRISE' && {
                     applicant_name: formData.applicant_name,
                     company_name: formData.company_name,
@@ -271,6 +281,110 @@ export const Register = () => {
                             </>
                         )}
 
+                        {/* Account Intent Selection - Radio Cards (Solo para ENTERPRISE) */}
+                        {type === 'ENTERPRISE' && (
+                            <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-700/50">
+                                <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-4">
+                                    ¿Cuál será tu rol inicial en la cuenta?
+                                </h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    {/* Operational Card */}
+                                    <button
+                                        type="button"
+                                        onClick={() => setAccountIntent('OPERATIONAL')}
+                                        className={clsx(
+                                            "p-4 rounded-lg border-2 transition-all flex flex-col items-start gap-2 text-left",
+                                            accountIntent === 'OPERATIONAL'
+                                                ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+                                                : "border-gray-200 dark:border-gray-700 bg-white dark:bg-slate-800 hover:border-gray-300 dark:hover:border-gray-600"
+                                        )}
+                                    >
+                                        <div className="flex items-center gap-2 w-full">
+                                            <div className={clsx(
+                                                "w-5 h-5 rounded-full border-2 flex items-center justify-center",
+                                                accountIntent === 'OPERATIONAL'
+                                                    ? "border-blue-500 bg-blue-500"
+                                                    : "border-gray-300 dark:border-gray-600"
+                                            )}>
+                                                {accountIntent === 'OPERATIONAL' && (
+                                                    <span className="w-2 h-2 bg-white rounded-full"></span>
+                                                )}
+                                            </div>
+                                            <HardHat className={clsx(
+                                                "w-5 h-5",
+                                                accountIntent === 'OPERATIONAL'
+                                                    ? "text-blue-600 dark:text-blue-400"
+                                                    : "text-gray-400"
+                                            )} />
+                                            <span className={clsx(
+                                                "font-semibold text-sm",
+                                                accountIntent === 'OPERATIONAL'
+                                                    ? "text-blue-900 dark:text-blue-100"
+                                                    : "text-slate-700 dark:text-slate-300"
+                                            )}>
+                                                Administrador Operativo
+                                            </span>
+                                        </div>
+                                        <p className={clsx(
+                                            "text-xs ml-7",
+                                            accountIntent === 'OPERATIONAL'
+                                                ? "text-blue-800 dark:text-blue-200"
+                                                : "text-slate-500 dark:text-slate-400"
+                                        )}>
+                                            Gestionaré la cuenta, veré reportes y la operación día a día.
+                                        </p>
+                                    </button>
+
+                                    {/* Billing Card */}
+                                    <button
+                                        type="button"
+                                        onClick={() => setAccountIntent('BILLING')}
+                                        className={clsx(
+                                            "p-4 rounded-lg border-2 transition-all flex flex-col items-start gap-2 text-left",
+                                            accountIntent === 'BILLING'
+                                                ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+                                                : "border-gray-200 dark:border-gray-700 bg-white dark:bg-slate-800 hover:border-gray-300 dark:hover:border-gray-600"
+                                        )}
+                                    >
+                                        <div className="flex items-center gap-2 w-full">
+                                            <div className={clsx(
+                                                "w-5 h-5 rounded-full border-2 flex items-center justify-center",
+                                                accountIntent === 'BILLING'
+                                                    ? "border-blue-500 bg-blue-500"
+                                                    : "border-gray-300 dark:border-gray-600"
+                                            )}>
+                                                {accountIntent === 'BILLING' && (
+                                                    <span className="w-2 h-2 bg-white rounded-full"></span>
+                                                )}
+                                            </div>
+                                            <CreditCard className={clsx(
+                                                "w-5 h-5",
+                                                accountIntent === 'BILLING'
+                                                    ? "text-blue-600 dark:text-blue-400"
+                                                    : "text-gray-400"
+                                            )} />
+                                            <span className={clsx(
+                                                "font-semibold text-sm",
+                                                accountIntent === 'BILLING'
+                                                    ? "text-blue-900 dark:text-blue-100"
+                                                    : "text-slate-700 dark:text-slate-300"
+                                            )}>
+                                                Facturación / Contrato
+                                            </span>
+                                        </div>
+                                        <p className={clsx(
+                                            "text-xs ml-7",
+                                            accountIntent === 'BILLING'
+                                                ? "text-blue-800 dark:text-blue-200"
+                                                : "text-slate-500 dark:text-slate-400"
+                                        )}>
+                                            Solo configuro el pago y el contrato. Delegaré la operación a otro usuario.
+                                        </p>
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
                         {error && (
                             <div className="p-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm rounded-md flex items-center gap-2">
                                 <span className="material-symbols-rounded text-lg">error</span>
@@ -278,7 +392,7 @@ export const Register = () => {
                             </div>
                         )}
 
-                        <Button type="submit" className="w-full mt-4" disabled={loading}>
+                        <Button type="submit" className="w-full mt-4" disabled={loading || (type === 'ENTERPRISE' && !accountIntent)}>
                             {loading ? t('form.submitting') : t('form.submit')}
                         </Button>
                     </form>
