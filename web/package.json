@@ -9,8 +9,6 @@
         "preview": "vite preview"
     },
     "dependencies": {
-        "@reach/combobox": "^0.18.0",
-        "@react-google-maps/api": "^2.20.8",
         "clsx": "^2.1.0",
         "firebase": "^10.8.0",
         "framer-motion": "^12.28.1",
@@ -22,8 +20,7 @@
         "react-i18next": "^16.5.3",
         "react-phone-number-input": "^3.4.14",
         "react-router-dom": "^6.22.1",
-        "tailwind-merge": "^2.2.1",
-        "use-places-autocomplete": "^4.0.1"
+        "tailwind-merge": "^2.2.1"
     },
     "devDependencies": {
         "@types/react": "^18.2.55",
