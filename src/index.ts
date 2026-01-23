@@ -4,7 +4,8 @@ import helmet from 'helmet';
 import './config/firebase'; // Import to trigger initialization
 import { env } from './config/env';
 import { register } from './api/auth.controller';
-import { adminLogin, listTenants, updateTenantStatus } from './api/admin.controller'; // [UPDATED]
+import { adminLogin, listTenants, updateTenantStatus, getBrandingSettings, updateBrandingSettings } from './api/admin.controller';
+import { getPublicBrandingSettings } from './api/public.controller';
 import { requireSuperAdmin } from './middleware/admin';
 
 const app = express();
@@ -26,6 +27,9 @@ app.get('/health', (req, res) => {
     });
 });
 
+// Public Routes
+app.get('/api/settings/branding', getPublicBrandingSettings);
+
 // Routes
 app.post('/api/auth/register', register);
 app.post('/api/admin/login', adminLogin); // [NEW]
@@ -33,6 +37,8 @@ app.post('/api/admin/login', adminLogin); // [NEW]
 // Admin Routes (Protected)
 app.get('/api/admin/tenants', requireSuperAdmin, listTenants);
 app.patch('/api/admin/tenants/:uid', requireSuperAdmin, updateTenantStatus);
+app.get('/api/admin/settings/branding', requireSuperAdmin, getBrandingSettings);
+app.put('/api/admin/settings/branding', requireSuperAdmin, updateBrandingSettings);
 
 // Start Server
 const port = parseInt(env.PORT, 10);

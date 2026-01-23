@@ -22,4 +22,19 @@ export const getTenants = (status?: string) =>
 export const updateTenantStatus = (uid: string, status: 'ACTIVE' | 'REJECTED') =>
     api.patch(`/tenants/${uid}`, { status });
 
+interface LogoSet {
+  isotype: string;
+  logotype: string;
+  imagotype: string;
+}
+
+interface BrandingSettings {
+  light: LogoSet;
+  dark: LogoSet;
+}
+
+export const getBrandingSettings = () => api.get<BrandingSettings>('/settings/branding');
+
+export const updateBrandingSettings = (data: BrandingSettings) => api.put('/settings/branding', data);
+
 export default api;

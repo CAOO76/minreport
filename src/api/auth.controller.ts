@@ -21,14 +21,25 @@ export const register = async (req: Request, res: Response) => {
         const data = validation.data;
         const tenantEmail = data.email.toLowerCase();
 
-        // 2. Check if already exists in Firestore (as a request or tenant)
-        const existingDoc = await db.collection('tenants').doc(tenantEmail).get();
-        if (existingDoc.exists) {
-            return res.status(409).json({ error: 'Solicitud ya registrada para este email' });
+        // 2. Updated Uniqueness Check based on Business Rules
+        if (data.type === 'ENTERPRISE' || data.type === 'PERSONAL') {
+            const idField = data.type === 'ENTERPRISE' ? 'rut' : 'run';
+            const idValue = (data as any)[idField];
+            
+            if (idValue) {
+                const querySnapshot = await db.collection('tenants').where(idField, '==', idValue).get();
+                if (!querySnapshot.empty) {
+                    return res.status(409).json({ error: `El ${idField.toUpperCase()} ya está registrado` });
+                }
+            }
+        } else { // 'EDUCATIONAL'
+            const querySnapshot = await db.collection('tenants').where('email', '==', tenantEmail).get();
+            if (!querySnapshot.empty) {
+                return res.status(409).json({ error: 'El email ya está registrado' });
+            }
         }
 
-        // 3. Save Request to Firestore (Using email as ID)
-        // This avoids creating Auth user until approval
+        // 3. Save Request to Firestore (Using auto-generated ID)
         const tenantData = {
             ...data,
             email: tenantEmail,
@@ -37,7 +48,7 @@ export const register = async (req: Request, res: Response) => {
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         };
 
-        await db.collection('tenants').doc(tenantEmail).set(tenantData);
+        await db.collection('tenants').add(tenantData);
 
         // 4. Send Email to Super Admin (Notification)
         try {
@@ -53,7 +64,7 @@ export const register = async (req: Request, res: Response) => {
                         <p><strong>Tipo:</strong> ${data.type}</p>
                         <p><strong>Nombre:</strong> ${data.type === 'PERSONAL' ? (data as any).full_name : (data as any).company_name || (data as any).institution_name}</p>
                         <p><strong>Email:</strong> ${data.email}</p>
-                        <p><strong>Identificador Fiscal (RUT/RUN):</strong> ${'rut' in data ? (data as any).rut : (data as any).run}</p>
+                        <p><strong>Identificador Fiscal (RUT/RUN):</strong> ${'rut' in data ? (data as any).rut : 'run' in data ? (data as any).run : 'N/A'}</p>
                         <br />
                         <a href="https://minreport-access.web.app/admin" style="background: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Revisar en el Panel</a>
                     </div>

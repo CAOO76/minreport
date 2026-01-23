@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { db, auth } from '../config/firebase';
 import { Resend } from 'resend';
 import { env } from '../config/env';
+import { z } from 'zod';
 
 const resend = new Resend(env.RESEND_API_KEY);
 
@@ -44,7 +45,8 @@ export const adminLogin = async (req: Request, res: Response) => {
 };
 
 export const updateTenantStatus = async (req: Request, res: Response) => {
-    const { uid } = req.params; // In the new flow, this is the email
+    console.log('Admin Params received:', req.params);
+    const { uid } = req.params;
     const { status, rejectionReason } = req.body;
 
     if (!['ACTIVE', 'REJECTED'].includes(status)) {
@@ -164,4 +166,29 @@ export const updateTenantStatus = async (req: Request, res: Response) => {
         console.error('[ADMIN] Error updating tenant:', error);
         return res.status(500).json({ error: 'Failed to update tenant status and create account' });
     }
+};
+
+
+export const getBrandingSettings = async (req: Request, res: Response) => {
+  try {
+    const doc = await db.collection('settings').doc('branding').get();
+    if (!doc.exists) {
+      // Return defaults if not exist
+      return res.json({ siteName: 'MinReport', primaryColor: '#000000' });
+    }
+    res.json(doc.data());
+  } catch (error) {
+    console.error('Error getting branding settings:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+};
+
+export const updateBrandingSettings = async (req: Request, res: Response) => {
+  try {
+    await db.collection('settings').doc('branding').set(req.body, { merge: true });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error updating branding settings:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
 };

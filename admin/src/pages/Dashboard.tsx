@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getTenants, updateTenantStatus } from '../services/api';
-import { Check, X, Clock, Building2, GraduationCap, User, LogOut } from 'lucide-react';
+import { Check, X, Clock, LogOut } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ThemeSwitch } from '../components/ThemeSwitch';
@@ -48,20 +48,12 @@ export const Dashboard = () => {
         fetchTenants();
     }, []);
 
-    const handleAction = async (email: string, status: 'ACTIVE' | 'REJECTED') => {
+    const handleAction = async (id: string, status: 'ACTIVE' | 'REJECTED') => {
         try {
-            await updateTenantStatus(email, status);
-            setTenants(prev => prev.map(t => t.email === email ? { ...t, status } : t));
+            await updateTenantStatus(id, status);
+            setTenants(prev => prev.map(t => t.id === id ? { ...t, status } : t));
         } catch (error) {
             alert('Error updating status');
-        }
-    };
-
-    const getTypeIcon = (type: string) => {
-        switch (type) {
-            case 'ENTERPRISE': return <Building2 size={16} />;
-            case 'EDUCATIONAL': return <GraduationCap size={16} />;
-            default: return <User size={16} />;
         }
     };
 
@@ -105,11 +97,10 @@ export const Dashboard = () => {
                             <tr><td colSpan={6} className="px-6 py-10 text-center text-slate-500">{t('admin.no_pending')}</td></tr>
                         ) : tenants.map((tenant) => (
                             <tr key={tenant.id} className="hover:bg-slate-50/50 dark:hover:bg-white/5 transition-colors">
-                                <td className="px-6 py-4">
-                                    <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
-                                        {getTypeIcon(tenant.type)}
-                                        <span className="text-xs font-medium">{tenant.type}</span>
-                                    </div>
+                                <td className="px-6 py-4 text-center">
+                                    <span className="material-symbols-rounded text-slate-500" title={tenant.type}>
+                                        {tenant.type === 'ENTERPRISE' ? 'domain' : tenant.type === 'EDUCATIONAL' ? 'school' : 'person'}
+                                    </span>
                                 </td>
                                 <td className="px-6 py-4 font-medium text-slate-900 dark:text-slate-100">
                                     {tenant.company_name || tenant.institution_name || tenant.full_name}
@@ -137,14 +128,14 @@ export const Dashboard = () => {
                                     {tenant.status === 'PENDING_APPROVAL' && (
                                         <div className="flex justify-end gap-2">
                                             <button
-                                                onClick={() => handleAction(tenant.email, 'ACTIVE')}
+                                                onClick={() => handleAction(tenant.id, 'ACTIVE')}
                                                 className="p-1.5 rounded-md text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
                                                 title="Aprobar"
                                             >
                                                 <Check size={18} />
                                             </button>
                                             <button
-                                                onClick={() => handleAction(tenant.email, 'REJECTED')}
+                                                onClick={() => handleAction(tenant.id, 'REJECTED')}
                                                 className="p-1.5 rounded-md text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors"
                                                 title="Rechazar"
                                             >
