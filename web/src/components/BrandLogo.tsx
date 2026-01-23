@@ -1,14 +1,32 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../firebase'; // Assuming firebase is initialized here
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 
-// A mock hook for theme context, replace with your actual theme implementation
-const useTheme = () => {
-    // Just an example, maybe your theme is stored in localStorage or a context
-    const [theme, setTheme] = useState(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-    
+// Define more specific types for branding
+type LogoVariant = 'isotype' | 'logotype' | 'imagotype';
+
+interface Logos {
+    isotype?: string;
+    logotype?: string;
+    imagotype?: string;
+}
+
+interface BrandingConfig {
+    light: Logos;
+    dark: Logos;
+}
+
+// Custom hook to get the current theme ('light' or 'dark')
+const useTheme = (): 'light' | 'dark' => {
+    const [theme, setTheme] = useState<'light' | 'dark'>(() =>
+        window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+    );
+
     useEffect(() => {
         const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-        const handleChange = (e: MediaQueryListEvent) => setTheme(e.matches ? 'dark' : 'light');
+        const handleChange = (e: MediaQueryListEvent) => {
+            setTheme(e.matches ? 'dark' : 'light');
+        };
         mediaQuery.addEventListener('change', handleChange);
         return () => mediaQuery.removeEventListener('change', handleChange);
     }, []);
@@ -16,13 +34,7 @@ const useTheme = () => {
     return theme;
 };
 
-
-interface BrandingConfig {
-    light: { [key: string]: string };
-    dark: { [key: string]: string };
-}
-
-// A mock hook for fetching branding, replace with your actual data fetching logic (e.g., React Query, SWR)
+// Custom hook for fetching branding configuration from Firestore
 const useBranding = () => {
     const [branding, setBranding] = useState<BrandingConfig | null>(null);
     const [loading, setLoading] = useState(true);
@@ -30,9 +42,12 @@ const useBranding = () => {
     useEffect(() => {
         const fetchBranding = async () => {
             try {
-                const docRef = db.collection('settings').doc('branding');
-                const docSnap = await docRef.get();
-                if (docSnap.exists) {
+                // Use modular Firestore SDK (v9+)
+                const docRef = doc(db, 'settings', 'branding');
+                const docSnap = await getDoc(docRef);
+
+                if (docSnap.exists()) {
+                    // The improved interfaces will help TypeScript catch errors downstream.
                     setBranding(docSnap.data() as BrandingConfig);
                 } else {
                     console.warn("Branding settings not found in Firestore.");
@@ -51,7 +66,7 @@ const useBranding = () => {
 };
 
 interface BrandLogoProps {
-    variant?: 'isotype' | 'logotype' | 'imagotype';
+    variant?: LogoVariant;
     className?: string;
 }
 
@@ -63,10 +78,11 @@ const BrandLogo: React.FC<BrandLogoProps> = ({ variant = 'imagotype', className 
         return <div className={`animate-pulse bg-gray-300 dark:bg-gray-700 rounded ${className || 'w-32 h-8'}`}></div>;
     }
 
+    // Safely access the logo URL with optional chaining and correct typing
     const logoUrl = branding?.[theme]?.[variant];
 
     if (!logoUrl) {
-        // Fallback to a text representation or a default static logo if not configured
+        // Fallback to a default view if the logo is not available
         return (
             <div className={className}>
                 <span className="text-lg font-bold text-gray-800 dark:text-white">MINREPORT</span>
