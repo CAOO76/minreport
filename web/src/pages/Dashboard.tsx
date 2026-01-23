@@ -3,13 +3,31 @@ import { auth } from '../firebase';
 import { signOut } from 'firebase/auth';
 import { useTranslation } from 'react-i18next';
 import { LogOut, LayoutDashboard, Building2, User } from 'lucide-react';
-import { ThemeSwitch } from './Register'; // Re-using existing components
+import { ThemeSwitch } from '../components/ThemeSwitch'; // Re-using existing components
 import { LanguageSwitch } from '../components/LanguageSwitch';
+import { useEffect, useState } from 'react';
 
 export const Dashboard = () => {
     const { t } = useTranslation();
     const navigate = useNavigate();
     const user = auth.currentUser;
+    const [userType, setUserType] = useState<string | null>(null);
+
+    useEffect(() => {
+        const fetchUserType = async () => {
+            if (user) {
+                try {
+                    const idTokenResult = await user.getIdTokenResult();
+                    if (idTokenResult.claims.type) {
+                        setUserType(idTokenResult.claims.type as string);
+                    }
+                } catch (error) {
+                    console.error("Error fetching user's custom claims:", error);
+                }
+            }
+        };
+        fetchUserType();
+    }, [user]);
 
     const handleLogout = async () => {
         await signOut(auth);
@@ -46,9 +64,14 @@ export const Dashboard = () => {
             {/* Main Content */}
             <main className="max-w-7xl mx-auto p-8">
                 <header className="mb-10">
-                    <h1 className="text-3xl font-bold text-slate-900 dark:text-white">
-                        {t('dashboard.welcome', '¡Hola de nuevo!')}
-                    </h1>
+                    <div className="flex items-center gap-3">
+                        <span className="material-symbols-rounded text-4xl text-primary">
+                            {userType === 'ENTERPRISE' ? 'domain' : userType === 'EDUCATIONAL' ? 'school' : 'person'}
+                        </span>
+                        <h1 className="text-3xl font-bold text-slate-900 dark:text-white">
+                            {t('dashboard.welcome', '¡Hola de nuevo!')}
+                        </h1>
+                    </div>
                     <p className="text-slate-500 mt-1">{user?.email}</p>
                 </header>
 
