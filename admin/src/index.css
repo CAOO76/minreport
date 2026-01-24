@@ -14,7 +14,7 @@
 }
 
 ::-webkit-scrollbar-track {
-    @apply bg-surface-light dark:bg-surface-dark;
+    @apply bg-antigravity-light-surface dark:bg-antigravity-dark-surface;
 }
 
 ::-webkit-scrollbar-thumb {

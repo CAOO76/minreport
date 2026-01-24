@@ -1,30 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useTheme } from '../context/ThemeContext';
 
 export const ThemeSwitch = () => {
-    const [theme, setTheme] = useState(
-        localStorage.getItem('theme') || 'light'
-    );
-
-    useEffect(() => {
-        if (theme === 'dark') {
-            document.documentElement.classList.add('dark');
-        } else {
-            document.documentElement.classList.remove('dark');
-        }
-        localStorage.setItem('theme', theme);
-    }, [theme]);
-
-    const toggleTheme = () => {
-        setTheme(theme === 'light' ? 'dark' : 'light');
-    };
+    const { theme, toggleTheme } = useTheme();
 
     return (
         <button
             onClick={toggleTheme}
-            className="p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+            className="p-2 rounded-xl text-slate-500 hover:text-antigravity-accent hover:bg-antigravity-accent/5 dark:hover:bg-antigravity-accent/10 transition-colors border border-transparent hover:border-antigravity-accent/20 bg-white/50 dark:bg-black/20 backdrop-blur-sm"
             aria-label="Toggle Theme"
         >
-            <span className="material-symbols-rounded text-2xl">
+            <span className="material-symbols-rounded text-xl block">
                 {theme === 'light' ? 'light_mode' : 'dark_mode'}
             </span>
         </button>

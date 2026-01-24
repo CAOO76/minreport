@@ -13,9 +13,9 @@ export const LanguageSwitch = () => {
     return (
         <button
             onClick={toggleLanguage}
-            className="text-xs font-bold px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all active:scale-95 text-slate-600 dark:text-slate-400"
+            className="text-[10px] font-bold px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 text-slate-500 hover:text-antigravity-accent hover:border-antigravity-accent/30 transition-all uppercase tracking-widest bg-white/50 dark:bg-black/20 backdrop-blur-sm"
         >
-            {i18n.language.toUpperCase().split('-')[0]} | {i18n.language.toUpperCase().split('-')[0] === 'ES' ? 'PT' : (i18n.language.toUpperCase().split('-')[0] === 'EN' ? 'ES' : 'EN')}
+            {(i18n.language || 'es').startsWith('es') ? 'ES | EN' : (i18n.language.startsWith('en') ? 'EN | PT' : 'PT | ES')}
         </button>
     );
 };

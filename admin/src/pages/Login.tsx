@@ -32,19 +32,19 @@ export const Login = () => {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center p-6 bg-surface-light dark:bg-surface-dark transition-colors relative overflow-hidden">
+        <div className="min-h-screen flex items-center justify-center p-6 bg-antigravity-light-bg dark:bg-antigravity-dark-bg transition-colors relative overflow-hidden">
             <div className="absolute top-6 right-6 flex items-center gap-3 z-50">
                 <LanguageSwitch />
                 <ThemeSwitch />
             </div>
 
             {/* Background Decorative Element */}
-            <div className="absolute -top-24 -right-24 w-96 h-96 bg-primary/5 rounded-full blur-3xl" />
-            <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-indigo-500/5 rounded-full blur-3xl" />
+            <div className="absolute -top-24 -right-24 w-96 h-96 bg-antigravity-accent/5 rounded-full blur-3xl" />
+            <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-antigravity-accent/5 rounded-full blur-3xl" />
 
             <div className="w-full max-w-[400px] relative">
                 <div className="mb-12 text-center">
-                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white dark:bg-white/5 shadow-xl shadow-primary/10 border border-slate-100 dark:border-white/10 text-primary mb-6 transition-transform hover:scale-105 duration-300">
+                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white dark:bg-white/5 shadow-xl shadow-antigravity-accent/10 border border-slate-100 dark:border-white/10 text-antigravity-accent mb-6 transition-transform hover:scale-105 duration-300">
                         <ShieldAlert size={32} />
                     </div>
                     <h1 className="text-3xl font-bold text-slate-900 dark:text-white tracking-tight">{t('admin.title')}</h1>
@@ -62,7 +62,7 @@ export const Login = () => {
                                     onChange={(e) => setEmail(e.target.value)}
                                     placeholder="admin@minreport.com"
                                     required
-                                    className="w-full pl-4 pr-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-black/20 border border-slate-200 dark:border-white/5 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-slate-900 dark:text-white transition-all placeholder:text-slate-400"
+                                    className="w-full pl-4 pr-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-black/20 border border-slate-200 dark:border-white/5 focus:ring-2 focus:ring-antigravity-accent/20 focus:border-antigravity-accent outline-none text-slate-900 dark:text-white transition-all placeholder:text-slate-400"
                                     autoComplete="off"
                                 />
                             </div>
@@ -77,7 +77,7 @@ export const Login = () => {
                                     onChange={(e) => setPassword(e.target.value)}
                                     placeholder="••••••••"
                                     required
-                                    className="w-full pl-4 pr-11 py-3.5 rounded-2xl bg-slate-50 dark:bg-black/20 border border-slate-200 dark:border-white/5 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-slate-900 dark:text-white transition-all placeholder:text-slate-400"
+                                    className="w-full pl-4 pr-11 py-3.5 rounded-2xl bg-slate-50 dark:bg-black/20 border border-slate-200 dark:border-white/5 focus:ring-2 focus:ring-antigravity-accent/20 focus:border-antigravity-accent outline-none text-slate-900 dark:text-white transition-all placeholder:text-slate-400"
                                     autoComplete="off"
                                 />
                                 <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">
@@ -96,7 +96,7 @@ export const Login = () => {
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full py-4 px-6 rounded-2xl bg-primary hover:bg-primary-dark text-white font-bold transition-all flex items-center justify-center gap-3 shadow-xl shadow-primary/20 hover:shadow-primary/30 active:scale-[0.98] disabled:opacity-50 disabled:shadow-none"
+                            className="w-full py-4 px-6 rounded-2xl bg-antigravity-accent hover:bg-antigravity-accent/90 text-white font-bold transition-all flex items-center justify-center gap-3 shadow-xl shadow-antigravity-accent/20 hover:shadow-antigravity-accent/30 active:scale-[0.98] disabled:opacity-50 disabled:shadow-none"
                         >
                             {loading ? (
                                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />

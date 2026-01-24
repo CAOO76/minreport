@@ -36,24 +36,24 @@ export const Login = () => {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900 p-6">
+        <div className="min-h-screen flex items-center justify-center bg-antigravity-light-bg dark:bg-antigravity-dark-bg p-6 transition-colors">
             <div className="max-w-md w-full">
                 <div className="mb-10 text-center">
-                    <div className="w-16 h-16 bg-primary/10 text-primary rounded-2xl flex items-center justify-center mx-auto mb-6">
+                    <div className="w-16 h-16 bg-antigravity-accent/10 text-antigravity-accent rounded-2xl flex items-center justify-center mx-auto mb-6">
                         <LogIn size={32} />
                     </div>
-                    <h1 className="text-3xl font-bold text-slate-900 dark:text-white tracking-tight">
+                    <h1 className="text-3xl font-bold text-antigravity-light-text dark:text-antigravity-dark-text tracking-tight">
                         {t('auth.login_title', 'Iniciar Sesión')}
                     </h1>
-                    <p className="text-slate-500 dark:text-slate-400 mt-2 font-medium">
+                    <p className="text-antigravity-light-muted dark:text-antigravity-dark-muted mt-2 font-medium">
                         {t('auth.login_subtitle', 'Accede a tu cuenta de MINREPORT')}
                     </p>
                 </div>
 
-                <div className="bg-white dark:bg-slate-800 p-8 rounded-[32px] shadow-2xl shadow-slate-200/50 dark:shadow-none border border-slate-100 dark:border-slate-700/50">
+                <div className="bg-antigravity-light-surface dark:bg-antigravity-dark-surface p-8 rounded-[32px] shadow-sm border border-antigravity-light-border dark:border-antigravity-dark-border">
                     <form onSubmit={handleLogin} className="space-y-6">
                         <div className="space-y-1.5">
-                            <label className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest px-1">
+                            <label className="text-[11px] font-bold text-antigravity-light-muted dark:text-antigravity-dark-muted uppercase tracking-widest px-1">
                                 {t('form.email', 'Email')}
                             </label>
                             <div className="relative group">
@@ -61,12 +61,12 @@ export const Login = () => {
                                     type="email"
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
-                                    className="w-full pl-12 pr-5 py-4 rounded-2xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-slate-900 dark:text-white transition-all font-medium"
+                                    className="w-full pl-12 pr-5 py-4 rounded-2xl bg-antigravity-light-bg dark:bg-antigravity-dark-bg border border-antigravity-light-border dark:border-antigravity-dark-border focus:ring-2 focus:ring-antigravity-accent/20 focus:border-antigravity-accent outline-none text-antigravity-light-text dark:text-antigravity-dark-text transition-all font-medium"
                                     placeholder="nombre@ejemplo.com"
                                     required
                                     autoComplete="off"
                                 />
-                                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors">
+                                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-antigravity-light-muted group-focus-within:text-antigravity-accent transition-colors">
                                     <Mail size={18} />
                                 </div>
                             </div>
@@ -74,7 +74,7 @@ export const Login = () => {
 
                         <div className="space-y-1.5">
                             <div className="flex justify-between items-center px-1">
-                                <label className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
+                                <label className="text-[11px] font-bold text-antigravity-light-muted dark:text-antigravity-dark-muted uppercase tracking-widest">
                                     {t('form.password', 'Contraseña')}
                                 </label>
                             </div>
@@ -83,12 +83,12 @@ export const Login = () => {
                                     type="password"
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="w-full pl-12 pr-5 py-4 rounded-2xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-slate-900 dark:text-white transition-all font-medium"
+                                    className="w-full pl-12 pr-5 py-4 rounded-2xl bg-antigravity-light-bg dark:bg-antigravity-dark-bg border border-antigravity-light-border dark:border-antigravity-dark-border focus:ring-2 focus:ring-antigravity-accent/20 focus:border-antigravity-accent outline-none text-antigravity-light-text dark:text-antigravity-dark-text transition-all font-medium"
                                     placeholder="••••••••"
                                     required
                                     autoComplete="current-password"
                                 />
-                                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors">
+                                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-antigravity-light-muted group-focus-within:text-antigravity-accent transition-colors">
                                     <Lock size={18} />
                                 </div>
                             </div>
@@ -104,7 +104,7 @@ export const Login = () => {
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full py-4 bg-primary hover:bg-primary-dark text-white font-bold rounded-2xl transition-all shadow-lg shadow-primary/25 active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-3"
+                            className="w-full py-4 bg-antigravity-accent hover:bg-antigravity-accent/90 text-white font-bold rounded-2xl transition-all shadow-md active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-3"
                         >
                             {loading ? (
                                 <Loader2 className="w-5 h-5 animate-spin" />
@@ -117,10 +117,10 @@ export const Login = () => {
                         </button>
                     </form>
 
-                    <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-700/50 text-center">
-                        <p className="text-sm text-slate-500">
+                    <div className="mt-8 pt-6 border-t border-antigravity-light-border dark:border-antigravity-dark-border text-center">
+                        <p className="text-sm text-antigravity-light-muted dark:text-antigravity-dark-muted">
                             {t('auth.no_account', '¿No tienes cuenta?')}
-                            <Link to="/" className="ml-2 text-primary font-bold hover:underline">
+                            <Link to="/register" className="ml-2 text-antigravity-accent font-bold hover:underline">
                                 {t('auth.register_link', 'Regístrate aquí')}
                             </Link>
                         </p>

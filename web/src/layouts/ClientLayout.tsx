@@ -1,16 +1,22 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { useTheme } from '../context/ThemeContext';
-import { BrandLogo } from './BrandLogo';
-import { LanguageSwitch } from './LanguageSwitch';
+import BrandLogo from '../components/BrandLogo';
 
-export const AdminLayout = () => {
+import { LanguageSwitch } from '../components/LanguageSwitch';
+import { useTheme } from '../context/ThemeContext';
+import { signOut } from 'firebase/auth';
+import { auth } from '../firebase';
+
+const ClientLayout = () => {
     const { theme, toggleTheme } = useTheme();
     const navigate = useNavigate();
 
-    const handleLogout = () => {
-        localStorage.removeItem('admin_token');
-        localStorage.removeItem('admin_user');
-        navigate('/login');
+    const handleLogout = async () => {
+        try {
+            await signOut(auth);
+            navigate('/login');
+        } catch (error) {
+            console.error('Logout error:', error);
+        }
     };
 
     // Clases para los botones del menú (Iconos centrados)
@@ -21,9 +27,7 @@ export const AdminLayout = () => {
         }`;
 
     return (
-        // CONTENEDOR PRINCIPAL: Fondo Global Antigravity
-        <div className="min-h-screen bg-antigravity-light-bg dark:bg-antigravity-dark-bg transition-colors flex flex-col">
-
+        <div className="flex flex-col h-screen bg-antigravity-light-bg dark:bg-antigravity-dark-bg transition-colors">
             {/* 1. BARRA SUPERIOR (HEADER) - Ancho Completo */}
             <header className="h-16 bg-antigravity-light-surface dark:bg-antigravity-dark-surface border-b border-antigravity-light-border dark:border-antigravity-dark-border flex items-center justify-between px-6 sticky top-0 z-50">
                 {/* Izquierda: Marca */}
@@ -47,14 +51,16 @@ export const AdminLayout = () => {
                             {theme === 'dark' ? 'light_mode' : 'dark_mode'}
                         </span>
                     </button>
+
+                    {/* User Profile placeholder */}
+                    <div className="h-8 w-8 rounded-full bg-antigravity-light-border dark:bg-antigravity-dark-border ml-2"></div>
                 </div>
             </header>
 
             {/* 2. SECCIÓN INFERIOR (Sidebar + Escritorio) */}
             <div className="flex flex-1 overflow-hidden relative">
-
-                {/* SIDEBAR - Solo Iconos */}
-                <aside className="w-20 bg-antigravity-light-surface dark:bg-antigravity-dark-surface border-r border-antigravity-light-border dark:border-antigravity-dark-border flex flex-col items-center py-6 z-10">
+                {/* ICON-ONLY SIDEBAR (Left - Fixed width 80px / w-20) */}
+                <aside className="w-20 bg-antigravity-light-surface dark:bg-antigravity-dark-surface border-r border-antigravity-light-border dark:border-antigravity-dark-border flex flex-col items-center py-6 z-10 transition-colors">
 
                     {/* Isotipo en la parte superior */}
                     <div className="mb-6">
@@ -63,14 +69,8 @@ export const AdminLayout = () => {
 
                     {/* Navegación */}
                     <nav className="flex-1 flex flex-col gap-2">
-                        <NavLink to="/" className={navLinkClasses} title="Solicitudes">
-                            <span className="material-symbols-rounded text-2xl">inbox</span>
-                        </NavLink>
-                        <NavLink to="/branding" className={navLinkClasses} title="UI/UX">
-                            <span className="material-symbols-rounded text-2xl">palette</span>
-                        </NavLink>
-                        <NavLink to="/tenants" className={navLinkClasses} title="Tenants">
-                            <span className="material-symbols-rounded text-2xl">domain</span>
+                        <NavLink to="/" className={navLinkClasses} title="Dashboard">
+                            <span className="material-symbols-rounded text-2xl">dashboard</span>
                         </NavLink>
                     </nav>
 
@@ -85,10 +85,12 @@ export const AdminLayout = () => {
                 </aside>
 
                 {/* ESCRITORIO (Contenido Principal) */}
-                <main className="flex-1 overflow-auto p-8">
+                <main className="flex-1 overflow-auto p-8 relative">
                     <Outlet />
                 </main>
             </div>
         </div>
     );
 };
+
+export default ClientLayout;

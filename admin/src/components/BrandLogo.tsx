@@ -11,7 +11,7 @@ interface BrandLogoProps {
     forcedTheme?: 'light' | 'dark';
 }
 
-const BrandLogo: React.FC<BrandLogoProps> = ({ variant = 'imagotype', className, forcedTheme }) => {
+export const BrandLogo: React.FC<BrandLogoProps> = ({ variant = 'imagotype', className, forcedTheme }) => {
     const { theme: contextTheme } = useTheme();
     const { branding, loading } = useBranding();
     const theme = forcedTheme || contextTheme;
@@ -33,7 +33,7 @@ const BrandLogo: React.FC<BrandLogoProps> = ({ variant = 'imagotype', className,
     return (
         <img
             src={logoUrl}
-            key={logoUrl}
+            key={logoUrl} // Key addition to force reload if only URL changes (though shouldn't happen often)
             alt={`${variant} logo`}
             className={`object-contain ${className || ''}`}
         />

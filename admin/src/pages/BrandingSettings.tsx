@@ -81,7 +81,7 @@ const BrandingSection: React.FC<{
             onFileChange(type, file);
         } else {
             onFileChange(type, null);
-            if(file) alert('Only .png files are accepted.');
+            if (file) alert('Only .png files are accepted.');
         }
     };
 
@@ -98,7 +98,7 @@ const BrandingSection: React.FC<{
                             type="file"
                             accept=".png"
                             onChange={(e) => handleFileChange(e, type)}
-                            className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-violet-50 file:text-violet-700 hover:file:bg-violet-100"
+                            className="block w-full text-sm text-antigravity-light-muted dark:text-antigravity-dark-muted file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-antigravity-light-bg dark:file:bg-antigravity-dark-bg file:text-antigravity-light-text dark:file:text-antigravity-dark-text hover:file:bg-antigravity-light-border dark:hover:file:bg-antigravity-dark-border file:transition-colors"
                         />
                         <BrandingPreview
                             file={files[type] || null}
@@ -189,7 +189,7 @@ export const BrandingSettings: React.FC = () => {
     if (isLoading) {
         return <div className="p-8">Loading settings...</div>;
     }
-    
+
     if (!settings) {
         return <div className="p-8">Could not load branding settings.</div>;
     }
@@ -197,7 +197,7 @@ export const BrandingSettings: React.FC = () => {
     return (
         <div className="p-8 space-y-8">
             <h2 className="text-3xl font-extrabold text-gray-900 dark:text-white">Branding &amp; Appearance</h2>
-            
+
             <BrandingSection
                 title="Light Mode Assets"
                 mode="dark" // Dark background for light theme assets
@@ -205,7 +205,7 @@ export const BrandingSettings: React.FC = () => {
                 onFileChange={handleFileChange('light')}
                 existingUrls={settings.light}
             />
-            
+
             <BrandingSection
                 title="Dark Mode Assets"
                 mode="light" // Light background for dark theme assets
@@ -218,7 +218,7 @@ export const BrandingSettings: React.FC = () => {
                 <button
                     onClick={handleSaveChanges}
                     disabled={isSaving}
-                    className="px-6 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                    className="px-6 py-3 bg-antigravity-accent text-white font-semibold rounded-lg shadow-md hover:bg-antigravity-accent/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-antigravity-accent disabled:opacity-50"
                 >
                     {isSaving ? 'Saving...' : 'Save Changes'}
                 </button>

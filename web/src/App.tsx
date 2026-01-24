@@ -6,6 +6,9 @@ import { Register } from './pages/Register';
 import { SetPassword } from './pages/SetPassword';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
+import { BrandingProvider } from './context/BrandingContext';
+import { ThemeProvider } from './context/ThemeContext';
+import ClientLayout from './layouts/ClientLayout';
 
 function App() {
     const [user, setUser] = useState<User | null>(null);
@@ -22,21 +25,30 @@ function App() {
     if (loading) return null;
 
     return (
-        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-            <Routes>
-                {/* Public / Auth Routes */}
-                <Route path="/" element={user ? <Navigate to="/dashboard" /> : <Register />} />
-                <Route path="/login" element={user ? <Navigate to="/dashboard" /> : <Login />} />
-                <Route path="/auth/action" element={<SetPassword />} />
+        <ThemeProvider>
+            <BrandingProvider>
+                <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+                    <Routes>
+                        {/* Public / Auth Routes */}
+                        <Route path="/login" element={user ? <Navigate to="/dashboard" /> : <Login />} />
+                        <Route path="/register" element={user ? <Navigate to="/dashboard" /> : <Register />} />
+                        <Route path="/auth/action" element={<SetPassword />} />
+                        
+                        {/* Protected Routes with Layout */}
+                        <Route element={user ? <ClientLayout /> : <Navigate to="/login" replace />}>
+                            <Route path="/dashboard" element={<Dashboard />} />
+                        </Route>
 
-                {/* Protected Routes */}
-                <Route path="/dashboard" element={user ? <Dashboard /> : <Navigate to="/login" />} />
-
-                {/* Fallback */}
-                <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-        </BrowserRouter>
+                        {/* Root and Fallback */}
+                        <Route path="/" element={<Navigate to={user ? "/dashboard" : "/login"} replace />} />
+                        <Route path="*" element={<Navigate to={user ? "/dashboard" : "/login"} replace />} />
+                    </Routes>
+                </BrowserRouter>
+            </BrandingProvider>
+        </ThemeProvider>
     );
 }
 
 export default App;
+
+

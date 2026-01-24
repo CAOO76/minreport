@@ -1,10 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getTenants, updateTenantStatus } from '../services/api';
-import { Check, X, Clock, LogOut } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Check, X, Clock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { ThemeSwitch } from '../components/ThemeSwitch';
-import { LanguageSwitch } from '../components/LanguageSwitch';
 import clsx from 'clsx';
 
 interface Tenant {
@@ -24,13 +21,6 @@ export const Dashboard = () => {
     const { t } = useTranslation();
     const [tenants, setTenants] = useState<Tenant[]>([]);
     const [loading, setLoading] = useState(true);
-    const navigate = useNavigate();
-
-    const handleLogout = () => {
-        localStorage.removeItem('admin_token');
-        localStorage.removeItem('admin_user');
-        navigate('/login');
-    };
 
     const fetchTenants = async () => {
         try {
@@ -59,26 +49,12 @@ export const Dashboard = () => {
 
     return (
         <div className="p-8 max-w-7xl mx-auto">
-            <header className="mb-10 flex justify-between items-center">
-                <div>
-                    <h1 className="text-3xl font-bold text-slate-900 dark:text-white">{t('admin.inbox_title')}</h1>
-                    <p className="text-slate-500 mt-1">{t('admin.inbox_subtitle')}</p>
-                </div>
-                <div className="flex items-center gap-4">
-                    <LanguageSwitch />
-                    <ThemeSwitch />
-                    <div className="w-px h-6 bg-slate-200 dark:bg-white/10 mx-1" />
-                    <button
-                        onClick={handleLogout}
-                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/10 transition-all font-medium text-sm border border-transparent hover:border-rose-100 dark:hover:border-rose-900/30"
-                    >
-                        <LogOut size={18} />
-                        {t('admin.logout')}
-                    </button>
-                </div>
+            <header className="mb-10">
+                <h1 className="text-3xl font-bold text-slate-900 dark:text-white">{t('admin.inbox_title')}</h1>
+                <p className="text-slate-500 mt-1">{t('admin.inbox_subtitle')}</p>
             </header>
 
-            <div className="bg-surface-card-light dark:bg-surface-card-dark border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
+            <div className="bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-antigravity-light-border dark:border-antigravity-dark-border rounded-xl overflow-hidden shadow-sm">
                 <table className="w-full text-left border-collapse">
                     <thead>
                         <tr className="bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-800">
