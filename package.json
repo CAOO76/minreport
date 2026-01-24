@@ -10,7 +10,7 @@
     "build:functions": "npm install --prefix services/functions && npm run build --prefix services/functions",
     "serve:emulators": "firebase emulators:start --import=./data --export-on-exit",
     "dev:all": "npm run build:functions && npx concurrently --kill-others \"npm run serve:emulators\" \"npm run dev\" \"npm run dev --prefix web\" \"npm run dev --prefix admin\"",
-    "backup": "git add . && git commit -m \"Auto-save\" && git push"
+    "backup": "bash -c 'git add . && git commit -m \"${1:-Auto-save}\" && git push' --"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -29,7 +29,7 @@
     "concurrently": "^9.2.1",
     "nodemon": "^3.0.3",
     "ts-node": "^10.9.2",
-    "typescript": "^5.3.3"
+    "typescript": "^5.6.3"
   },
   "engines": {
     "node": ">=18.0.0"

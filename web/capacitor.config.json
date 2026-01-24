@@ -1,0 +1,30 @@
+{
+    "appId": "com.minreport.app",
+    "appName": "MinReport",
+    "webDir": "dist",
+    "server": {
+        "androidScheme": "http",
+        "allowNavigation": [
+            "192.168.1.82",
+            "192.168.1.82:*",
+            "http://192.168.1.82:*",
+            "10.0.2.2",
+            "10.0.2.2:*",
+            "http://10.0.2.2:*",
+            "localhost"
+        ]
+    },
+    "plugins": {
+        "Camera": {
+            "permissions": [
+                "camera",
+                "photos"
+            ]
+        },
+        "Geolocation": {
+            "permissions": [
+                "location"
+            ]
+        }
+    }
+}

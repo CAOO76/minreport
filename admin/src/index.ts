@@ -9,7 +9,7 @@ import { Resend } from 'resend';
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 8080; // Cloud Run requiere puerto 8080 por defecto
+const PORT = process.env.PORT || 8081; // Usamos 8081 para evitar conflicto con el Core Backend (8080)
 
 // ----------------------------------------------------
 // 1. Middlewares de Seguridad y Configuración
@@ -65,7 +65,8 @@ app.post('/api/send-alert', async (req: Request, res: Response) => {
 // ----------------------------------------------------
 // 3. Iniciar Servidor
 // ----------------------------------------------------
-app.listen(PORT, () => {
-    console.log(`\n📡 MinReport Backend listening on port ${PORT}`);
+app.listen(Number(PORT), '0.0.0.0', () => {
+    console.log(`\n📡 MinReport Admin Backend listening on port ${PORT}`);
+    console.log(`   Host: 0.0.0.0 (Aceptando conexiones externas)`);
     console.log(`   Env: ${process.env.NODE_ENV || 'development'}`);
 });

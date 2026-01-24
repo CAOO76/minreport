@@ -11,8 +11,13 @@ import { requireSuperAdmin } from './middleware/admin';
 const app = express();
 
 // Middleware
-app.use(helmet());
-app.use(cors({ origin: true })); // Allow all origins for now, strict later
+app.use(helmet({ contentSecurityPolicy: false })); // Deshabilitar CSP en dev para facilitar emuladores
+app.use(cors({
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}));
 app.use(express.json());
 
 // Header Security for Cloud Run
@@ -44,5 +49,6 @@ app.put('/api/admin/settings/branding', requireSuperAdmin, updateBrandingSetting
 const port = parseInt(env.PORT, 10);
 app.listen(port, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${port}`);
-    console.log(`🌍 Environment: ${env.NODE_ENV}`);
+    console.log(`📡 Host: 0.0.0.0 (¡Acceso Móvil Habilitado!)`);
+    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
 });

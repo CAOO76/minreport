@@ -1,4 +1,13 @@
-const API_URL = 'http://localhost:8080/api';
+import { Capacitor } from '@capacitor/core';
+
+// Dirección adaptativa: 10.0.2.2 para emulador, IP real para celular físico, localhost para web
+const MI_IP_IMAC = "192.168.1.82";
+const isEmulator = /sdk|emulator|google/i.test(navigator.userAgent);
+const host = Capacitor.isNativePlatform()
+    ? (isEmulator ? "10.0.2.2" : MI_IP_IMAC)
+    : (location.hostname === MI_IP_IMAC ? MI_IP_IMAC : "localhost");
+
+const API_URL = `http://${host}:8080/api`;
 
 export interface RegisterData {
     email: string;
