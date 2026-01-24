@@ -3,7 +3,8 @@ import { useNavigate, Link } from 'react-router-dom';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../config/firebase';
 import { useTranslation } from 'react-i18next';
-import { Mail, Lock, LogIn, AlertCircle, Loader2, ArrowRight } from 'lucide-react';
+import { Mail, Lock, LogIn, AlertCircle, Loader2, ArrowRight, ShieldAlert } from 'lucide-react';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 export const Login = () => {
     const { t } = useTranslation();
@@ -11,6 +12,7 @@ export const Login = () => {
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const isMobile = useIsMobile();
     const navigate = useNavigate();
 
     const handleLogin = async (e: React.FormEvent) => {
@@ -118,12 +120,22 @@ export const Login = () => {
                     </form>
 
                     <div className="mt-8 pt-6 border-t border-antigravity-light-border dark:border-antigravity-dark-border text-center">
-                        <p className="text-sm text-antigravity-light-muted dark:text-antigravity-dark-muted">
-                            {t('auth.no_account', '¿No tienes cuenta?')}
-                            <Link to="/register" className="ml-2 text-antigravity-accent font-bold hover:underline">
-                                {t('auth.register_link', 'Regístrate aquí')}
-                            </Link>
-                        </p>
+                        {isMobile ? (
+                            <div className="flex flex-col items-center gap-2 px-4">
+                                <ShieldAlert size={20} className="text-antigravity-accent opacity-80" />
+                                <p className="text-xs font-medium text-antigravity-light-muted dark:text-antigravity-dark-muted leading-relaxed">
+                                    El acceso móvil está restringido a cuentas activas.<br />
+                                    Para nuevos registros, contacte con su administrador.
+                                </p>
+                            </div>
+                        ) : (
+                            <p className="text-sm text-antigravity-light-muted dark:text-antigravity-dark-muted">
+                                {t('auth.no_account', '¿No tienes cuenta?')}
+                                <Link to="/register" className="ml-2 text-antigravity-accent font-bold hover:underline">
+                                    {t('auth.register_link', 'Regístrate aquí')}
+                                </Link>
+                            </p>
+                        )}
                     </div>
                 </div>
             </div>

@@ -50,3 +50,14 @@ if (location.hostname === "localhost" || location.hostname === "127.0.0.1") {
     console.log("   - Firestore: 127.0.0.1:8085");
     console.log("   - Storage: http://127.0.0.1:9195");
 }
+
+// Request persistent storage (Critical for Offline-First)
+if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().then((persistent) => {
+        if (persistent) {
+            console.log("💎 [STORAGE] Persistencia concedida. Los datos están protegidos.");
+        } else {
+            console.log("⚠️ [STORAGE] Persistencia denegada. El navegador podría borrar datos localmente.");
+        }
+    });
+}

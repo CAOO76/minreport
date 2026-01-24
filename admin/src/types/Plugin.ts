@@ -14,5 +14,6 @@ export interface PluginManifest {
 export interface PluginProps {
     user: any;
     theme: 'light' | 'dark';
+    platform: 'desktop' | 'mobile';
     api: any;
 }

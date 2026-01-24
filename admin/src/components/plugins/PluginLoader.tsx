@@ -32,7 +32,8 @@ export const PluginLoader: React.FC<PluginLoaderProps> = ({ plugin, hostProps })
             if (win.MINREPORT_PLUGINS?.[plugin.id]?.init) {
                 const container = document.getElementById(`plugin-container-${plugin.id}`);
                 if (container) {
-                    win.MINREPORT_PLUGINS[plugin.id].init(container, hostProps);
+                    const platform = window.innerWidth < 768 ? 'mobile' : 'desktop';
+                    win.MINREPORT_PLUGINS[plugin.id].init(container, { ...hostProps, platform });
                 }
             }
         };
