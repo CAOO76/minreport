@@ -9,7 +9,8 @@
     "start": "node dist/index.js",
     "build:functions": "npm install --prefix services/functions && npm run build --prefix services/functions",
     "serve:emulators": "firebase emulators:start --import=./data --export-on-exit",
-    "dev:all": "npm run build:functions && npx concurrently --kill-others \"npm run serve:emulators\" \"npm run dev\" \"npm run dev --prefix web\" \"npm run dev --prefix admin\""
+    "dev:all": "npm run build:functions && npx concurrently --kill-others \"npm run serve:emulators\" \"npm run dev\" \"npm run dev --prefix web\" \"npm run dev --prefix admin\"",
+    "backup": "git add . && git commit -m \"Auto-save\" && git push"
   },
   "dependencies": {
     "cors": "^2.8.5",

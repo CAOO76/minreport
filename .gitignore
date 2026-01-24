@@ -43,3 +43,5 @@ data/
 *.njsproj
 *.sln
 *.sw?
+.env
+service-account-key.json

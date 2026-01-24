@@ -1,6 +1,11 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, connectAuthEmulator } from "firebase/auth";
-import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
+import {
+    initializeFirestore,
+    connectFirestoreEmulator,
+    persistentLocalCache,
+    persistentMultipleTabManager
+} from "firebase/firestore";
 import { getStorage, connectStorageEmulator } from "firebase/storage";
 
 // Your web app's Firebase configuration
@@ -18,7 +23,14 @@ console.log('Firebase Config Debug:', firebaseConfig);
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+
+// Initialize Firestore with Persistence
+export const db = initializeFirestore(app, {
+    localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager()
+    })
+});
+
 export const storage = getStorage(app);
 
 // Connect to Emulators if in localhost
@@ -30,7 +42,7 @@ if (location.hostname === "localhost" || location.hostname === "127.0.0.1") {
 
     // Firestore Emulator
     connectFirestoreEmulator(db, '127.0.0.1', 8085);
-    
+
     // Storage Emulator
     connectStorageEmulator(storage, '127.0.0.1', 9195);
 

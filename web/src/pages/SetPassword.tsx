@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { confirmPasswordReset, verifyPasswordResetCode } from 'firebase/auth';
-import { auth } from '../firebase';
+import { auth } from '../config/firebase';
 import { useTranslation } from 'react-i18next';
 import { KeyRound, ShieldCheck, AlertCircle, Eye, EyeOff, Loader2 } from 'lucide-react';
 

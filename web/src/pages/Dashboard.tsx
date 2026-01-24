@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { Building2, User } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { auth } from '../firebase';
+import { auth } from '../config/firebase';
 
 export const Dashboard = () => {
     const { t } = useTranslation();

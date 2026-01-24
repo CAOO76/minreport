@@ -4,6 +4,7 @@ import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
 import { getStorage, connectStorageEmulator } from "firebase/storage";
 
 // Your web app's Firebase configuration
+// Note: envDir is '..' in vite.config.ts, so it reads from root .env
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
     authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -13,8 +14,6 @@ const firebaseConfig = {
     appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
-console.log('Firebase Config Debug:', firebaseConfig);
-
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
@@ -22,19 +21,15 @@ export const db = getFirestore(app);
 export const storage = getStorage(app);
 
 // Connect to Emulators if in localhost
-if (location.hostname === "localhost" || location.hostname === "127.0.0.1") {
-    console.log("🔧 [FRONTEND] Localhost detected - Connecting to Emulators");
+if (typeof window !== 'undefined' && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
+    console.log("🔧 [ADMIN] Localhost detected - Connecting to Emulators");
 
     // Auth Emulator
     connectAuthEmulator(auth, "http://127.0.0.1:9190");
 
     // Firestore Emulator
     connectFirestoreEmulator(db, '127.0.0.1', 8085);
-    
+
     // Storage Emulator
     connectStorageEmulator(storage, '127.0.0.1', 9195);
-
-    console.log("   - Auth: http://127.0.0.1:9190");
-    console.log("   - Firestore: 127.0.0.1:8085");
-    console.log("   - Storage: http://127.0.0.1:9195");
 }

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { getBrandingSettings, updateBrandingSettings } from '../services/api';
-import { storage } from '../firebase';
+import { storage } from '../config/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 interface LogoSet {

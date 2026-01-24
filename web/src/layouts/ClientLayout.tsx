@@ -4,7 +4,7 @@ import BrandLogo from '../components/BrandLogo';
 import { LanguageSwitch } from '../components/LanguageSwitch';
 import { useTheme } from '../context/ThemeContext';
 import { signOut } from 'firebase/auth';
-import { auth } from '../firebase';
+import { auth } from '../config/firebase';
 
 const ClientLayout = () => {
     const { theme, toggleTheme } = useTheme();
