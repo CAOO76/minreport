@@ -36,9 +36,9 @@ export const SDKButton: React.FC<SDKButtonProps> = ({
     variant = 'primary',
     fullWidth = false,
     children,
-    style,
+    style = {},
     ...props
-}) => {
+}: SDKButtonProps) => {
     let backgroundColor = TOKENS.primary;
     let color = TOKENS.background;
     let border = `1px solid ${TOKENS.primary}`;
@@ -95,7 +95,12 @@ interface SDKCardProps {
     style?: React.CSSProperties;
 }
 
-export const SDKCard: React.FC<SDKCardProps> = ({ title, action, children, style }) => {
+export const SDKCard: React.FC<SDKCardProps> = ({
+    title,
+    action,
+    children,
+    style = {}
+}: SDKCardProps) => {
     const cardStyle: React.CSSProperties = {
         backgroundColor: TOKENS.background,
         border: `1px solid ${TOKENS.border}`,
@@ -130,7 +135,11 @@ interface SDKInputProps extends React.InputHTMLAttributes<HTMLInputElement> {
     label?: string;
 }
 
-export const SDKInput: React.FC<SDKInputProps> = ({ label, style, ...props }) => {
+export const SDKInput: React.FC<SDKInputProps> = ({
+    label,
+    style = {},
+    ...props
+}: SDKInputProps) => {
     const containerStyle: React.CSSProperties = {
         display: 'flex',
         flexDirection: 'column',

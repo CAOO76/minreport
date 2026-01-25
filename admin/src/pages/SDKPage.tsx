@@ -9,19 +9,19 @@ export const SDKPage = () => {
             title: 'SDK Core',
             icon: <Library className="text-antigravity-accent" size={24} />,
             description: 'Motor de registro y gestión de ciclo de vida de plugins.',
-            path: 'src/sdk/core'
+            path: 'sdk/core'
         },
         {
             title: 'Data Layer',
             icon: <Layers className="text-antigravity-accent" size={24} />,
             description: 'Shared Entity Pattern para manipulación segura de Firestore.',
-            path: 'src/sdk/data'
+            path: 'sdk/data'
         },
         {
             title: 'UI Kit',
             icon: <Code className="text-antigravity-accent" size={24} />,
             description: 'Componentes con herencia visual estricta (Atkinson Hyperlegible).',
-            path: 'src/sdk/ui'
+            path: 'sdk/ui'
         }
     ];
 
