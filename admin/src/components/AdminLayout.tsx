@@ -78,6 +78,9 @@ export const AdminLayout = () => {
                         <NavLink to="/plugins" className={navLinkClasses} title="Plugins">
                             <span className="material-symbols-rounded text-2xl">extension</span>
                         </NavLink>
+                        <NavLink to="/sdk" className={navLinkClasses} title="Descargar SDK">
+                            <span className="material-symbols-rounded text-2xl">sdk</span>
+                        </NavLink>
                     </nav>
 
                     {/* Botón Salir */}

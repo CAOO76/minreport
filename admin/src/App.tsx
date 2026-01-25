@@ -5,6 +5,7 @@ import { AuthGuard } from './components/AuthGuard';
 import { BrandingSettings } from './pages/BrandingSettings';
 import { PluginsPage } from './pages/PluginsPage';
 import { UsersPage } from './pages/UsersPage';
+import { SDKPage } from './pages/SDKPage';
 import { AdminLayout } from './components/AdminLayout';
 import { ThemeProvider } from './context/ThemeContext';
 import { BrandingProvider } from './context/BrandingContext';
@@ -25,6 +26,7 @@ function App() {
                                 <Route path="/tenants" element={<div>Tenants Page</div>} />
                                 <Route path="/plugins" element={<PluginsPage />} />
                                 <Route path="/branding" element={<BrandingSettings />} />
+                                <Route path="/sdk" element={<SDKPage />} />
                             </Route>
                         </Routes>
                     </div>
