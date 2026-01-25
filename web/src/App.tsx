@@ -6,6 +6,7 @@ import { Register } from './pages/Register';
 import { SetPassword } from './pages/SetPassword';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
+import { ClientPluginsPage } from './pages/ClientPluginsPage';
 import { BrandingProvider } from './context/BrandingContext';
 import { ThemeProvider } from './context/ThemeContext';
 import ClientLayout from './layouts/ClientLayout';
@@ -43,6 +44,7 @@ function App() {
                         {/* Protected Routes with Layout */}
                         <Route element={user ? <ProtectedLayout /> : <Navigate to="/login" replace />}>
                             <Route path="/dashboard" element={<Dashboard />} />
+                            <Route path="/plugins" element={<ClientPluginsPage />} />
                             {/* Mobile specific routes could be added here if needed */}
                             <Route path="/capture" element={<div>Capture View (Not implemented)</div>} />
                             <Route path="/menu" element={<div>Menu View (Not implemented)</div>} />

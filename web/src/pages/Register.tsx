@@ -95,7 +95,7 @@ export const Register = () => {
                 usage_profile: formData.usage_profile,
             });
         }
-        
+
         if (Object.values(requiredFields).some(val => !val)) {
             setError('Todos los campos son obligatorios');
             return;
@@ -165,7 +165,7 @@ export const Register = () => {
 
     const renderInput = (label: string, name: string, type = 'text', placeholder = '', required = true) => (
         <div className="flex flex-col gap-1">
-            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{label}</label>
+            <label className="text-xs font-semibold text-antigravity-light-muted dark:text-antigravity-dark-muted uppercase tracking-wider">{label}</label>
             <input
                 type={type}
                 name={name}
@@ -174,9 +174,9 @@ export const Register = () => {
                 placeholder={placeholder}
                 required={required}
                 className={clsx(
-                    "w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700",
-                    "focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all",
-                    "text-slate-900 dark:text-slate-100 placeholder-slate-400"
+                    "w-full px-4 py-2 rounded-md bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-slate-700",
+                    "focus:outline-none focus:border-antigravity-accent focus:ring-1 focus:ring-antigravity-accent transition-all",
+                    "text-antigravity-light-text dark:text-antigravity-dark-text placeholder-slate-400"
                 )}
                 autoComplete="off"
             />
@@ -185,19 +185,19 @@ export const Register = () => {
 
     const renderSelect = (label: string, name: string, options: { value: string, label: string }[]) => (
         <div className="flex flex-col gap-1">
-            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{label}</label>
+            <label className="text-xs font-semibold text-antigravity-light-muted dark:text-antigravity-dark-muted uppercase tracking-wider">{label}</label>
             <select
                 name={name}
                 value={(formData as any)[name]}
                 onChange={handleChange}
                 className={clsx(
-                    "w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700",
-                    "focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all",
-                    "text-slate-900 dark:text-slate-100"
+                    "w-full px-4 py-2 rounded-md bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-slate-700",
+                    "focus:outline-none focus:border-antigravity-accent focus:ring-1 focus:ring-antigravity-accent transition-all",
+                    "text-antigravity-light-text dark:text-antigravity-dark-text"
                 )}
             >
                 {options.map(opt => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    <option key={opt.value} value={opt.value} className="bg-white dark:bg-slate-900">{opt.label}</option>
                 ))}
             </select>
         </div>
@@ -206,37 +206,37 @@ export const Register = () => {
     // --- ICONOS SVG ---
     const IconHardHat = ({ className }: { className?: string }) => (
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-            <path d="M2 18a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v2z"/><path d="M10 10V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v5"/><path d="M4 15v-3a6 6 0 0 1 6-6h0"/><path d="M14 6h0a6 6 0 0 1 6 6v3"/>
+            <path d="M2 18a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v2z" /><path d="M10 10V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v5" /><path d="M4 15v-3a6 6 0 0 1 6-6h0" /><path d="M14 6h0a6 6 0 0 1 6 6v3" />
         </svg>
     );
 
     const IconCreditCard = ({ className }: { className?: string }) => (
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-            <rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/>
+            <rect width="20" height="14" x="2" y="5" rx="2" /><line x1="2" x2="22" y1="10" y2="10" />
         </svg>
     );
 
     const IconCheck = ({ className }: { className?: string }) => (
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" />
         </svg>
     );
     // ------------------
 
     return (
-        <div className="min-h-screen flex items-center justify-center p-4 bg-surface-light dark:bg-surface-dark transition-colors">
+        <div className="min-h-screen flex items-center justify-center p-4 bg-antigravity-light-bg dark:bg-antigravity-dark-bg transition-colors">
             <div className="absolute top-4 right-4 flex items-center gap-2">
                 <LanguageSwitch />
                 <ThemeSwitch />
             </div>
 
-            <Card className="w-full max-w-lg shadow-xl shadow-black/5 dark:shadow-none my-8">
+            <Card className="w-full max-w-lg shadow-xl shadow-black/5 dark:shadow-none my-8 bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-antigravity-light-border dark:border-antigravity-dark-border">
                 <div className="mb-8 text-center">
-                    <h1 className="text-2xl font-bold text-primary mb-2">{t('auth.title')}</h1>
-                    <p className="text-slate-500 text-sm">{t('auth.subtitle')}</p>
+                    <h1 className="text-2xl font-bold text-antigravity-accent mb-2">{t('auth.title')}</h1>
+                    <p className="text-antigravity-light-muted dark:text-antigravity-dark-muted text-sm">{t('auth.subtitle')}</p>
                 </div>
 
-                <div className="flex p-1 mb-8 bg-gray-100 dark:bg-white/5 rounded-lg">
+                <div className="flex p-1 mb-8 bg-slate-100 dark:bg-white/5 rounded-lg">
                     {(['ENTERPRISE', 'EDUCATIONAL', 'PERSONAL'] as AccountType[]).map((tab) => (
                         <button
                             key={tab}
@@ -244,7 +244,7 @@ export const Register = () => {
                             className={clsx(
                                 "flex-1 py-2 text-xs font-bold rounded-md transition-all",
                                 type === tab
-                                    ? "bg-white dark:bg-surface-card-dark text-primary shadow-sm"
+                                    ? "bg-white dark:bg-slate-800 text-antigravity-accent shadow-sm"
                                     : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
                             )}
                         >
@@ -255,11 +255,11 @@ export const Register = () => {
 
                 {success ? (
                     <div className="text-center py-10">
-                        <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <div className="w-16 h-16 bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400 rounded-full flex items-center justify-center mx-auto mb-4">
                             <IconCheck className="w-8 h-8" />
                         </div>
-                        <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">{t('form.submit_success_title', 'Solicitud Enviada')}</h3>
-                        <p className="text-slate-500 mb-6">{t('form.submit_success_msg', 'Te notificaremos por correo.')}</p>
+                        <h3 className="text-xl font-bold text-antigravity-light-text dark:text-antigravity-dark-text mb-2">{t('form.submit_success_title', 'Solicitud Enviada')}</h3>
+                        <p className="text-antigravity-light-muted dark:text-antigravity-dark-muted mb-6">{t('form.submit_success_msg', 'Te notificaremos por correo.')}</p>
                         <Button onClick={() => setSuccess(false)} variant="secondary">{t('form.back', 'Volver')}</Button>
                     </div>
                 ) : (
@@ -296,17 +296,17 @@ export const Register = () => {
                             <>
                                 {renderInput(t('form.applicant_name'), 'applicant_name')}
                                 {renderInput(t('form.company_name'), 'company_name')}
-                                
+
                                 {/* === ZONA NUEVA: SELECTOR DE PERFIL B2B (SVG PREMIUM) === */}
                                 <div className="space-y-2 pt-2 pb-2">
                                     <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Perfil de Usuario</label>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                        <div 
+                                        <div
                                             onClick={() => setRoleIntent('OPERATIONAL')}
                                             className={clsx(
                                                 "cursor-pointer rounded-lg border p-3 flex flex-col items-center text-center transition-all relative group",
-                                                roleIntent === 'OPERATIONAL' 
-                                                    ? "border-primary bg-primary/5 ring-1 ring-primary" 
+                                                roleIntent === 'OPERATIONAL'
+                                                    ? "border-primary bg-primary/5 ring-1 ring-primary"
                                                     : "border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600"
                                             )}
                                         >
@@ -320,12 +320,12 @@ export const Register = () => {
                                             )}
                                         </div>
 
-                                        <div 
+                                        <div
                                             onClick={() => setRoleIntent('BILLING')}
                                             className={clsx(
                                                 "cursor-pointer rounded-lg border p-3 flex flex-col items-center text-center transition-all relative group",
-                                                roleIntent === 'BILLING' 
-                                                    ? "border-primary bg-primary/5 ring-1 ring-primary" 
+                                                roleIntent === 'BILLING'
+                                                    ? "border-primary bg-primary/5 ring-1 ring-primary"
                                                     : "border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600"
                                             )}
                                         >
@@ -383,9 +383,9 @@ export const Register = () => {
                 )}
 
                 <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-700/50 text-center">
-                    <p className="text-sm text-slate-500">
+                    <p className="text-sm text-antigravity-light-muted dark:text-antigravity-dark-muted">
                         {t('auth.already_have_account', '¿Ya tienes cuenta?')}
-                        <Link to="/login" className="ml-2 text-primary font-bold hover:underline">
+                        <Link to="/login" className="ml-2 text-antigravity-accent font-bold hover:underline">
                             {t('auth.login_link_reg', 'Ingresar aquí')}
                         </Link>
                     </p>

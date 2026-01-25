@@ -1,8 +1,60 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true;
+    
+    // Helper: Verify if user is a Super Admin
+    function isSuperAdmin() {
+      return request.auth != null && 
+        (
+          request.auth.token.role == 'SUPER_ADMIN' ||
+          request.auth.token.email == 'admin@minreport.com' ||
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'SUPER_ADMIN')
+        );
+    }
+
+    // User Profiles Collection
+    match /users/{userId} {
+      // Super Admins can do everything
+      allow read, write: if isSuperAdmin();
+      
+      // Regular users can only read their own profile
+      allow read: if request.auth != null && request.auth.uid == userId;
+      
+      // Setup Wizard: Allow user to update their own profile during onboarding 
+      // (assuming setup is an update to the user doc)
+      // Note: This matches the requirement "Los usuarios normales solo pueden leer su propio perfil"
+      // but usually they need to write at least once. 
+      // User requested: "Solo el Admin puede leer/escribir en la colección users ajena. Los usuarios normales solo pueden leer su propio perfil."
+      // So no write for normal users according to exact prompt.
+    }
+
+    // Audit Logs Collection (Append Only for Admin)
+    match /admin_audit_logs/{logId} {
+      allow create, read: if isSuperAdmin();
+    }
+
+    // Branding & Global Settings
+    match /settings/branding {
+      allow read: if true; // Publicly readable for UI consistency
+      allow write: if isSuperAdmin();
+    }
+
+    // Tenants Management
+    match /tenants/{tenantId} {
+      allow read, write: if isSuperAdmin();
+    }
+
+    // User Inbox (Messages)
+    match /users/{userId}/inbox/{messageId} {
+      allow read, write: if isSuperAdmin();
+      allow read, update: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // System Plugins (Dynamic Registry)
+    match /plugins/{pluginId} {
+      allow read: if request.auth != null; // Authenticated users/admins can read
+      allow write: if isSuperAdmin();      // Only Super Admin can manage plugins
     }
   }
 }

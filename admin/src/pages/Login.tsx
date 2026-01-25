@@ -23,6 +23,14 @@ export const Login = () => {
             const { data } = await adminLogin(email, password);
             localStorage.setItem('admin_token', data.token);
             localStorage.setItem('admin_user', JSON.stringify(data.user));
+
+            // Sign in to Firebase Client SDK
+            if (data.firebaseToken) {
+                const { auth } = await import('../config/firebase');
+                const { signInWithCustomToken } = await import('firebase/auth');
+                await signInWithCustomToken(auth, data.firebaseToken);
+            }
+
             navigate('/');
         } catch (err: any) {
             setError(err.response?.data?.error || t('admin.invalid_credentials', 'Credenciales inválidas'));
@@ -38,9 +46,6 @@ export const Login = () => {
                 <ThemeSwitch />
             </div>
 
-            {/* Background Decorative Element */}
-            <div className="absolute -top-24 -right-24 w-96 h-96 bg-antigravity-accent/5 rounded-full blur-3xl" />
-            <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-antigravity-accent/5 rounded-full blur-3xl" />
 
             <div className="w-full max-w-[400px] relative">
                 <div className="mb-12 text-center">

@@ -17,10 +17,14 @@ interface Tenant {
     run?: string;
 }
 
+import { TenantDetailsModal } from '../components/admin/TenantDetailsModal';
+import { Eye } from 'lucide-react';
+
 export const Dashboard = () => {
     const { t } = useTranslation();
     const [tenants, setTenants] = useState<Tenant[]>([]);
     const [loading, setLoading] = useState(true);
+    const [selectedTenant, setSelectedTenant] = useState<Tenant | null>(null);
 
     const fetchTenants = async () => {
         try {
@@ -42,6 +46,7 @@ export const Dashboard = () => {
         try {
             await updateTenantStatus(id, status);
             setTenants(prev => prev.map(t => t.id === id ? { ...t, status } : t));
+            setSelectedTenant(null); // Close modal if open
         } catch (error) {
             alert('Error updating status');
         }
@@ -101,30 +106,47 @@ export const Dashboard = () => {
                                     </span>
                                 </td>
                                 <td className="px-6 py-4 text-right">
-                                    {tenant.status === 'PENDING_APPROVAL' && (
-                                        <div className="flex justify-end gap-2">
-                                            <button
-                                                onClick={() => handleAction(tenant.id, 'ACTIVE')}
-                                                className="p-1.5 rounded-md text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
-                                                title="Aprobar"
-                                            >
-                                                <Check size={18} />
-                                            </button>
-                                            <button
-                                                onClick={() => handleAction(tenant.id, 'REJECTED')}
-                                                className="p-1.5 rounded-md text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors"
-                                                title="Rechazar"
-                                            >
-                                                <X size={18} />
-                                            </button>
-                                        </div>
-                                    )}
+                                    <div className="flex justify-end gap-2">
+                                        <button
+                                            onClick={() => setSelectedTenant(tenant)}
+                                            className="p-1.5 rounded-md text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10 hover:text-antigravity-accent transition-colors"
+                                            title="Ver Detalles"
+                                        >
+                                            <Eye size={18} />
+                                        </button>
+
+                                        {tenant.status === 'PENDING_APPROVAL' && (
+                                            <>
+                                                <button
+                                                    onClick={() => handleAction(tenant.id, 'ACTIVE')}
+                                                    className="p-1.5 rounded-md text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
+                                                    title="Aprobar"
+                                                >
+                                                    <Check size={18} />
+                                                </button>
+                                                <button
+                                                    onClick={() => handleAction(tenant.id, 'REJECTED')}
+                                                    className="p-1.5 rounded-md text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors"
+                                                    title="Rechazar"
+                                                >
+                                                    <X size={18} />
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
                                 </td>
                             </tr>
                         ))}
                     </tbody>
                 </table>
             </div>
+
+            <TenantDetailsModal
+                isOpen={!!selectedTenant}
+                onClose={() => setSelectedTenant(null)}
+                tenant={selectedTenant}
+                onAction={handleAction}
+            />
         </div>
     );
 };

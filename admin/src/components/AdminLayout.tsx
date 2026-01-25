@@ -66,11 +66,17 @@ export const AdminLayout = () => {
                         <NavLink to="/" className={navLinkClasses} title="Solicitudes">
                             <span className="material-symbols-rounded text-2xl">inbox</span>
                         </NavLink>
+                        <NavLink to="/users" className={navLinkClasses} title="Usuarios">
+                            <span className="material-symbols-rounded text-2xl">group</span>
+                        </NavLink>
                         <NavLink to="/branding" className={navLinkClasses} title="UI/UX">
                             <span className="material-symbols-rounded text-2xl">palette</span>
                         </NavLink>
                         <NavLink to="/tenants" className={navLinkClasses} title="Tenants">
                             <span className="material-symbols-rounded text-2xl">domain</span>
+                        </NavLink>
+                        <NavLink to="/plugins" className={navLinkClasses} title="Plugins">
+                            <span className="material-symbols-rounded text-2xl">extension</span>
                         </NavLink>
                     </nav>
 

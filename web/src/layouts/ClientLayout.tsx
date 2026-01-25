@@ -72,6 +72,9 @@ const ClientLayout = () => {
                         <NavLink to="/" className={navLinkClasses} title="Dashboard">
                             <span className="material-symbols-rounded text-2xl">dashboard</span>
                         </NavLink>
+                        <NavLink to="/plugins" className={navLinkClasses} title="Mis Aplicaciones">
+                            <span className="material-symbols-rounded text-2xl">apps</span>
+                        </NavLink>
                     </nav>
 
                     {/* Botón Salir */}

@@ -34,9 +34,42 @@ export const adminLogin = async (req: Request, res: Response) => {
     const { email, password } = req.body;
 
     if (email === env.SUPER_ADMIN_EMAIL && password === env.SUPER_ADMIN_PASSWORD) {
+        // Create or get the Super Admin user in Firebase Auth
+        let uid = 'super-admin-id';
+        try {
+            const user = await auth.getUserByEmail(env.SUPER_ADMIN_EMAIL);
+            uid = user.uid;
+        } catch (e) {
+            // If doesn't exist, Create it (though it should exist by script)
+            const newUser = await auth.createUser({
+                email: env.SUPER_ADMIN_EMAIL,
+                password: env.SUPER_ADMIN_PASSWORD,
+                displayName: 'Super Admin'
+            });
+            uid = newUser.uid;
+            // Set claims
+            await auth.setCustomUserClaims(uid, { role: 'SUPER_ADMIN' });
+        }
+
+        // Generate Custom Token for Client SDK
+        const firebaseToken = await auth.createCustomToken(uid, { role: 'SUPER_ADMIN' });
+
+        // [NEW] Ensure Super Admin document exists in Firestore for Rule compatibility
+        console.log(`[ADMIN] Ensuring Super Admin doc exists for UID: ${uid}`);
+        await db.collection('users').doc(uid).set({
+            uid,
+            email: env.SUPER_ADMIN_EMAIL,
+            displayName: 'Super Admin',
+            role: 'SUPER_ADMIN',
+            status: 'ACTIVE',
+            updatedAt: new Date().toISOString()
+        }, { merge: true });
+        console.log(`[ADMIN] Super Admin doc synced successfully`);
+
         return res.status(200).json({
             success: true,
             token: 'master-admin-access-token',
+            firebaseToken, // Return the custom token
             user: { email: env.SUPER_ADMIN_EMAIL, role: 'super-admin' }
         });
     }
@@ -105,10 +138,30 @@ export const updateTenantStatus = async (req: Request, res: Response) => {
 
             const actionLink = `${baseUrl}/auth/action?mode=resetPassword&oobCode=${oobCode}`;
 
-            // 4. Update Firestore with uid and status
+            // 4. Update Firestore with uid and status in tenants
             await tenantRef.update({
                 status: 'ACTIVE',
                 authUid: userRecord.uid,
+                updatedAt: new Date().toISOString()
+            });
+
+            // 4.5 Create/Sync User Document in 'users' collection for Admin Management
+            // This ensures the user appears in the User Management section
+            await db.collection('users').doc(userRecord.uid).set({
+                uid: userRecord.uid,
+                email: tenantData.email,
+                displayName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
+                role: 'USER', // Default role
+                status: 'ACTIVE',
+                entitlements: {
+                    pluginsEnabled: [], // Start with no plugins by default, or inherit from tenant request if available
+                    storageLimit: 1073741824 // 1GB default
+                },
+                stats: {
+                    storageUsed: 0,
+                    lastLogin: null
+                },
+                createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
             });
 
@@ -170,25 +223,25 @@ export const updateTenantStatus = async (req: Request, res: Response) => {
 
 
 export const getBrandingSettings = async (req: Request, res: Response) => {
-  try {
-    const doc = await db.collection('settings').doc('branding').get();
-    if (!doc.exists) {
-      // Return defaults if not exist
-      return res.json({ siteName: 'MinReport', primaryColor: '#000000' });
+    try {
+        const doc = await db.collection('settings').doc('branding').get();
+        if (!doc.exists) {
+            // Return defaults if not exist
+            return res.json({ siteName: 'MinReport', primaryColor: '#000000' });
+        }
+        res.json(doc.data());
+    } catch (error) {
+        console.error('Error getting branding settings:', error);
+        res.status(500).json({ message: 'Internal server error.' });
     }
-    res.json(doc.data());
-  } catch (error) {
-    console.error('Error getting branding settings:', error);
-    res.status(500).json({ message: 'Internal server error.' });
-  }
 };
 
 export const updateBrandingSettings = async (req: Request, res: Response) => {
-  try {
-    await db.collection('settings').doc('branding').set(req.body, { merge: true });
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Error updating branding settings:', error);
-    res.status(500).json({ message: 'Internal server error.' });
-  }
+    try {
+        await db.collection('settings').doc('branding').set(req.body, { merge: true });
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error updating branding settings:', error);
+        res.status(500).json({ message: 'Internal server error.' });
+    }
 };
