@@ -2,9 +2,7 @@ import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
-import { Plugin } from '../../../admin/src/types/admin'; // Importing common type if possible, or redefine locally
-import { motion, AnimatePresence } from 'framer-motion';
-import clsx from 'clsx';
+import { motion } from 'framer-motion';
 
 // Re-defining interface locally to avoid monorepo path complexities if not set up
 interface ClientPlugin {
@@ -15,7 +13,7 @@ interface ClientPlugin {
 }
 
 export const ClientPluginsPage = () => {
-    const { t } = useTranslation();
+    useTranslation();
     const [plugins, setPlugins] = useState<ClientPlugin[]>([]);
     const [loading, setLoading] = useState(true);
     const [activePlugin, setActivePlugin] = useState<ClientPlugin | null>(null);
