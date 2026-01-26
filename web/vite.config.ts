@@ -12,14 +12,17 @@ export default defineConfig({
         react(),
         VitePWA({
             registerType: 'autoUpdate',
+            devOptions: {
+                enabled: true
+            },
             strategies: 'generateSW',
             manifest: {
-                name: 'MinReport Field',
+                name: 'MinReport',
                 short_name: 'MinReport',
                 description: 'MinReport Field Application',
-                theme_color: '#1f1f1f',
+                theme_color: '#ffffff',
                 display: 'standalone',
-                background_color: '#1f1f1f',
+                background_color: '#ffffff',
                 icons: [
                     {
                         src: 'pwa-192x192.png',
@@ -34,7 +37,7 @@ export default defineConfig({
                 ]
             },
             workbox: {
-                globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+                globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
                 maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10MB
                 runtimeCaching: [
                     {

@@ -38,7 +38,12 @@ export const SDKPage = () => {
                 </div>
                 <button
                     className="flex items-center gap-2 px-6 py-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold rounded-xl hover:scale-105 transition-transform shadow-xl shadow-black/10"
-                    onClick={() => alert('Generando paquete SDK... (En producción esto descargaría un .zip)')}
+                    onClick={() => {
+                        const link = document.createElement('a');
+                        link.href = '/minreport-sdk-v1.zip';
+                        link.download = 'minreport-sdk-v1.zip';
+                        link.click();
+                    }}
                 >
                     <Download size={20} />
                     Descargar Source

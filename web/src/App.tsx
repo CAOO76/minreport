@@ -12,6 +12,7 @@ import { ThemeProvider } from './context/ThemeContext';
 import ClientLayout from './layouts/ClientLayout';
 import MobileLayout from './layouts/MobileLayout';
 import { useIsMobile } from './hooks/useIsMobile';
+import OfflineIndicator from './components/common/OfflineIndicator';
 
 function App() {
     const [user, setUser] = useState<User | null>(null);
@@ -55,6 +56,7 @@ function App() {
                         <Route path="*" element={<Navigate to={user ? "/dashboard" : "/login"} replace />} />
                     </Routes>
                 </BrowserRouter>
+                <OfflineIndicator />
             </BrandingProvider>
         </ThemeProvider>
     );
