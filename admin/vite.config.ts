@@ -4,6 +4,9 @@ import react from '@vitejs/plugin-react'
 // https://vitejs.dev/config/
 export default defineConfig({
     envDir: '..',
+    define: {
+        __APP_VERSION__: JSON.stringify(process.env.npm_package_version),
+    },
     resolve: {
         dedupe: ['firebase']
     },

@@ -56,5 +56,10 @@ service cloud.firestore {
       allow read: if request.auth != null; // Authenticated users/admins can read
       allow write: if isSuperAdmin();      // Only Super Admin can manage plugins
     }
+
+    // SDK Versions Management
+    match /admin_sdk_versions/{versionId} {
+      allow read, write: if isSuperAdmin();
+    }
   }
 }
