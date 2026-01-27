@@ -3,8 +3,9 @@ import { useNavigate, Link } from 'react-router-dom';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../config/firebase';
 import { useTranslation } from 'react-i18next';
-import { Mail, Lock, LogIn, AlertCircle, Loader2, ArrowRight, ShieldAlert } from 'lucide-react';
+import { Mail, Lock, AlertCircle, Loader2, ArrowRight, ShieldAlert } from 'lucide-react';
 import { useIsMobile } from '../hooks/useIsMobile';
+import BrandLogo from '../components/BrandLogo';
 
 export const Login = () => {
     const { t } = useTranslation();
@@ -41,8 +42,8 @@ export const Login = () => {
         <div className="min-h-screen flex items-center justify-center bg-antigravity-light-bg dark:bg-antigravity-dark-bg p-6 transition-colors">
             <div className="max-w-md w-full">
                 <div className="mb-10 text-center">
-                    <div className="w-16 h-16 bg-antigravity-accent/10 text-antigravity-accent rounded-2xl flex items-center justify-center mx-auto mb-6">
-                        <LogIn size={32} />
+                    <div className="w-16 h-16 bg-white dark:bg-white/5 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xl shadow-antigravity-accent/10 border border-slate-100 dark:border-white/10 transition-transform hover:scale-105 duration-300">
+                        <BrandLogo variant="isotype" className="w-10 h-10" />
                     </div>
                     <h1 className="text-3xl font-bold text-antigravity-light-text dark:text-antigravity-dark-text tracking-tight">
                         {t('auth.login_title', 'Iniciar Sesión')}

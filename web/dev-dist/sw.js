@@ -82,22 +82,25 @@ define(['./workbox-f87553f6'], (function (workbox) { 'use strict';
     "revision": "3ca0b8505b4bec776b69afdba2768812"
   }, {
     "url": "index.html",
-    "revision": "0.bss5ksl89ng"
+    "revision": "0.c5due8q854"
   }], {});
   workbox.cleanupOutdatedCaches();
   workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("index.html"), {
-    allowlist: [/^\/$/]
+    allowlist: [/^\/$/],
+    denylist: [/^\/src/, /^\/node_modules/, /^\/@/]
   }));
   workbox.registerRoute(({
-    request
-  }) => request.destination === "image" || request.destination === "video", new workbox.CacheFirst({
+    url
+  }) => url.origin.includes("firebasestorage"), new workbox.CacheFirst({
     "cacheName": "media-cache",
     plugins: [new workbox.ExpirationPlugin({
       maxEntries: 200,
       maxAgeSeconds: 2592000
     })]
   }), 'GET');
-  workbox.registerRoute(/^https:\/\/firestore\.googleapis\.com/, new workbox.NetworkFirst({
+  workbox.registerRoute(({
+    url
+  }) => url.hostname.includes("firestore") || url.pathname.includes("api"), new workbox.NetworkFirst({
     "cacheName": "api-cache",
     "networkTimeoutSeconds": 10,
     plugins: [new workbox.ExpirationPlugin({

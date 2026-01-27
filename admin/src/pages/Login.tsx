@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ThemeSwitch } from '../components/ThemeSwitch';
 import { LanguageSwitch } from '../components/LanguageSwitch';
+import { BrandLogo } from '../components/BrandLogo';
 
 export const Login = () => {
     const { t } = useTranslation();
@@ -49,8 +50,8 @@ export const Login = () => {
 
             <div className="w-full max-w-[400px] relative">
                 <div className="mb-12 text-center">
-                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white dark:bg-white/5 shadow-xl shadow-antigravity-accent/10 border border-slate-100 dark:border-white/10 text-antigravity-accent mb-6 transition-transform hover:scale-105 duration-300">
-                        <ShieldAlert size={32} />
+                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white dark:bg-white/5 shadow-xl shadow-antigravity-accent/10 border border-slate-100 dark:border-white/10 mb-6 transition-transform hover:scale-105 duration-300">
+                        <BrandLogo variant="isotype" className="w-10 h-10" />
                     </div>
                     <h1 className="text-3xl font-bold text-slate-900 dark:text-white tracking-tight">{t('admin.title')}</h1>
                     <p className="text-slate-500 dark:text-slate-400 text-sm mt-2 font-medium">{t('admin.restricted')}</p>

@@ -3,6 +3,22 @@ import { db, auth } from '../config/firebase';
 import { Resend } from 'resend';
 import { env } from '../config/env';
 import { z } from 'zod';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import fs from 'fs';
+import path from 'path';
+import https from 'https';
+
+const execAsync = promisify(exec);
+
+const downloadFile = async (url: string, dest: string): Promise<void> => {
+    console.log(`[DevOps] Executing download via curl to follow redirects: ${dest}`);
+    // -L follows redirects, -o specifies output file, -s is silent but we want errors
+    await execAsync(`curl -L "${url}" -o "${dest}"`);
+    if (!fs.existsSync(dest) || fs.statSync(dest).size < 100) {
+        throw new Error(`Download failed or file too small: ${dest}`);
+    }
+};
 
 const resend = new Resend(env.RESEND_API_KEY);
 
@@ -238,7 +254,71 @@ export const getBrandingSettings = async (req: Request, res: Response) => {
 
 export const updateBrandingSettings = async (req: Request, res: Response) => {
     try {
-        await db.collection('settings').doc('branding').set(req.body, { merge: true });
+        const settings = req.body;
+        await db.collection('settings').doc('branding').set(settings, { merge: true });
+
+        // 🔥 AUTOMATED DEVOPS: Sync icons with local filesystem (Zero-Code Solution)
+        // We do this in background to not block the UI
+        const syncAssets = async () => {
+            try {
+                const rootDir = process.cwd();
+                const webPublicDir = path.join(rootDir, 'web/public');
+                const androidResDir = path.join(rootDir, 'web/android/app/src/main/res');
+                console.log(`[DevOps] Sync starting. rootDir: ${rootDir}`);
+
+                // 1. Sync PWA Icons (Web Browser)
+                const pwaIconUrl = settings.light?.pwaIcon || settings.dark?.pwaIcon || settings.light?.isotype;
+                if (pwaIconUrl) {
+                    console.log('[DevOps] Syncing PWA Icons...');
+                    const tempIcon = path.join(rootDir, 'temp_pwa_master.png');
+                    await downloadFile(pwaIconUrl, tempIcon);
+
+                    // Sync to Web App
+                    if (fs.existsSync(webPublicDir)) {
+                        await execAsync(`sips -z 192 192 "${tempIcon}" --out "${path.join(webPublicDir, 'pwa-192x192.png')}"`);
+                        await execAsync(`sips -z 512 512 "${tempIcon}" --out "${path.join(webPublicDir, 'pwa-512x512.png')}"`);
+                        console.log('[DevOps] PWA Icons updated in web/public');
+                    }
+                    if (fs.existsSync(tempIcon)) fs.unlinkSync(tempIcon);
+                }
+
+                // 2. Sync Native Mobile Icons (Android)
+                // We prioritize dark.appIcon (White logo) because we set a dark background in colors.xml
+                const appIconUrl = settings.dark?.appIcon || settings.light?.appIcon;
+                if (appIconUrl && fs.existsSync(androidResDir)) {
+                    console.log('[DevOps] Syncing Native Mobile Icons...');
+                    const tempAppIcon = path.join(rootDir, 'temp_app_master.png');
+                    await downloadFile(appIconUrl, tempAppIcon);
+
+                    const mipmapConfigs = [
+                        { dir: 'mipmap-mdpi', size: 48, adaptive: 108 },
+                        { dir: 'mipmap-hdpi', size: 72, adaptive: 162 },
+                        { dir: 'mipmap-xhdpi', size: 96, adaptive: 216 },
+                        { dir: 'mipmap-xxhdpi', size: 144, adaptive: 324 },
+                        { dir: 'mipmap-xxxhdpi', size: 192, adaptive: 432 },
+                    ];
+
+                    for (const config of mipmapConfigs) {
+                        const targetDir = path.join(androidResDir, config.dir);
+                        if (fs.existsSync(targetDir)) {
+                            // Legacy and Compatibility Icons
+                            await execAsync(`sips -z ${config.size} ${config.size} "${tempAppIcon}" --out "${path.join(targetDir, 'ic_launcher.png')}"`);
+                            await execAsync(`sips -z ${config.size} ${config.size} "${tempAppIcon}" --out "${path.join(targetDir, 'ic_launcher_round.png')}"`);
+
+                            // 📱 Modern Adaptive Icons Foreground Layer (using 108dp standard)
+                            await execAsync(`sips -z ${config.adaptive} ${config.adaptive} "${tempAppIcon}" --out "${path.join(targetDir, 'ic_launcher_foreground.png')}"`);
+                        }
+                    }
+                    console.log('[DevOps] Android Native Icons updated in web/android');
+                    if (fs.existsSync(tempAppIcon)) fs.unlinkSync(tempAppIcon);
+                }
+            } catch (syncErr) {
+                console.error('[DevOps Error] Failed to sync assets to local filesystem:', syncErr);
+            }
+        };
+
+        syncAssets(); // Runs in background
+
         res.json({ success: true });
     } catch (error) {
         console.error('Error updating branding settings:', error);

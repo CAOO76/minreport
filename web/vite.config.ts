@@ -15,50 +15,71 @@ export default defineConfig({
             devOptions: {
                 enabled: true
             },
-            strategies: 'generateSW',
+            includeAssets: ['favicon.ico', 'pwa-192x192.png', 'pwa-512x512.png'],
             manifest: {
+                id: '/',
                 name: 'MinReport',
                 short_name: 'MinReport',
                 description: 'MinReport Field Application',
                 theme_color: '#ffffff',
-                display: 'standalone',
                 background_color: '#ffffff',
+                display: 'standalone',
+                orientation: 'portrait',
+                start_url: '/',
+                scope: '/',
                 icons: [
                     {
                         src: 'pwa-192x192.png',
                         sizes: '192x192',
-                        type: 'image/png'
+                        type: 'image/png',
+                        purpose: 'any'
+                    },
+                    {
+                        src: 'pwa-192x192.png',
+                        sizes: '192x192',
+                        type: 'image/png',
+                        purpose: 'maskable'
                     },
                     {
                         src: 'pwa-512x512.png',
                         sizes: '512x512',
-                        type: 'image/png'
+                        type: 'image/png',
+                        purpose: 'any'
+                    },
+                    {
+                        src: 'pwa-512x512.png',
+                        sizes: '512x512',
+                        type: 'image/png',
+                        purpose: 'maskable'
                     }
                 ]
             },
             workbox: {
+                cleanupOutdatedCaches: true,
                 globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-                maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10MB
+                maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
+                navigateFallback: 'index.html',
+                navigateFallbackDenylist: [/^\/src/, /^\/node_modules/, /^\/@/],
                 runtimeCaching: [
                     {
-                        urlPattern: ({ request }) => request.destination === 'image' || request.destination === 'video',
+                        urlPattern: ({ url }) => url.origin.includes('firebasestorage'),
                         handler: 'CacheFirst',
                         options: {
                             cacheName: 'media-cache',
                             expiration: {
                                 maxEntries: 200,
-                                maxAgeSeconds: 30 * 24 * 60 * 60, // 30 Days
+                                maxAgeSeconds: 30 * 24 * 60 * 60,
                             },
                         },
                     },
                     {
-                        urlPattern: /^https:\/\/firestore\.googleapis\.com/,
+                        urlPattern: ({ url }) => url.hostname.includes('firestore') || url.pathname.includes('api'),
                         handler: 'NetworkFirst',
                         options: {
                             cacheName: 'api-cache',
                             expiration: {
                                 maxEntries: 500,
-                                maxAgeSeconds: 7 * 24 * 60 * 60, // 7 Days
+                                maxAgeSeconds: 7 * 24 * 60 * 60,
                             },
                             networkTimeoutSeconds: 10,
                         },
@@ -67,4 +88,7 @@ export default defineConfig({
             }
         })
     ],
+    server: {
+        host: true
+    }
 })

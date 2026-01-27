@@ -20,16 +20,20 @@ export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
 
-// Connect to Emulators if in localhost
-if (typeof window !== 'undefined' && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
-    console.log("🔧 [ADMIN] Localhost detected - Connecting to Emulators");
+// 🔧 CONFIGURACIÓN DE EMULADORES (Dynamic for Network Access)
+const MI_IP_IMAC = "192.168.1.82";
 
-    // Auth Emulator
-    connectAuthEmulator(auth, "http://127.0.0.1:9190");
+if (typeof window !== 'undefined') {
+    const isLocal = window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1" ||
+        window.location.hostname === MI_IP_IMAC;
 
-    // Firestore Emulator
-    connectFirestoreEmulator(db, '127.0.0.1', 8085);
+    if (isLocal) {
+        const EMULATOR_HOST = window.location.hostname === MI_IP_IMAC ? MI_IP_IMAC : "127.0.0.1";
+        console.log(`🔧 [ADMIN] Local/Network detected - Connecting to Emulators at ${EMULATOR_HOST}`);
 
-    // Storage Emulator
-    connectStorageEmulator(storage, '127.0.0.1', 9195);
+        connectAuthEmulator(auth, `http://${EMULATOR_HOST}:9190`, { disableWarnings: true });
+        connectFirestoreEmulator(db, EMULATOR_HOST, 8085);
+        connectStorageEmulator(storage, EMULATOR_HOST, 9195);
+    }
 }

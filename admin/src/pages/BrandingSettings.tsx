@@ -7,6 +7,8 @@ interface LogoSet {
     isotype: string;
     logotype: string;
     imagotype: string;
+    pwaIcon?: string; // Icono para navegadores/PWA (512px)
+    appIcon?: string; // Icono para App Móvil (1024px)
 }
 
 interface BrandingSettingsData {
@@ -15,8 +17,8 @@ interface BrandingSettingsData {
 }
 
 const DEFAULT_SETTINGS: BrandingSettingsData = {
-    light: { isotype: '', logotype: '', imagotype: '' },
-    dark: { isotype: '', logotype: '', imagotype: '' },
+    light: { isotype: '', logotype: '', imagotype: '', pwaIcon: '', appIcon: '' },
+    dark: { isotype: '', logotype: '', imagotype: '', pwaIcon: '', appIcon: '' },
 };
 
 // Real implementation of the storage upload
@@ -34,6 +36,18 @@ const uploadFileToStorage = async (file: File, path: string): Promise<string> =>
     }
 };
 
+// Utility to fix branding URLs for local network testing
+const fixBrandingUrl = (url?: string): string => {
+    if (!url) return '';
+    const currentHost = location.hostname;
+    // Always replace localhost/127.0.0.1 with the current host if we are NOT on localhost
+    // This allows the laptop to see images stored in the iMac emulator
+    if (currentHost !== 'localhost' && currentHost !== '127.0.0.1') {
+        return url.replace(/localhost|127\.0\.0\.1/g, currentHost);
+    }
+    return url;
+};
+
 const BrandingPreview: React.FC<{ file: File | null, existingUrl: string | null, label: string, mode: 'light' | 'dark' }> = ({ file, existingUrl, label, mode }) => {
     const [preview, setPreview] = useState<string | null>(null);
 
@@ -45,7 +59,7 @@ const BrandingPreview: React.FC<{ file: File | null, existingUrl: string | null,
             };
             reader.readAsDataURL(file);
         } else if (existingUrl) {
-            setPreview(existingUrl);
+            setPreview(fixBrandingUrl(existingUrl));
         } else {
             setPreview(null);
         }
@@ -88,22 +102,24 @@ const BrandingSection: React.FC<{
     return (
         <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-md">
             <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">{title}</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {(['isotype', 'logotype', 'imagotype'] as const).map(type => (
-                    <div key={type}>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                            {type.charAt(0).toUpperCase() + type.slice(1)} (.png)
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {(['isotype', 'logotype', 'imagotype', 'pwaIcon', 'appIcon'] as const).map(type => (
+                    <div key={type} className="space-y-2">
+                        <label className="block text-sm font-bold text-gray-700 dark:text-gray-300">
+                            {type === 'pwaIcon' ? 'Icono Web / PWA (512px)' :
+                                type === 'appIcon' ? 'Icono App Móvil (1024px)' :
+                                    type.charAt(0).toUpperCase() + type.slice(1)} (.png)
                         </label>
                         <input
                             type="file"
                             accept=".png"
                             onChange={(e) => handleFileChange(e, type)}
-                            className="block w-full text-sm text-antigravity-light-muted dark:text-antigravity-dark-muted file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-antigravity-light-bg dark:file:bg-antigravity-dark-bg file:text-antigravity-light-text dark:file:text-antigravity-dark-text hover:file:bg-antigravity-light-border dark:hover:file:bg-antigravity-dark-border file:transition-colors"
+                            className="block w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 transition-all cursor-pointer"
                         />
                         <BrandingPreview
                             file={files[type] || null}
                             existingUrl={existingUrls?.[type] || null}
-                            label={`${type} Preview`}
+                            label={type === 'pwaIcon' ? 'PWA Icon' : type === 'appIcon' ? 'Mobile Icon' : `${type} Preview`}
                             mode={mode}
                         />
                     </div>
@@ -126,9 +142,11 @@ export const BrandingSettings: React.FC = () => {
             try {
                 const response = await getBrandingSettings();
                 const data = response.data || {};
+
+                // Deep merge defaults with actual data to ensure new fields are present
                 setSettings({
-                    light: { ...DEFAULT_SETTINGS.light, ...data.light },
-                    dark: { ...DEFAULT_SETTINGS.dark, ...data.dark },
+                    light: { ...DEFAULT_SETTINGS.light, ...(data.light || {}) },
+                    dark: { ...DEFAULT_SETTINGS.dark, ...(data.dark || {}) },
                 });
             } catch (error) {
                 console.error('Failed to fetch branding settings', error);
@@ -150,37 +168,42 @@ export const BrandingSettings: React.FC = () => {
 
         setIsSaving(true);
         try {
-            const uploadPromises: Promise<{ mode: 'light' | 'dark', type: string, url: string }>[] = [];
-            const allFiles = { light: lightFiles, dark: darkFiles };
+            // Create a deep copy of the current settings to modify
+            const updatedSettings: BrandingSettingsData = JSON.parse(JSON.stringify(settings));
 
-            for (const mode of ['light', 'dark'] as const) {
-                for (const [type, file] of Object.entries(allFiles[mode])) {
+            // 1. Process Sequential Uploads
+            // Sequential is more reliable for multiple concurrent uploads in emulator/limited bandwidth
+            const modes = ['light', 'dark'] as const;
+            const stagedFiles = { light: lightFiles, dark: darkFiles };
+
+            for (const mode of modes) {
+                const filesToUpload = Object.entries(stagedFiles[mode]);
+                for (const [type, file] of filesToUpload) {
                     if (file) {
+                        console.log(`[Branding] Uploading ${type} for theme ${mode}...`);
                         const path = `branding/${mode}_${type}.png`;
-                        uploadPromises.push(
-                            uploadFileToStorage(file, path).then(url => ({ mode, type, url }))
-                        );
+                        const url = await uploadFileToStorage(file, path);
+
+                        // Update the copied settings object
+                        (updatedSettings[mode] as any)[type] = url;
+                        console.log(`[Branding] Logged URL for ${type}: ${url}`);
                     }
                 }
             }
 
-            const uploadedUrls = await Promise.all(uploadPromises);
+            // 2. Persist to Backend
+            console.log('[Branding] Saving all changes to Firestore...', updatedSettings);
+            await updateBrandingSettings(updatedSettings);
 
-            // Create a deep copy of the current settings to modify
-            const newSettings: BrandingSettingsData = JSON.parse(JSON.stringify(settings));
+            // 3. Update local state and clear staging
+            setSettings(updatedSettings);
+            setLightFiles({});
+            setDarkFiles({});
 
-            uploadedUrls.forEach(({ mode, type, url }) => {
-                (newSettings[mode] as any)[type] = url;
-            });
-
-            await updateBrandingSettings(newSettings);
-            setSettings(newSettings); // Update local state with new URLs
-            setLightFiles({}); // Clear staged files
-            setDarkFiles({});  // Clear staged files
-            alert('Branding settings updated successfully!');
+            alert('¡Branding actualizado con éxito!');
         } catch (error) {
             console.error('Failed to save branding settings:', error);
-            alert('Failed to update settings. See console for details.');
+            alert('Error al guardar los cambios. Revisa la consola para más detalles.');
         } finally {
             setIsSaving(false);
         }
