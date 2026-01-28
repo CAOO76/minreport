@@ -1,0 +1,14 @@
+{
+    "name": "@minreport/sdk",
+    "version": "1.0.0",
+    "type": "module",
+    "main": "./index.ts",
+    "types": "./index.ts",
+    "exports": {
+        ".": "./index.ts",
+        "./types": "./types.ts",
+        "./ui": "./ui/index.tsx",
+        "./data": "./data/EntityManager.ts",
+        "./core": "./core/PluginRegistry.ts"
+    }
+}
