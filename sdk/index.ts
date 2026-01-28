@@ -3,10 +3,10 @@
  * "El Ensamblaje Final"
  */
 
-import { pluginRegistry } from './core/PluginRegistry.ts';
-import { entityManager } from './data/EntityManager.ts';
-import * as UI from './ui/index.tsx';
-import * as Types from './types.ts';
+import { pluginRegistry } from './core/PluginRegistry';
+import { entityManager } from './data/EntityManager';
+import * as UI from './ui';
+import * as Types from './types';
 
 /**
  * MinReport SDK Global Object
@@ -27,7 +27,7 @@ export const MinReport = {
 };
 
 // Re-exportación de tipos para facilitar el uso de TypeScript en los plugins
-export * from './types.ts';
+export * from './types';
 
 /**
  * EJEMPLO DE USO (HIPOTÉTICO):

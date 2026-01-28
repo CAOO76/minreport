@@ -10,7 +10,8 @@ export default defineConfig({
         dedupe: ['firebase'],
         alias: {
             '@minreport/sdk': path.resolve(__dirname, '../sdk')
-        }
+        },
+        extensions: ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json']
     },
     plugins: [
         react(),
