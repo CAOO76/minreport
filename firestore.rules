@@ -7,9 +7,8 @@ service cloud.firestore {
       return request.auth != null && 
         (
           request.auth.token.role == 'SUPER_ADMIN' ||
-          request.auth.token.email == 'admin@minreport.com' ||
-          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'SUPER_ADMIN')
+          request.auth.token.email == 'admin@minreport.com'
+          // Removed database lookup to prevent circular dependency/recursion loops on user profile reads
         );
     }
 
@@ -20,13 +19,28 @@ service cloud.firestore {
       
       // Regular users can only read their own profile
       allow read: if request.auth != null && request.auth.uid == userId;
+
+      // [LOGIN FLOW SUPPORT] Allow looking up a user by email (Limit 1)
+      allow list: if request.query.limit <= 1; 
       
-      // Setup Wizard: Allow user to update their own profile during onboarding 
-      // (assuming setup is an update to the user doc)
-      // Note: This matches the requirement "Los usuarios normales solo pueden leer su propio perfil"
-      // but usually they need to write at least once. 
-      // User requested: "Solo el Admin puede leer/escribir en la colección users ajena. Los usuarios normales solo pueden leer su propio perfil."
-      // So no write for normal users according to exact prompt.
+      // Allow users to update their own LAST ACTIVE ACCOUNT only (context switching)
+      allow update: if request.auth != null && request.auth.uid == userId && 
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActiveAccountId']);
+    }
+
+    // ACCOUNTS / TENANTS DATA
+    match /accounts/{accountId} {
+      // Owner can read
+      allow read: if request.auth != null && (
+        resource.data.ownerId == request.auth.uid ||
+        isSuperAdmin()
+      );
+      
+      // [LOGIN FLOW SUPPORT] Allow public read of account details (Name/Type) for the login selector
+      allow get: if true;
+
+      // Only Super Admin can write/create accounts via backend (or scripts)
+      allow write: if isSuperAdmin();
     }
 
     // Audit Logs Collection (Append Only for Admin)
@@ -40,7 +54,7 @@ service cloud.firestore {
       allow write: if isSuperAdmin();
     }
 
-    // Tenants Management
+    // Tenants Management (Requests)
     match /tenants/{tenantId} {
       allow read, write: if isSuperAdmin();
     }

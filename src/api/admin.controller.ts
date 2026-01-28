@@ -133,9 +133,9 @@ export const updateTenantStatus = async (req: Request, res: Response) => {
 
             // 2. Set Custom Claims
             await auth.setCustomUserClaims(userRecord.uid, {
-                role: 'admin',
+                role: 'USER', // Standard system role, consistent with Firestore doc
                 tier: tenantData.type,
-                tenantId: userRecord.uid
+                tenantId: uid // Correctly points to Account ID (Tenant), not User ID
             });
 
             // 3. Generate "Magic" Activation Link (Password Reset)
@@ -161,13 +161,35 @@ export const updateTenantStatus = async (req: Request, res: Response) => {
                 updatedAt: new Date().toISOString()
             });
 
+            // 4.1 Create Account Document (The Business Entity)
+            // We use the tenant ID as the Account ID for simplicity and traceability
+            const accountId = uid;
+            await db.collection('accounts').doc(accountId).set({
+                id: accountId,
+                name: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
+                type: tenantData.type,
+                rut: 'rut' in tenantData ? tenantData.rut : ('run' in tenantData ? tenantData.run : null),
+                ownerId: userRecord.uid,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            });
+
             // 4.5 Create/Sync User Document in 'users' collection for Admin Management
             // This ensures the user appears in the User Management section
+            const memberships = [{
+                accountId: accountId,
+                role: 'OWNER',
+                companyName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
+                joinedAt: Date.now()
+            }];
+
             await db.collection('users').doc(userRecord.uid).set({
                 uid: userRecord.uid,
                 email: tenantData.email,
                 displayName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
-                role: 'USER', // Default role
+                role: 'USER', // Default system role
+                memberships: memberships, // <--- CRITICAL: Multi-Tenancy Link
+                lastActiveAccountId: accountId, // Auto-select this account
                 status: 'ACTIVE',
                 entitlements: {
                     pluginsEnabled: [], // Start with no plugins by default, or inherit from tenant request if available

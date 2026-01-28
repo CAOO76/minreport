@@ -30,6 +30,7 @@ interface SDKButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
     variant?: 'primary' | 'secondary' | 'danger';
     fullWidth?: boolean;
     children: React.ReactNode;
+    style?: React.CSSProperties;
 }
 
 export const SDKButton: React.FC<SDKButtonProps> = ({
@@ -133,6 +134,7 @@ export const SDKCard: React.FC<SDKCardProps> = ({
  */
 interface SDKInputProps extends React.InputHTMLAttributes<HTMLInputElement> {
     label?: string;
+    style?: React.CSSProperties;
 }
 
 export const SDKInput: React.FC<SDKInputProps> = ({

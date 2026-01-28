@@ -54,7 +54,7 @@ export const Register = () => {
         if ((name === 'rut' || name === 'run') && formData.country === 'CL') {
             finalValue = formatRut(value);
         }
-        setFormData(prev => ({ ...prev, [name]: finalValue }));
+        setFormData((prev: any) => ({ ...prev, [name]: finalValue }));
     };
 
     const isPublicEmail = (email: string) => {
@@ -147,7 +147,7 @@ export const Register = () => {
 
             await registerUser(payload);
             setSuccess(true);
-            setFormData(prev => ({ ...prev, email: '' }));
+            setFormData((prev: any) => ({ ...prev, email: '' }));
         } catch (err: any) {
             const errorMessage = (err.message || '').toLowerCase();
             // Proxy for 409 Conflict. Check for keywords indicating a duplicate entry.

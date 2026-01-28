@@ -1,23 +1,14 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink } from 'react-router-dom';
 import BrandLogo from '../components/BrandLogo';
 
 import { LanguageSwitch } from '../components/LanguageSwitch';
 import { useTheme } from '../context/ThemeContext';
-import { signOut } from 'firebase/auth';
-import { auth } from '../config/firebase';
+// import AccountSwitcher from '../components/layout/AccountSwitcher';
+import { useAuth } from '../context/AuthContext';
 
 const ClientLayout = () => {
     const { theme, toggleTheme } = useTheme();
-    const navigate = useNavigate();
-
-    const handleLogout = async () => {
-        try {
-            await signOut(auth);
-            navigate('/login');
-        } catch (error) {
-            console.error('Logout error:', error);
-        }
-    };
+    const { signOut: signOutContext } = useAuth();
 
     // Clases para los botones del menú (Iconos centrados)
     const navLinkClasses = ({ isActive }: { isActive: boolean }) =>
@@ -36,7 +27,6 @@ const ClientLayout = () => {
                     <BrandLogo variant="logotype" className="h-8 w-auto object-contain" />
                 </div>
 
-                {/* Derecha: Controles Globales */}
                 <div className="flex items-center gap-2">
                     {/* Selector de Idioma */}
                     <LanguageSwitch />
@@ -52,8 +42,9 @@ const ClientLayout = () => {
                         </span>
                     </button>
 
-                    {/* User Profile placeholder */}
-                    <div className="h-8 w-8 rounded-full bg-antigravity-light-border dark:bg-antigravity-dark-border ml-2"></div>
+                    {/* Account Switcher */}
+                    {/* Aislamiento de Sesión: AccountSwitcher desactivado para flujo de Túnel Único */}
+                    {/* <AccountSwitcher /> */}
                 </div>
             </header>
 
@@ -79,7 +70,7 @@ const ClientLayout = () => {
 
                     {/* Botón Salir */}
                     <button
-                        onClick={handleLogout}
+                        onClick={() => signOutContext()}
                         className="w-12 h-12 flex items-center justify-center rounded-xl transition-all mt-auto text-antigravity-light-muted dark:text-antigravity-dark-muted hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-500"
                         title="Cerrar Sesión"
                     >

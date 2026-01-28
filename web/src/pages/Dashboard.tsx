@@ -1,69 +1,88 @@
-import { useTranslation } from 'react-i18next';
-import { Building2, User } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { auth } from '../config/firebase';
+
+import { MinReport } from '@minreport/sdk'; // Ajusta la ruta según tu estructura real
+import { useAuth } from '../context/AuthContext';
+import { useNetworkStatus } from '../hooks/useNetworkStatus';
+import { useNavigate } from 'react-router-dom';
 
 export const Dashboard = () => {
-    const { t } = useTranslation();
-    const user = auth.currentUser;
-    const [userType, setUserType] = useState<string | null>(null);
+    const { currentAccount } = useAuth();
+    const { isOnline } = useNetworkStatus();
+    const navigate = useNavigate();
 
-    useEffect(() => {
-        const fetchUserType = async () => {
-            if (user) {
-                try {
-                    const idTokenResult = await user.getIdTokenResult();
-                    if (idTokenResult.claims.type) {
-                        setUserType(idTokenResult.claims.type as string);
-                    }
-                } catch (error) {
-                    console.error("Error fetching user's custom claims:", error);
-                }
-            }
-        };
-        fetchUserType();
-    }, [user]);
+    // Fallback if no account selected (shouldn't happen due to RequireAuthLayout)
+    if (!currentAccount) return null;
+
+    // Derived role
+    // NOTE: AuthContext.profile.memberships has the roles. 
+    // We can access it via useAuth().profile if needed, but currentAccount is what we display.
+
+    const APP_VERSION = '__APP_VERSION__' in window ? (window as any).__APP_VERSION__ : 'v1.0.0';
 
     return (
-        <div className="max-w-7xl mx-auto">
-            {/* Main Content Header */}
-            <header className="mb-10">
-                <div className="flex items-center gap-3">
-                    <span className="material-symbols-rounded text-4xl text-antigravity-accent transition-colors">
-                        {userType === 'ENTERPRISE' ? 'domain' : userType === 'EDUCATIONAL' ? 'school' : 'person'}
-                    </span>
-                    <h1 className="text-3xl font-bold text-antigravity-light-text dark:text-antigravity-dark-text tracking-tight transition-colors">
-                        {t('dashboard.welcome', '¡Hola de nuevo!')}
-                    </h1>
-                </div>
-                <p className="text-antigravity-light-muted dark:text-antigravity-dark-muted mt-1 font-medium transition-colors">{user?.email}</p>
+        <div className="max-w-4xl mx-auto py-8 px-4 space-y-8 animate-in fade-in duration-500">
+            {/* Encabezado */}
+            <header>
+                <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+                    Panel de Control - <span className="text-indigo-600 dark:text-indigo-400">{currentAccount.name}</span>
+                </h1>
+                <p className="text-gray-500 dark:text-gray-400 mt-1">
+                    Bienvenido al centro de operaciones.
+                </p>
             </header>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-antigravity-light-surface dark:bg-antigravity-dark-surface p-8 rounded-[32px] border border-antigravity-light-border dark:border-antigravity-dark-border shadow-sm transition-all hover:shadow-md group">
-                    <div className="w-12 h-12 bg-antigravity-accent/10 text-antigravity-accent rounded-2xl flex items-center justify-center mb-6 group-hover:bg-antigravity-accent group-hover:text-white transition-all">
-                        <Building2 size={24} />
+            {/* Tarjeta de Diagnóstico */}
+            <MinReport.UI.SDKCard title="Estado del Núcleo Operativo">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <div className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-100 dark:border-gray-700">
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Tenant ID</p>
+                        <p className="font-mono text-xs text-gray-600 dark:text-gray-300 break-all select-all">
+                            {currentAccount.id}
+                        </p>
                     </div>
-                    <h3 className="text-lg font-bold text-antigravity-light-text dark:text-antigravity-dark-text mb-2">Mi Ecosistema</h3>
-                    <p className="text-sm text-antigravity-light-muted dark:text-antigravity-dark-muted leading-relaxed">
-                        Gestione sus activos y configure los parámetros de su organización.
-                    </p>
-                </div>
 
-                <div className="bg-antigravity-light-surface dark:bg-antigravity-dark-surface p-8 rounded-[32px] border border-antigravity-light-border dark:border-antigravity-dark-border shadow-sm transition-all hover:shadow-md group">
-                    <div className="w-12 h-12 bg-antigravity-accent/10 text-antigravity-accent rounded-2xl flex items-center justify-center mb-6 group-hover:bg-antigravity-accent group-hover:text-white transition-all">
-                        <User size={24} />
+                    <div className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-100 dark:border-gray-700">
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Versión del Sistema</p>
+                        <p className="font-semibold text-gray-800 dark:text-gray-200">
+                            {APP_VERSION}
+                        </p>
                     </div>
-                    <h3 className="text-lg font-bold text-antigravity-light-text dark:text-antigravity-dark-text mb-2">Perfil</h3>
-                    <p className="text-sm text-antigravity-light-muted dark:text-antigravity-dark-muted leading-relaxed">
-                        Actualice su información personal y preferencias de seguridad.
-                    </p>
-                </div>
-            </div>
 
-            <div className="mt-12 p-12 bg-antigravity-light-surface/50 dark:bg-antigravity-dark-surface/50 rounded-[40px] border border-dashed border-antigravity-light-border dark:border-antigravity-dark-border text-center">
-                <p className="text-antigravity-light-muted dark:text-antigravity-dark-muted italic">Aquí aparecerá tu panel de indicadores...</p>
-            </div>
+                    <div className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-100 dark:border-gray-700">
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Conexión</p>
+                        <div className="flex items-center gap-2">
+                            <div className={`w-2.5 h-2.5 rounded-full ${isOnline ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : 'bg-red-500'}`} />
+                            <span className={`font-medium ${isOnline ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
+                                {isOnline ? 'Online' : 'Offline'}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </MinReport.UI.SDKCard>
+
+            {/* Tarjeta de Bienvenida / Empty State */}
+            <MinReport.UI.SDKCard>
+                <div className="text-center py-8">
+                    <div className="w-16 h-16 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                        <span className="material-symbols-rounded text-3xl">extension</span>
+                    </div>
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+                        Sistema Operativo Listo
+                    </h2>
+                    <p className="text-gray-500 dark:text-gray-400 max-w-md mx-auto mb-8 leading-relaxed">
+                        El sistema está operativo y conectado a su cuenta <strong>{currentAccount.name}</strong>.
+                        Actualmente no hay plugins habilitados en su espacio de trabajo.
+                    </p>
+
+                    <div className="flex justify-center">
+                        <MinReport.UI.SDKButton
+                            variant="primary"
+                            onClick={() => navigate('/plugins')}
+                        >
+                            Ver Catálogo de Plugins
+                        </MinReport.UI.SDKButton>
+                    </div>
+                </div>
+            </MinReport.UI.SDKCard>
         </div>
     );
 };
