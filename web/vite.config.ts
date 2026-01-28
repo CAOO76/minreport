@@ -9,48 +9,10 @@ export default defineConfig({
     resolve: {
         dedupe: ['firebase'],
         alias: {
-            '@minreport/sdk': path.resolve(__dirname, '../sdk/index.ts'),
-            '@minreport/sdk/types': path.resolve(__dirname, '../sdk/types.ts'),
-            '@minreport/sdk/ui': path.resolve(__dirname, '../sdk/ui/index.tsx'),
-            '@minreport/sdk/data': path.resolve(__dirname, '../sdk/data/EntityManager.ts'),
-            '@minreport/sdk/core': path.resolve(__dirname, '../sdk/core/PluginRegistry.ts')
-        },
-        extensions: ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json']
+            '@minreport/sdk': path.resolve(__dirname, '../sdk')
+        }
     },
     plugins: [
-        // Custom plugin to resolve SDK internal imports
-        {
-            name: 'resolve-sdk-imports',
-            resolveId(source, importer) {
-                if (!importer) return null;
-
-                // Only handle imports from SDK files
-                if (!importer.includes('/sdk/')) return null;
-
-                const sdkRoot = path.resolve(__dirname, '../sdk');
-
-                // Map relative imports to absolute paths
-                if (source.startsWith('./')) {
-                    const importerDir = path.dirname(importer);
-                    const resolved = path.resolve(importerDir, source);
-
-                    // Try different extensions
-                    const extensions = ['.ts', '.tsx', '/index.ts', '/index.tsx'];
-                    for (const ext of extensions) {
-                        const fullPath = resolved + ext;
-                        try {
-                            if (require('fs').existsSync(fullPath)) {
-                                return fullPath;
-                            }
-                        } catch (e) {
-                            // Continue to next extension
-                        }
-                    }
-                }
-
-                return null;
-            }
-        },
         react(),
         VitePWA({
             registerType: 'autoUpdate',
