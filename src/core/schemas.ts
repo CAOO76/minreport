@@ -43,6 +43,7 @@ const enterpriseProfile = z.object({
             return false;
         }
     }, { message: "Invalid website URL" }).optional().or(z.literal('')),
+    roleIntent: z.enum(['OPERATIONAL', 'BILLING']).optional(), // B2B Role Intent
 });
 
 const educationalProfile = z.object({

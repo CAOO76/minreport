@@ -34,6 +34,8 @@ import { db, auth } from '../../config/firebase';
 import { UserProfile, UserStatus, Plugin } from '../../types/admin';
 import { M3Switch } from '../ui/M3Switch';
 import clsx from 'clsx';
+import { ConfirmDeleteDialog } from '../common/ConfirmDeleteDialog';
+import { deleteTenant } from '../../services/api';
 
 interface UserManagementDrawerProps {
     isOpen: boolean;
@@ -86,6 +88,9 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
     // State for Confirmation Modal
     const [pendingAction, setPendingAction] = useState<{ key: string; label: string; action: 'ACTIVATE' | 'DEACTIVATE' } | null>(null);
 
+    // State for Delete Confirmation
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
     const handleCopyId = () => {
         if (!user) return;
         navigator.clipboard.writeText(user.uid);
@@ -100,6 +105,22 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
             await updateUserStatus(user.uid, newStatus);
         } catch (err) {
             console.error(err);
+        } finally {
+            setActionLoading(null);
+        }
+    };
+
+    const handleDeleteUser = async () => {
+        if (!user) return;
+        setActionLoading('DELETING');
+        try {
+            // Call cascade delete endpoint
+            await deleteTenant(user.uid);
+            setShowDeleteConfirm(false);
+            onClose(); // Close drawer after successful deletion
+        } catch (err) {
+            console.error('[DRAWER] Error deleting user:', err);
+            alert('Error al eliminar usuario');
         } finally {
             setActionLoading(null);
         }
@@ -367,11 +388,11 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
                                                             </p>
                                                         </div>
                                                         <button
-                                                            onClick={() => handleStatusUpdate('DELETED')}
+                                                            onClick={() => setShowDeleteConfirm(true)}
                                                             disabled={actionLoading !== null}
-                                                            className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider bg-rose-600 text-white hover:bg-rose-700 active:scale-95 transition-all flex items-center gap-2 shadow-sm"
+                                                            className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider bg-rose-600 text-white hover:bg-rose-700 active:scale-95 transition-all flex items-center gap-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                                         >
-                                                            {actionLoading === 'DELETED' ? (
+                                                            {actionLoading === 'DELETING' ? (
                                                                 <RefreshCw size={12} className="animate-spin" />
                                                             ) : (
                                                                 <>
@@ -579,6 +600,16 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
                             </motion.div>
                         </motion.div>
                     )}
+
+                    {/* Delete Confirmation Dialog */}
+                    <ConfirmDeleteDialog
+                        isOpen={showDeleteConfirm}
+                        onClose={() => setShowDeleteConfirm(false)}
+                        onConfirm={handleDeleteUser}
+                        title="Eliminar Usuario Permanentemente"
+                        itemName={user?.displayName || user?.email || ''}
+                        description="Esta acción eliminará permanentemente todos los datos asociados: usuario, cuenta, autenticación y solicitudes. Esta acción NO se puede deshacer."
+                    />
                 </>
             )}
         </AnimatePresence>

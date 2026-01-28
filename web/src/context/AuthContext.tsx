@@ -1,8 +1,10 @@
+
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth';
 import { doc, onSnapshot, getDoc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import type { UserProfile, Account } from '../../../src/types/auth';
+import { checkAndClaimInvitations } from '../utils/invitationHandler';
 
 interface AuthContextType {
     user: User | null;
@@ -21,6 +23,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [currentAccount, setCurrentAccount] = useState<Account | null>(null);
     const [loading, setLoading] = useState(true);
 
+    // 0. Auto-Discovery Logic (Delegate to Utility)
+    const checkPendingInvites = async (currentUser: User) => {
+        await checkAndClaimInvitations(currentUser, db);
+    };
+
     // 1. Listen to Firebase Auth state
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -34,6 +41,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 // If we are coming from a logged-out state, loading might be false.
                 // We want to force it to true until profile/account are resolved.
                 setLoading(true);
+                // Trigger invite check on login (fire functions background)
+                checkPendingInvites(currentUser);
             }
         });
         return unsubscribe;

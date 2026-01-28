@@ -6,6 +6,8 @@ import { BrandingSettings } from './pages/BrandingSettings';
 import { PluginsPage } from './pages/PluginsPage';
 import { UsersPage } from './pages/UsersPage';
 import { SDKPage } from './pages/SDKPage';
+import { EnterpriseManagement } from './pages/EnterpriseManagement';
+import { EnterpriseDetail } from './pages/EnterpriseDetail';
 import { AdminLayout } from './components/AdminLayout';
 import { ThemeProvider } from './context/ThemeContext';
 import { BrandingProvider } from './context/BrandingContext';
@@ -22,6 +24,8 @@ function App() {
                             <Route element={<AuthGuard><AdminLayout /></AuthGuard>}>
                                 <Route path="/" element={<Dashboard />} />
                                 <Route path="/users" element={<UsersPage />} />
+                                <Route path="/enterprises" element={<EnterpriseManagement />} />
+                                <Route path="/enterprises/:id" element={<EnterpriseDetail />} />
                                 {/* TODO: Create the Tenants page component */}
                                 <Route path="/tenants" element={<div>Tenants Page</div>} />
                                 <Route path="/plugins" element={<PluginsPage />} />

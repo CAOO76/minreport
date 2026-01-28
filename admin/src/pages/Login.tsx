@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { adminLogin } from '../services/api';
-import { ShieldAlert, LogIn, Lock } from 'lucide-react';
+import { ShieldAlert, LogIn, Lock, Eye, EyeOff } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ThemeSwitch } from '../components/ThemeSwitch';
@@ -11,6 +11,7 @@ export const Login = () => {
     const { t } = useTranslation();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
@@ -78,7 +79,7 @@ export const Login = () => {
                             <label className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest px-1">{t('admin.master_pass')}</label>
                             <div className="relative group">
                                 <input
-                                    type="password"
+                                    type={showPassword ? 'text' : 'password'}
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
                                     placeholder="••••••••"
@@ -86,9 +87,13 @@ export const Login = () => {
                                     className="w-full pl-4 pr-11 py-3.5 rounded-2xl bg-slate-50 dark:bg-black/20 border border-slate-200 dark:border-white/5 focus:ring-2 focus:ring-antigravity-accent/20 focus:border-antigravity-accent outline-none text-slate-900 dark:text-white transition-all placeholder:text-slate-400"
                                     autoComplete="off"
                                 />
-                                <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">
-                                    <Lock size={18} />
-                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPassword(!showPassword)}
+                                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-antigravity-accent transition-colors"
+                                >
+                                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                                </button>
                             </div>
                         </div>
 

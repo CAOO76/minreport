@@ -69,6 +69,9 @@ export const AdminLayout = () => {
                         <NavLink to="/users" className={navLinkClasses} title="Usuarios">
                             <span className="material-symbols-rounded text-2xl">group</span>
                         </NavLink>
+                        <NavLink to="/enterprises" className={navLinkClasses} title="Empresas B2B">
+                            <span className="material-symbols-rounded text-2xl">business</span>
+                        </NavLink>
                         <NavLink to="/branding" className={navLinkClasses} title="UI/UX">
                             <span className="material-symbols-rounded text-2xl">palette</span>
                         </NavLink>

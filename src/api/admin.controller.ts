@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { db, auth } from '../config/firebase';
+import admin, { db, auth } from '../config/firebase';
 import { Resend } from 'resend';
 import { env } from '../config/env';
 import { z } from 'zod';
@@ -43,6 +43,30 @@ export const listTenants = async (req: Request, res: Response) => {
     } catch (error) {
         console.error('[ADMIN] Error listing tenants:', error);
         return res.status(500).json({ error: 'Failed to fetch tenants' });
+    }
+};
+
+export const listAccounts = async (req: Request, res: Response) => {
+    try {
+        const type = req.query.type as string;
+        let query: any = db.collection('accounts');
+
+        if (type) {
+            query = query.where('type', '==', type);
+        }
+
+        const snapshot = await query.orderBy('createdAt', 'desc').get();
+        console.log(`[ADMIN] Found ${snapshot.size} accounts in Firestore (type: ${type || 'ALL'})`);
+
+        const accounts = snapshot.docs.map((doc: any) => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+
+        return res.status(200).json(accounts);
+    } catch (error) {
+        console.error('[ADMIN] Error listing accounts:', error);
+        return res.status(500).json({ error: 'Failed to fetch accounts' });
     }
 };
 
@@ -176,32 +200,52 @@ export const updateTenantStatus = async (req: Request, res: Response) => {
 
             // 4.5 Create/Sync User Document in 'users' collection for Admin Management
             // This ensures the user appears in the User Management section
+
+            // Determine role based on roleIntent (B2B feature)
+            const userRole = tenantData.type === 'ENTERPRISE' && tenantData.roleIntent === 'BILLING'
+                ? 'BILLING_ONLY'  // Comprador: Solo gestión comercial
+                : 'OWNER';         // Operador/Dueño: Acceso total
+
             const memberships = [{
                 accountId: accountId,
-                role: 'OWNER',
+                role: userRole,
                 companyName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
                 joinedAt: Date.now()
             }];
 
-            await db.collection('users').doc(userRecord.uid).set({
-                uid: userRecord.uid,
-                email: tenantData.email,
-                displayName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
-                role: 'USER', // Default system role
-                memberships: memberships, // <--- CRITICAL: Multi-Tenancy Link
-                lastActiveAccountId: accountId, // Auto-select this account
-                status: 'ACTIVE',
-                entitlements: {
-                    pluginsEnabled: [], // Start with no plugins by default, or inherit from tenant request if available
-                    storageLimit: 1073741824 // 1GB default
-                },
-                stats: {
-                    storageUsed: 0,
-                    lastLogin: null
-                },
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            });
+            // Check if user document already exists
+            const existingUserDoc = await db.collection('users').doc(userRecord.uid).get();
+
+            if (existingUserDoc.exists) {
+                // User already has an account, just add the new membership
+                await db.collection('users').doc(userRecord.uid).update({
+                    memberships: admin.firestore.FieldValue.arrayUnion(...memberships),
+                    updatedAt: new Date().toISOString()
+                });
+                console.log(`[ADMIN] Added new membership to existing user ${userRecord.uid}`);
+            } else {
+                // New user, create full document
+                await db.collection('users').doc(userRecord.uid).set({
+                    uid: userRecord.uid,
+                    email: tenantData.email,
+                    displayName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
+                    role: 'USER', // Default system role
+                    memberships: memberships, // <--- CRITICAL: Multi-Tenancy Link
+                    lastActiveAccountId: accountId, // Auto-select this account
+                    status: 'ACTIVE',
+                    entitlements: {
+                        pluginsEnabled: [], // Start with no plugins by default, or inherit from tenant request if available
+                        storageLimit: 1073741824 // 1GB default
+                    },
+                    stats: {
+                        storageUsed: 0,
+                        lastLogin: null
+                    },
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                });
+                console.log(`[ADMIN] Created new user document for ${userRecord.uid}`);
+            }
 
             // 5. Notify Success with Professional Template
             await resend.emails.send({
@@ -256,6 +300,88 @@ export const updateTenantStatus = async (req: Request, res: Response) => {
     } catch (error) {
         console.error('[ADMIN] Error updating tenant:', error);
         return res.status(500).json({ error: 'Failed to update tenant status and create account' });
+    }
+};
+
+/**
+ * DELETE /api/admin/tenants/:uid
+ * Cascade delete: Authentication + users + accounts + tenants
+ */
+export const deleteTenant = async (req: Request, res: Response) => {
+    const { uid } = req.params;
+
+    try {
+        let tenantRef = db.collection('tenants').doc(uid);
+        let tenantDoc = await tenantRef.get();
+
+        // [FIX] Support deletion by Auth UID (User Management flow)
+        if (!tenantDoc.exists) {
+            console.log(`[DELETE] Tenant not found by ID ${uid}. Searching by authUid...`);
+            const querySnapshot = await db.collection('tenants').where('authUid', '==', uid).limit(1).get();
+
+            if (!querySnapshot.empty) {
+                tenantDoc = querySnapshot.docs[0];
+                tenantRef = tenantDoc.ref;
+                console.log(`[DELETE] Found tenant by authUid: ${tenantDoc.id}`);
+            } else {
+                // Fallback: If no tenant found but it's a valid Auth UID, delete User+Auth only
+                console.log(`[DELETE] No tenant found. Attempting to delete Orphan User: ${uid}`);
+                // Verify if user exists in Auth to confirm it's a valid UID
+                try {
+                    await auth.getUser(uid);
+                    // Proceed to delete User + Auth only (Tenant logic skipped)
+                    await auth.deleteUser(uid);
+                    await db.collection('users').doc(uid).delete();
+                    return res.status(200).json({ success: true, message: 'Orphan User deleted successfully' });
+                } catch (e) {
+                    return res.status(404).json({ error: 'Tenant and User not found' });
+                }
+            }
+        }
+
+        const tenantData = tenantDoc.data()!;
+        const authUid = tenantData.authUid;
+
+        // 1. Delete from Firebase Authentication (if exists)
+        if (authUid) {
+            try {
+                await auth.deleteUser(authUid);
+                console.log(`[DELETE] Removed user from Authentication: ${authUid}`);
+            } catch (authError: any) {
+                if (authError.code !== 'auth/user-not-found') {
+                    console.warn(`[DELETE] Auth deletion warning:`, authError);
+                }
+            }
+
+            // 2. Delete from users collection
+            try {
+                await db.collection('users').doc(authUid).delete();
+                console.log(`[DELETE] Removed user document: ${authUid}`);
+            } catch (userError) {
+                console.warn(`[DELETE] User doc deletion warning:`, userError);
+            }
+        }
+
+        // 3. Delete from accounts collection (using tenant ID as account ID)
+        try {
+            await db.collection('accounts').doc(uid).delete();
+            console.log(`[DELETE] Removed account document: ${uid}`);
+        } catch (accountError) {
+            console.warn(`[DELETE] Account deletion warning:`, accountError);
+        }
+
+        // 4. Delete from tenants collection
+        await tenantRef.delete();
+        console.log(`[DELETE] Removed tenant document: ${uid}`);
+
+        return res.status(200).json({
+            success: true,
+            message: 'Tenant and all related data deleted successfully'
+        });
+
+    } catch (error) {
+        console.error('[ADMIN] Error deleting tenant:', error);
+        return res.status(500).json({ error: 'Failed to delete tenant' });
     }
 };
 

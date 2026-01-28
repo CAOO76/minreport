@@ -25,6 +25,12 @@ export const getTenants = (status?: string) =>
 export const updateTenantStatus = (uid: string, status: 'ACTIVE' | 'REJECTED') =>
     api.patch(`/tenants/${uid}`, { status });
 
+export const deleteTenant = (uid: string) =>
+    api.delete(`/tenants/${uid}`);
+
+export const getAccounts = (type?: string) =>
+    api.get('/accounts', { params: { type } });
+
 interface LogoSet {
     isotype: string;
     logotype: string;

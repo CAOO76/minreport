@@ -31,6 +31,7 @@ interface SDKButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
     fullWidth?: boolean;
     children: React.ReactNode;
     style?: React.CSSProperties;
+    isLoading?: boolean;
 }
 
 export const SDKButton: React.FC<SDKButtonProps> = ({
@@ -38,6 +39,7 @@ export const SDKButton: React.FC<SDKButtonProps> = ({
     fullWidth = false,
     children,
     style = {},
+    isLoading = false,
     ...props
 }: SDKButtonProps) => {
     let backgroundColor = TOKENS.primary;
@@ -54,6 +56,13 @@ export const SDKButton: React.FC<SDKButtonProps> = ({
         border = `1px solid ${TOKENS.error}`;
     }
 
+    // Adjust styles for disabled/loading state
+    if (isLoading || props.disabled) {
+        backgroundColor = TOKENS.border;
+        color = TOKENS.textMuted;
+        border = `1px solid ${TOKENS.border}`;
+    }
+
     const buttonStyle: React.CSSProperties = {
         ...baseTextStyle,
         width: fullWidth ? '100%' : 'auto',
@@ -64,7 +73,7 @@ export const SDKButton: React.FC<SDKButtonProps> = ({
         borderRadius: '8px',
         fontWeight: '700',
         fontSize: '14px',
-        cursor: 'pointer',
+        cursor: (isLoading || props.disabled) ? 'not-allowed' : 'pointer',
         transition: 'opacity 0.2s ease',
         backgroundColor,
         color,
@@ -76,11 +85,16 @@ export const SDKButton: React.FC<SDKButtonProps> = ({
     return (
         <button
             style={buttonStyle}
-            onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'}
-            onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+            onMouseEnter={(e) => {
+                if (!isLoading && !props.disabled) e.currentTarget.style.opacity = '0.9';
+            }}
+            onMouseLeave={(e) => {
+                if (!isLoading && !props.disabled) e.currentTarget.style.opacity = '1';
+            }}
+            disabled={isLoading || props.disabled}
             {...props}
         >
-            {children}
+            {isLoading ? '...' : children}
         </button>
     );
 };

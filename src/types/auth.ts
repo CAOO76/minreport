@@ -1,5 +1,5 @@
 
-export type UserRole = 'OWNER' | 'ADMIN' | 'OPERATOR' | 'VIEWER';
+export type UserRole = 'OWNER' | 'ADMIN' | 'BILLING_ONLY' | 'OPERATOR';
 
 export type AccountType = 'PERSONAL' | 'BUSINESS' | 'EDUCATIONAL';
 
@@ -32,6 +32,13 @@ export interface Account {
     type: AccountType;
     rut?: string; // Tax ID, unique per account
     ownerId: string; // User UID who owns this account
+    primaryOperator?: {
+        name: string;
+        email: string;
+        jobTitle?: string;
+        uid?: string;
+        status: 'ACTIVE' | 'PENDING';
+    };
     createdAt: number;
     updatedAt: number;
 }

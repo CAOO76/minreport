@@ -46,15 +46,24 @@ export const useAdminUsers = () => {
         setLoading(true);
         setError(null);
         try {
-            // Nota: Podríamos filtrar por status != 'DELETED' en la query, 
-            // pero el usuario sugirió manejarlo en la UI o query.
-            const q = query(collection(db, 'users'), where('status', '!=', 'DELETED'));
-            const querySnapshot = await getDocs(q);
+            // [DEBUG] Auth Diagnostics
+            if (!auth.currentUser) {
+                console.error('[DIAGNOSTIC] No user logged in via Firebase SDK!');
+            } else {
+                const tokenResult = await auth.currentUser.getIdTokenResult();
+                console.log('[DIAGNOSTIC] Logged User:', auth.currentUser.email);
+                console.log('[DIAGNOSTIC] Claims:', tokenResult.claims);
+                console.log('[DIAGNOSTIC] Is SuperAdmin per Token?', tokenResult.claims.role === 'SUPER_ADMIN');
+            }
+
+            // Get all users (Super Admin has full access)
+            const querySnapshot = await getDocs(collection(db, 'users'));
             const userList: UserProfile[] = [];
 
             querySnapshot.forEach((doc) => {
                 const userData = doc.data();
-                if (userData.role !== 'SUPER_ADMIN') {
+                // Filter out SUPER_ADMIN and DELETED users in client
+                if (userData.role !== 'SUPER_ADMIN' && userData.status !== 'DELETED') {
                     userList.push({ uid: doc.id, ...userData } as UserProfile);
                 }
             });

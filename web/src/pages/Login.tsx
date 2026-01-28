@@ -6,6 +6,9 @@ import { auth, db } from '../config/firebase';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, ArrowRight, Loader2, Lock, Eye, EyeOff } from 'lucide-react';
 import BrandLogo from '../components/BrandLogo';
+import { LanguageSwitch } from '../components/LanguageSwitch';
+import { ThemeSwitch } from '../components/ThemeSwitch';
+import { Link } from 'react-router-dom';
 
 // Definición de Tipos para la UI
 type LoginStep = 'IDENTIFICATION' | 'ACCOUNT_SELECTION' | 'CHALLENGE';
@@ -185,8 +188,12 @@ export const Login = () => {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-[#121212] transition-colors p-4">
-            <div className="w-full max-w-md">
+        <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-[#121212] transition-colors p-4 relative overflow-hidden">
+            <div className="absolute top-6 right-6 flex items-center gap-3 z-50">
+                <LanguageSwitch />
+                <ThemeSwitch />
+            </div>
+            <div className="w-full max-w-md relative">
 
                 {/* Logo Centrado */}
                 <div className="mb-8 flex justify-center">
@@ -244,6 +251,15 @@ export const Login = () => {
                                 )}
                             </button>
                         </form>
+
+                        <div className="mt-8 pt-6 border-t border-gray-100 dark:border-gray-800 text-center">
+                            <p className="text-sm text-gray-500 dark:text-gray-400">
+                                ¿No tienes una cuenta?{' '}
+                                <Link to="/register" className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline">
+                                    Crear cuenta
+                                </Link>
+                            </p>
+                        </div>
                     </div>
                 )}
 

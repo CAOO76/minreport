@@ -21,26 +21,39 @@ service cloud.firestore {
       allow read: if request.auth != null && request.auth.uid == userId;
 
       // [LOGIN FLOW SUPPORT] Allow looking up a user by email (Limit 1)
-      allow list: if request.query.limit <= 1; 
+      allow list: if request.query.limit != null && request.query.limit <= 1; 
       
       // Allow users to update their own LAST ACTIVE ACCOUNT only (context switching)
       allow update: if request.auth != null && request.auth.uid == userId && 
-                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActiveAccountId']);
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActiveAccountId', 'memberships', 'notificationsSettings']);
     }
 
     // ACCOUNTS / TENANTS DATA
     match /accounts/{accountId} {
       // Owner can read
+      // Owner can read OR Primary Operator (Invitee) can read
       allow read: if request.auth != null && (
         resource.data.ownerId == request.auth.uid ||
+        resource.data.primaryOperator.email == request.auth.token.email ||
         isSuperAdmin()
       );
       
       // [LOGIN FLOW SUPPORT] Allow public read of account details (Name/Type) for the login selector
       allow get: if true;
 
-      // Only Super Admin can write/create accounts via backend (or scripts)
-      allow write: if isSuperAdmin();
+      // Only Super Admin can CREATE/DELETE accounts
+      allow create, delete: if isSuperAdmin();
+
+      // Update rules: Super Admin OR Owner OR Primary Operator (for accepting invite)
+      allow update: if request.auth != null && (
+        isSuperAdmin() ||
+        // Owner: Can update operator invite and basic info
+        (resource.data.ownerId == request.auth.uid && 
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['primaryOperator', 'name', 'description', 'settings'])) ||
+        // Operator: Can update their own status (accept invite)
+        (resource.data.primaryOperator.email == request.auth.token.email &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['primaryOperator']))
+      );
     }
 
     // Audit Logs Collection (Append Only for Admin)

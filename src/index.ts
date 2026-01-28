@@ -3,10 +3,11 @@ import cors from 'cors';
 import helmet from 'helmet';
 import './config/firebase'; // Import to trigger initialization
 import { env } from './config/env';
-import { register } from './api/auth.controller';
-import { adminLogin, listTenants, updateTenantStatus, getBrandingSettings, updateBrandingSettings } from './api/admin.controller';
+import { register, inviteUser } from './api/auth.controller';
+import { adminLogin, listTenants, listAccounts, updateTenantStatus, deleteTenant, getBrandingSettings, updateBrandingSettings } from './api/admin.controller';
 import { getPublicBrandingSettings } from './api/public.controller';
 import { requireSuperAdmin } from './middleware/admin';
+import { requireAuth } from './middleware/auth';
 
 const app = express();
 
@@ -38,10 +39,13 @@ app.get('/api/settings/branding', getPublicBrandingSettings);
 // Routes
 app.post('/api/auth/register', register);
 app.post('/api/admin/login', adminLogin); // [NEW]
+app.post('/api/auth/invite', requireAuth, inviteUser); // [NEW] B2B Invitation
 
 // Admin Routes (Protected)
 app.get('/api/admin/tenants', requireSuperAdmin, listTenants);
+app.get('/api/admin/accounts', requireSuperAdmin, listAccounts); // [NEW] Accounts Management
 app.patch('/api/admin/tenants/:uid', requireSuperAdmin, updateTenantStatus);
+app.delete('/api/admin/tenants/:uid', requireSuperAdmin, deleteTenant);
 app.get('/api/admin/settings/branding', requireSuperAdmin, getBrandingSettings);
 app.put('/api/admin/settings/branding', requireSuperAdmin, updateBrandingSettings);
 
