@@ -19,9 +19,26 @@
   <!-- Icons: Material Symbols Rounded -->
   <link rel="stylesheet"
     href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+  <!-- Init Theme Script (Prevent FOUC) -->
+  <script>
+    (function () {
+      try {
+        var localTheme = localStorage.getItem('theme');
+        var supportDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        // Default to light if no storage, but if we wanted system pref:
+        // if (localTheme === 'dark' || (!localTheme && supportDarkMode))
+        // Matching current ThemeContext behavior (default 'light' if null):
+        if (localTheme === 'dark') {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+      } catch (e) { }
+    })();
+  </script>
 </head>
 
-<body class="bg-surface-light dark:bg-surface-dark text-slate-900 dark:text-slate-100 antialiased min-h-screen">
+<body class="bg-gray-50 dark:bg-[#121212] text-slate-900 dark:text-slate-100 antialiased min-h-screen">
   <div id="root"></div>
   <script type="module" src="/src/main.tsx"></script>
 </body>
