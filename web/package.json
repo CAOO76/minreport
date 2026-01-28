@@ -5,6 +5,7 @@
     "type": "module",
     "scripts": {
         "dev": "vite --host",
+        "prebuild": "bash scripts/copy-sdk.sh",
         "build": "vite build",
         "preview": "vite preview --host",
         "cap:sync": "npx cap sync",

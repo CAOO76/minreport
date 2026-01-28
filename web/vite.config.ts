@@ -9,7 +9,7 @@ export default defineConfig({
     resolve: {
         dedupe: ['firebase'],
         alias: {
-            '@minreport/sdk': path.resolve(__dirname, '../sdk')
+            '@minreport/sdk': path.resolve(__dirname, 'src/sdk-bundle/index.ts')
         }
     },
     plugins: [
@@ -96,6 +96,14 @@ export default defineConfig({
         host: true,
         fs: {
             allow: ['..']
+        }
+    },
+    build: {
+        rollupOptions: {
+            external: [],
+            output: {
+                manualChunks: undefined
+            }
         }
     }
 })
