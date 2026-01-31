@@ -5,7 +5,7 @@ import { auth } from '../config/firebase';
 import { useTranslation } from 'react-i18next';
 import { KeyRound, ShieldCheck, AlertCircle, Eye, EyeOff, Loader2 } from 'lucide-react';
 
-export const SetPassword = () => {
+export const PasswordReset = () => {
     const { t } = useTranslation();
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();

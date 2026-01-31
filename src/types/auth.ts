@@ -12,7 +12,17 @@ export interface Membership {
 
 export interface UserProfile {
     uid: string;
-    email: string;
+    /**
+     * Identificador soberano (RUT).
+     * El email de Firebase Auth es un mecanismo técnico subyacente.
+     * Para Admins y usuarios Personales.
+     */
+    rut?: string;
+    loginMethod: 'RUT' | 'EMAIL';
+    email: string; // Auth credential
+    contactEmail: string; // Recovery/Communication
+    recoveryPhone?: string;
+
     displayName?: string;
     photoURL?: string;
     // Array of accounts this user belongs to
@@ -30,7 +40,11 @@ export interface Account {
     id: string; // matches accountId in Membership
     name: string; // Company Name or Personal Name
     type: AccountType;
-    rut?: string; // Tax ID, unique per account
+    /**
+     * ID legal único de la empresa/cuenta.
+     * Formato: XX.XXX.XXX-X
+     */
+    rut: string;
     ownerId: string; // User UID who owns this account
     primaryOperator?: {
         name: string;

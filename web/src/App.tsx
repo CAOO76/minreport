@@ -1,7 +1,10 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { Register } from './pages/Register';
-import { SetPassword } from './pages/SetPassword';
+import { PasswordReset } from './pages/PasswordReset';
 import { Login } from './pages/Login';
+import { RegisterSelection } from './pages/RegisterSelection';
+import { RequestAccount } from './pages/RequestAccount';
+import { RequestEduAccount } from './pages/RequestEduAccount';
+import { RequestPersonalAccount } from './pages/RequestPersonalAccount';
 import { Dashboard } from './pages/Dashboard';
 import { ClientPluginsPage } from './pages/ClientPluginsPage';
 import { BrandingProvider } from './context/BrandingContext';
@@ -64,8 +67,12 @@ const AppRoutes = () => {
         <Routes>
             {/* Public / Auth Routes */}
             <Route path="/login" element={user ? <Navigate to="/dashboard" /> : <Login />} />
-            <Route path="/register" element={user ? <Navigate to="/dashboard" /> : <Register />} />
-            <Route path="/auth/action" element={<SetPassword />} />
+            <Route path="/register-selection" element={user ? <Navigate to="/dashboard" /> : <RegisterSelection />} />
+            <Route path="/request-b2b" element={user ? <Navigate to="/dashboard" /> : <RequestAccount />} />
+            <Route path="/request-edu" element={user ? <Navigate to="/dashboard" /> : <RequestEduAccount />} />
+            <Route path="/request-personal" element={user ? <Navigate to="/dashboard" /> : <RequestPersonalAccount />} />
+            <Route path="/password-reset" element={<PasswordReset />} />
+            <Route path="/auth/action" element={<PasswordReset />} />
 
             {/* Protected Routes with Layout */}
             <Route element={<RequireAuthLayout />}>

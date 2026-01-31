@@ -228,7 +228,8 @@ export const updateTenantStatus = async (req: Request, res: Response) => {
                 await db.collection('users').doc(userRecord.uid).set({
                     uid: userRecord.uid,
                     email: tenantData.email,
-                    displayName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
+                    // [FIX] Preserve existing Auth DisplayName if available (don't overwrite Person with Company Name)
+                    displayName: userRecord.displayName || (tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name)),
                     role: 'USER', // Default system role
                     memberships: memberships, // <--- CRITICAL: Multi-Tenancy Link
                     lastActiveAccountId: accountId, // Auto-select this account
