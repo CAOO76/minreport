@@ -11,6 +11,10 @@ import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import ClientLayout from './layouts/ClientLayout';
 import MobileLayout from './layouts/MobileLayout';
+import MobileLogin from './pages/mobile/MobileLogin';
+import MobileDashboard from './pages/mobile/MobileDashboard';
+import MobileTools from './pages/mobile/MobileTools';
+import MobileProfile from './pages/mobile/MobileProfile';
 import { useIsMobile } from './hooks/useIsMobile';
 import OfflineIndicator from './components/common/OfflineIndicator';
 import AccountSelector from './components/auth/AccountSelector';
@@ -89,7 +93,20 @@ const AppRoutes = () => {
             <Route path="/setup-access" element={<SetupAccess />} />
             <Route path="/auth/action" element={<SetPassword />} />
 
-            {/* Protected Routes with Layout */}
+
+            {/* 📱 Rutas Móviles (Protegidas por MobileLayout y Role Checks) */}
+            <Route path="/mobile" element={<MobileLayout />}>
+                <Route path="dashboard" element={<MobileDashboard />} />
+                <Route path="tools" element={<MobileTools />} />
+                <Route path="profile" element={<MobileProfile />} />
+                {/* Redirección por defecto */}
+                <Route index element={<Navigate to="/mobile/dashboard" replace />} />
+            </Route>
+
+            {/* Login Móvil Independiente */}
+            <Route path="/mobile/login" element={<MobileLogin />} />
+
+            {/* Protected Routes with Client Layout */}
             <Route element={<RequireAuthLayout />}>
                 <Route path="/dashboard" element={<DashboardRouter />} />
                 <Route path="/plugins" element={<ClientPluginsPage />} />
