@@ -2,7 +2,7 @@
 import React, { useEffect } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { Home, LayoutGrid, User } from 'lucide-react';
-import { auth, db } from '../../config/firebase';
+import { auth, db } from '../config/firebase';
 import { signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 
