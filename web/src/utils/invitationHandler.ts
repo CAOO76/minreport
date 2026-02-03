@@ -1,6 +1,6 @@
 
 import { User } from 'firebase/auth';
-import { Firestore, collection, query, where, getDocs, writeBatch, doc, arrayUnion } from 'firebase/firestore';
+import { Firestore, collection, query, where, getDocs, writeBatch, doc, arrayUnion, getDoc } from 'firebase/firestore';
 
 /**
  * Busca invitaciones pendientes para el usuario y las vincula automáticamente.
@@ -48,15 +48,30 @@ export const checkAndClaimInvitations = async (user: User, db: Firestore): Promi
             });
         });
 
-        // 3. Actualizar Usuario: Añadir memberships
+        // 3. Pre-flight Check: Evitar Duplicados en User
+        // arrayUnion fallaba porque 'joinedAt' cambiaba siempre, haciéndolo un objeto "nuevo"
         if (newMemberships.length > 0) {
-            batch.update(userRef, {
-                memberships: arrayUnion(...newMemberships)
-            });
+            const userDoc = await getDoc(userRef); // Leer perfil actual
+            const currentUserData = userDoc.exists() ? userDoc.data() : {};
+            const currentMemberships = currentUserData.memberships || [];
+
+            // Filtrar solo las memberships que NO tiene ya
+            const uniqueNewMemberships = newMemberships.filter(nm =>
+                !currentMemberships.some((cm: any) => cm.accountId === nm.accountId)
+            );
+
+            if (uniqueNewMemberships.length > 0) {
+                batch.update(userRef, {
+                    memberships: arrayUnion(...uniqueNewMemberships)
+                });
+                console.log(`[InvitationHandler] Added ${uniqueNewMemberships.length} new memberships.`);
+            } else {
+                console.log(`[InvitationHandler] Memberships already exist, skipping user update.`);
+            }
         }
 
         await batch.commit();
-        console.log(`[InvitationHandler] ${snapshot.size} invitaciones reclamadas para ${user.email}`);
+        console.log(`[InvitationHandler] Processed ${snapshot.size} pending invitations.`);
         return snapshot.size;
 
     } catch (error) {

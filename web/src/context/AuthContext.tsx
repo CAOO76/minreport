@@ -73,22 +73,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 3. Determine and Fetch Current Account
     useEffect(() => {
         const resolveAccount = async () => {
-            if (!user || !profile) {
-                if (!user) setLoading(false);
+            if (!user) {
+                setLoading(false);
                 return;
             }
 
-            // Define target Account ID
+            // [CRITICAL FIX] Prioritize ID Token Claims (Source of Truth from Login Tunnel)
             let targetAccountId: string | null = null;
 
-            if (profile.memberships && profile.memberships.length > 0) {
-                if (profile.memberships.length === 1) {
-                    targetAccountId = profile.memberships[0].accountId;
-                } else if (profile.lastActiveAccountId) {
-                    // Verify membership still exists
-                    const hasMembership = profile.memberships.some(m => m.accountId === profile.lastActiveAccountId);
-                    if (hasMembership) {
-                        targetAccountId = profile.lastActiveAccountId;
+            try {
+                // Force refresh to ensure we have the latest claims from the tunnel login
+                const idTokenResult = await user.getIdTokenResult();
+                const claims = idTokenResult.claims;
+
+                if (claims.activeAccountId) {
+                    console.log(`[AUTH-CONTEXT] Using Claim Account ID: ${claims.activeAccountId}`);
+                    targetAccountId = claims.activeAccountId as string;
+                }
+            } catch (e) {
+                console.warn("Failed to get token claims", e);
+            }
+
+            // Fallback: Use Firestore Profile Profile if claims are missing (e.g. persistent session)
+            if (!targetAccountId && profile) {
+                if (profile.memberships && profile.memberships.length > 0) {
+                    // Scenario 1: Only one account -> Auto-select
+                    if (profile.memberships.length === 1) {
+                        targetAccountId = profile.memberships[0].accountId;
+                    }
+                    // Scenario 2: Multiple accounts -> Respect last active
+                    else if (profile.lastActiveAccountId) {
+                        const hasMembership = profile.memberships.some(m => m.accountId === profile.lastActiveAccountId);
+                        if (hasMembership) {
+                            targetAccountId = profile.lastActiveAccountId;
+                        }
                     }
                 }
             }
@@ -105,24 +123,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     const accountRef = doc(db, 'accounts', targetAccountId);
                     const accountSnap = await getDoc(accountRef);
                     if (accountSnap.exists()) {
-                        setCurrentAccount({ id: accountSnap.id, ...accountSnap.data() } as Account);
+                        const accountData = accountSnap.data();
+                        console.log(`[AUTH-CONTEXT] Resolved Account: ${accountData.name}`);
+                        setCurrentAccount({ id: accountSnap.id, ...accountData } as Account);
                     } else {
-                        console.error(`Account ${targetAccountId} not found.`);
+                        console.warn(`[AUTH-CONTEXT] Account ${targetAccountId} not found in Firestore.`);
                         setCurrentAccount(null);
                     }
                 } catch (err) {
-                    console.error("Error fetching account:", err);
+                    console.error("[AUTH-CONTEXT] Error fetching account:", err);
                     setCurrentAccount(null);
                 }
             } else {
-                // No account selected (force selector) or no memberships
-                setCurrentAccount(null);
+                // Valid state: User is logged in but hasn't selected an account yet
+                // Only stop loading if we have the profile loaded (so we know for sure they have multiple options)
+                if (profile) {
+                    setCurrentAccount(null);
+                }
             }
-            setLoading(false);
+
+            // Critical: Ensure loading stops eventually
+            if (profile || !user) {
+                setLoading(false);
+            }
         };
 
         resolveAccount();
-    }, [user, profile]); // Re-run if user or profile (memberships/lastActive) changes
+    }, [user, profile]); // Re-run if user (token refresh) or profile changes
 
     const switchAccount = async (accountId: string) => {
         if (!user || !profile) return;

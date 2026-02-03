@@ -67,35 +67,46 @@ export const getAccountsById = async (req: Request, res: Response) => {
       fullName = userData.displayName || userData.fullName;
       const memberships = userData.memberships || [];
 
-      accounts = await Promise.all(memberships.map(async (m: any) => {
-        const accountSnap = await db.collection('accounts').doc(m.accountId).get();
-        const accountData = accountSnap.exists ? accountSnap.data() : {};
-        return {
-          accountId: m.accountId,
-          accountName: accountData?.name || 'Unknown Account',
-          type: accountData?.type || 'PERSONAL',
-          role: m.role
-        };
+      const accountResults = await Promise.all(memberships.map(async (m: any) => {
+        try {
+          const accountSnap = await db.collection('accounts').doc(m.accountId).get();
+
+          if (!accountSnap.exists) {
+            console.warn(`[RUT-DIAGNOSTIC] Ghost membership excluded: ${m.accountId}`);
+            return null;
+          }
+
+          const accountData = accountSnap.data();
+          return {
+            accountId: m.accountId,
+            accountName: accountData?.name || `Cuenta ${m.accountId.slice(0, 4)}`,
+            type: accountData?.type || 'PERSONAL',
+            role: m.role || 'MEMBER'
+          };
+        } catch (err) {
+          console.error(`[RUT-DIAGNOSTIC] Failed to read account ${m.accountId}:`, err);
+          return null;
+        }
       }));
+
+      accounts = accountResults.filter(a => a !== null);
     }
 
     // 2. Search in 'accounts' for primaryOperator assignment (Delegates)
     const accountsRef = db.collection('accounts');
     const delegateSnapshot = await accountsRef.where('primaryOperator.taxId', 'in', finalSearchValues).get();
 
-    console.log(`[RUT-DIAGNOSTIC] Delegate matches found: ${delegateSnapshot.size}`);
-
     if (!delegateSnapshot.empty) {
       delegateSnapshot.docs.forEach(docSnap => {
         const data = docSnap.data();
-        if (!fullName) fullName = data.primaryOperator.name;
+        if (!fullName) fullName = data.primaryOperator?.name;
 
         // Add if not already present (avoid duplicates)
         if (!accounts.find(a => a.accountId === docSnap.id)) {
           accounts.push({
             accountId: docSnap.id,
-            accountName: data.name,
-            type: data.type,
+            accountName: data.name || 'Empresa sin nombre',
+            type: data.type || 'BUSINESS',
             role: 'ADMINISTRADOR OPERATIVO'
           });
         }

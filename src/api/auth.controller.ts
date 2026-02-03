@@ -212,23 +212,23 @@ export const inviteUser = async (req: Request, res: Response) => {
             console.log(`[B2B-INVITE] ✅ Account updated successfully.`);
         }
 
-        // 4. Generate Activation Link
-        if (isNewUser) {
-            const rawLink = await auth.generatePasswordResetLink(normalizedEmail);
-            // In prod: map to custom domain
-            const baseUrl = process.env.NODE_ENV === 'production'
-                ? 'https://minreport-access.web.app'
-                : 'http://localhost:5173';
+        // 4. Generate Activation Link (Always context-aware for B2B)
+        const baseUrl = process.env.NODE_ENV === 'production'
+            ? 'https://minreport-access.web.app'
+            : 'http://localhost:5173';
 
-            // Extract oobCode and construct nice link
+        if (isNewUser) {
+            console.log(`[B2B-INVITE] Generating activation link for NEW user: ${normalizedEmail}`);
+            const rawLink = await auth.generatePasswordResetLink(normalizedEmail);
             const url = new URL(rawLink);
             const oobCode = url.searchParams.get('oobCode');
-            link = `${baseUrl}/auth/action?mode=resetPassword&oobCode=${oobCode}&email=${normalizedEmail}`;
+
+            // Redirect to setup-access instead of standard reset
+            link = `${baseUrl}/setup-access?accountId=${accountId}&taxId=${taxId || ''}&email=${normalizedEmail}&oobCode=${oobCode}`;
         } else {
-            // Standard Login Link
-            link = process.env.NODE_ENV === 'production'
-                ? 'https://minreport-access.web.app/login'
-                : 'http://localhost:5173/login';
+            console.log(`[B2B-INVITE] Generating link for EXISTING user: ${normalizedEmail}`);
+            // Point to setup-access anyway so they can set their SPECIFIC password for this account
+            link = `${baseUrl}/setup-access?accountId=${accountId}&taxId=${taxId || ''}&email=${normalizedEmail}`;
         }
 
         // 5. Send Email via Resend

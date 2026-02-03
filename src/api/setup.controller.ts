@@ -92,8 +92,19 @@ export const setupAccountPassword = async (req: Request, res: Response) => {
         const passwordHash = hashPassword(password);
         memberships[mIndex].passwordHash = passwordHash;
         memberships[mIndex].activatedAt = new Date().toISOString();
+        memberships[mIndex].status = 'ACTIVE'; // Move from PENDING to ACTIVE
 
-        // 4. Update the User document
+        // 4. [NEW] Sync with Firebase Auth (Global Identity activation)
+        // This ensures the user can login globally while having a specific hash for this account
+        const userUid = userDocRef.id;
+        console.log(`[AUTH-TUNNEL] Syncing password with Firebase Auth for UID: ${userUid}`);
+        const { auth } = await import('../config/firebase');
+        await auth.updateUser(userUid, {
+            password: password,
+            emailVerified: true
+        });
+
+        // 5. Update the User document
         await userDocRef.update({
             memberships: memberships,
             updatedAt: Date.now()

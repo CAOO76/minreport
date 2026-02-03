@@ -234,12 +234,20 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
             const existingUserDoc = await db.collection('users').doc(userRecord.uid).get();
 
             if (existingUserDoc.exists) {
-                // User already has an account, just add the new membership
-                await db.collection('users').doc(userRecord.uid).update({
-                    memberships: admin.firestore.FieldValue.arrayUnion(...memberships),
-                    updatedAt: new Date().toISOString()
-                });
-                console.log(`[ADMIN] Added new membership to existing user ${userRecord.uid}`);
+                // User exists: Check for existing membership to avoid duplicates
+                const userData = existingUserDoc.data();
+                const currentMemberships = userData?.memberships || [];
+                const alreadyMember = currentMemberships.some((m: any) => m.accountId === accountId);
+
+                if (!alreadyMember) {
+                    await db.collection('users').doc(userRecord.uid).update({
+                        memberships: admin.firestore.FieldValue.arrayUnion(...memberships),
+                        updatedAt: new Date().toISOString()
+                    });
+                    console.log(`[ADMIN] Added new membership to existing user ${userRecord.uid}`);
+                } else {
+                    console.log(`[ADMIN] User ${userRecord.uid} already member of ${accountId}, skipping add.`);
+                }
             } else {
                 // New user, create full document
                 await db.collection('users').doc(userRecord.uid).set({
@@ -284,7 +292,7 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
             });
 
             // [AUDIT] Log Approval
-            await auditAction((req as any).user.email, 'APPROVE_TENANT', uid, { type: tenantData.type });
+            await auditAction(adminEmail, 'APPROVE_TENANT', uid, { type: tenantData.type });
 
         } else if (status === 'REJECTED') {
             await tenantRef.update({

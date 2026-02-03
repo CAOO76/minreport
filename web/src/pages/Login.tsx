@@ -75,7 +75,13 @@ export const Login = () => {
                 type: acc.type
             }));
 
-            setDetectedAccounts(resolvedAccounts);
+            // Deduplicate accounts visually to prevent UI glitches
+            const uniqueAccounts = new Map<string, DetectedAccount>();
+            resolvedAccounts.forEach(acc => {
+                uniqueAccounts.set(acc.id, acc);
+            });
+
+            setDetectedAccounts(Array.from(uniqueAccounts.values()));
             setStep('ACCOUNT_SELECTION');
 
         } catch (err: any) {

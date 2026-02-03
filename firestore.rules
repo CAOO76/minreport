@@ -30,16 +30,21 @@ service cloud.firestore {
 
     // ACCOUNTS / TENANTS DATA
     match /accounts/{accountId} {
-      // Owner can read
-      // Owner can read OR Primary Operator (Invitee) can read
-      allow read: if request.auth != null && (
+      // Allow reading specific document if Owner, Operator, Super Admin OR Active Session
+      allow get: if request.auth != null && (
+        isSuperAdmin() ||
+        // Trust the Custom Token Claim (Tunnel-validated access)
+        request.auth.token.activeAccountId == accountId ||
         resource.data.ownerId == request.auth.uid ||
-        resource.data.primaryOperator.email == request.auth.token.email ||
-        isSuperAdmin()
+        (resource.data.primaryOperator != null && resource.data.primaryOperator.email == request.auth.token.email)
       );
-      
-      // [LOGIN FLOW SUPPORT] Allow public read of account details (Name/Type) for the login selector
-      allow get: if true;
+
+      // [CRITICAL] Allow LIST queries for Login/Invitation flow
+      allow list: if request.auth != null && (
+        isSuperAdmin() ||
+        (resource.data.ownerId == request.auth.uid) || 
+        (resource.data.primaryOperator != null && resource.data.primaryOperator.email == request.auth.token.email)
+      );
 
       // Only Super Admin can CREATE/DELETE accounts
       allow create, delete: if isSuperAdmin();
@@ -51,7 +56,7 @@ service cloud.firestore {
         (resource.data.ownerId == request.auth.uid && 
          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['primaryOperator', 'name', 'description', 'settings', 'updatedAt'])) ||
         // Operator: Can update their own status (accept invite)
-        (resource.data.primaryOperator.email == request.auth.token.email &&
+        (resource.data.primaryOperator != null && resource.data.primaryOperator.email == request.auth.token.email &&
          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['primaryOperator', 'updatedAt']))
       );
     }
