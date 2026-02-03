@@ -5,12 +5,11 @@
  */
 export const SDK_METADATA = {
     changelog: [
-        "Implementación del ciclo de vida del SDK (BETA/STABLE/DEPRECATED).",
-        "Control de distribución basado en el estado de la versión.",
-        "Soporte para promoción manual de versiones en el panel admin.",
-        "Mejoras de seguridad en la descarga de paquetes."
-    ],
-    author: 'MinReport Dev Team',
+    "Automated maintenance release.",
+    "Source Bump: v1.0.0 -> v1.0.1",
+    "Trace ID: 1770143450292"
+],
+    author: 'MinReport Automation',
     releaseDate: new Date(),
     status: 'BETA' as const
 };

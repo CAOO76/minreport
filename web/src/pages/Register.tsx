@@ -14,12 +14,12 @@ import clsx from 'clsx';
 // Los iconos están definidos abajo como componentes SVG nativos.
 
 type AccountType = 'ENTERPRISE' | 'EDUCATIONAL' | 'PERSONAL';
-type RoleIntent = 'OPERATIONAL' | 'BILLING';
+type EducationalProfile = 'ALUMNO' | 'ACADEMICO' | 'DOCENTE' | 'OTRO';
 
 export const Register = () => {
     const { t } = useTranslation();
     const [type, setType] = useState<AccountType>('ENTERPRISE');
-    const [roleIntent, setRoleIntent] = useState<RoleIntent | null>(null);
+    const [eduProfile, setEduProfile] = useState<EducationalProfile | null>(null);
 
     const [formData, setFormData] = useState<Partial<RegisterData>>({
         email: '',
@@ -35,7 +35,8 @@ export const Register = () => {
         graduation_date: '',
         full_name: '',
         run: '',
-        usage_profile: 'PROFESSIONAL'
+        usage_profile: 'PROFESSIONAL',
+        profile: ''
     });
 
     const [loading, setLoading] = useState(false);
@@ -45,7 +46,7 @@ export const Register = () => {
     const handleTypeChange = (newType: AccountType) => {
         setType(newType);
         setError('');
-        if (newType !== 'ENTERPRISE') setRoleIntent(null);
+        setEduProfile(null);
     };
 
     const handleChange = (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -78,15 +79,13 @@ export const Register = () => {
                 company_name: formData.company_name,
                 industry: formData.industry,
                 rut: formData.rut,
-                roleIntent: roleIntent,
             });
         } else if (type === 'EDUCATIONAL') {
             Object.assign(requiredFields, {
                 applicant_name: formData.applicant_name,
                 institution_name: formData.institution_name,
-                institution_website: formData.institution_website,
-                program_name: formData.program_name,
-                graduation_date: formData.graduation_date,
+                run: formData.run, // Mandatory ID
+                profile: eduProfile, // Mandatory Profile
             });
         } else if (type === 'PERSONAL') {
             Object.assign(requiredFields, {
@@ -102,14 +101,15 @@ export const Register = () => {
         }
 
         // Specific validations based on type
-        if (type !== 'EDUCATIONAL') { // ENTERPRISE or PERSONAL
-            const idField = type === 'PERSONAL' ? 'run' : 'rut';
-            const idValue = formData[idField];
-            if (formData.country === 'CL' && !validateRut(idValue || '')) {
-                setError(`Formato de ${type === 'PERSONAL' ? 'RUN' : 'RUT'} inválido`);
-                return;
-            }
-        } else { // EDUCATIONAL
+        const idField = (type === 'ENTERPRISE') ? 'rut' : 'run';
+        const idValue = (formData as any)[idField];
+
+        if (formData.country === 'CL' && !validateRut(idValue || '')) {
+            setError(`Formato de ${idField.toUpperCase()} inválido`);
+            return;
+        }
+
+        if (type === 'EDUCATIONAL') {
             if (isPublicEmail(formData.email || '')) {
                 setError(t('errors.public_email'));
                 return;
@@ -123,7 +123,6 @@ export const Register = () => {
                 email: formData.email,
                 country: formData.country,
                 type,
-                roleIntent: type === 'ENTERPRISE' ? roleIntent : undefined,
                 ...(type === 'ENTERPRISE' && {
                     applicant_name: formData.applicant_name,
                     company_name: formData.company_name,
@@ -134,6 +133,8 @@ export const Register = () => {
                 ...(type === 'EDUCATIONAL' && {
                     applicant_name: formData.applicant_name,
                     institution_name: formData.institution_name,
+                    run: formData.run,
+                    profile: eduProfile,
                     institution_website: formData.institution_website,
                     program_name: formData.program_name,
                     graduation_date: formData.graduation_date
@@ -204,18 +205,6 @@ export const Register = () => {
     );
 
     // --- ICONOS SVG ---
-    const IconHardHat = ({ className }: { className?: string }) => (
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-            <path d="M2 18a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v2z" /><path d="M10 10V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v5" /><path d="M4 15v-3a6 6 0 0 1 6-6h0" /><path d="M14 6h0a6 6 0 0 1 6 6v3" />
-        </svg>
-    );
-
-    const IconCreditCard = ({ className }: { className?: string }) => (
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-            <rect width="20" height="14" x="2" y="5" rx="2" /><line x1="2" x2="22" y1="10" y2="10" />
-        </svg>
-    );
-
     const IconCheck = ({ className }: { className?: string }) => (
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
             <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" />
@@ -230,22 +219,22 @@ export const Register = () => {
                 <ThemeSwitch />
             </div>
 
-            <Card className="w-full max-w-lg shadow-xl shadow-black/5 dark:shadow-none my-8 bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-antigravity-light-border dark:border-antigravity-dark-border">
+            <Card className="w-full max-w-lg shadow-xl shadow-black/5 dark:shadow-none my-8 bg-antigravity-light-surface dark:bg-[#1E1E1E] border border-antigravity-light-border dark:border-gray-800 rounded-[2rem] p-10 font-Atkinson">
                 <div className="mb-8 text-center">
-                    <h1 className="text-2xl font-bold text-antigravity-accent mb-2">{t('auth.title')}</h1>
-                    <p className="text-antigravity-light-muted dark:text-antigravity-dark-muted text-sm">{t('auth.subtitle')}</p>
+                    <h1 className="text-3xl font-extrabold text-gray-900 dark:text-white mb-2 tracking-tight uppercase">{t('auth.title', 'Nueva Suscripción')}</h1>
+                    <p className="text-gray-500 dark:text-gray-400 text-sm font-medium">{t('auth.subtitle', 'Inicia tu proceso de activación personalizada')}</p>
                 </div>
 
-                <div className="flex p-1 mb-8 bg-slate-100 dark:bg-white/5 rounded-lg">
+                <div className="flex p-1.5 mb-8 bg-gray-100 dark:bg-white/5 rounded-2xl">
                     {(['ENTERPRISE', 'EDUCATIONAL', 'PERSONAL'] as AccountType[]).map((tab) => (
                         <button
                             key={tab}
                             onClick={() => handleTypeChange(tab)}
                             className={clsx(
-                                "flex-1 py-2 text-xs font-bold rounded-md transition-all",
+                                "flex-1 py-3 text-xs font-bold rounded-xl transition-all duration-300",
                                 type === tab
-                                    ? "bg-white dark:bg-slate-800 text-antigravity-accent shadow-sm"
-                                    : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                                    ? "bg-white dark:bg-indigo-600 text-indigo-600 dark:text-white shadow-lg shadow-gray-200/50 dark:shadow-none"
+                                    : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
                             )}
                         >
                             {t(`tabs.${tab.toLowerCase()}`)}
@@ -294,77 +283,54 @@ export const Register = () => {
 
                         {type === 'ENTERPRISE' && (
                             <>
-                                {renderInput(t('form.applicant_name'), 'applicant_name')}
-                                {renderInput(t('form.company_name'), 'company_name')}
-
-                                {/* === ZONA NUEVA: SELECTOR DE PERFIL B2B (SVG PREMIUM) === */}
-                                <div className="space-y-2 pt-2 pb-2">
-                                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Perfil de Usuario</label>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                        <div
-                                            onClick={() => setRoleIntent('OPERATIONAL')}
-                                            className={clsx(
-                                                "cursor-pointer rounded-lg border p-3 flex flex-col items-center text-center transition-all relative group",
-                                                roleIntent === 'OPERATIONAL'
-                                                    ? "border-primary bg-primary/5 ring-1 ring-primary"
-                                                    : "border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600"
-                                            )}
-                                        >
-                                            <IconHardHat className={clsx("h-6 w-6 mb-2 transition-colors", roleIntent === 'OPERATIONAL' ? "text-primary" : "text-gray-400 group-hover:text-gray-500")} />
-                                            <p className="text-xs font-bold text-slate-900 dark:text-white">Dueño / Operativo</p>
-                                            <p className="text-[10px] text-slate-500 leading-tight mt-1">Gestión completa</p>
-                                            {roleIntent === 'OPERATIONAL' && (
-                                                <div className="absolute top-2 right-2 text-primary">
-                                                    <IconCheck className="w-4 h-4" />
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        <div
-                                            onClick={() => setRoleIntent('BILLING')}
-                                            className={clsx(
-                                                "cursor-pointer rounded-lg border p-3 flex flex-col items-center text-center transition-all relative group",
-                                                roleIntent === 'BILLING'
-                                                    ? "border-primary bg-primary/5 ring-1 ring-primary"
-                                                    : "border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600"
-                                            )}
-                                        >
-                                            <IconCreditCard className={clsx("h-6 w-6 mb-2 transition-colors", roleIntent === 'BILLING' ? "text-primary" : "text-gray-400 group-hover:text-gray-500")} />
-                                            <p className="text-xs font-bold text-slate-900 dark:text-white">Comprador</p>
-                                            <p className="text-[10px] text-slate-500 leading-tight mt-1">Solo pagos</p>
-                                            {roleIntent === 'BILLING' && (
-                                                <div className="absolute top-2 right-2 text-primary">
-                                                    <IconCheck className="w-4 h-4" />
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                                {/* ============================================= */}
-
-                                {renderInput(formData.country === 'CL' ? 'RUT' : activeCountry.taxLabel, 'rut', 'text', activeCountry.placeholder)}
-                                {renderInput(t('form.industry'), 'industry')}
+                                {renderInput(t('form.applicant_name', 'Nombre del Solicitante'), 'applicant_name')}
+                                {renderInput(t('form.company_name', 'Nombre de la Empresa'), 'company_name')}
+                                {renderInput(formData.country === 'CL' ? 'RUT de la Empresa' : activeCountry.taxLabel, 'rut', 'text', activeCountry.placeholder)}
+                                {renderInput(t('form.industry', 'Industria'), 'industry')}
                                 {renderInput(`${t('form.website')} (${t('form.optional')})`, 'website', 'text', 'www.company.com', false)}
                             </>
                         )}
 
                         {type === 'EDUCATIONAL' && (
                             <>
-                                {renderInput(t('form.applicant_name'), 'applicant_name')}
-                                {renderInput(t('form.institution_name'), 'institution_name')}
-                                {renderInput(t('form.institution_web'), 'institution_website', 'text', 'www.edu.cl')}
-                                {renderInput(t('form.program_name'), 'program_name')}
-                                {renderInput(t('form.graduation_date'), 'graduation_date', 'date')}
+                                {renderInput(t('form.applicant_name', 'Nombre Completo'), 'applicant_name')}
+                                {renderInput(formData.country === 'CL' ? 'RUN / Cédula Identidad' : activeCountry.taxLabel, 'run', 'text', activeCountry.placeholder)}
+
+                                <div className="space-y-2">
+                                    <label className="text-xs font-bold text-gray-500 uppercase tracking-widest ml-1">Perfil Académico</label>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {(['ALUMNO', 'ACADEMICO', 'DOCENTE', 'OTRO'] as EducationalProfile[]).map(p => (
+                                            <button
+                                                key={p}
+                                                type="button"
+                                                onClick={() => setEduProfile(p)}
+                                                className={clsx(
+                                                    "py-3 px-4 rounded-xl border text-[10px] font-bold transition-all",
+                                                    eduProfile === p
+                                                        ? "bg-indigo-50 border-indigo-400 text-indigo-700 dark:bg-indigo-500/20 dark:border-indigo-500 dark:text-indigo-300"
+                                                        : "bg-gray-50 border-gray-100 text-gray-400 dark:bg-white/5 dark:border-gray-800"
+                                                )}
+                                            >
+                                                {p}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {renderInput(t('form.institution_name', 'Institución'), 'institution_name')}
+                                {renderInput(`${t('form.institution_web', 'Web Institucional')} (${t('form.optional')})`, 'institution_website', 'text', 'www.edu.cl', false)}
+                                {renderInput(t('form.program_name', 'Carrera / Programa'), 'program_name')}
+                                {renderInput(t('form.graduation_date', 'Fecha Estimada Graduación'), 'graduation_date', 'date')}
                             </>
                         )}
 
                         {type === 'PERSONAL' && (
                             <>
-                                {renderInput(t('form.full_name'), 'full_name')}
-                                {renderInput(formData.country === 'CL' ? 'RUN' : activeCountry.taxLabel, 'run', 'text', activeCountry.placeholder)}
-                                {renderSelect(t('form.usage_profile'), 'usage_profile', [
-                                    { value: 'PROFESSIONAL', label: t('form.professional', 'Profesional') },
-                                    { value: 'PERSONAL', label: t('form.personal', 'Proyecto Personal') }
+                                {renderInput(t('form.full_name', 'Nombre Completo'), 'full_name')}
+                                {renderInput(formData.country === 'CL' ? 'RUN / Cédula Identidad' : activeCountry.taxLabel, 'run', 'text', activeCountry.placeholder)}
+                                {renderSelect(t('form.usage_profile', 'Perfil de Uso'), 'usage_profile', [
+                                    { value: 'PROFESSIONAL', label: t('form.professional', 'Profesional Independiente') },
+                                    { value: 'PERSONAL', label: t('form.personal', 'Proyecto Personal / Hobby') }
                                 ])}
                             </>
                         )}
@@ -376,8 +342,8 @@ export const Register = () => {
                             </div>
                         )}
 
-                        <Button type="submit" className="w-full mt-4" disabled={loading}>
-                            {loading ? t('form.submitting', 'Enviando...') : t('form.submit', 'Enviar Solicitud')}
+                        <Button type="submit" className="w-full mt-6 py-4 rounded-xl text-base shadow-lg shadow-indigo-600/20 active:scale-[0.99] transition-transform" disabled={loading}>
+                            {loading ? t('form.submitting', 'Procesando encriptación...') : t('form.submit', 'Solicitar Acceso Seguro')}
                         </Button>
                     </form>
                 )}

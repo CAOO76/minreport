@@ -3,6 +3,8 @@ import { Register } from './pages/Register';
 import { SetPassword } from './pages/SetPassword';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
+import { CorporateDashboard } from './pages/CorporateDashboard';
+import { SetupAccess } from './pages/SetupAccess';
 import { ClientPluginsPage } from './pages/ClientPluginsPage';
 import { BrandingProvider } from './context/BrandingContext';
 import { ThemeProvider } from './context/ThemeContext';
@@ -55,6 +57,25 @@ const RequireAuthLayout = () => {
     return <Layout />;
 };
 
+const DashboardRouter = () => {
+    const { profile, currentAccount, user } = useAuth();
+
+    const membership = profile?.memberships.find((m: any) => m.accountId === currentAccount?.id);
+    const userRole = membership?.role;
+
+    // Detect Enterprise/Business accounts (case-insensitive)
+    const type = currentAccount?.type?.toUpperCase();
+    const isEnterpriseAccount = type === 'ENTERPRISE' || type === 'BUSINESS';
+
+    // Corporate Logic: Owner of B2B account or BILLING_ONLY role
+    const isCorporateView = isEnterpriseAccount && (
+        userRole === 'BILLING_ONLY' ||
+        user?.uid === currentAccount?.ownerId
+    );
+
+    return isCorporateView ? <CorporateDashboard /> : <Dashboard />;
+};
+
 const AppRoutes = () => {
     const { user, loading } = useAuth();
 
@@ -65,11 +86,12 @@ const AppRoutes = () => {
             {/* Public / Auth Routes */}
             <Route path="/login" element={user ? <Navigate to="/dashboard" /> : <Login />} />
             <Route path="/register" element={user ? <Navigate to="/dashboard" /> : <Register />} />
+            <Route path="/setup-access" element={<SetupAccess />} />
             <Route path="/auth/action" element={<SetPassword />} />
 
             {/* Protected Routes with Layout */}
             <Route element={<RequireAuthLayout />}>
-                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/dashboard" element={<DashboardRouter />} />
                 <Route path="/plugins" element={<ClientPluginsPage />} />
                 <Route path="/capture" element={<div>Capture View (Not implemented)</div>} />
                 <Route path="/menu" element={<div>Menu View (Not implemented)</div>} />

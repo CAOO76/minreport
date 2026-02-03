@@ -33,7 +33,7 @@ const enterpriseProfile = z.object({
     applicant_name: z.string().min(2, "Applicant name is required"),
     company_name: z.string().min(2, "Company name is required"),
     industry: z.string().min(2, "Industry is required"),
-    rut: z.string(), // Validated in superRefine
+    rut: z.string(), // Company TAX ID
     website: z.string().transform(ensureProtocol).refine(val => {
         if (!val) return true;
         try {
@@ -43,12 +43,13 @@ const enterpriseProfile = z.object({
             return false;
         }
     }, { message: "Invalid website URL" }).optional().or(z.literal('')),
-    roleIntent: z.enum(['OPERATIONAL', 'BILLING']).optional(), // B2B Role Intent
 });
 
 const educationalProfile = z.object({
     type: z.literal('EDUCATIONAL'),
+    profile: z.enum(['ALUMNO', 'ACADEMICO']), // New Profile Requirement
     applicant_name: z.string().min(2, "Applicant name is required"),
+    run: z.string(), // Identity Document (Natural Person)
     institution_name: z.string().min(2, "Institution name is required"),
     institution_website: z.string().transform(ensureProtocol).refine(val => {
         try {
@@ -67,7 +68,7 @@ const educationalProfile = z.object({
 const personalProfile = z.object({
     type: z.literal('PERSONAL'),
     full_name: z.string().min(2, "Full name is required"),
-    run: z.string(), // Validated in superRefine
+    run: z.string(), // Identity Document (Natural Person)
     usage_profile: z.enum(['PERSONAL', 'PROFESSIONAL']),
 });
 
@@ -79,7 +80,7 @@ export const registerSchema = baseSchema.and(
         personalProfile,
     ])
 ).superRefine((data, ctx) => {
-    // 1. Strict Email Validation for EDUCATIONAL
+    // 1. Strict Email Validation for EDUCATIONAL (MinReport Edu-Gatekeeper Layer 1)
     if (data.type === 'EDUCATIONAL') {
         const domain = data.email.split('@')[1]?.toLowerCase();
         if (domain && PUBLIC_EMAIL_DOMAINS.includes(domain)) {
@@ -91,18 +92,16 @@ export const registerSchema = baseSchema.and(
         }
     }
 
-    // 2. Tax ID Validation (Only for ENTERPRISE and PERSONAL)
-    if (data.type !== 'EDUCATIONAL') {
-        const taxIdField = data.type === 'PERSONAL' ? 'run' : 'rut';
-        const taxIdValue = (data as any)[taxIdField];
+    // 2. Tax ID Validation (Mandatory for ALL types in the new ID-centric architecture)
+    const taxIdField = (data.type === 'ENTERPRISE') ? 'rut' : 'run';
+    const taxIdValue = (data as any)[taxIdField];
 
-        if (!validateTaxId(taxIdValue, data.country)) {
-            ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: `Invalid Tax ID for ${data.country}`,
-                path: [taxIdField],
-            });
-        }
+    if (!validateTaxId(taxIdValue, data.country)) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Invalid ID Document (${taxIdField.toUpperCase()}) for ${data.country}`,
+            path: [taxIdField],
+        });
     }
 });
 

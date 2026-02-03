@@ -1,14 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, updateDoc, collection, query, where, getDocs, limit, getDoc } from 'firebase/firestore';
-import { auth, db } from '../config/firebase';
+import { signInWithCustomToken } from 'firebase/auth';
+import { auth } from '../config/firebase';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, ArrowRight, Loader2, Lock, Eye, EyeOff } from 'lucide-react';
 import BrandLogo from '../components/BrandLogo';
 import { LanguageSwitch } from '../components/LanguageSwitch';
 import { ThemeSwitch } from '../components/ThemeSwitch';
 import { Link } from 'react-router-dom';
+import { formatRut } from '../utils/rut';
 
 // Definición de Tipos para la UI
 type LoginStep = 'IDENTIFICATION' | 'ACCOUNT_SELECTION' | 'CHALLENGE';
@@ -26,7 +26,7 @@ export const Login = () => {
 
     // Estados del Flujo
     const [step, setStep] = useState<LoginStep>('IDENTIFICATION');
-    const [email, setEmail] = useState('');
+    const [taxId, setTaxId] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
@@ -39,80 +39,48 @@ export const Login = () => {
     // Limpieza de Memoria (Zero Memory Policy)
     useEffect(() => {
         return () => {
-            setEmail('');
+            setTaxId('');
             setPassword('');
             setDetectedAccounts([]);
         };
     }, []);
 
-    // Detección Real de Cuentas (Firestore)
-    const detectUserAccounts = async (userEmail: string) => {
+    // Detección de Cuentas vía API (ID-Céntrico)
+    const detectUserAccounts = async (id: string) => {
         setLoading(true);
         setError('');
 
         try {
-            // Paso 1: Buscar Usuario por Email
-            const usersRef = collection(db, 'users');
-            const q = query(usersRef, where('email', '==', userEmail), limit(1));
-            const querySnapshot = await getDocs(q);
+            const response = await fetch(`${import.meta.env.VITE_API_URL}/api/public/accounts-by-id/${id}`);
 
-            // Paso 2: Validar existencia
-            if (querySnapshot.empty) {
-                setError(t('auth.user_not_found', 'Usuario no registrado'));
+            if (!response.ok) {
+                const data = await response.json();
+                setError(data.message || t('auth.user_not_found', 'ID no encontrado'));
                 setLoading(false);
                 return;
             }
 
-            const userDoc = querySnapshot.docs[0];
-            const userData = userDoc.data();
-            const memberships = userData.memberships || [];
+            const data = await response.json();
 
-            // Paso 3: Validar Membresías
-            if (memberships.length === 0) {
-                setError(t('auth.no_accounts', 'Este usuario no tiene cuentas asociadas'));
+            if (data.accounts.length === 0) {
+                setError(t('auth.no_accounts', 'Este documento no tiene cuentas asociadas'));
                 setLoading(false);
                 return;
             }
 
-            // Paso 4: Resolver Cuentas (Join manual)
-            // Iteramos las membresías para buscar los detalles de cada cuenta en la colección 'accounts'
-            const accountsPromises = memberships.map(async (m: any) => {
-                if (!m.accountId) return null;
+            // Mapear respuesta de API al formato de la UI
+            const resolvedAccounts = data.accounts.map((acc: any) => ({
+                id: acc.accountId,
+                name: acc.accountName,
+                type: acc.type
+            }));
 
-                try {
-                    const accountRef = doc(db, 'accounts', m.accountId);
-                    const accountSnap = await getDoc(accountRef);
-
-                    if (accountSnap.exists()) {
-                        const data = accountSnap.data();
-                        return {
-                            id: accountSnap.id,
-                            name: data.name || 'Sin Nombre',
-                            type: data.type || 'PERSONAL'
-                        } as DetectedAccount;
-                    }
-                } catch (e) {
-                    console.error(`Error fetching account ${m.accountId}`, e);
-                }
-                return null;
-            });
-
-            const resolvedAccounts = (await Promise.all(accountsPromises)).filter(acc => acc !== null) as DetectedAccount[];
-
-            if (resolvedAccounts.length === 0) {
-                setError(t('auth.no_active_accounts', 'No se encontraron cuentas activas'));
-                setLoading(false);
-                return;
-            }
-
-            // Paso 5: Actualizar Estado y Avanzar
             setDetectedAccounts(resolvedAccounts);
             setStep('ACCOUNT_SELECTION');
 
         } catch (err: any) {
             console.error('Error detecting accounts:', err);
-            // Mensaje genérico en caso de error de sistema/red
-            setError(t('auth.detection_error', 'Error al verificar la cuenta. Intente nuevamente.'));
+            setError(t('auth.detection_error', 'Error al verificar la identidad.'));
         } finally {
             setLoading(false);
         }
@@ -120,8 +88,8 @@ export const Login = () => {
 
     const handleIdentificationSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!email.trim()) return;
-        detectUserAccounts(email);
+        if (!taxId.trim()) return;
+        detectUserAccounts(taxId);
     };
 
     const handleAccountSelect = (account: DetectedAccount) => {
@@ -133,45 +101,42 @@ export const Login = () => {
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!email || !password || !selectedAccount) return;
+        if (!taxId || !password || !selectedAccount) return;
 
         setLoading(true);
         setError('');
 
         try {
-            // 1. Autenticación Firebase
-            const userCredential = await signInWithEmailAndPassword(auth, email, password);
-            const user = userCredential.user;
+            // 1. Desafío de Clave Segregada (vía API Tunnel)
+            const response = await fetch(`${import.meta.env.VITE_API_URL}/api/auth/tunnel/challenge`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    taxId,
+                    accountId: selectedAccount.id,
+                    password
+                })
+            });
 
-            // 2. Actualizar Contexto (Last Active Account)
-            // Esto asegura que al entrar, la sesión apunte a la cuenta seleccionada en este flujo "Túnel"
-            try {
-                const userRef = doc(db, 'users', user.uid);
-                await updateDoc(userRef, {
-                    lastActiveAccountId: selectedAccount.id
-                });
-            } catch (updateError) {
-                console.warn('No se pudo actualizar la última cuenta activa:', updateError);
+            const data = await response.json();
+
+            if (!response.ok) {
+                setError(data.error || t('auth.login_error', 'Credenciales inválidas.'));
+                setLoading(false);
+                return;
             }
 
+            // 2. Autenticación Firebase con Token Personalizado
+            // Este token ya trae los claims del entorno seleccionado (Aislamiento Total)
+            await signInWithCustomToken(auth, data.firebaseToken);
+
             // 3. Limpieza y Redirección
-            setPassword(''); // Limpieza inmediata
+            setPassword('');
             navigate('/');
 
         } catch (err: any) {
             console.error('Login error:', err);
-            let message = t('auth.login_error', 'Email o contraseña incorrectos.');
-
-            // Mensajes genéricos por seguridad
-            if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
-                message = t('auth.invalid_credentials', 'Credenciales inválidas.');
-            } else if (err.code === 'auth/network-request-failed') {
-                message = t('auth.network_error', 'Error de conexión con el servidor.');
-            } else if (err.code === 'auth/too-many-requests') {
-                message = t('auth.too_many_requests', 'Demasiados intentos. Intente más tarde.');
-            }
-
-            setError(message);
+            setError(t('auth.network_error', 'Error de conexión con el servidor de seguridad.'));
         } finally {
             setLoading(false);
         }
@@ -208,24 +173,24 @@ export const Login = () => {
                         <div className="text-center mb-8">
                             <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Hola de nuevo</h1>
                             <p className="text-gray-500 dark:text-gray-400 mt-2 text-sm">
-                                Ingresa tu correo para continuar
+                                Ingresa tu identificación para comenzar
                             </p>
                         </div>
 
                         <form onSubmit={handleIdentificationSubmit} className="space-y-6" autoComplete="off">
                             <div className="space-y-1">
                                 <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest ml-1">
-                                    Correo Electrónico
+                                    Documento de Identificación (RUT / RUN)
                                 </label>
                                 <input
-                                    type="email"
-                                    value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
+                                    type="text"
+                                    value={taxId}
+                                    onChange={(e) => setTaxId(formatRut(e.target.value))}
                                     className="w-full px-5 py-4 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium text-lg text-center"
-                                    placeholder="nombre@empresa.com"
+                                    placeholder="12.345.678-9"
                                     required
                                     autoFocus
-                                    autoComplete="email"
+                                    autoComplete="off"
                                     data-lpignore="true"
                                 />
                             </div>
@@ -306,11 +271,11 @@ export const Login = () => {
                             <button
                                 onClick={() => {
                                     setStep('IDENTIFICATION');
-                                    setEmail('');
+                                    setTaxId('');
                                 }}
                                 className="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors font-medium"
                             >
-                                Usar otra dirección de correo
+                                Usar otro documento de identidad
                             </button>
                         </div>
                     </div>

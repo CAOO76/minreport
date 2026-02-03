@@ -15,6 +15,10 @@ interface Tenant {
     full_name?: string;
     rut?: string;
     run?: string;
+    processedBy?: string;
+    processedAt?: string;
+    rejectionReason?: string;
+    observations?: string;
 }
 
 import { TenantDetailsModal } from '../components/admin/TenantDetailsModal';
@@ -26,7 +30,7 @@ export const Dashboard = () => {
     const [loading, setLoading] = useState(true);
     const [selectedTenant, setSelectedTenant] = useState<Tenant | null>(null);
 
-    const [activeTab, setActiveTab] = useState<'PERSONAL' | 'ENTERPRISE'>('PERSONAL');
+    const [activeTab, setActiveTab] = useState<'PERSONAL' | 'ENTERPRISE' | 'EDUCATIONAL'>('PERSONAL');
 
     const fetchTenants = async () => {
         try {
@@ -43,10 +47,10 @@ export const Dashboard = () => {
         fetchTenants();
     }, []);
 
-    const handleAction = async (id: string, status: 'ACTIVE' | 'REJECTED') => {
+    const handleAction = async (id: string, status: 'ACTIVE' | 'REJECTED', data?: { rejectionReason?: string, observations?: string }) => {
         try {
-            await updateTenantStatus(id, status);
-            setTenants(prev => prev.map(t => t.id === id ? { ...t, status } : t));
+            await updateTenantStatus(id, status, data);
+            setTenants(prev => prev.map(t => t.id === id ? { ...t, status, ...data, processedAt: new Date().toISOString() } : t));
             setSelectedTenant(null); // Close modal if open
         } catch (error) {
             alert('Error updating status');
@@ -54,12 +58,7 @@ export const Dashboard = () => {
     };
 
     const filteredTenants = tenants.filter(t => {
-        const matches = activeTab === 'ENTERPRISE'
-            ? t.type === 'ENTERPRISE'
-            : (t.type === 'PERSONAL' || t.type === 'EDUCATIONAL');
-        // Debugging logs
-        // console.log(`Tenant ${t.id} type:${t.type} matches ${activeTab}? ${matches}`);
-        return matches;
+        return t.type === activeTab;
     });
 
     useEffect(() => {
@@ -75,7 +74,6 @@ export const Dashboard = () => {
                     <p className="text-slate-500 mt-1">{t('admin.inbox_subtitle')}</p>
                 </div>
 
-                {/* Tabs */}
                 <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
                     <button
                         onClick={() => setActiveTab('PERSONAL')}
@@ -86,7 +84,18 @@ export const Dashboard = () => {
                                 : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
                         )}
                     >
-                        Personas / Educacional
+                        Personas
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('EDUCATIONAL')}
+                        className={clsx(
+                            "px-4 py-2 text-sm font-medium rounded-md transition-all",
+                            activeTab === 'EDUCATIONAL'
+                                ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm"
+                                : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                        )}
+                    >
+                        Educacional
                     </button>
                     <button
                         onClick={() => setActiveTab('ENTERPRISE')}
@@ -108,7 +117,7 @@ export const Dashboard = () => {
                         <tr className="bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-800">
                             <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">{t('admin.table.type')}</th>
                             <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
-                                {activeTab === 'ENTERPRISE' ? 'Razón Social' : t('admin.table.name')}
+                                {activeTab === 'ENTERPRISE' ? 'Razón Social' : activeTab === 'EDUCATIONAL' ? 'Institución' : t('admin.table.name')}
                             </th>
                             <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
                                 {activeTab === 'ENTERPRISE' ? 'RUT Empresa' : 'RUN / ID'}

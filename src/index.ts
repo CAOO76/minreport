@@ -4,8 +4,11 @@ import helmet from 'helmet';
 import './config/firebase'; // Import to trigger initialization
 import { env } from './config/env';
 import { register, inviteUser } from './api/auth.controller';
-import { adminLogin, listTenants, listAccounts, updateTenantStatus, deleteTenant, getBrandingSettings, updateBrandingSettings } from './api/admin.controller';
-import { getPublicBrandingSettings } from './api/public.controller';
+import { adminLogin, listTenants, listAccounts, updateTenantStatus, deleteTenant, purgeTenant, getBrandingSettings, updateBrandingSettings, getSystemMetrics, getAuditLogs } from './api/admin.controller';
+import { getPublicBrandingSettings, getAccountsById } from './api/public.controller';
+import { challengeAccountAccess } from './api/auth_tunnel.controller';
+import { setupAccountPassword } from './api/setup.controller';
+import { validateEduRequest, analyzeEduDocument } from './api/edu.controller';
 import { requireSuperAdmin } from './middleware/admin';
 import { requireAuth } from './middleware/auth';
 
@@ -21,6 +24,12 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Global Request Logger for B2B Tunnel Diagnostic
+app.use((req, res, next) => {
+    console.log(`[CORE-API] ${new Date().toISOString()} ${req.method} ${req.url}`);
+    next();
+});
+
 // Header Security for Cloud Run
 app.disable('x-powered-by');
 
@@ -35,10 +44,15 @@ app.get('/health', (req, res) => {
 
 // Public Routes
 app.get('/api/settings/branding', getPublicBrandingSettings);
+app.get('/api/public/accounts-by-id/:taxId([^/]+)', getAccountsById);
 
 // Routes
 app.post('/api/auth/register', register);
-app.post('/api/admin/login', adminLogin); // [NEW]
+app.post('/api/auth/tunnel/challenge', challengeAccountAccess);
+app.post('/api/auth/tunnel/setup-password', setupAccountPassword);
+app.post('/api/admin/login', adminLogin);
+app.post('/api/edu/validate/:requestId', requireAuth, validateEduRequest);
+app.post('/api/edu/analyze-doc', requireAuth, analyzeEduDocument);
 app.post('/api/auth/invite', requireAuth, inviteUser); // [NEW] B2B Invitation
 
 // Admin Routes (Protected)
@@ -46,8 +60,11 @@ app.get('/api/admin/tenants', requireSuperAdmin, listTenants);
 app.get('/api/admin/accounts', requireSuperAdmin, listAccounts); // [NEW] Accounts Management
 app.patch('/api/admin/tenants/:uid', requireSuperAdmin, updateTenantStatus);
 app.delete('/api/admin/tenants/:uid', requireSuperAdmin, deleteTenant);
+app.delete('/api/admin/tenants/:uid/purge', requireSuperAdmin, purgeTenant); // Hard Delete
 app.get('/api/admin/settings/branding', requireSuperAdmin, getBrandingSettings);
 app.put('/api/admin/settings/branding', requireSuperAdmin, updateBrandingSettings);
+app.get('/api/admin/metrics', requireSuperAdmin, getSystemMetrics); // [NEW] System Dashboard
+app.get('/api/admin/audit-logs', requireSuperAdmin, getAuditLogs); // [NEW] Traceability
 
 // Start Server
 const port = parseInt(env.PORT, 10);

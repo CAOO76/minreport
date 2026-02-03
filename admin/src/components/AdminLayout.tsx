@@ -66,17 +66,25 @@ export const AdminLayout = () => {
                         <NavLink to="/" className={navLinkClasses} title="Solicitudes">
                             <span className="material-symbols-rounded text-2xl">inbox</span>
                         </NavLink>
-                        <NavLink to="/users" className={navLinkClasses} title="Usuarios">
-                            <span className="material-symbols-rounded text-2xl">group</span>
+
+                        {/* Segmented Account Management */}
+                        <div className="w-8 h-px bg-antigravity-light-border dark:bg-antigravity-dark-border mx-auto my-1" />
+
+                        <NavLink to="/b2b" className={navLinkClasses} title="Empresas B2B">
+                            <span className="material-symbols-rounded text-2xl">domain</span>
                         </NavLink>
-                        <NavLink to="/enterprises" className={navLinkClasses} title="Empresas B2B">
-                            <span className="material-symbols-rounded text-2xl">business</span>
+                        <NavLink to="/edu" className={navLinkClasses} title="Educacional">
+                            <span className="material-symbols-rounded text-2xl">school</span>
                         </NavLink>
+                        <NavLink to="/personal" className={navLinkClasses} title="Personas">
+                            <span className="material-symbols-rounded text-2xl">person</span>
+                        </NavLink>
+
+
+                        <div className="w-8 h-px bg-antigravity-light-border dark:bg-antigravity-dark-border mx-auto my-1" />
+
                         <NavLink to="/branding" className={navLinkClasses} title="UI/UX">
                             <span className="material-symbols-rounded text-2xl">palette</span>
-                        </NavLink>
-                        <NavLink to="/tenants" className={navLinkClasses} title="Tenants">
-                            <span className="material-symbols-rounded text-2xl">domain</span>
                         </NavLink>
                         <NavLink to="/plugins" className={navLinkClasses} title="Plugins">
                             <span className="material-symbols-rounded text-2xl">extension</span>

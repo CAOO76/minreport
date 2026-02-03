@@ -1,7 +1,7 @@
 
 export type UserRole = 'OWNER' | 'ADMIN' | 'BILLING_ONLY' | 'OPERATOR';
 
-export type AccountType = 'PERSONAL' | 'BUSINESS' | 'EDUCATIONAL';
+export type AccountType = 'PERSONAL' | 'BUSINESS' | 'EDUCATIONAL' | 'ENTERPRISE';
 
 export interface Membership {
     accountId: string;
@@ -30,14 +30,16 @@ export interface Account {
     id: string; // matches accountId in Membership
     name: string; // Company Name or Personal Name
     type: AccountType;
-    rut?: string; // Tax ID, unique per account
+    taxId?: string; // Tax ID, unique per account
     ownerId: string; // User UID who owns this account
     primaryOperator?: {
         name: string;
         email: string;
+        taxId?: string; // ID used for authentication (RUT/RUN)
         jobTitle?: string;
         uid?: string;
         status: 'ACTIVE' | 'PENDING';
+        invitedAt?: number; // Added for traceability
     };
     createdAt: number;
     updatedAt: number;

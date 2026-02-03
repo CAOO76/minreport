@@ -99,40 +99,120 @@ export const register = async (req: Request, res: Response) => {
     }
 };
 
+import { formatRut } from '../utils/rut';
+
 // [NEW] Invitation B2B Logic
 export const inviteUser = async (req: Request, res: Response) => {
     try {
-        const { email, accountId, companyName } = req.body;
+        let { email, accountId, companyName, taxId } = req.body;
 
         if (!email || !accountId) {
             return res.status(400).json({ error: 'Email and Account ID are required' });
         }
 
+        // Normalize inputs
         const normalizedEmail = email.toLowerCase();
+        taxId = taxId ? formatRut(taxId) : null;
         let link = '';
         let isNewUser = false;
         let userRecord;
 
-        // 1. Check if User Exists
-        try {
-            userRecord = await auth.getUserByEmail(normalizedEmail);
-            // User exists: Just notify them
-        } catch (error: any) {
-            if (error.code === 'auth/user-not-found') {
-                // User does NOT exist: Create placeholder + Reset Link
-                isNewUser = true;
-                userRecord = await auth.createUser({
-                    email: normalizedEmail,
-                    emailVerified: true, // Auto-verify since we are inviting them
-                    disabled: false
-                });
-            } else {
-                throw error;
+        // 1. Identity Resolution (RUT/RUN First)
+        // The system is RUT-Centric. Email is just a channel.
+        console.log(`[B2B-INVITE] Resolving identity for TaxID: ${taxId}...`);
+        const userQuery = await db.collection('users').where('taxId', '==', taxId).limit(1).get();
+
+        if (!userQuery.empty) {
+            const existingUserDoc = userQuery.docs[0];
+            userRecord = await auth.getUser(existingUserDoc.id);
+            console.log(`[B2B-INVITE] Identity found by RUT. Existing UID: ${userRecord.uid}`);
+        } else {
+            console.log(`[B2B-INVITE] RUT not found in Firestore. Checking by Email: ${normalizedEmail}...`);
+            // Fallback to Email-based lookup
+            try {
+                userRecord = await auth.getUserByEmail(normalizedEmail);
+                console.log(`[B2B-INVITE] Identity found by Email. UID: ${userRecord.uid}`);
+            } catch (error: any) {
+                if (error.code === 'auth/user-not-found') {
+                    // Fully New User: Create placeholder
+                    isNewUser = true;
+                    userRecord = await auth.createUser({
+                        email: normalizedEmail,
+                        emailVerified: true,
+                        disabled: false
+                    });
+                    console.log(`[B2B-INVITE] Created new Auth record. UID: ${userRecord.uid}`);
+                } else {
+                    throw error;
+                }
             }
         }
 
-        // 2. Generate Activation Link (Only for new users or if requested)
-        // For existing users, they just login. For new users, they need to set password.
+        if (!userRecord) {
+            throw new Error('Failed to resolve or create user identity.');
+        }
+
+        // 2. [CRITICAL] Sync with 'users' collection (The "Internal User" Creation)
+        // This must happen BEFORE email sending to ensure system consistency.
+        console.log(`[B2B-INVITE] Syncing 'users' document for UID: ${userRecord.uid}...`);
+
+        try {
+            const userRef = db.collection('users').doc(userRecord.uid);
+            const userDoc = await userRef.get();
+
+            let memberships = [];
+            if (userDoc.exists) {
+                memberships = userDoc.data()?.memberships || [];
+            }
+
+            const mIndex = memberships.findIndex((m: any) => m.accountId === accountId);
+            const delegateMembership = {
+                accountId,
+                role: 'ADMINISTRADOR OPERATIVO',
+                type: 'BUSINESS', // B2B context
+                status: 'PENDING',
+                invitedAt: Date.now()
+            };
+
+            if (mIndex > -1) {
+                memberships[mIndex] = { ...memberships[mIndex], ...delegateMembership };
+            } else {
+                memberships.push(delegateMembership);
+            }
+
+            await userRef.set({
+                taxId: taxId || userDoc.data()?.taxId || null,
+                email: normalizedEmail,
+                fullName: req.body.name || userDoc.data()?.fullName || normalizedEmail.split('@')[0],
+                memberships,
+                updatedAt: Date.now()
+            }, { merge: true });
+
+            console.log(`[B2B-INVITE] ✅ User document synced successfully for ${normalizedEmail}`);
+        } catch (dbError) {
+            console.error('[B2B-INVITE] ❌ Failed to sync user document:', dbError);
+            throw new Error('Failed to create internal user record');
+        }
+
+        // 3. Update Account Document (Primary Operator)
+        if (accountId) {
+            console.log(`[B2B-INVITE] Updating Account ${accountId} with Primary Operator...`);
+            await db.collection('accounts').doc(accountId).update({
+                primaryOperator: {
+                    name: req.body.name || normalizedEmail.split('@')[0],
+                    email: normalizedEmail,
+                    taxId: taxId || null,
+                    jobTitle: req.body.jobTitle || 'ADMINISTRADOR OPERATIVO',
+                    status: 'PENDING',
+                    invitedAt: Date.now(),
+                    uid: userRecord.uid // Link explicit UID
+                },
+                updatedAt: Date.now()
+            });
+            console.log(`[B2B-INVITE] ✅ Account updated successfully.`);
+        }
+
+        // 4. Generate Activation Link
         if (isNewUser) {
             const rawLink = await auth.generatePasswordResetLink(normalizedEmail);
             // In prod: map to custom domain
@@ -145,12 +225,13 @@ export const inviteUser = async (req: Request, res: Response) => {
             const oobCode = url.searchParams.get('oobCode');
             link = `${baseUrl}/auth/action?mode=resetPassword&oobCode=${oobCode}&email=${normalizedEmail}`;
         } else {
+            // Standard Login Link
             link = process.env.NODE_ENV === 'production'
                 ? 'https://minreport-access.web.app/login'
                 : 'http://localhost:5173/login';
         }
 
-        // 3. Send Email via Resend
+        // 5. Send Email via Resend
         await resend.emails.send({
             from: 'MinReport Access <no-reply@minreport.com>',
             to: normalizedEmail,

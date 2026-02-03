@@ -4,13 +4,15 @@ import { Login } from './pages/Login';
 import { AuthGuard } from './components/AuthGuard';
 import { BrandingSettings } from './pages/BrandingSettings';
 import { PluginsPage } from './pages/PluginsPage';
-import { UsersPage } from './pages/UsersPage';
 import { SDKPage } from './pages/SDKPage';
 import { EnterpriseManagement } from './pages/EnterpriseManagement';
 import { EnterpriseDetail } from './pages/EnterpriseDetail';
 import { AdminLayout } from './components/AdminLayout';
 import { ThemeProvider } from './context/ThemeContext';
 import { BrandingProvider } from './context/BrandingContext';
+import { B2BPage } from './pages/B2BPage';
+import { EduPage } from './pages/EduPage';
+import { PersonalPage } from './pages/PersonalPage';
 
 function App() {
     return (
@@ -23,11 +25,14 @@ function App() {
 
                             <Route element={<AuthGuard><AdminLayout /></AuthGuard>}>
                                 <Route path="/" element={<Dashboard />} />
-                                <Route path="/users" element={<UsersPage />} />
                                 <Route path="/enterprises" element={<EnterpriseManagement />} />
                                 <Route path="/enterprises/:id" element={<EnterpriseDetail />} />
-                                {/* TODO: Create the Tenants page component */}
-                                <Route path="/tenants" element={<div>Tenants Page</div>} />
+
+                                {/* Segmented Tenant Management Routes */}
+                                <Route path="/b2b" element={<B2BPage />} />
+                                <Route path="/personal" element={<PersonalPage />} />
+                                <Route path="/edu" element={<EduPage />} />
+
                                 <Route path="/plugins" element={<PluginsPage />} />
                                 <Route path="/branding" element={<BrandingSettings />} />
                                 <Route path="/sdk" element={<SDKPage />} />

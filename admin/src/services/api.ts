@@ -22,11 +22,14 @@ export const adminLogin = (email: string, password: string) =>
 export const getTenants = (status?: string) =>
     api.get('/tenants', { params: { status } });
 
-export const updateTenantStatus = (uid: string, status: 'ACTIVE' | 'REJECTED') =>
-    api.patch(`/tenants/${uid}`, { status });
+export const updateTenantStatus = (uid: string, status: 'ACTIVE' | 'REJECTED' | 'SUSPENDED', data?: { rejectionReason?: string, observations?: string }) =>
+    api.patch(`/tenants/${uid}`, { status, ...data });
 
 export const deleteTenant = (uid: string) =>
     api.delete(`/tenants/${uid}`);
+
+export const purgeTenant = (uid: string) =>
+    api.delete(`/tenants/${uid}/purge`);
 
 export const getAccounts = (type?: string) =>
     api.get('/accounts', { params: { type } });
