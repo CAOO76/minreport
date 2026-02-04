@@ -5,7 +5,8 @@ const config: CapacitorConfig = {
     appName: 'MinReport',
     webDir: 'dist',
     server: {
-        androidScheme: 'https'
+        androidScheme: 'http',
+        cleartext: true
     },
     plugins: {
         Camera: {

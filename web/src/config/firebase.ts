@@ -50,10 +50,11 @@ const hostIP = Capacitor.isNativePlatform()
     ? (isEmulator ? "10.0.2.2" : MI_IP_IMAC)
     : (esIP ? MI_IP_IMAC : "localhost");
 
+const USE_EMULATORS = !Capacitor.isNativePlatform() && (import.meta.env.VITE_USE_EMULATORS === 'true' || location.hostname === "localhost" || location.hostname === "127.0.0.1");
 const EMULATOR_HOST = hostIP;
 
-// Condición: Ejecutar si es localhost O móvil O IP local
-if (location.hostname === "localhost" || location.hostname === "127.0.0.1" || Capacitor.isNativePlatform() || esIP) {
+// Condición: Solo en Web local o si se pide explícitamente (NO nativo por defecto)
+if (USE_EMULATORS || (esIP && !Capacitor.isNativePlatform())) {
     console.log(`🚀 [FIREBASE] Entorno local detectado. Host: ${EMULATOR_HOST} (Emulator: ${isEmulator})`);
 
     try {

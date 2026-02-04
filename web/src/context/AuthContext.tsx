@@ -30,22 +30,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // 1. Listen to Firebase Auth state
     useEffect(() => {
+        // [SAFETY HATCH] If auth takes more than 10 seconds, stop loading
+        const safetyTimeout = setTimeout(() => {
+            if (loading) {
+                console.warn("[AUTH-CONTEXT] Safety timeout reached. Forcing loading to false.");
+                setLoading(false);
+            }
+        }, 10000);
+
         const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+            clearTimeout(safetyTimeout);
             setUser(currentUser);
             if (!currentUser) {
                 setProfile(null);
                 setCurrentAccount(null);
                 setLoading(false);
             } else {
-                // Determine if we need to set loading to true
-                // If we are coming from a logged-out state, loading might be false.
-                // We want to force it to true until profile/account are resolved.
                 setLoading(true);
-                // Trigger invite check on login (fire functions background)
                 checkPendingInvites(currentUser);
             }
         });
-        return unsubscribe;
+        return () => {
+            unsubscribe();
+            clearTimeout(safetyTimeout);
+        };
     }, []);
 
     // 2. Listen to User Profile (Firestore) when User is authenticated

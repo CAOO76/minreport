@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Capacitor } from '@capacitor/core';
 import { Register } from './pages/Register';
 import { SetPassword } from './pages/SetPassword';
 import { Login } from './pages/Login';
@@ -18,6 +19,8 @@ import MobileProfile from './pages/mobile/MobileProfile';
 import { useIsMobile } from './hooks/useIsMobile';
 import OfflineIndicator from './components/common/OfflineIndicator';
 import AccountSelector from './components/auth/AccountSelector';
+import LoadingScreen from './components/common/LoadingScreen';
+import ErrorBoundary from './components/common/ErrorBoundary';
 
 import { useEffect } from 'react';
 import { MinReport } from '@minreport/sdk'; // Importing SDK via Alias
@@ -54,7 +57,7 @@ const RequireAuthLayout = () => {
         }
     }, [currentAccount, user, profile, loading]);
 
-    if (loading) return null; // Or a loading spinner
+    if (loading) return <LoadingScreen />;
     if (!user) return <Navigate to="/login" replace />;
     if (!currentAccount) return <AccountSelector />;
 
@@ -83,7 +86,7 @@ const DashboardRouter = () => {
 const AppRoutes = () => {
     const { user, loading } = useAuth();
 
-    if (loading) return null;
+    if (loading) return <LoadingScreen />;
 
     return (
         <Routes>
@@ -115,24 +118,34 @@ const AppRoutes = () => {
             </Route>
 
             {/* Root and Fallback */}
-            <Route path="/" element={<Navigate to={user ? "/dashboard" : "/login"} replace />} />
-            <Route path="*" element={<Navigate to={user ? "/dashboard" : "/login"} replace />} />
+            <Route path="/" element={
+                Capacitor.isNativePlatform()
+                    ? <Navigate to="/mobile/login" replace />
+                    : <Navigate to={user ? "/dashboard" : "/login"} replace />
+            } />
+            <Route path="*" element={
+                Capacitor.isNativePlatform()
+                    ? <Navigate to="/mobile/login" replace />
+                    : <Navigate to={user ? "/dashboard" : "/login"} replace />
+            } />
         </Routes>
     );
 };
 
 function App() {
     return (
-        <ThemeProvider>
-            <BrandingProvider>
-                <AuthProvider>
-                    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-                        <AppRoutes />
-                    </BrowserRouter>
-                    <OfflineIndicator />
-                </AuthProvider>
-            </BrandingProvider>
-        </ThemeProvider>
+        <ErrorBoundary>
+            <ThemeProvider>
+                <BrandingProvider>
+                    <AuthProvider>
+                        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+                            <AppRoutes />
+                        </BrowserRouter>
+                        <OfflineIndicator />
+                    </AuthProvider>
+                </BrandingProvider>
+            </ThemeProvider>
+        </ErrorBoundary>
     );
 }
 
