@@ -38,8 +38,8 @@ export const storage = getStorage(app);
 // 🔧 CONFIGURACIÓN DE EMULADORES (Corregida para Celular + iMac)
 // ---------------------------------------------------------------------------
 
-// 1. TU IP REAL (La de tu iMac .82, NO la del Router .1)
-const MI_IP_IMAC = "192.168.1.82";
+// 1. TU IP REAL (La de tu iMac .87, NO la del Router .1)
+const MI_IP_IMAC = "192.168.1.87";
 
 // 2. DETECCIÓN DE HOST (iMac vs Local vs Emulador)
 const isEmulator = /sdk|emulator|google/i.test(navigator.userAgent);
@@ -50,12 +50,12 @@ const hostIP = Capacitor.isNativePlatform()
     ? (isEmulator ? "10.0.2.2" : MI_IP_IMAC)
     : (esIP ? MI_IP_IMAC : "localhost");
 
-const USE_EMULATORS = !Capacitor.isNativePlatform() && (import.meta.env.VITE_USE_EMULATORS === 'true' || location.hostname === "localhost" || location.hostname === "127.0.0.1");
+const USE_EMULATORS = import.meta.env.MODE === 'development' || import.meta.env.VITE_USE_EMULATORS === 'true' || location.hostname === "localhost" || location.hostname === "127.0.0.1";
 const EMULATOR_HOST = hostIP;
 
-// Condición: Solo en Web local o si se pide explícitamente (NO nativo por defecto)
-if (USE_EMULATORS || (esIP && !Capacitor.isNativePlatform())) {
-    console.log(`🚀 [FIREBASE] Entorno local detectado. Host: ${EMULATOR_HOST} (Emulator: ${isEmulator})`);
+// Condición: En desarrollo, conectar a emuladores (web Y móvil)
+if (USE_EMULATORS) {
+    console.log(`🚀 [FIREBASE] Modo desarrollo - Conectando a emuladores en ${EMULATOR_HOST}`);
 
     try {
         // Auth Emulator (Puerto 9190)

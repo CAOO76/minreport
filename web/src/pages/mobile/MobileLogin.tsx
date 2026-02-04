@@ -39,14 +39,22 @@ const MobileLogin: React.FC = () => {
 
     // Dynamic API URL Resolver for Native Connectivity
     const getBaseUrl = () => {
-        const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+        const MI_IP_IMAC = "192.168.1.87";
+        const isEmulator = /sdk|emulator|google/i.test(navigator.userAgent);
+        const baseUrl = import.meta.env.VITE_API_URL || `http://${MI_IP_IMAC}:8080`;
 
-        // If we are on Android emulator and baseUrl is localhost, use the bridge IP 10.0.2.2
-        if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android' && (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1'))) {
-            return baseUrl.replace('localhost', '10.0.2.2').replace('127.0.0.1', '10.0.2.2');
+        if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
+            // Si es emulador Y la URL es localhost/127.0.0.1, usamos el bridge 10.0.2.2
+            if (isEmulator && (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1'))) {
+                return baseUrl.replace('localhost', '10.0.2.2').replace('127.0.0.1', '10.0.2.2');
+            }
+
+            // Si es dispositivo real Y la URL es localhost, forzamos la IP del iMac
+            if (!isEmulator && (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1'))) {
+                return baseUrl.replace('localhost', MI_IP_IMAC).replace('127.0.0.1', MI_IP_IMAC);
+            }
         }
 
-        // In any other case (Physical device with IP in .env, or web), use baseUrl as is
         return baseUrl;
     };
 

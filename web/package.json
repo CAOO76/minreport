@@ -5,9 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "bash scripts/copy-sdk.sh && vite --host",
+    "dev:mobile": "bash scripts/dev-mobile.sh",
+    "clean:android": "bash scripts/clean-android.sh",
+    "build:apk": "bash scripts/build-apk.sh",
     "prebuild": "bash scripts/copy-sdk.sh",
     "build": "vite build",
     "preview": "vite preview --host",
+    "android": "npx cap run android -l",
     "cap:sync": "npx cap sync",
     "cap:open:android": "npx cap open android",
     "assets:generate": "npx @capacitor/assets generate --android --assetPath assets"
