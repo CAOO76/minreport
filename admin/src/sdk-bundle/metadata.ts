@@ -5,9 +5,11 @@
  */
 export const SDK_METADATA = {
     changelog: [
-    "Plugins Test"
-],
+        "Automated maintenance release.",
+        "Source Bump: v1.0.3 -> v1.0.4",
+        "Trace ID: 1738785581000"
+    ],
     author: 'MinReport Automation',
-    releaseDate: new Date(),
+    releaseDate: new Date("2026-02-05T20:00:00Z"),
     status: 'BETA' as const
 };

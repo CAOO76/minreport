@@ -25,25 +25,18 @@ export class EntityManager {
     /**
      * Extiende una entidad con datos específicos de un plugin.
      * Garantiza que solo se modifique la rama 'extensions.pluginId'.
-     * Ahora INYECTA el accountId para soportar Multi-Tenancy.
      * 
      * @param collectionName Nombre de la colección (ej. 'acopios')
      * @param entityId ID del documento
      * @param pluginId ID del plugin (ej. 'topo')
      * @param data Datos a guardar dentro de la extensión del plugin
-     * @param accountId ID de la cuenta (Tenant context)
      */
     public async extendEntity(
         collectionName: string,
         entityId: string,
         pluginId: string,
-        data: any,
-        accountId: string
+        data: any
     ): Promise<void> {
-        if (!accountId) {
-            throw new Error(`[SDK Data] accountId es obligatorio para extendEntity en el plugin ${pluginId}`);
-        }
-
         try {
             const docRef = doc(this.db, collectionName, entityId);
 
@@ -54,18 +47,12 @@ export class EntityManager {
              */
             const updatePath = `extensions.${pluginId}`;
 
-            // Inyectamos el accountId en los datos para queries globales
-            const dataWithContext = {
-                ...data,
-                accountId
-            };
-
             await updateDoc(docRef, {
-                [updatePath]: dataWithContext,
+                [updatePath]: data,
                 updatedAt: new Date().toISOString()
             });
 
-            console.log(`[SDK Data] Entidad ${entityId} extendida exitosamente por plugin: ${pluginId} (Account: ${accountId})`);
+            console.log(`[SDK Data] Entidad ${entityId} extendida exitosamente por plugin: ${pluginId}`);
         } catch (error) {
             console.error(`[SDK Data] Error en extendEntity para el plugin "${pluginId}":`, error);
             throw error;

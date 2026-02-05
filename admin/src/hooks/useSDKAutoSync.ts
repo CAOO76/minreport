@@ -11,7 +11,7 @@ import {
     serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { SDK_METADATA } from '../../../src/sdk/metadata';
+import { SDK_METADATA } from '../sdk-bundle/metadata';
 
 // Injected by Vite via define in vite.config.ts
 declare const __APP_VERSION__: string;

@@ -17,7 +17,7 @@ const question = (query: string): Promise<string> => {
 
 const ROOT_DIR = path.resolve(__dirname, '../');
 const PKG_PATH = path.join(ROOT_DIR, 'package.json');
-const METADATA_PATH = path.join(ROOT_DIR, 'src/sdk/metadata.ts');
+const METADATA_PATH = path.join(ROOT_DIR, 'sdk/metadata.ts');
 
 // Helper: Semantic Versioning Logic
 const bumpVersion = (current: string, type: 'patch' | 'minor' | 'major'): string => {
