@@ -13,7 +13,7 @@
     "watch:sdk": "nodemon --watch src/sdk -e ts --exec \"bash web/scripts/copy-sdk.sh && bash admin/scripts/copy-sdk.sh\"",
     "release:sdk": "ts-node scripts/release_sdk.ts",
     "sync:plugins": "npx ts-node scripts/sync_plugins.ts",
-    "backup": "bash -c 'git add . && git commit -m \"${1:-Auto-save}\" && git push' --"
+    "backup": "git add . && (git commit -m \"Auto-save\" || true) && git push"
   },
   "dependencies": {
     "cors": "^2.8.5",
