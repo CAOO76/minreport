@@ -5,7 +5,7 @@
  */
 export const SDK_METADATA = {
     changelog: [
-    "Android base active"
+    "Plugins Test"
 ],
     author: 'MinReport Automation',
     releaseDate: new Date(),

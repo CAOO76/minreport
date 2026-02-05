@@ -7,7 +7,7 @@ import {
 /**
  * Interface interna para almacenar el plugin y su implementación.
  */
-interface RegisteredPlugin {
+export interface RegisteredPlugin {
     manifest: PluginManifest;
     instance: PluginLifeCycle;
     isActive: boolean;
@@ -96,6 +96,14 @@ export class PluginRegistry {
     public getPluginInstance(id: string): PluginLifeCycle | undefined {
         const plugin = this.registry.get(id);
         return plugin?.isActive ? plugin.instance : undefined;
+    }
+
+    /**
+     * Devuelve la metadata y la instancia de un plugin por su ID.
+     * @param id ID del plugin a buscar.
+     */
+    public getPluginById(id: string): RegisteredPlugin | undefined {
+        return this.registry.get(id);
     }
 }
 

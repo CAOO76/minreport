@@ -21,6 +21,7 @@ import OfflineIndicator from './components/common/OfflineIndicator';
 import AccountSelector from './components/auth/AccountSelector';
 import LoadingScreen from './components/common/LoadingScreen';
 import ErrorBoundary from './components/common/ErrorBoundary';
+import PluginErrorBoundaryDemo from './core/plugins/PluginErrorBoundaryDemo';
 
 import { useEffect } from 'react';
 import { MinReport } from '@minreport/sdk'; // Importing SDK via Alias
@@ -113,6 +114,7 @@ const AppRoutes = () => {
             <Route element={<RequireAuthLayout />}>
                 <Route path="/dashboard" element={<DashboardRouter />} />
                 <Route path="/plugins" element={<ClientPluginsPage />} />
+                <Route path="/debug/error-boundary" element={<PluginErrorBoundaryDemo />} />
                 <Route path="/capture" element={<div>Capture View (Not implemented)</div>} />
                 <Route path="/menu" element={<div>Menu View (Not implemented)</div>} />
             </Route>

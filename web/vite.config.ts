@@ -7,7 +7,8 @@ import path from 'path'
 export default defineConfig({
     envDir: '..',
     resolve: {
-        dedupe: ['firebase'],
+        preserveSymlinks: true,
+        dedupe: ['react', 'react-dom', 'firebase'],
         alias: {
             '@minreport/sdk': path.resolve(__dirname, 'src/sdk-bundle/index.ts')
         }
