@@ -86,7 +86,8 @@ async function main() {
     const packages = [
         PKG_PATH,
         path.join(ROOT_DIR, 'admin/package.json'),
-        path.join(ROOT_DIR, 'web/package.json')
+        path.join(ROOT_DIR, 'web/package.json'),
+        path.join(ROOT_DIR, 'sdk/package.json')
     ];
 
     packages.forEach(p => {

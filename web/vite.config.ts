@@ -2,6 +2,12 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
+import fs from 'fs'
+
+const aliasesJsonPath = path.resolve(__dirname, '../scripts/plugin_aliases.json');
+const pluginAliases = fs.existsSync(aliasesJsonPath)
+    ? JSON.parse(fs.readFileSync(aliasesJsonPath, 'utf8'))
+    : {};
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -10,7 +16,8 @@ export default defineConfig({
         preserveSymlinks: true,
         dedupe: ['react', 'react-dom', 'firebase'],
         alias: {
-            '@minreport/sdk': path.resolve(__dirname, 'src/sdk-bundle/index.ts')
+            '@minreport/sdk': path.resolve(__dirname, 'src/sdk-bundle/index.ts'),
+            ...pluginAliases
         }
     },
     plugins: [

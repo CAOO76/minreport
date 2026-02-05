@@ -1,29 +1,12 @@
 import { MinReport, PluginManifest } from '@minreport/sdk';
-import StockpileControlPlugin from '../plugins/stockpile-control';
+import { DISCOVERED_PLUGINS } from './DiscoveredPlugins';
 
 /**
- * Registro Central de Plugins (Web Core)
- * Este archivo actúa como el panel de conexiones donde se enchufan 
- * todos los plugins disponibles en la plataforma MINREPORT.
+ * Registro Central de Plugins (Web Core) - DINÁMICO
  */
 
-// 1. Catálogo de Plugins Disponibles
-const PLUGIN_CATALOG = [
-    {
-        manifest: {
-            id: 'stockpile-control',
-            name: 'Control de Acopios',
-            version: '1.0.0',
-            author: 'MinReport'
-        },
-        instance: StockpileControlPlugin
-    }
-];
-
-// 2. Registro Automático
-// Al importar este archivo, los plugins se registran en el SDK Core 
-// para habilitar su ciclo de vida y gestión de datos.
-PLUGIN_CATALOG.forEach(p => {
+// 1. Registro Automático
+DISCOVERED_PLUGINS.forEach(p => {
     if (!MinReport.Core.getPluginById(p.manifest.id)) {
         MinReport.Core.register(p.manifest, p.instance as any);
     }

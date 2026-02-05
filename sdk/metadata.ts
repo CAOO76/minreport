@@ -5,7 +5,9 @@
  */
 export const SDK_METADATA = {
     changelog: [
-    "Plugins tests"
+    "Automated maintenance release.",
+    "Source Bump: v1.0.6 -> v1.0.7",
+    "Trace ID: 1770334583101"
 ],
     author: 'MinReport Automation',
     releaseDate: new Date(),

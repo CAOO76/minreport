@@ -147,6 +147,13 @@ export const PluginsPage = () => {
                                         checked={plugin.status === 'OPERATIONAL'}
                                         onChange={() => toggleStatus(plugin.key, plugin.status)}
                                     />
+                                    <button
+                                        onClick={() => (window.location.href = `/plugins/${plugin.key}`)}
+                                        className="mt-2 text-[10px] font-bold text-antigravity-accent hover:underline flex items-center gap-1"
+                                    >
+                                        <span className="material-symbols-rounded text-sm">rocket_launch</span>
+                                        EJECUTAR
+                                    </button>
                                 </div>
                             </div>
 

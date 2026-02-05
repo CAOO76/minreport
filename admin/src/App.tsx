@@ -13,6 +13,7 @@ import { BrandingProvider } from './context/BrandingContext';
 import { B2BPage } from './pages/B2BPage';
 import { EduPage } from './pages/EduPage';
 import { PersonalPage } from './pages/PersonalPage';
+import { PluginExecutionPage } from './pages/PluginExecutionPage';
 
 function App() {
     return (
@@ -34,6 +35,7 @@ function App() {
                                 <Route path="/edu" element={<EduPage />} />
 
                                 <Route path="/plugins" element={<PluginsPage />} />
+                                <Route path="/plugins/:pluginId" element={<PluginExecutionPage />} />
                                 <Route path="/branding" element={<BrandingSettings />} />
                                 <Route path="/sdk" element={<SDKPage />} />
                             </Route>

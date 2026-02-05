@@ -4,6 +4,8 @@ import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firesto
 import { auth, db } from '../config/firebase';
 import { motion } from 'framer-motion';
 
+import { PluginLoader } from '../core/plugins/PluginLoader';
+
 // Re-defining interface locally to avoid monorepo path complexities if not set up
 interface ClientPlugin {
     key: string;
@@ -30,24 +32,27 @@ export const ClientPluginsPage = () => {
                 if (userSnap.exists()) {
                     const userData = userSnap.data();
                     const enabledKeys: string[] = userData.entitlements?.pluginsEnabled || [];
+                    const isAdmin = userData.role === 'OWNER' || userData.role === 'ADMIN' || (userData.memberships && userData.memberships.some((m: any) => m.role === 'OWNER' || m.role === 'ADMIN'));
 
-                    if (enabledKeys.length > 0) {
-                        // 2. Fetch Plugin Details (only enabled ones)
-                        // In a real app we might cache this or fetch all active and filter
-                        const pluginsInfo: ClientPlugin[] = [];
+                    // 2. Fetch Plugin Details
+                    const pluginsInfo: ClientPlugin[] = [];
+                    // Mostramos operacionales siempre, y TESTING solo si es admin
+                    const q = query(collection(db, 'plugins'));
+                    const querySnapshot = await getDocs(q);
 
-                        // Optimize: Fetch all operational plugins and filter in memory since 'in' query is limited to 10
-                        const q = query(collection(db, 'plugins'), where('status', '==', 'OPERATIONAL'));
-                        const querySnapshot = await getDocs(q);
+                    querySnapshot.forEach((doc) => {
+                        const data = doc.data();
+                        const isOperational = data.status === 'OPERATIONAL';
+                        const isTestingAndAdmin = data.status === 'TESTING' && isAdmin;
 
-                        querySnapshot.forEach((doc) => {
-                            if (enabledKeys.includes(doc.id)) {
-                                pluginsInfo.push({ key: doc.id, ...doc.data() } as ClientPlugin);
+                        if (isOperational || isTestingAndAdmin) {
+                            if (isAdmin || enabledKeys.includes(doc.id)) {
+                                pluginsInfo.push({ key: doc.id, ...data } as ClientPlugin);
                             }
-                        });
+                        }
+                    });
 
-                        setPlugins(pluginsInfo);
-                    }
+                    setPlugins(pluginsInfo);
                 }
             } catch (error) {
                 console.error("Error loading plugins:", error);
@@ -80,28 +85,11 @@ export const ClientPluginsPage = () => {
                             {activePlugin.description}
                         </span>
                     </div>
-                    <div className="flex items-center gap-2">
-                        {/* Mock Toolbar Actions */}
-                        <button className="p-2 text-antigravity-light-muted hover:text-antigravity-light-text transition-colors">
-                            <span className="material-symbols-rounded">settings</span>
-                        </button>
-                    </div>
                 </div>
 
-                {/* Immersive Content Area */}
-                <div className="flex-1 p-8 overflow-y-auto bg-slate-50 dark:bg-antigravity-dark-bg/50 flex flex-col items-center justify-center text-center">
-                    <div className="w-24 h-24 rounded-3xl bg-antigravity-accent/10 flex items-center justify-center text-antigravity-accent mb-6">
-                        <span className="material-symbols-rounded text-5xl">{activePlugin.icon}</span>
-                    </div>
-                    <h1 className="text-3xl font-black text-antigravity-light-text dark:text-antigravity-dark-text mb-2">
-                        Bienvenido a {activePlugin.label}
-                    </h1>
-                    <p className="text-antigravity-light-muted dark:text-antigravity-dark-muted max-w-lg mb-8">
-                        Este espacio de trabajo está dedicado exclusivamente a las funciones de {activePlugin.label.toLowerCase()}. Aquí se cargarían los dashboards y herramientas específicas.
-                    </p>
-                    <button className="px-6 py-3 rounded-xl bg-antigravity-accent text-white font-bold shadow-lg shadow-antigravity-accent/20 hover:scale-105 transition-transform">
-                        Iniciar Operación
-                    </button>
+                {/* Real Plugin Content Area */}
+                <div className="flex-1 p-0 overflow-y-auto bg-slate-50 dark:bg-antigravity-dark-bg/50">
+                    <PluginLoader pluginId={activePlugin.key} />
                 </div>
             </div>
         );

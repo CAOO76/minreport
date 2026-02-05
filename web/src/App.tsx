@@ -22,6 +22,7 @@ import AccountSelector from './components/auth/AccountSelector';
 import LoadingScreen from './components/common/LoadingScreen';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import PluginErrorBoundaryDemo from './core/plugins/PluginErrorBoundaryDemo';
+import { getAllPlugins } from './core/PluginRegistry';
 
 import { useEffect } from 'react';
 import { MinReport } from '@minreport/sdk'; // Importing SDK via Alias
@@ -44,10 +45,13 @@ const RequireAuthLayout = () => {
                 isOffline: !navigator.onLine
             };
 
-            const entitlements = profile.entitlements?.pluginsEnabled || [];
+            const isSuperAdmin = context.userRole === 'OWNER' || context.userRole === 'ADMIN';
+            const entitlements = isSuperAdmin
+                ? getAllPlugins().map((p: any) => p.id)
+                : (profile.entitlements?.pluginsEnabled || []);
 
             try {
-                await MinReport.Core.initializePlugins(context, entitlements);
+                await MinReport.Core.initializePlugins({ ...context, theme: 'light' }, entitlements);
             } catch (error) {
                 console.error("Plugin initialization failed:", error);
             }

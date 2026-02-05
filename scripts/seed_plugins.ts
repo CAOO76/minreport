@@ -23,40 +23,10 @@ interface Plugin {
 
 const INITIAL_PLUGINS: Plugin[] = [
     {
-        key: 'topografia',
-        label: 'Topografía',
-        description: 'Módulo integral de levantamiento y análisis topográfico.',
-        icon: 'landscape',
-        status: 'OPERATIONAL',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        observations: []
-    },
-    {
-        key: 'finanzas',
-        label: 'Finanzas',
-        description: 'Gestión de costos, presupuestos y proyecciones financieras.',
-        icon: 'account_balance_wallet',
-        status: 'OPERATIONAL',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        observations: []
-    },
-    {
-        key: 'transporte',
-        label: 'Transporte',
-        description: 'Logística, flotas y control de rutas.',
-        icon: 'local_shipping',
-        status: 'OPERATIONAL',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        observations: []
-    },
-    {
-        key: 'perforacion',
-        label: 'Perforación',
-        description: 'Control de sondajes y operación de maquinaria de perforación.',
-        icon: 'precision_manufacturing',
+        key: 'stockpile-control',
+        label: 'Control de Acopios',
+        description: 'Gestión y monitoreo de inventario de mineral en tiempo real.',
+        icon: 'inventory_2',
         status: 'OPERATIONAL',
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -65,9 +35,17 @@ const INITIAL_PLUGINS: Plugin[] = [
 ];
 
 async function seedPlugins() {
-    console.log("Seeding plugins collection...");
-    const batch = db.batch();
+    console.log("Limpiando colección de plugins y re-sembrando sólo reales...");
 
+    // 1. Borrar existentes para eliminar mocks
+    const snapshot = await db.collection('plugins').get();
+    const deleteBatch = db.batch();
+    snapshot.docs.forEach(doc => deleteBatch.delete(doc.ref));
+    await deleteBatch.commit();
+    console.log("🗑️ Mocks eliminados.");
+
+    // 2. Sembrar reales
+    const batch = db.batch();
     for (const plugin of INITIAL_PLUGINS) {
         const ref = db.collection('plugins').doc(plugin.key);
         batch.set(ref, {
@@ -78,7 +56,7 @@ async function seedPlugins() {
     }
 
     await batch.commit();
-    console.log("✅ Plugins seeded successfully.");
+    console.log("✅ Catálogo de plugins reales actualizado.");
 }
 
 seedPlugins().catch(console.error);
