@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { getTenants, updateTenantStatus, deleteTenant } from '../../services/api';
-import { Check, X, Clock, Trash2, Eye, Ban } from 'lucide-react';
+import { Check, X, Clock, Trash2, Eye, Ban, Settings, Blocks } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { UserManagementDrawer } from './UserManagementDrawer';
 import { ConfirmationModal } from './ConfirmationModal';
+import { TenantDetailsModal } from './TenantDetailsModal';
+import { TenantPluginsModal } from './TenantPluginsModal';
 import { useAdminUsers } from '../../hooks/useAdminUsers';
 import { UserProfile } from '../../types/admin';
 
@@ -19,6 +21,7 @@ interface Tenant {
     full_name?: string;
     rut?: string;
     run?: string;
+    enabledPlugins?: string[];
 }
 
 interface TenantListProps {
@@ -31,13 +34,19 @@ export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle })
     const { t } = useTranslation();
     const [tenants, setTenants] = useState<Tenant[]>([]);
     const [loading, setLoading] = useState(true);
-    const { toggleUserPlugin, updateUserStatus } = useAdminUsers(); // Hooks for actions
+    const { toggleUserPlugin, updateUserStatus } = useAdminUsers();
 
-    // State for managing user via Drawer
+    // State for managing user via Drawer (Legacy/User-Centric)
     const [managingUser, setManagingUser] = useState<UserProfile | null>(null);
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
-    // Legacy modal states (will be replaced or kept for basic actions if needed, but Drawer is preferred for manage)
+    // State for Tenant Details Modal (Traceability / Audit)
+    const [selectedTenant, setSelectedTenant] = useState<Tenant | null>(null);
+
+    // State for Tenant Plugins Modal (Dedicated Workspace)
+    const [selectedPluginTenant, setSelectedPluginTenant] = useState<Tenant | null>(null);
+
+    // Confirmation Modal State
     const [actionModal, setActionModal] = useState<{ isOpen: boolean, tenant: Tenant | null, action: 'DELETE' | 'SUSPEND' } | null>(null);
 
     const fetchTenants = async () => {
@@ -56,15 +65,15 @@ export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle })
     }, [type]);
 
     // Adapter: Convert Tenant to UserProfile for the Drawer
-    const handleManage = (tenant: Tenant) => {
+    const handleManageUser = (tenant: Tenant) => {
         const profile: UserProfile = {
             uid: tenant.id,
             email: tenant.email,
             displayName: tenant.type === 'ENTERPRISE' ? tenant.company_name! : (tenant.full_name || tenant.institution_name!),
-            role: 'USER', // Default
+            role: 'USER',
             status: tenant.status as any,
             entitlements: {
-                pluginsEnabled: [],
+                pluginsEnabled: tenant.enabledPlugins || [],
                 storageLimit: 0
             },
             stats: {
@@ -76,15 +85,50 @@ export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle })
         setIsDrawerOpen(true);
     };
 
-    const handleAction = async (id: string, status: 'ACTIVE' | 'REJECTED' | 'SUSPENDED') => {
+    const handleAction = async (id: string, status: 'ACTIVE' | 'REJECTED' | 'SUSPENDED' | 'DELETED', data?: any) => {
         try {
-            await updateTenantStatus(id, status);
-            setTenants(prev => prev.map(t => t.id === id ? { ...t, status } : t));
+            await updateTenantStatus(id, status as any, data);
+
+            // Optimistic Update
+            setTenants(prev => prev.map(t => {
+                if (t.id === id) {
+                    return {
+                        ...t,
+                        status: status as any,
+                        ...(data?.enabledPlugins ? { enabledPlugins: data.enabledPlugins } : {})
+                    };
+                }
+                return t;
+            }));
+
+            // Close modals if necessary
             setActionModal(null);
-            // Also close drawer if open
-            if (isDrawerOpen) setIsDrawerOpen(false);
+            if (status !== 'ACTIVE') {
+                setSelectedTenant(null);
+            }
         } catch (error) {
             alert('Error updating status');
+        }
+    };
+
+    const handleUpdatePlugins = async (tenantId: string, newPlugins: string[]) => {
+        try {
+            await updateTenantStatus(tenantId, 'ACTIVE', { enabledPlugins: newPlugins });
+
+            // Optimistic Update
+            setTenants(prev => prev.map(t => {
+                if (t.id === tenantId) {
+                    return { ...t, enabledPlugins: newPlugins };
+                }
+                return t;
+            }));
+
+            // Update the selected plugin tenant state to reflect changes immediately in the modal
+            setSelectedPluginTenant(prev => prev ? { ...prev, enabledPlugins: newPlugins } : null);
+
+        } catch (error) {
+            console.error('Failed to update plugins', error);
+            alert('Error al actualizar plugins');
         }
     };
 
@@ -155,15 +199,37 @@ export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle })
                                     </td>
                                     <td className="px-6 py-4 text-right">
                                         <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            {/* Primary Action: Manage via Drawer */}
+
+                                            {/* Action 1: Settings / Plugins (Active Only) - NEW ICON */}
+                                            {tenant.status === 'ACTIVE' && (
+                                                <button
+                                                    onClick={() => setSelectedPluginTenant(tenant)}
+                                                    className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors"
+                                                    title="Configurar Plugins"
+                                                >
+                                                    <Blocks size={18} />
+                                                </button>
+                                            )}
+
+                                            {/* Action 2: Inspector / Traceability - GEAR ICON RESTORED */}
                                             <button
-                                                onClick={() => handleManage(tenant)}
+                                                onClick={() => setSelectedTenant(tenant)}
                                                 className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10 hover:text-antigravity-accent transition-colors"
-                                                title="Gestionar Cuenta"
+                                                title="Ver Trazabilidad y Detalles"
+                                            >
+                                                <Settings size={18} />
+                                            </button>
+
+                                            {/* Action 3: User Management (Active Only) - EYE ICON */}
+                                            <button
+                                                onClick={() => handleManageUser(tenant)}
+                                                className="p-1.5 rounded-lg text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
+                                                title="Ver Perfil de Usuario"
                                             >
                                                 <Eye size={18} />
                                             </button>
 
+                                            {/* Action 4: Suspend (Active Only) */}
                                             {tenant.status === 'ACTIVE' && (
                                                 <button
                                                     onClick={() => setActionModal({ isOpen: true, tenant, action: 'SUSPEND' })}
@@ -174,6 +240,7 @@ export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle })
                                                 </button>
                                             )}
 
+                                            {/* Action 5: Delete */}
                                             <button
                                                 onClick={() => setActionModal({ isOpen: true, tenant, action: 'DELETE' })}
                                                 className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors"
@@ -190,12 +257,28 @@ export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle })
                 </div>
             </div>
 
+            {/* Modal for Traceability (The "Card") */}
+            <TenantDetailsModal
+                isOpen={!!selectedTenant}
+                onClose={() => setSelectedTenant(null)}
+                tenant={selectedTenant as any}
+                onAction={handleAction as any}
+            />
+
+            {/* Dedicated Modal for Plugins (The New Workspace) */}
+            <TenantPluginsModal
+                isOpen={!!selectedPluginTenant}
+                onClose={() => setSelectedPluginTenant(null)}
+                tenant={selectedPluginTenant as any}
+                onUpdatePlugins={handleUpdatePlugins}
+            />
+
             <UserManagementDrawer
                 isOpen={isDrawerOpen}
                 onClose={() => setIsDrawerOpen(false)}
                 user={managingUser}
-                toggleUserPlugin={toggleUserPlugin} // Connected to hook
-                updateUserStatus={updateUserStatus} // Connected to hook
+                toggleUserPlugin={toggleUserPlugin}
+                updateUserStatus={updateUserStatus}
             />
 
             {actionModal && (

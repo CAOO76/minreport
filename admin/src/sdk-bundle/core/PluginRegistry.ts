@@ -1,7 +1,7 @@
 import {
     PluginManifest,
     PluginLifeCycle,
-    MinReportContext
+    SecureContext
 } from '../types';
 
 /**
@@ -53,12 +53,12 @@ export class PluginRegistry {
     }
 
     /**
-     * Inicializa los plugins permitidos según los permisos del usuario.
-     * @param context Contexto de MinReport (proyecto, usuario, etc).
+     * Inicializa los plugins permitidos usando un factory de contextos seguros.
+     * @param contextFactory Función que genera un SecureContext para un plugin dado.
      * @param userEntitlements Array de IDs de plugins permitidos.
      */
-    public async initializePlugins(context: MinReportContext, userEntitlements: string[]): Promise<void> {
-        console.log(`[SDK] Inicializando plugins para el usuario ${context.userId}...`);
+    public async initializePlugins(contextFactory: (pluginId: string) => SecureContext, userEntitlements: string[]): Promise<void> {
+        console.log(`[SDK] Inicializando plugins...`);
 
         for (const [id, plugin] of this.registry.entries()) {
             // Un plugin se activa si está en userEntitlements 
@@ -68,7 +68,8 @@ export class PluginRegistry {
             if (hasPermission) {
                 try {
                     console.log(`[SDK] Activando plugin: ${plugin.manifest.name}...`);
-                    await plugin.instance.onInit(context);
+                    const secureContext = contextFactory(id);
+                    await plugin.instance.onInit(secureContext);
                     plugin.isActive = true;
                 } catch (error) {
                     console.error(`[SDK] Error al inicializar el plugin "${id}":`, error);

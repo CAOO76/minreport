@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Check, X as XIcon, MapPin, Phone, Globe, FileText, Calendar, Building, User, History, Shield, Info, MessageSquare } from 'lucide-react';
+import { X, Check, X as XIcon, MapPin, Phone, FileText, Calendar, History, Shield, Info, MessageSquare } from 'lucide-react';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 
@@ -24,6 +24,7 @@ interface Tenant {
     processedAt?: string;
     rejectionReason?: string;
     observations?: string;
+    enabledPlugins?: string[];
 }
 
 interface TenantDetailsModalProps {
@@ -48,6 +49,9 @@ export const TenantDetailsModal: React.FC<TenantDetailsModalProps> = ({
 
     const getDisplayName = () => tenant.company_name || tenant.institution_name || tenant.full_name;
     const getIdNumber = () => tenant.rut || tenant.run || 'N/A';
+
+    // We render for everyone now, plugins are handled elsewhere
+    console.log('[TenantDetailsModal] Rendering traceability for:', tenant.id);
 
     return (
         <AnimatePresence>
@@ -105,6 +109,7 @@ export const TenantDetailsModal: React.FC<TenantDetailsModalProps> = ({
 
                         {/* Body */}
                         <div className="p-6 overflow-y-auto space-y-8">
+
                             {/* Primary Info Grid */}
                             <div className="grid grid-cols-2 gap-6">
                                 <div className="space-y-1">
@@ -117,7 +122,7 @@ export const TenantDetailsModal: React.FC<TenantDetailsModalProps> = ({
                                 <div className="space-y-1">
                                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
                                         <Calendar size={12} />
-                                        Fecha Solicitud
+                                        Fecha Registro
                                     </label>
                                     <p className="text-sm font-medium text-slate-900 dark:text-white">
                                         {new Date(tenant.createdAt._seconds * 1000).toLocaleDateString()}
@@ -138,11 +143,6 @@ export const TenantDetailsModal: React.FC<TenantDetailsModalProps> = ({
                                         <div>
                                             <label className="text-[10px] font-bold text-slate-400 uppercase">Dirección</label>
                                             <p className="text-sm text-slate-700 dark:text-slate-300">{tenant.address || 'No registrada'}</p>
-                                            {tenant.address_place_id && (
-                                                <span className="inline-block mt-1 text-[9px] bg-green-100 text-green-700 px-1.5 rounded dark:bg-green-900/30 dark:text-green-400">
-                                                    Google Validated
-                                                </span>
-                                            )}
                                         </div>
                                     </div>
                                     <div className="p-3 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-100 dark:border-white/5 flex gap-3">
@@ -154,34 +154,12 @@ export const TenantDetailsModal: React.FC<TenantDetailsModalProps> = ({
                                             <p className="text-sm text-slate-700 dark:text-slate-300 font-mono">{tenant.phone || 'No registrado'}</p>
                                         </div>
                                     </div>
-                                    <div className="p-3 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-100 dark:border-white/5 flex gap-3">
-                                        <div className="p-2 bg-white dark:bg-white/5 rounded-lg h-fit text-slate-400">
-                                            <Globe size={16} />
-                                        </div>
-                                        <div>
-                                            <label className="text-[10px] font-bold text-slate-400 uppercase">Sitio Web</label>
-                                            <a href={tenant.website} target="_blank" rel="noreferrer" className="text-sm text-blue-600 hover:underline truncate block">
-                                                {tenant.website || 'No registrado'}
-                                            </a>
-                                        </div>
-                                    </div>
-                                    {tenant.position && (
-                                        <div className="p-3 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-100 dark:border-white/5 flex gap-3">
-                                            <div className="p-2 bg-white dark:bg-white/5 rounded-lg h-fit text-slate-400">
-                                                <User size={16} />
-                                            </div>
-                                            <div>
-                                                <label className="text-[10px] font-bold text-slate-400 uppercase">Cargo / Rol</label>
-                                                <p className="text-sm text-slate-700 dark:text-slate-300">{tenant.position}</p>
-                                            </div>
-                                        </div>
-                                    )}
                                 </div>
                             </div>
 
                             <hr className="border-slate-100 dark:border-slate-800" />
 
-                            {/* Traceability Section */}
+                            {/* Traceability Section - ALWAYS VISIBLE */}
                             <div className="space-y-4">
                                 <h3 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-widest flex items-center gap-2">
                                     <History size={14} className="text-antigravity-accent" />

@@ -12,6 +12,8 @@ interface PluginEntry {
     id: string;
     name: string;
     gitUrl: string;
+    icon?: string;
+    description?: string;
 }
 
 function sync() {
@@ -51,7 +53,9 @@ function sync() {
                 name: plugin.name,
                 importPath: `@minreport/${plugin.id}`,
                 version: pkg.version,
-                localPath: pluginPath
+                localPath: pluginPath,
+                icon: plugin.icon || 'extension',
+                description: plugin.description || ''
             });
         } catch (error) {
             console.error(`❌ Error sincronizando ${plugin.id}:`, error);
@@ -68,7 +72,14 @@ ${discovered.map(p => `import ${p.id.replace(/-/g, '_')}Plugin from '${p.importP
 
 export const DISCOVERED_PLUGINS = [
     ${discovered.map(p => `{
-        manifest: { id: '${p.id}', name: '${p.name}', version: '${p.version}', author: 'MINREPORT Team' },
+        manifest: { 
+            id: '${p.id}', 
+            name: '${p.name}', 
+            version: '${p.version}', 
+            author: 'MINREPORT Team',
+            icon: '${p.icon}',
+            description: '${p.description}'
+        },
         instance: ${p.id.replace(/-/g, '_')}Plugin
     }`).join(',\n    ')}
 ];

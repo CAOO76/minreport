@@ -19,10 +19,11 @@ interface Tenant {
     processedAt?: string;
     rejectionReason?: string;
     observations?: string;
+    enabledPlugins?: string[];
 }
 
 import { TenantDetailsModal } from '../components/admin/TenantDetailsModal';
-import { Eye } from 'lucide-react';
+import { Eye, Settings } from 'lucide-react';
 
 export const Dashboard = () => {
     const { t } = useTranslation();
@@ -47,12 +48,35 @@ export const Dashboard = () => {
         fetchTenants();
     }, []);
 
-    const handleAction = async (id: string, status: 'ACTIVE' | 'REJECTED', data?: { rejectionReason?: string, observations?: string }) => {
+    const handleAction = async (id: string, status: 'ACTIVE' | 'REJECTED', data?: { rejectionReason?: string, observations?: string, enabledPlugins?: string[] }) => {
         try {
             await updateTenantStatus(id, status, data);
-            setTenants(prev => prev.map(t => t.id === id ? { ...t, status, ...data, processedAt: new Date().toISOString() } : t));
-            setSelectedTenant(null); // Close modal if open
+
+            // Update local state specifically for plugin toggles to ensure UI reflects change immediately
+            setTenants(prev => prev.map(t => {
+                if (t.id === id) {
+                    return {
+                        ...t,
+                        status,
+                        ...data,
+                        processedAt: new Date().toISOString(),
+                        // Ensure enabledPlugins is merged if present
+                        ...(data?.enabledPlugins ? { enabledPlugins: data.enabledPlugins } : {})
+                    };
+                }
+                return t;
+            }));
+
+            // Only close modal if it's a status change (Pending -> Active/Rejected), not for plugin toggles
+            if (status !== 'ACTIVE' || (data && !data.enabledPlugins)) {
+                setSelectedTenant(null);
+            } else {
+                // If it's a plugin toggle, update the selected tenant too so the modal doesn't stale
+                setSelectedTenant(prev => prev ? { ...prev, ...data } : null);
+            }
+
         } catch (error) {
+            console.error(error);
             alert('Error updating status');
         }
     };
@@ -167,10 +191,15 @@ export const Dashboard = () => {
                                     <div className="flex justify-end gap-2">
                                         <button
                                             onClick={() => setSelectedTenant(tenant)}
-                                            className="p-1.5 rounded-md text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10 hover:text-antigravity-accent transition-colors"
-                                            title="Ver Detalles"
+                                            className={clsx(
+                                                "p-1.5 rounded-md transition-colors",
+                                                tenant.status === 'ACTIVE'
+                                                    ? "text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20"
+                                                    : "text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10 hover:text-antigravity-accent"
+                                            )}
+                                            title={tenant.status === 'ACTIVE' ? "Administrar Cuenta" : "Ver Detalles"}
                                         >
-                                            <Eye size={18} />
+                                            {tenant.status === 'ACTIVE' ? <Settings size={18} /> : <Eye size={18} />}
                                         </button>
 
                                         {tenant.status === 'PENDING_APPROVAL' && (

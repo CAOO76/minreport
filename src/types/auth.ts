@@ -43,4 +43,5 @@ export interface Account {
     };
     createdAt: number;
     updatedAt: number;
+    enabledPlugins?: string[]; // [NEW] Definitive Plugin Management
 }

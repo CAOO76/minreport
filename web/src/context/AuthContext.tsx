@@ -1,7 +1,7 @@
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth';
-import { doc, onSnapshot, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import type { UserProfile, Account } from '../../../src/types/auth';
 import { checkAndClaimInvitations } from '../utils/invitationHandler';
@@ -78,86 +78,74 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return unsubscribe;
     }, [user]);
 
-    // 3. Determine and Fetch Current Account
+
+
+    // NEW STATE for stability
+    const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
+
+    // 3.1 Resolve ID
     useEffect(() => {
-        const resolveAccount = async () => {
-            if (!user) {
-                setLoading(false);
-                return;
+        if (!user) {
+            setActiveAccountId(null);
+            setLoading(false);
+            return;
+        }
+
+        let targetId: string | null = null;
+
+        // Claims Check (Priority 1)
+        user.getIdTokenResult().then(res => {
+            if (res.claims.activeAccountId) {
+                targetId = res.claims.activeAccountId as string;
             }
-
-            // [CRITICAL FIX] Prioritize ID Token Claims (Source of Truth from Login Tunnel)
-            let targetAccountId: string | null = null;
-
-            try {
-                // Force refresh to ensure we have the latest claims from the tunnel login
-                const idTokenResult = await user.getIdTokenResult();
-                const claims = idTokenResult.claims;
-
-                if (claims.activeAccountId) {
-                    console.log(`[AUTH-CONTEXT] Using Claim Account ID: ${claims.activeAccountId}`);
-                    targetAccountId = claims.activeAccountId as string;
-                }
-            } catch (e) {
-                console.warn("Failed to get token claims", e);
-            }
-
-            // Fallback: Use Firestore Profile Profile if claims are missing (e.g. persistent session)
-            if (!targetAccountId && profile) {
-                if (profile.memberships && profile.memberships.length > 0) {
-                    // Scenario 1: Only one account -> Auto-select
-                    if (profile.memberships.length === 1) {
-                        targetAccountId = profile.memberships[0].accountId;
-                    }
-                    // Scenario 2: Multiple accounts -> Respect last active
-                    else if (profile.lastActiveAccountId) {
-                        const hasMembership = profile.memberships.some(m => m.accountId === profile.lastActiveAccountId);
-                        if (hasMembership) {
-                            targetAccountId = profile.lastActiveAccountId;
-                        }
+            // Fallback Profile (Priority 2)
+            if (!targetId && profile) {
+                if (profile.memberships?.length === 1) targetId = profile.memberships[0].accountId;
+                else if (profile.lastActiveAccountId) {
+                    if (profile.memberships?.some(m => m.accountId === profile.lastActiveAccountId)) {
+                        targetId = profile.lastActiveAccountId;
                     }
                 }
             }
 
-            // If we have a target account, fetch it
-            if (targetAccountId) {
-                // Optimization: Don't re-fetch if already loaded
-                if (currentAccount?.id === targetAccountId) {
-                    setLoading(false);
-                    return;
-                }
+            // Set ID (triggers listener)
+            setActiveAccountId(targetId);
 
-                try {
-                    const accountRef = doc(db, 'accounts', targetAccountId);
-                    const accountSnap = await getDoc(accountRef);
-                    if (accountSnap.exists()) {
-                        const accountData = accountSnap.data();
-                        console.log(`[AUTH-CONTEXT] Resolved Account: ${accountData.name}`);
-                        setCurrentAccount({ id: accountSnap.id, ...accountData } as Account);
-                    } else {
-                        console.warn(`[AUTH-CONTEXT] Account ${targetAccountId} not found in Firestore.`);
-                        setCurrentAccount(null);
-                    }
-                } catch (err) {
-                    console.error("[AUTH-CONTEXT] Error fetching account:", err);
-                    setCurrentAccount(null);
-                }
+            // Stop loading if we have profile but no account selected (valid state)
+            if (profile && !targetId) setLoading(false);
+
+        }).catch(err => {
+            console.error("Token error", err);
+            setLoading(false);
+        });
+
+    }, [user, profile]);
+
+    // 3.2 Listen to Account Data
+    useEffect(() => {
+        if (!activeAccountId) {
+            setCurrentAccount(null);
+            return;
+        }
+
+        console.log(`[AUTH-CONTEXT] Subscribing to Account: ${activeAccountId}`);
+        const accountRef = doc(db, 'accounts', activeAccountId);
+
+        const unsubscribe = onSnapshot(accountRef, (snapshot) => {
+            if (snapshot.exists()) {
+                setCurrentAccount({ id: snapshot.id, ...snapshot.data() } as Account);
             } else {
-                // Valid state: User is logged in but hasn't selected an account yet
-                // Only stop loading if we have the profile loaded (so we know for sure they have multiple options)
-                if (profile) {
-                    setCurrentAccount(null);
-                }
+                console.warn("Account not found");
+                setCurrentAccount(null);
             }
+            setLoading(false); // Data ready
+        }, (err) => {
+            console.error("Account listen error", err);
+            setLoading(false);
+        });
 
-            // Critical: Ensure loading stops eventually
-            if (profile || !user) {
-                setLoading(false);
-            }
-        };
-
-        resolveAccount();
-    }, [user, profile]); // Re-run if user (token refresh) or profile changes
+        return () => unsubscribe();
+    }, [activeAccountId]);
 
     const switchAccount = async (accountId: string) => {
         if (!user || !profile) return;

@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
 import { Register } from './pages/Register';
 import { SetPassword } from './pages/SetPassword';
@@ -28,12 +28,14 @@ import { secureContextFactory } from './core/SecureContextFactory';
 import { useEffect } from 'react';
 import { MinReport } from '@minreport/sdk'; // Importing SDK via Alias
 
-const RequireAuthLayout = () => {
+/**
+ * PluginInitializer handles the SDK initialization logic globally.
+ * It ensures plugins are loaded regardless of whether the user is on mobile or desktop.
+ * As a layout route, it must render an Outlet.
+ */
+const PluginInitializer = () => {
     const { user, profile, currentAccount, loading } = useAuth();
-    const isMobile = useIsMobile();
-    const Layout = isMobile ? MobileLayout : ClientLayout;
 
-    // Plugin Initialization Effect
     useEffect(() => {
         const initPlugins = async () => {
             if (!user || !currentAccount || !profile) return;
@@ -46,18 +48,22 @@ const RequireAuthLayout = () => {
                 isOffline: !navigator.onLine
             };
 
-            const isSuperAdmin = context.userRole === 'OWNER' || context.userRole === 'ADMIN';
-            const entitlements = isSuperAdmin
+            // Only System SUPER_ADMIN sees all plugins.
+            const isSystemAdmin = profile.role === 'SUPER_ADMIN';
+
+            const entitlements = isSystemAdmin
                 ? getAllPlugins().map((p: any) => p.id)
-                : (profile.entitlements?.pluginsEnabled || []);
+                : (currentAccount.enabledPlugins || []);
+
+            console.log(`[SDK-INIT] Initializing for ${isSystemAdmin ? 'SystemAdmin' : 'Account:' + currentAccount.id}`, entitlements);
 
             try {
-                // SDK 2.0: Pasamos una función factory que genera contextos seguros bajo demanda
                 await MinReport.Core.initializePlugins((pluginId) => {
                     return secureContextFactory.create(pluginId, context.projectId, context.userId);
                 }, entitlements);
+                console.log("[SDK-INIT] Plugins initialized successfully");
             } catch (error) {
-                console.error("Plugin initialization failed:", error);
+                console.error("[SDK-INIT] Plugin initialization failed:", error);
             }
         };
 
@@ -65,6 +71,14 @@ const RequireAuthLayout = () => {
             initPlugins();
         }
     }, [currentAccount, user, profile, loading]);
+
+    return <Outlet />;
+};
+
+const RequireAuthLayout = () => {
+    const { user, currentAccount, loading } = useAuth();
+    const isMobile = useIsMobile();
+    const Layout = isMobile ? MobileLayout : ClientLayout;
 
     if (loading) return <LoadingScreen />;
     if (!user) return <Navigate to="/login" replace />;
@@ -105,26 +119,28 @@ const AppRoutes = () => {
             <Route path="/setup-access" element={<SetupAccess />} />
             <Route path="/auth/action" element={<SetPassword />} />
 
-
-            {/* 📱 Rutas Móviles (Protegidas por MobileLayout y Role Checks) */}
-            <Route path="/mobile" element={<MobileLayout />}>
-                <Route path="dashboard" element={<MobileDashboard />} />
-                <Route path="tools" element={<MobileTools />} />
-                <Route path="profile" element={<MobileProfile />} />
-                {/* Redirección por defecto */}
-                <Route index element={<Navigate to="/mobile/dashboard" replace />} />
-            </Route>
-
-            {/* Login Móvil Independiente */}
+            {/* Login Móvil Independiente (Prioridad sobre rutas protegidas) */}
             <Route path="/mobile/login" element={<MobileLogin />} />
 
+            {/* 📱 Rutas Móviles (Protegidas) */}
+            <Route element={<PluginInitializer />}>
+                <Route path="/mobile" element={<MobileLayout />}>
+                    <Route path="dashboard" element={<MobileDashboard />} />
+                    <Route path="tools" element={<MobileTools />} />
+                    <Route path="profile" element={<MobileProfile />} />
+                    <Route index element={<Navigate to="/mobile/dashboard" replace />} />
+                </Route>
+            </Route>
+
             {/* Protected Routes with Client Layout */}
-            <Route element={<RequireAuthLayout />}>
-                <Route path="/dashboard" element={<DashboardRouter />} />
-                <Route path="/plugins" element={<ClientPluginsPage />} />
-                <Route path="/debug/error-boundary" element={<PluginErrorBoundaryDemo />} />
-                <Route path="/capture" element={<div>Capture View (Not implemented)</div>} />
-                <Route path="/menu" element={<div>Menu View (Not implemented)</div>} />
+            <Route element={<PluginInitializer />}>
+                <Route element={<RequireAuthLayout />}>
+                    <Route path="/dashboard" element={<DashboardRouter />} />
+                    <Route path="/plugins" element={<ClientPluginsPage />} />
+                    <Route path="/debug/error-boundary" element={<PluginErrorBoundaryDemo />} />
+                    <Route path="/capture" element={<div>Capture View (Not implemented)</div>} />
+                    <Route path="/menu" element={<div>Menu View (Not implemented)</div>} />
+                </Route>
             </Route>
 
             {/* Root and Fallback */}
@@ -160,5 +176,3 @@ function App() {
 }
 
 export default App;
-
-

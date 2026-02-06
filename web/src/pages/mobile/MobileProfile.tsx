@@ -4,11 +4,13 @@ import { useNavigate } from 'react-router-dom';
 import { signOut } from 'firebase/auth';
 import { auth } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
-import { LogOut, ShieldCheck, Mail, Building2, UserCircle } from 'lucide-react';
+import { useTheme } from '../../context/ThemeContext';
+import { LogOut, ShieldCheck, Mail, Building2, UserCircle, Sun, Moon } from 'lucide-react';
 
 const MobileProfile: React.FC = () => {
     const navigate = useNavigate();
     const { user, profile, currentAccount } = useAuth();
+    const { theme, toggleTheme } = useTheme();
 
     const handleLogout = async () => {
         try {
@@ -32,7 +34,16 @@ const MobileProfile: React.FC = () => {
         <div className="space-y-8 px-1 pt-4">
 
             {/* Avatar Section */}
-            <div className="flex flex-col items-center text-center">
+            <div className="flex flex-col items-center text-center relative pt-4">
+                {/* Theme Toggle Button - Absolute Top Right */}
+                <button
+                    onClick={toggleTheme}
+                    className="absolute right-2 top-0 p-2.5 rounded-full bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-zinc-700 transition-colors shadow-sm"
+                    aria-label="Toggle Theme"
+                >
+                    {theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}
+                </button>
+
                 <div className="w-24 h-24 rounded-full bg-gray-200 dark:bg-zinc-800 flex items-center justify-center mb-4 border-4 border-white dark:border-black shadow-lg">
                     {user?.photoURL ? (
                         <img src={user.photoURL} alt="Profile" className="w-full h-full rounded-full object-cover" />
@@ -40,12 +51,12 @@ const MobileProfile: React.FC = () => {
                         <UserCircle size={64} className="text-gray-400 dark:text-gray-500" />
                     )}
                 </div>
-                <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+                <h1 className="text-2xl font-bold text-gray-900 dark:text-white font-atkinson">
                     {user?.displayName || 'Usuario'}
                 </h1>
                 <div className="flex items-center gap-2 mt-2 px-3 py-1 bg-indigo-50 dark:bg-indigo-900/30 rounded-full">
                     <ShieldCheck size={14} className="text-indigo-600 dark:text-indigo-400" />
-                    <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wide">
+                    <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wide font-atkinson">
                         {getRoleLabel()}
                     </span>
                 </div>

@@ -1,66 +1,111 @@
-
-import React from 'react';
-import { Map, Triangle, Radio, FileText, ChevronRight, HardHat } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Package } from 'lucide-react';
+import { MinReport } from '@minreport/sdk';
+import { PluginLoader } from '../../core/plugins/PluginLoader';
 
 const MobileTools: React.FC = () => {
+    const [plugins, setPlugins] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [activePlugin, setActivePlugin] = useState<any | null>(null);
 
-    const tools = [
-        { id: 'maps', name: 'Mapa de Mina', icon: Map, color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-900/20' },
-        { id: 'topo', name: 'Topografía', icon: Triangle, color: 'text-orange-600', bg: 'bg-orange-50 dark:bg-orange-900/20' },
-        { id: 'sensors', name: 'Sensores IoT', icon: Radio, color: 'text-purple-600', bg: 'bg-purple-50 dark:bg-purple-900/20' },
-        { id: 'reports', name: 'Reportes', icon: FileText, color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20' },
-        { id: 'safety', name: 'Seguridad', icon: HardHat, color: 'text-rose-600', bg: 'bg-rose-50 dark:bg-rose-900/20' },
-    ];
+    useEffect(() => {
+        // Cargar plugins reales desde el SDK
+        const loadPlugins = () => {
+            const activePlugins = MinReport.Core.getActivePlugins();
+            setPlugins(activePlugins);
+            setLoading(false);
+        };
 
-    const handleToolClick = (toolName: string) => {
-        // Aquí iría la navegación real: navigate('/mobile/tools/map')
-        alert(`Abriendo herramienta: ${toolName}`);
+        // Delay para asegurar inicialización del SDK
+        const timer = setTimeout(loadPlugins, 500);
+        return () => clearTimeout(timer);
+    }, []);
+
+    const handlePluginClick = (plugin: any) => {
+        setActivePlugin(plugin);
     };
 
+    // Modo Inmersivo del Plugin (Full Screen dentro del MobileLayout)
+    if (activePlugin) {
+        return (
+            <div className="flex flex-col h-full bg-white dark:bg-black font-atkinson animate-in slide-in-from-right duration-300">
+                {/* Header Inmersivo */}
+                <div className="h-16 px-4 border-b border-gray-100 dark:border-zinc-800 flex items-center justify-between bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md sticky top-0 z-10">
+                    <div className="flex items-center gap-3">
+                        <button
+                            onClick={() => setActivePlugin(null)}
+                            className="p-2 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-2xl transition-colors text-gray-500"
+                        >
+                            <span className="material-symbols-rounded !text-2xl">arrow_back</span>
+                        </button>
+                        <div className="flex items-center gap-3">
+                            <span className="material-symbols-rounded text-indigo-600 dark:text-indigo-400 !text-2xl">
+                                {activePlugin.icon || 'extension'}
+                            </span>
+                            <h2 className="text-lg font-bold text-gray-900 dark:text-white truncate max-w-[180px]">
+                                {activePlugin.name}
+                            </h2>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Contenido Real del Plugin */}
+                <div className="flex-1 overflow-y-auto">
+                    <PluginLoader pluginId={activePlugin.id} />
+                </div>
+            </div>
+        );
+    }
+
     return (
-        <div className="space-y-6 px-1 pt-2">
+        <div className="space-y-6 px-4 pt-6 pb-20 font-atkinson">
 
             {/* Header */}
             <div>
                 <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Herramientas</h1>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                    Plugins activos en tu plan
+                    {loading ? 'Cargando herramientas...' : `${plugins.length} ${plugins.length === 1 ? 'plugin activo' : 'plugins activos'} en tu plan`}
                 </p>
             </div>
 
-            {/* Tools Grid */}
-            <div className="grid grid-cols-2 gap-4">
-                {tools.map((tool) => (
-                    <button
-                        key={tool.id}
-                        onClick={() => handleToolClick(tool.name)}
-                        className="flex flex-col items-center justify-center p-6 rounded-3xl bg-white dark:bg-zinc-900 shadow-sm border border-gray-100 dark:border-zinc-800 transition-all active:scale-95 active:shadow-none h-40 group"
-                    >
-                        <div className={`p-4 rounded-2xl ${tool.bg} mb-4 group-hover:scale-110 transition-transform`}>
-                            <tool.icon size={32} className={tool.color} />
-                        </div>
-                        <span className="font-bold text-gray-900 dark:text-white text-sm">
-                            {tool.name}
-                        </span>
-                    </button>
-                ))}
-            </div>
-
-            {/* Accesos Rápidos / Lista Secundaria */}
-            <div className="pt-4">
-                <h3 className="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wider mb-3 px-1">
-                    Utilidades
-                </h3>
-                <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-gray-100 dark:border-zinc-800 overflow-hidden">
-                    <button className="w-full flex items-center justify-between p-4 hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors border-b border-gray-100 dark:border-zinc-800 last:border-0">
-                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Escáner QR</span>
-                        <ChevronRight size={18} className="text-gray-400" />
-                    </button>
-                    <button className="w-full flex items-center justify-between p-4 hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors">
-                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Sincronizar Datos Offline</span>
-                        <ChevronRight size={18} className="text-gray-400" />
-                    </button>
+            {/* Plugins Grid (Real) */}
+            {loading ? (
+                <div className="grid grid-cols-2 gap-4">
+                    {[1, 2].map(i => (
+                        <div key={i} className="h-40 rounded-3xl bg-gray-100 dark:bg-zinc-800 animate-pulse" />
+                    ))}
                 </div>
+            ) : plugins.length > 0 ? (
+                <div className="grid grid-cols-2 gap-4">
+                    {plugins.map((plugin) => (
+                        <button
+                            key={plugin.id}
+                            onClick={() => handlePluginClick(plugin)}
+                            className="flex flex-col items-center justify-center p-6 rounded-3xl bg-white dark:bg-zinc-900 shadow-sm border border-gray-100 dark:border-zinc-800 transition-all active:scale-95 active:shadow-none h-40 group"
+                        >
+                            <div className={`p-4 rounded-2xl bg-indigo-50 dark:bg-indigo-900/20 mb-4 group-hover:scale-110 transition-transform`}>
+                                <span className="material-symbols-rounded text-indigo-600 dark:text-indigo-400 !text-4xl">
+                                    {plugin.icon || 'extension'}
+                                </span>
+                            </div>
+                            <span className="font-bold text-gray-900 dark:text-white text-sm text-center px-2 truncate w-full">
+                                {plugin.name}
+                            </span>
+                        </button>
+                    ))}
+                </div>
+            ) : (
+                <div className="flex flex-col items-center justify-center py-12 text-gray-400 dark:text-gray-600 border-2 border-dashed border-gray-100 dark:border-zinc-800 rounded-3xl">
+                    <Package size={48} strokeWidth={1.5} className="mb-4 opacity-50" />
+                    <p className="text-sm">No tienes módulos activos.</p>
+                </div>
+            )}
+
+            {/* Nota de Seguridad */}
+            <div className="pt-4 opacity-50">
+                <p className="text-[10px] text-center text-gray-400 px-8">
+                    Solo aparecen las herramientas habilitadas por el Administrador de tu cuenta.
+                </p>
             </div>
         </div>
     );

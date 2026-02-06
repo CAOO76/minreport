@@ -139,7 +139,7 @@ import { AuthRequest } from '../middleware/admin';
 export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
     console.log('Admin Params received:', req.params);
     const { uid } = req.params;
-    const { status, rejectionReason, observations } = req.body;
+    const { status, rejectionReason, observations, enabledPlugins } = req.body;
     const adminEmail = req.user?.email || 'master-admin';
 
     if (!['ACTIVE', 'REJECTED'].includes(status)) {
@@ -199,6 +199,7 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
                 processedAt: new Date().toISOString(),
                 processedBy: adminEmail,
                 observations: observations || null,
+                enabledPlugins: enabledPlugins || [], // [NEW] Persist plugin preferences
                 updatedAt: new Date().toISOString()
             });
 
@@ -210,9 +211,10 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
                 type: tenantData.type,
                 taxId: taxId, // Standardized field name
                 ownerId: userRecord.uid,
+                enabledPlugins: enabledPlugins || [], // [NEW] Sync to Account
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
-            });
+            }, { merge: true }); // Merge to allow partial updates if account exists
 
             // 4.5 Create/Sync User Document in 'users' collection for Admin Management
             // This ensures the user appears in the User Management section
