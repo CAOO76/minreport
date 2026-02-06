@@ -26,8 +26,15 @@
         "paths": {
             "@minreport/*": [
                 "../_plugins/*/src/plugin.ts"
+            ],
+            "firebase": [
+                "./node_modules/firebase"
+            ],
+            "firebase/*": [
+                "./node_modules/firebase/*"
             ]
-        }
+        },
+        "noImplicitAny": false
     },
     "include": [
         "src"
