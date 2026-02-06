@@ -7,7 +7,7 @@ import stockpile_controlPlugin from '@minreport/stockpile-control';
 
 export const DISCOVERED_PLUGINS = [
     {
-        manifest: { id: 'stockpile-control', name: 'Stockpile Control', version: '1.0.5' },
+        manifest: { id: 'stockpile-control', name: 'Stockpile Control', version: '1.0.5', author: 'MINREPORT Team' },
         instance: stockpile_controlPlugin
     }
 ];

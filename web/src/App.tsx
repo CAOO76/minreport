@@ -23,6 +23,7 @@ import LoadingScreen from './components/common/LoadingScreen';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import PluginErrorBoundaryDemo from './core/plugins/PluginErrorBoundaryDemo';
 import { getAllPlugins } from './core/PluginRegistry';
+import { secureContextFactory } from './core/SecureContextFactory';
 
 import { useEffect } from 'react';
 import { MinReport } from '@minreport/sdk'; // Importing SDK via Alias
@@ -51,7 +52,10 @@ const RequireAuthLayout = () => {
                 : (profile.entitlements?.pluginsEnabled || []);
 
             try {
-                await MinReport.Core.initializePlugins({ ...context, theme: 'light' }, entitlements);
+                // SDK 2.0: Pasamos una función factory que genera contextos seguros bajo demanda
+                await MinReport.Core.initializePlugins((pluginId) => {
+                    return secureContextFactory.create(pluginId, context.projectId, context.userId);
+                }, entitlements);
             } catch (error) {
                 console.error("Plugin initialization failed:", error);
             }

@@ -1,5 +1,6 @@
 import { MinReport, PluginManifest } from '@minreport/sdk';
 import { DISCOVERED_PLUGINS } from './DiscoveredPlugins';
+import { secureContextFactory } from './SecureContextFactory';
 
 /**
  * Registro Central de Plugins (Web Core) - DINÁMICO
