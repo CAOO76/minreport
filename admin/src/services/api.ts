@@ -22,7 +22,7 @@ export const adminLogin = (email: string, password: string) =>
 export const getTenants = (status?: string) =>
     api.get('/tenants', { params: { status } });
 
-export const updateTenantStatus = (uid: string, status: 'ACTIVE' | 'REJECTED' | 'SUSPENDED', data?: { rejectionReason?: string, observations?: string }) =>
+export const updateTenantStatus = (uid: string, status: 'ACTIVE' | 'REJECTED' | 'SUSPENDED', data?: { rejectionReason?: string, observations?: string, enabledPlugins?: string[] }) =>
     api.patch(`/tenants/${uid}`, { status, ...data });
 
 export const deleteTenant = (uid: string) =>

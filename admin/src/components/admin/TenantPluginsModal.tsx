@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Extension, Settings } from 'lucide-react';
+import { X, Puzzle, Settings } from 'lucide-react';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 import { M3Switch } from '../ui/M3Switch';
