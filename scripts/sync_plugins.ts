@@ -68,7 +68,7 @@ ${discovered.map(p => `import ${p.id.replace(/-/g, '_')}Plugin from '${p.importP
 
 export const DISCOVERED_PLUGINS = [
     ${discovered.map(p => `{
-        manifest: { id: '${p.id}', name: '${p.name}', version: '${p.version}' },
+        manifest: { id: '${p.id}', name: '${p.name}', version: '${p.version}', author: 'MINREPORT Team' },
         instance: ${p.id.replace(/-/g, '_')}Plugin
     }`).join(',\n    ')}
 ];

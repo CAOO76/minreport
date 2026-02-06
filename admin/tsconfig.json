@@ -21,7 +21,13 @@
         "jsx": "react-jsx",
         "types": [
             "vite/client"
-        ]
+        ],
+        "baseUrl": ".",
+        "paths": {
+            "@minreport/*": [
+                "../../_plugins/*/src/plugin.ts"
+            ]
+        }
     },
     "include": [
         "src"

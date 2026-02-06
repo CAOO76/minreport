@@ -17,5 +17,5 @@ export const getPluginById = (id: string) => {
 };
 
 export const getAllPlugins = () => {
-    return PLUGIN_CATALOG.map(p => p.manifest);
+    return DISCOVERED_PLUGINS.map(p => p.manifest);
 };

@@ -26,5 +26,5 @@ export const getPluginById = (id: string) => {
  * Ideal para listar iconos en el menú móvil de herramientas o dashboards.
  */
 export const getAllPlugins = (): PluginManifest[] => {
-    return PLUGIN_CATALOG.map(p => p.manifest);
+    return DISCOVERED_PLUGINS.map(p => p.manifest);
 };
