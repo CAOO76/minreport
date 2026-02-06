@@ -25,7 +25,7 @@
         "baseUrl": ".",
         "paths": {
             "@minreport/*": [
-                "../../_plugins/*/src/plugin.ts"
+                "../_plugins/*/src/plugin.ts"
             ]
         }
     },

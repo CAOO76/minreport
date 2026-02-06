@@ -28,6 +28,9 @@
         "paths": {
             "@minreport/sdk": [
                 "../sdk"
+            ],
+            "@minreport/*": [
+                "../_plugins/*/src/plugin.ts"
             ]
         }
     },
