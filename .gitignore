@@ -34,7 +34,10 @@ ui-debug.log*
 /data/
 
 # Editor directories and files
-.vscode/*
+.vscode/dist/
+/_plugins/
+/scripts/plugin_aliases.json
+**/DiscoveredPlugins.ts
 !.vscode/extensions.json
 .idea/
 .vs/

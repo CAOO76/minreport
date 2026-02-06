@@ -8,7 +8,7 @@
     "dev:mobile": "bash scripts/dev-mobile.sh",
     "clean:android": "bash scripts/clean-android.sh",
     "build:apk": "bash scripts/build-apk.sh",
-    "prebuild": "bash scripts/copy-sdk.sh",
+    "prebuild": "npx ts-node ../scripts/sync_plugins.ts && bash scripts/copy-sdk.sh",
     "build": "vite build",
     "preview": "vite preview --host",
     "android": "npx cap run android -l",
