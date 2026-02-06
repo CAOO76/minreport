@@ -9,6 +9,7 @@ import { getPublicBrandingSettings, getAccountsById } from './api/public.control
 import { challengeAccountAccess } from './api/auth_tunnel.controller';
 import { setupAccountPassword } from './api/setup.controller';
 import { validateEduRequest, analyzeEduDocument } from './api/edu.controller';
+import staffRoutes from './api/staff.controller';
 import { requireSuperAdmin } from './middleware/admin';
 import { requireAuth } from './middleware/auth';
 
@@ -54,6 +55,9 @@ app.post('/api/admin/login', adminLogin);
 app.post('/api/edu/validate/:requestId', requireAuth, validateEduRequest);
 app.post('/api/edu/analyze-doc', requireAuth, analyzeEduDocument);
 app.post('/api/auth/invite', requireAuth, inviteUser); // [NEW] B2B Invitation
+
+// Staff Routes (Onboarding)
+app.use('/api/staff', staffRoutes); // [NEW] Staff Management
 
 // Admin Routes (Protected)
 app.get('/api/admin/tenants', requireSuperAdmin, listTenants);

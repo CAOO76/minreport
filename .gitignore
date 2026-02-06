@@ -48,3 +48,9 @@ ui-debug.log*
 *.sw?
 .env
 service-account-key.json
+
+# Playwright
+/test-results/
+/playwright-report/
+/playwright/.cache/
+/tests/.auth/*.json

@@ -74,7 +74,7 @@ export const PluginLoader: React.FC<PluginLoaderProps> = ({ pluginId }) => {
     // Renderizado Seguro
     return (
         <PluginErrorBoundary pluginName={pluginEntry.manifest.name}>
-            <div className="w-full h-full animate-in fade-in zoom-in-95 duration-700">
+            <div id="plugin-canvas" className="w-full h-full animate-in fade-in zoom-in-95 duration-700">
                 {/* Renderizado dinámico del widget del plugin */}
                 {pluginEntry.instance.renderWidget()}
             </div>

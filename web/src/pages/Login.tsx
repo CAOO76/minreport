@@ -1,162 +1,99 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { signInWithCustomToken } from 'firebase/auth';
-import { auth } from '../config/firebase';
-import { useTranslation } from 'react-i18next';
 import { ArrowLeft, ArrowRight, Loader2, Lock, Eye, EyeOff } from 'lucide-react';
 import BrandLogo from '../components/BrandLogo';
 import { LanguageSwitch } from '../components/LanguageSwitch';
 import { ThemeSwitch } from '../components/ThemeSwitch';
 import { Link } from 'react-router-dom';
 import { formatRut } from '../utils/rut';
+import { useAuthActions } from '../hooks/useAuthActions';
+import AccountSelector from '../components/auth/AccountSelector';
 
 // Definición de Tipos para la UI
 type LoginStep = 'IDENTIFICATION' | 'ACCOUNT_SELECTION' | 'CHALLENGE';
-type AccountType = 'B2B' | 'EDU' | 'PERSONAL';
-
-interface DetectedAccount {
-    id: string;
-    name: string;
-    type: AccountType;
-}
 
 export const Login = () => {
-    const { t } = useTranslation();
     const navigate = useNavigate();
+
+    // Hook de Autenticación (Nueva Arquitectura)
+    const {
+        checkIdentity,
+        loginToAccount,
+        detectedAccounts,
+        showAccountSelector,
+        loading: authLoading,
+        error: authError,
+        resetFlow
+    } = useAuthActions();
 
     // Estados del Flujo
     const [step, setStep] = useState<LoginStep>('IDENTIFICATION');
     const [taxId, setTaxId] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
-
-    // Data State
-    const [detectedAccounts, setDetectedAccounts] = useState<DetectedAccount[]>([]);
-    const [selectedAccount, setSelectedAccount] = useState<DetectedAccount | null>(null);
+    const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
 
     // Limpieza de Memoria (Zero Memory Policy)
     useEffect(() => {
         return () => {
             setTaxId('');
             setPassword('');
-            setDetectedAccounts([]);
         };
     }, []);
 
-    // Detección de Cuentas vía API (ID-Céntrico)
-    const detectUserAccounts = async (id: string) => {
-        setLoading(true);
-        setError('');
-
-        try {
-            const response = await fetch(`${import.meta.env.VITE_API_URL}/api/public/accounts-by-id/${id}`);
-
-            if (!response.ok) {
-                const data = await response.json();
-                setError(data.message || t('auth.user_not_found', 'ID no encontrado'));
-                setLoading(false);
-                return;
-            }
-
-            const data = await response.json();
-
-            if (data.accounts.length === 0) {
-                setError(t('auth.no_accounts', 'Este documento no tiene cuentas asociadas'));
-                setLoading(false);
-                return;
-            }
-
-            // Mapear respuesta de API al formato de la UI
-            const resolvedAccounts = data.accounts.map((acc: any) => ({
-                id: acc.accountId,
-                name: acc.accountName,
-                type: acc.type
-            }));
-
-            // Deduplicate accounts visually to prevent UI glitches
-            const uniqueAccounts = new Map<string, DetectedAccount>();
-            resolvedAccounts.forEach(acc => {
-                uniqueAccounts.set(acc.id, acc);
-            });
-
-            setDetectedAccounts(Array.from(uniqueAccounts.values()));
+    // Sincronizar showAccountSelector con step
+    useEffect(() => {
+        if (showAccountSelector && detectedAccounts.length > 0) {
             setStep('ACCOUNT_SELECTION');
-
-        } catch (err: any) {
-            console.error('Error detecting accounts:', err);
-            setError(t('auth.detection_error', 'Error al verificar la identidad.'));
-        } finally {
-            setLoading(false);
         }
-    };
+    }, [showAccountSelector, detectedAccounts]);
 
-    const handleIdentificationSubmit = (e: React.FormEvent) => {
+    const handleIdentificationSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!taxId.trim()) return;
-        detectUserAccounts(taxId);
+        await checkIdentity(taxId);
     };
 
-    const handleAccountSelect = (account: DetectedAccount) => {
-        setSelectedAccount(account);
+    const handleAccountSelect = (account: any) => {
+        setSelectedAccountId(account.accountId);
         setStep('CHALLENGE');
         setPassword(''); // Asegurar limpieza al entrar al challenge
-        setError('');
     };
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!taxId || !password || !selectedAccount) return;
+        if (!password || !selectedAccountId) return;
 
-        setLoading(true);
-        setError('');
+        const selectedAccount = detectedAccounts.find(acc => acc.accountId === selectedAccountId);
+        if (!selectedAccount) return;
 
         try {
-            // 1. Desafío de Clave Segregada (vía API Tunnel)
-            const response = await fetch(`${import.meta.env.VITE_API_URL}/api/auth/tunnel/challenge`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    taxId,
-                    accountId: selectedAccount.id,
-                    password
-                })
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                setError(data.error || t('auth.login_error', 'Credenciales inválidas.'));
-                setLoading(false);
-                return;
-            }
-
-            // 2. Autenticación Firebase con Token Personalizado
-            // Este token ya trae los claims del entorno seleccionado (Aislamiento Total)
-            await signInWithCustomToken(auth, data.firebaseToken);
-
-            // 3. Limpieza y Redirección
+            await loginToAccount(selectedAccount, password);
+            // Limpieza y Redirección
             setPassword('');
             navigate('/');
-
         } catch (err: any) {
             console.error('Login error:', err);
-            setError(t('auth.network_error', 'Error de conexión con el servidor de seguridad.'));
-        } finally {
-            setLoading(false);
         }
     };
 
     // --- RENDERIZADORES DE ICONOS MATERIAL ---
-    const renderIcon = (type: AccountType) => {
+    const renderIcon = (type: string) => {
         switch (type) {
-            case 'B2B': return 'business';
-            case 'EDU': return 'school';
-            case 'PERSONAL': return 'person';
-            default: return 'help';
+            case 'BUSINESS':
+            case 'ENTERPRISE':
+                return 'business';
+            case 'EDUCATIONAL':
+                return 'school';
+            case 'PERSONAL':
+                return 'person';
+            default:
+                return 'help';
         }
     };
+
+    // Obtener cuenta seleccionada
+    const selectedAccount = detectedAccounts.find(acc => acc.accountId === selectedAccountId);
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-[#121212] transition-colors p-4 relative overflow-hidden">
@@ -201,18 +138,18 @@ export const Login = () => {
                                 />
                             </div>
 
-                            {error && step === 'IDENTIFICATION' && (
+                            {authError && step === 'IDENTIFICATION' && (
                                 <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 text-xs font-medium text-center animate-in fade-in">
-                                    {error}
+                                    {authError}
                                 </div>
                             )}
 
                             <button
                                 type="submit"
-                                disabled={loading}
+                                disabled={authLoading}
                                 className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-md shadow-indigo-600/20 active:scale-[0.98] disabled:opacity-70 flex items-center justify-center gap-2"
                             >
-                                {loading ? (
+                                {authLoading ? (
                                     <Loader2 className="w-6 h-6 animate-spin" />
                                 ) : (
                                     <>
@@ -236,55 +173,16 @@ export const Login = () => {
 
                 {/* Paso 2: Selección de Cuenta */}
                 {step === 'ACCOUNT_SELECTION' && (
-                    <div className="animate-in fade-in slide-in-from-right-8 duration-500 w-full">
-                        <div className="text-center mb-8">
-                            <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Selecciona una cuenta</h2>
-                            <p className="text-gray-500 dark:text-gray-400 mt-1">
-                                Hemos encontrado {detectedAccounts.length} perfiles asociados
-                            </p>
-                        </div>
-
-                        <div className="grid gap-4">
-                            {detectedAccounts.map((account: DetectedAccount) => (
-                                <button
-                                    key={account.id}
-                                    onClick={() => handleAccountSelect(account)}
-                                    className="group relative flex items-center p-4 bg-white dark:bg-[#1E1E1E] rounded-2xl border border-gray-100 dark:border-gray-800 hover:border-indigo-500 dark:hover:border-indigo-500 shadow-sm hover:shadow-md transition-all duration-200 text-left w-full"
-                                >
-                                    {/* Icono (Visual Distinctive) */}
-                                    <div className="w-12 h-12 rounded-xl bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mr-4 group-hover:scale-105 transition-transform">
-                                        <span className="material-symbols-rounded text-[28px]">
-                                            {renderIcon(account.type)}
-                                        </span>
-                                    </div>
-
-                                    {/* Info Cuenta */}
-                                    <div className="flex-1">
-                                        <h3 className="text-lg font-semibold text-gray-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-                                            {account.name}
-                                        </h3>
-                                    </div>
-
-                                    {/* Indicador Selección */}
-                                    <div className="text-gray-300 dark:text-gray-600 group-hover:text-indigo-500 group-hover:translate-x-1 transition-all">
-                                        <span className="material-symbols-rounded">arrow_forward_ios</span>
-                                    </div>
-                                </button>
-                            ))}
-                        </div>
-
-                        <div className="mt-8 text-center">
-                            <button
-                                onClick={() => {
-                                    setStep('IDENTIFICATION');
-                                    setTaxId('');
-                                }}
-                                className="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors font-medium"
-                            >
-                                Usar otro documento de identidad
-                            </button>
-                        </div>
-                    </div>
+                    <AccountSelector
+                        accounts={detectedAccounts}
+                        onSelectAccount={handleAccountSelect}
+                        onCancel={() => {
+                            resetFlow();
+                            setStep('IDENTIFICATION');
+                            setTaxId('');
+                        }}
+                        loading={authLoading}
+                    />
                 )}
 
                 {/* Paso 3: CHALLENGE (Password) */}
@@ -302,7 +200,7 @@ export const Login = () => {
                                 Ingreso seguro a entorno aislado
                             </p>
                             <h2 className="text-xl font-bold text-gray-900 dark:text-white mt-1">
-                                {selectedAccount.name}
+                                {selectedAccount.accountName}
                             </h2>
                         </div>
 
@@ -337,19 +235,19 @@ export const Login = () => {
                                 </div>
                             </div>
 
-                            {error && (
+                            {authError && (
                                 <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 text-xs font-medium text-center animate-in fade-in">
-                                    {error}
+                                    {authError}
                                 </div>
                             )}
 
                             <div className="space-y-3">
                                 <button
                                     type="submit"
-                                    disabled={loading}
+                                    disabled={authLoading}
                                     className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-md shadow-indigo-600/20 active:scale-[0.98] disabled:opacity-70 flex items-center justify-center gap-2"
                                 >
-                                    {loading ? (
+                                    {authLoading ? (
                                         <Loader2 className="w-6 h-6 animate-spin" />
                                     ) : (
                                         <>
@@ -364,8 +262,7 @@ export const Login = () => {
                                     onClick={() => {
                                         setStep('ACCOUNT_SELECTION');
                                         setPassword('');
-                                        setError('');
-                                        setSelectedAccount(null);
+                                        setSelectedAccountId(null);
                                     }}
                                     className="w-full py-3 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/5 rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
                                 >

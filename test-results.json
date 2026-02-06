@@ -1,0 +1,693 @@
+{
+  "config": {
+    "configFile": "/Volumes/CODE/MINREPORT iMac/minreport/playwright.config.ts",
+    "rootDir": "/Volumes/CODE/MINREPORT iMac/minreport/tests",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": "/Volumes/CODE/MINREPORT iMac/minreport/tests/global-setup.ts",
+    "globalTeardown": "/Volumes/CODE/MINREPORT iMac/minreport/tests/global-teardown.ts",
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/Volumes/CODE/MINREPORT iMac/minreport/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "Desktop Chrome",
+        "name": "Desktop Chrome",
+        "testDir": "/Volumes/CODE/MINREPORT iMac/minreport/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      },
+      {
+        "outputDir": "/Volumes/CODE/MINREPORT iMac/minreport/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "Desktop Firefox",
+        "name": "Desktop Firefox",
+        "testDir": "/Volumes/CODE/MINREPORT iMac/minreport/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      },
+      {
+        "outputDir": "/Volumes/CODE/MINREPORT iMac/minreport/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "Desktop Safari",
+        "name": "Desktop Safari",
+        "testDir": "/Volumes/CODE/MINREPORT iMac/minreport/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      },
+      {
+        "outputDir": "/Volumes/CODE/MINREPORT iMac/minreport/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "Mobile Pixel 5",
+        "name": "Mobile Pixel 5",
+        "testDir": "/Volumes/CODE/MINREPORT iMac/minreport/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      },
+      {
+        "outputDir": "/Volumes/CODE/MINREPORT iMac/minreport/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "Mobile iPhone 12",
+        "name": "Mobile iPhone 12",
+        "testDir": "/Volumes/CODE/MINREPORT iMac/minreport/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      },
+      {
+        "outputDir": "/Volumes/CODE/MINREPORT iMac/minreport/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "Admin Dashboard",
+        "name": "Admin Dashboard",
+        "testDir": "/Volumes/CODE/MINREPORT iMac/minreport/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "/.*admin.*\\.spec\\.ts/"
+        ],
+        "timeout": 60000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "html",
+        {
+          "outputFolder": "playwright-report"
+        }
+      ],
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "test-results.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "runAgents": "none",
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.58.2",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "e2e/specs/full_integration.spec.ts",
+      "file": "e2e/specs/full_integration.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "E2E-020: Ciclo de Vida Completo (Story Driven)",
+          "file": "e2e/specs/full_integration.spec.ts",
+          "line": 14,
+          "column": 6,
+          "specs": [
+            {
+              "title": "Debería completar todo el flujo desde configuración de owner hasta dashboard de trabajador",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "Desktop Chrome",
+                  "projectName": "Desktop Chrome",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 23689,
+                      "error": {
+                        "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================",
+                        "stack": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)",
+                        "location": {
+                          "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                          "column": 20,
+                          "line": 147
+                        },
+                        "snippet": "\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                            "column": 20,
+                            "line": 147
+                          },
+                          "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)\u001b[22m"
+                        },
+                        {
+                          "location": {
+                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                            "column": 20,
+                            "line": 147
+                          },
+                          "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)\u001b[22m"
+                        }
+                      ],
+                      "stdout": [
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-02-06T22:42:14.394Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Desktop-Chrome/test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Desktop-Chrome/error-context.md"
+                        },
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Desktop-Chrome/test-failed-2.png"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                        "column": 20,
+                        "line": 147
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "b1587dd9eba7a633c965-bffb31f01b8c62e2aae1",
+              "file": "e2e/specs/full_integration.spec.ts",
+              "line": 20,
+              "column": 9
+            },
+            {
+              "title": "Debería completar todo el flujo desde configuración de owner hasta dashboard de trabajador",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "Desktop Firefox",
+                  "projectName": "Desktop Firefox",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 3823,
+                      "error": {
+                        "message": "Error: [LOGIN-FAIL] Login falló por datos no encontrados en Backend para RUT 76.123.456-7",
+                        "stack": "Error: [LOGIN-FAIL] Login falló por datos no encontrados en Backend para RUT 76.123.456-7\n    at /Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:124:23\n    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:119:9)",
+                        "location": {
+                          "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                          "column": 23,
+                          "line": 124
+                        },
+                        "snippet": "\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:124\n\n\u001b[0m \u001b[90m 122 |\u001b[39m                 console\u001b[33m.\u001b[39merror(\u001b[32m'[LOGIN-FAIL] Identity Verification Error detected in UI'\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 123 |\u001b[39m                 console\u001b[33m.\u001b[39merror(\u001b[32m'[BODY-TEXT]:'\u001b[39m\u001b[33m,\u001b[39m body)\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 124 |\u001b[39m                 \u001b[36mthrow\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mError\u001b[39m(\u001b[32m`[LOGIN-FAIL] Login falló por datos no encontrados en Backend para RUT ${enterpriseRun}`\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                       \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 125 |\u001b[39m             })\u001b[33m.\u001b[39m\u001b[36mcatch\u001b[39m((e) \u001b[33m=>\u001b[39m {\n \u001b[90m 126 |\u001b[39m                 \u001b[36mif\u001b[39m (e\u001b[33m.\u001b[39mmessage\u001b[33m.\u001b[39mincludes(\u001b[32m'Login falló'\u001b[39m)) \u001b[36mthrow\u001b[39m e\u001b[33m;\u001b[39m\n \u001b[90m 127 |\u001b[39m             })\u001b[33m,\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                            "column": 23,
+                            "line": 124
+                          },
+                          "message": "Error: [LOGIN-FAIL] Login falló por datos no encontrados en Backend para RUT 76.123.456-7\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:124\n\n\u001b[0m \u001b[90m 122 |\u001b[39m                 console\u001b[33m.\u001b[39merror(\u001b[32m'[LOGIN-FAIL] Identity Verification Error detected in UI'\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 123 |\u001b[39m                 console\u001b[33m.\u001b[39merror(\u001b[32m'[BODY-TEXT]:'\u001b[39m\u001b[33m,\u001b[39m body)\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 124 |\u001b[39m                 \u001b[36mthrow\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mError\u001b[39m(\u001b[32m`[LOGIN-FAIL] Login falló por datos no encontrados en Backend para RUT ${enterpriseRun}`\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                       \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 125 |\u001b[39m             })\u001b[33m.\u001b[39m\u001b[36mcatch\u001b[39m((e) \u001b[33m=>\u001b[39m {\n \u001b[90m 126 |\u001b[39m                 \u001b[36mif\u001b[39m (e\u001b[33m.\u001b[39mmessage\u001b[33m.\u001b[39mincludes(\u001b[32m'Login falló'\u001b[39m)) \u001b[36mthrow\u001b[39m e\u001b[33m;\u001b[39m\n \u001b[90m 127 |\u001b[39m             })\u001b[33m,\u001b[39m\u001b[0m\n\u001b[2m    at /Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:124:23\u001b[22m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:119:9)\u001b[22m"
+                        },
+                        {
+                          "location": {
+                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                            "column": 23,
+                            "line": 124
+                          },
+                          "message": "Error: [LOGIN-FAIL] Login falló por datos no encontrados en Backend para RUT 76.123.456-7\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:124\n\n\u001b[0m \u001b[90m 122 |\u001b[39m                 console\u001b[33m.\u001b[39merror(\u001b[32m'[LOGIN-FAIL] Identity Verification Error detected in UI'\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 123 |\u001b[39m                 console\u001b[33m.\u001b[39merror(\u001b[32m'[BODY-TEXT]:'\u001b[39m\u001b[33m,\u001b[39m body)\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 124 |\u001b[39m                 \u001b[36mthrow\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mError\u001b[39m(\u001b[32m`[LOGIN-FAIL] Login falló por datos no encontrados en Backend para RUT ${enterpriseRun}`\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                       \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 125 |\u001b[39m             })\u001b[33m.\u001b[39m\u001b[36mcatch\u001b[39m((e) \u001b[33m=>\u001b[39m {\n \u001b[90m 126 |\u001b[39m                 \u001b[36mif\u001b[39m (e\u001b[33m.\u001b[39mmessage\u001b[33m.\u001b[39mincludes(\u001b[32m'Login falló'\u001b[39m)) \u001b[36mthrow\u001b[39m e\u001b[33m;\u001b[39m\n \u001b[90m 127 |\u001b[39m             })\u001b[33m,\u001b[39m\u001b[0m\n\u001b[2m    at /Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:124:23\u001b[22m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:119:9)\u001b[22m"
+                        }
+                      ],
+                      "stdout": [
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                        }
+                      ],
+                      "stderr": [
+                        {
+                          "text": "[LOGIN-FAIL] Identity Verification Error detected in UI\n"
+                        },
+                        {
+                          "text": "[BODY-TEXT]: ES | EN\nlight_mode\nMINREPORT\nHola de nuevo\n\nIngresa tu identificación para comenzar\n\nDOCUMENTO DE IDENTIFICACIÓN (RUT / RUN)\nError al verificar la identidad.\nContinuar\n\n¿No tienes una cuenta? Crear cuenta\n"
+                        },
+                        {
+                          "text": "[LOGIN-FAIL] Identity Verification Error detected in UI\n"
+                        },
+                        {
+                          "text": "[BODY-TEXT]: ES | EN\nlight_mode\nMINREPORT\nHola de nuevo\n\nIngresa tu identificación para comenzar\n\nDOCUMENTO DE IDENTIFICACIÓN (RUT / RUN)\nError al verificar la identidad.\nContinuar\n\n¿No tienes una cuenta? Crear cuenta\n"
+                        }
+                      ],
+                      "retry": 0,
+                      "startTime": "2026-02-06T22:43:04.157Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Desktop-Firefox/test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Desktop-Firefox/error-context.md"
+                        },
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Desktop-Firefox/test-failed-2.png"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                        "column": 23,
+                        "line": 124
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "b1587dd9eba7a633c965-618be77d49ce5fb00437",
+              "file": "e2e/specs/full_integration.spec.ts",
+              "line": 20,
+              "column": 9
+            },
+            {
+              "title": "Debería completar todo el flujo desde configuración de owner hasta dashboard de trabajador",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "Desktop Safari",
+                  "projectName": "Desktop Safari",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 24397,
+                      "error": {
+                        "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================",
+                        "stack": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)",
+                        "location": {
+                          "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                          "column": 20,
+                          "line": 147
+                        },
+                        "snippet": "\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                            "column": 20,
+                            "line": 147
+                          },
+                          "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)\u001b[22m"
+                        },
+                        {
+                          "location": {
+                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                            "column": 20,
+                            "line": 147
+                          },
+                          "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)\u001b[22m"
+                        }
+                      ],
+                      "stdout": [
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-02-06T22:43:14.679Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Desktop-Safari/test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Desktop-Safari/error-context.md"
+                        },
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Desktop-Safari/test-failed-2.png"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                        "column": 20,
+                        "line": 147
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "b1587dd9eba7a633c965-80ef8c77be1df995e1c8",
+              "file": "e2e/specs/full_integration.spec.ts",
+              "line": 20,
+              "column": 9
+            },
+            {
+              "title": "Debería completar todo el flujo desde configuración de owner hasta dashboard de trabajador",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "Mobile Pixel 5",
+                  "projectName": "Mobile Pixel 5",
+                  "results": [
+                    {
+                      "workerIndex": 3,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 24150,
+                      "error": {
+                        "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================",
+                        "stack": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)",
+                        "location": {
+                          "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                          "column": 20,
+                          "line": 147
+                        },
+                        "snippet": "\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                            "column": 20,
+                            "line": 147
+                          },
+                          "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)\u001b[22m"
+                        },
+                        {
+                          "location": {
+                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                            "column": 20,
+                            "line": 147
+                          },
+                          "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)\u001b[22m"
+                        }
+                      ],
+                      "stdout": [
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-02-06T22:44:07.018Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Mobile-Pixel-5/test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Mobile-Pixel-5/error-context.md"
+                        },
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Mobile-Pixel-5/test-failed-2.png"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                        "column": 20,
+                        "line": 147
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "b1587dd9eba7a633c965-db874decb1d41cb8fca3",
+              "file": "e2e/specs/full_integration.spec.ts",
+              "line": 20,
+              "column": 9
+            },
+            {
+              "title": "Debería completar todo el flujo desde configuración de owner hasta dashboard de trabajador",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "Mobile iPhone 12",
+                  "projectName": "Mobile iPhone 12",
+                  "results": [
+                    {
+                      "workerIndex": 4,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 24357,
+                      "error": {
+                        "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================",
+                        "stack": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)",
+                        "location": {
+                          "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                          "column": 20,
+                          "line": 147
+                        },
+                        "snippet": "\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                            "column": 20,
+                            "line": 147
+                          },
+                          "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)\u001b[22m"
+                        },
+                        {
+                          "location": {
+                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                            "column": 20,
+                            "line": 147
+                          },
+                          "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)\u001b[22m"
+                        }
+                      ],
+                      "stdout": [
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                        }
+                      ],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-02-06T22:44:57.731Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Mobile-iPhone-12/test-failed-1.png"
+                        },
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Mobile-iPhone-12/error-context.md"
+                        },
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Mobile-iPhone-12/test-failed-2.png"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
+                        "column": 20,
+                        "line": 147
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "b1587dd9eba7a633c965-9d6b2fa72597aadc55a3",
+              "file": "e2e/specs/full_integration.spec.ts",
+              "line": 20,
+              "column": 9
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-02-06T22:40:47.339Z",
+    "duration": 300890.456,
+    "expected": 0,
+    "skipped": 0,
+    "unexpected": 5,
+    "flaky": 0
+  }
+}

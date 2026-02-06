@@ -8,6 +8,7 @@ export interface Membership {
     role: UserRole;
     companyName: string;
     joinedAt?: number; // timestamp
+    jobProfileId?: string; // [NEW] Referencia al perfil de cargo asignado
 }
 
 export interface UserProfile {

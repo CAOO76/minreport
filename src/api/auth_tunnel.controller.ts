@@ -7,39 +7,27 @@ import { formatRut } from '../utils/rut';
  * @route POST /api/auth/tunnel/challenge
  * @desc Verify password for a specific account and issue a context-restricted token
  * @access Public (Step 2 of Login)
+ * 
+ * Arquitectura "Pasillo de Puertas Blindadas":
+ * - Usa authEmail específico de la cuenta (no el email genérico del usuario)
+ * - Aislamiento total entre cuentas del mismo RUN
  */
 export const challengeAccountAccess = async (req: Request, res: Response) => {
     try {
-        const { taxId, accountId, password } = req.body;
+        const { accountId, authEmail, password } = req.body;
 
-        if (!taxId || !accountId || !password) {
-            return res.status(400).json({ error: 'Tax ID, Account ID and Password are required' });
+        if (!accountId || !authEmail || !password) {
+            return res.status(400).json({ error: 'Account ID, Auth Email and Password are required' });
         }
 
-        // Normalize taxId formats for resilient lookup
-        const cleanTaxId = taxId.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
-        const formattedTaxId = formatRut(cleanTaxId);
-        const searchValues = new Set([formattedTaxId, cleanTaxId]);
+        console.log(`[AUTH-TUNNEL] Challenge for account ${accountId} with email ${authEmail}`);
 
-        if (cleanTaxId.length >= 2) {
-            const body = cleanTaxId.slice(0, -1);
-            const dv = cleanTaxId.slice(-1);
-            searchValues.add(`${body}-${dv}`);
-        }
-        const finalSearchValues = Array.from(searchValues);
-
-        // 1. Find User by taxId (RUN/RUT)
+        // 1. Find User by authEmail (específico de la cuenta)
         const usersRef = db.collection('users');
-        const userSnapshot = await usersRef.where('taxId', 'in', finalSearchValues).limit(1).get();
+        const userSnapshot = await usersRef.where('email', '==', authEmail).limit(1).get();
 
         if (userSnapshot.empty) {
-            // FALLBACK: If not in 'users', check if they were invited as a delegate
-            const accountsRef = db.collection('accounts');
-            const delegateSnapshot = await accountsRef.where('primaryOperator.taxId', 'in', finalSearchValues).get();
-
-            if (!delegateSnapshot.empty) {
-                return res.status(401).json({ error: 'Cuenta no activada. Por favor revisa tu email para establecer una clave.' });
-            }
+            console.warn(`[AUTH-TUNNEL] No user found with email: ${authEmail}`);
             return res.status(404).json({ error: 'Usuario no encontrado' });
         }
 
@@ -51,11 +39,11 @@ export const challengeAccountAccess = async (req: Request, res: Response) => {
         const membership = memberships.find((m: any) => m.accountId === accountId);
 
         if (!membership) {
+            console.warn(`[AUTH-TUNNEL] User ${userDoc.id} has no membership for account ${accountId}`);
             return res.status(403).json({ error: 'No access to this account' });
         }
 
         // 3. Verify Password (Stored in membership for bank-level isolation)
-        // If passwordHash is missing, the account might not be activated yet
         if (!membership.passwordHash) {
             return res.status(401).json({ error: 'Account not activated. Please check your email.' });
         }
@@ -63,6 +51,7 @@ export const challengeAccountAccess = async (req: Request, res: Response) => {
         const isValid = verifyPassword(password, membership.passwordHash);
 
         if (!isValid) {
+            console.warn(`[AUTH-TUNNEL] Invalid password for user ${userDoc.id} on account ${accountId}`);
             return res.status(401).json({ error: 'Invalid password for this account' });
         }
 
@@ -79,6 +68,8 @@ export const challengeAccountAccess = async (req: Request, res: Response) => {
             lastActiveAccountId: accountId,
             lastLogin: new Date().toISOString()
         });
+
+        console.log(`[AUTH-TUNNEL] ✅ Challenge successful for user ${userDoc.id} on account ${accountId}`);
 
         return res.status(200).json({
             success: true,

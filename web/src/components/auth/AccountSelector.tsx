@@ -1,75 +1,114 @@
 import React, { useState } from 'react';
-import { useAuth } from '../../context/AuthContext';
-import { Building2, User, ChevronRight } from 'lucide-react';
+import type { AccountReference } from '../../types/user_directory';
 
-const AccountSelector: React.FC = () => {
-    const { profile, switchAccount, signOut } = useAuth();
-    const [loadingId, setLoadingId] = useState<string | null>(null);
+interface AccountSelectorProps {
+    accounts: AccountReference[];
+    onSelectAccount: (account: AccountReference) => void;
+    onCancel: () => void;
+    loading?: boolean;
+}
 
-    if (!profile) return null;
+/**
+ * Selector de Cuentas - Arquitectura "Pasillo de Puertas Blindadas"
+ * 
+ * Muestra las cuentas disponibles para un RUN y permite seleccionar
+ * la cuenta específica para autenticación.
+ * 
+ * Diseño: Material Design 3 + Atkinson Hyperlegible
+ */
+const AccountSelector: React.FC<AccountSelectorProps> = ({
+    accounts,
+    onSelectAccount,
+    onCancel,
+    loading = false
+}) => {
+    const [selectedId, setSelectedId] = useState<string | null>(null);
 
-    const handleSelect = async (accountId: string) => {
-        setLoadingId(accountId);
-        try {
-            await switchAccount(accountId);
-        } catch (error) {
-            console.error("Failed to switch account", error);
-            setLoadingId(null);
+    const handleSelect = (account: AccountReference) => {
+        setSelectedId(account.accountId);
+        onSelectAccount(account);
+    };
+
+    const renderIcon = (type: string) => {
+        switch (type) {
+            case 'BUSINESS':
+            case 'ENTERPRISE':
+                return 'business';
+            case 'EDUCATIONAL':
+                return 'school';
+            case 'PERSONAL':
+                return 'person';
+            default:
+                return 'account_circle';
         }
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-            <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in duration-300">
-                <div className="p-8 text-center bg-slate-900 text-white">
-                    <h1 className="text-2xl font-bold tracking-tight">Selecciona tu Cuenta</h1>
-                    <p className="text-slate-400 mt-2 text-sm">
-                        Tienes acceso a {profile.memberships?.length || 0} cuenta{profile.memberships?.length !== 1 ? 's' : ''}
-                    </p>
-                </div>
+        <div className="animate-in fade-in slide-in-from-right-8 duration-500 w-full">
+            <div className="text-center mb-8">
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+                    Selecciona una cuenta
+                </h2>
+                <p className="text-gray-500 dark:text-gray-400 mt-1">
+                    Hemos encontrado {accounts.length} {accounts.length === 1 ? 'perfil asociado' : 'perfiles asociados'}
+                </p>
+            </div>
 
-                <div className="p-6 space-y-3">
-                    {profile.memberships?.map((membership) => (
-                        <button
-                            key={membership.accountId}
-                            onClick={() => handleSelect(membership.accountId)}
-                            disabled={loadingId !== null}
-                            className="w-full group relative flex items-center p-4 rounded-xl border border-gray-100 bg-white hover:border-blue-500 hover:shadow-md transition-all duration-200 text-left disabled:opacity-50"
-                        >
-                            <div className={`p-3 rounded-lg mr-4 ${membership.role === 'OWNER' ? 'bg-blue-50 text-blue-600' : 'bg-gray-50 text-gray-600'} group-hover:scale-110 transition-transform`}>
-                                {membership.role === 'OWNER' ? <Building2 size={24} /> : <User size={24} />}
-                            </div>
-
-                            <div className="flex-1">
-                                <h3 className="font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">
-                                    {membership.companyName}
-                                </h3>
-                                <div className="flex items-center gap-2 mt-1">
-                                    <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 uppercase tracking-wide">
-                                        {membership.role}
-                                    </span>
-                                </div>
-                            </div>
-
-                            <div className="text-gray-300 group-hover:text-blue-500 transform group-hover:translate-x-1 transition-all">
-                                {loadingId === membership.accountId ? (
-                                    <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                                ) : (
-                                    <ChevronRight size={20} />
-                                )}
-                            </div>
-                        </button>
-                    ))}
-                </div>
-
-                <div className="p-4 bg-gray-50 border-t border-gray-100 text-center">
+            <div className="grid gap-4">
+                {accounts.map((account) => (
                     <button
-                        onClick={() => signOut()}
-                        className="text-sm text-gray-500 hover:text-red-500 font-medium transition-colors"
+                        key={account.accountId}
+                        onClick={() => handleSelect(account)}
+                        disabled={loading}
+                        className="group relative flex items-center p-4 bg-white dark:bg-[#1E1E1E] rounded-2xl border border-gray-100 dark:border-gray-800 hover:border-indigo-500 dark:hover:border-indigo-500 shadow-sm hover:shadow-md transition-all duration-200 text-left w-full disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        Cerrar Sesión
+                        {/* Avatar o Icono */}
+                        <div className="w-12 h-12 rounded-xl bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mr-4 group-hover:scale-105 transition-transform overflow-hidden">
+                            {account.avatar ? (
+                                <img
+                                    src={account.avatar}
+                                    alt={account.accountName}
+                                    className="w-full h-full object-cover"
+                                />
+                            ) : (
+                                <span className="material-symbols-rounded text-[28px]">
+                                    {renderIcon(account.type)}
+                                </span>
+                            )}
+                        </div>
+
+                        {/* Info Cuenta */}
+                        <div className="flex-1">
+                            <h3 className="text-lg font-semibold text-gray-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                                {account.accountName}
+                            </h3>
+                            <div className="flex items-center gap-2 mt-1">
+                                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 uppercase tracking-wide">
+                                    {account.role}
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* Indicador Selección */}
+                        <div className="text-gray-300 dark:text-gray-600 group-hover:text-indigo-500 group-hover:translate-x-1 transition-all">
+                            {selectedId === account.accountId && loading ? (
+                                <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                                <span className="material-symbols-rounded">arrow_forward_ios</span>
+                            )}
+                        </div>
                     </button>
-                </div>
+                ))}
+            </div>
+
+            <div className="mt-8 text-center">
+                <button
+                    onClick={onCancel}
+                    disabled={loading}
+                    className="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors font-medium disabled:opacity-50"
+                >
+                    Usar otro documento de identidad
+                </button>
             </div>
         </div>
     );

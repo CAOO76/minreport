@@ -1,10 +1,10 @@
 import { Request, Response } from 'express';
-import { Resend } from 'resend';
 import admin, { db, auth } from '../config/firebase';
+import { EmailService } from '../services/EmailService';
 import { registerSchema } from '../core/schemas';
 import { env } from '../config/env';
 
-const resend = new Resend(env.RESEND_API_KEY);
+
 
 export const register = async (req: Request, res: Response) => {
     try {
@@ -66,7 +66,7 @@ export const register = async (req: Request, res: Response) => {
 
         // 4. Send Email to Super Admin (Notification)
         try {
-            await resend.emails.send({
+            await EmailService.sendEmail({
                 from: 'MinReport System <onboarding@minreport.com>',
                 to: env.SUPER_ADMIN_EMAIL,
                 subject: `🚀 Nueva Solicitud: ${data.type}`,
@@ -232,7 +232,7 @@ export const inviteUser = async (req: Request, res: Response) => {
         }
 
         // 5. Send Email via Resend
-        await resend.emails.send({
+        await EmailService.sendEmail({
             from: 'MinReport Access <no-reply@minreport.com>',
             to: normalizedEmail,
             subject: isNewUser

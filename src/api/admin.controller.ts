@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import admin, { db, auth } from '../config/firebase';
-import { Resend } from 'resend';
+import { EmailService } from '../services/EmailService';
 import { env } from '../config/env';
 import { z } from 'zod';
 import { exec } from 'child_process';
@@ -37,7 +37,7 @@ const auditAction = async (actorEmail: string, action: string, targetId: string,
     }
 };
 
-const resend = new Resend(env.RESEND_API_KEY);
+
 
 export const listTenants = async (req: Request, res: Response) => {
     try {
@@ -276,17 +276,17 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
             }
 
             // 5. Send Notification Email
-            await resend.emails.send({
-                from: 'MinReport Activation <no-reply@minreport.com>',
+            await EmailService.sendEmail({
+                from: 'MinReport System <support@minreport.com>',
                 to: tenantData.email,
-                subject: '✅ Tu cuenta MinReport ha sido aprobada',
+                subject: '✅ Solicitud de Registro Aprobada',
                 html: `
-                    <div style="font-family: sans-serif; color: #334155;">
-                        <h2 style="color: #4F46E5;">¡Bienvenido a MinReport!</h2>
-                        <p>Tu solicitud de registro ha sido aprobada exitosamente.</p>
-                        <p>Para completar la configuración de tu cuenta y crear tu contraseña, haz clic en el siguiente enlace:</p>
+                    <div style="font-family: sans-serif; max-width: 600px; color: #334155;">
+                        <h2 style="color: #4F46E5;">¡Buenas noticias!</h2>
+                        <p>Tu solicitud para <strong>${tenantData.company_name || tenantData.institution_name || 'tu cuenta'}</strong> ha sido aprobada.</p>
+                        <p>Ya puedes configurar tu acceso y comenzar a usar MINREPORT.</p>
                         <br />
-                        <a href="${actionLink}" style="background: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Activar Cuenta</a>
+                        <a href="https://minreport-access.web.app/setup-access?accountId=${uid}&taxId=${taxId || ''}&email=${tenantData.email}" style="background: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Configurar Acceso</a>
                         <br /><br />
                         <p style="font-size: 12px; color: #94a3b8;">Si el botón no funciona, copia y pega este enlace: ${actionLink}</p>
                     </div>
@@ -307,7 +307,7 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
             });
 
             // 2. Notify Rejection
-            await resend.emails.send({
+            await EmailService.sendEmail({
                 from: 'MinReport <ops@minreport.com>',
                 to: tenantData.email,
                 subject: 'Estado de tu solicitud en MinReport',

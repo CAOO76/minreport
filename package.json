@@ -5,6 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "nodemon --watch src src/index.ts",
+    "dev:server": "NODE_ENV=test MOCK_EMAILS=true FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9190 FIRESTORE_TELEMETRY_DISABLED=1 SUPER_ADMIN_PASSWORD=SuperAdmin123! nodemon --watch src src/index.ts",
     "build": "npm run sync:plugins && tsc",
     "start": "node dist/index.js",
     "build:functions": "npm install --prefix services/functions && npm run build --prefix services/functions",
@@ -13,7 +14,12 @@
     "watch:sdk": "nodemon --watch src/sdk -e ts --exec \"bash web/scripts/copy-sdk.sh && bash admin/scripts/copy-sdk.sh\"",
     "release:sdk": "ts-node scripts/release_sdk.ts",
     "sync:plugins": "npx ts-node scripts/sync_plugins.ts",
-    "backup": "git add . && (git commit -m \"Auto-save\" || true) && git push"
+    "backup": "git add . && (git commit -m \"Auto-save\" || true) && git push",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:debug": "playwright test --debug",
+    "test:e2e:report": "playwright show-report",
+    "test:seed": "ts-node tests/utils/db-seeder.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -26,6 +32,7 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^20.11.16",
