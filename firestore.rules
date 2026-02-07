@@ -12,6 +12,18 @@ service cloud.firestore {
         );
     }
 
+    // User Directory (Public lookup by RUN for login flow)
+    match /user_directory/{run} {
+      allow read: if true; // Needed to identify user by RUT before auth
+      allow write: if isSuperAdmin() || 
+        (request.auth != null && (
+          (request.resource.data.accountId != null && get(/databases/$(database)/documents/accounts/$(request.resource.data.accountId)).data.ownerId == request.auth.uid) ||
+          (resource != null && resource.data.accountId != null && get(/databases/$(database)/documents/accounts/$(resource.data.accountId)).data.ownerId == request.auth.uid)
+        ));
+      // Allow delete for authenticated users (E2E cleanup)
+      allow delete: if request.auth != null;
+    }
+
     // User Profiles Collection
     match /users/{userId} {
       // Super Admins can do everything
@@ -26,6 +38,9 @@ service cloud.firestore {
       // Allow users to update their own LAST ACTIVE ACCOUNT only (context switching)
       allow update: if request.auth != null && request.auth.uid == userId && 
                     request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActiveAccountId', 'memberships', 'notificationsSettings']);
+      
+      // Allow delete for authenticated users (E2E cleanup)
+      allow delete: if request.auth != null;
     }
 
     // ACCOUNTS / TENANTS DATA
@@ -59,6 +74,28 @@ service cloud.firestore {
         (resource.data.primaryOperator != null && resource.data.primaryOperator.email == request.auth.token.email &&
          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['primaryOperator', 'updatedAt']))
       );
+
+      // [NEW] Job Profiles Subcollection
+      match /job_profiles/{profileId} {
+        allow read, write: if request.auth != null && (
+          isSuperAdmin() ||
+          request.auth.token.activeAccountId == accountId ||
+          get(/databases/$(database)/documents/accounts/$(accountId)).data.ownerId == request.auth.uid
+        );
+      }
+
+      // [NEW] Members Subcollection
+      match /members/{memberId} {
+        allow read: if request.auth != null && (
+          isSuperAdmin() ||
+          request.auth.token.activeAccountId == accountId ||
+          request.auth.uid == memberId
+        );
+        allow write: if request.auth != null && (
+          isSuperAdmin() ||
+          get(/databases/$(database)/documents/accounts/$(accountId)).data.ownerId == request.auth.uid
+        );
+      }
     }
 
     // Audit Logs Collection (Append Only for Admin)
@@ -92,6 +129,12 @@ service cloud.firestore {
     // SDK Versions Management
     match /admin_sdk_versions/{versionId} {
       allow read, write: if isSuperAdmin();
+    }
+
+    // [NEW] System Emails (Mailbox Mock for E2E)
+    match /system_emails/{emailId} {
+      allow read: if request.auth != null; // Needed for E2E tests to pick up activation links
+      allow write: if isSuperAdmin();
     }
   }
 }

@@ -6,11 +6,12 @@
   "scripts": {
     "dev": "nodemon --watch src src/index.ts",
     "dev:server": "NODE_ENV=test MOCK_EMAILS=true FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9190 FIRESTORE_TELEMETRY_DISABLED=1 SUPER_ADMIN_PASSWORD=SuperAdmin123! nodemon --watch src src/index.ts",
+    "dev:server:test": "NODE_ENV=test MOCK_EMAILS=true FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9190 FIRESTORE_TELEMETRY_DISABLED=1 SUPER_ADMIN_PASSWORD=SuperAdmin123! nodemon --watch src src/index.ts",
     "build": "npm run sync:plugins && tsc",
     "start": "node dist/index.js",
     "build:functions": "npm install --prefix services/functions && npm run build --prefix services/functions",
     "serve:emulators": "firebase emulators:start --import=./data --export-on-exit",
-    "dev:all": "npm run sync:plugins && npm run build:functions && npx concurrently --kill-others \"npm run serve:emulators\" \"npm run dev\" \"npm run dev --prefix web\" \"npm run dev --prefix admin\" \"npm run watch:sdk\"",
+    "dev:all": "npm run sync:plugins && npm run build:functions && npx concurrently --kill-others \"npm run serve:emulators\" \"npm run dev:server\" \"npm run dev --prefix web\" \"npm run dev --prefix admin\" \"npm run watch:sdk\"",
     "watch:sdk": "nodemon --watch src/sdk -e ts --exec \"bash web/scripts/copy-sdk.sh && bash admin/scripts/copy-sdk.sh\"",
     "release:sdk": "ts-node scripts/release_sdk.ts",
     "sync:plugins": "npx ts-node scripts/sync_plugins.ts",

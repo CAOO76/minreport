@@ -1,10 +1,24 @@
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { ClipboardList, Bell, TrendingUp, AlertCircle, Clock, CheckCircle2 } from 'lucide-react';
+import { ClipboardList, Bell, TrendingUp, AlertCircle, Clock, CheckCircle2, LayoutGrid } from 'lucide-react';
+import { MinReport } from '@minreport/sdk';
+import { PluginLoader } from '../../core/plugins/PluginLoader';
 
 const MobileDashboard: React.FC = () => {
     const { user, profile, currentAccount } = useAuth();
+    const [plugins, setPlugins] = useState<any[]>([]);
+    const [activePlugin, setActivePlugin] = useState<any | null>(null);
+
+    useEffect(() => {
+        // Inicializar plugins desde el SDK
+        const init = () => {
+            const active = MinReport.Core.getActivePlugins();
+            setPlugins(active);
+        };
+        const timer = setTimeout(init, 500);
+        return () => clearTimeout(timer);
+    }, []);
 
     // Datetime greeting
     const hour = new Date().getHours();
@@ -24,8 +38,28 @@ const MobileDashboard: React.FC = () => {
         { title: 'Alerta de Seguridad revisada', time: 'Hace 3 horas', type: 'warning' },
     ];
 
+    if (activePlugin) {
+        return (
+            <div className="fixed inset-0 bg-white dark:bg-zinc-900 z-[100] flex flex-col">
+                <div className="h-16 px-4 border-b border-gray-100 dark:border-zinc-800 flex items-center gap-3 bg-white dark:bg-zinc-900">
+                    <button
+                        onClick={() => setActivePlugin(null)}
+                        className="p-2 hover:bg-gray-100 dark:hover:bg-white/10 rounded-full text-gray-500"
+                    >
+                        <span className="material-symbols-rounded">arrow_back</span>
+                    </button>
+                    <span className="material-symbols-rounded text-indigo-600 dark:text-indigo-400">{activePlugin.icon || 'extension'}</span>
+                    <h2 className="font-bold text-gray-900 dark:text-white">{activePlugin.name}</h2>
+                </div>
+                <div className="flex-1 overflow-hidden relative">
+                    <PluginLoader pluginId={activePlugin.id} />
+                </div>
+            </div>
+        );
+    }
+
     return (
-        <div className="space-y-6">
+        <div className="space-y-6 pb-20 px-4 pt-4">
 
             {/* Header Section */}
             <div className="flex items-center justify-between">
@@ -71,9 +105,44 @@ const MobileDashboard: React.FC = () => {
                 ))}
             </div>
 
-            {/* Recent Activity */}
+            {/* Plugins Sections */}
             <div>
                 <div className="flex items-center justify-between mb-3 px-1">
+                    <h2 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                        <LayoutGrid size={20} className="text-indigo-600" />
+                        Mis Herramientas
+                    </h2>
+                </div>
+
+                {plugins.length === 0 ? (
+                    <div className="p-8 text-center bg-gray-50 dark:bg-white/5 rounded-2xl border-2 border-dashed border-gray-200 dark:border-zinc-800">
+                        <p className="text-sm text-gray-500">No hay herramientas activas</p>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 gap-3">
+                        {plugins.map((plugin) => (
+                            <button
+                                key={plugin.id}
+                                onClick={() => setActivePlugin(plugin)}
+                                className="w-full text-left bg-white dark:bg-zinc-900 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-zinc-800 flex items-center gap-4 active:scale-[0.98] transition-all"
+                            >
+                                <div className="w-12 h-12 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                                    <span className="material-symbols-rounded">{plugin.icon || 'extension'}</span>
+                                </div>
+                                <div className="flex-1">
+                                    <h3 className="font-bold text-gray-900 dark:text-white">{plugin.name}</h3>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-1">{plugin.description}</p>
+                                </div>
+                                <span className="material-symbols-rounded text-gray-300">chevron_right</span>
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {/* Recent Activity */}
+            <div>
+                <div className="flex items-center justify-between mb-3 px-1 pt-2">
                     <h2 className="text-lg font-bold text-gray-900 dark:text-white">Actividad Reciente</h2>
                     <button className="text-xs font-medium text-indigo-600 dark:text-indigo-400">Ver todo</button>
                 </div>

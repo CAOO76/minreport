@@ -27,6 +27,7 @@ export interface UserDirectory {
     run: string;                    // RUN del usuario (ID del documento)
     fullName: string;               // Nombre completo del usuario
     accounts: AccountReference[];   // Array de cuentas asociadas
+    accountId?: string;             // [NEW] Added for Security Rules context validation
     createdAt: number;
     updatedAt: number;
 }

@@ -24,6 +24,8 @@ import ErrorBoundary from './components/common/ErrorBoundary';
 import PluginErrorBoundaryDemo from './core/plugins/PluginErrorBoundaryDemo';
 import { getAllPlugins } from './core/PluginRegistry';
 import { secureContextFactory } from './core/SecureContextFactory';
+import { JobProfilesPage } from './pages/JobProfilesPage';
+import { StaffPage } from './pages/StaffPage';
 
 import { useEffect } from 'react';
 import { MinReport } from '@minreport/sdk'; // Importing SDK via Alias
@@ -76,14 +78,28 @@ const PluginInitializer = () => {
 };
 
 const RequireAuthLayout = () => {
-    const { user, currentAccount, loading } = useAuth();
+    const { user, profile, currentAccount, loading, switchAccount, signOut } = useAuth();
     const isMobile = useIsMobile();
     const Layout = isMobile ? MobileLayout : ClientLayout;
 
     if (loading) return <LoadingScreen />;
     if (!user) return <Navigate to="/login" replace />;
-    if (!currentAccount) return <AccountSelector />;
+    if (!currentAccount) {
+        console.log('[E2E-NAV] RequireAuthLayout: No currentAccount, showing Selector');
+        return (
+            <div className="min-h-screen bg-antigravity-light-bg dark:bg-antigravity-dark-bg flex items-center justify-center p-4">
+                <div className="w-full max-w-md">
+                    <AccountSelector
+                        accounts={(profile?.memberships || []) as any}
+                        onSelectAccount={(acc) => switchAccount(acc.accountId)}
+                        onCancel={signOut}
+                    />
+                </div>
+            </div>
+        );
+    }
 
+    console.log(`[E2E-NAV] RequireAuthLayout rendering Layout (${isMobile ? 'Mobile' : 'Desktop'})`);
     return <Layout />;
 };
 
@@ -137,6 +153,8 @@ const AppRoutes = () => {
                 <Route element={<RequireAuthLayout />}>
                     <Route path="/dashboard" element={<DashboardRouter />} />
                     <Route path="/plugins" element={<ClientPluginsPage />} />
+                    <Route path="/job-profiles" element={<JobProfilesPage />} />
+                    <Route path="/staff" element={<StaffPage />} />
                     <Route path="/debug/error-boundary" element={<PluginErrorBoundaryDemo />} />
                     <Route path="/capture" element={<div>Capture View (Not implemented)</div>} />
                     <Route path="/menu" element={<div>Menu View (Not implemented)</div>} />

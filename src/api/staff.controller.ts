@@ -26,31 +26,24 @@ router.post('/create-worker', async (req: Request, res: Response) => {
 
         // 1. Verificar si el usuario ya existe
         let userRecord;
+        let isNewUser = false;
         try {
             userRecord = await auth.getUserByEmail(normalizedEmail);
             console.log('[Staff API] Usuario ya existe:', userRecord.uid);
-
-            // Usuario existe, retornar su UID
-            return res.status(200).json({
-                uid: userRecord.uid,
-                isNewUser: false
-            });
         } catch (error: any) {
             if (error.code !== 'auth/user-not-found') {
                 throw error;
             }
-            // Usuario no existe, continuar con creación
+            // 2. Crear usuario en Firebase Auth if not exists
+            userRecord = await auth.createUser({
+                email: normalizedEmail,
+                emailVerified: false,
+                displayName: displayName,
+                disabled: false
+            });
+            isNewUser = true;
+            console.log('[Staff API] Usuario creado con UID:', userRecord.uid);
         }
-
-        // 2. Crear usuario en Firebase Auth
-        userRecord = await auth.createUser({
-            email: normalizedEmail,
-            emailVerified: false,
-            displayName: displayName,
-            disabled: false
-        });
-
-        console.log('[Staff API] Usuario creado con UID:', userRecord.uid);
 
         // 3. Generar link de configuración de contraseña
         const rawLink = await auth.generatePasswordResetLink(normalizedEmail);
@@ -120,10 +113,8 @@ router.post('/create-worker', async (req: Request, res: Response) => {
         }
 
         // [ACTO F] BACKEND PERSISTENCE: Ensure user is findable in user_directory
-        // This acts as a safety net if frontend Firestore call fails during high-latency tests
+        // AND has a valid profile in /users
         try {
-            // The log below seems to be from a different context (public.controller.ts)
-            // Keeping the original log for staff.controller.ts context.
             console.log('[Staff API] Forcing user_directory entry for RUN:', run);
             const userDirRef = db.collection('user_directory').doc(run);
             await userDirRef.set({
@@ -134,19 +125,53 @@ router.post('/create-worker', async (req: Request, res: Response) => {
                     authEmail: normalizedEmail,
                     role: 'OPERATOR',
                     type: 'BUSINESS',
-                    accountName: 'Minera ABC S.A.' // Fallback or pass from req
+                    accountName: 'Minera ABC S.A.' // Fallback
                 }),
+                accountId: accountId, // Added for security context consistency
                 updatedAt: new Date().toISOString()
             }, { merge: true });
-            console.log('[Staff API] ✅ user_directory forced successfully');
+
+            console.log('[Staff API] Syncing user profile in /users for UID:', userRecord.uid);
+            const userProfileRef = db.collection('users').doc(userRecord.uid);
+            const userProfileSnap = await userProfileRef.get();
+
+            const membership = {
+                accountId: accountId,
+                role: 'OPERATOR',
+                companyName: 'Minera ABC S.A.',
+                joinedAt: Date.now()
+            };
+
+            if (!userProfileSnap.exists) {
+                // Create profile if new
+                await userProfileRef.set({
+                    uid: userRecord.uid,
+                    email: normalizedEmail,
+                    taxId: run,
+                    fullName: displayName,
+                    role: 'USER',
+                    memberships: [membership],
+                    status: 'PENDING',
+                    createdAt: Date.now(),
+                    updatedAt: Date.now()
+                });
+            } else {
+                // Update memberships if existing
+                await userProfileRef.update({
+                    memberships: admin.firestore.FieldValue.arrayUnion(membership),
+                    updatedAt: Date.now()
+                });
+            }
+
+            console.log('[Staff API] ✅ user_directory and user profile forced successfully');
         } catch (dirErr) {
-            console.error('[Staff API] ⚠️ Failed to force user_directory entry:', dirErr);
+            console.error('[Staff API] ⚠️ Failed to force background persistence:', dirErr);
         }
 
         return res.status(201).json({
             uid: userRecord.uid,
-            isNewUser: true,
-            message: 'Usuario creado y email de configuración enviado'
+            isNewUser: isNewUser,
+            message: isNewUser ? 'Usuario creado y email de configuración enviado' : 'Vínculo actualizado y email de acceso enviado'
         });
 
     } catch (error: any) {

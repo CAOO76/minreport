@@ -9,15 +9,15 @@ export class SetupPasswordPage {
     }
 
     async fillPassword(password: string) {
-        await this.page.fill('input[placeholder="Mínimo 8 caracteres"]', password);
-        await this.page.fill('input[placeholder="Repite la contraseña"]', password);
+        await this.page.fill('[data-testid="setup-password-input"]', password);
+        await this.page.fill('[data-testid="setup-confirm-input"]', password);
     }
 
     async submit() {
-        await this.page.click('button:has-text("Activar Clave Exclusiva")');
+        await this.page.click('[data-testid="setup-submit-button"]');
     }
 
     async expectSuccess() {
-        await expect(this.page.locator('text=¡Seguridad Activada!')).toBeVisible();
+        await expect(this.page.locator('[data-testid="setup-success-title"]')).toBeVisible();
     }
 }

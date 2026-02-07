@@ -59,12 +59,24 @@ const ClientLayout = () => {
                     </div>
 
                     {/* Navegación */}
-                    <nav className="flex-1 flex flex-col gap-2">
+                    <nav className="flex-1 flex <SAME> gap-2">
                         <NavLink to="/" className={navLinkClasses} title="Dashboard">
                             <span className="material-symbols-rounded text-2xl">dashboard</span>
+                            <span className="sr-only">Dashboard</span>
                         </NavLink>
                         <NavLink to="/plugins" className={navLinkClasses} title="Mis Aplicaciones">
                             <span className="material-symbols-rounded text-2xl">apps</span>
+                            <span className="sr-only">Mis Aplicaciones</span>
+                        </NavLink>
+
+                        {/* E2E Selectors Support */}
+                        <NavLink to="/job-profiles" className={navLinkClasses} title="Job Profiles">
+                            <span className="material-symbols-rounded text-2xl">demography</span>
+                            <span className="sr-only">Job Profiles</span>
+                        </NavLink>
+                        <NavLink to="/staff" className={navLinkClasses} title="Staff">
+                            <span className="material-symbols-rounded text-2xl">badge</span>
+                            <span className="sr-only">Staff</span>
                         </NavLink>
                     </nav>
 

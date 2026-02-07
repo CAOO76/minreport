@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Save, Trash2, AlertCircle } from 'lucide-react';
+import { ChevronRight, AlertCircle, Info } from 'lucide-react';
 import { ProfileService } from '../../services/ProfileService';
 import { getAllPlugins } from '../../core/PluginRegistry';
 import { useAuth } from '../../context/AuthContext';
@@ -14,13 +14,10 @@ import M3Switch from '../common/M3Switch';
  * Panel de administración para gestionar Perfiles de Cargo (Job Profiles).
  * Permite a las empresas B2B crear perfiles estandarizados con conjuntos
  * específicos de plugins asignados.
- * 
- * Diseño: Split-view con lista de perfiles a la izquierda y editor a la derecha.
- * Estilo: Material Design 3 con tipografía Atkinson Hyperlegible.
  */
 
 export const JobProfileManager = () => {
-    const { currentAccount } = useAuth();
+    const { currentAccount, user } = useAuth();
     const [profiles, setProfiles] = useState<JobProfile[]>([]);
     const [selectedProfile, setSelectedProfile] = useState<JobProfile | null>(null);
     const [isEditing, setIsEditing] = useState(false);
@@ -34,18 +31,19 @@ export const JobProfileManager = () => {
     // Obtener plugins disponibles
     const availablePlugins = getAllPlugins();
 
-    // Cargar perfiles en tiempo real
+    // Cargar perfiles
     useEffect(() => {
         if (!currentAccount?.id) return;
 
         const unsubscribe = ProfileService.getProfiles(currentAccount.id, (loadedProfiles) => {
+            console.log(`[JobProfileManager] Perfiles cargados: ${loadedProfiles.length}`);
             setProfiles(loadedProfiles);
         });
 
         return () => unsubscribe();
     }, [currentAccount?.id]);
 
-    // Sincronizar formulario con perfil seleccionado
+    // Sincronizar formulario
     useEffect(() => {
         if (selectedProfile) {
             setFormName(selectedProfile.name);
@@ -76,6 +74,10 @@ export const JobProfileManager = () => {
     };
 
     const handleSave = async () => {
+        if (!user?.uid) {
+            console.error('[JobProfileManager] Error: No user UID found');
+            return;
+        }
         if (!currentAccount?.id || !formName.trim()) return;
 
         setIsSaving(true);
@@ -85,8 +87,7 @@ export const JobProfileManager = () => {
                 name: formName.trim(),
                 description: formDescription.trim(),
                 allowedPlugins: formPlugins,
-                createdAt: selectedProfile?.createdAt,
-                createdBy: selectedProfile?.createdBy
+                createdBy: selectedProfile?.createdBy || user.uid
             };
 
             await ProfileService.saveProfile(currentAccount.id, profileData);
@@ -98,10 +99,10 @@ export const JobProfileManager = () => {
         }
     };
 
-    const handleDelete = async () => {
-        if (!currentAccount?.id || !selectedProfile?.id) return;
-
-        if (!confirm(`¿Eliminar el perfil "${selectedProfile.name}"?`)) return;
+    const handleDeleteProfile = async () => {
+        if (!selectedProfile || !currentAccount?.id) return;
+        const confirmed = window.confirm(`¿Eliminar el perfil "${selectedProfile.name}"?`);
+        if (!confirmed) return;
 
         try {
             await ProfileService.deleteProfile(currentAccount.id, selectedProfile.id);
@@ -112,171 +113,91 @@ export const JobProfileManager = () => {
         }
     };
 
-    if (!currentAccount) {
+    if (!currentAccount?.id) {
         return (
-            <div className="flex items-center justify-center h-full">
-                <p className="text-gray-500 dark:text-gray-400">
-                    Selecciona una cuenta para gestionar perfiles
-                </p>
+            <div className="flex items-center justify-center p-12 h-64">
+                <div className="text-center animate-pulse">
+                    <AlertCircle className="w-12 h-12 mx-auto mb-3 text-gray-400" />
+                    <p className="text-sm text-gray-500">Cargando perfiles...</p>
+                </div>
             </div>
         );
     }
 
     return (
-        <div
-            className="h-full flex gap-6 p-6"
-            style={{ fontFamily: "'Atkinson Hyperlegible', sans-serif" }}
-        >
-            {/* LISTA DE PERFILES - Izquierda */}
-            <aside className="w-80 flex flex-col gap-4">
-                <div className="flex items-center justify-between">
-                    <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+        <div className="h-full flex flex-col md:flex-row gap-6 p-6" style={{ fontFamily: "'Atkinson Hyperlegible', sans-serif" }}>
+            {/* LISTA DE PERFILES */}
+            <aside className="w-full md:w-80 flex flex-col gap-4">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-white" data-testid="page-title">
                         Perfiles de Cargo
                     </h2>
                     <Button
                         variant="primary"
                         icon="add"
                         onClick={handleNewProfile}
-                        className="!px-3 !py-2"
+                        className="!p-2"
+                        data-testid="add-profile-btn"
                     >
                         Nuevo
                     </Button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-2">
-                    {profiles.length === 0 ? (
-                        <Card className="!p-8 text-center">
-                            <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-                                <span className="material-symbols-rounded text-gray-400 dark:text-gray-600">
-                                    badge
-                                </span>
-                            </div>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">
-                                No hay perfiles creados
-                            </p>
-                            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                                Crea tu primer perfil de cargo
-                            </p>
-                        </Card>
-                    ) : (
-                        profiles.map(profile => (
-                            <button
-                                key={profile.id}
-                                onClick={() => handleSelectProfile(profile)}
-                                className={`
-                                    w-full text-left p-4 rounded-lg border transition-all
-                                    ${selectedProfile?.id === profile.id
-                                        ? 'bg-indigo-50 dark:bg-indigo-500/10 border-indigo-500'
-                                        : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-indigo-300 dark:hover:border-indigo-700'
-                                    }
-                                `}
-                            >
-                                <div className="flex items-start gap-3">
-                                    <div className="w-10 h-10 rounded-lg bg-indigo-100 dark:bg-indigo-500/20 flex items-center justify-center flex-shrink-0">
-                                        <span className="material-symbols-rounded text-indigo-600 dark:text-indigo-400 text-xl">
-                                            badge
-                                        </span>
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <h3 className="font-semibold text-gray-900 dark:text-white truncate">
-                                            {profile.name}
-                                        </h3>
-                                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 line-clamp-2">
-                                            {profile.description || 'Sin descripción'}
-                                        </p>
-                                        <div className="flex items-center gap-1 mt-2">
-                                            <span className="material-symbols-rounded text-xs text-gray-400">
-                                                extension
-                                            </span>
-                                            <span className="text-xs text-gray-500 dark:text-gray-400">
-                                                {profile.allowedPlugins?.length || 0} plugins
-                                            </span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </button>
-                        ))
+                    {profiles.map(profile => (
+                        <button
+                            key={profile.id}
+                            onClick={() => handleSelectProfile(profile)}
+                            className={`w-full text-left p-4 rounded-lg border transition-all ${selectedProfile?.id === profile.id
+                                ? 'bg-indigo-50 dark:bg-indigo-500/10 border-indigo-500'
+                                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-indigo-300'
+                                }`}
+                            data-testid="profile-item"
+                        >
+                            <h3 className="font-semibold text-gray-900 dark:text-white truncate">{profile.name}</h3>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mt-1">{profile.description}</p>
+                        </button>
+                    ))}
+                    {profiles.length === 0 && (
+                        <div className="p-8 text-center bg-gray-50 dark:bg-gray-900 rounded-lg border border-dashed border-gray-300 dark:border-gray-700">
+                            <p className="text-sm text-gray-400">No hay perfiles</p>
+                        </div>
                     )}
                 </div>
             </aside>
 
-            {/* EDITOR DE PERFIL - Derecha */}
-            <main className="flex-1 flex flex-col gap-4">
+            {/* EDITOR */}
+            <main className="flex-1 flex flex-col gap-4 min-w-0">
                 {!selectedProfile && !isEditing ? (
                     <Card className="flex-1 flex flex-col items-center justify-center !p-12 text-center">
-                        <div className="w-20 h-20 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center mb-4">
-                            <span className="material-symbols-rounded text-4xl text-gray-400 dark:text-gray-600">
-                                badge
-                            </span>
-                        </div>
-                        <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">
-                            Selecciona un perfil
-                        </h3>
-                        <p className="text-sm text-gray-500 dark:text-gray-400 max-w-md">
-                            Elige un perfil de la lista o crea uno nuevo para definir
-                            qué herramientas puede usar cada cargo en tu empresa.
-                        </p>
+                        <Info className="w-12 h-12 text-gray-300 mb-4" />
+                        <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">Selecciona un perfil</h3>
+                        <p className="text-sm text-gray-500 max-w-sm">Define las herramientas permitidas para cada cargo administrativo u operativo.</p>
                     </Card>
                 ) : (
                     <>
-                        {/* Header del Editor */}
                         <Card className="!p-4">
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-3">
-                                    <div className="w-12 h-12 rounded-xl bg-indigo-100 dark:bg-indigo-500/20 flex items-center justify-center">
-                                        <span className="material-symbols-rounded text-indigo-600 dark:text-indigo-400 text-2xl">
-                                            badge
-                                        </span>
+                                    <div className="w-10 h-10 rounded-lg bg-indigo-100 dark:bg-indigo-500/20 flex items-center justify-center">
+                                        <ChevronRight className="text-indigo-600 dark:text-indigo-400" />
                                     </div>
                                     <div>
                                         <h2 className="text-lg font-bold text-gray-900 dark:text-white">
                                             {isEditing ? (selectedProfile ? 'Editar Perfil' : 'Nuevo Perfil') : selectedProfile?.name}
                                         </h2>
-                                        <p className="text-xs text-gray-500 dark:text-gray-400">
-                                            {isEditing ? 'Define permisos de plugins' : 'Vista de perfil'}
-                                        </p>
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-2">
                                     {!isEditing ? (
                                         <>
-                                            <Button
-                                                variant="secondary"
-                                                icon="edit"
-                                                onClick={() => setIsEditing(true)}
-                                            >
-                                                Editar
-                                            </Button>
-                                            <Button
-                                                variant="secondary"
-                                                icon="delete"
-                                                onClick={handleDelete}
-                                                className="!text-red-600 dark:!text-red-400 hover:!bg-red-50 dark:hover:!bg-red-900/20"
-                                            >
-                                                Eliminar
-                                            </Button>
+                                            <Button variant="secondary" icon="edit" onClick={() => setIsEditing(true)}>Editar</Button>
+                                            <Button variant="secondary" icon="delete" onClick={handleDeleteProfile} className="!text-red-500">Eliminar</Button>
                                         </>
                                     ) : (
                                         <>
-                                            <Button
-                                                variant="secondary"
-                                                onClick={() => {
-                                                    setIsEditing(false);
-                                                    if (selectedProfile) {
-                                                        setFormName(selectedProfile.name);
-                                                        setFormDescription(selectedProfile.description);
-                                                        setFormPlugins(selectedProfile.allowedPlugins || []);
-                                                    }
-                                                }}
-                                            >
-                                                Cancelar
-                                            </Button>
-                                            <Button
-                                                variant="primary"
-                                                icon="save"
-                                                onClick={handleSave}
-                                                disabled={isSaving || !formName.trim()}
-                                            >
+                                            <Button variant="secondary" onClick={() => setIsEditing(false)}>Cancelar</Button>
+                                            <Button variant="primary" icon="save" onClick={handleSave} disabled={isSaving || !formName.trim()} data-testid="save-profile-btn">
                                                 {isSaving ? 'Guardando...' : 'Guardar'}
                                             </Button>
                                         </>
@@ -285,109 +206,55 @@ export const JobProfileManager = () => {
                             </div>
                         </Card>
 
-                        {/* Formulario */}
-                        <Card className="flex-1 overflow-y-auto">
-                            <div className="space-y-6">
-                                {/* Nombre del Perfil */}
-                                <div>
-                                    <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                                        Nombre del Perfil
-                                    </label>
-                                    <input
-                                        type="text"
-                                        value={formName}
-                                        onChange={(e) => setFormName(e.target.value)}
-                                        disabled={!isEditing}
-                                        placeholder="ej: Operador CAEX, Supervisor de Planta"
-                                        className="w-full px-4 py-3 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
-                                    />
-                                </div>
+                        <Card className="flex-1 overflow-y-auto space-y-6">
+                            <div>
+                                <label className="block text-sm font-semibold mb-2">Nombre del Perfil</label>
+                                <input
+                                    type="text"
+                                    value={formName}
+                                    onChange={(e) => setFormName(e.target.value)}
+                                    disabled={!isEditing}
+                                    placeholder="ej: Operador CAEX"
+                                    className="w-full p-3 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white"
+                                    data-testid="profile-name-input"
+                                />
+                            </div>
 
-                                {/* Descripción */}
-                                <div>
-                                    <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                                        Descripción
-                                    </label>
-                                    <textarea
-                                        value={formDescription}
-                                        onChange={(e) => setFormDescription(e.target.value)}
-                                        disabled={!isEditing}
-                                        placeholder="Describe las responsabilidades de este cargo..."
-                                        rows={3}
-                                        className="w-full px-4 py-3 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed transition-all resize-none"
-                                    />
-                                </div>
+                            <div>
+                                <label className="block text-sm font-semibold mb-2">Descripción</label>
+                                <textarea
+                                    value={formDescription}
+                                    onChange={(e) => setFormDescription(e.target.value)}
+                                    disabled={!isEditing}
+                                    placeholder="Responsabilidades del cargo..."
+                                    className="w-full p-3 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white resize-none"
+                                    rows={3}
+                                    data-testid="profile-description-textarea"
+                                />
+                            </div>
 
-                                {/* Grid de Plugins */}
-                                <div>
-                                    <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
-                                        Herramientas Permitidas
-                                    </label>
-
-                                    {availablePlugins.length === 0 ? (
-                                        <div className="p-8 text-center bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                                            <AlertCircle className="w-12 h-12 mx-auto mb-3 text-gray-400" />
-                                            <p className="text-sm text-gray-500 dark:text-gray-400">
-                                                No hay plugins disponibles
-                                            </p>
+                            <div>
+                                <label className="block text-sm font-semibold mb-4">Herramientas Permitidas</label>
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    {availablePlugins.map(plugin => (
+                                        <div key={plugin.id} className="p-4 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex items-center justify-between">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-8 h-8 rounded bg-white dark:bg-gray-700 flex items-center justify-center">
+                                                    <span className="material-symbols-rounded text-sm">extension</span>
+                                                </div>
+                                                <div>
+                                                    <p className="text-sm font-medium">{plugin.name}</p>
+                                                    <p className="text-xs text-gray-500">v{plugin.version}</p>
+                                                </div>
+                                            </div>
+                                            <M3Switch
+                                                checked={formPlugins.includes(plugin.id)}
+                                                onChange={() => isEditing && handleTogglePlugin(plugin.id)}
+                                                data-testid={`plugin-switch-${plugin.id}`}
+                                                disabled={!isEditing}
+                                            />
                                         </div>
-                                    ) : (
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                            {availablePlugins.map(plugin => {
-                                                const isEnabled = formPlugins.includes(plugin.id);
-
-                                                return (
-                                                    <div
-                                                        key={plugin.id}
-                                                        className={`
-                                                            p-4 rounded-lg border transition-all
-                                                            ${isEnabled
-                                                                ? 'bg-indigo-50 dark:bg-indigo-500/10 border-indigo-500'
-                                                                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
-                                                            }
-                                                            ${isEditing ? 'cursor-pointer hover:border-indigo-300 dark:hover:border-indigo-700' : 'opacity-60'}
-                                                        `}
-                                                        onClick={() => isEditing && handleTogglePlugin(plugin.id)}
-                                                    >
-                                                        <div className="flex items-center justify-between">
-                                                            <div className="flex items-center gap-3 flex-1 min-w-0">
-                                                                <div className={`
-                                                                    w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0
-                                                                    ${isEnabled
-                                                                        ? 'bg-indigo-100 dark:bg-indigo-500/20'
-                                                                        : 'bg-gray-100 dark:bg-gray-700'
-                                                                    }
-                                                                `}>
-                                                                    <span className={`
-                                                                        material-symbols-rounded text-xl
-                                                                        ${isEnabled
-                                                                            ? 'text-indigo-600 dark:text-indigo-400'
-                                                                            : 'text-gray-500 dark:text-gray-400'
-                                                                        }
-                                                                    `}>
-                                                                        {plugin.icon || 'extension'}
-                                                                    </span>
-                                                                </div>
-                                                                <div className="flex-1 min-w-0">
-                                                                    <h4 className="font-semibold text-sm text-gray-900 dark:text-white truncate">
-                                                                        {plugin.name}
-                                                                    </h4>
-                                                                    <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                                                                        v{plugin.version}
-                                                                    </p>
-                                                                </div>
-                                                            </div>
-                                                            <M3Switch
-                                                                checked={isEnabled}
-                                                                onChange={() => isEditing && handleTogglePlugin(plugin.id)}
-                                                                disabled={!isEditing}
-                                                            />
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    )}
+                                    ))}
                                 </div>
                             </div>
                         </Card>

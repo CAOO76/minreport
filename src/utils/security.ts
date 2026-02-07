@@ -28,9 +28,15 @@ export const verifyPassword = (password: string, storedHash: string): boolean =>
 
     const hashToVerify = pbkdf2Sync(password, salt, ITERATIONS, KEY_LEN, DIGEST).toString('hex');
 
-    // Use timingSafeEqual to prevent timing attacks
-    return timingSafeEqual(
-        Buffer.from(originalHash, 'hex'),
-        Buffer.from(hashToVerify, 'hex')
-    );
+    // Use timingSafeEqual to prevent timing attacks, but only if lengths match
+    // to avoid "RangeError: Input buffers must have the same byte length"
+    const originalBuffer = Buffer.from(originalHash, 'hex');
+    const verifyBuffer = Buffer.from(hashToVerify, 'hex');
+
+    if (originalBuffer.length !== verifyBuffer.length) {
+        console.warn(`[SECURITY] Hash length mismatch: expected ${verifyBuffer.length}, got ${originalBuffer.length}`);
+        return false;
+    }
+
+    return timingSafeEqual(originalBuffer, verifyBuffer);
 };

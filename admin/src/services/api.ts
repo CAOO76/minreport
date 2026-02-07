@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const MI_IP_IMAC = "192.168.1.82";
+const MI_IP_IMAC = "192.168.1.87";
 const API_BASE = location.hostname === 'localhost' ? 'http://localhost:8080/api/admin' : `http://${MI_IP_IMAC}:8080/api/admin`;
 
 const api = axios.create({

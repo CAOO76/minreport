@@ -4,34 +4,47 @@ export class JobProfileManagerPage {
     constructor(private page: Page) { }
 
     async goto() {
-        await this.page.goto('/dashboard');
-        // Asumimos que hay un link en el sidebar o una ruta directa
-        await this.page.click('nav >> text=Job Profiles');
+        console.log('[E2E-POM] Navegando a Perfiles de Cargo (v\xeda Men\xfa Lateral)...');
+        // Esperamos a que el layout esté listo buscando el navbar
+        await this.page.waitForSelector('aside nav', { timeout: 15000 });
+
+        // Intentamos clic en el acceso directo del sidebar
+        const navLink = this.page.locator('aside nav a[title="Job Profiles"]');
+        await navLink.click();
+        console.log('[E2E-POM] Esperando t\xedtulo Perfiles de Cargo...');
+        // Usamos el locatario por rol y el testid, esperando a que esté adjunto al DOM
+        const title = this.page.locator('[data-testid="page-title"]');
+        await title.waitFor({ state: 'attached', timeout: 30000 });
+        console.log('[E2E-POM] ✅ T\xedtulo detectado en el DOM');
     }
 
     async openNewProfileModal() {
-        await this.page.click('button:has-text("Nuevo Perfil")');
+        console.log('[E2E-POM] Abriendo modal de nuevo perfil...');
+        await this.page.click('[data-testid="add-profile-btn"]');
     }
 
-    async fillBasicInfo(name: string, description: string) {
-        await this.page.fill('input[name="name"]', name);
-        await this.page.fill('textarea[name="description"]', description);
+    async fillProfileDetails(name: string, description: string) {
+        console.log(`[E2E-POM] Completando detalles: ${name}`);
+        await this.page.fill('[data-testid="profile-name-input"]', name);
+        await this.page.fill('[data-testid="profile-description-textarea"]', description);
     }
 
-    async isPluginVisible(pluginName: string): Promise<boolean> {
-        const pluginCheckbox = this.page.locator(`label:has-text("${pluginName}")`);
-        return await pluginCheckbox.isVisible();
+    async togglePlugin(pluginId: string) {
+        console.log(`[E2E-POM] Activando plugin: ${pluginId}`);
+        await this.page.click(`[data-testid="plugin-switch-${pluginId}"]`);
     }
 
-    async selectPlugin(pluginName: string) {
-        await this.page.check(`label:has-text("${pluginName}") >> input[type="checkbox"]`);
-    }
-
-    async save() {
-        await this.page.click('button:has-text("Guardar")');
+    async saveProfile() {
+        console.log('[E2E-POM] Guardando perfil...');
+        await this.page.click('[data-testid="save-profile-btn"]');
+        // Esperamos a que se guarde y vuelva a la vista de lista (el botón de guardar desaparece del editor si se cierra)
+        // O simplemente esperamos a que el botón vuelva a estar habilitado si no se cierra
     }
 
     async expectProfileInList(name: string) {
-        await expect(this.page.locator(`text=${name}`)).toBeVisible();
+        console.log(`[E2E-POM] Verificando perfil en lista: ${name}`);
+        const profileItem = this.page.locator(`[data-testid="profile-item"]:has-text("${name}")`).first();
+        await profileItem.waitFor({ state: 'visible', timeout: 15000 });
+        await expect(profileItem).toBeVisible();
     }
 }

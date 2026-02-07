@@ -5,27 +5,34 @@ export class StaffOnboardingPage {
     constructor(private page: Page) { }
 
     async goto() {
-        await this.page.goto('/dashboard');
-        await this.page.click('nav >> text=Trabajadores');
+        console.log('[E2E-POM] Navegando a Staff (vía Menú Lateral)...');
+        // El sidebar usa title="Staff" y tiene un sr-only con "Staff"
+        await this.page.click('nav >> [title="Staff"]');
     }
 
     async openOnboardingForm() {
-        await this.page.click('button:has-text("Vincular Trabajador")');
+        console.log('[E2E-POM] Accediendo al formulario de Staff (ya visible)...');
+        // El formulario es directo en este componente, no requiere clic previo.
+        // Solo verificamos que el contenedor sea visible.
+        await expect(this.page.locator('form')).toBeVisible();
     }
 
     async fillWorkerData(run: string, name: string, email: string) {
-        await fillRut(this.page, 'input[placeholder*="RUN"]', run);
-        await this.page.fill('input[placeholder="Nombre completo"]', name);
-        await this.page.fill('input[type="email"]', email);
+        console.log(`[E2E-POM] Completando datos del trabajador: ${name}`);
+        await fillRut(this.page, '[data-testid="worker-run-input"]', run);
+        await this.page.fill('[data-testid="worker-name-input"]', name);
+        await this.page.fill('[data-testid="worker-email-input"]', email);
     }
 
     async selectJobProfile(profileName: string) {
-        // En StaffOnboarding.tsx los perfiles se muestran como tarjetas clicables
-        await this.page.click(`div[role="button"]:has-text("${profileName}")`);
+        console.log(`[E2E-POM] Seleccionando perfil: ${profileName}`);
+        const testId = `profile-card-${profileName.replace(/\s+/g, '-').toLowerCase()}`;
+        await this.page.click(`[data-testid="${testId}"]`);
     }
 
     async submit() {
-        await this.page.click('button:has-text("Vincular")');
+        console.log('[E2E-POM] Haciendo clic en Vincular Trabajador...');
+        await this.page.click('button:has-text("Vincular Trabajador")');
     }
 
     async expectSuccess() {

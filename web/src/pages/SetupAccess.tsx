@@ -37,7 +37,16 @@ export const SetupAccess = () => {
         setError('');
 
         try {
-            const response = await fetch(`${import.meta.env.VITE_API_URL}/api/auth/tunnel/setup-password`, {
+            const MI_IP_IMAC = "192.168.1.87";
+            const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+            let baseUrl = import.meta.env.VITE_API_URL;
+
+            if (isLocalHost && baseUrl && baseUrl.includes(MI_IP_IMAC)) {
+                baseUrl = baseUrl.replace(MI_IP_IMAC, 'localhost');
+            }
+            if (!baseUrl) baseUrl = isLocalHost ? 'http://localhost:8080' : `http://${MI_IP_IMAC}:8080`;
+
+            const response = await fetch(`${baseUrl}/api/auth/tunnel/setup-password`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -47,7 +56,9 @@ export const SetupAccess = () => {
                 })
             });
 
+            console.log('[SetupAccess] Response status:', response.status);
             const data = await response.json();
+            console.log('[SetupAccess] Response data:', data);
 
             if (!response.ok) {
                 setError(data.error || 'Error al establecer la contraseña.');
@@ -55,12 +66,14 @@ export const SetupAccess = () => {
             }
 
             setSuccess(true);
+            console.log('[SetupAccess] Password set successfully');
             // Redirigir al login después de 3 segundos
             setTimeout(() => {
                 navigate('/login');
             }, 3000);
 
         } catch (err) {
+            console.error('[SetupAccess] Connection error:', err);
             setError('Error de conexión con el servidor.');
         } finally {
             setLoading(false);
@@ -74,7 +87,7 @@ export const SetupAccess = () => {
                     <div className="w-20 h-20 bg-green-50 dark:bg-green-500/10 text-green-600 dark:text-green-400 rounded-full flex items-center justify-center mx-auto mb-6">
                         <CheckCircle2 size={48} />
                     </div>
-                    <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">¡Seguridad Activada!</h1>
+                    <h1 data-testid="setup-success-title" className="text-2xl font-bold text-gray-900 dark:text-white mb-2">¡Seguridad Activada!</h1>
                     <p className="text-gray-500 dark:text-gray-400">
                         Tu contraseña exclusiva ha sido guardada. Serás redirigido al inicio de sesión en unos instantes.
                     </p>
@@ -124,6 +137,7 @@ export const SetupAccess = () => {
                                     onChange={(e) => setPassword(e.target.value)}
                                     className="w-full pl-5 pr-12 py-4 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                                     placeholder="Mínimo 8 caracteres"
+                                    data-testid="setup-password-input"
                                     required
                                     autoFocus
                                     autoComplete="off"
@@ -148,6 +162,7 @@ export const SetupAccess = () => {
                                 onChange={(e) => setConfirmPassword(e.target.value)}
                                 className="w-full px-5 py-4 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                                 placeholder="Repite la contraseña"
+                                data-testid="setup-confirm-input"
                                 required
                                 autoComplete="off"
                             />
@@ -162,6 +177,7 @@ export const SetupAccess = () => {
                         <button
                             type="submit"
                             disabled={loading || !!error}
+                            data-testid="setup-submit-button"
                             className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-md active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
                         >
                             {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : 'Activar Clave Exclusiva'}

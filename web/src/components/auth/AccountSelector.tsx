@@ -50,12 +50,12 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
                     Selecciona una cuenta
                 </h2>
                 <p className="text-gray-500 dark:text-gray-400 mt-1">
-                    Hemos encontrado {accounts.length} {accounts.length === 1 ? 'perfil asociado' : 'perfiles asociados'}
+                    Hemos encontrado {accounts?.length || 0} {(accounts?.length || 0) === 1 ? 'perfil asociado' : 'perfiles asociados'}
                 </p>
             </div>
 
             <div className="grid gap-4">
-                {accounts.map((account) => (
+                {accounts?.map((account) => (
                     <button
                         key={account.accountId}
                         onClick={() => handleSelect(account)}

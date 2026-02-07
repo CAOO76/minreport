@@ -4,11 +4,17 @@ import { useState, useEffect } from 'react';
  * Hook to detect if the current viewport is mobile (width < 768px)
  */
 export function useIsMobile() {
-    const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+    const [isMobile, setIsMobile] = useState(() => {
+        const mobile = window.innerWidth < 768;
+        console.log(`[DEBUG-DEVICE] innerWidth: ${window.innerWidth}, isMobile: ${mobile}`);
+        return mobile;
+    });
 
     useEffect(() => {
         const handleResize = () => {
-            setIsMobile(window.innerWidth < 768);
+            const mobile = window.innerWidth < 768;
+            console.log(`[DEBUG-DEVICE] Resize -> innerWidth: ${window.innerWidth}, isMobile: ${mobile}`);
+            setIsMobile(mobile);
         };
 
         window.addEventListener('resize', handleResize);

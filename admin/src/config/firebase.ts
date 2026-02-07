@@ -1,10 +1,12 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, connectAuthEmulator } from "firebase/auth";
-import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
+import { initializeFirestore, connectFirestoreEmulator } from "firebase/firestore";
 import { getStorage, connectStorageEmulator } from "firebase/storage";
 
-// Your web app's Firebase configuration
-// Note: envDir is '..' in vite.config.ts, so it reads from root .env
+/**
+ * MINREPORT - Firebase Admin Config (BRUTAL E2E PATCH)
+ */
+
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
     authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -16,24 +18,27 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-export const db = getFirestore(app);
-export const storage = getStorage(app);
+const auth = getAuth(app);
 
-// 🔧 CONFIGURACIÓN DE EMULADORES (Dynamic for Network Access)
-const MI_IP_IMAC = "192.168.1.82";
+// 🔥 FORZAR LONG POLLING PARA EVITAR FREEZE EN ADMIN (Global Setup Fix) 🔥
+const db = initializeFirestore(app, {
+    experimentalForceLongPolling: true, // 👈 Clave para estabilidad en tests automatizados
+});
 
-if (typeof window !== 'undefined') {
-    const isLocal = window.location.hostname === "localhost" ||
-        window.location.hostname === "127.0.0.1" ||
-        window.location.hostname === MI_IP_IMAC;
+const storage = getStorage(app);
 
-    if (isLocal) {
-        const EMULATOR_HOST = window.location.hostname === MI_IP_IMAC ? MI_IP_IMAC : "127.0.0.1";
-        console.log(`🔧 [ADMIN] Local/Network detected - Connecting to Emulators at ${EMULATOR_HOST}`);
+// 🔥🔥🔥 PARCHE DE EMERGENCIA E2E (ADMIN / POLLING) 🔥🔥🔥
+console.warn("%c🚨 ADMIN: EMULADORES ACTIVOS (LONG-POLLING) 🚨", "color: orange; font-weight: bold;");
 
-        connectAuthEmulator(auth, `http://${EMULATOR_HOST}:9190`, { disableWarnings: true });
-        connectFirestoreEmulator(db, EMULATOR_HOST, 8085);
-        connectStorageEmulator(storage, EMULATOR_HOST, 9195);
-    }
+try {
+    // Sincronizado a puerto 9190 (Auth real del proyecto) y 8085 (Firestore)
+    connectAuthEmulator(auth, "http://127.0.0.1:9190", { disableWarnings: true });
+    connectFirestoreEmulator(db, "127.0.0.1", 8085);
+    connectStorageEmulator(storage, "127.0.0.1", 9195);
+    console.log("✅ ADMIN: Emuladores vinculados con Polling.");
+} catch (e) {
+    console.error("❌ ADMIN: Error de vinculación:", e);
 }
+
+export { app, auth, db, storage };
+export default app;

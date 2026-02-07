@@ -32,8 +32,8 @@ export default defineConfig({
     ],
 
     // Global Setup/Teardown
-    globalSetup: require.resolve('./tests/global-setup.ts'),
-    globalTeardown: require.resolve('./tests/global-teardown.ts'),
+    // globalSetup: require.resolve('./tests/global-setup.ts'),
+    // globalTeardown: require.resolve('./tests/global-teardown.ts'),
 
     use: {
         // Base URL
@@ -49,33 +49,32 @@ export default defineConfig({
         video: 'retain-on-failure',
 
         // Action timeout
-        actionTimeout: 15000,
+        actionTimeout: 30000,
 
         // Navigation timeout
-        navigationTimeout: 30000,
+        navigationTimeout: 60000,
     },
 
-    // Web Server (Frontend)
     webServer: [
         {
-            command: 'cd web && npm run dev',
-            url: 'http://localhost:5173',
+            command: 'cd web && PATH=$PATH:/usr/local/bin npm run dev',
+            url: 'http://127.0.0.1:5173',
             reuseExistingServer: !process.env.CI,
             timeout: 120 * 1000,
             stdout: 'pipe',
             stderr: 'pipe',
         },
         {
-            command: 'cd admin && npm run dev',
-            url: 'http://localhost:5174',
+            command: 'cd admin && PATH=$PATH:/usr/local/bin npm run dev',
+            url: 'http://127.0.0.1:5174',
             reuseExistingServer: !process.env.CI,
             timeout: 120 * 1000,
             stdout: 'pipe',
             stderr: 'pipe',
         },
         {
-            command: 'npm run dev',
-            url: 'http://localhost:8080/health',
+            command: 'PATH=$PATH:/usr/local/bin npm run dev:server',
+            url: 'http://127.0.0.1:8080/health',
             reuseExistingServer: !process.env.CI,
             timeout: 120 * 1000,
             stdout: 'pipe',

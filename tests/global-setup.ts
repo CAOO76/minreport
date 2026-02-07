@@ -155,11 +155,13 @@ async function globalSetup(config: FullConfig) {
         // Esperar a que la URL cambie al dashboard o al root (que redirige)
         console.log('[GLOBAL-SETUP] Esperando redirección post-login...');
         try {
-            await page.waitForURL(url => url.pathname === '/' || url.pathname.includes('/dashboard'), {
-                timeout: 30000,
-                waitUntil: 'networkidle'
-            });
-            console.log('[GLOBAL-SETUP] ✅ Login exitoso. URL actual:', page.url());
+            // Esperar a que desaparezca el formulario de login
+            await page.waitForSelector('input[type="email"]', { state: 'hidden', timeout: 45000 });
+
+            // Esperar un poco más para que la redirección se complete
+            await page.waitForTimeout(2000);
+
+            console.log('[GLOBAL-SETUP] ✅ Redirección exitosa detectada:', page.url());
         } catch (err) {
             console.error('[GLOBAL-SETUP] ❌ Error de navegación post-login. Capturando pantalla...');
             await page.screenshot({ path: 'tests/screenshots/admin-login-fail.png' });

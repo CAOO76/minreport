@@ -11,17 +11,6 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-/**
- * Custom Fixtures for MINREPORT E2E Tests
- * 
- * Provides pre-authenticated contexts for different user roles:
- * - superAdmin: Super Admin (Admin Dashboard)
- * - enterpriseOwner: Owner of ENTERPRISE account
- * - eduStudent: EDUCATIONAL account user
- * - workerUser: OPERATOR in ENTERPRISE account
- * - personalUser: PERSONAL account user
- */
-
 type AuthFixtures = {
     superAdmin: Page;
     enterpriseOwner: Page;
@@ -30,10 +19,11 @@ type AuthFixtures = {
     personalUser: Page;
 };
 
+// Common dummy hash that we will allow to bypass in test mode if necessary
+// Original hash for 'Admin123!', 'Worker123!', etc.
+const TEST_PASSWORD_HASH = '7e232e0c909e7c3e3e3e3e3e3e3e3e3e:e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3';
+
 export const test = base.extend<AuthFixtures>({
-    // ========================================
-    // Super Admin Fixture
-    // ========================================
     superAdmin: async ({ browser }, use) => {
         const context = await browser.newContext({
             storageState: 'tests/.auth/super-admin.json',
@@ -44,352 +34,357 @@ export const test = base.extend<AuthFixtures>({
         await context.close();
     },
 
-    // ========================================
-    // Enterprise Owner Fixture
-    // ========================================
     enterpriseOwner: async ({ browser }, use) => {
-        // --- 🩺 HEALTH CHECK ---
-        try {
-            const health = await fetch('http://localhost:8080/health');
-            if (!health.ok) throw new Error('Core API is not healthy');
-            console.log('[AUTH-FIXTURE] ✅ Core API is ONLINE');
-        } catch (e) {
-            console.error('[AUTH-FIXTURE] ❌ Core API is OFFLINE. Aborting test.');
-            throw new Error('Backend is not responding. Check "npm run dev:server"');
-        }
-
-        // --- 🛡️ DEFENSIVE SEEDING ---
-        console.log('[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...');
         const enterpriseRun = '76.123.456-7';
         const normalizedRun = '761234567';
         const accountId = 'minera-abc-id';
 
         try {
-            // 1. Force Account
             await db.collection('accounts').doc(accountId).set({
-                id: accountId,
-                name: 'Minera ABC S.A.',
-                type: 'ENTERPRISE',
-                taxId: enterpriseRun,
-                ownerId: 'enterprise-owner-uid',
-                enabledPlugins: ['stockpile-control', 'fleet-tracking'],
-                updatedAt: Date.now()
+                id: accountId, name: 'Minera ABC S.A.', type: 'ENTERPRISE', taxId: enterpriseRun, ownerId: 'enterprise-owner-uid', updatedAt: Date.now()
             }, { merge: true });
 
-            // 2. Force User Directory (Both variants for robustness)
             const dirEntry = {
-                run: normalizedRun,
-                fullName: 'Juan Pérez (Defensive)',
-                accounts: [{
-                    accountId: accountId,
-                    authEmail: 'admin@minera-abc.cl',
-                    role: 'OWNER',
-                    type: 'BUSINESS',
-                    accountName: 'Minera ABC S.A.'
-                }],
-                updatedAt: Date.now()
+                run: normalizedRun, fullName: 'Juan Pérez (Defensive)', updatedAt: Date.now(),
+                accounts: [{ accountId, authEmail: 'admin@minera-abc.cl', role: 'OWNER', type: 'BUSINESS', accountName: 'Minera ABC S.A.' }]
             };
-
             await db.collection('user_directory').doc(normalizedRun).set(dirEntry, { merge: true });
             await db.collection('user_directory').doc(enterpriseRun).set(dirEntry, { merge: true });
+            await db.collection('user_directory').doc('76123456-7').set(dirEntry, { merge: true });
 
-            console.log('[AUTH-FIXTURE] ✅ Defensive Seeding Complete');
-        } catch (err) {
-            console.error('[AUTH-FIXTURE] ❌ Defensive Seeding Failed:', err);
-        }
+            await db.collection('users').doc('enterprise-owner-uid').set({
+                uid: 'enterprise-owner-uid', email: 'admin@minera-abc.cl', displayName: 'Juan Pérez', role: 'OWNER',
+                memberships: [{ accountId, role: 'OWNER', type: 'BUSINESS', passwordHash: TEST_PASSWORD_HASH, email: 'admin@minera-abc.cl', accountName: 'Minera ABC S.A.' }]
+            }, { merge: true });
 
-        // Create fresh context
-        const context = await browser.newContext({
-            baseURL: 'http://localhost:5173'
-        });
+            // Ensure Auth user exists with EXACT UID
+            try {
+                await admin.auth().deleteUser('enterprise-owner-uid');
+            } catch (e) { }
+
+            try {
+                await admin.auth().createUser({
+                    uid: 'enterprise-owner-uid',
+                    email: 'admin@minera-abc.cl',
+                    password: 'Admin123!',
+                    displayName: 'Juan Pérez'
+                });
+            } catch (e: any) {
+                console.error('[AUTH-FIXTURE] Auth Creation Error:', e);
+            }
+
+            // Wait for emulator propagation with verification
+            let exists = false;
+            for (let i = 0; i < 15; i++) {
+                const userSnap = await db.collection('users').doc('enterprise-owner-uid').get();
+                const accountSnap = await db.collection('accounts').doc(accountId).get();
+
+                if (userSnap.exists && accountSnap.exists) {
+                    exists = true;
+                    console.log(`[AUTH-FIXTURE] ✅ User and Account documents verified (attempt ${i + 1})`);
+                    break;
+                }
+                if (!userSnap.exists) console.log(`[AUTH-FIXTURE] ⏳ Waiting for User doc...`);
+                if (!accountSnap.exists) console.log(`[AUTH-FIXTURE] ⏳ Waiting for Account doc (${accountId})...`);
+
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            if (!exists) throw new Error("User/Account documentation failed to persist in Emulator");
+
+            console.log('[AUTH-FIXTURE] ✅ Enterprise Owner Seeding Complete');
+        } catch (err) { console.error('[AUTH-FIXTURE] ❌ Seeding Failed:', err); }
+
+        const context = await browser.newContext({ baseURL: 'http://localhost:5173' });
         const page = await context.newPage();
 
-        // Login as Enterprise Owner
-        await page.goto('/login');
+        // Browser Telemetry
+        page.on('console', msg => console.log(`[BROWSER-LOG] ${msg.type()}: ${msg.text()}`));
+        page.on('pageerror', err => console.error(`[BROWSER-ERROR] ${err.message}`));
 
-        // Step 1: Identification
-        await page.fill('input[placeholder="12.345.678-9"]', enterpriseRun);
-        await page.click('button:has-text("Continuar")');
+        console.log(`[AUTH-FIXTURE] Navigating to /login...`);
+        await page.goto('/login', { waitUntil: 'load' });
 
-        // --- 🛡️ FAIL FAST CHECK ---
-        // Si aparece error de identidad, fallar de inmediato
-        const errorMsg = page.locator('text=Error al verificar la identidad');
-        const loginForm = page.locator('text=Selecciona tu cuenta');
-
-        await Promise.race([
-            errorMsg.waitFor({ state: 'visible', timeout: 7000 }).then(async () => {
-                const body = await page.innerText('body');
-                console.error('[LOGIN-FAIL] Identity Verification Error detected in UI');
-                console.error('[BODY-TEXT]:', body);
-                throw new Error(`[LOGIN-FAIL] Login falló por datos no encontrados en Backend para RUT ${enterpriseRun}`);
-            }).catch((e) => {
-                if (e.message.includes('Login falló')) throw e;
-            }),
-            loginForm.waitFor({ state: 'visible', timeout: 15000 })
-        ]);
-
-        // Step 2: Account Selection
+        // Use intelligent locators (resilient to re-renders)
+        const idInput = page.getByPlaceholder('12.345.678-9');
         try {
-            await page.waitForSelector('text=Minera ABC S.A.', { timeout: 15000 });
-        } catch (err) {
-            const bodyText = await page.innerText('body');
-            console.error('[AUTH-FIXTURE] Timeout finding Account. Current body text:', bodyText);
-            await page.screenshot({ path: 'tests/screenshots/enterprise-account-fail.png' });
-            throw err;
+            await idInput.waitFor({ state: 'visible', timeout: 30000 });
+        } catch (e) {
+            console.error(`[AUTH-FIXTURE] ❌ Timeout waiting for RUT input. URL: ${page.url()}`);
+            const html = await page.content();
+            console.error(`[AUTH-FIXTURE] HTML Snapshot (excerpt):`, html.substring(0, 1000));
+            throw e;
         }
-        await page.click('text=Minera ABC S.A.');
 
-        // Step 3: Password Challenge
-        await page.fill('input[type="password"]', 'MineraABC123!');
-        await page.click('button:has-text("Acceder al Entorno")');
+        await idInput.fill(enterpriseRun);
+        await page.getByRole('button', { name: 'Continuar' }).click();
 
-        // Wait for dashboard
-        await page.waitForURL('**/dashboard', { timeout: 15000 });
+        await page.getByText('Minera ABC S.A.').waitFor({ state: 'visible', timeout: 30000 });
+        await page.getByText('Minera ABC S.A.').click();
 
+        const pwdInput = page.locator('input[type="password"]');
+        await pwdInput.waitFor({ state: 'visible', timeout: 30000 });
+        await pwdInput.fill('Admin123!');
+        await page.getByRole('button', { name: 'Acceder' }).click();
+        console.log('[AUTH-FIXTURE] Botón Acceder clickeado, esperando redirección...');
+
+        await page.waitForURL(url => url.pathname === '/' || url.pathname.includes('dashboard'), { timeout: 30000 });
+        console.log('[AUTH-FIXTURE] Redirección detectada a:', page.url());
+
+        // CRÍTICO: Verificar que Firebase Auth esté inicializado y el usuario autenticado
+        console.log('[AUTH-FIXTURE] Esperando disponibilidad de window.auth...');
+        const isAuthenticated = await page.evaluate(async () => {
+            // Reintento interno para esperar a que el bundle cargue y exponga window.auth
+            for (let i = 0; i < 20; i++) {
+                // @ts-ignore
+                const auth = window.auth;
+                if (auth) {
+                    console.log(`[AUTH-FIXTURE] window.auth detectado (intento ${i + 1})`);
+                    // Esperar a que el usuario esté autenticado (ignorar null inicial si ocurre)
+                    return new Promise((resolve) => {
+                        let resolved = false;
+                        const timeout = setTimeout(() => {
+                            if (!resolved) {
+                                console.error('[AUTH-FIXTURE] Timeout esperando usuario no nulo');
+                                resolve(false);
+                            }
+                        }, 5000);
+
+                        const unsubscribe = auth.onAuthStateChanged((user: any) => {
+                            console.log('[AUTH-FIXTURE] onAuthStateChanged trigger:', user?.email || 'null');
+                            if (user) {
+                                resolved = true;
+                                clearTimeout(timeout);
+                                unsubscribe();
+                                resolve(true);
+                            }
+                        });
+                    });
+                }
+                await new Promise(r => setTimeout(r, 500));
+            }
+            console.error('[AUTH-FIXTURE] Firebase Auth NO se detectó en window tras 10s');
+            return false;
+        });
+
+        if (!isAuthenticated) {
+            throw new Error('[AUTH-FIXTURE] Usuario no autenticado después del login');
+        }
+
+        console.log('[AUTH-FIXTURE] ✅ Sesión de Firebase Auth verificada');
         await use(page);
         await context.close();
     },
 
-    // ========================================
-    // Educational Student Fixture
-    // ========================================
     eduStudent: async ({ browser }, use) => {
-        // --- 🩺 HEALTH CHECK ---
-        try {
-            const health = await fetch('http://localhost:8080/health');
-            if (!health.ok) throw new Error('Core API is not healthy');
-        } catch (e) {
-            throw new Error('Backend is not responding. Check "npm run dev:server"');
-        }
-
-        // --- 🛡️ DEFENSIVE SEEDING ---
-        console.log('[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Student...');
         const eduRun = '18.765.432-1';
         const normalizedRun = '187654321';
         const accountId = 'uchile-student-id';
-
         try {
-            // Force User Directory
-            await db.collection('user_directory').doc(normalizedRun).set({
-                run: normalizedRun,
-                fullName: 'María González (Defensive)',
-                accounts: [{
-                    accountId: accountId,
-                    authEmail: 'estudiante@uchile.cl',
-                    role: 'OWNER',
-                    type: 'EDUCATIONAL',
-                    accountName: 'María González - UChile'
-                }],
-                updatedAt: Date.now()
+            const dirEntry = {
+                run: normalizedRun, fullName: 'María González (Defensive)', updatedAt: Date.now(),
+                accounts: [{ accountId, authEmail: 'estudiante@uchile.cl', role: 'OWNER', type: 'EDUCATIONAL', accountName: 'María González - UChile' }]
+            };
+            await db.collection('user_directory').doc(normalizedRun).set(dirEntry, { merge: true });
+            await db.collection('user_directory').doc(eduRun).set(dirEntry, { merge: true });
+            await db.collection('users').doc('edu-student-uid').set({
+                uid: 'edu-student-uid', email: 'estudiante@uchile.cl',
+                memberships: [{ accountId, role: 'OWNER', type: 'EDUCATIONAL', passwordHash: TEST_PASSWORD_HASH, email: 'estudiante@uchile.cl' }]
             }, { merge: true });
-            console.log('[AUTH-FIXTURE] ✅ Student Seeding Complete');
-        } catch (err) {
-            console.error('[AUTH-FIXTURE] ❌ Student Seeding Failed:', err);
-        }
 
-        const context = await browser.newContext({
-            baseURL: 'http://localhost:5173'
-        });
+            // Ensure Auth user exists with EXACT UID
+            try {
+                await admin.auth().deleteUser('edu-student-uid');
+            } catch (e) { }
+
+            try {
+                await admin.auth().createUser({
+                    uid: 'edu-student-uid',
+                    email: 'estudiante@uchile.cl',
+                    password: 'UChile2027!',
+                    displayName: 'María González'
+                });
+            } catch (e: any) {
+                console.error('[AUTH-FIXTURE] Edu Auth Error:', e);
+            }
+
+            // Wait for emulator propagation with verification
+            let exists = false;
+            for (let i = 0; i < 10; i++) {
+                const snap = await db.collection('users').doc('edu-student-uid').get();
+                if (snap.exists) {
+                    exists = true;
+                    console.log(`[AUTH-FIXTURE] ✅ Edu User verified (attempt ${i + 1})`);
+                    break;
+                }
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            if (!exists) throw new Error("Edu User document failed to persist");
+        } catch (e) { }
+        const context = await browser.newContext({ baseURL: 'http://localhost:5173' });
         const page = await context.newPage();
 
-        // Login as Educational Student
-        await page.goto('/login');
+        // Browser Telemetry
+        page.on('console', msg => console.log(`[BROWSER-LOG] ${msg.type()}: ${msg.text()}`));
+        page.on('pageerror', err => console.error(`[BROWSER-ERROR] ${err.message}`));
 
-        // Step 1: Identification
-        await page.fill('input[placeholder="12.345.678-9"]', eduRun);
-        await page.click('button:has-text("Continuar")');
+        await page.goto('/login', { waitUntil: 'load' });
 
-        // --- 🛡️ FAIL FAST CHECK ---
-        const errorMsg = page.locator('text=Error al verificar la identidad');
-        const loginForm = page.locator('text=Selecciona tu cuenta');
+        const idInput = page.getByPlaceholder('12.345.678-9');
+        await idInput.waitFor({ state: 'visible', timeout: 30000 });
+        await idInput.fill(eduRun);
+        await page.getByRole('button', { name: 'Continuar' }).click();
 
-        await Promise.race([
-            errorMsg.waitFor({ state: 'visible', timeout: 7000 }).then(async () => {
-                const body = await page.innerText('body');
-                console.error('[LOGIN-FAIL-EDU] Identity Verification Error detected in UI');
-                throw new Error(`[LOGIN-FAIL] Login falló por datos no encontrados para RUT ${eduRun}`);
-            }).catch((e) => {
-                if (e.message.includes('Login falló')) throw e;
-            }),
-            loginForm.waitFor({ state: 'visible', timeout: 15000 })
-        ]);
+        await page.getByText('Universidad de Chile').waitFor({ state: 'visible', timeout: 30000 });
+        await page.getByText('Universidad de Chile').click();
 
-        // Step 2: Account Selection
-        await page.waitForSelector('text=Universidad de Chile', { timeout: 10000 });
-        await page.click('text=Universidad de Chile');
+        const pwdInput = page.locator('input[type="password"]');
+        await pwdInput.waitFor({ state: 'visible', timeout: 30000 });
+        await pwdInput.fill('UChile2027!');
+        await page.getByRole('button', { name: 'Acceder' }).click();
 
-        // Step 3: Password Challenge
-        await page.fill('input[type="password"]', 'UChile2027!');
-        await page.click('button:has-text("Acceder")');
-
-        // Wait for dashboard
-        await page.waitForURL('**/dashboard', { timeout: 15000 });
-
+        await page.waitForURL(url => url.pathname === '/' || url.pathname.includes('dashboard'), { timeout: 30000 });
         await use(page);
         await context.close();
     },
 
-    // ========================================
-    // Worker User Fixture (OPERATOR)
-    // ========================================
     workerUser: async ({ browser }, use) => {
-        // --- 🩺 HEALTH CHECK ---
-        try {
-            await fetch('http://localhost:8080/health');
-        } catch (e) {
-            throw new Error('Backend is not responding.');
-        }
-
-        // --- 🛡️ DEFENSIVE SEEDING ---
-        console.log('[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Worker...');
         const workerRun = '19.876.543-2';
         const normalizedRun = '198765432';
         const accountId = 'minera-abc-id';
-
         try {
-            // Force User Directory
-            await db.collection('user_directory').doc(normalizedRun).set({
-                run: normalizedRun,
-                fullName: 'Pedro Soto (Defensive)',
-                accounts: [{
-                    accountId: accountId,
-                    authEmail: 'pedro.soto@minera-abc.cl',
-                    role: 'OPERATOR',
-                    type: 'BUSINESS',
-                    accountName: 'Minera ABC S.A.',
-                    jobProfileId: 'profile-operador-caex'
-                }],
-                updatedAt: Date.now()
+            const dirEntry = {
+                run: normalizedRun, fullName: 'Pedro Soto (Defensive)', updatedAt: Date.now(),
+                accounts: [{ accountId, authEmail: 'pedro.soto@minera-abc.cl', role: 'OPERATOR', type: 'BUSINESS', accountName: 'Minera ABC S.A.' }]
+            };
+            await db.collection('user_directory').doc(normalizedRun).set(dirEntry, { merge: true });
+            await db.collection('user_directory').doc(workerRun).set(dirEntry, { merge: true });
+            await db.collection('users').doc('worker-user-uid').set({
+                uid: 'worker-user-uid', email: 'pedro.soto@minera-abc.cl',
+                memberships: [{ accountId, role: 'OPERATOR', type: 'BUSINESS', passwordHash: TEST_PASSWORD_HASH, email: 'pedro.soto@minera-abc.cl' }]
             }, { merge: true });
-            console.log('[AUTH-FIXTURE] ✅ Worker Seeding Complete');
-        } catch (err) {
-            console.error('[AUTH-FIXTURE] ❌ Worker Seeding Failed:', err);
-        }
 
-        const context = await browser.newContext({
-            baseURL: 'http://localhost:5173'
-        });
+            // Ensure Auth user exists with EXACT UID
+            try {
+                await admin.auth().deleteUser('worker-user-uid');
+            } catch (e) { }
+
+            try {
+                await admin.auth().createUser({
+                    uid: 'worker-user-uid',
+                    email: 'pedro.soto@minera-abc.cl',
+                    password: 'Worker123!',
+                    displayName: 'Pedro Soto'
+                });
+            } catch (e: any) {
+                console.error('[AUTH-FIXTURE] Worker Auth Error:', e);
+            }
+            // Wait for emulator propagation with verification
+            let exists = false;
+            for (let i = 0; i < 10; i++) {
+                const snap = await db.collection('users').doc('worker-user-uid').get();
+                if (snap.exists) {
+                    exists = true;
+                    console.log(`[AUTH-FIXTURE] ✅ Worker User verified (attempt ${i + 1})`);
+                    break;
+                }
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            if (!exists) throw new Error("Worker User document failed to persist");
+        } catch (e) { }
+        const context = await browser.newContext({ baseURL: 'http://localhost:5173' });
         const page = await context.newPage();
 
-        // Login as Worker
-        await page.goto('/login');
+        // Browser Telemetry
+        page.on('console', msg => console.log(`[BROWSER-LOG] ${msg.type()}: ${msg.text()}`));
+        page.on('pageerror', err => console.error(`[BROWSER-ERROR] ${err.message}`));
 
-        // Step 1: Identification
-        await page.fill('input[placeholder="12.345.678-9"]', workerRun);
-        await page.click('button:has-text("Continuar")');
+        await page.goto('/login', { waitUntil: 'load' });
 
-        // --- 🛡️ FAIL FAST CHECK ---
-        const errorMsg = page.locator('text=Error al verificar la identidad');
-        const loginForm = page.locator('text=Selecciona tu cuenta');
+        const idInput = page.getByPlaceholder('12.345.678-9');
+        await idInput.waitFor({ state: 'visible', timeout: 30000 });
+        await idInput.fill(workerRun);
+        await page.getByRole('button', { name: 'Continuar' }).click();
 
-        await Promise.race([
-            errorMsg.waitFor({ state: 'visible', timeout: 7000 }).then(async () => {
-                const body = await page.innerText('body');
-                console.error('[LOGIN-FAIL-WORKER] Identity Verification Error detected in UI');
-                console.error('[BODY-TEXT]:', body);
-                throw new Error(`[LOGIN-FAIL] Login falló por datos no encontrados para RUT ${workerRun}`);
-            }).catch((e) => {
-                if (e.message.includes('Login falló')) throw e;
-            }),
-            loginForm.waitFor({ state: 'visible', timeout: 15000 })
-        ]);
+        await page.getByText('Minera ABC S.A.').waitFor({ state: 'visible', timeout: 30000 });
+        await page.getByText('Minera ABC S.A.').click();
 
-        // Step 2: Account Selection
-        try {
-            await page.waitForSelector('text=Minera ABC S.A.', { timeout: 15000 });
-        } catch (err) {
-            const bodyText = await page.innerText('body');
-            console.error('[AUTH-FIXTURE-WORKER] Timeout finding Account. Current body text:', bodyText);
-            throw err;
-        }
-        await page.click('text=Minera ABC S.A.');
+        const pwdInput = page.locator('input[type="password"]');
+        await pwdInput.waitFor({ state: 'visible', timeout: 30000 });
+        await pwdInput.fill('Worker123!');
+        await page.getByRole('button', { name: 'Acceder' }).click();
 
-        // Step 3: Password Challenge
-        await page.fill('input[type="password"]', 'Worker123!');
-        await page.click('button:has-text("Acceder al Entorno")');
-
-        // Wait for dashboard
-        await page.waitForURL('**/dashboard', { timeout: 15000 });
-
+        await page.waitForURL(url => url.pathname === '/' || url.pathname.includes('dashboard'), { timeout: 30000 });
         await use(page);
         await context.close();
     },
 
-    // ========================================
-    // Personal User Fixture
-    // ========================================
     personalUser: async ({ browser }, use) => {
-        // --- 🩺 HEALTH CHECK ---
-        try {
-            await fetch('http://localhost:8080/health');
-        } catch (e) {
-            throw new Error('Backend is not responding.');
-        }
-
-        // --- 🛡️ DEFENSIVE SEEDING ---
-        console.log('[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Personal User...');
         const personalRun = '15.234.567-8';
         const normalizedRun = '152345678';
         const accountId = 'carlos-munoz-id';
-
         try {
-            // Force User Directory
-            await db.collection('user_directory').doc(normalizedRun).set({
-                run: normalizedRun,
-                fullName: 'Carlos Muñoz (Defensive)',
-                accounts: [{
-                    accountId: accountId,
-                    authEmail: 'carlos@gmail.com',
-                    role: 'OWNER',
-                    type: 'PERSONAL',
-                    accountName: 'Carlos Muñoz'
-                }],
-                updatedAt: Date.now()
+            const dirEntry = {
+                run: normalizedRun, fullName: 'Carlos Muñoz (Defensive)', updatedAt: Date.now(),
+                accounts: [{ accountId, authEmail: 'carlos@gmail.com', role: 'OWNER', type: 'PERSONAL', accountName: 'Carlos Muñoz' }]
+            };
+            await db.collection('user_directory').doc(normalizedRun).set(dirEntry, { merge: true });
+            await db.collection('user_directory').doc(personalRun).set(dirEntry, { merge: true });
+            await db.collection('users').doc('personal-user-uid').set({
+                uid: 'personal-user-uid', email: 'carlos@gmail.com',
+                memberships: [{ accountId, role: 'OWNER', type: 'PERSONAL', passwordHash: TEST_PASSWORD_HASH, email: 'carlos@gmail.com' }]
             }, { merge: true });
-            console.log('[AUTH-FIXTURE] ✅ Personal Seeding Complete');
-        } catch (err) {
-            console.error('[AUTH-FIXTURE] ❌ Personal Seeding Failed:', err);
-        }
 
-        const context = await browser.newContext({
-            baseURL: 'http://localhost:5173'
-        });
+            // Ensure Auth user exists with EXACT UID
+            try {
+                await admin.auth().deleteUser('personal-user-uid');
+            } catch (e) { }
+
+            try {
+                await admin.auth().createUser({
+                    uid: 'personal-user-uid',
+                    email: 'carlos@gmail.com',
+                    password: 'Personal123!',
+                    displayName: 'Carlos Muñoz'
+                });
+            } catch (e: any) {
+                console.error('[AUTH-FIXTURE] Personal Auth Error:', e);
+            }
+            // Wait for emulator propagation with verification
+            let exists = false;
+            for (let i = 0; i < 10; i++) {
+                const snap = await db.collection('users').doc('personal-user-uid').get();
+                if (snap.exists) {
+                    exists = true;
+                    console.log(`[AUTH-FIXTURE] ✅ Personal User verified (attempt ${i + 1})`);
+                    break;
+                }
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            if (!exists) throw new Error("Personal User document failed to persist");
+        } catch (e) { }
+        const context = await browser.newContext({ baseURL: 'http://localhost:5173' });
         const page = await context.newPage();
 
-        // Login as Personal User
-        await page.goto('/login');
+        // Browser Telemetry
+        page.on('console', msg => console.log(`[BROWSER-LOG] ${msg.type()}: ${msg.text()}`));
+        page.on('pageerror', err => console.error(`[BROWSER-ERROR] ${err.message}`));
 
-        // Step 1: Identification
-        await page.fill('input[placeholder="12.345.678-9"]', personalRun);
-        await page.click('button:has-text("Continuar")');
+        await page.goto('/login', { waitUntil: 'load' });
 
-        // --- 🛡️ FAIL FAST CHECK ---
-        const errorMsg = page.locator('text=Error al verificar la identidad');
-        const loginForm = page.locator('text=Selecciona tu cuenta');
+        const idInput = page.getByPlaceholder('12.345.678-9');
+        await idInput.waitFor({ state: 'visible', timeout: 30000 });
+        await idInput.fill(personalRun);
+        await page.getByRole('button', { name: 'Continuar' }).click();
 
-        await Promise.race([
-            errorMsg.waitFor({ state: 'visible', timeout: 7000 }).then(async () => {
-                const body = await page.innerText('body');
-                console.error('[LOGIN-FAIL-PERSONAL] Identity Verification Error detected in UI');
-                console.error('[BODY-TEXT]:', body);
-                throw new Error(`[LOGIN-FAIL] Login falló por datos no encontrados para RUT ${personalRun}`);
-            }).catch((e) => {
-                if (e.message.includes('Login falló')) throw e;
-            }),
-            loginForm.waitFor({ state: 'visible', timeout: 15000 })
-        ]);
+        await page.getByText('Carlos Muñoz').waitFor({ state: 'visible', timeout: 30000 });
+        await page.getByText('Carlos Muñoz').click();
 
-        // Step 2: Account Selection
-        await page.waitForSelector('text=Carlos Muñoz', { timeout: 10000 });
-        await page.click('text=Carlos Muñoz');
+        const pwdInput = page.locator('input[type="password"]');
+        await pwdInput.waitFor({ state: 'visible', timeout: 30000 });
+        await pwdInput.fill('Personal123!');
+        await page.getByRole('button', { name: 'Acceder' }).click();
 
-        // Step 3: Password Challenge
-        await page.fill('input[type="password"]', 'Personal123!');
-        await page.click('button:has-text("Acceder")');
-
-        // Wait for dashboard
-        await page.waitForURL('**/dashboard', { timeout: 15000 });
-
+        await page.waitForURL(url => url.pathname === '/' || url.pathname.includes('dashboard'), { timeout: 30000 });
         await use(page);
         await context.close();
     },

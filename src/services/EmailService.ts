@@ -49,6 +49,11 @@ export class EmailService {
         const accountIdMatch = options.html.match(/[?&]accountId=([^&"'\s]+)/);
         const taxIdMatch = options.html.match(/[?&]taxId=([^&"'\s]+)/);
 
+        console.log(`[EmailService][MOCK] Extracted params:`, {
+            accountId: accountIdMatch ? accountIdMatch[1] : 'MISSING',
+            taxId: taxIdMatch ? taxIdMatch[1] : 'MISSING',
+            oobCode: oobCodeMatch ? oobCodeMatch[1] : 'MISSING'
+        });
         const emailDoc = {
             to: options.to,
             subject: options.subject,

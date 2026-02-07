@@ -8,7 +8,7 @@ const config: CapacitorConfig = {
         // 🔥 LIVE RELOAD: Apunta a tu servidor Vite local (DESARROLLO)
         // ⚠️ Este archivo es para desarrollo con Android Studio
         // ⚠️ Para APK de producción, usa: npm run build:apk
-        url: 'http://192.168.1.87:5173',
+        url: 'http://192.168.1.86:5175',
         cleartext: true,
         androidScheme: 'http'
     },

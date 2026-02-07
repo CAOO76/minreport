@@ -4,8 +4,8 @@
     "rootDir": "/Volumes/CODE/MINREPORT iMac/minreport/tests",
     "forbidOnly": false,
     "fullyParallel": false,
-    "globalSetup": "/Volumes/CODE/MINREPORT iMac/minreport/tests/global-setup.ts",
-    "globalTeardown": "/Volumes/CODE/MINREPORT iMac/minreport/tests/global-teardown.ts",
+    "globalSetup": null,
+    "globalTeardown": null,
     "globalTimeout": 0,
     "grep": {},
     "grepInvert": null,
@@ -160,7 +160,7 @@
           "specs": [
             {
               "title": "Debería completar todo el flujo desde configuración de owner hasta dashboard de trabajador",
-              "ok": false,
+              "ok": true,
               "tags": [],
               "tests": [
                 {
@@ -173,85 +173,442 @@
                     {
                       "workerIndex": 0,
                       "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 23689,
-                      "error": {
-                        "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================",
-                        "stack": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)",
-                        "location": {
-                          "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                          "column": 20,
-                          "line": 147
-                        },
-                        "snippet": "\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                            "column": 20,
-                            "line": 147
-                          },
-                          "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)\u001b[22m"
-                        },
-                        {
-                          "location": {
-                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                            "column": 20,
-                            "line": 147
-                          },
-                          "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)\u001b[22m"
-                        }
-                      ],
+                      "status": "passed",
+                      "duration": 11157,
+                      "errors": [],
                       "stdout": [
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                          "text": "[AUTH-FIXTURE] ✅ User and Account documents verified (attempt 1)\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                          "text": "[AUTH-FIXTURE] ✅ Enterprise Owner Seeding Complete\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                          "text": "[AUTH-FIXTURE] Navigating to /login...\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                          "text": "[BROWSER-LOG] debug: [vite] connecting...\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                          "text": "[BROWSER-LOG] debug: [vite] connected.\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                          "text": "[BROWSER-LOG] info: %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: %c🚨 FRONTEND: EMULADORES ACTIVOS (HTTP/LONG-POLLING) 🚨 color: orange; font-weight: bold; font-size: 14px;\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ FRONTEND: Conexión emuladores (localhost) exitosa.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🛠️ E2E: Firebase auth/db/firestore expuestos en window.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ Firebase inicializado correctamente\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 📍 Región configurada: southamerica-west1\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🗄️ Proyecto: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ⛔ App Engine: PROHIBIDO\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Plugin registrado: Stockpile Control (v1.0.5)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: Branding settings not found in Firestore.\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Botón Acceder clickeado, esperando redirección...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Redirección detectada a: http://localhost:5173/\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Esperando disponibilidad de window.auth...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Subscribing to Account: minera-abc-id\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] window.auth detectado (intento 1)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] onAuthStateChanged trigger: admin@minera-abc.cl\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Sesión de Firebase Auth verificada\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Navegando a Perfiles de Cargo (vía Menú Lateral)...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Snapshot for UID enterprise-owner-uid exists: true\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 1920, isMobile: false\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Desktop)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 1920, isMobile: false\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Desktop)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id [stockpile-control, fleet-tracking]\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id [stockpile-control, fleet-tracking]\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Esperando título Perfiles de Cargo...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] Montando JobProfilesPage\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] Montando JobProfilesPage\n"
+                        },
+                        {
+                          "text": "[E2E-POM] ✅ Título detectado en el DOM\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Abriendo modal de nuevo perfil...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [JobProfileManager] Perfiles cargados: 44\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Completando detalles: Super Operador\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Activando plugin: stockpile-control\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Guardando perfil...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [JobProfileManager] Perfiles cargados: 45\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Verificando perfil en lista: Super Operador\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Navegando a Staff (vía Menú Lateral)...\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Accediendo al formulario de Staff (ya visible)...\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Completando datos del trabajador: Miguel Integración\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [ProfileService] Profile saved: AkrQ0Y8vSQvFqxy7bQEV\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Seleccionando perfil: Super Operador\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Haciendo clic en Vincular Trabajador...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StaffService] Iniciando onboarding: {run: 205556664, email: miguel.integracion@abc.cl, accountId: minera-abc-id}\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StaffService] Creando nueva entrada en user_directory\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StaffService] Verificando usuario en Auth...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StaffService] Usuario existente encontrado: pVOdw1esW82ErAQYbfcpAdUHDU3n\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StaffService] Vinculando cuenta en user_directory\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StaffService] Agregando miembro a la cuenta\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StaffService] ✅ Onboarding completado exitosamente\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] debug: [vite] connecting...\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] debug: [vite] connected.\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] info: %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] warning: %c🚨 FRONTEND: EMULADORES ACTIVOS (HTTP/LONG-POLLING) 🚨 color: orange; font-weight: bold; font-size: 14px;\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: ✅ FRONTEND: Conexión emuladores (localhost) exitosa.\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: 🛠️ E2E: Firebase auth/db/firestore expuestos en window.\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: ✅ Firebase inicializado correctamente\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: 📍 Región configurada: southamerica-west1\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: 🗄️ Proyecto: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: ⛔ App Engine: PROHIBIDO\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [SDK] Plugin registrado: Stockpile Control (v1.0.5)\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] warning: Branding settings not found in Firestore.\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [AUTH-CONTEXT] Subscribing to Account: minera-abc-id\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [AUTH-CONTEXT] Snapshot for UID pVOdw1esW82ErAQYbfcpAdUHDU3n exists: true\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id [stockpile-control, fleet-tracking]\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id [stockpile-control, fleet-tracking]\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] warning: [StockpileControl] No se recibió Storage API en el contexto\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] warning: [StockpileControl] No se recibió Storage API en el contexto\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ User and Account documents verified (attempt 1)\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Enterprise Owner Seeding Complete\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Navigating to /login...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] debug: [vite] connecting...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] debug: [vite] connected.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] info: %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: %c🚨 FRONTEND: EMULADORES ACTIVOS (HTTP/LONG-POLLING) 🚨 color: orange; font-weight: bold; font-size: 14px;\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ FRONTEND: Conexión emuladores (localhost) exitosa.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🛠️ E2E: Firebase auth/db/firestore expuestos en window.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ Firebase inicializado correctamente\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 📍 Región configurada: southamerica-west1\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🗄️ Proyecto: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ⛔ App Engine: PROHIBIDO\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Plugin registrado: Stockpile Control (v1.0.5)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: Branding settings not found in Firestore.\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Botón Acceder clickeado, esperando redirección...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Redirección detectada a: http://localhost:5173/\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Esperando disponibilidad de window.auth...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Subscribing to Account: minera-abc-id\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] window.auth detectado (intento 1)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] onAuthStateChanged trigger: admin@minera-abc.cl\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Sesión de Firebase Auth verificada\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Snapshot for UID enterprise-owner-uid exists: true\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 1920, isMobile: false\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Desktop)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 1920, isMobile: false\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Desktop)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id [stockpile-control, fleet-tracking]\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id [stockpile-control, fleet-tracking]\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
                         }
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-02-06T22:42:14.394Z",
+                      "startTime": "2026-02-07T05:04:40.224Z",
                       "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Desktop-Chrome/test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Desktop-Chrome/error-context.md"
-                        },
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Desktop-Chrome/test-failed-2.png"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                        "column": 20,
-                        "line": 147
-                      }
+                      "attachments": []
                     }
                   ],
-                  "status": "unexpected"
+                  "status": "expected"
                 }
               ],
               "id": "b1587dd9eba7a633c965-bffb31f01b8c62e2aae1",
@@ -261,111 +618,298 @@
             },
             {
               "title": "Debería completar todo el flujo desde configuración de owner hasta dashboard de trabajador",
-              "ok": false,
+              "ok": true,
               "tags": [],
               "tests": [
                 {
                   "timeout": 60000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
+                  "annotations": [
+                    {
+                      "type": "skip",
+                      "description": "Firefox no soporta la emulación móvil requerida en el Acto 4.",
+                      "location": {
+                        "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/e2e/specs/full_integration.spec.ts",
+                        "line": 23,
+                        "column": 14
+                      }
+                    }
+                  ],
+                  "expectedStatus": "skipped",
                   "projectId": "Desktop Firefox",
                   "projectName": "Desktop Firefox",
                   "results": [
                     {
                       "workerIndex": 1,
                       "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 3823,
-                      "error": {
-                        "message": "Error: [LOGIN-FAIL] Login falló por datos no encontrados en Backend para RUT 76.123.456-7",
-                        "stack": "Error: [LOGIN-FAIL] Login falló por datos no encontrados en Backend para RUT 76.123.456-7\n    at /Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:124:23\n    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:119:9)",
-                        "location": {
-                          "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                          "column": 23,
-                          "line": 124
-                        },
-                        "snippet": "\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:124\n\n\u001b[0m \u001b[90m 122 |\u001b[39m                 console\u001b[33m.\u001b[39merror(\u001b[32m'[LOGIN-FAIL] Identity Verification Error detected in UI'\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 123 |\u001b[39m                 console\u001b[33m.\u001b[39merror(\u001b[32m'[BODY-TEXT]:'\u001b[39m\u001b[33m,\u001b[39m body)\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 124 |\u001b[39m                 \u001b[36mthrow\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mError\u001b[39m(\u001b[32m`[LOGIN-FAIL] Login falló por datos no encontrados en Backend para RUT ${enterpriseRun}`\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                       \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 125 |\u001b[39m             })\u001b[33m.\u001b[39m\u001b[36mcatch\u001b[39m((e) \u001b[33m=>\u001b[39m {\n \u001b[90m 126 |\u001b[39m                 \u001b[36mif\u001b[39m (e\u001b[33m.\u001b[39mmessage\u001b[33m.\u001b[39mincludes(\u001b[32m'Login falló'\u001b[39m)) \u001b[36mthrow\u001b[39m e\u001b[33m;\u001b[39m\n \u001b[90m 127 |\u001b[39m             })\u001b[33m,\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                            "column": 23,
-                            "line": 124
-                          },
-                          "message": "Error: [LOGIN-FAIL] Login falló por datos no encontrados en Backend para RUT 76.123.456-7\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:124\n\n\u001b[0m \u001b[90m 122 |\u001b[39m                 console\u001b[33m.\u001b[39merror(\u001b[32m'[LOGIN-FAIL] Identity Verification Error detected in UI'\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 123 |\u001b[39m                 console\u001b[33m.\u001b[39merror(\u001b[32m'[BODY-TEXT]:'\u001b[39m\u001b[33m,\u001b[39m body)\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 124 |\u001b[39m                 \u001b[36mthrow\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mError\u001b[39m(\u001b[32m`[LOGIN-FAIL] Login falló por datos no encontrados en Backend para RUT ${enterpriseRun}`\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                       \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 125 |\u001b[39m             })\u001b[33m.\u001b[39m\u001b[36mcatch\u001b[39m((e) \u001b[33m=>\u001b[39m {\n \u001b[90m 126 |\u001b[39m                 \u001b[36mif\u001b[39m (e\u001b[33m.\u001b[39mmessage\u001b[33m.\u001b[39mincludes(\u001b[32m'Login falló'\u001b[39m)) \u001b[36mthrow\u001b[39m e\u001b[33m;\u001b[39m\n \u001b[90m 127 |\u001b[39m             })\u001b[33m,\u001b[39m\u001b[0m\n\u001b[2m    at /Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:124:23\u001b[22m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:119:9)\u001b[22m"
-                        },
-                        {
-                          "location": {
-                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                            "column": 23,
-                            "line": 124
-                          },
-                          "message": "Error: [LOGIN-FAIL] Login falló por datos no encontrados en Backend para RUT 76.123.456-7\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:124\n\n\u001b[0m \u001b[90m 122 |\u001b[39m                 console\u001b[33m.\u001b[39merror(\u001b[32m'[LOGIN-FAIL] Identity Verification Error detected in UI'\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 123 |\u001b[39m                 console\u001b[33m.\u001b[39merror(\u001b[32m'[BODY-TEXT]:'\u001b[39m\u001b[33m,\u001b[39m body)\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 124 |\u001b[39m                 \u001b[36mthrow\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mError\u001b[39m(\u001b[32m`[LOGIN-FAIL] Login falló por datos no encontrados en Backend para RUT ${enterpriseRun}`\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                       \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 125 |\u001b[39m             })\u001b[33m.\u001b[39m\u001b[36mcatch\u001b[39m((e) \u001b[33m=>\u001b[39m {\n \u001b[90m 126 |\u001b[39m                 \u001b[36mif\u001b[39m (e\u001b[33m.\u001b[39mmessage\u001b[33m.\u001b[39mincludes(\u001b[32m'Login falló'\u001b[39m)) \u001b[36mthrow\u001b[39m e\u001b[33m;\u001b[39m\n \u001b[90m 127 |\u001b[39m             })\u001b[33m,\u001b[39m\u001b[0m\n\u001b[2m    at /Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:124:23\u001b[22m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:119:9)\u001b[22m"
-                        }
-                      ],
+                      "status": "skipped",
+                      "duration": 5031,
+                      "errors": [],
                       "stdout": [
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                          "text": "[AUTH-FIXTURE] ✅ User and Account documents verified (attempt 1)\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                          "text": "[AUTH-FIXTURE] ✅ Enterprise Owner Seeding Complete\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                          "text": "[AUTH-FIXTURE] Navigating to /login...\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                          "text": "[BROWSER-LOG] debug: [vite] connecting...\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                          "text": "[BROWSER-LOG] debug: [vite] connected.\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                          "text": "[BROWSER-LOG] info: Download the React DevTools for a better development experience: https://reactjs.org/link/react-devtools\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: 🚨 FRONTEND: EMULADORES ACTIVOS (HTTP/LONG-POLLING) 🚨\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ FRONTEND: Conexión emuladores (localhost) exitosa.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🛠️ E2E: Firebase auth/db/firestore expuestos en window.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ Firebase inicializado correctamente\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 📍 Región configurada: southamerica-west1\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🗄️ Proyecto: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ⛔ App Engine: PROHIBIDO\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Plugin registrado: Stockpile Control (v1.0.5)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: Branding settings not found in Firestore.\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Botón Acceder clickeado, esperando redirección...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Redirección detectada a: http://localhost:5173/\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Esperando disponibilidad de window.auth...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Subscribing to Account: minera-abc-id\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] window.auth detectado (intento 1)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] onAuthStateChanged trigger: admin@minera-abc.cl\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Sesión de Firebase Auth verificada\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Snapshot for UID enterprise-owner-uid exists: true\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 1920, isMobile: false\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Desktop)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 1920, isMobile: false\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Desktop)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id Array\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id Array\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ User and Account documents verified (attempt 1)\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Enterprise Owner Seeding Complete\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Navigating to /login...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] debug: [vite] connecting...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] debug: [vite] connected.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] info: Download the React DevTools for a better development experience: https://reactjs.org/link/react-devtools\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: 🚨 FRONTEND: EMULADORES ACTIVOS (HTTP/LONG-POLLING) 🚨\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ FRONTEND: Conexión emuladores (localhost) exitosa.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🛠️ E2E: Firebase auth/db/firestore expuestos en window.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ Firebase inicializado correctamente\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 📍 Región configurada: southamerica-west1\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🗄️ Proyecto: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ⛔ App Engine: PROHIBIDO\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Plugin registrado: Stockpile Control (v1.0.5)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: Branding settings not found in Firestore.\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Botón Acceder clickeado, esperando redirección...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Redirección detectada a: http://localhost:5173/\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Esperando disponibilidad de window.auth...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] window.auth detectado (intento 1)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] onAuthStateChanged trigger: admin@minera-abc.cl\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Sesión de Firebase Auth verificada\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Subscribing to Account: minera-abc-id\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Snapshot for UID enterprise-owner-uid exists: true\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 1920, isMobile: false\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Desktop)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 1920, isMobile: false\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Desktop)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id Array\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id Array\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
                         }
                       ],
-                      "stderr": [
-                        {
-                          "text": "[LOGIN-FAIL] Identity Verification Error detected in UI\n"
-                        },
-                        {
-                          "text": "[BODY-TEXT]: ES | EN\nlight_mode\nMINREPORT\nHola de nuevo\n\nIngresa tu identificación para comenzar\n\nDOCUMENTO DE IDENTIFICACIÓN (RUT / RUN)\nError al verificar la identidad.\nContinuar\n\n¿No tienes una cuenta? Crear cuenta\n"
-                        },
-                        {
-                          "text": "[LOGIN-FAIL] Identity Verification Error detected in UI\n"
-                        },
-                        {
-                          "text": "[BODY-TEXT]: ES | EN\nlight_mode\nMINREPORT\nHola de nuevo\n\nIngresa tu identificación para comenzar\n\nDOCUMENTO DE IDENTIFICACIÓN (RUT / RUN)\nError al verificar la identidad.\nContinuar\n\n¿No tienes una cuenta? Crear cuenta\n"
-                        }
-                      ],
+                      "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-02-06T22:43:04.157Z",
-                      "annotations": [],
-                      "attachments": [
+                      "startTime": "2026-02-07T05:04:56.791Z",
+                      "annotations": [
                         {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Desktop-Firefox/test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Desktop-Firefox/error-context.md"
-                        },
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Desktop-Firefox/test-failed-2.png"
+                          "type": "skip",
+                          "description": "Firefox no soporta la emulación móvil requerida en el Acto 4.",
+                          "location": {
+                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/e2e/specs/full_integration.spec.ts",
+                            "line": 23,
+                            "column": 14
+                          }
                         }
                       ],
-                      "errorLocation": {
-                        "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                        "column": 23,
-                        "line": 124
-                      }
+                      "attachments": []
                     }
                   ],
-                  "status": "unexpected"
+                  "status": "skipped"
                 }
               ],
               "id": "b1587dd9eba7a633c965-618be77d49ce5fb00437",
@@ -375,7 +919,7 @@
             },
             {
               "title": "Debería completar todo el flujo desde configuración de owner hasta dashboard de trabajador",
-              "ok": false,
+              "ok": true,
               "tags": [],
               "tests": [
                 {
@@ -388,85 +932,427 @@
                     {
                       "workerIndex": 2,
                       "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 24397,
-                      "error": {
-                        "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================",
-                        "stack": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)",
-                        "location": {
-                          "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                          "column": 20,
-                          "line": 147
-                        },
-                        "snippet": "\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                            "column": 20,
-                            "line": 147
-                          },
-                          "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)\u001b[22m"
-                        },
-                        {
-                          "location": {
-                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                            "column": 20,
-                            "line": 147
-                          },
-                          "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)\u001b[22m"
-                        }
-                      ],
+                      "status": "passed",
+                      "duration": 12975,
+                      "errors": [],
                       "stdout": [
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                          "text": "[AUTH-FIXTURE] ✅ User and Account documents verified (attempt 1)\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                          "text": "[AUTH-FIXTURE] ✅ Enterprise Owner Seeding Complete\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                          "text": "[AUTH-FIXTURE] Navigating to /login...\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                          "text": "[BROWSER-LOG] info: Successfully preconnected to https://fonts.gstatic.com/\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                          "text": "[BROWSER-LOG] info: Successfully preconnected to https://fonts.googleapis.com/\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                          "text": "[BROWSER-LOG] debug: [vite] connecting...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] debug: [vite] connected.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: %c🚨 FRONTEND: EMULADORES ACTIVOS (HTTP/LONG-POLLING) 🚨 color: orange; font-weight: bold; font-size: 14px;\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ FRONTEND: Conexión emuladores (localhost) exitosa.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🛠️ E2E: Firebase auth/db/firestore expuestos en window.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ Firebase inicializado correctamente\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 📍 Región configurada: southamerica-west1\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🗄️ Proyecto: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ⛔ App Engine: PROHIBIDO\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Plugin registrado: Stockpile Control (v1.0.5)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: Branding settings not found in Firestore.\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Botón Acceder clickeado, esperando redirección...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Redirección detectada a: http://localhost:5173/\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Esperando disponibilidad de window.auth...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] window.auth detectado (intento 1)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] onAuthStateChanged trigger: admin@minera-abc.cl\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Sesión de Firebase Auth verificada\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Navegando a Perfiles de Cargo (vía Menú Lateral)...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Subscribing to Account: minera-abc-id\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Snapshot for UID enterprise-owner-uid exists: true\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 1920, isMobile: false\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Desktop)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 1920, isMobile: false\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Desktop)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id [stockpile-control, fleet-tracking]\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id [stockpile-control, fleet-tracking]\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] Montando JobProfilesPage\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] Montando JobProfilesPage\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Esperando título Perfiles de Cargo...\n"
+                        },
+                        {
+                          "text": "[E2E-POM] ✅ Título detectado en el DOM\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Abriendo modal de nuevo perfil...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [JobProfileManager] Perfiles cargados: 45\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Completando detalles: Super Operador\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Activando plugin: stockpile-control\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Guardando perfil...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [JobProfileManager] Perfiles cargados: 46\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Verificando perfil en lista: Super Operador\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Navegando a Staff (vía Menú Lateral)...\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Accediendo al formulario de Staff (ya visible)...\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Completando datos del trabajador: Miguel Integración\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [ProfileService] Profile saved: OH2QI3N2VXl2waJT3j5C\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Seleccionando perfil: Super Operador\n"
+                        },
+                        {
+                          "text": "[E2E-POM] Haciendo clic en Vincular Trabajador...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StaffService] Iniciando onboarding: {run: 205556664, email: miguel.integracion@abc.cl, accountId: minera-abc-id}\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StaffService] Creando nueva entrada en user_directory\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StaffService] Verificando usuario en Auth...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StaffService] Usuario existente encontrado: pVOdw1esW82ErAQYbfcpAdUHDU3n\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StaffService] Vinculando cuenta en user_directory\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StaffService] Agregando miembro a la cuenta\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StaffService] ✅ Onboarding completado exitosamente\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] info: Successfully preconnected to https://fonts.googleapis.com/\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] info: Successfully preconnected to https://fonts.gstatic.com/\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] info: Successfully preconnected to https://fonts.gstatic.com/\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] info: Successfully preconnected to https://fonts.gstatic.com/\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] debug: [vite] connecting...\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] debug: [vite] connected.\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] info: %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] warning: %c🚨 FRONTEND: EMULADORES ACTIVOS (HTTP/LONG-POLLING) 🚨 color: orange; font-weight: bold; font-size: 14px;\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: ✅ FRONTEND: Conexión emuladores (localhost) exitosa.\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: 🛠️ E2E: Firebase auth/db/firestore expuestos en window.\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: ✅ Firebase inicializado correctamente\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: 📍 Región configurada: southamerica-west1\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: 🗄️ Proyecto: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: ⛔ App Engine: PROHIBIDO\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [SDK] Plugin registrado: Stockpile Control (v1.0.5)\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] warning: Branding settings not found in Firestore.\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [AUTH-CONTEXT] Subscribing to Account: minera-abc-id\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] error: Failed to load resource: The network connection was lost.\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [AUTH-CONTEXT] Snapshot for UID pVOdw1esW82ErAQYbfcpAdUHDU3n exists: true\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id [stockpile-control, fleet-tracking]\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id [stockpile-control, fleet-tracking]\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] warning: [StockpileControl] No se recibió Storage API en el contexto\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[MOBILE-LOG] warning: [StockpileControl] No se recibió Storage API en el contexto\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ User and Account documents verified (attempt 1)\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Enterprise Owner Seeding Complete\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Navigating to /login...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] info: Successfully preconnected to https://fonts.googleapis.com/\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] info: Successfully preconnected to https://fonts.gstatic.com/\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] debug: [vite] connecting...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] debug: [vite] connected.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: %c🚨 FRONTEND: EMULADORES ACTIVOS (HTTP/LONG-POLLING) 🚨 color: orange; font-weight: bold; font-size: 14px;\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ FRONTEND: Conexión emuladores (localhost) exitosa.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🛠️ E2E: Firebase auth/db/firestore expuestos en window.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ Firebase inicializado correctamente\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 📍 Región configurada: southamerica-west1\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🗄️ Proyecto: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ⛔ App Engine: PROHIBIDO\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Plugin registrado: Stockpile Control (v1.0.5)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: Branding settings not found in Firestore.\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Botón Acceder clickeado, esperando redirección...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Redirección detectada a: http://localhost:5173/\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Esperando disponibilidad de window.auth...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] window.auth detectado (intento 1)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] onAuthStateChanged trigger: admin@minera-abc.cl\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Sesión de Firebase Auth verificada\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Subscribing to Account: minera-abc-id\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] error: Failed to load resource: The network connection was lost.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: [2026-02-07T05:05:25.682Z]  @firebase/firestore: Firestore (10.14.1): WebChannelConnection RPC 'Write' stream 0x6e850377 transport errored: jd\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Snapshot for UID enterprise-owner-uid exists: true\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 1920, isMobile: false\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Desktop)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 1920, isMobile: false\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Desktop)\n"
                         }
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-02-06T22:43:14.679Z",
+                      "startTime": "2026-02-07T05:05:09.666Z",
                       "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Desktop-Safari/test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Desktop-Safari/error-context.md"
-                        },
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Desktop-Safari/test-failed-2.png"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                        "column": 20,
-                        "line": 147
-                      }
+                      "attachments": []
                     }
                   ],
-                  "status": "unexpected"
+                  "status": "expected"
                 }
               ],
               "id": "b1587dd9eba7a633c965-80ef8c77be1df995e1c8",
@@ -476,98 +1362,298 @@
             },
             {
               "title": "Debería completar todo el flujo desde configuración de owner hasta dashboard de trabajador",
-              "ok": false,
+              "ok": true,
               "tags": [],
               "tests": [
                 {
                   "timeout": 60000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
+                  "annotations": [
+                    {
+                      "type": "skip",
+                      "description": "Este test integral requiere un host Desktop para la fase administrativa inicial.",
+                      "location": {
+                        "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/e2e/specs/full_integration.spec.ts",
+                        "line": 27,
+                        "column": 14
+                      }
+                    }
+                  ],
+                  "expectedStatus": "skipped",
                   "projectId": "Mobile Pixel 5",
                   "projectName": "Mobile Pixel 5",
                   "results": [
                     {
                       "workerIndex": 3,
                       "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 24150,
-                      "error": {
-                        "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================",
-                        "stack": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)",
-                        "location": {
-                          "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                          "column": 20,
-                          "line": 147
-                        },
-                        "snippet": "\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                            "column": 20,
-                            "line": 147
-                          },
-                          "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)\u001b[22m"
-                        },
-                        {
-                          "location": {
-                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                            "column": 20,
-                            "line": 147
-                          },
-                          "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)\u001b[22m"
-                        }
-                      ],
+                      "status": "skipped",
+                      "duration": 2812,
+                      "errors": [],
                       "stdout": [
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                          "text": "[AUTH-FIXTURE] ✅ User and Account documents verified (attempt 1)\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                          "text": "[AUTH-FIXTURE] ✅ Enterprise Owner Seeding Complete\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                          "text": "[AUTH-FIXTURE] Navigating to /login...\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                          "text": "[BROWSER-LOG] debug: [vite] connecting...\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                          "text": "[BROWSER-LOG] debug: [vite] connected.\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                          "text": "[BROWSER-LOG] info: %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: %c🚨 FRONTEND: EMULADORES ACTIVOS (HTTP/LONG-POLLING) 🚨 color: orange; font-weight: bold; font-size: 14px;\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ FRONTEND: Conexión emuladores (localhost) exitosa.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🛠️ E2E: Firebase auth/db/firestore expuestos en window.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ Firebase inicializado correctamente\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 📍 Región configurada: southamerica-west1\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🗄️ Proyecto: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ⛔ App Engine: PROHIBIDO\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Plugin registrado: Stockpile Control (v1.0.5)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: Branding settings not found in Firestore.\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Botón Acceder clickeado, esperando redirección...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Redirección detectada a: http://localhost:5173/\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Esperando disponibilidad de window.auth...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Subscribing to Account: minera-abc-id\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] window.auth detectado (intento 1)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] onAuthStateChanged trigger: admin@minera-abc.cl\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Sesión de Firebase Auth verificada\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Snapshot for UID enterprise-owner-uid exists: true\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 393, isMobile: true\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Mobile)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 393, isMobile: true\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Mobile)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id [stockpile-control, fleet-tracking]\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id [stockpile-control, fleet-tracking]\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ User and Account documents verified (attempt 1)\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Enterprise Owner Seeding Complete\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Navigating to /login...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] debug: [vite] connecting...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] debug: [vite] connected.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] info: %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: %c🚨 FRONTEND: EMULADORES ACTIVOS (HTTP/LONG-POLLING) 🚨 color: orange; font-weight: bold; font-size: 14px;\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ FRONTEND: Conexión emuladores (localhost) exitosa.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🛠️ E2E: Firebase auth/db/firestore expuestos en window.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ Firebase inicializado correctamente\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 📍 Región configurada: southamerica-west1\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🗄️ Proyecto: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ⛔ App Engine: PROHIBIDO\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Plugin registrado: Stockpile Control (v1.0.5)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: Branding settings not found in Firestore.\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Botón Acceder clickeado, esperando redirección...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Redirección detectada a: http://localhost:5173/\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Esperando disponibilidad de window.auth...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Subscribing to Account: minera-abc-id\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] window.auth detectado (intento 1)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] onAuthStateChanged trigger: admin@minera-abc.cl\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Sesión de Firebase Auth verificada\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Snapshot for UID enterprise-owner-uid exists: true\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 393, isMobile: true\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Mobile)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 393, isMobile: true\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Mobile)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id [stockpile-control, fleet-tracking]\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id [stockpile-control, fleet-tracking]\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
                         }
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-02-06T22:44:07.018Z",
-                      "annotations": [],
-                      "attachments": [
+                      "startTime": "2026-02-07T05:05:27.806Z",
+                      "annotations": [
                         {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Mobile-Pixel-5/test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Mobile-Pixel-5/error-context.md"
-                        },
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Mobile-Pixel-5/test-failed-2.png"
+                          "type": "skip",
+                          "description": "Este test integral requiere un host Desktop para la fase administrativa inicial.",
+                          "location": {
+                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/e2e/specs/full_integration.spec.ts",
+                            "line": 27,
+                            "column": 14
+                          }
                         }
                       ],
-                      "errorLocation": {
-                        "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                        "column": 20,
-                        "line": 147
-                      }
+                      "attachments": []
                     }
                   ],
-                  "status": "unexpected"
+                  "status": "skipped"
                 }
               ],
               "id": "b1587dd9eba7a633c965-db874decb1d41cb8fca3",
@@ -577,98 +1663,265 @@
             },
             {
               "title": "Debería completar todo el flujo desde configuración de owner hasta dashboard de trabajador",
-              "ok": false,
+              "ok": true,
               "tags": [],
               "tests": [
                 {
                   "timeout": 60000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
+                  "annotations": [
+                    {
+                      "type": "skip",
+                      "description": "Este test integral requiere un host Desktop para la fase administrativa inicial.",
+                      "location": {
+                        "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/e2e/specs/full_integration.spec.ts",
+                        "line": 27,
+                        "column": 14
+                      }
+                    }
+                  ],
+                  "expectedStatus": "skipped",
                   "projectId": "Mobile iPhone 12",
                   "projectName": "Mobile iPhone 12",
                   "results": [
                     {
                       "workerIndex": 4,
                       "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 24357,
-                      "error": {
-                        "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================",
-                        "stack": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)",
-                        "location": {
-                          "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                          "column": 20,
-                          "line": 147
-                        },
-                        "snippet": "\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                            "column": 20,
-                            "line": 147
-                          },
-                          "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)\u001b[22m"
-                        },
-                        {
-                          "location": {
-                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                            "column": 20,
-                            "line": 147
-                          },
-                          "message": "TimeoutError: page.waitForURL: Timeout 15000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"**/dashboard\" until \"load\"\n  navigated to \"http://localhost:5173/\"\n  navigated to \"http://localhost:5173/login\"\n  navigated to \"http://localhost:5173/login\"\n============================================================\n\n\u001b[90m   at \u001b[39mfixtures/auth.fixture.ts:147\n\n\u001b[0m \u001b[90m 145 |\u001b[39m\n \u001b[90m 146 |\u001b[39m         \u001b[90m// Wait for dashboard\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 147 |\u001b[39m         \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mwaitForURL(\u001b[32m'**/dashboard'\u001b[39m\u001b[33m,\u001b[39m { timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                    \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 148 |\u001b[39m\n \u001b[90m 149 |\u001b[39m         \u001b[36mawait\u001b[39m use(page)\u001b[33m;\u001b[39m\n \u001b[90m 150 |\u001b[39m         \u001b[36mawait\u001b[39m context\u001b[33m.\u001b[39mclose()\u001b[33m;\u001b[39m\u001b[0m\n\u001b[2m    at Object.enterpriseOwner (/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts:147:20)\u001b[22m"
-                        }
-                      ],
+                      "status": "skipped",
+                      "duration": 3550,
+                      "errors": [],
                       "stdout": [
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                          "text": "[AUTH-FIXTURE] ✅ User and Account documents verified (attempt 1)\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                          "text": "[AUTH-FIXTURE] ✅ Enterprise Owner Seeding Complete\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                          "text": "[AUTH-FIXTURE] Navigating to /login...\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Core API is ONLINE\n"
+                          "text": "[BROWSER-LOG] info: Successfully preconnected to https://fonts.googleapis.com/\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] 🛡️ Performing Defensive Seeding for Enterprise Owner...\n"
+                          "text": "[BROWSER-LOG] info: Successfully preconnected to https://fonts.gstatic.com/\n"
                         },
                         {
-                          "text": "[AUTH-FIXTURE] ✅ Defensive Seeding Complete\n"
+                          "text": "[BROWSER-LOG] debug: [vite] connecting...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] debug: [vite] connected.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: %c🚨 FRONTEND: EMULADORES ACTIVOS (HTTP/LONG-POLLING) 🚨 color: orange; font-weight: bold; font-size: 14px;\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ FRONTEND: Conexión emuladores (localhost) exitosa.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🛠️ E2E: Firebase auth/db/firestore expuestos en window.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ Firebase inicializado correctamente\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 📍 Región configurada: southamerica-west1\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🗄️ Proyecto: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ⛔ App Engine: PROHIBIDO\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Plugin registrado: Stockpile Control (v1.0.5)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: Branding settings not found in Firestore.\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Botón Acceder clickeado, esperando redirección...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Redirección detectada a: http://localhost:5173/\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Esperando disponibilidad de window.auth...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Subscribing to Account: minera-abc-id\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] window.auth detectado (intento 1)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] onAuthStateChanged trigger: admin@minera-abc.cl\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Sesión de Firebase Auth verificada\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Snapshot for UID enterprise-owner-uid exists: true\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 390, isMobile: true\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Mobile)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 390, isMobile: true\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Mobile)\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ User and Account documents verified (attempt 1)\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Enterprise Owner Seeding Complete\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Navigating to /login...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] info: Successfully preconnected to https://fonts.googleapis.com/\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] info: Successfully preconnected to https://fonts.gstatic.com/\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] debug: [vite] connecting...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] debug: [vite] connected.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: %c🚨 FRONTEND: EMULADORES ACTIVOS (HTTP/LONG-POLLING) 🚨 color: orange; font-weight: bold; font-size: 14px;\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ FRONTEND: Conexión emuladores (localhost) exitosa.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🛠️ E2E: Firebase auth/db/firestore expuestos en window.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ✅ Firebase inicializado correctamente\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 📍 Región configurada: southamerica-west1\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: 🗄️ Proyecto: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: ⛔ App Engine: PROHIBIDO\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Plugin registrado: Stockpile Control (v1.0.5)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] warning: Branding settings not found in Firestore.\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Botón Acceder clickeado, esperando redirección...\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Redirección detectada a: http://localhost:5173/\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] Esperando disponibilidad de window.auth...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] window.auth detectado (intento 1)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-FIXTURE] onAuthStateChanged trigger: admin@minera-abc.cl\n"
+                        },
+                        {
+                          "text": "[AUTH-FIXTURE] ✅ Sesión de Firebase Auth verificada\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Subscribing to Account: minera-abc-id\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [AUTH-CONTEXT] Snapshot for UID enterprise-owner-uid exists: true\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] error: Failed to load resource: The network connection was lost.\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 390, isMobile: true\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Mobile)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DEBUG-DEVICE] innerWidth: 390, isMobile: true\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [E2E-NAV] RequireAuthLayout rendering Layout (Mobile)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id [stockpile-control, fleet-tracking]\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Initializing for Account:minera-abc-id [stockpile-control, fleet-tracking]\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Inicializando plugins...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK] Activando plugin: Stockpile Control...\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [StockpileControl] Plugin inicializado (SDK 2.0)\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: Contexto Seguro recibido: minreport-8f2a8\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [DataService] Inicializado con Secure Storage\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
+                        },
+                        {
+                          "text": "[BROWSER-LOG] log: [SDK-INIT] Plugins initialized successfully\n"
                         }
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-02-06T22:44:57.731Z",
-                      "annotations": [],
-                      "attachments": [
+                      "startTime": "2026-02-07T05:05:36.592Z",
+                      "annotations": [
                         {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Mobile-iPhone-12/test-failed-1.png"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Mobile-iPhone-12/error-context.md"
-                        },
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/Volumes/CODE/MINREPORT iMac/minreport/test-results/e2e-specs-full_integration-a8b7f-sta-dashboard-de-trabajador-Mobile-iPhone-12/test-failed-2.png"
+                          "type": "skip",
+                          "description": "Este test integral requiere un host Desktop para la fase administrativa inicial.",
+                          "location": {
+                            "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/e2e/specs/full_integration.spec.ts",
+                            "line": 27,
+                            "column": 14
+                          }
                         }
                       ],
-                      "errorLocation": {
-                        "file": "/Volumes/CODE/MINREPORT iMac/minreport/tests/fixtures/auth.fixture.ts",
-                        "column": 20,
-                        "line": 147
-                      }
+                      "attachments": []
                     }
                   ],
-                  "status": "unexpected"
+                  "status": "skipped"
                 }
               ],
               "id": "b1587dd9eba7a633c965-9d6b2fa72597aadc55a3",
@@ -683,11 +1936,11 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-02-06T22:40:47.339Z",
-    "duration": 300890.456,
-    "expected": 0,
-    "skipped": 0,
-    "unexpected": 5,
+    "startTime": "2026-02-07T05:04:28.179Z",
+    "duration": 76527.255,
+    "expected": 2,
+    "skipped": 3,
+    "unexpected": 0,
     "flaky": 0
   }
 }

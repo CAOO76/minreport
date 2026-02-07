@@ -9,18 +9,16 @@ function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs));
 }
 
-interface M3SwitchProps {
+interface M3SwitchProps extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onChange'> {
     checked: boolean;
     onChange: (checked: boolean) => void;
-    disabled?: boolean;
-    className?: string;
 }
 
 /**
  * M3Switch - Material Design 3 Compliant Switch
  * Pure CSS implementation with smooth transitions and premium touch.
  */
-export const M3Switch: React.FC<M3SwitchProps> = ({ checked, onChange, disabled, className }) => {
+export const M3Switch: React.FC<M3SwitchProps> = ({ checked, onChange, disabled, className, ...props }) => {
     return (
         <button
             type="button"
@@ -28,6 +26,7 @@ export const M3Switch: React.FC<M3SwitchProps> = ({ checked, onChange, disabled,
             aria-checked={checked}
             disabled={disabled}
             onClick={() => !disabled && onChange(!checked)}
+            {...props}
             className={cn(
                 "group relative inline-flex h-8 w-14 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-all duration-300 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-[#121212]",
                 checked
@@ -49,3 +48,5 @@ export const M3Switch: React.FC<M3SwitchProps> = ({ checked, onChange, disabled,
         </button>
     );
 };
+
+export default M3Switch;

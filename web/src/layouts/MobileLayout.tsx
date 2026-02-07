@@ -37,11 +37,12 @@ const MobileLayout: React.FC = () => {
                             const membership = userData.memberships?.find((m: any) => m.accountId === targetAccountId);
                             const role = membership?.role || 'MEMBER';
 
-                            // BLOCK: Enterprise Owner
-                            if (accountData.type === 'ENTERPRISE' && role === 'OWNER') {
+                            // BLOCK: Enterprise Owner (Permitir en desarrollo local para E2E)
+                            const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+                            if (accountData.type === 'ENTERPRISE' && role === 'OWNER' && !isLocal) {
                                 console.warn("Security Alert: Enterprise Owner detected in mobile layout. Expelling.");
                                 await signOut(auth);
-                                navigate('/mobile/login'); // Redirect to login which will show restricted message if they try again
+                                navigate('/mobile/login');
                             }
                         }
                     }

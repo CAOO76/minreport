@@ -31,16 +31,14 @@ export const setupAccountPassword = async (req: Request, res: Response) => {
             searchValues.add(`${body}-${dv}`);
         }
         const finalSearchValues = Array.from(searchValues);
+        console.log('[SETUP-CORE] Searching for User with TaxID variants:', finalSearchValues);
 
         // 1. Find User by taxId
         const usersRef = db.collection('users');
         const snapshot = await usersRef.where('taxId', 'in', finalSearchValues).limit(1).get();
 
-        let userDocRef;
-        let userData;
-        let memberships;
-
         if (snapshot.empty) {
+            console.warn('[SETUP-CORE] Identity not found in /users for variants:', finalSearchValues);
             // FALLBACK: User invited but 'users' doc not synced yet (pre-fix invitations)
             const accountsRef = db.collection('accounts');
             const delegateSnapshot = await accountsRef.where('primaryOperator.taxId', '==', taxId).limit(1).get();
@@ -57,29 +55,41 @@ export const setupAccountPassword = async (req: Request, res: Response) => {
             // Need the Auth UID
             const { auth } = await import('../config/firebase');
             const userRecord = await auth.getUserByEmail(email);
-            userDocRef = db.collection('users').doc(userRecord.uid);
 
-            memberships = [{
+            const newUserDocRef = db.collection('users').doc(userRecord.uid);
+            const newMemberships = [{
                 accountId: accountDoc.id,
                 role: 'ADMINISTRADOR OPERATIVO',
                 type: 'BUSINESS',
                 status: 'PENDING'
             }];
 
-            await userDocRef.set({
+            await newUserDocRef.set({
                 taxId,
                 email,
                 fullName: accData.primaryOperator.name,
-                memberships,
+                memberships: newMemberships,
                 updatedAt: Date.now()
             });
-            userData = { memberships }; // Mimic doc data for next steps
-        } else {
-            userDocRef = snapshot.docs[0].ref;
-            userData = snapshot.docs[0].data();
-            memberships = userData.memberships || [];
-        }
 
+            return updateUserPassword(newUserDocRef, newMemberships, accountId, password, res);
+        } else {
+            const userDocRef = snapshot.docs[0].ref;
+            const userData = snapshot.docs[0].data();
+            const memberships = userData.memberships || [];
+            return updateUserPassword(userDocRef, memberships, accountId, password, res);
+        }
+    } catch (error) {
+        console.error('[AUTH-TUNNEL] Setup Password Error:', error);
+        return res.status(500).json({ error: 'Failed to establish security credentials' });
+    }
+};
+
+/**
+ * Helper to update user password in memberships and Firebase Auth
+ */
+export const updateUserPassword = async (userDocRef: any, memberships: any[], accountId: string, password: string, res: Response) => {
+    try {
         // 2. Find specific membership
         const mIndex = memberships.findIndex((m: any) => m.accountId === accountId);
 
@@ -88,14 +98,13 @@ export const setupAccountPassword = async (req: Request, res: Response) => {
         }
 
         // 3. Hash and Store password
-        // We store it inside the membership object for total isolation
+        const { hashPassword } = await import('../utils/security');
         const passwordHash = hashPassword(password);
         memberships[mIndex].passwordHash = passwordHash;
         memberships[mIndex].activatedAt = new Date().toISOString();
-        memberships[mIndex].status = 'ACTIVE'; // Move from PENDING to ACTIVE
+        memberships[mIndex].status = 'ACTIVE';
 
-        // 4. [NEW] Sync with Firebase Auth (Global Identity activation)
-        // This ensures the user can login globally while having a specific hash for this account
+        // 4. Sync with Firebase Auth
         const userUid = userDocRef.id;
         console.log(`[AUTH-TUNNEL] Syncing password with Firebase Auth for UID: ${userUid}`);
         const { auth } = await import('../config/firebase');
@@ -110,7 +119,7 @@ export const setupAccountPassword = async (req: Request, res: Response) => {
             updatedAt: Date.now()
         });
 
-        // 5. Update the Tenant/Request status if needed
+        // 6. Update the Tenant/Request status if needed
         const tenantSnap = await db.collection('tenants').doc(accountId).get();
         if (tenantSnap.exists) {
             await tenantSnap.ref.update({

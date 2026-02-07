@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Capacitor } from '@capacitor/core';
 import { signInWithCustomToken, signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
+import { formatRut } from '../../utils/rut';
 import {
     Eye,
     EyeOff,
@@ -15,7 +15,7 @@ import {
     Lock,
     User
 } from 'lucide-react';
-import { formatRut } from '../../utils/rut';
+import { getApiUrl } from '../../utils/network';
 
 type LoginStep = 'IDENTIFICATION' | 'ACCOUNT_SELECTION' | 'CHALLENGE';
 type AccountType = 'B2B' | 'EDU' | 'PERSONAL';
@@ -24,6 +24,7 @@ interface DetectedAccount {
     id: string;
     name: string;
     type: AccountType;
+    authEmail: string; // [FIX] Required for challenge
 }
 
 const MobileLogin: React.FC = () => {
@@ -36,27 +37,6 @@ const MobileLogin: React.FC = () => {
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-
-    // Dynamic API URL Resolver for Native Connectivity
-    const getBaseUrl = () => {
-        const MI_IP_IMAC = "192.168.1.87";
-        const isEmulator = /sdk|emulator|google/i.test(navigator.userAgent);
-        const baseUrl = import.meta.env.VITE_API_URL || `http://${MI_IP_IMAC}:8080`;
-
-        if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
-            // Si es emulador Y la URL es localhost/127.0.0.1, usamos el bridge 10.0.2.2
-            if (isEmulator && (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1'))) {
-                return baseUrl.replace('localhost', '10.0.2.2').replace('127.0.0.1', '10.0.2.2');
-            }
-
-            // Si es dispositivo real Y la URL es localhost, forzamos la IP del iMac
-            if (!isEmulator && (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1'))) {
-                return baseUrl.replace('localhost', MI_IP_IMAC).replace('127.0.0.1', MI_IP_IMAC);
-            }
-        }
-
-        return baseUrl;
-    };
 
     // Data State
     const [detectedAccounts, setDetectedAccounts] = useState<DetectedAccount[]>([]);
@@ -78,8 +58,7 @@ const MobileLogin: React.FC = () => {
         setError(null);
 
         try {
-            const baseUrl = getBaseUrl();
-            const response = await fetch(`${baseUrl}/api/public/accounts-by-id/${taxId}`);
+            const response = await fetch(getApiUrl(`/api/public/accounts-by-id/${taxId}`));
 
             if (!response.ok) {
                 const data = await response.json();
@@ -103,7 +82,8 @@ const MobileLogin: React.FC = () => {
                     accountMap.set(acc.accountId, {
                         id: acc.accountId,
                         name: acc.accountName,
-                        type: acc.type
+                        type: acc.type,
+                        authEmail: acc.authEmail // [FIX] Store for challenge
                     });
                 }
             });
@@ -113,8 +93,7 @@ const MobileLogin: React.FC = () => {
 
         } catch (err: any) {
             console.error('Error detecting accounts:', err);
-            const baseUrl = getBaseUrl();
-            setError(`Error de conexión (API: ${baseUrl}). Verifica que tu servidor esté activo.`);
+            setError(`Error de conexión. Verifica que tu servidor esté activo.`);
         } finally {
             setLoading(false);
         }
@@ -138,13 +117,13 @@ const MobileLogin: React.FC = () => {
 
         try {
             // A. Desafío Túnel
-            const baseUrl = getBaseUrl();
-            const response = await fetch(`${baseUrl}/api/auth/tunnel/challenge`, {
+            const response = await fetch(getApiUrl('/api/auth/tunnel/challenge'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     taxId,
                     accountId: selectedAccount.id,
+                    authEmail: selectedAccount.authEmail, // [FIX] Critical parameter
                     password
                 })
             });
@@ -188,8 +167,7 @@ const MobileLogin: React.FC = () => {
 
         } catch (err: any) {
             console.error('Mobile Login Error:', err);
-            const baseUrl = getBaseUrl();
-            setError(`Error de conexión al servidor (API: ${baseUrl}). Verifica que tu servidor esté activo.`);
+            setError(`Error de conexión al servidor. Verifica que tu servidor esté activo.`);
         } finally {
             setLoading(false);
         }

@@ -62,13 +62,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         const userRef = doc(db, 'users', user.uid);
         const unsubscribe = onSnapshot(userRef, (snapshot) => {
+            console.log(`[AUTH-CONTEXT] Snapshot for UID ${user.uid} exists:`, snapshot.exists());
             if (snapshot.exists()) {
                 const data = snapshot.data() as UserProfile;
                 setProfile(data);
             } else {
-                // Handle case where auth exists but profile doesn't (legacy or error)
-                console.error("User profile not found for uid:", user.uid);
-                setProfile(null);
+                // Defensive: If on localhost, wait a bit before clearing profile 
+                // to handle emulator sync latency
+                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                    console.warn(`[AUTH-CONTEXT] Profile briefly missing for ${user.uid}, waiting for sync...`);
+                    // We don't call setProfile(null) immediately to avoid UI jumps
+                } else {
+                    console.error("User profile not found for uid:", user.uid);
+                    setProfile(null);
+                }
             }
         }, (error) => {
             console.error("Error fetching user profile:", error);

@@ -197,11 +197,15 @@ export async function getLatestEmailLink(page: Page, toEmail: string): Promise<s
         const db = (window as any).db;
         if (!db) return null;
 
-        const snapshot = await db.collection('system_emails')
-            .where('to', '==', email)
-            .orderBy('createdAt', 'desc')
-            .limit(1)
-            .get();
+        const { collection, query, where, orderBy, limit, getDocs } = (window as any).firestore;
+        const q = query(
+            collection(db, 'system_emails'),
+            where('to', '==', email),
+            orderBy('createdAt', 'desc'),
+            limit(1)
+        );
+
+        const snapshot = await getDocs(q);
 
         if (snapshot.empty) return null;
         const data = snapshot.docs[0].data();
@@ -215,6 +219,8 @@ export async function getLatestEmailLink(page: Page, toEmail: string): Promise<s
 
         // fallback: buscar link en el body html
         const match = data.body.match(/href="([^"]+)"/);
-        return match ? match[1] : null;
+        const finalUrl = match ? match[1] : null;
+        console.log(`[E2E-HELPER] Link capturado para ${email}:`, finalUrl);
+        return finalUrl;
     }, toEmail);
 }
