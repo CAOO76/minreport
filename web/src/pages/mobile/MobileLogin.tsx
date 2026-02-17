@@ -12,10 +12,15 @@ import {
     ArrowRight,
     ArrowLeft,
     ChevronRight,
-    Lock,
-    User
+    Lock
 } from 'lucide-react';
+<<<<<<< Updated upstream
 import { getApiUrl } from '../../utils/network';
+=======
+import { formatRut } from '../../utils/rut';
+import { LanguageSwitch } from '../../components/LanguageSwitch';
+import { ThemeSwitch } from '../../components/ThemeSwitch';
+>>>>>>> Stashed changes
 
 type LoginStep = 'IDENTIFICATION' | 'ACCOUNT_SELECTION' | 'CHALLENGE';
 type AccountType = 'B2B' | 'EDU' | 'PERSONAL';
@@ -174,50 +179,59 @@ const MobileLogin: React.FC = () => {
     };
 
     return (
-        <div className="h-screen w-screen overflow-hidden bg-white dark:bg-black text-gray-900 dark:text-gray-100 flex flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+        <div className="h-screen w-screen overflow-hidden bg-white dark:bg-black text-black dark:text-white flex flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] relative industrial-mineral-gradient">
+            {/* Background Layer Grid Overlay */}
+            <div className="absolute inset-0 technical-grid opacity-10 pointer-events-none"></div>
 
-            {/* Top Bar / Back Button */}
-            <div className="h-14 flex items-center px-4">
-                {step !== 'IDENTIFICATION' && (
+            <div className="h-20 flex items-center px-8 relative z-50">
+                {step !== 'IDENTIFICATION' ? (
                     <button
                         onClick={handleBack}
-                        className="p-2 hover:bg-gray-100 dark:hover:bg-zinc-900 rounded-full transition-colors"
+                        className="p-3 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 rounded-none transition-all active:scale-95"
                     >
-                        <ArrowLeft size={24} />
+                        <ArrowLeft size={20} className="text-black dark:text-white" />
                     </button>
+                ) : (
+                    <div className="flex items-center gap-2">
+                        <LanguageSwitch />
+                        <ThemeSwitch />
+                    </div>
                 )}
+                <div className="flex-1 text-center">
+                    <p className="hud-label text-black/40 dark:text-white/20">MNR_SECURE_PROTO_v2.0</p>
+                </div>
+                <div className="w-20"></div> {/* Spacer for symmetry */}
             </div>
 
             <div className="flex-1 flex flex-col px-8 overflow-y-auto pb-12">
 
                 {/* Visual Header */}
-                <div className="py-8 flex flex-col items-center">
-                    <div className="w-16 h-16 bg-indigo-600 rounded-2xl mb-6 shadow-xl shadow-indigo-500/20 flex items-center justify-center">
-                        <Lock className="text-white w-8 h-8" />
+                <div className="py-12 flex flex-col items-center">
+                    <div className="w-24 h-24 bg-black dark:bg-white flex items-center justify-center border border-black/10 dark:border-white/10 mb-8 transition-transform hover:scale-105 duration-700 relative">
+                        <div className="absolute inset-0 technical-grid opacity-20"></div>
+                        <Lock className="text-white dark:text-black w-10 h-10 relative z-10" />
                     </div>
+
                     {step === 'IDENTIFICATION' && (
-                        <>
-                            <h1 className="text-2xl font-bold tracking-tight">Hola de nuevo</h1>
-                            <p className="text-gray-500 text-sm mt-2 text-center text-pretty">
-                                Ingresa tu RUT para comenzar
-                            </p>
-                        </>
+                        <div className="text-center">
+                            <span className="material-symbols-rounded text-6xl text-emerald-500">input</span>
+                        </div>
                     )}
                     {step === 'ACCOUNT_SELECTION' && (
-                        <>
-                            <h1 className="text-2xl font-bold tracking-tight">Selecciona Cuenta</h1>
-                            <p className="text-gray-500 text-sm mt-2 text-center">
-                                Hemos encontrado {detectedAccounts.length} perfiles
+                        <div className="text-center">
+                            <h1 className="text-4xl font-black tracking-tight uppercase leading-none">SELECT_ENV</h1>
+                            <p className="hud-label mt-4 text-center">
+                                [{detectedAccounts.length}_VULCAN_ENVIRONMENTS_DETECTED]
                             </p>
-                        </>
+                        </div>
                     )}
                     {step === 'CHALLENGE' && selectedAccount && (
-                        <>
-                            <h1 className="text-2xl font-bold tracking-tight">{selectedAccount.name}</h1>
-                            <p className="text-gray-500 text-sm mt-2 text-center">
-                                Ingresa tu contraseña de acceso
+                        <div className="text-center">
+                            <h1 className="text-3xl font-black tracking-tight uppercase leading-none">{selectedAccount.name}</h1>
+                            <p className="hud-label mt-4 text-center">
+                                [CHALLENGE_ACTIVE] INGRESA CREDENCIAL DE ACCESO
                             </p>
-                        </>
+                        </div>
                     )}
                 </div>
 
@@ -231,78 +245,95 @@ const MobileLogin: React.FC = () => {
                     )}
 
                     {step === 'IDENTIFICATION' && (
-                        <form onSubmit={handleIdentificationSubmit} className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500" autoComplete="off">
-                            <div className="space-y-2">
-                                <label className="text-[11px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest ml-1">
-                                    RUT / RUN
-                                </label>
+                        <form onSubmit={handleIdentificationSubmit} className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500" autoComplete="off">
+                            <div className="space-y-3">
+                                <div className="flex justify-between items-end px-1">
+                                    <label className="hud-label">Documento ID (RUT / RUN)</label>
+                                    <span className="text-[10px] font-mono opacity-20">[01]</span>
+                                </div>
                                 <div className="relative">
-                                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
-                                        <User size={20} />
-                                    </div>
                                     <input
                                         type="text"
-                                        className="w-full h-16 bg-gray-50 dark:bg-zinc-900 border border-gray-100 dark:border-zinc-800 rounded-2xl pl-12 pr-4 text-lg font-medium focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all placeholder:text-gray-400"
+                                        className="premium-input text-center text-2xl tracking-[0.2em] h-20"
                                         placeholder="12.345.678-9"
                                         value={taxId}
                                         onChange={(e) => setTaxId(formatRut(e.target.value))}
                                         required
+                                        autoFocus
                                         autoComplete="off"
+                                        spellCheck="false"
+                                        autoCorrect="off"
+                                        autoCapitalize="off"
+                                        data-lpignore="true"
                                     />
                                 </div>
                             </div>
                             <button
                                 type="submit"
                                 disabled={loading || !taxId}
-                                className="w-full h-16 bg-black dark:bg-white text-white dark:text-black font-bold text-lg rounded-2xl shadow-xl active:scale-[0.97] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                className="w-full h-20 bg-black dark:bg-white text-white dark:text-black font-black uppercase tracking-[0.3em] text-[14px] rounded-none shadow-2xl active:scale-[0.98] transition-all flex items-center justify-center gap-4 disabled:opacity-30"
                             >
-                                {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : <span>Continuar</span>}
-                                {!loading && <ArrowRight size={20} />}
+                                {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : (
+                                    <>
+                                        <span>CONTINUAR</span>
+                                        <ArrowRight size={20} />
+                                    </>
+                                )}
                             </button>
                         </form>
                     )}
 
                     {step === 'ACCOUNT_SELECTION' && (
-                        <div className="space-y-3 animate-in fade-in slide-in-from-right-4 duration-500">
+                        <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-500">
                             {detectedAccounts.map((acc) => (
                                 <button
                                     key={acc.id}
                                     onClick={() => handleAccountSelect(acc)}
-                                    className="w-full p-5 bg-white dark:bg-zinc-900 border border-gray-100 dark:border-zinc-800 rounded-2xl flex items-center gap-4 active:scale-[0.98] transition-all text-left shadow-sm hover:border-indigo-500/50"
+                                    className="w-full p-6 bg-black/5 dark:bg-black/80 border border-black/10 dark:border-white/5 rounded-none flex items-center gap-5 active:scale-[0.99] transition-all text-left shadow-lg overflow-hidden relative group"
                                 >
-                                    <div className="w-12 h-12 bg-gray-50 dark:bg-black rounded-xl flex items-center justify-center text-gray-400">
-                                        {acc.type === 'B2B' ? <Lock size={22} /> : <User size={22} />}
+                                    <div className="absolute inset-0 technical-grid opacity-5 group-hover:opacity-10 transition-opacity"></div>
+                                    <div className="w-14 h-14 bg-black/10 dark:bg-white/5 flex items-center justify-center border border-black/5 dark:border-white/5 relative z-10 transition-transform group-hover:scale-105">
+                                        <span className="material-symbols-rounded text-[28px] text-black/60 dark:text-white/40">
+                                            {acc.type === 'B2B' ? 'corporate_fare' : 'person'}
+                                        </span>
                                     </div>
-                                    <div className="flex-1">
-                                        <p className="font-bold text-base leading-tight">{acc.name}</p>
-                                        <p className="text-xs text-gray-400 mt-0.5 uppercase tracking-wider">{acc.type}</p>
+                                    <div className="flex-1 relative z-10">
+                                        <p className="font-black text-lg uppercase tracking-tight text-black dark:text-white leading-tight mb-1">{acc.name}</p>
+                                        <p className="hud-label text-black/30 dark:text-white/30">{acc.type}_CHALLENGE</p>
                                     </div>
-                                    <ChevronRight className="text-gray-300" size={20} />
+                                    <div className="text-black/10 dark:text-white/10 group-hover:text-black dark:group-hover:text-white transition-all">
+                                        <ChevronRight size={24} />
+                                    </div>
                                 </button>
                             ))}
                         </div>
                     )}
 
                     {step === 'CHALLENGE' && (
-                        <form onSubmit={handleLogin} className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500" autoComplete="off">
-                            <div className="space-y-2">
-                                <label className="text-[11px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest ml-1">
-                                    Contraseña
-                                </label>
+                        <form onSubmit={handleLogin} className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-500" autoComplete="off">
+                            <div className="space-y-3">
+                                <div className="flex justify-between items-end px-1">
+                                    <label className="hud-label">Credencial de Seguridad</label>
+                                    <span className="text-[10px] font-mono text-black/20 dark:text-white/20">[02]</span>
+                                </div>
                                 <div className="relative">
                                     <input
                                         type={showPassword ? 'text' : 'password'}
-                                        className="w-full h-16 bg-gray-50 dark:bg-zinc-900 border border-gray-100 dark:border-zinc-800 rounded-2xl px-4 text-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all"
+                                        className="premium-input bg-black/5 dark:bg-black/60 h-20"
                                         placeholder="••••••••"
                                         value={password}
                                         onChange={(e) => setPassword(e.target.value)}
                                         required
                                         autoComplete="new-password"
+                                        spellCheck="false"
+                                        autoCorrect="off"
+                                        autoCapitalize="off"
+                                        data-lpignore="true"
                                     />
                                     <button
                                         type="button"
                                         onClick={() => setShowPassword(!showPassword)}
-                                        className="absolute right-0 top-0 h-full px-5 text-gray-400"
+                                        className="absolute right-0 top-0 h-full px-6 text-black/30 dark:text-white/30 hover:text-black dark:hover:text-white transition-colors"
                                     >
                                         {showPassword ? <EyeOff size={22} /> : <Eye size={22} />}
                                     </button>
@@ -311,10 +342,14 @@ const MobileLogin: React.FC = () => {
                             <button
                                 type="submit"
                                 disabled={loading}
-                                className="w-full h-16 bg-indigo-600 text-white font-bold text-lg rounded-2xl shadow-xl shadow-indigo-600/20 active:scale-[0.97] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                className="w-full h-20 bg-black dark:bg-white text-white dark:text-black font-black uppercase tracking-[0.3em] text-[14px] rounded-none shadow-2xl active:scale-[0.98] transition-all flex items-center justify-center gap-4 disabled:opacity-30"
                             >
-                                {loading && <Loader2 className="w-6 h-6 animate-spin" />}
-                                {loading ? 'Validando...' : 'Acceder al Entorno'}
+                                {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : (
+                                    <>
+                                        <span>ACCEDER AL ENTORNO</span>
+                                        <ArrowRight size={20} />
+                                    </>
+                                )}
                             </button>
                         </form>
                     )}

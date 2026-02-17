@@ -1,0 +1,19 @@
+{
+  "status": "commited",
+  "type": "backend",
+  "scope": "codebase",
+  "localEndpoint": "http://localhost:8080",
+  "loginUser": "info@minreport.com",
+  "loginPassword": "caoo76",
+  "executionArgs": {
+    "projectName": "minreport-core",
+    "projectPath": "/Volumes/CODE/MINREPORT iMac/minreport",
+    "testIds": [],
+    "additionalInstruction": "Execute backend tests against the local server on port 8080. Ensure emulators are used for Firebase interactions.",
+    "envs": {
+      "API_KEY": "sk-user-PMxck_KfEb4EeZ6pcCJbeQBAmP1_1DAfpWFz-cvPIGxqf0BzHpqJwNEX09PVv_wO9FocPAJ4ADU3mNzk-SKbrszh9D7_-DMD_344wSSBuWbI1a3ndUnlOMYymjP0GPlKqlI"
+    }
+  },
+  "serverPort": 52195,
+  "proxy": "http://9c1eda2f-c7f8-4b4e-b690-bb5bb42e5d5b:bgUH5jeLMb41X2CNlw1e3aVCWqLmDPF7@tun.testsprite.com:8080"
+}

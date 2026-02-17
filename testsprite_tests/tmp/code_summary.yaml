@@ -1,0 +1,77 @@
+version: "2"
+type: backend
+tech_stack:
+  - Node.js
+  - Express
+  - TypeScript
+  - Firebase
+  - Zod
+routes:
+  - path: /health
+    file: src/index.ts
+    auth_required: false
+    description: Health check endpoint
+  - path: /api/settings/branding
+    file: src/api/public.controller.ts
+    auth_required: false
+    description: Get public branding settings
+  - path: /api/public/accounts-by-id/:taxId
+    file: src/api/public.controller.ts
+    auth_required: false
+    description: Check account existence by Tax ID
+  - path: /api/auth/register
+    file: src/api/auth.controller.ts
+    auth_required: false
+    description: Register a new user
+  - path: /api/auth/tunnel/challenge
+    file: src/api/auth_tunnel.controller.ts
+    auth_required: false
+    description: Challenge account access
+  - path: /api/auth/tunnel/setup-password
+    file: src/api/setup.controller.ts
+    auth_required: false
+    description: Set up account password
+  - path: /api/admin/login
+    file: src/api/admin.controller.ts
+    auth_required: false
+    description: Admin login
+  - path: /api/edu/validate/:requestId
+    file: src/api/edu.controller.ts
+    auth_required: true
+    description: Validate education request
+  - path: /api/edu/analyze-doc
+    file: src/api/edu.controller.ts
+    auth_required: true
+    description: Analyze education document
+  - path: /api/auth/invite
+    file: src/api/auth.controller.ts
+    auth_required: true
+    description: Invite user (B2B)
+  - path: /api/admin/tenants
+    file: src/api/admin.controller.ts
+    auth_required: true
+    description: List tenants (Super Admin)
+features:
+  - name: Authentication
+    description: User registration, login, and invitation systems
+    files:
+      - src/api/auth.controller.ts
+      - src/api/admin.controller.ts
+      - src/middleware/auth.ts
+    api_calls:
+      - method: POST
+        endpoint: /api/auth/register
+      - method: POST
+        endpoint: /api/admin/login
+      - method: POST
+        endpoint: /api/auth/invite
+  - name: Education Services
+    description: Document analysis and validation for education requests
+    files:
+      - src/api/edu.controller.ts
+    api_calls:
+      - method: POST
+        endpoint: /api/edu/validate/:requestId
+      - method: POST
+        endpoint: /api/edu/analyze-doc
+known_limitations: []

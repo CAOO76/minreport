@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { adminLogin } from '../services/api';
-import { ShieldAlert, LogIn, Lock, Eye, EyeOff } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { adminLogin, getUIAssetsSettings } from '../services/api';
+import { LogIn, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ThemeSwitch } from '../components/ThemeSwitch';
@@ -14,7 +14,20 @@ export const Login = () => {
     const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const [bgImage, setBgImage] = useState('');
     const navigate = useNavigate();
+
+    useEffect(() => {
+        const fetchUI = async () => {
+            try {
+                const { data } = await getUIAssetsSettings();
+                if (data.login_bg) setBgImage(data.login_bg);
+            } catch (err) {
+                console.warn('Could not fetch premium backgrounds, using fallback.');
+            }
+        };
+        fetchUI();
+    }, []);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -26,7 +39,6 @@ export const Login = () => {
             localStorage.setItem('admin_token', data.token);
             localStorage.setItem('admin_user', JSON.stringify(data.user));
 
-            // Sign in to Firebase Client SDK
             if (data.firebaseToken) {
                 const { auth } = await import('../config/firebase');
                 const { signInWithCustomToken } = await import('firebase/auth');
@@ -42,55 +54,77 @@ export const Login = () => {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center p-6 bg-antigravity-light-bg dark:bg-antigravity-dark-bg transition-colors relative overflow-hidden">
+        <div className="min-h-screen flex items-center justify-center p-6 transition-colors relative overflow-hidden industrial-mineral-gradient">
+            {/* Background Layer with industrial texture */}
+            {bgImage && (
+                <div className="absolute inset-0 z-0">
+                    <img src={bgImage} alt="industrial atmosphere" className="w-full h-full object-cover brightness-[0.4] dark:brightness-[0.3]" />
+                    <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]"></div>
+                </div>
+            )}
+
             <div className="absolute top-6 right-6 flex items-center gap-3 z-50">
                 <LanguageSwitch />
                 <ThemeSwitch />
             </div>
 
-
-            <div className="w-full max-w-[400px] relative">
-                <div className="mb-12 text-center">
-                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white dark:bg-white/5 shadow-xl shadow-antigravity-accent/10 border border-slate-100 dark:border-white/10 mb-6 transition-transform hover:scale-105 duration-300">
-                        <BrandLogo variant="isotype" className="w-10 h-10" />
-                    </div>
-                    <h1 className="text-3xl font-bold text-slate-900 dark:text-white tracking-tight">{t('admin.title')}</h1>
-                    <p className="text-slate-500 dark:text-slate-400 text-sm mt-2 font-medium">{t('admin.restricted')}</p>
+            <div className="w-full max-w-[400px] relative z-10 text-black dark:text-white transition-all duration-700">
+                {/* Logo Flotante perfectamente alineado */}
+                <div className="mb-6 px-10 flex justify-center">
+                    <BrandLogo variant="isotype" className="w-1/4 h-auto relative z-10" />
                 </div>
 
-                <div className="bg-white dark:bg-white/5 backdrop-blur-xl border border-slate-200 dark:border-white/10 p-8 rounded-3xl shadow-2xl shadow-black/5 dark:shadow-none">
-                    <form onSubmit={handleSubmit} className="space-y-6">
-                        <div className="space-y-1.5">
-                            <label className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest px-1">{t('admin.table.email')}</label>
-                            <div className="relative group">
-                                <input
-                                    type="email"
-                                    value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
-                                    placeholder="admin@minreport.com"
-                                    required
-                                    className="w-full pl-4 pr-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-black/20 border border-slate-200 dark:border-white/5 focus:ring-2 focus:ring-antigravity-accent/20 focus:border-antigravity-accent outline-none text-slate-900 dark:text-white transition-all placeholder:text-slate-400"
-                                    autoComplete="off"
-                                />
+                <div className="flex items-center justify-center gap-4 mb-6 animate-in fade-in slide-in-from-top-4 duration-1000 delay-200">
+                    <div className="h-[1px] w-8" style={{ backgroundColor: 'rgb(198, 131, 70)' }}></div>
+                    <p className="hud-label" style={{ color: 'rgb(198, 131, 70)' }}>MINREPORT®</p>
+                    <div className="h-[1px] w-8" style={{ backgroundColor: 'rgb(198, 131, 70)' }}></div>
+                </div>
+
+                <div className="elite-tech-surface py-8 px-10 shadow-3xl animate-in fade-in zoom-in-95 duration-700 delay-100 relative">
+                    {/* Interior Grid Layer */}
+                    <div className="absolute inset-0 technical-grid opacity-20 pointer-events-none"></div>
+
+                    <form onSubmit={handleSubmit} className="space-y-10 relative z-10" autoComplete="off">
+                        <div className="space-y-3">
+                            <div className="flex justify-between items-end px-1">
+                                <span className="material-symbols-rounded text-black/40 dark:text-white/40 mb-1">alternate_email</span>
+                                <span className="text-[10px] font-mono text-black/20 dark:text-white/20">[01]</span>
                             </div>
+                            <input
+                                type="email"
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                placeholder=""
+                                required
+                                className="premium-input bg-black/80"
+                                autoComplete="off"
+                                spellCheck="false"
+                                data-lpignore="true"
+                                data-form-type="other"
+                            />
                         </div>
 
-                        <div className="space-y-1.5">
-                            <label className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest px-1">{t('admin.master_pass')}</label>
-                            <div className="relative group">
+                        <div className="space-y-3">
+                            <div className="flex justify-between items-end px-1">
+                                <span className="material-symbols-rounded text-black/40 dark:text-white/40 mb-1">key</span>
+                                <span className="text-[10px] font-mono text-black/20 dark:text-white/20">[02]</span>
+                            </div>
+                            <div className="relative">
                                 <input
                                     type={showPassword ? 'text' : 'password'}
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    placeholder="••••••••"
+                                    placeholder=""
                                     required
-                                    className="w-full pl-4 pr-11 py-3.5 rounded-2xl bg-slate-50 dark:bg-black/20 border border-slate-200 dark:border-white/5 focus:ring-2 focus:ring-antigravity-accent/20 focus:border-antigravity-accent outline-none text-slate-900 dark:text-white transition-all placeholder:text-slate-400"
-                                    autoComplete="off"
+                                    className="premium-input pr-14 bg-black/80"
+                                    autoComplete="new-password"
+                                    spellCheck="false"
+                                    data-lpignore="true"
                                 />
                                 <button
                                     type="button"
                                     onClick={() => setShowPassword(!showPassword)}
-                                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-antigravity-accent transition-colors"
+                                    className="absolute right-5 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/30 hover:text-black dark:hover:text-white transition-colors"
                                 >
                                     {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                                 </button>
@@ -98,37 +132,33 @@ export const Login = () => {
                         </div>
 
                         {error && (
-                            <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400 text-xs font-semibold flex items-center gap-3 border border-rose-100 dark:border-rose-500/20 animate-in fade-in slide-in-from-top-2">
-                                <span className="material-symbols-rounded text-lg">error</span>
-                                {error}
+                            <div className="p-4 rounded-none bg-rose-500/10 text-rose-400 text-[10px] font-mono font-bold flex items-center gap-3 border border-rose-500/30 animate-in fade-in slide-in-from-bottom-2">
+                                <span className="material-symbols-rounded text-base">error</span>
+                                <span className="uppercase tracking-tight">{error}</span>
                             </div>
                         )}
 
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full py-4 px-6 rounded-2xl bg-antigravity-accent hover:bg-antigravity-accent/90 text-white font-bold transition-all flex items-center justify-center gap-3 shadow-xl shadow-antigravity-accent/20 hover:shadow-antigravity-accent/30 active:scale-[0.98] disabled:opacity-50 disabled:shadow-none"
+                            className="w-full py-6 px-8 rounded-none bg-black dark:bg-white text-white dark:text-black font-black uppercase tracking-[0.3em] text-[12px] transition-all flex items-center justify-center shadow-3xl active:scale-[0.98] disabled:opacity-30"
                         >
                             {loading ? (
-                                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                <div className="w-6 h-6 border-2 border-black/20 dark:border-white/20 border-t-black dark:border-t-white rounded-full animate-spin" />
                             ) : (
-                                <>
-                                    <LogIn size={20} />
-                                    {t('admin.login_btn')}
-                                </>
+                                <LogIn size={27} />
                             )}
                         </button>
                     </form>
                 </div>
 
-                <footer className="mt-12 text-center space-y-2">
-                    <p className="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] font-bold">
-                        {t('admin.secure_layer')}
-                    </p>
-                    <div className="flex justify-center gap-3">
-                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                        <span className="text-[9px] text-slate-400 uppercase tracking-widest">{t('admin.active_systems')}</span>
+                <footer className="mt-8 text-center space-y-4 opacity-40 hover:opacity-100 transition-opacity duration-500">
+                    <div className="flex justify-center">
+                        <ShieldCheck size={14} className="text-emerald-600 dark:text-emerald-400" />
                     </div>
+                    <p className="text-[10px] text-black/60 dark:text-white uppercase tracking-[0.3em] font-black">
+                        © {new Date().getFullYear()} MINREPORT. TODOS LOS DERECHOS RESERVADOS.
+                    </p>
                 </footer>
             </div>
         </div>

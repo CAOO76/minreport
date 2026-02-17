@@ -51,4 +51,14 @@ export const getBrandingSettings = () => api.get<BrandingSettings>('/settings/br
 
 export const updateBrandingSettings = (data: BrandingSettings) => api.put('/settings/branding', data);
 
+export interface UIAssetsData {
+    login_bg: string;
+    dashboard_bg: string;
+    sidebar_bg: string;
+}
+
+export const getUIAssetsSettings = () => api.get<UIAssetsData>('/settings/ui-assets');
+
+export const updateUIAssetsSettings = (data: UIAssetsData) => api.put('/settings/ui-assets', data);
+
 export default api;

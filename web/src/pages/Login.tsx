@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Loader2, Lock, Eye, EyeOff } from 'lucide-react';
+import { signInWithCustomToken } from 'firebase/auth';
+import { auth } from '../config/firebase';
+import { useTranslation } from 'react-i18next';
+import { ArrowLeft, ArrowRight, Loader2, Lock, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import BrandLogo from '../components/BrandLogo';
 import { LanguageSwitch } from '../components/LanguageSwitch';
 import { ThemeSwitch } from '../components/ThemeSwitch';
@@ -8,6 +11,8 @@ import { Link } from 'react-router-dom';
 import { formatRut } from '../utils/rut';
 import { useAuthActions } from '../hooks/useAuthActions';
 import AccountSelector from '../components/auth/AccountSelector';
+import { AccountReference } from '../types/user_directory';
+import { AccountType } from '../../../src/types/auth';
 
 // Definición de Tipos para la UI
 type LoginStep = 'IDENTIFICATION' | 'ACCOUNT_SELECTION' | 'CHALLENGE';
@@ -32,6 +37,23 @@ export const Login = () => {
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+    const [bgImage, setBgImage] = useState('');
+
+    // Fetch UI Backgrounds
+    useEffect(() => {
+        const fetchUI = async () => {
+            try {
+                const response = await fetch(`${import.meta.env.VITE_API_URL}/api/settings/ui-assets`);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.login_bg) setBgImage(data.login_bg);
+                }
+            } catch (err) {
+                console.warn('UI Assets not available yet.');
+            }
+        };
+        fetchUI();
+    }, []);
 
     // Limpieza de Memoria (Zero Memory Policy)
     useEffect(() => {
@@ -57,7 +79,8 @@ export const Login = () => {
     const handleAccountSelect = (account: any) => {
         setSelectedAccountId(account.accountId);
         setStep('CHALLENGE');
-        setPassword(''); // Asegurar limpieza al entrar al challenge
+        setPassword('');
+        // No necesitamos setError aquí porque authError es manejado por el hook
     };
 
     const handleLogin = async (e: React.FormEvent) => {
@@ -69,7 +92,6 @@ export const Login = () => {
 
         try {
             await loginToAccount(selectedAccount, password);
-            // Limpieza y Redirección
             setPassword('');
             navigate('/');
         } catch (err: any) {
@@ -78,7 +100,7 @@ export const Login = () => {
     };
 
     // --- RENDERIZADORES DE ICONOS MATERIAL ---
-    const renderIcon = (type: string) => {
+    const renderIcon = (type: AccountType | string) => {
         switch (type) {
             case 'BUSINESS':
             case 'ENTERPRISE':
@@ -96,50 +118,62 @@ export const Login = () => {
     const selectedAccount = detectedAccounts.find(acc => acc.accountId === selectedAccountId);
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-[#121212] transition-colors p-4 relative overflow-hidden">
+        <div className="min-h-screen flex items-center justify-center p-4 transition-colors relative overflow-hidden industrial-mineral-gradient">
+            {/* Background Layer with mineral texture */}
+            {bgImage && (
+                <div className="absolute inset-0 z-0">
+                    <img src={bgImage} alt="industrial atmosphere" className="w-full h-full object-cover brightness-[0.3] dark:brightness-[0.2]" />
+                    <div className="absolute inset-0 bg-black/50 backdrop-blur-[1px]"></div>
+                </div>
+            )}
+
             <div className="absolute top-6 right-6 flex items-center gap-3 z-50">
                 <LanguageSwitch />
                 <ThemeSwitch />
             </div>
-            <div className="w-full max-w-md relative">
 
-                {/* Logo Centrado */}
-                <div className="mb-8 flex justify-center">
-                    <div className="w-16 h-16 bg-white dark:bg-white/5 rounded-2xl flex items-center justify-center shadow-lg shadow-gray-200/50 dark:shadow-none border border-gray-100 dark:border-gray-800">
-                        <BrandLogo variant="isotype" className="w-8 h-8" />
-                    </div>
+            <div className="w-full max-w-[400px] relative z-10 transition-all duration-700 text-black dark:text-white">
+
+                {/* Logo Flotante perfectamente alineado con los campos (p-12) */}
+                <div className="mb-6 px-10 flex justify-center">
+                    <BrandLogo variant="isotype" className="w-1/4 h-auto relative z-10" />
+                </div>
+
+                <div className="flex items-center justify-center gap-4 mb-6 animate-in fade-in slide-in-from-top-4 duration-1000 delay-200">
+                    <div className="h-[1px] w-8" style={{ backgroundColor: 'rgb(198, 131, 70)' }}></div>
+                    <p className="hud-label" style={{ color: 'rgb(198, 131, 70)' }}>MINREPORT®</p>
+                    <div className="h-[1px] w-8" style={{ backgroundColor: 'rgb(198, 131, 70)' }}></div>
                 </div>
 
                 {/* Paso 1: Identificación */}
                 {step === 'IDENTIFICATION' && (
-                    <div className="bg-white dark:bg-[#1E1E1E] rounded-3xl p-8 shadow-sm border border-gray-100 dark:border-gray-800 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                        <div className="text-center mb-8">
-                            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Hola de nuevo</h1>
-                            <p className="text-gray-500 dark:text-gray-400 mt-2 text-sm">
-                                Ingresa tu identificación para comenzar
-                            </p>
-                        </div>
+                    <div className="elite-tech-surface py-8 px-10 animate-in fade-in zoom-in-95 duration-700 shadow-3xl">
+                        <div className="absolute inset-0 technical-grid opacity-20 pointer-events-none"></div>
 
-                        <form onSubmit={handleIdentificationSubmit} className="space-y-6" autoComplete="off">
-                            <div className="space-y-1">
-                                <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest ml-1">
-                                    Documento de Identificación (RUT / RUN)
-                                </label>
+                        <form onSubmit={handleIdentificationSubmit} className="space-y-8 relative z-10" autoComplete="off">
+                            <div className="space-y-3">
+                                <div className="flex justify-between items-end px-1">
+                                    <span className="material-symbols-rounded text-black/40 dark:text-white/40 mb-1">id_card</span>
+                                    <span className="text-[10px] font-mono text-black/20 dark:text-white/20">[01]</span>
+                                </div>
                                 <input
                                     type="text"
                                     value={taxId}
                                     onChange={(e) => setTaxId(formatRut(e.target.value))}
-                                    className="w-full px-5 py-4 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium text-lg text-center"
+                                    className="premium-input text-center text-2xl tracking-[0.2em]"
                                     placeholder="12.345.678-9"
                                     required
                                     autoFocus
                                     autoComplete="off"
+                                    spellCheck="false"
+                                    autoCorrect="off"
+                                    autoCapitalize="off"
                                     data-lpignore="true"
                                 />
                             </div>
 
                             {authError && step === 'IDENTIFICATION' && (
-                                <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 text-xs font-medium text-center animate-in fade-in">
+                                <div className="p-4 rounded-2xl bg-rose-500/10 text-rose-400 text-[11px] font-bold text-center border border-rose-500/20 animate-in fade-in slide-in-from-top-2">
                                     {authError}
                                 </div>
                             )}
@@ -147,26 +181,22 @@ export const Login = () => {
                             <button
                                 type="submit"
                                 disabled={authLoading}
-                                className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-md shadow-indigo-600/20 active:scale-[0.98] disabled:opacity-70 flex items-center justify-center gap-2"
+                                className="w-full py-6 bg-black dark:bg-white text-white dark:text-black font-black uppercase tracking-[0.3em] text-[12px] transition-all shadow-3xl active:scale-[0.98] disabled:opacity-30 flex items-center justify-center gap-4"
                             >
                                 {authLoading ? (
-                                    <Loader2 className="w-6 h-6 animate-spin" />
+                                    <Loader2 className="w-7 h-7 animate-spin text-white dark:text-black" />
                                 ) : (
                                     <>
-                                        <span>Continuar</span>
-                                        <ArrowRight size={20} />
+                                        <ArrowRight size={27} />
                                     </>
                                 )}
                             </button>
                         </form>
 
-                        <div className="mt-8 pt-6 border-t border-gray-100 dark:border-gray-800 text-center">
-                            <p className="text-sm text-gray-500 dark:text-gray-400">
-                                ¿No tienes una cuenta?{' '}
-                                <Link to="/register" className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline">
-                                    Crear cuenta
-                                </Link>
-                            </p>
+                        <div className="mt-8 pt-8 border-t border-black/5 dark:border-white/5 text-center relative z-10 flex justify-center">
+                            <Link to="/register" className="text-black/30 dark:text-white/20 hover:text-black dark:hover:text-white transition-all transform hover:scale-110">
+                                <span className="material-symbols-rounded text-[24px]">person_add</span>
+                            </Link>
                         </div>
                     </div>
                 )}
@@ -187,72 +217,75 @@ export const Login = () => {
 
                 {/* Paso 3: CHALLENGE (Password) */}
                 {step === 'CHALLENGE' && selectedAccount && (
-                    <div className="bg-white dark:bg-[#1E1E1E] rounded-3xl p-8 shadow-sm border border-gray-100 dark:border-gray-800 animate-in fade-in slide-in-from-right-8 duration-500 w-full">
+                    <div className="elite-tech-surface p-12 animate-in fade-in slide-in-from-right-12 duration-1000 w-full shadow-3xl">
+                        <div className="absolute inset-0 technical-grid opacity-20 pointer-events-none"></div>
 
-                        {/* Header Visual: Túnel Único Context */}
-                        <div className="text-center mb-6">
-                            <div className="w-16 h-16 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                                <span className="material-symbols-rounded text-4xl">
+                        <div className="text-center mb-12 relative z-10">
+                            <div className="w-24 h-24 bg-white/5 text-white border border-white/10 flex items-center justify-center mx-auto mb-8 shadow-2xl relative overflow-hidden">
+                                <div className="absolute inset-0 technical-grid opacity-10"></div>
+                                <span className="material-symbols-rounded text-[48px] relative z-10">
                                     {renderIcon(selectedAccount.type)}
                                 </span>
                             </div>
-                            <p className="text-gray-500 dark:text-gray-400 text-xs font-semibold uppercase tracking-wider">
-                                Ingreso seguro a entorno aislado
+                            <p className="hud-label text-black/40 dark:text-white/40 mb-3">
+                                [VULCAN_CHALLENGE_ACTIVE]
                             </p>
-                            <h2 className="text-xl font-bold text-gray-900 dark:text-white mt-1">
+                            <h2 className="text-3xl font-black text-black dark:text-white uppercase tracking-tight leading-none mb-1">
                                 {selectedAccount.accountName}
                             </h2>
+                            <p className="text-[9px] font-mono text-black/20 dark:text-white/20 uppercase tracking-[0.3em]">SECURE_ISOLATION_ZONE</p>
                         </div>
 
-                        <form onSubmit={handleLogin} className="space-y-6" autoComplete="off">
-                            <div className="space-y-1">
-                                <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest ml-1">
-                                    Contraseña
-                                </label>
+                        <form onSubmit={handleLogin} className="space-y-10 relative z-10" autoComplete="off">
+                            <div className="space-y-3">
+                                <div className="flex justify-between items-end px-1">
+                                    <label className="hud-label text-black/60 dark:text-white/60">Contraseña Táctica</label>
+                                    <span className="text-[10px] font-mono text-black/20 dark:text-white/20">[02]</span>
+                                </div>
                                 <div className="relative group">
                                     <input
                                         type={showPassword ? "text" : "password"}
-                                        name="pwd_challenge_field" // Non-standard name
+                                        name="pwd_challenge_field"
                                         id="pwd_access_token"
                                         value={password}
                                         onChange={(e) => setPassword(e.target.value)}
-                                        className="w-full pl-5 pr-12 py-4 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium text-lg"
+                                        className="premium-input pr-14 text-center tracking-[0.4em] bg-black/80"
                                         placeholder="••••••••"
                                         required
                                         autoFocus
-                                        autoComplete="new-password" // Critical Anti-Autofill 
-                                        data-lpignore="true" // Ignore LastPass
-                                        data-form-type="other" // Hint for Safari
+                                        autoComplete="new-password"
+                                        spellCheck="false"
+                                        data-lpignore="true"
                                         onCopy={(e) => e.preventDefault()}
                                     />
                                     <button
                                         type="button"
                                         onClick={() => setShowPassword(!showPassword)}
-                                        className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                                        className="absolute right-5 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/30 hover:text-black dark:hover:text-white transition-colors"
                                     >
-                                        {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                                        {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                                     </button>
                                 </div>
                             </div>
 
                             {authError && (
-                                <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 text-xs font-medium text-center animate-in fade-in">
+                                <div className="p-4 rounded-2xl bg-rose-500/10 text-rose-400 text-[11px] font-bold text-center border border-rose-500/20 animate-in fade-in">
                                     {authError}
                                 </div>
                             )}
 
-                            <div className="space-y-3">
+                            <div className="space-y-6">
                                 <button
                                     type="submit"
                                     disabled={authLoading}
-                                    className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-md shadow-indigo-600/20 active:scale-[0.98] disabled:opacity-70 flex items-center justify-center gap-2"
+                                    className="w-full py-6 bg-white hover:bg-slate-200 text-black font-black uppercase tracking-[0.3em] text-[12px] transition-all shadow-3xl active:scale-[0.98] disabled:opacity-30 flex items-center justify-center gap-4"
                                 >
                                     {authLoading ? (
-                                        <Loader2 className="w-6 h-6 animate-spin" />
+                                        <Loader2 className="w-5 h-5 animate-spin text-black" />
                                     ) : (
                                         <>
-                                            <span>Acceder al Entorno</span>
-                                            <Lock size={18} />
+                                            <span>ACCEDER_ENTORNO</span>
+                                            <Lock size={16} />
                                         </>
                                     )}
                                 </button>
@@ -264,15 +297,24 @@ export const Login = () => {
                                         setPassword('');
                                         setSelectedAccountId(null);
                                     }}
-                                    className="w-full py-3 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/5 rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
+                                    className="w-full py-4 text-black/30 dark:text-white/30 hover:text-black dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 font-mono font-bold uppercase tracking-[0.2em] text-[9px] transition-all flex items-center justify-center gap-4 border border-transparent hover:border-black/10 dark:hover:border-white/10"
                                 >
-                                    <ArrowLeft size={18} />
-                                    <span>Cancelar</span>
+                                    <ArrowLeft size={14} />
+                                    <span>[CANCEL_REQUEST]</span>
                                 </button>
                             </div>
                         </form>
                     </div>
                 )}
+
+                <footer className="mt-8 text-center space-y-4 opacity-40 hover:opacity-100 transition-opacity duration-500">
+                    <div className="flex justify-center">
+                        <ShieldCheck size={14} className="text-emerald-600 dark:text-emerald-400" />
+                    </div>
+                    <p className="text-[10px] text-black/60 dark:text-white uppercase tracking-[0.3em] font-black">
+                        © {new Date().getFullYear()} MINREPORT. TODOS LOS DERECHOS RESERVADOS.
+                    </p>
+                </footer>
 
             </div>
         </div>

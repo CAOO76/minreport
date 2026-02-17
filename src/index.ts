@@ -4,7 +4,7 @@ import helmet from 'helmet';
 import './config/firebase'; // Import to trigger initialization
 import { env } from './config/env';
 import { register, inviteUser } from './api/auth.controller';
-import { adminLogin, listTenants, listAccounts, updateTenantStatus, deleteTenant, purgeTenant, getBrandingSettings, updateBrandingSettings, getSystemMetrics, getAuditLogs } from './api/admin.controller';
+import { adminLogin, listTenants, listAccounts, updateTenantStatus, deleteTenant, purgeTenant, getBrandingSettings, updateBrandingSettings, getSystemMetrics, getAuditLogs, getUIAssetsSettings, updateUIAssetsSettings } from './api/admin.controller';
 import { getPublicBrandingSettings, getAccountsById } from './api/public.controller';
 import { challengeAccountAccess } from './api/auth_tunnel.controller';
 import { setupAccountPassword } from './api/setup.controller';
@@ -69,6 +69,8 @@ app.get('/api/admin/settings/branding', requireSuperAdmin, getBrandingSettings);
 app.put('/api/admin/settings/branding', requireSuperAdmin, updateBrandingSettings);
 app.get('/api/admin/metrics', requireSuperAdmin, getSystemMetrics); // [NEW] System Dashboard
 app.get('/api/admin/audit-logs', requireSuperAdmin, getAuditLogs); // [NEW] Traceability
+app.get('/api/admin/settings/ui-assets', requireSuperAdmin, getUIAssetsSettings);
+app.put('/api/admin/settings/ui-assets', requireSuperAdmin, updateUIAssetsSettings);
 
 // Start Server
 const port = parseInt(env.PORT, 10);

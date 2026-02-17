@@ -14,6 +14,7 @@ import { B2BPage } from './pages/B2BPage';
 import { EduPage } from './pages/EduPage';
 import { PersonalPage } from './pages/PersonalPage';
 import { PluginExecutionPage } from './pages/PluginExecutionPage';
+import { UIAssetsSettings } from './pages/UIAssetsSettings';
 
 function App() {
     return (
@@ -37,6 +38,7 @@ function App() {
                                 <Route path="/plugins" element={<PluginsPage />} />
                                 <Route path="/plugins/:pluginId" element={<PluginExecutionPage />} />
                                 <Route path="/branding" element={<BrandingSettings />} />
+                                <Route path="/ui-assets" element={<UIAssetsSettings />} />
                                 <Route path="/sdk" element={<SDKPage />} />
                             </Route>
                         </Routes>

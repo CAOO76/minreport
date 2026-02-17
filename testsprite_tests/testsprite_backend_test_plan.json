@@ -1,0 +1,52 @@
+[
+  {
+    "id": "TC001",
+    "title": "health endpoint returns service_status_ok",
+    "description": "Verify that the GET /health endpoint returns a successful response indicating the backend service is reachable and operational."
+  },
+  {
+    "id": "TC002",
+    "title": "branding endpoint returns_public_branding_settings",
+    "description": "Test the GET /api/settings/branding endpoint to ensure it returns the correct public branding settings for the frontend to render."
+  },
+  {
+    "id": "TC003",
+    "title": "accounts_by_id_endpoint_returns_account_existence",
+    "description": "Validate the GET /api/public/accounts-by-id/:taxId endpoint returns true if the account exists and false or not found if it does not."
+  },
+  {
+    "id": "TC004",
+    "title": "register_endpoint_creates_user_with_correct_role",
+    "description": "Test POST /api/auth/register to register new users with different email domains and identifiers, verifying correct role assignment (B2B, Educational, Personal) and validation errors for malformed inputs."
+  },
+  {
+    "id": "TC005",
+    "title": "auth_tunnel_challenge_returns_challenge_token",
+    "description": "Verify POST /api/auth/tunnel/challenge returns a valid challenge token when provided with a valid invite token."
+  },
+  {
+    "id": "TC006",
+    "title": "setup_password_endpoint_activates_account",
+    "description": "Test POST /api/auth/tunnel/setup-password to ensure account activation with valid tokens and proper error handling for invalid or expired tokens."
+  },
+  {
+    "id": "TC007",
+    "title": "admin_login_accepts_valid_credentials",
+    "description": "Verify POST /api/admin/login accepts valid owner/admin credentials and rejects invalid credentials."
+  },
+  {
+    "id": "TC008",
+    "title": "edu_validate_endpoint_approves_education_request",
+    "description": "Test POST /api/edu/validate/:requestId to ensure that an authenticated admin can approve an education request and update the user role accordingly."
+  },
+  {
+    "id": "TC009",
+    "title": "edu_analyze_doc_returns_analysis_metadata",
+    "description": "Verify POST /api/edu/analyze-doc accepts document payloads, returns analysis metadata and requestId, and handles corrupted or unsupported documents with appropriate errors."
+  },
+  {
+    "id": "TC010",
+    "title": "invite_endpoint_requires_auth_and_valid_email",
+    "description": "Test POST /api/auth/invite to ensure only authenticated admins can send invites, validate email formats, handle duplicate invites, and reject unauthorized requests."
+  }
+]

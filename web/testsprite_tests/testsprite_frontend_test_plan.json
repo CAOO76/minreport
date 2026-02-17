@@ -1,0 +1,69 @@
+[
+  {
+    "id": "TC001",
+    "title": "Account lookup endpoint with dynamic route is intentionally skipped",
+    "description": "Ensures the test suite does not attempt to navigate to routes with dynamic segments (cannot be executed deterministically via static navigation).",
+    "category": "Global Test Environment Setup",
+    "priority": "Low",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /health"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"OK\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC002",
+    "title": "Health page indicates service is healthy",
+    "description": "Validates the service health endpoint is reachable and shows a healthy status on the page.",
+    "category": "Public & Health Checks (supporting checks used by tests)",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /health"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"OK\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"healthy\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/health\""
+      }
+    ]
+  },
+  {
+    "id": "TC003",
+    "title": "Health page renders without server error content",
+    "description": "Ensures the health endpoint does not display common server error indicators.",
+    "category": "Public & Health Checks (supporting checks used by tests)",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /health"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Internal Server Error\" is not visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"502\" is not visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Service Unavailable\" is not visible"
+      }
+    ]
+  }
+]

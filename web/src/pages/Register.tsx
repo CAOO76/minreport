@@ -1,8 +1,8 @@
-import { useState, ChangeEvent, FormEvent } from 'react';
+import { useState, useEffect, ChangeEvent, FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
-import { Card } from '../components/Card';
-import { Button } from '../components/Button';
+import { LogIn, ArrowLeft, ArrowRight, ShieldCheck, UserPlus, Building, GraduationCap, User } from 'lucide-react';
+import BrandLogo from '../components/BrandLogo';
 import { ThemeSwitch } from '../components/ThemeSwitch';
 import { LanguageSwitch } from '../components/LanguageSwitch';
 import { registerUser, RegisterData } from '../services/auth';
@@ -10,14 +10,12 @@ import { formatRut, validateRut } from '../utils/rut';
 import { SUPPORTED_COUNTRIES } from '../../../src/core/constants';
 import clsx from 'clsx';
 
-// NO importamos librerías externas para evitar errores. 
-// Los iconos están definidos abajo como componentes SVG nativos.
-
 type AccountType = 'ENTERPRISE' | 'EDUCATIONAL' | 'PERSONAL';
 type EducationalProfile = 'ALUMNO' | 'ACADEMICO' | 'DOCENTE' | 'OTRO';
 
 export const Register = () => {
     const { t } = useTranslation();
+    const [step, setStep] = useState(1);
     const [type, setType] = useState<AccountType>('ENTERPRISE');
     const [eduProfile, setEduProfile] = useState<EducationalProfile | null>(null);
 
@@ -42,6 +40,31 @@ export const Register = () => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState(false);
+
+    // Zero Memory Policy
+    useEffect(() => {
+        return () => {
+            setFormData({
+                email: '',
+                country: 'CL',
+                applicant_name: '',
+                company_name: '',
+                industry: '',
+                rut: '',
+                website: '',
+                institution_name: '',
+                institution_website: '',
+                program_name: '',
+                graduation_date: '',
+                full_name: '',
+                run: '',
+                usage_profile: 'PROFESSIONAL',
+                profile: ''
+            });
+            setError('');
+            setSuccess(false);
+        };
+    }, []);
 
     const handleTypeChange = (newType: AccountType) => {
         setType(newType);
@@ -164,9 +187,12 @@ export const Register = () => {
 
     const activeCountry = SUPPORTED_COUNTRIES.find(c => c.code === formData.country) || SUPPORTED_COUNTRIES[0];
 
-    const renderInput = (label: string, name: string, type = 'text', placeholder = '', required = true) => (
-        <div className="flex flex-col gap-1">
-            <label className="text-xs font-semibold text-antigravity-light-muted dark:text-antigravity-dark-muted uppercase tracking-wider">{label}</label>
+    const renderInput = (label: string, name: string, icon: string, index: string, type = 'text', placeholder = '', required = true) => (
+        <div className="space-y-3">
+            <div className="flex justify-between items-end px-1">
+                <span className="material-symbols-rounded text-black/40 dark:text-white/40 mb-1">{icon}</span>
+                <span className="text-[10px] font-mono text-black/20 dark:text-white/20">[{index}]</span>
+            </div>
             <input
                 type={type}
                 name={name}
@@ -174,31 +200,28 @@ export const Register = () => {
                 onChange={handleChange}
                 placeholder={placeholder}
                 required={required}
-                className={clsx(
-                    "w-full px-4 py-2 rounded-md bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-slate-700",
-                    "focus:outline-none focus:border-antigravity-accent focus:ring-1 focus:ring-antigravity-accent transition-all",
-                    "text-antigravity-light-text dark:text-antigravity-dark-text placeholder-slate-400"
-                )}
+                className="premium-input"
                 autoComplete="off"
+                spellCheck="false"
+                data-lpignore="true"
             />
         </div>
     );
 
-    const renderSelect = (label: string, name: string, options: { value: string, label: string }[]) => (
-        <div className="flex flex-col gap-1">
-            <label className="text-xs font-semibold text-antigravity-light-muted dark:text-antigravity-dark-muted uppercase tracking-wider">{label}</label>
+    const renderSelect = (label: string, name: string, icon: string, index: string, options: { value: string, label: string }[]) => (
+        <div className="space-y-3">
+            <div className="flex justify-between items-end px-1">
+                <span className="material-symbols-rounded text-black/40 dark:text-white/40 mb-1">{icon}</span>
+                <span className="text-[10px] font-mono text-black/20 dark:text-white/20">[{index}]</span>
+            </div>
             <select
                 name={name}
                 value={(formData as any)[name]}
                 onChange={handleChange}
-                className={clsx(
-                    "w-full px-4 py-2 rounded-md bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-slate-700",
-                    "focus:outline-none focus:border-antigravity-accent focus:ring-1 focus:ring-antigravity-accent transition-all",
-                    "text-antigravity-light-text dark:text-antigravity-dark-text"
-                )}
+                className="premium-input"
             >
                 {options.map(opt => (
-                    <option key={opt.value} value={opt.value} className="bg-white dark:bg-slate-900">{opt.label}</option>
+                    <option key={opt.value} value={opt.value} className="bg-white dark:bg-black">{opt.label}</option>
                 ))}
             </select>
         </div>
@@ -213,150 +236,174 @@ export const Register = () => {
     // ------------------
 
     return (
-        <div className="min-h-screen flex items-center justify-center p-4 bg-antigravity-light-bg dark:bg-antigravity-dark-bg transition-colors">
-            <div className="absolute top-4 right-4 flex items-center gap-2">
+        <div className="min-h-screen flex items-center justify-center p-6 transition-colors relative overflow-hidden industrial-mineral-gradient">
+            <div className="absolute top-6 right-6 flex items-center gap-3 z-50">
                 <LanguageSwitch />
                 <ThemeSwitch />
             </div>
 
-            <Card className="w-full max-w-lg shadow-xl shadow-black/5 dark:shadow-none my-8 bg-antigravity-light-surface dark:bg-[#1E1E1E] border border-antigravity-light-border dark:border-gray-800 rounded-[2rem] p-10 font-Atkinson">
-                <div className="mb-8 text-center">
-                    <h1 className="text-3xl font-extrabold text-gray-900 dark:text-white mb-2 tracking-tight uppercase">{t('auth.title', 'Nueva Suscripción')}</h1>
-                    <p className="text-gray-500 dark:text-gray-400 text-sm font-medium">{t('auth.subtitle', 'Inicia tu proceso de activación personalizada')}</p>
+            <div className="w-full max-w-lg relative z-10 transition-all duration-700 text-black dark:text-white">
+
+                {/* Logo Flotante perfectamente alineado */}
+                <div className="mb-6 px-10 flex justify-center">
+                    <BrandLogo variant="isotype" className="w-1/4 h-auto relative z-10" />
                 </div>
 
-                <div className="flex p-1.5 mb-8 bg-gray-100 dark:bg-white/5 rounded-2xl">
-                    {(['ENTERPRISE', 'EDUCATIONAL', 'PERSONAL'] as AccountType[]).map((tab) => (
-                        <button
-                            key={tab}
-                            onClick={() => handleTypeChange(tab)}
-                            className={clsx(
-                                "flex-1 py-3 text-xs font-bold rounded-xl transition-all duration-300",
-                                type === tab
-                                    ? "bg-white dark:bg-indigo-600 text-indigo-600 dark:text-white shadow-lg shadow-gray-200/50 dark:shadow-none"
-                                    : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-                            )}
-                        >
-                            {t(`tabs.${tab.toLowerCase()}`)}
-                        </button>
-                    ))}
+                <div className="flex items-center justify-center gap-4 mb-6 animate-in fade-in slide-in-from-top-4 duration-1000 delay-200">
+                    <div className="h-[1px] w-8" style={{ backgroundColor: 'rgb(198, 131, 70)' }}></div>
+                    <p className="hud-label" style={{ color: 'rgb(198, 131, 70)' }}>MINREPORT®</p>
+                    <div className="h-[1px] w-8" style={{ backgroundColor: 'rgb(198, 131, 70)' }}></div>
                 </div>
 
-                {success ? (
-                    <div className="text-center py-10">
-                        <div className="w-16 h-16 bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <IconCheck className="w-8 h-8" />
-                        </div>
-                        <h3 className="text-xl font-bold text-antigravity-light-text dark:text-antigravity-dark-text mb-2">{t('form.submit_success_title', 'Solicitud Enviada')}</h3>
-                        <p className="text-antigravity-light-muted dark:text-antigravity-dark-muted mb-6">{t('form.submit_success_msg', 'Te notificaremos por correo.')}</p>
-                        <Button onClick={() => setSuccess(false)} variant="secondary">{t('form.back', 'Volver')}</Button>
-                    </div>
-                ) : (
-                    <form onSubmit={handleSubmit} className="space-y-5">
-                        <div className="flex flex-col gap-1">
-                            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('form.country')}</label>
-                            <select
-                                name="country"
-                                value={formData.country}
-                                onChange={handleChange}
+                <div className="elite-tech-surface py-8 px-10 shadow-3xl relative animate-in fade-in zoom-in-95 duration-700 delay-100">
+                    <div className="absolute inset-0 technical-grid opacity-20 pointer-events-none"></div>
+
+                    {/* Tabs Standardized */}
+                    <div className="flex p-1.5 mb-10 bg-black/5 dark:bg-white/5 rounded-none relative z-10 border border-black/5 dark:border-white/5">
+                        {(['ENTERPRISE', 'EDUCATIONAL', 'PERSONAL'] as AccountType[]).map((tab) => (
+                            <button
+                                key={tab}
+                                onClick={() => handleTypeChange(tab)}
                                 className={clsx(
-                                    "w-full px-4 py-2 rounded-md bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700 font-medium",
-                                    "focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all",
-                                    "text-slate-900 dark:text-slate-100 placeholder-slate-400"
+                                    "flex-1 py-4 text-[10px] font-black tracking-[0.2em] uppercase transition-all duration-500",
+                                    type === tab
+                                        ? "bg-black dark:bg-white text-white dark:text-black shadow-xl"
+                                        : "text-black/30 dark:text-white/20 hover:text-black/60 dark:hover:text-white/40"
                                 )}
                             >
-                                {SUPPORTED_COUNTRIES.map(c => (
-                                    <option key={c.code} value={c.code}>{c.name}</option>
-                                ))}
-                            </select>
-                        </div>
+                                {t(`tabs.${tab.toLowerCase()}`)}
+                            </button>
+                        ))}
+                    </div>
 
-                        <div className="space-y-4">
-                            {renderInput(t('form.email'), 'email', 'email', 'name@company.com')}
-                            {type === 'EDUCATIONAL' && (
-                                <div className="p-3 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-xs rounded-md flex items-start gap-2 border border-blue-100 dark:border-blue-800">
-                                    <span className="text-lg">ℹ️</span>
-                                    <p>{t('errors.public_email')}</p>
+                    {success ? (
+                        <div className="text-center py-10 relative z-10 space-y-8 animate-in fade-in slide-in-from-bottom-4">
+                            <div className="w-20 h-20 bg-emerald-600/10 text-emerald-600 dark:text-emerald-400 border border-emerald-600/20 flex items-center justify-center mx-auto shadow-2xl">
+                                <IconCheck className="w-10 h-10" />
+                            </div>
+                            <div className="space-y-2">
+                                <h3 className="text-2xl font-black uppercase tracking-tight">{t('form.submit_success_title', 'Solicitud Enviada')}</h3>
+                                <p className="hud-label opacity-60 text-center">{t('form.submit_success_msg', 'Te notificaremos por correo.')}</p>
+                            </div>
+                            <button
+                                onClick={() => setSuccess(false)}
+                                className="w-full py-6 bg-black dark:bg-white text-white dark:text-black font-black uppercase tracking-[0.3em] text-[12px] shadow-3xl active:scale-[0.98] transition-all"
+                            >
+                                {t('form.back', 'Volver')}
+                            </button>
+                        </div>
+                    ) : (
+                        <form onSubmit={handleSubmit} className="space-y-8 relative z-10" autoComplete="off">
+                            {renderSelect(t('form.country'), 'country', 'public', '00', SUPPORTED_COUNTRIES.map(c => ({ value: c.code, label: c.name })))}
+
+                            <div className="space-y-4">
+                                {renderInput(t('form.email'), 'email', 'alternate_email', '01', 'email', 'NAME@COMPANY.COM')}
+                                {type === 'EDUCATIONAL' && (
+                                    <div className="p-4 bg-black/5 dark:bg-white/5 text-black/60 dark:text-white/60 text-[10px] uppercase font-bold tracking-tight flex items-start gap-4 border border-black/5 dark:border-white/5">
+                                        <span className="material-symbols-rounded text-base text-blue-500">info</span>
+                                        <p>{t('errors.public_email')}</p>
+                                    </div>
+                                )}
+                            </div>
+
+                            {type === 'ENTERPRISE' && (
+                                <div className="space-y-8">
+                                    {renderInput(t('form.applicant_name'), 'applicant_name', 'person', '02')}
+                                    {renderInput(t('form.company_name'), 'company_name', 'business', '03')}
+                                    {renderInput(formData.country === 'CL' ? 'RUT de la Empresa' : activeCountry.taxLabel, 'rut', 'id_card', '04', 'text', activeCountry.placeholder)}
+                                    {renderInput(t('form.industry'), 'industry', 'settings_input_composite', '05')}
+                                    {renderInput(`${t('form.website')}`, 'website', 'language', '06', 'text', 'WWW.COMPANY.COM', false)}
                                 </div>
                             )}
-                        </div>
 
-                        {type === 'ENTERPRISE' && (
-                            <>
-                                {renderInput(t('form.applicant_name', 'Nombre del Solicitante'), 'applicant_name')}
-                                {renderInput(t('form.company_name', 'Nombre de la Empresa'), 'company_name')}
-                                {renderInput(formData.country === 'CL' ? 'RUT de la Empresa' : activeCountry.taxLabel, 'rut', 'text', activeCountry.placeholder)}
-                                {renderInput(t('form.industry', 'Industria'), 'industry')}
-                                {renderInput(`${t('form.website')} (${t('form.optional')})`, 'website', 'text', 'www.company.com', false)}
-                            </>
-                        )}
+                            {type === 'EDUCATIONAL' && (
+                                <div className="space-y-8">
+                                    {renderInput(t('form.applicant_name'), 'applicant_name', 'person', '02')}
+                                    {renderInput(formData.country === 'CL' ? 'RUN / Cédula Identidad' : activeCountry.taxLabel, 'run', 'id_card', '03', 'text', activeCountry.placeholder)}
 
-                        {type === 'EDUCATIONAL' && (
-                            <>
-                                {renderInput(t('form.applicant_name', 'Nombre Completo'), 'applicant_name')}
-                                {renderInput(formData.country === 'CL' ? 'RUN / Cédula Identidad' : activeCountry.taxLabel, 'run', 'text', activeCountry.placeholder)}
-
-                                <div className="space-y-2">
-                                    <label className="text-xs font-bold text-gray-500 uppercase tracking-widest ml-1">Perfil Académico</label>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        {(['ALUMNO', 'ACADEMICO', 'DOCENTE', 'OTRO'] as EducationalProfile[]).map(p => (
-                                            <button
-                                                key={p}
-                                                type="button"
-                                                onClick={() => setEduProfile(p)}
-                                                className={clsx(
-                                                    "py-3 px-4 rounded-xl border text-[10px] font-bold transition-all",
-                                                    eduProfile === p
-                                                        ? "bg-indigo-50 border-indigo-400 text-indigo-700 dark:bg-indigo-500/20 dark:border-indigo-500 dark:text-indigo-300"
-                                                        : "bg-gray-50 border-gray-100 text-gray-400 dark:bg-white/5 dark:border-gray-800"
-                                                )}
-                                            >
-                                                {p}
-                                            </button>
-                                        ))}
+                                    <div className="space-y-4">
+                                        <div className="flex justify-between items-end px-1">
+                                            <span className="material-symbols-rounded text-black/40 dark:text-white/40 mb-1">school</span>
+                                            <span className="text-[10px] font-mono text-black/20 dark:text-white/20">[04]</span>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {(['ALUMNO', 'ACADEMICO', 'DOCENTE', 'OTRO'] as EducationalProfile[]).map(p => (
+                                                <button
+                                                    key={p}
+                                                    type="button"
+                                                    onClick={() => setEduProfile(p)}
+                                                    className={clsx(
+                                                        "py-4 px-4 border text-[10px] font-black uppercase tracking-widest transition-all duration-300",
+                                                        eduProfile === p
+                                                            ? "bg-black dark:bg-white border-black dark:border-white text-white dark:text-black shadow-lg"
+                                                            : "bg-black/5 dark:bg-white/5 border-black/5 dark:border-white/5 text-black/30 dark:text-white/20"
+                                                    )}
+                                                >
+                                                    {p}
+                                                </button>
+                                            ))}
+                                        </div>
                                     </div>
+
+                                    {renderInput(t('form.institution_name'), 'institution_name', 'apartment', '05')}
+                                    {renderInput(`${t('form.institution_web')}`, 'institution_website', 'language', '06', 'text', 'WWW.EDU.CL', false)}
+                                    {renderInput(t('form.program_name'), 'program_name', 'history_edu', '07')}
+                                    {renderInput(t('form.graduation_date'), 'graduation_date', 'event', '08', 'date')}
                                 </div>
+                            )}
 
-                                {renderInput(t('form.institution_name', 'Institución'), 'institution_name')}
-                                {renderInput(`${t('form.institution_web', 'Web Institucional')} (${t('form.optional')})`, 'institution_website', 'text', 'www.edu.cl', false)}
-                                {renderInput(t('form.program_name', 'Carrera / Programa'), 'program_name')}
-                                {renderInput(t('form.graduation_date', 'Fecha Estimada Graduación'), 'graduation_date', 'date')}
-                            </>
-                        )}
+                            {type === 'PERSONAL' && (
+                                <div className="space-y-8">
+                                    {renderInput(t('form.full_name'), 'full_name', 'person', '02')}
+                                    {renderInput(formData.country === 'CL' ? 'RUN / Cédula Identidad' : activeCountry.taxLabel, 'run', 'id_card', '03', 'text', activeCountry.placeholder)}
+                                    {renderSelect(t('form.usage_profile'), 'usage_profile', 'account_circle', '04', [
+                                        { value: 'PROFESSIONAL', label: t('form.professional', 'Profesional Independiente') },
+                                        { value: 'PERSONAL', label: t('form.personal', 'Proyecto Personal / Hobby') }
+                                    ])}
+                                </div>
+                            )}
 
-                        {type === 'PERSONAL' && (
-                            <>
-                                {renderInput(t('form.full_name', 'Nombre Completo'), 'full_name')}
-                                {renderInput(formData.country === 'CL' ? 'RUN / Cédula Identidad' : activeCountry.taxLabel, 'run', 'text', activeCountry.placeholder)}
-                                {renderSelect(t('form.usage_profile', 'Perfil de Uso'), 'usage_profile', [
-                                    { value: 'PROFESSIONAL', label: t('form.professional', 'Profesional Independiente') },
-                                    { value: 'PERSONAL', label: t('form.personal', 'Proyecto Personal / Hobby') }
-                                ])}
-                            </>
-                        )}
+                            {error && (
+                                <div className="p-4 bg-rose-500/10 text-rose-400 text-[10px] font-mono font-bold flex items-center gap-3 border border-rose-500/30 animate-in fade-in slide-in-from-bottom-2">
+                                    <span className="material-symbols-rounded text-base">error</span>
+                                    <span className="uppercase tracking-tight">{error}</span>
+                                </div>
+                            )}
 
-                        {error && (
-                            <div className="p-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm rounded-md flex items-center gap-2">
-                                <span className="font-bold">!</span>
-                                {error}
-                            </div>
-                        )}
+                            <button
+                                type="submit"
+                                disabled={loading}
+                                className="w-full py-6 bg-black dark:bg-white text-white dark:text-black font-black uppercase tracking-[0.3em] text-[12px] transition-all shadow-3xl active:scale-[0.98] disabled:opacity-30 flex items-center justify-center gap-4"
+                            >
+                                {loading ? (
+                                    <div className="w-6 h-6 border-2 border-white/20 dark:border-black/20 border-t-white dark:border-t-black rounded-full animate-spin" />
+                                ) : (
+                                    <>
+                                        <span>SOLICITAR_ENTORNO</span>
+                                        <ArrowRight size={20} />
+                                    </>
+                                )}
+                            </button>
+                        </form>
+                    )}
 
-                        <Button type="submit" className="w-full mt-6 py-4 rounded-xl text-base shadow-lg shadow-indigo-600/20 active:scale-[0.99] transition-transform" disabled={loading}>
-                            {loading ? t('form.submitting', 'Procesando encriptación...') : t('form.submit', 'Solicitar Acceso Seguro')}
-                        </Button>
-                    </form>
-                )}
-
-                <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-700/50 text-center">
-                    <p className="text-sm text-antigravity-light-muted dark:text-antigravity-dark-muted">
-                        {t('auth.already_have_account', '¿Ya tienes cuenta?')}
-                        <Link to="/login" className="ml-2 text-antigravity-accent font-bold hover:underline">
-                            {t('auth.login_link_reg', 'Ingresar aquí')}
+                    <div className="mt-10 pt-8 border-t border-black/5 dark:border-white/5 text-center relative z-10">
+                        <Link to="/login" className="hud-label text-black/30 dark:text-white/20 hover:text-black dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 py-3 px-6 transition-all inline-flex items-center gap-3">
+                            <ArrowLeft size={14} />
+                            <span>[BACK_TO_LOGIN]</span>
                         </Link>
-                    </p>
+                    </div>
                 </div>
-            </Card>
+
+                <footer className="mt-8 text-center space-y-4 opacity-40 hover:opacity-100 transition-opacity duration-500">
+                    <div className="flex justify-center">
+                        <ShieldCheck size={14} className="text-emerald-600 dark:text-emerald-400" />
+                    </div>
+                    <p className="text-[10px] text-black/60 dark:text-white uppercase tracking-[0.3em] font-black">
+                        © {new Date().getFullYear()} MINREPORT. TODOS LOS DERECHOS RESERVADOS.
+                    </p>
+                </footer>
+            </div>
         </div>
     );
 };

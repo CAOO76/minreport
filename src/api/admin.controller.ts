@@ -434,24 +434,32 @@ export const updateBrandingSettings = async (req: Request, res: Response) => {
                 const pwaIconUrl = settings.light?.pwaIcon || settings.dark?.pwaIcon || settings.light?.isotype;
                 if (pwaIconUrl) {
                     console.log('[DevOps] Syncing PWA Icons...');
-                    const tempIcon = path.join(rootDir, 'temp_pwa_master.png');
+                    const ext = pwaIconUrl.toLowerCase().includes('.svg') ? '.svg' : '.png';
+                    const tempIcon = path.join(rootDir, `temp_pwa_master${ext}`);
                     await downloadFile(pwaIconUrl, tempIcon);
 
                     // Sync to Web App
                     if (fs.existsSync(webPublicDir)) {
-                        await execAsync(`sips -z 192 192 "${tempIcon}" --out "${path.join(webPublicDir, 'pwa-192x192.png')}"`);
-                        await execAsync(`sips -z 512 512 "${tempIcon}" --out "${path.join(webPublicDir, 'pwa-512x512.png')}"`);
-                        console.log('[DevOps] PWA Icons updated in web/public');
+                        if (ext === '.svg') {
+                            // Direct copy for SVGs to maintain vector quality
+                            fs.copyFileSync(tempIcon, path.join(webPublicDir, 'branding/master_icon.svg'));
+                            console.log('[DevOps] SVG Master Icon updated in web/public/branding');
+                        } else {
+                            await execAsync(`sips -z 192 192 "${tempIcon}" --out "${path.join(webPublicDir, 'pwa-192x192.png')}"`);
+                            await execAsync(`sips -z 512 512 "${tempIcon}" --out "${path.join(webPublicDir, 'pwa-512x512.png')}"`);
+                            console.log('[DevOps] PNG PWA Icons updated in web/public');
+                        }
                     }
                     if (fs.existsSync(tempIcon)) fs.unlinkSync(tempIcon);
                 }
 
                 // 2. Sync Native Mobile Icons (Android)
-                // We prioritize dark.appIcon (White logo) because we set a dark background in colors.xml
+                // [BRANDING-AUTO] Safe-Zone Logic: Enforce 66% safe area to prevent clipping
                 const appIconUrl = settings.dark?.appIcon || settings.light?.appIcon;
                 if (appIconUrl && fs.existsSync(androidResDir)) {
-                    console.log('[DevOps] Syncing Native Mobile Icons...');
-                    const tempAppIcon = path.join(rootDir, 'temp_app_master.png');
+                    console.log('[DevOps] Syncing Native Mobile Icons with Safe Zone...');
+                    const ext = appIconUrl.toLowerCase().includes('.svg') ? '.svg' : '.png';
+                    const tempAppIcon = path.join(rootDir, `temp_app_master${ext}`);
                     await downloadFile(appIconUrl, tempAppIcon);
 
                     const mipmapConfigs = [
@@ -465,15 +473,29 @@ export const updateBrandingSettings = async (req: Request, res: Response) => {
                     for (const config of mipmapConfigs) {
                         const targetDir = path.join(androidResDir, config.dir);
                         if (fs.existsSync(targetDir)) {
-                            // Legacy and Compatibility Icons
-                            await execAsync(`sips -z ${config.size} ${config.size} "${tempAppIcon}" --out "${path.join(targetDir, 'ic_launcher.png')}"`);
-                            await execAsync(`sips -z ${config.size} ${config.size} "${tempAppIcon}" --out "${path.join(targetDir, 'ic_launcher_round.png')}"`);
+                            // [SAFE-ZONE] Resize to 66% of target and pad with transparency
+                            // For adaptive icons (108dp default), the safe zone is roughly 72px center
+                            const safeSize = Math.floor(config.size * 0.66);
+                            const adaptiveSafeSize = Math.floor(config.adaptive * 0.66);
 
-                            // 📱 Modern Adaptive Icons Foreground Layer (using 108dp standard)
-                            await execAsync(`sips -z ${config.adaptive} ${config.adaptive} "${tempAppIcon}" --out "${path.join(targetDir, 'ic_launcher_foreground.png')}"`);
+                            if (ext === '.svg') {
+                                // For SVGs on Mac, sips can still rasterize them to PNG for Android Res
+                                await execAsync(`sips -s format png -z ${safeSize} ${safeSize} "${tempAppIcon}" --out "${path.join(targetDir, 'ic_launcher.png')}"`);
+                                await execAsync(`sips -s format png -z ${adaptiveSafeSize} ${adaptiveSafeSize} "${tempAppIcon}" --out "${path.join(targetDir, 'ic_launcher_foreground.png')}"`);
+                            } else {
+                                await execAsync(`sips -z ${safeSize} ${safeSize} "${tempAppIcon}" --out "${path.join(targetDir, 'ic_launcher.png')}"`);
+                                await execAsync(`sips -z ${adaptiveSafeSize} ${adaptiveSafeSize} "${tempAppIcon}" --out "${path.join(targetDir, 'ic_launcher_foreground.png')}"`);
+                            }
+
+                            // Pad to original size (Centering)
+                            await execAsync(`sips --padToHeightWidth ${config.size} ${config.size} "${path.join(targetDir, 'ic_launcher.png')}"`);
+                            await execAsync(`sips --padToHeightWidth ${config.adaptive} ${config.adaptive} "${path.join(targetDir, 'ic_launcher_foreground.png')}"`);
+
+                            // Compatibility Round Icon
+                            fs.copyFileSync(path.join(targetDir, 'ic_launcher.png'), path.join(targetDir, 'ic_launcher_round.png'));
                         }
                     }
-                    console.log('[DevOps] Android Native Icons updated in web/android');
+                    console.log('[DevOps] Android Native Icons updated with Safe Zone');
                     if (fs.existsSync(tempAppIcon)) fs.unlinkSync(tempAppIcon);
                 }
             } catch (syncErr) {
@@ -532,5 +554,32 @@ export const getAuditLogs = async (req: Request, res: Response) => {
     } catch (error) {
         console.error('Error fetching audit logs:', error);
         return res.status(500).json({ error: 'Failed to fetch logs' });
+    }
+};
+export const getUIAssetsSettings = async (req: Request, res: Response) => {
+    try {
+        const doc = await db.collection('settings').doc('ui_assets').get();
+        if (!doc.exists) {
+            return res.json({
+                login_bg: '',
+                dashboard_bg: '',
+                sidebar_bg: ''
+            });
+        }
+        res.json(doc.data());
+    } catch (error) {
+        console.error('Error getting UI assets settings:', error);
+        res.status(500).json({ message: 'Internal server error.' });
+    }
+};
+
+export const updateUIAssetsSettings = async (req: Request, res: Response) => {
+    try {
+        const settings = req.body;
+        await db.collection('settings').doc('ui_assets').set(settings, { merge: true });
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error updating UI assets settings:', error);
+        res.status(500).json({ message: 'Internal server error.' });
     }
 };

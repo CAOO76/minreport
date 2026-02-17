@@ -8,6 +8,35 @@
     }
 }
 
+@layer utilities {
+    .elite-tech-surface {
+        @apply bg-white dark:bg-black border border-black/10 dark:border-white/5 relative overflow-hidden;
+    }
+
+    .technical-grid {
+        background-image: linear-gradient(to right, currentColor 1px, transparent 1px),
+            linear-gradient(to bottom, currentColor 1px, transparent 1px);
+        background-size: 20px 20px;
+        @apply text-black/[0.05] dark:text-white/[0.03];
+    }
+
+    .hud-label {
+        @apply text-[9px] font-mono font-bold uppercase tracking-[0.25em] text-black/40 dark:text-white/40;
+    }
+
+    .industrial-mineral-gradient {
+        background: linear-gradient(180deg, #FAFAFA 0%, #E5E5E5 100%);
+    }
+
+    .dark .industrial-mineral-gradient {
+        background: radial-gradient(circle at center, #1a1a1a 0%, #000000 100%);
+    }
+
+    .premium-input {
+        @apply w-full px-5 py-4 rounded-none bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 focus:border-black dark:focus:border-white outline-none text-black dark:text-white transition-all duration-300 placeholder:text-black/30 dark:placeholder:text-white/20 font-bold tracking-tight text-sm;
+    }
+}
+
 /* Custom Scrollbar for Webkit */
 ::-webkit-scrollbar {
     width: 8px;

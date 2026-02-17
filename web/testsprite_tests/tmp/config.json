@@ -1,0 +1,17 @@
+{
+  "status": "commited",
+  "type": "frontend",
+  "scope": "codebase",
+  "localEndpoint": "http://localhost:5173",
+  "executionArgs": {
+    "projectName": "minreport-web",
+    "projectPath": "/Volumes/CODE/MINREPORT iMac/minreport/web",
+    "testIds": [],
+    "additionalInstruction": "Execute frontend tests for the web project. Ensure the dev server is accessible.",
+    "envs": {
+      "API_KEY": "sk-user-PMxck_KfEb4EeZ6pcCJbeQBAmP1_1DAfpWFz-cvPIGxqf0BzHpqJwNEX09PVv_wO9FocPAJ4ADU3mNzk-SKbrszh9D7_-DMD_344wSSBuWbI1a3ndUnlOMYymjP0GPlKqlI"
+    }
+  },
+  "serverPort": 54889,
+  "proxy": "http://15fd2339-c0ce-4482-ae57-0ce24019bb82:jVCAYcN9OOjkIFzyDagtQS6rfa5LilOp@tun.testsprite.com:8080"
+}

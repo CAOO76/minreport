@@ -1,7 +1,9 @@
-
 import { initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 process.env.FIRESTORE_EMULATOR_HOST = "127.0.0.1:8085";
 process.env.FIREBASE_AUTH_EMULATOR_HOST = "127.0.0.1:9190";
@@ -14,8 +16,8 @@ const db = getFirestore();
 const auth = getAuth();
 
 async function createSuperAdmin() {
-    const email = "admin@minreport.com";
-    const password = "adminPassword123!";
+    const email = process.env.SUPER_ADMIN_EMAIL || "admin@minreport.com";
+    const password = process.env.SUPER_ADMIN_PASSWORD || "SuperAdmin123!";
 
     console.log(`Checking for user ${email}...`);
 

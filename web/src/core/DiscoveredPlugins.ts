@@ -3,9 +3,10 @@
  * ARCHIVO GENERADO AUTOMÁTICAMENTE - NO EDITAR 
  * Generado por scripts/sync_plugins.ts
  */
-import stockpile_controlPlugin from '@minreport/stockpile-control';
+
 
 export const DISCOVERED_PLUGINS = [
+<<<<<<< Updated upstream
     {
         manifest: { 
             id: 'stockpile-control', 
@@ -17,4 +18,7 @@ export const DISCOVERED_PLUGINS = [
         },
         instance: stockpile_controlPlugin
     }
+=======
+    
+>>>>>>> Stashed changes
 ];
