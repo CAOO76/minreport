@@ -68,7 +68,7 @@ function sync() {
  * ARCHIVO GENERADO AUTOMÁTICAMENTE - NO EDITAR 
  * Generado por scripts/sync_plugins.ts
  */
-import { PluginManifest, PluginLifeCycle } from '@minreport/sdk';
+import { PluginManifest, PluginLifeCycle } from '../sdk-bundle';
 ${discovered.map(p => `import ${p.id.replace(/-/g, '_')}Plugin from '${p.importPath}';`).join('\n')}
 
 export const DISCOVERED_PLUGINS: { manifest: PluginManifest; instance: PluginLifeCycle }[] = [
