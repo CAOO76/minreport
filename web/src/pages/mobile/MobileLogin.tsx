@@ -14,13 +14,9 @@ import {
     ChevronRight,
     Lock
 } from 'lucide-react';
-<<<<<<< Updated upstream
 import { getApiUrl } from '../../utils/network';
-=======
-import { formatRut } from '../../utils/rut';
 import { LanguageSwitch } from '../../components/LanguageSwitch';
 import { ThemeSwitch } from '../../components/ThemeSwitch';
->>>>>>> Stashed changes
 
 type LoginStep = 'IDENTIFICATION' | 'ACCOUNT_SELECTION' | 'CHALLENGE';
 type AccountType = 'B2B' | 'EDU' | 'PERSONAL';
