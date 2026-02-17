@@ -68,22 +68,23 @@ function sync() {
  * ARCHIVO GENERADO AUTOMÁTICAMENTE - NO EDITAR 
  * Generado por scripts/sync_plugins.ts
  */
-${discovered.map(p => `import ${p.id.replace(/-/g, '_')}Plugin from '${p.importPath}';`).join('\n')}
+import { PluginManifest, PluginLifeCycle } from '@minreport/sdk';
+\${discovered.map(p => \`import \${p.id.replace(/-/g, '_')}Plugin from '\${p.importPath}';\`).join('\\n')}
 
-export const DISCOVERED_PLUGINS = [
-    ${discovered.map(p => `{
+export const DISCOVERED_PLUGINS: { manifest: PluginManifest; instance: PluginLifeCycle }[] = [
+    \${discovered.map(p => \`{
         manifest: { 
-            id: '${p.id}', 
-            name: '${p.name}', 
-            version: '${p.version}', 
+            id: '\${p.id}', 
+            name: '\${p.name}', 
+            version: '\${p.version}', 
             author: 'MINREPORT Team',
-            icon: '${p.icon}',
-            description: '${p.description}'
+            icon: '\${p.icon}',
+            description: '\${p.description}'
         },
-        instance: ${p.id.replace(/-/g, '_')}Plugin
-    }`).join(',\n    ')}
+        instance: \${p.id.replace(/-/g, '_')}Plugin
+    }\`).join(',\\n    ')}
 ];
-`;
+\`;
 
     fs.writeFileSync(path.join(WEB_CORE_DIR, 'DiscoveredPlugins.ts'), webContent);
     fs.writeFileSync(path.join(ADMIN_CORE_DIR, 'DiscoveredPlugins.ts'), webContent);
