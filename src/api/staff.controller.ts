@@ -55,53 +55,71 @@ router.post('/create-worker', async (req: Request, res: Response) => {
             ? 'https://minreport-access.web.app'
             : 'http://localhost:5173';
 
-        const setupLink = `${baseUrl}/setup-access?accountId=${accountId}&taxId=${run || ''}&email=${normalizedEmail}&oobCode=${oobCode}`;
+        const encodedName = encodeURIComponent(displayName || 'Miembro del Equipo');
+        const setupLink = `${baseUrl}/setup-access?accountId=${accountId}&email=${normalizedEmail}&name=${encodedName}&type=BUSINESS&oobCode=${oobCode}`;
 
         // 5. Enviar email de bienvenida con RESEND
         try {
             await EmailService.sendEmail({
                 from: 'MinReport Onboarding <no-reply@minreport.com>',
                 to: normalizedEmail,
-                subject: '🎉 Bienvenido al equipo - Configura tu acceso',
+                subject: 'Configuración de Acceso Operativo',
                 html: `
-                    <div style="font-family: 'Atkinson Hyperlegible', sans-serif; max-width: 600px; color: #334155; padding: 40px 20px;">
+                    <div style="font-family: 'Arial', sans-serif; max-width: 600px; color: #334155; padding: 40px 20px;">
                         <div style="text-align: center; margin-bottom: 32px;">
-                            <h1 style="color: #4F46E5; font-size: 28px; margin: 0;">¡Bienvenido a MinReport!</h1>
+                            <img src="https://minreport-access.web.app/pwa-192x192.png" alt="MINREPORT" style="height: 48px; width: auto; opacity: 0.9;" />
                         </div>
                         
-                        <div style="background: #F8FAFC; border-left: 4px solid #4F46E5; padding: 20px; border-radius: 8px; margin-bottom: 24px;">
-                            <p style="margin: 0; font-size: 16px; line-height: 1.6;">
-                                Hola <strong>${displayName}</strong>,
+                        <div style="background: #F8FAFC; border-left: 4px solid #0F172A; padding: 24px; border-radius: 0px; margin-bottom: 24px;">
+                            <p style="margin: 0; font-size: 16px; line-height: 1.6; font-weight: bold; color: #0F172A; text-transform: uppercase;">
+                                ONBOARDING: ${displayName}
                             </p>
-                            <p style="margin: 12px 0 0 0; font-size: 16px; line-height: 1.6;">
-                                Has sido añadido como miembro del equipo. Para comenzar, necesitas configurar tu contraseña de acceso.
+                            <p style="margin: 12px 0 0 0; font-size: 15px; line-height: 1.6;">
+                                Has sido añadido como operador activo al sistema. Para habilitar tu ingreso, necesitas configurar tu contraseña de cuenta.
+                            </p>
+
+                            <div style="margin-top: 24px; background: white; border: 1px solid #E2E8F0; padding: 16px; border-radius: 4px;">
+                                <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Operador Destino</p>
+                                <p style="margin: 0 0 16px 0; font-size: 16px; color: #0F172A; font-weight: bold;">${displayName}</p>
+                                
+                                <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Correo Asociado</p>
+                                <p style="margin: 0 0 16px 0; font-size: 14px; color: #0F172A;">${normalizedEmail}</p>
+                                
+                                <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Tipo de Entorno</p>
+                                <p style="margin: 0; font-size: 14px; color: #0F172A;">Operación Corporativa (BUSINESS)</p>
+                            </div>
+                            
+                            <p style="margin: 24px 0 0 0; font-size: 15px; line-height: 1.6;">
+                                Por seguridad, deberás verificar tu identidad ingresando tu documento principal antes de establecer tu contraseña exclusiva de acceso.
                             </p>
                         </div>
 
                         <div style="text-align: center; margin: 32px 0;">
                             <a href="${setupLink}" 
-                               style="background: #4F46E5; 
+                               style="background: #0F172A; 
                                       color: white; 
-                                      padding: 14px 32px; 
+                                      padding: 16px 32px; 
                                       text-decoration: none; 
-                                      border-radius: 8px; 
                                       font-weight: bold; 
                                       display: inline-block;
-                                      font-size: 16px;">
-                                Configurar mi Contraseña
+                                      font-size: 14px;
+                                      text-transform: uppercase;
+                                      letter-spacing: 0.1em;
+                                      border-radius: 2px;">
+                                Configurar Credenciales
                             </a>
                         </div>
 
-                        <div style="background: #FEF3C7; border: 1px solid #FCD34D; padding: 16px; border-radius: 8px; margin-top: 24px;">
+                        <div style="background: #FFFBEB; border-left: 4px solid #F59E0B; padding: 16px; border-radius: 0px; margin-top: 24px;">
                             <p style="margin: 0; font-size: 14px; color: #92400E;">
-                                <strong>⚠️ Importante:</strong> Este enlace expira en 24 horas. Si no lo usas a tiempo, deberás solicitar uno nuevo.
+                                <strong>IMPORTANTE:</strong> Este enlace de seguridad expira en 24 horas por políticas de acceso.
                             </p>
                         </div>
 
                         <hr style="border: 0; border-top: 1px solid #E2E8F0; margin: 32px 0;" />
 
-                        <p style="font-size: 12px; color: #94A3B8; text-align: center; margin: 0;">
-                            Si no esperabas este correo, puedes ignorarlo de forma segura.
+                        <p style="font-size: 10px; color: #94A3B8; text-align: center; margin: 0; text-transform: uppercase; letter-spacing: 0.1em;">
+                            MINREPORT SECURITY INFRASTRUCTURE
                         </p>
                     </div>
                 `

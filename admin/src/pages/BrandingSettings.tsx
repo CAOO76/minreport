@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import clsx from 'clsx';
 import { getBrandingSettings, updateBrandingSettings } from '../services/api';
 import { storage } from '../config/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -60,11 +61,6 @@ const BrandingPreview: React.FC<{ file: File | null, existingUrl: string | null,
         }
     }, [file, existingUrl]);
 
-    // [SIMULATION-FIX] Correct background for the requested mode
-    // mode="light" -> white background, black logo.
-    // mode="dark" -> dark background, inverted (white) logo.
-    const bgColor = mode === 'light' ? 'bg-white' : 'bg-slate-900';
-    const textColor = mode === 'light' ? 'text-slate-400' : 'text-slate-500';
     const isSvg = (file?.name.toLowerCase().includes('.svg')) || (existingUrl?.toLowerCase().includes('.svg'));
 
     const sizeClasses = {
@@ -74,23 +70,37 @@ const BrandingPreview: React.FC<{ file: File | null, existingUrl: string | null,
     };
 
     return (
-        <div className={`p-6 rounded-2xl border border-slate-200 dark:border-slate-800 ${bgColor} transition-all duration-300 shadow-sm overflow-hidden`}>
-            <div className="flex justify-between items-center mb-4">
-                <h4 className="text-xs font-bold uppercase tracking-wider opacity-60 m-0">{label}</h4>
-                <div className={`text-[10px] px-2 py-1 rounded-full font-mono ${mode === 'light' ? 'bg-slate-100 text-slate-500' : 'bg-slate-800 text-slate-400'}`}>
-                    {mode.toUpperCase()} THEME
+        <div className={clsx(
+            "p-6 rounded-none border transition-all duration-500 shadow-premium overflow-hidden relative",
+            mode === 'light' ? 'bg-white/80 border-black/5' : 'bg-black/40 border-white/5 backdrop-blur-md'
+        )}>
+            <div className="absolute inset-0 technical-grid pointer-events-none opacity-10"></div>
+            <div className="relative z-10 flex justify-between items-center mb-4">
+                <h4 className="hud-label !text-[10px] m-0">{label}</h4>
+                <div className={clsx(
+                    "text-[9px] px-3 py-1 rounded-none font-black tracking-widest uppercase",
+                    mode === 'light' ? 'bg-black/5 text-black/40' : 'bg-white/10 text-white/50'
+                )}>
+                    {mode}_NODE
                 </div>
             </div>
-            <div className={`${sizeClasses[size]} flex items-center justify-center border-2 border-dashed border-slate-300/20 rounded-xl`}>
+            <div className={clsx(
+                sizeClasses[size],
+                "relative z-10 flex items-center justify-center border border-dashed rounded-none group-hover:border-antigravity-accent/50 transition-colors",
+                mode === 'light' ? 'border-black/10' : 'border-white/10'
+            )}>
                 {preview ? (
                     <img
                         src={preview}
                         alt={`${label} preview`}
-                        className={`max-h-full max-w-full transition-all duration-500 ${isSvg && mode === 'dark' ? 'invert brightness-200' : ''}`}
+                        className={clsx(
+                            "max-h-full max-w-full transition-all duration-700",
+                            isSvg && mode === 'dark' && "invert brightness-200"
+                        )}
                         style={{ imageRendering: 'crisp-edges' }}
                     />
                 ) : (
-                    <span className={`text-[10px] font-bold ${textColor}`}>AWAITING ASSET</span>
+                    <span className="text-[10px] font-black opacity-20 tracking-[0.2em]">AWAITING_ASSET</span>
                 )}
             </div>
         </div>
@@ -116,27 +126,29 @@ const BrandingSection: React.FC<{
     };
 
     return (
-        <div className="bg-white dark:bg-slate-800 p-8 rounded-[32px] shadow-sm border border-slate-100 dark:border-slate-700/50">
-            <div className="mb-8">
-                <h3 className="text-2xl font-bold text-slate-900 dark:text-white m-0 tracking-tight">{title}</h3>
-                {description && <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">{description}</p>}
+        <div className="elite-tech-surface p-12 rounded-none shadow-3xl border-black/5 dark:border-white/5 relative group">
+            <div className="absolute inset-0 technical-grid pointer-events-none opacity-20"></div>
+
+            <div className="relative z-10 mb-12">
+                <h3 className="text-3xl font-black text-black dark:text-white m-0 tracking-tighter italic uppercase">{title}</h3>
+                {description && <p className="text-black/50 dark:text-white/40 text-sm mt-2 font-medium">{description}</p>}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <div className="relative z-10 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
                 {(['isotype', 'logotype', 'imagotype', 'pwaIcon', 'appIcon'] as const).map(type => (
-                    <div key={type} className="group flex flex-col space-y-4">
+                    <div key={type} className="group/item flex flex-col space-y-6">
                         <div className="flex flex-col">
-                            <label className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                            <label className="hud-label !text-black/80 dark:!text-white/80 transition-colors group-hover/item:!text-antigravity-accent">
                                 {type === 'pwaIcon' ? 'Favicon / PWA' :
-                                    type === 'appIcon' ? 'App Móvil (Safe Zone)' :
+                                    type === 'appIcon' ? 'Mobile App Isotype' :
                                         type.charAt(0).toUpperCase() + type.slice(1)}
                             </label>
-                            <span className="text-[10px] text-slate-400 font-mono mb-1">
+                            <span className="text-[10px] text-black/30 dark:text-white/30 font-black uppercase tracking-widest mt-1">
                                 {type === 'isotype' ? 'Master (Min 512x512px)' :
-                                    type === 'logotype' ? 'Horizontal (Alta Definición)' :
-                                        type === 'imagotype' ? 'Completo (Min 512px)' :
+                                    type === 'logotype' ? 'Horizontal (HD)' :
+                                        type === 'imagotype' ? 'Unified (Min 512px)' :
                                             type === 'pwaIcon' ? 'Web Icon (512x512px)' :
-                                                'App Master (Min 1024x1024px)'}
+                                                'App Master (1024x1024px)'}
                             </span>
                         </div>
 
@@ -145,25 +157,26 @@ const BrandingSection: React.FC<{
                                 type="file"
                                 accept=".png,.svg"
                                 onChange={(e) => handleFileChange(e, type)}
+                                autoComplete="off"
                                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                             />
-                            <div className="py-2 px-4 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold text-center border-2 border-transparent group-hover/input:border-antigravity-accent transition-all">
-                                {files[type] ? `Replace: ${files[type]?.name.slice(0, 15)}...` : 'Choose File'}
+                            <div className="h-12 flex items-center justify-center rounded-none bg-black dark:bg-white text-white dark:text-black text-[10px] font-black uppercase tracking-widest border-2 border-transparent group-hover/input:bg-antigravity-accent group-hover/input:text-white transition-all shadow-lg active:scale-95">
+                                {files[type] ? `Replace: ${files[type]?.name.slice(0, 15)}...` : 'Select File'}
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-1 gap-4">
+                        <div className="grid grid-cols-1 gap-6">
                             <BrandingPreview
                                 file={files[type] || null}
                                 existingUrl={existingUrls?.[type] || null}
-                                label="Modo Claro"
+                                label="Daylight Node"
                                 mode="light"
                                 size={type === 'isotype' ? 'small' : type === 'imagotype' || type === 'appIcon' ? 'large' : 'medium'}
                             />
                             <BrandingPreview
                                 file={files[type] || null}
                                 existingUrl={existingUrls?.[type] || null}
-                                label="Modo Oscuro"
+                                label="Mineral Node"
                                 mode="dark"
                                 size={type === 'isotype' ? 'small' : type === 'imagotype' || type === 'appIcon' ? 'large' : 'medium'}
                             />
@@ -235,40 +248,57 @@ export const BrandingSettings: React.FC = () => {
         }
     };
 
-    if (isLoading) return <div className="p-12 animate-pulse text-slate-400 font-bold tracking-widest text-center uppercase">Updating System Identity...</div>;
-    if (!settings) return <div className="p-12 text-red-500 font-bold uppercase">System Error: Branding Unavailable</div>;
+    if (isLoading) return (
+        <div className="p-12 flex flex-col items-center justify-center space-y-4">
+            <div className="w-12 h-12 border-4 border-black/10 dark:border-white/10 border-t-antigravity-accent rounded-none animate-spin"></div>
+            <div className="hud-label animate-pulse">Initializing Identity Engine...</div>
+        </div>
+    );
+
+    if (!settings) return <div className="p-12 hud-label !text-rose-500 text-center uppercase">Critical Failure: Branding_Auth_Unreachable</div>;
 
     return (
-        <div className="max-w-7xl mx-auto p-4 md:p-12 space-y-12">
-            <header className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
-                <div className="space-y-1">
-                    <h2 className="text-4xl font-black text-slate-900 dark:text-white tracking-tighter m-0 uppercase">MASTER IDENTITY</h2>
-                    <p className="text-slate-500 dark:text-slate-400 font-medium text-sm">Carga tus logos en negro monochrome once. El sistema genera todas las variaciones.</p>
+        <div className="max-w-[1400px] mx-auto space-y-16 animate-in fade-in duration-1000">
+            <header className="flex flex-col md:flex-row md:items-end justify-between gap-10">
+                <div className="space-y-3">
+                    <div className="flex items-center gap-3">
+                        <div className="w-8 h-[2px] bg-antigravity-accent"></div>
+                        <span className="hud-label !text-antigravity-accent italic">SYSTEM_CORE_IDENTITY</span>
+                    </div>
+                    <h2 className="text-5xl font-black text-black dark:text-white tracking-tighter m-0 uppercase italic">Master_Branding</h2>
+                    <p className="text-black/50 dark:text-white/40 font-medium text-base max-w-xl leading-relaxed">
+                        Carga tus activos maestros en negro monocromo. El motor industrial MINREPORT procesará las variaciones de luz y sombra dinámicamente.
+                    </p>
                 </div>
 
                 <button
                     onClick={handleSaveChanges}
                     disabled={isSaving}
-                    className="group relative px-10 py-4 bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-black rounded-full shadow-2xl hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:hover:scale-100 overflow-hidden"
+                    className="group relative px-12 py-5 bg-black dark:bg-white text-white dark:text-black font-black rounded-none shadow-premium hover:scale-105 active:scale-95 transition-all disabled:opacity-50 overflow-hidden"
                 >
-                    <span className="relative z-10 uppercase">{isSaving ? 'Optimizando...' : 'Sincronizar Identidad'}</span>
-                    {!isSaving && <div className="absolute inset-0 bg-antigravity-accent opacity-0 group-hover:opacity-20 transition-opacity"></div>}
+                    <span className="relative z-10 uppercase tracking-widest text-sm">
+                        {isSaving ? 'Syncing_Core...' : 'Synchronize Identity'}
+                    </span>
+                    {!isSaving && <div className="absolute inset-0 bg-antigravity-accent opacity-0 group-hover:opacity-100 transition-opacity mix-blend-overlay"></div>}
                 </button>
             </header>
 
-            <div className="space-y-16">
+            <div className="space-y-20">
                 <BrandingSection
-                    title="Identidad Maestra (SVG)"
-                    description="Tus logos maestros en negro. Generaremos las simulaciones clara y oscura automáticamente."
+                    title="Industrial Assets"
+                    description="Protocols require high-contrast SVG masters for optimal resolution across all node displays."
                     files={files}
                     onFileChange={handleFileChange}
                     existingUrls={settings.light}
                 />
             </div>
 
-            <footer className="pt-12 border-t border-slate-200 dark:border-slate-800 flex flex-col md:flex-row justify-between gap-4 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-                <div>MINREPORT BRAND AUTOMATION v2.8</div>
-                <div>THEME ADAPTATION: ACTIVE</div>
+            <footer className="pt-12 border-t border-black/5 dark:border-white/5 flex flex-col md:flex-row justify-between gap-6 hud-label !text-[10px] !text-black/20 dark:!text-white/20">
+                <div className="flex items-center gap-4">
+                    <span className="w-2 h-2 rounded-none bg-emerald-500 animate-pulse"></span>
+                    MINREPORT_BRAND_AUTOMATION_v3.0_STABLE
+                </div>
+                <div className="italic">PROTOCOL: IDENTITY_FLUID_ADAPTATION_ACTIVE</div>
             </footer>
         </div>
     );

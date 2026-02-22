@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../config/firebase'; // Client SDK
-import { doc, getDoc, updateDoc, collection, getDocs, query, where } from 'firebase/firestore';
-import { ArrowLeft, Users, Shield, CreditCard, AlertTriangle, UserCheck } from 'lucide-react';
+import { doc, getDoc, updateDoc, collection, getDocs } from 'firebase/firestore';
+import { ArrowLeft, Users, Shield, CreditCard, AlertTriangle, UserCheck, Activity, ShieldCheck, Globe, Trash2, Power } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { deleteTenant } from '../services/api'; // Reuse delete backend logic
@@ -34,20 +34,16 @@ export const EnterpriseDetail = () => {
 
     const fetchData = async () => {
         try {
-            // 1. Get Account Details
             const accRef = doc(db, 'accounts', id!);
             const accSnap = await getDoc(accRef);
 
             if (accSnap.exists()) {
                 setAccount({ id: accSnap.id, ...accSnap.data() });
             } else {
-                console.error('Account not found');
                 navigate('/enterprises');
                 return;
             }
 
-            // 2. Get All Users and Filter (Inefficient but works for now without backend index changes)
-            // TODO: Implement cleaner backend search
             const usersSnap = await getDocs(collection(db, 'users'));
             const accountUsers = usersSnap.docs
                 .map(d => d.data() as User)
@@ -71,7 +67,6 @@ export const EnterpriseDetail = () => {
                 updatedAt: new Date().toISOString()
             });
             setAccount((prev: any) => ({ ...prev, status: newStatus }));
-            // TODO: Call backend to kill sessions if needed
         } catch (error) {
             console.error('Error updating status:', error);
             alert('Error al actualizar estado');
@@ -85,7 +80,6 @@ export const EnterpriseDetail = () => {
 
         setActionLoading(true);
         try {
-            // Use existing backend endpoint which handles cascade delete
             await deleteTenant(id!);
             alert('Cuenta eliminada correctamente');
             navigate('/enterprises');
@@ -100,102 +94,128 @@ export const EnterpriseDetail = () => {
         const membership = user.memberships?.find(m => m.accountId === id);
         const role = membership?.role;
 
-        if (role === 'BILLING_ONLY') return <span className="bg-emerald-100 text-emerald-800 text-xs px-2 py-1 rounded-full flex items-center gap-1"><CreditCard size={10} /> Comprador</span>;
-        if (role === 'OWNER') return <span className="bg-purple-100 text-purple-800 text-xs px-2 py-1 rounded-full flex items-center gap-1"><Shield size={10} /> Dueño/Admin</span>;
-        return <span className="bg-slate-100 text-slate-600 text-xs px-2 py-1 rounded-full">Operador</span>;
+        if (role === 'BILLING_ONLY') return (
+            <div className="flex items-center gap-2 px-3 py-1 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-none text-[10px] font-black uppercase tracking-widest">
+                <CreditCard size={10} /> Comprador
+            </div>
+        );
+        if (role === 'OWNER') return (
+            <div className="flex items-center gap-2 px-3 py-1 bg-purple-500/10 text-purple-500 border border-purple-500/20 rounded-full text-[10px] font-black uppercase tracking-widest">
+                <Shield size={10} /> Admin_Core
+            </div>
+        );
+        return (
+            <div className="flex items-center gap-2 px-3 py-1 bg-black/5 dark:bg-white/10 text-black/40 dark:text-white/40 border border-black/5 dark:border-white/5 rounded-full text-[10px] font-black uppercase tracking-widest">
+                Operador
+            </div>
+        );
     };
 
-    if (loading) return <div className="p-10 text-center text-slate-500">Cargando información de la empresa...</div>;
+    if (loading) return (
+        <div className="p-12 flex flex-col items-center justify-center space-y-6">
+            <div className="w-16 h-16 border-b-2 border-antigravity-accent rounded-none animate-spin"></div>
+            <div className="hud-label animate-pulse tracking-[1em]">ACCESSING_NODE_DATA</div>
+        </div>
+    );
 
-    // Group Users
     const billingUsers = users.filter(u => u.memberships?.find(m => m.accountId === id)?.role === 'BILLING_ONLY');
     const operationalUsers = users.filter(u => {
         const role = u.memberships?.find(m => m.accountId === id)?.role;
-        return role !== 'BILLING_ONLY'; // Owners, Admins, Operators
+        return role !== 'BILLING_ONLY';
     });
 
     return (
-        <div className="p-8 max-w-7xl mx-auto">
-            {/* Header Navigation */}
-            <button
-                onClick={() => navigate('/enterprises')}
-                className="flex items-center gap-2 text-slate-500 hover:text-slate-900 mb-6 transition-colors"
-            >
-                <ArrowLeft size={20} />
-                Volver al listado
-            </button>
+        <div className="space-y-12 animate-in fade-in duration-1000 pb-24">
+            <header className="flex flex-col gap-8">
+                <button
+                    onClick={() => navigate('/enterprises')}
+                    className="group flex items-center gap-3 text-black/40 dark:text-white/40 hover:text-black dark:hover:text-white transition-all text-xs font-black uppercase tracking-widest"
+                >
+                    <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" />
+                    Back_to_Inventory
+                </button>
 
-            {/* Account Header */}
-            <header className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div>
-                    <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                        {account?.name}
-                        <span className={clsx(
-                            "text-xs px-2 py-1 rounded-full border",
-                            account?.status === 'SUSPENDED' ? "bg-amber-50 border-amber-200 text-amber-700" :
-                                account?.status === 'LOCKED' ? "bg-red-50 border-red-200 text-red-700" :
-                                    "bg-emerald-50 border-emerald-200 text-emerald-700"
-                        )}>
-                            {account?.status || 'ACTIVO'}
-                        </span>
-                    </h1>
-                    <div className="flex gap-4 mt-2 text-sm text-slate-500 font-mono">
-                        <span>RUT: {account?.rut || 'N/A'}</span>
-                        <span>ID: {account?.id}</span>
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-10">
+                    <div className="space-y-4">
+                        <div className="flex items-center gap-4">
+                            <h1 className="text-6xl font-black text-black dark:text-white tracking-tighter m-0 uppercase italic">
+                                {account?.name}
+                            </h1>
+                            <div className={clsx(
+                                "px-6 py-2 rounded-none text-[10px] font-black uppercase tracking-[0.3em] border shadow-premium animate-pulse",
+                                (!account?.status || account?.status === 'ACTIVE') ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" :
+                                    account?.status === 'SUSPENDED' ? "bg-amber-500/10 text-amber-500 border-amber-500/20" :
+                                        "bg-rose-500/10 text-rose-500 border-rose-500/20"
+                            )}>
+                                {account?.status || 'LINKED_NODE'}
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-6 hud-label !text-black/30 dark:!text-white/20">
+                            <span className="flex items-center gap-2"><Globe size={14} /> RUT_{account?.rut || 'UNDEFINED'}</span>
+                            <span className="flex items-center gap-2 italic">UUID_{account?.id}</span>
+                        </div>
                     </div>
-                </div>
 
-                <div className="flex gap-2">
-                    {(!account?.status || account?.status === 'ACTIVE') ? (
-                        <button
-                            disabled={actionLoading}
-                            onClick={() => handleUpdateStatus('SUSPENDED')}
-                            className="px-4 py-2 bg-amber-100 text-amber-800 hover:bg-amber-200 rounded-lg text-sm font-medium transition-colors"
-                        >
-                            Suspender Servicio
-                        </button>
-                    ) : (
-                        <button
-                            disabled={actionLoading}
-                            onClick={() => handleUpdateStatus('ACTIVE')}
-                            className="px-4 py-2 bg-emerald-100 text-emerald-800 hover:bg-emerald-200 rounded-lg text-sm font-medium transition-colors"
-                        >
-                            Reactivar Servicio
-                        </button>
-                    )}
-
-                    <button
-                        disabled={actionLoading}
-                        onClick={handleDeleteAccount}
-                        className="px-4 py-2 bg-red-100 text-red-800 hover:bg-red-200 rounded-lg text-sm font-medium transition-colors"
-                    >
-                        Eliminar Cuenta
-                    </button>
+                    <div className="flex gap-4">
+                        <div className="p-1 elite-tech-surface flex rounded-none border-white/5 shadow-2xl overflow-hidden">
+                            {(!account?.status || account?.status === 'ACTIVE') ? (
+                                <button
+                                    disabled={actionLoading}
+                                    onClick={() => handleUpdateStatus('SUSPENDED')}
+                                    className="px-6 py-4 bg-amber-500 text-white hover:bg-amber-600 font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-3"
+                                >
+                                    <Power size={14} />
+                                    Suspend_Core
+                                </button>
+                            ) : (
+                                <button
+                                    disabled={actionLoading}
+                                    onClick={() => handleUpdateStatus('ACTIVE')}
+                                    className="px-6 py-4 bg-emerald-500 text-white hover:bg-emerald-600 font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-3"
+                                >
+                                    <Activity size={14} />
+                                    Reactivate_Node
+                                </button>
+                            )}
+                            <button
+                                disabled={actionLoading}
+                                onClick={handleDeleteAccount}
+                                className="px-6 py-4 bg-rose-600 text-white hover:bg-rose-700 font-black text-[10px] uppercase tracking-widest transition-all flex items-center gap-3"
+                            >
+                                <Trash2 size={14} />
+                                Purge_Data
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </header>
 
-            {/* Users Sections */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-12">
                 {/* Billing / Buyers */}
-                <section>
-                    <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-                        <CreditCard className="text-antigravity-accent" size={20} />
-                        Gestión Comercial / Compradores
-                    </h2>
-                    <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+                <section className="space-y-6">
+                    <div className="flex items-center justify-between px-2">
+                        <div className="flex items-center gap-3">
+                            <div className="w-8 h-[2px] bg-antigravity-accent opacity-30"></div>
+                            <h2 className="hud-label m-0">Commercial_Protocol_Staff</h2>
+                        </div>
+                        <span className="text-[10px] font-black text-black/20 dark:text-white/10 uppercase font-mono">COUNT_{billingUsers.length}</span>
+                    </div>
+
+                    <div className="elite-tech-surface rounded-none shadow-3xl overflow-hidden border-black/5 dark:border-white/5 relative">
+                        <div className="absolute inset-0 technical-grid pointer-events-none opacity-20"></div>
                         {billingUsers.length === 0 ? (
-                            <div className="p-8 text-center text-slate-500 text-sm">No hay usuarios de facturación asignados.</div>
+                            <div className="p-20 text-center hud-label opacity-20 relative z-10">NULL_BILLING_STAFF</div>
                         ) : (
-                            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+                            <ul className="divide-y divide-black/5 dark:divide-white/5 relative z-10 m-0">
                                 {billingUsers.map(user => (
-                                    <li key={user.uid} className="p-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-xs">
+                                    <li key={user.uid} className="p-8 flex items-center justify-between group hover:bg-black/[0.02] dark:hover:bg-white/[0.03] transition-colors">
+                                        <div className="flex items-center gap-5">
+                                            <div className="w-12 h-12 rounded-none bg-black dark:bg-white flex items-center justify-center text-white dark:text-black font-black text-xs shadow-premium">
                                                 {user.displayName?.[0] || 'U'}
                                             </div>
                                             <div>
-                                                <p className="text-sm font-medium text-slate-900 dark:text-white">{user.displayName}</p>
-                                                <p className="text-xs text-slate-500">{user.email}</p>
+                                                <p className="text-base font-black text-black dark:text-white uppercase tracking-tight italic m-0">{user.displayName}</p>
+                                                <p className="text-[10px] font-bold text-black/30 dark:text-white/20 tracking-widest m-0">{user.email.toLowerCase()}</p>
                                             </div>
                                         </div>
                                         {getRoleBadge(user)}
@@ -207,25 +227,33 @@ export const EnterpriseDetail = () => {
                 </section>
 
                 {/* Operational Staff */}
-                <section>
-                    <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-                        <Users className="text-antigravity-accent" size={20} />
-                        Usuarios Operativos (Dueños/Staff)
-                    </h2>
-                    <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+                <section className="space-y-6">
+                    <div className="flex items-center justify-between px-2">
+                        <div className="flex items-center gap-3">
+                            <div className="w-8 h-[2px] bg-antigravity-accent opacity-30"></div>
+                            <h2 className="hud-label m-0">Operational_Core_Nodes</h2>
+                        </div>
+                        <span className="text-[10px] font-black text-black/20 dark:text-white/10 uppercase font-mono">COUNT_{operationalUsers.length}</span>
+                    </div>
+
+                    <div className="elite-tech-surface rounded-none shadow-3xl overflow-hidden border-black/5 dark:border-white/5 relative">
+                        <div className="absolute inset-0 technical-grid pointer-events-none opacity-20"></div>
                         {operationalUsers.length === 0 ? (
-                            <div className="p-8 text-center text-slate-500 text-sm">No hay usuarios operativos registrados.</div>
+                            <div className="p-20 text-center hud-label opacity-20 relative z-10">NULL_OPERATIONAL_STAFF</div>
                         ) : (
-                            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+                            <ul className="divide-y divide-black/5 dark:divide-white/5 relative z-10 m-0">
                                 {operationalUsers.map(user => (
-                                    <li key={user.uid} className="p-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-bold text-xs">
-                                                {user.displayName?.[0] || 'U'}
+                                    <li key={user.uid} className="p-8 flex items-center justify-between group hover:bg-black/[0.02] dark:hover:bg-white/[0.03] transition-colors">
+                                        <div className="flex items-center gap-5">
+                                            <div className="relative">
+                                                <div className="absolute -inset-1 bg-antigravity-accent opacity-0 group-hover:opacity-40 blur-sm transition-opacity rounded-none"></div>
+                                                <div className="relative w-12 h-12 rounded-none bg-antigravity-accent/10 border border-antigravity-accent/20 flex items-center justify-center text-antigravity-accent font-black text-xs shadow-lg">
+                                                    {user.displayName?.[0] || 'U'}
+                                                </div>
                                             </div>
                                             <div>
-                                                <p className="text-sm font-medium text-slate-900 dark:text-white">{user.displayName}</p>
-                                                <p className="text-xs text-slate-500">{user.email}</p>
+                                                <p className="text-base font-black text-black dark:text-white uppercase tracking-tight italic m-0 group-hover:text-antigravity-accent transition-colors">{user.displayName}</p>
+                                                <p className="text-[10px] font-bold text-black/30 dark:text-white/20 tracking-widest m-0">{user.email.toLowerCase()}</p>
                                             </div>
                                         </div>
                                         {getRoleBadge(user)}
@@ -237,14 +265,29 @@ export const EnterpriseDetail = () => {
                 </section>
             </div>
 
-            <div className="mt-8 p-4 bg-blue-50 text-blue-800 rounded-lg text-sm border border-blue-100 flex items-start gap-3">
-                <AlertTriangle size={18} className="shrink-0 mt-0.5" />
-                <p>
-                    <strong>Nota sobre B2B:</strong> Los usuarios listados aquí pertenecen a la cuenta empresarial identificada por el RUT.
-                    Eliminar la cuenta suspenderá el acceso de todos estos usuarios a este espacio de trabajo específico,
-                    pero no eliminará sus cuentas personales si tienen acceso a otras empresas.
-                </p>
+            <div className="p-10 rounded-none glass-card border-amber-500/20 bg-amber-500/5 flex gap-8 items-start relative overflow-hidden">
+                <div className="absolute inset-0 technical-grid opacity-5 pointer-events-none"></div>
+                <div className="w-14 h-14 rounded-none bg-amber-500/10 flex items-center justify-center shrink-0 shadow-lg">
+                    <AlertTriangle className="text-amber-500" size={28} />
+                </div>
+                <div className="space-y-4 relative z-10">
+                    <h5 className="text-amber-600 dark:text-amber-500 font-black text-xs uppercase tracking-[0.3em] flex items-center gap-3 m-0 italic">
+                        Node_Action_Protocol_Alpha_v2
+                    </h5>
+                    <p className="text-[11px] text-amber-700/60 dark:text-amber-400/50 font-black uppercase tracking-widest leading-loose max-w-2xl m-0">
+                        <strong>Technical_Notice:</strong> Los usuarios listados pertenecen a la cuenta empresarial identificada bajo el RUT de nodo.
+                        La ejecución de la purga de datos desconectará irreversiblemente todos los enlaces operativos, pero conservará la identidad atómica de los usuarios si poseen privilegios en otros nodos del sistema.
+                    </p>
+                </div>
             </div>
+
+            <footer className="pt-12 border-t border-black/5 dark:border-white/5 flex flex-col md:flex-row justify-between gap-6 hud-label !text-[10px] !text-black/20 dark:!text-white/20">
+                <div className="flex items-center gap-4">
+                    <ShieldCheck className="text-emerald-500" size={14} />
+                    B2B_PROTOCOL_ENFORCEMENT_VERIFIED
+                </div>
+                <div className="italic tracking-widest uppercase">Encryption_Level: AES-256-INDUSTRIAL_GRADE</div>
+            </footer>
         </div>
     );
 };

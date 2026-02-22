@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Download, Send, CheckCircle, AlertCircle } from 'lucide-react';
+import { X, Download, Send, CheckCircle, AlertCircle, Info, ShieldCheck, Cpu, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAdminSDK } from '../../hooks/useAdminSDK';
 import { SDKVersion, SDKStatus } from '../../types/sdk-admin';
@@ -18,7 +18,7 @@ interface SDKManagementDrawerProps {
 
 /**
  * SDKManagementDrawer component for publishing new SDK versions 
- * and viewing details of existing ones.
+ * and viewing details of existing ones. Refactored to Elite Industrial style.
  */
 export const SDKManagementDrawer: React.FC<SDKManagementDrawerProps> = ({
     isOpen,
@@ -28,12 +28,11 @@ export const SDKManagementDrawer: React.FC<SDKManagementDrawerProps> = ({
     onDownload,
     isLoading
 }) => {
-    const { publishVersion, error } = useAdminSDK(); // publishVersion still needed for new releases if applicable, but we are using AutoSync mostly. 
-    // Actually, let's just pass everything from SDKPage for consistency.
+    const { publishVersion, error } = useAdminSDK();
 
     // Form state for new version
     const [versionNumber, setVersionNumber] = useState('');
-    const [status, setStatus] = useState<SDKStatus>('BETA'); // Default to BETA for safety
+    const [status, setStatus] = useState<SDKStatus>('BETA');
     const [changelog, setChangelog] = useState('');
 
     // Update state for existing version promotion
@@ -63,7 +62,7 @@ export const SDKManagementDrawer: React.FC<SDKManagementDrawerProps> = ({
                 status,
                 changelog,
                 createdBy: user.uid,
-                downloadUrl: '', // Simulated
+                downloadUrl: '',
                 releaseDate: Timestamp.now()
             });
             onClose();
@@ -94,7 +93,7 @@ export const SDKManagementDrawer: React.FC<SDKManagementDrawerProps> = ({
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         onClick={onClose}
-                        className="fixed inset-0 bg-black/20 backdrop-blur-[2px] z-40"
+                        className="fixed inset-0 bg-black/40 backdrop-blur-xl z-[100]"
                     />
 
                     {/* Drawer */}
@@ -102,149 +101,153 @@ export const SDKManagementDrawer: React.FC<SDKManagementDrawerProps> = ({
                         initial={{ x: '100%' }}
                         animate={{ x: 0 }}
                         exit={{ x: '100%' }}
-                        transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                        className="fixed right-0 top-0 h-screen w-full max-w-md bg-white border-l border-[#E5E7EB] z-50 flex flex-col shadow-xl font-['Atkinson_Hyperlegible']"
+                        transition={{ type: 'spring', damping: 30, stiffness: 200 }}
+                        className="fixed right-0 top-0 h-screen w-full max-w-xl elite-tech-surface border-l border-white/10 z-[101] flex flex-col shadow-antigravity-accent/10 shadow-2xl overflow-hidden"
                     >
+                        <div className="absolute inset-0 technical-grid pointer-events-none opacity-20"></div>
+
                         {/* Header */}
-                        <div className="p-6 border-b border-[#E5E7EB] flex justify-between items-center bg-slate-50/50">
+                        <div className="p-10 border-b border-white/5 flex justify-between items-center relative z-10">
                             <div>
-                                <h2 className="text-xl font-bold text-slate-900 tracking-tight">
-                                    {isViewMode ? `Detalles Versión` : 'Publicar Nueva Versión'}
+                                <div className="flex items-center gap-3 mb-2">
+                                    <div className="w-8 h-[1px] bg-antigravity-accent"></div>
+                                    <span className="hud-label !text-antigravity-accent uppercase">Component_Inspector</span>
+                                </div>
+                                <h2 className="text-3xl font-black text-black dark:text-white uppercase tracking-tighter italic m-0">
+                                    {isViewMode ? `Release_v${selectedVersion.versionNumber}` : 'Deploy_New_Core'}
                                 </h2>
-                                <p className="text-xs text-slate-500 mt-1">
-                                    {isViewMode ? 'Información técnica del release' : 'Registra un nuevo lanzamiento del SDK'}
-                                </p>
                             </div>
                             <button
                                 onClick={onClose}
-                                className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400"
+                                className="w-12 h-12 rounded-none bg-black/5 dark:bg-white/5 hover:bg-antigravity-accent hover:text-white flex items-center justify-center text-black/40 dark:text-white/40 transition-all active:scale-90"
                             >
-                                <X size={20} />
+                                <X size={24} />
                             </button>
                         </div>
 
                         {/* Content */}
-                        <div className="flex-1 overflow-y-auto p-6">
+                        <div className="flex-1 overflow-y-auto p-10 relative z-10 custom-scrollbar">
                             {error && (
-                                <div className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-xl flex items-start gap-3 text-rose-600 text-sm">
-                                    <AlertCircle size={18} className="shrink-0" />
-                                    <p>{error}</p>
+                                <div className="mb-10 p-6 glass-card border-rose-500/20 bg-rose-500/[0.05] rounded-none flex items-start gap-4 text-rose-600">
+                                    <AlertCircle size={20} className="shrink-0 mt-1" />
+                                    <div>
+                                        <p className="hud-label !text-rose-500 mb-2">Protocol_Error_0xsdk</p>
+                                        <p className="text-xs font-bold uppercase tracking-widest leading-relaxed">{error}</p>
+                                    </div>
                                 </div>
                             )}
 
                             {isViewMode ? (
-                                <div className="space-y-6">
-                                    {/* Info Cards */}
-                                    <div className="flex items-center justify-between">
-                                        <div className="space-y-1">
-                                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Lanzamiento</p>
-                                            <h3 className="text-2xl font-black text-slate-900 italic">v{selectedVersion.versionNumber}</h3>
-                                        </div>
-                                        <span className={clsx(
-                                            "inline-flex items-center px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide",
-                                            selectedVersion.status === 'STABLE' && "bg-emerald-600 text-white",
-                                            selectedVersion.status === 'BETA' && "bg-yellow-400 text-black",
-                                            selectedVersion.status === 'DEPRECATED' && "bg-slate-400 text-white"
-                                        )}>
-                                            {selectedVersion.status}
-                                        </span>
-                                    </div>
-
+                                <div className="space-y-12">
                                     {/* Lifecycle Promotion Control */}
-                                    <div className="p-5 rounded-2xl bg-antigravity-accent/5 border border-antigravity-accent/10 space-y-4">
-                                        <p className="text-[10px] font-black text-antigravity-accent uppercase tracking-widest flex items-center gap-2">
-                                            <CheckCircle size={12} />
-                                            Ciclo de Vida (Lifecycle)
-                                        </p>
-                                        <div className="space-y-3">
-                                            <label className="text-[10px] font-bold text-slate-500 uppercase">Cambiar Estado (Promoción)</label>
-                                            <div className="grid grid-cols-3 gap-2">
-                                                {(['BETA', 'STABLE', 'DEPRECATED'] as SDKStatus[]).map((s) => (
-                                                    <button
-                                                        key={s}
-                                                        onClick={() => handleStatusUpdate(s)}
-                                                        className={clsx(
-                                                            "py-2 rounded-lg text-[10px] font-bold uppercase transition-all border",
-                                                            selectedVersion.status === s
-                                                                ? "bg-slate-900 text-white border-transparent"
-                                                                : "bg-white text-slate-400 border-slate-200 hover:border-slate-400"
-                                                        )}
-                                                    >
-                                                        {s}
-                                                    </button>
-                                                ))}
-                                            </div>
+                                    <div className="p-10 rounded-none bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 space-y-8 relative overflow-hidden group">
+                                        <div className="absolute inset-0 technical-grid opacity-10 pointer-events-none"></div>
+                                        <div className="flex justify-between items-center relative z-10">
+                                            <p className="hud-label flex items-center gap-2">
+                                                <Zap size={14} className="text-antigravity-accent" />
+                                                LIFECYCLE_PHASE_UPDATE
+                                            </p>
+                                            <span className={clsx(
+                                                "px-4 py-1.5 rounded-none text-[9px] font-black uppercase tracking-[0.2em] border shadow-sm transition-all duration-700",
+                                                selectedVersion.status === 'STABLE' && "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
+                                                selectedVersion.status === 'BETA' && "bg-amber-500/10 text-amber-600 border-amber-500/20",
+                                                selectedVersion.status === 'DEPRECATED' && "bg-rose-500/10 text-rose-600 border-rose-500/20"
+                                            )}>
+                                                {selectedVersion.status}
+                                            </span>
+                                        </div>
+
+                                        <div className="grid grid-cols-3 gap-3 relative z-10">
+                                            {(['BETA', 'STABLE', 'DEPRECATED'] as SDKStatus[]).map((s) => (
+                                                <button
+                                                    key={s}
+                                                    onClick={() => handleStatusUpdate(s)}
+                                                    className={clsx(
+                                                        "py-4 rounded-none text-[9px] font-black uppercase tracking-[0.2em] transition-all border italic shadow-sm",
+                                                        selectedVersion.status === s
+                                                            ? "bg-black dark:bg-white text-white dark:text-black border-transparent shadow-premium"
+                                                            : "bg-black/5 dark:bg-white/5 text-black/30 dark:text-white/20 border-transparent hover:bg-black/10 dark:hover:bg-white/10"
+                                                    )}
+                                                >
+                                                    {s}
+                                                </button>
+                                            ))}
                                         </div>
                                     </div>
 
-                                    <div className="p-5 rounded-2xl bg-slate-50 border border-[#E5E7EB]">
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Changelog / Cambios</p>
-                                        <div className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed font-medium">
+                                    <div className="space-y-4">
+                                        <span className="hud-label !text-black/30 dark:!text-white/20 ml-2">Release_Validation_Manifest</span>
+                                        <div className="p-8 rounded-[32px] bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 text-[11px] font-bold text-black/60 dark:text-white/40 uppercase tracking-widest leading-relaxed italic">
                                             {selectedVersion.changelog}
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="p-4 rounded-xl border border-slate-100 bg-white shadow-sm">
-                                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Fecha</p>
-                                            <p className="text-sm font-bold text-slate-900 mt-1">
+                                    <div className="grid grid-cols-2 gap-8">
+                                        <div className="p-8 rounded-none bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5">
+                                            <p className="hud-label !text-black/30 dark:!text-white/20 mb-3">Release_Timestamp</p>
+                                            <p className="text-xl font-black text-black dark:text-white font-mono italic">
                                                 {selectedVersion.releaseDate?.toDate().toLocaleString()}
                                             </p>
                                         </div>
-                                        <div className="p-4 rounded-xl border border-slate-100 bg-white shadow-sm">
-                                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Autor (UID)</p>
-                                            <p className="text-sm font-bold text-slate-900 mt-1 truncate">
-                                                {selectedVersion.createdBy.substring(0, 10)}...
+                                        <div className="p-8 rounded-[32px] bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5">
+                                            <p className="hud-label !text-black/30 dark:!text-white/20 mb-3">Operator_Identity</p>
+                                            <p className="text-xl font-black text-black dark:text-white font-mono italic truncate">
+                                                {selectedVersion.createdBy.substring(0, 10).toUpperCase()}...
                                             </p>
                                         </div>
                                     </div>
                                 </div>
                             ) : (
-                                <form onSubmit={handlePublish} className="space-y-6">
-                                    <div className="space-y-4">
+                                <form onSubmit={handlePublish} className="space-y-10" autoComplete="off">
+                                    <div className="space-y-8">
                                         {/* Version Number */}
-                                        <div className="space-y-2">
-                                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">
-                                                Número de Versión
+                                        <div className="space-y-3 px-1">
+                                            <label className="hud-label !text-black/30 dark:!text-white/20 ml-1">
+                                                Semantic_Version_Identifier
                                             </label>
                                             <input
                                                 type="text"
                                                 required
                                                 value={versionNumber}
                                                 onChange={(e) => setVersionNumber(e.target.value)}
-                                                placeholder="Ej: 1.0.2"
-                                                className="w-full px-4 py-3 rounded-xl border border-[#E5E7EB] focus:border-[#111827] focus:ring-1 focus:ring-[#111827] outline-none transition-all font-bold text-slate-900 placeholder:text-slate-300"
+                                                placeholder="e.g. 2.4.8-industrial"
+                                                className="premium-input !py-6"
                                             />
                                         </div>
 
                                         {/* Status */}
-                                        <div className="space-y-2">
-                                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">
-                                                Estado del Release
+                                        <div className="space-y-3 px-1">
+                                            <label className="hud-label !text-black/30 dark:!text-white/20 ml-1">
+                                                Protocol_Status
                                             </label>
-                                            <select
-                                                value={status}
-                                                onChange={(e) => setStatus(e.target.value as SDKStatus)}
-                                                className="w-full px-4 py-3 rounded-xl border border-[#E5E7EB] focus:border-[#111827] outline-none transition-all font-bold text-slate-900 bg-white appearance-none"
-                                            >
-                                                <option value="BETA">BETA (En desarrollo)</option>
-                                                <option value="STABLE">STABLE (Producción)</option>
-                                                <option value="DEPRECATED">DEPRECATED (Obsoleta)</option>
-                                            </select>
+                                            <div className="relative group">
+                                                <select
+                                                    value={status}
+                                                    onChange={(e) => setStatus(e.target.value as SDKStatus)}
+                                                    className="premium-input !py-6 appearance-none cursor-pointer uppercase italic font-black"
+                                                >
+                                                    <option value="BETA">PHASE_BETA (Internal_Review)</option>
+                                                    <option value="STABLE">PHASE_STABLE (Deployment_Ready)</option>
+                                                    <option value="DEPRECATED">PHASE_DEPRECATED (Legacy_Control)</option>
+                                                </select>
+                                                <div className="absolute right-6 top-1/2 -translate-y-1/2 pointer-events-none opacity-40 group-hover:opacity-100 transition-opacity">
+                                                    <Zap size={14} className="text-antigravity-accent" />
+                                                </div>
+                                            </div>
                                         </div>
 
                                         {/* Changelog */}
-                                        <div className="space-y-2">
-                                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">
-                                                Notas del Cambio (Changelog)
+                                        <div className="space-y-3 px-1">
+                                            <label className="hud-label !text-black/30 dark:!text-white/20 ml-1">
+                                                Validation_Log_Entries
                                             </label>
                                             <textarea
                                                 required
-                                                rows={8}
+                                                rows={10}
                                                 value={changelog}
                                                 onChange={(e) => setChangelog(e.target.value)}
-                                                placeholder="Describe las mejoras, correcciones y nuevas funcionalidades..."
-                                                className="w-full px-4 py-3 rounded-xl border border-[#E5E7EB] focus:border-[#111827] outline-none transition-all font-medium text-slate-700 leading-relaxed resize-none"
+                                                placeholder="Inject core modifications manifest..."
+                                                className="premium-input !py-6 !h-64 resize-none !px-8 placeholder:italic"
                                             />
                                         </div>
                                     </div>
@@ -252,14 +255,14 @@ export const SDKManagementDrawer: React.FC<SDKManagementDrawerProps> = ({
                                     <button
                                         type="submit"
                                         disabled={isLoading}
-                                        className="w-full py-4 rounded-xl bg-[#111827] text-white font-bold text-sm flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50"
+                                        className="w-full py-6 rounded-none bg-antigravity-accent text-white font-black text-[11px] uppercase tracking-[0.4em] flex items-center justify-center gap-4 shadow-premium hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-30 italic"
                                     >
                                         {isLoading ? (
                                             <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                                         ) : (
                                             <>
                                                 <Send size={18} />
-                                                Publicar Release
+                                                Commit_Binary_to_Cloud
                                             </>
                                         )}
                                     </button>
@@ -269,24 +272,24 @@ export const SDKManagementDrawer: React.FC<SDKManagementDrawerProps> = ({
 
                         {/* Footer - Only in View Mode */}
                         {isViewMode && (
-                            <div className="p-6 border-t border-[#E5E7EB] bg-slate-50/50">
+                            <div className="p-10 border-t border-white/5 bg-black/5 dark:bg-white/[0.02]">
                                 <button
                                     onClick={() => onDownload(selectedVersion!)}
                                     disabled={selectedVersion.status === 'DEPRECATED' || isLoading}
                                     className={clsx(
-                                        "w-full py-4 rounded-xl text-white font-bold text-sm flex items-center justify-center gap-2 transition-all",
+                                        "w-full py-6 rounded-none font-black text-[11px] uppercase tracking-[0.4em] flex items-center justify-center gap-4 transition-all italic shadow-2xl",
                                         selectedVersion.status === 'DEPRECATED'
-                                            ? "bg-slate-200 cursor-not-allowed opacity-50"
-                                            : "bg-[#111827] hover:opacity-90 active:scale-[0.98]"
+                                            ? "bg-rose-500/10 text-rose-500/30 border border-rose-500/10 cursor-not-allowed"
+                                            : "bg-black dark:bg-white text-white dark:text-black hover:scale-[1.02] active:scale-95"
                                     )}
                                 >
                                     <Download size={18} />
-                                    {selectedVersion.status === 'DEPRECATED' ? 'Versión Obsoleta (Bloqueado)' : 'Descargar Paquete SDK'}
+                                    {selectedVersion.status === 'DEPRECATED' ? 'Binary_Locked_Deprecation' : 'Extract_Signed_Package'}
                                 </button>
-                                <p className="text-[9px] text-center text-slate-400 mt-4 uppercase font-black tracking-widest">
+                                <p className="text-[9px] text-center text-black/20 dark:text-white/20 mt-6 uppercase font-black tracking-[0.3em] font-mono italic">
                                     {selectedVersion.status === 'DEPRECATED'
-                                        ? 'Esta versión ya no se distribuye.'
-                                        : 'Generando archivo JSON firmado...'}
+                                        ? 'Integrity Violation: Access Revoked for Outdated Core.'
+                                        : 'Generating technical manifest digest...'}
                                 </p>
                             </div>
                         )}

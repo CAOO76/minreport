@@ -17,6 +17,7 @@ export const requireSuperAdmin = async (req: AuthRequest, res: Response, next: N
 
         // MASTER TOKEN CHECK
         if (token === 'master-admin-access-token') {
+            console.log('[SECURITY] Master Token accepted');
             return next();
         }
 
@@ -28,6 +29,7 @@ export const requireSuperAdmin = async (req: AuthRequest, res: Response, next: N
 
         if (!isSuperAdmin && !hasAdminClaim) {
             console.warn(`[SECURITY] Unauthorized admin access attempt: ${decodedToken.email}`);
+            console.log(`[SECURITY] Expected: ${env.SUPER_ADMIN_EMAIL}, Got: ${decodedToken.email}`);
             return res.status(403).json({ error: 'Forbidden: Admin access only' });
         }
 

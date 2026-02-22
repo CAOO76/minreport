@@ -10,14 +10,14 @@
 
 @layer utilities {
     .elite-tech-surface {
-        @apply bg-white dark:bg-black border border-black/10 dark:border-white/5 relative overflow-hidden;
+        @apply bg-white dark:bg-[#0A0A0A] border border-black/10 dark:border-white/5 relative overflow-hidden;
     }
 
     .technical-grid {
         background-image: linear-gradient(to right, currentColor 1px, transparent 1px),
             linear-gradient(to bottom, currentColor 1px, transparent 1px);
         background-size: 20px 20px;
-        @apply text-black/[0.05] dark:text-white/[0.03];
+        @apply text-black/[0.05] dark:opacity-0;
     }
 
     .hud-label {
@@ -29,7 +29,7 @@
     }
 
     .dark .industrial-mineral-gradient {
-        background: radial-gradient(circle at center, #1a1a1a 0%, #000000 100%);
+        background: #000000;
     }
 
     .premium-input {

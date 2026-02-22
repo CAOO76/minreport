@@ -262,7 +262,7 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
                                             </h3>
                                             <p className="text-xs text-antigravity-light-muted dark:text-antigravity-dark-muted truncate flex items-center gap-1">
                                                 <Mail size={12} />
-                                                {user.email}
+                                                {user.email.toLowerCase()}
                                             </p>
                                             <div className="flex items-center gap-2 mt-1">
                                                 <code className="bg-slate-200 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[9px] text-slate-500 font-mono tracking-tighter">

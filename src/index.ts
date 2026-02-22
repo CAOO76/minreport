@@ -69,7 +69,7 @@ app.get('/api/admin/settings/branding', requireSuperAdmin, getBrandingSettings);
 app.put('/api/admin/settings/branding', requireSuperAdmin, updateBrandingSettings);
 app.get('/api/admin/metrics', requireSuperAdmin, getSystemMetrics); // [NEW] System Dashboard
 app.get('/api/admin/audit-logs', requireSuperAdmin, getAuditLogs); // [NEW] Traceability
-app.get('/api/admin/settings/ui-assets', requireSuperAdmin, getUIAssetsSettings);
+app.get('/api/admin/settings/ui-assets', getUIAssetsSettings);
 app.put('/api/admin/settings/ui-assets', requireSuperAdmin, updateUIAssetsSettings);
 
 // Start Server

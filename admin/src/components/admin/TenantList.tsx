@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getTenants, updateTenantStatus, deleteTenant } from '../../services/api';
-import { Check, X, Clock, Trash2, Eye, Ban, Settings, Blocks } from 'lucide-react';
+import { Check, X, Clock, Trash2, Eye, Ban, Settings, Blocks, Cpu, ShieldCheck, Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { UserManagementDrawer } from './UserManagementDrawer';
@@ -14,7 +14,7 @@ interface Tenant {
     id: string;
     type: 'ENTERPRISE' | 'EDUCATIONAL' | 'PERSONAL';
     email: string;
-    status: 'PENDING_APPROVAL' | 'ACTIVE' | 'REJECTED' | 'SUSPENDED' | 'DELETED';
+    status: 'PENDING_APPROVAL' | 'ACTIVE' | 'REJECTED' | 'SUSPENDED' | 'DELETED' | 'APPROVED';
     createdAt: any;
     company_name?: string;
     institution_name?: string;
@@ -36,23 +36,16 @@ export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle })
     const [loading, setLoading] = useState(true);
     const { toggleUserPlugin, updateUserStatus } = useAdminUsers();
 
-    // State for managing user via Drawer (Legacy/User-Centric)
     const [managingUser, setManagingUser] = useState<UserProfile | null>(null);
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-
-    // State for Tenant Details Modal (Traceability / Audit)
     const [selectedTenant, setSelectedTenant] = useState<Tenant | null>(null);
-
-    // State for Tenant Plugins Modal (Dedicated Workspace)
     const [selectedPluginTenant, setSelectedPluginTenant] = useState<Tenant | null>(null);
-
-    // Confirmation Modal State
     const [actionModal, setActionModal] = useState<{ isOpen: boolean, tenant: Tenant | null, action: 'DELETE' | 'SUSPEND' } | null>(null);
 
     const fetchTenants = async () => {
         try {
             const { data } = await getTenants();
-            setTenants(data.filter((t: Tenant) => t.type === type && t.status !== 'DELETED'));
+            setTenants(data.filter((t: Tenant) => t.type === type && (t.status === 'ACTIVE' || t.status === 'SUSPENDED' || t.status === 'APPROVED')));
         } catch (error) {
             console.error('Error fetching tenants:', error);
         } finally {
@@ -64,7 +57,6 @@ export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle })
         fetchTenants();
     }, [type]);
 
-    // Adapter: Convert Tenant to UserProfile for the Drawer
     const handleManageUser = (tenant: Tenant) => {
         const profile: UserProfile = {
             uid: tenant.id,
@@ -88,8 +80,6 @@ export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle })
     const handleAction = async (id: string, status: 'ACTIVE' | 'REJECTED' | 'SUSPENDED' | 'DELETED', data?: any) => {
         try {
             await updateTenantStatus(id, status as any, data);
-
-            // Optimistic Update
             setTenants(prev => prev.map(t => {
                 if (t.id === id) {
                     return {
@@ -100,8 +90,6 @@ export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle })
                 }
                 return t;
             }));
-
-            // Close modals if necessary
             setActionModal(null);
             if (status !== 'ACTIVE') {
                 setSelectedTenant(null);
@@ -114,18 +102,13 @@ export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle })
     const handleUpdatePlugins = async (tenantId: string, newPlugins: string[]) => {
         try {
             await updateTenantStatus(tenantId, 'ACTIVE', { enabledPlugins: newPlugins });
-
-            // Optimistic Update
             setTenants(prev => prev.map(t => {
                 if (t.id === tenantId) {
                     return { ...t, enabledPlugins: newPlugins };
                 }
                 return t;
             }));
-
-            // Update the selected plugin tenant state to reflect changes immediately in the modal
             setSelectedPluginTenant(prev => prev ? { ...prev, enabledPlugins: newPlugins } : null);
-
         } catch (error) {
             console.error('Failed to update plugins', error);
             alert('Error al actualizar plugins');
@@ -144,107 +127,155 @@ export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle })
     };
 
     return (
-        <div className="h-full flex flex-col">
-            <header className="mb-8">
-                <h1 className="text-3xl font-black text-antigravity-light-text dark:text-antigravity-dark-text tracking-tight">{title}</h1>
-                <p className="text-antigravity-light-muted dark:text-antigravity-dark-muted mt-1">{subtitle}</p>
+        <div className="space-y-10 animate-in fade-in duration-1000 pb-24">
+            <header className="flex flex-col md:flex-row md:items-end justify-between gap-8">
+                <div className="space-y-3">
+                    <div className="flex items-center gap-3">
+                        <div className="w-8 h-[2px] bg-antigravity-accent"></div>
+                        <span className="hud-label !text-antigravity-accent italic">ACCOUNT_TENANT_PROTOCOL</span>
+                    </div>
+                    <h1 className="text-5xl font-black text-black dark:text-white tracking-tighter m-0 uppercase italic">
+                        {title.replace(' ', '_')}
+                    </h1>
+                    <p className="text-black/50 dark:text-white/40 font-medium text-base max-w-xl leading-relaxed">
+                        {subtitle}
+                    </p>
+                </div>
+
+                <div className="flex gap-4">
+                    <div className="p-4 glass-card flex items-center gap-4 border-black/5 dark:border-white/5">
+                        <div className="w-10 h-10 bg-black/5 dark:bg-white/10 rounded-none flex items-center justify-center text-antigravity-accent">
+                            <Zap size={20} />
+                        </div>
+                        <div>
+                            <div className="text-[9px] font-black text-black/30 dark:text-white/20 uppercase tracking-widest">Active_Nodes</div>
+                            <div className="text-xl font-black text-black dark:text-white font-mono">{tenants.filter(t => t.status === 'ACTIVE').length}</div>
+                        </div>
+                    </div>
+                </div>
             </header>
 
-            <div className="flex-1 bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-antigravity-light-border dark:border-antigravity-dark-border rounded-xl overflow-hidden shadow-sm flex flex-col">
-                <div className="overflow-auto flex-1">
+            <div className="elite-tech-surface rounded-none shadow-3xl overflow-hidden border-black/5 dark:border-white/5 relative">
+                <div className="absolute inset-0 technical-grid pointer-events-none opacity-20"></div>
+
+                <div className="overflow-x-auto relative z-10">
                     <table className="w-full text-left border-collapse">
-                        <thead className="sticky top-0 bg-slate-50 dark:bg-slate-900/90 backdrop-blur z-10 border-b border-antigravity-light-border dark:border-antigravity-dark-border">
-                            <tr>
-                                <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-antigravity-light-muted dark:text-antigravity-dark-muted">
-                                    {type === 'ENTERPRISE' ? 'Razón Social' : type === 'EDUCATIONAL' ? 'Institución' : 'Nombre Completo'}
+                        <thead>
+                            <tr className="bg-black/5 dark:bg-white/5 border-b border-black/10 dark:border-white/10">
+                                <th className="px-10 py-6 hud-label">
+                                    {type === 'ENTERPRISE' ? 'Entity_Identity' : type === 'EDUCATIONAL' ? 'Campus_Registry' : 'Subject_Name'}
                                 </th>
-                                <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-antigravity-light-muted dark:text-antigravity-dark-muted">
-                                    {type === 'ENTERPRISE' ? 'RUT Empresa' : 'Identificación (RUN)'}
+                                <th className="px-10 py-6 hud-label">
+                                    {type === 'ENTERPRISE' ? 'Fiscal_RUT' : 'Civil_RUN'}
                                 </th>
-                                <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-antigravity-light-muted dark:text-antigravity-dark-muted">Email</th>
-                                <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-antigravity-light-muted dark:text-antigravity-dark-muted text-center">Estado</th>
-                                <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-antigravity-light-muted dark:text-antigravity-dark-muted text-right">Acciones</th>
+                                <th className="px-10 py-6 hud-label">Digital_Endpoint</th>
+                                <th className="px-10 py-6 hud-label text-center">Status_Matrix</th>
+                                <th className="px-10 py-6 hud-label text-right">Protocol_Actions</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-antigravity-light-border dark:divide-antigravity-dark-border">
+                        <tbody className="divide-y divide-black/5 dark:divide-white/5">
                             {loading ? (
-                                <tr><td colSpan={5} className="px-6 py-20 text-center text-antigravity-light-muted">Cargando cuentas...</td></tr>
+                                <tr><td colSpan={5} className="px-10 py-24 text-center">
+                                    <div className="flex flex-col items-center gap-4 animate-pulse opacity-40">
+                                        <Cpu size={40} className="animate-spin duration-[3s]" />
+                                        <span className="hud-label italic tracking-[0.3em]">SYNCHRONIZING_DATA_STREAM...</span>
+                                    </div>
+                                </td></tr>
                             ) : tenants.length === 0 ? (
-                                <tr><td colSpan={5} className="px-6 py-20 text-center text-antigravity-light-muted">No hay cuentas registradas en esta categoría.</td></tr>
+                                <tr><td colSpan={5} className="px-10 py-24 text-center">
+                                    <div className="flex flex-col items-center gap-4 opacity-10 grayscale">
+                                        <ShieldCheck size={60} />
+                                        <span className="hud-label italic tracking-[0.4em]">NO_RECORDS_IN_CURRENT_BUFFER</span>
+                                    </div>
+                                </td></tr>
                             ) : tenants.map((tenant) => (
-                                <tr key={tenant.id} className="hover:bg-slate-50 dark:hover:bg-white/5 transition-colors group">
-                                    <td className="px-6 py-4 font-bold text-antigravity-light-text dark:text-antigravity-dark-text">
-                                        {type === 'ENTERPRISE' ? tenant.company_name : (tenant.full_name || tenant.institution_name)}
+                                <tr key={tenant.id} className="hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors group">
+                                    <td className="px-10 py-6">
+                                        <div className="flex items-center gap-4">
+                                            <div className="w-10 h-10 rounded-none bg-black dark:bg-white text-white dark:text-black flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
+                                                <span className="text-[12px] font-black italic">
+                                                    {(type === 'ENTERPRISE' ? tenant.company_name : (tenant.full_name || tenant.institution_name))?.substring(0, 2).toUpperCase()}
+                                                </span>
+                                            </div>
+                                            <div className="flex flex-col">
+                                                <span className="text-[13px] font-black text-black dark:text-white uppercase tracking-tighter">
+                                                    {type === 'ENTERPRISE' ? tenant.company_name : (tenant.full_name || tenant.institution_name)}
+                                                </span>
+                                            </div>
+                                        </div>
                                     </td>
-                                    <td className="px-6 py-4 text-sm font-mono text-antigravity-light-muted dark:text-antigravity-dark-muted">
-                                        {tenant.rut || tenant.run || 'N/A'}
-                                    </td>
-                                    <td className="px-6 py-4 text-sm text-antigravity-light-muted dark:text-antigravity-dark-muted">
-                                        {tenant.email}
-                                    </td>
-                                    <td className="px-6 py-4 text-center">
-                                        <span className={clsx(
-                                            "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border",
-                                            tenant.status === 'PENDING_APPROVAL' && "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800",
-                                            tenant.status === 'ACTIVE' && "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800",
-                                            tenant.status === 'REJECTED' && "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/20 dark:text-rose-400 dark:border-rose-800",
-                                            tenant.status === 'SUSPENDED' && "bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700"
-                                        )}>
-                                            {tenant.status === 'PENDING_APPROVAL' && <Clock size={10} />}
-                                            {tenant.status === 'ACTIVE' && <Check size={10} />}
-                                            {tenant.status === 'REJECTED' && <X size={10} />}
-                                            {tenant.status === 'SUSPENDED' && <Ban size={10} />}
-                                            {t(`admin.status.${tenant.status.toLowerCase().replace('_approval', '')}`)}
+                                    <td className="px-10 py-6">
+                                        <span className="text-[11px] font-black text-black/40 dark:text-white/30 uppercase font-mono tracking-tight grayscale group-hover:grayscale-0 transition-all">
+                                            {tenant.rut || tenant.run || 'NOT_DECLARED'}
                                         </span>
                                     </td>
-                                    <td className="px-6 py-4 text-right">
-                                        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-
-                                            {/* Action 1: Settings / Plugins (Active Only) - NEW ICON */}
+                                    <td className="px-10 py-6">
+                                        <span className="text-[11px] font-bold text-antigravity-accent tracking-tighter opacity-70 group-hover:opacity-100 transition-opacity">
+                                            {tenant.email.toLowerCase()}
+                                        </span>
+                                    </td>
+                                    <td className="px-10 py-6">
+                                        <div className="flex justify-center">
+                                            <span className={clsx(
+                                                "inline-flex items-center gap-2 px-4 py-1.5 rounded-none text-[9px] font-black uppercase tracking-[0.15em] border shadow-sm transition-all duration-500",
+                                                tenant.status === 'PENDING_APPROVAL' && "bg-amber-500/10 text-amber-600 border-amber-500/20",
+                                                tenant.status === 'APPROVED' && "bg-cyan-500/10 text-cyan-500 border-cyan-500/20",
+                                                tenant.status === 'ACTIVE' && "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
+                                                tenant.status === 'REJECTED' && "bg-rose-500/10 text-rose-600 border-rose-500/20",
+                                                tenant.status === 'SUSPENDED' && "bg-black/5 text-black/40 border-black/10 dark:bg-white/5 dark:text-white/30 dark:border-white/10"
+                                            )}>
+                                                <div className={clsx("w-1 h-1 rounded-none",
+                                                    tenant.status === 'PENDING_APPROVAL' ? "bg-amber-500" :
+                                                        tenant.status === 'APPROVED' ? "bg-cyan-500" :
+                                                            tenant.status === 'ACTIVE' ? "bg-emerald-500" :
+                                                                tenant.status === 'REJECTED' ? "bg-rose-500" : "bg-black/30 dark:bg-white/20"
+                                                )}></div>
+                                                {t(`admin.status.${tenant.status.toLowerCase().replace('_approval', '')}`)}
+                                            </span>
+                                        </div>
+                                    </td>
+                                    <td className="px-10 py-6 text-right">
+                                        <div className="flex justify-end gap-3 opacity-0 group-hover:opacity-100 transition-all duration-500">
                                             {tenant.status === 'ACTIVE' && (
                                                 <button
                                                     onClick={() => setSelectedPluginTenant(tenant)}
-                                                    className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors"
-                                                    title="Configurar Plugins"
+                                                    className="w-10 h-10 rounded-none bg-indigo-500/10 text-indigo-500 hover:bg-indigo-500 hover:text-white flex items-center justify-center transition-all active:scale-90"
+                                                    title="Módulo Config"
                                                 >
                                                     <Blocks size={18} />
                                                 </button>
                                             )}
 
-                                            {/* Action 2: Inspector / Traceability - GEAR ICON RESTORED */}
                                             <button
                                                 onClick={() => setSelectedTenant(tenant)}
-                                                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10 hover:text-antigravity-accent transition-colors"
-                                                title="Ver Trazabilidad y Detalles"
+                                                className="w-10 h-10 rounded-none bg-black/5 dark:bg-white/5 hover:bg-black dark:hover:bg-white text-black/40 dark:text-white/40 hover:text-white dark:hover:text-black flex items-center justify-center transition-all active:scale-90"
+                                                title="Protocol Inspector"
                                             >
                                                 <Settings size={18} />
                                             </button>
 
-                                            {/* Action 3: User Management (Active Only) - EYE ICON */}
                                             <button
                                                 onClick={() => handleManageUser(tenant)}
-                                                className="p-1.5 rounded-lg text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
-                                                title="Ver Perfil de Usuario"
+                                                className="w-10 h-10 rounded-none bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white flex items-center justify-center transition-all active:scale-90"
+                                                title="Entity Profile"
                                             >
                                                 <Eye size={18} />
                                             </button>
 
-                                            {/* Action 4: Suspend (Active Only) */}
                                             {tenant.status === 'ACTIVE' && (
                                                 <button
                                                     onClick={() => setActionModal({ isOpen: true, tenant, action: 'SUSPEND' })}
-                                                    className="p-1.5 rounded-lg text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors"
-                                                    title="Suspender Cuenta"
+                                                    className="w-10 h-10 rounded-none bg-amber-500/10 text-amber-500 hover:bg-amber-500 hover:text-white flex items-center justify-center transition-all active:scale-90"
+                                                    title="Halt Protocol"
                                                 >
                                                     <Ban size={18} />
                                                 </button>
                                             )}
 
-                                            {/* Action 5: Delete */}
                                             <button
                                                 onClick={() => setActionModal({ isOpen: true, tenant, action: 'DELETE' })}
-                                                className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors"
-                                                title="Eliminar Cuenta"
+                                                className="w-10 h-10 rounded-none bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white flex items-center justify-center transition-all active:scale-90"
+                                                title="Purge Entry"
                                             >
                                                 <Trash2 size={18} />
                                             </button>
@@ -257,7 +288,7 @@ export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle })
                 </div>
             </div>
 
-            {/* Modal for Traceability (The "Card") */}
+            {/* Modals */}
             <TenantDetailsModal
                 isOpen={!!selectedTenant}
                 onClose={() => setSelectedTenant(null)}
@@ -265,7 +296,6 @@ export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle })
                 onAction={handleAction as any}
             />
 
-            {/* Dedicated Modal for Plugins (The New Workspace) */}
             <TenantPluginsModal
                 isOpen={!!selectedPluginTenant}
                 onClose={() => setSelectedPluginTenant(null)}

@@ -37,7 +37,8 @@ i18n
                             actions: "Acciones"
                         },
                         status: {
-                            pending: "PENDIENTE",
+                            pending: "EN REVISIÓN",
+                            approved: "APROBADO",
                             active: "ACTIVO",
                             rejected: "RECHAZADO"
                         }

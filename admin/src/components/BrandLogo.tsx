@@ -1,4 +1,5 @@
 import React from 'react';
+import clsx from 'clsx';
 import { useTheme } from '../context/ThemeContext';
 import { useBranding } from '../context/BrandingContext';
 
@@ -17,16 +18,23 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({ variant = 'imagotype', cla
     const theme = forcedTheme || contextTheme;
 
     if (loading) {
-        return <div className={`animate-pulse bg-slate-200 dark:bg-slate-700 rounded-lg ${className || 'w-32 h-8'}`}></div>;
+        return <div className={`animate-pulse bg-slate-200 dark:bg-slate-700 rounded-none ${className || 'w-32 h-8'}`}></div>;
     }
 
     const logoUrl = branding?.[theme]?.[variant];
 
     if (!logoUrl) {
         return (
-            <div className={`flex items-center gap-2 ${className}`}>
-                <div className="w-6 h-6 bg-antigravity-accent rounded-md"></div>
-                <span className="text-lg font-black text-slate-900 dark:text-white uppercase tracking-tighter">MINREPORT</span>
+            <div className={clsx("flex items-center gap-3", className)}>
+                <div className="relative group/logo">
+                    <div className="relative w-8 h-8 flex items-center justify-center rounded-none">
+                        <span className="text-white dark:text-black font-black text-xs italic tracking-tighter">MR</span>
+                    </div>
+                </div>
+                <div className="flex flex-col -space-y-1">
+                    <span className="text-lg font-black text-black dark:text-white uppercase tracking-tighter italic">MINREPORT</span>
+                    <span className="text-[8px] font-black text-antigravity-accent uppercase tracking-[0.3em] font-mono opacity-50">Industrial_Core</span>
+                </div>
             </div>
         );
     }

@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { getUIAssetsSettings, updateUIAssetsSettings, UIAssetsData } from '../services/api';
 import { storage } from '../config/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { AlertTriangle, ImageIcon, ShieldCheck } from 'lucide-react';
+import clsx from 'clsx';
 
 const INITIAL_DATA: UIAssetsData = {
     login_bg: '',
@@ -41,21 +43,28 @@ const UIAssetPreview: React.FC<{
     }, [file, existingUrl]);
 
     return (
-        <div className="group relative bg-slate-50 dark:bg-slate-900 rounded-[24px] border border-slate-200 dark:border-slate-800 p-4 transition-all hover:shadow-xl overflow-hidden aspect-video flex flex-col justify-end">
+        <div className="group relative elite-tech-surface !rounded-none overflow-hidden aspect-video flex flex-col justify-end p-8 border-black/5 dark:border-white/5 shadow-2xl transition-all duration-700 hover:scale-[1.02] hover:shadow-antigravity-accent/20">
+            {/* Dark technical overlay */}
+            <div className="absolute inset-0 technical-grid pointer-events-none opacity-40 z-10"></div>
+
             {preview ? (
                 <div className="absolute inset-0 z-0">
-                    <img src={preview} alt={label} className="w-full h-full object-cover brightness-[0.4] group-hover:scale-105 transition-transform duration-700" />
-                    <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent"></div>
+                    <img src={preview} alt={label} className="w-full h-full object-cover brightness-[0.5] contrast-[1.1] group-hover:scale-110 transition-transform duration-[2000ms] ease-out" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent"></div>
                 </div>
             ) : (
-                <div className="absolute inset-0 z-0 flex items-center justify-center bg-slate-100 dark:bg-slate-800 border-2 border-dashed border-slate-300 dark:border-slate-700 m-4 rounded-xl">
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Awaiting Identity Photo</span>
+                <div className="absolute inset-0 z-0 flex flex-col items-center justify-center bg-black/10 dark:bg-white/5 m-4 rounded-none border-2 border-dashed border-black/10 dark:border-white/10">
+                    <ImageIcon className="text-black/10 dark:text-white/10 mb-2" size={32} />
+                    <span className="hud-label !text-[10px] opacity-20">Awaiting Atmospheric Asset</span>
                 </div>
             )}
 
-            <div className="relative z-10 p-2">
-                <h4 className="text-white font-black text-sm uppercase tracking-tighter m-0">{label}</h4>
-                <p className="text-slate-400 text-[10px] font-medium leading-tight mt-1">{description}</p>
+            <div className="relative z-20 space-y-2">
+                <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-none bg-antigravity-accent"></div>
+                    <h4 className="text-white font-black text-sm uppercase tracking-[0.2em] m-0 italic">{label}</h4>
+                </div>
+                <p className="text-white/50 text-[10px] font-bold leading-relaxed max-w-[80%] uppercase tracking-widest">{description}</p>
             </div>
         </div>
     );
@@ -99,73 +108,119 @@ export const UIAssetsSettings: React.FC = () => {
             await updateUIAssetsSettings(updated);
             setSettings(updated);
             setFiles({});
-            alert('UI Backgrounds updated successfully!');
+            alert('Atmospheric synchronization successful.');
         } catch (error) {
-            alert('Failed to update assets.');
+            alert('Core UI Asset update failed.');
         } finally {
             setIsSaving(false);
         }
     };
 
-    if (isLoading) return <div className="p-12 animate-pulse text-slate-400 font-bold text-center">LOADING ASSETS ENGINE...</div>;
+    if (isLoading) return (
+        <div className="p-12 flex flex-col items-center justify-center space-y-6">
+            <div className="w-16 h-16 border-b-2 border-antigravity-accent rounded-none animate-spin"></div>
+            <div className="hud-label animate-pulse tracking-[1em]">CALIBRATING_OPTICS</div>
+        </div>
+    );
 
     return (
-        <div className="max-w-6xl mx-auto space-y-12 pb-24">
-            <header className="flex items-end justify-between">
-                <div>
-                    <h2 className="text-4xl font-black text-slate-900 dark:text-white tracking-tighter uppercase m-0">UI ASSETS</h2>
-                    <p className="text-slate-500 font-medium text-sm">Gestiona la atmósfera industrial del sistema. Solo tonos negros y gama de grafitos.</p>
+        <div className="max-w-[1400px] mx-auto space-y-16 animate-in fade-in duration-1000 pb-24">
+            <header className="flex flex-col md:flex-row md:items-end justify-between gap-10">
+                <div className="space-y-3">
+                    <div className="flex items-center gap-3">
+                        <div className="w-8 h-[2px] bg-antigravity-accent"></div>
+                        <span className="hud-label !text-antigravity-accent italic">ATOMIC_UI_ENVIRONMENT</span>
+                    </div>
+                    <h2 className="text-5xl font-black text-black dark:text-white tracking-tighter uppercase m-0 italic">Atmospheric_Assets</h2>
+                    <p className="text-black/50 dark:text-white/40 font-medium text-base max-w-xl leading-relaxed">
+                        Controla la estética mineral del sistema. Gestiona texturas de acero, grafito y carbono para mantener la integridad visual del nodo.
+                    </p>
                 </div>
                 <button
                     onClick={handleSave}
                     disabled={isSaving}
-                    className="px-8 py-4 bg-antigravity-accent text-white font-bold rounded-full shadow-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
+                    className="group relative px-12 py-5 bg-black dark:bg-white text-white dark:text-black font-black rounded-none shadow-premium hover:scale-105 active:scale-95 transition-all disabled:opacity-50 overflow-hidden"
                 >
-                    {isSaving ? 'UPDATING...' : 'SYNC ASSETS'}
+                    <span className="relative z-10 uppercase tracking-widest text-sm">
+                        {isSaving ? 'Recalibrating...' : 'Sync Environment'}
+                    </span>
+                    {!isSaving && <div className="absolute inset-0 bg-antigravity-accent opacity-0 group-hover:opacity-100 transition-opacity mix-blend-overlay"></div>}
                 </button>
             </header>
 
-            <div className="bg-white dark:bg-slate-800 p-8 rounded-[32px] border border-slate-100 dark:border-slate-700/50 space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <div className="elite-tech-surface p-12 rounded-none shadow-3xl border-black/5 dark:border-white/5 relative">
+                <div className="absolute inset-0 technical-grid pointer-events-none opacity-20"></div>
+
+                <div className="relative z-10 grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-12">
                     {[
-                        { id: 'login_bg', label: 'Login Background', desc: 'Vista principal de acceso. Debe transmitir robustez industrial y seguridad.' },
-                        { id: 'dashboard_bg', label: 'Dashboard Hub', desc: 'Atmósfera del panel central. Minimalismo absoluto en grafitos minerales.' },
-                        { id: 'sidebar_bg', label: 'Sidebar Texture', desc: 'Textura mineral para elementos de navegación laterales.' }
+                        { id: 'login_bg', label: 'Security Gateway', desc: 'Acceso principal al sistema. Debe transmitir robustez y encriptación.' },
+                        { id: 'dashboard_bg', label: 'Central Hub', desc: 'Panel de operaciones. Minimalismo mineral en grafitos profundos.' },
+                        { id: 'sidebar_bg', label: 'Navigation Texture', desc: 'Sustrato visual para los protocolos de navegación lateral.' }
                     ].map(asset => (
-                        <div key={asset.id} className="space-y-4">
+                        <div key={asset.id} className="space-y-6">
                             <UIAssetPreview
                                 file={files[asset.id] || null}
                                 existingUrl={(settings as any)[asset.id]}
                                 label={asset.label}
                                 description={asset.desc}
                             />
-                            <div className="relative group">
+                            <div className="relative group/input">
                                 <input
                                     type="file"
                                     accept="image/*"
+                                    autoComplete="off"
                                     onChange={(e) => handleFileChange(asset.id, e.target.files?.[0] || null)}
                                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                                 />
-                                <div className="py-2 px-4 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-[10px] font-black uppercase tracking-widest text-center border-2 border-transparent group-hover:border-antigravity-accent transition-all">
-                                    {files[asset.id] ? files[asset.id]?.name.slice(0, 15) : 'Upload Image'}
+                                <div className="h-12 flex items-center justify-center rounded-none bg-black dark:bg-white text-white dark:text-black text-[10px] font-black uppercase tracking-widest border-2 border-transparent group-hover/input:bg-antigravity-accent group-hover/input:text-white transition-all shadow-lg active:scale-95">
+                                    {files[asset.id] ? files[asset.id]?.name.slice(0, 20) : `Inject ${asset.label}`}
                                 </div>
                             </div>
                         </div>
                     ))}
                 </div>
 
-                <div className="p-6 rounded-2xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20">
-                    <h5 className="text-amber-700 dark:text-amber-500 font-bold text-xs uppercase mb-2 flex items-center gap-2">
-                        <span className="material-symbols-rounded text-lg">warning</span>
-                        Restricciones de Identidad
-                    </h5>
-                    <ul className="text-[10px] text-amber-600 dark:text-amber-400 font-medium space-y-1 ml-4 list-disc">
-                        <li>PROHIBIDO: Fotos genéricas, personas, arquitectura constructiva, gradientes artificiales.</li>
-                        <li>PERMITIDO: Texturas industriales, minerales (carbón, grafito, acero, roca).</li>
-                        <li>NORMA: Solo Negro y Gamas de Grafito (#000000 a #1f1f1f).</li>
-                    </ul>
+                <div className="mt-16 p-8 rounded-none glass-card border-amber-500/20 bg-amber-500/5 flex gap-6 items-start">
+                    <div className="w-12 h-12 rounded-none bg-amber-500/10 flex items-center justify-center shrink-0">
+                        <AlertTriangle className="text-amber-500" size={24} />
+                    </div>
+                    <div className="space-y-3">
+                        <h5 className="text-amber-600 dark:text-amber-500 font-black text-xs uppercase tracking-widest flex items-center gap-2">
+                            Industrial Visual Protocol v4.0
+                        </h5>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            <ul className="text-[10px] text-amber-700/60 dark:text-amber-400/50 font-black space-y-2 uppercase tracking-tighter">
+                                <li className="flex items-center gap-2">
+                                    <div className="w-1 h-1 rounded-none bg-amber-500"></div>
+                                    Prohibido: Elementos orgánicos o figurativos
+                                </li>
+                                <li className="flex items-center gap-2">
+                                    <div className="w-1 h-1 rounded-none bg-amber-500"></div>
+                                    Prohibido: Gradientes artificiales de color
+                                </li>
+                            </ul>
+                            <ul className="text-[10px] text-emerald-600/60 dark:text-emerald-400/50 font-black space-y-2 uppercase tracking-tighter">
+                                <li className="flex items-center gap-2">
+                                    <div className="w-1 h-1 rounded-none bg-emerald-500"></div>
+                                    Requerido: Macro-fotografía mineral/metálica
+                                </li>
+                                <li className="flex items-center gap-2">
+                                    <div className="w-1 h-1 rounded-full bg-emerald-500"></div>
+                                    Requerido: Rango HEX #000000 - #1F1F1F
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
                 </div>
             </div>
+
+            <footer className="pt-12 border-t border-black/5 dark:border-white/5 flex flex-col md:flex-row justify-between gap-6 hud-label !text-[10px] !text-black/20 dark:!text-white/20">
+                <div className="flex items-center gap-4">
+                    <ShieldCheck className="text-emerald-500" size={14} />
+                    ATMOSPHERIC_INTEGRITY_CHECKED
+                </div>
+                <div className="italic tracking-widest">MINREPORT OPTICS UNIT</div>
+            </footer>
         </div>
     );
 };

@@ -1,7 +1,7 @@
 import { useState, useEffect, ChangeEvent, FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
-import { LogIn, ArrowLeft, ArrowRight, ShieldCheck, UserPlus, Building, GraduationCap, User } from 'lucide-react';
+import { LogIn, ArrowLeft, ArrowRight, ShieldCheck, UserPlus, Building, GraduationCap, User, Eye, Edit2, Send, X } from 'lucide-react';
 import BrandLogo from '../components/BrandLogo';
 import { ThemeSwitch } from '../components/ThemeSwitch';
 import { LanguageSwitch } from '../components/LanguageSwitch';
@@ -40,6 +40,7 @@ export const Register = () => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState(false);
+    const [showPreview, setShowPreview] = useState(false);
 
     // Zero Memory Policy
     useEffect(() => {
@@ -63,6 +64,7 @@ export const Register = () => {
             });
             setError('');
             setSuccess(false);
+            setShowPreview(false);
         };
     }, []);
 
@@ -139,7 +141,12 @@ export const Register = () => {
             }
         }
 
+        setShowPreview(true);
+    };
+
+    const handleFinalSubmit = async () => {
         setLoading(true);
+        setError('');
 
         try {
             const payload: any = {
@@ -171,6 +178,7 @@ export const Register = () => {
 
             await registerUser(payload);
             setSuccess(true);
+            setShowPreview(false);
             setFormData((prev: any) => ({ ...prev, email: '' }));
         } catch (err: any) {
             const errorMessage = (err.message || '').toLowerCase();
@@ -235,6 +243,13 @@ export const Register = () => {
     );
     // ------------------
 
+    const renderPreviewRow = (label: string, value: string) => (
+        <div className="flex justify-between items-center py-4 border-b border-black/5 dark:border-white/5 last:border-0 group">
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-black/40 dark:text-white/30">{label}</span>
+            <span className="text-[12px] font-bold tracking-tight text-right truncate max-w-[200px]">{value || '---'}</span>
+        </div>
+    );
+
     return (
         <div className="min-h-screen flex items-center justify-center p-6 transition-colors relative overflow-hidden industrial-mineral-gradient">
             <div className="absolute top-6 right-6 flex items-center gap-3 z-50">
@@ -291,6 +306,90 @@ export const Register = () => {
                             >
                                 {t('form.back', 'Volver')}
                             </button>
+                        </div>
+                    ) : showPreview ? (
+                        <div className="space-y-10 relative z-10 animate-in fade-in zoom-in-95 duration-500">
+                            <div className="flex items-center gap-4 border-b border-black/5 dark:border-white/5 pb-6">
+                                <div className="w-12 h-12 bg-antigravity-accent/10 flex items-center justify-center text-antigravity-accent">
+                                    <Eye size={24} />
+                                </div>
+                                <div>
+                                    <h3 className="text-xl font-black uppercase tracking-tighter">PREVIEW_MODE</h3>
+                                    <p className="text-[10px] opacity-40 uppercase tracking-widest font-black">Verify your credentials before dispatch</p>
+                                </div>
+                            </div>
+
+                            <div className="space-y-1 bg-black/5 dark:bg-white/5 p-6 border border-black/5 dark:border-white/5">
+                                {renderPreviewRow(t('form.country'), activeCountry.name)}
+                                {renderPreviewRow(t('form.email'), formData.email || '')}
+
+                                {type === 'ENTERPRISE' && (
+                                    <>
+                                        {renderPreviewRow(t('form.applicant_name'), formData.applicant_name || '')}
+                                        {renderPreviewRow(t('form.company_name'), formData.company_name || '')}
+                                        {renderPreviewRow(formData.country === 'CL' ? 'RUT' : 'TAX_ID', formData.rut || '')}
+                                        {renderPreviewRow(t('form.industry'), formData.industry || '')}
+                                        {formData.website && renderPreviewRow(t('form.website'), formData.website)}
+                                    </>
+                                )}
+
+                                {type === 'EDUCATIONAL' && (
+                                    <>
+                                        {renderPreviewRow(t('form.applicant_name'), formData.applicant_name || '')}
+                                        {renderPreviewRow(formData.country === 'CL' ? 'RUN' : 'NATIONAL_ID', formData.run || '')}
+                                        {renderPreviewRow('PROFILE', eduProfile || '')}
+                                        {renderPreviewRow(t('form.institution_name'), formData.institution_name || '')}
+                                        {formData.institution_website && renderPreviewRow(t('form.institution_web'), formData.institution_website)}
+                                        {renderPreviewRow(t('form.program_name'), formData.program_name || '')}
+                                        {renderPreviewRow(t('form.graduation_date'), formData.graduation_date || '')}
+                                    </>
+                                )}
+
+                                {type === 'PERSONAL' && (
+                                    <>
+                                        {renderPreviewRow(t('form.full_name'), formData.full_name || '')}
+                                        {renderPreviewRow(formData.country === 'CL' ? 'RUN' : 'NATIONAL_ID', formData.run || '')}
+                                        {renderPreviewRow(t('form.usage_profile'), formData.usage_profile === 'PROFESSIONAL' ? t('form.professional') : t('form.personal'))}
+                                    </>
+                                )}
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPreview(false)}
+                                    className="py-5 border border-black/10 dark:border-white/10 text-black/60 dark:text-white/60 font-black uppercase tracking-[0.2em] text-[10px] flex items-center justify-center gap-3 hover:bg-black/5 dark:hover:bg-white/5 transition-all"
+                                >
+                                    <Edit2 size={16} />
+                                    EDIT
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setShowPreview(false);
+                                        setError('');
+                                    }}
+                                    className="py-5 border border-black/10 dark:border-white/10 text-rose-500/60 font-black uppercase tracking-[0.2em] text-[10px] flex items-center justify-center gap-3 hover:bg-rose-500/5 transition-all"
+                                >
+                                    <X size={16} />
+                                    CANCEL
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleFinalSubmit}
+                                    disabled={loading}
+                                    className="col-span-2 py-6 bg-black dark:bg-white text-white dark:text-black font-black uppercase tracking-[0.3em] text-[12px] transition-all shadow-3xl active:scale-[0.98] disabled:opacity-30 flex items-center justify-center gap-4"
+                                >
+                                    {loading ? (
+                                        <div className="w-6 h-6 border-2 border-white/20 dark:border-black/20 border-t-white dark:border-t-black rounded-full animate-spin" />
+                                    ) : (
+                                        <>
+                                            <Send size={18} />
+                                            SEND_DATA_SECURE
+                                        </>
+                                    )}
+                                </button>
+                            </div>
                         </div>
                     ) : (
                         <form onSubmit={handleSubmit} className="space-y-8 relative z-10" autoComplete="off">

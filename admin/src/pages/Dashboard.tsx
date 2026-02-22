@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { getTenants, updateTenantStatus } from '../services/api';
-import { Check, X, Clock } from 'lucide-react';
+import { Check, X, Clock, Settings, Eye, Search, Filter, Cpu, Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { motion } from 'framer-motion';
 import clsx from 'clsx';
+import { TenantDetailsModal } from '../components/admin/TenantDetailsModal';
 
 interface Tenant {
     id: string;
@@ -22,16 +24,14 @@ interface Tenant {
     enabledPlugins?: string[];
 }
 
-import { TenantDetailsModal } from '../components/admin/TenantDetailsModal';
-import { Eye, Settings } from 'lucide-react';
-
 export const Dashboard = () => {
     const { t } = useTranslation();
     const [tenants, setTenants] = useState<Tenant[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedTenant, setSelectedTenant] = useState<Tenant | null>(null);
-
     const [activeTab, setActiveTab] = useState<'PERSONAL' | 'ENTERPRISE' | 'EDUCATIONAL'>('PERSONAL');
+    const [searchTerm, setSearchTerm] = useState('');
+    const [showRejected, setShowRejected] = useState(false);
 
     const fetchTenants = async () => {
         try {
@@ -51,8 +51,6 @@ export const Dashboard = () => {
     const handleAction = async (id: string, status: 'ACTIVE' | 'REJECTED', data?: { rejectionReason?: string, observations?: string, enabledPlugins?: string[] }) => {
         try {
             await updateTenantStatus(id, status, data);
-
-            // Update local state specifically for plugin toggles to ensure UI reflects change immediately
             setTenants(prev => prev.map(t => {
                 if (t.id === id) {
                     return {
@@ -60,21 +58,17 @@ export const Dashboard = () => {
                         status,
                         ...data,
                         processedAt: new Date().toISOString(),
-                        // Ensure enabledPlugins is merged if present
                         ...(data?.enabledPlugins ? { enabledPlugins: data.enabledPlugins } : {})
                     };
                 }
                 return t;
             }));
 
-            // Only close modal if it's a status change (Pending -> Active/Rejected), not for plugin toggles
             if (status !== 'ACTIVE' || (data && !data.enabledPlugins)) {
                 setSelectedTenant(null);
             } else {
-                // If it's a plugin toggle, update the selected tenant too so the modal doesn't stale
                 setSelectedTenant(prev => prev ? { ...prev, ...data } : null);
             }
-
         } catch (error) {
             console.error(error);
             alert('Error updating status');
@@ -82,150 +76,231 @@ export const Dashboard = () => {
     };
 
     const filteredTenants = tenants.filter(t => {
-        return t.type === activeTab;
+        const matchesTab = t.type === activeTab;
+        const matchesStatus = showRejected ? t.status === 'REJECTED' : t.status === 'PENDING_APPROVAL';
+        const searchLower = searchTerm.toLowerCase();
+        const matchesSearch =
+            t.email.toLowerCase().includes(searchLower) ||
+            (t.company_name?.toLowerCase().includes(searchLower)) ||
+            (t.full_name?.toLowerCase().includes(searchLower)) ||
+            (t.rut?.toLowerCase().includes(searchLower)) ||
+            (t.run?.toLowerCase().includes(searchLower));
+        return matchesTab && matchesSearch && matchesStatus;
     });
 
-    useEffect(() => {
-        console.log('[DEBUG] Active Tab:', activeTab);
-        console.log('[DEBUG] Filtered Tenants Count:', filteredTenants.length);
-    }, [activeTab, tenants]);
+    const TabButton = ({ type, symbol }: { type: typeof activeTab, symbol: string }) => {
+        return (
+            <button
+                onClick={() => setActiveTab(type)}
+                className={clsx(
+                    "flex-1 flex items-center justify-center h-14 transition-all duration-500 relative group/tab",
+                    activeTab === type
+                        ? "text-antigravity-accent"
+                        : "text-black/30 dark:text-white/20 hover:text-black/60 dark:hover:text-white/50"
+                )}
+            >
+                <span className={clsx(
+                    "material-symbols-rounded text-[22px] transition-transform duration-500",
+                    activeTab === type ? "scale-110" : "opacity-60"
+                )}>
+                    {symbol}
+                </span>
+                {activeTab === type && (
+                    <div className="absolute bottom-3 w-1 h-1 bg-antigravity-accent rounded-none"></div>
+                )}
+            </button>
+        );
+    };
 
     return (
-        <div className="p-8 max-w-7xl mx-auto">
-            <header className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                    <h1 className="text-3xl font-bold text-slate-900 dark:text-white">{t('admin.inbox_title')}</h1>
-                    <p className="text-slate-500 mt-1">{t('admin.inbox_subtitle')}</p>
+        <div className="space-y-10 animate-in fade-in duration-1000 pb-24">
+            <header className="flex items-center justify-between gap-8 pb-10 border-b border-black/5 dark:border-white/5 relative z-20">
+                <div className="flex items-center gap-8">
+                    <div className="flex flex-col">
+                        <span className="text-[8px] font-black text-antigravity-accent tracking-[.3em] uppercase italic opacity-60">CENTRAL_CORE</span>
+                        <h1 className="text-4xl font-black text-black dark:text-white tracking-tighter m-0 uppercase italic leading-none">
+                            INBOX
+                        </h1>
+                    </div>
+
+                    <div className="w-[1px] h-10 bg-black/10 dark:bg-white/10"></div>
+
+                    {/* 1. Account type selectors (Left) */}
+                    <div className="flex gap-4 items-center">
+                        <TabButton type="PERSONAL" symbol="person" />
+                        <TabButton type="EDUCATIONAL" symbol="school" />
+                        <TabButton type="ENTERPRISE" symbol="domain" />
+                    </div>
                 </div>
 
-                <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
-                    <button
-                        onClick={() => setActiveTab('PERSONAL')}
-                        className={clsx(
-                            "px-4 py-2 text-sm font-medium rounded-md transition-all",
-                            activeTab === 'PERSONAL'
-                                ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm"
-                                : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-                        )}
-                    >
-                        Personas
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('EDUCATIONAL')}
-                        className={clsx(
-                            "px-4 py-2 text-sm font-medium rounded-md transition-all",
-                            activeTab === 'EDUCATIONAL'
-                                ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm"
-                                : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-                        )}
-                    >
-                        Educacional
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('ENTERPRISE')}
-                        className={clsx(
-                            "px-4 py-2 text-sm font-medium rounded-md transition-all",
-                            activeTab === 'ENTERPRISE'
-                                ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm"
-                                : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-                        )}
-                    >
-                        Empresas (B2B)
-                    </button>
+                {/* 2. Search Bar (Center/Auto-expand) */}
+                <div className="relative flex-1 max-w-3xl group px-4">
+                    <Search className="absolute left-10 top-1/2 -translate-y-1/2 text-black/20 dark:text-white/20 group-focus-within:text-antigravity-accent transition-colors" size={18} />
+                    <input
+                        type="text"
+                        placeholder="SEARCH_REGISTRY_HASH..."
+                        autoComplete="off"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="premium-input !pl-14 !rounded-none !py-4 shadow-none focus:shadow-none border-0 bg-transparent"
+                    />
+                    <div className="absolute bottom-0 left-4 right-4 h-[1px] bg-black/5 dark:bg-white/5 group-focus-within:bg-antigravity-accent/30 transition-all"></div>
                 </div>
+
+                {/* 3. Account status toggle (Right) */}
+                <button
+                    onClick={() => setShowRejected(!showRejected)}
+                    className={clsx(
+                        "flex items-center gap-2 px-6 py-4 transition-all duration-500 rounded-none w-20 justify-center group/toggle relative",
+                        showRejected
+                            ? "text-rose-600 dark:text-rose-400"
+                            : "text-black/40 dark:text-white/40 hover:text-black dark:hover:text-white"
+                    )}
+                    title={showRejected ? 'VIEW_PENDING' : 'VIEW_REJECTED'}
+                >
+                    <span className="material-symbols-rounded text-[24px] transition-transform duration-500 group-hover/toggle:scale-110">
+                        {showRejected ? 'cancel' : 'history'}
+                    </span>
+                    {showRejected && (
+                        <div className="absolute top-3 right-5 w-1.5 h-1.5 bg-rose-500 rounded-none animate-pulse"></div>
+                    )}
+                </button>
             </header>
 
-            <div className="bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-antigravity-light-border dark:border-antigravity-dark-border rounded-xl overflow-hidden shadow-sm">
-                <table className="w-full text-left border-collapse">
-                    <thead>
-                        <tr className="bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-800">
-                            <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">{t('admin.table.type')}</th>
-                            <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
-                                {activeTab === 'ENTERPRISE' ? 'Razón Social' : activeTab === 'EDUCATIONAL' ? 'Institución' : t('admin.table.name')}
-                            </th>
-                            <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">
-                                {activeTab === 'ENTERPRISE' ? 'RUT Empresa' : 'RUN / ID'}
-                            </th>
-                            <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">{t('admin.table.email')}</th>
-                            <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">{t('admin.table.status')}</th>
-                            <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-100 text-right">{t('admin.table.actions')}</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
-                        {loading ? (
-                            <tr><td colSpan={6} className="px-6 py-10 text-center text-slate-500">{t('admin.loading')}</td></tr>
-                        ) : filteredTenants.length === 0 ? (
-                            <tr><td colSpan={6} className="px-6 py-10 text-center text-slate-500">{t('admin.no_pending')}</td></tr>
-                        ) : filteredTenants.map((tenant) => (
-                            <tr key={tenant.id} className="hover:bg-slate-50/50 dark:hover:bg-white/5 transition-colors">
-                                <td className="px-6 py-4 text-center">
-                                    <span className="material-symbols-rounded text-slate-500" title={tenant.type}>
-                                        {tenant.type === 'ENTERPRISE' ? 'domain' : tenant.type === 'EDUCATIONAL' ? 'school' : 'person'}
-                                    </span>
-                                </td>
-                                <td className="px-6 py-4 font-medium text-slate-900 dark:text-slate-100">
-                                    {tenant.type === 'ENTERPRISE'
-                                        ? tenant.company_name
-                                        : (tenant.full_name || tenant.institution_name)}
-                                </td>
-                                <td className="px-6 py-4 text-sm text-slate-500 tabular-nums">
-                                    {tenant.rut || tenant.run}
-                                </td>
-                                <td className="px-6 py-4 text-sm text-slate-500">
-                                    {tenant.email}
-                                </td>
-                                <td className="px-6 py-4">
-                                    <span className={clsx(
-                                        "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide",
-                                        tenant.status === 'PENDING_APPROVAL' && "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
-                                        tenant.status === 'ACTIVE' && "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
-                                        tenant.status === 'REJECTED' && "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400"
-                                    )}>
-                                        {tenant.status === 'PENDING_APPROVAL' && <Clock size={10} />}
-                                        {tenant.status === 'ACTIVE' && <Check size={10} />}
-                                        {tenant.status === 'REJECTED' && <X size={10} />}
-                                        {t(`admin.status.${tenant.status.toLowerCase().replace('_approval', '')}`)}
-                                    </span>
-                                </td>
-                                <td className="px-6 py-4 text-right">
-                                    <div className="flex justify-end gap-2">
-                                        <button
-                                            onClick={() => setSelectedTenant(tenant)}
-                                            className={clsx(
-                                                "p-1.5 rounded-md transition-colors",
-                                                tenant.status === 'ACTIVE'
-                                                    ? "text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20"
-                                                    : "text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10 hover:text-antigravity-accent"
-                                            )}
-                                            title={tenant.status === 'ACTIVE' ? "Administrar Cuenta" : "Ver Detalles"}
-                                        >
-                                            {tenant.status === 'ACTIVE' ? <Settings size={18} /> : <Eye size={18} />}
-                                        </button>
+            <div className="elite-tech-surface rounded-none shadow-3xl overflow-hidden border-black/5 dark:border-white/5 relative bg-white/[0.01] dark:bg-black/[0.01]">
+                <div className="absolute inset-0 technical-grid pointer-events-none opacity-20"></div>
 
-                                        {tenant.status === 'PENDING_APPROVAL' && (
-                                            <>
-                                                <button
-                                                    onClick={() => handleAction(tenant.id, 'ACTIVE')}
-                                                    className="p-1.5 rounded-md text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors"
-                                                    title="Aprobar"
-                                                >
-                                                    <Check size={18} />
-                                                </button>
-                                                <button
-                                                    onClick={() => handleAction(tenant.id, 'REJECTED')}
-                                                    className="p-1.5 rounded-md text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors"
-                                                    title="Rechazar"
-                                                >
-                                                    <X size={18} />
-                                                </button>
-                                            </>
-                                        )}
-                                    </div>
-                                </td>
+                <div className="overflow-x-auto relative z-10">
+                    <table className="w-full text-left border-collapse">
+                        <thead>
+                            <tr className="bg-black/5 dark:bg-white/5 border-b border-black/10 dark:border-white/10">
+                                <th className="px-10 py-6 hud-label">
+                                    <span className="material-symbols-rounded text-[24px]">
+                                        {activeTab === 'ENTERPRISE' ? 'domain' : activeTab === 'EDUCATIONAL' ? 'school' : 'person'}
+                                    </span>
+                                </th>
+                                <th className="px-10 py-6 hud-label">
+                                    <span className="material-symbols-rounded text-[24px]">id_card</span>
+                                </th>
+                                <th className="px-10 py-6 hud-label">
+                                    <span className="material-symbols-rounded text-[24px]">alternate_email</span>
+                                </th>
+                                <th className="px-10 py-6 hud-label text-center">
+                                    <span className="material-symbols-rounded text-[24px]">person_check</span>
+                                </th>
+                                <th className="px-10 py-6 hud-label text-right">
+                                    <span className="material-symbols-rounded text-[24px]">rule</span>
+                                </th>
                             </tr>
-                        ))}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody className="divide-y divide-black/5 dark:divide-white/5">
+                            {loading ? (
+                                <tr><td colSpan={5} className="px-10 py-24 text-center">
+                                    <div className="flex flex-col items-center gap-4 animate-pulse opacity-40">
+                                        <Cpu size={40} className="animate-spin duration-[3s]" />
+                                        <span className="hud-label italic tracking-[0.3em]">SYNCHRONIZING_CORE_DATA...</span>
+                                    </div>
+                                </td></tr>
+                            ) : filteredTenants.length === 0 ? (
+                                <tr><td colSpan={5} className="px-10 py-24 text-center">
+                                    <div className="flex flex-col items-center gap-4 opacity-10 grayscale">
+                                        <Zap size={60} />
+                                        <span className="hud-label italic tracking-[0.4em]">INBOX_CLEAN_NO_PENDING_TASKS</span>
+                                    </div>
+                                </td></tr>
+                            ) : filteredTenants.map((tenant) => (
+                                <tr key={tenant.id} className="hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-all duration-500 group">
+                                    <td className="px-10 py-8">
+                                        <div className="flex items-center gap-5">
+                                            <div className={clsx(
+                                                "w-12 h-12 rounded-none flex items-center justify-center shadow-lg transition-transform duration-500 group-hover:scale-110",
+                                                tenant.status === 'PENDING_APPROVAL' ? "bg-antigravity-accent text-white" : "bg-black/5 dark:bg-white/10 text-black/40 dark:text-white/40"
+                                            )}>
+                                                <span className="text-sm font-black italic">
+                                                    {(tenant.company_name || tenant.full_name || tenant.institution_name)?.substring(0, 2).toUpperCase()}
+                                                </span>
+                                            </div>
+                                            <div className="flex flex-col">
+                                                <span className="text-sm font-black text-black dark:text-white uppercase tracking-tighter">
+                                                    {tenant.type === 'ENTERPRISE' ? tenant.company_name : (tenant.full_name || tenant.institution_name)}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td className="px-10 py-8">
+                                        <div className="flex flex-col">
+                                            <span className="text-[11px] font-black text-black/40 dark:text-white/30 uppercase font-mono tracking-widest grayscale group-hover:grayscale-0 transition-all">
+                                                {tenant.rut || tenant.run}
+                                            </span>
+                                        </div>
+                                    </td>
+                                    <td className="px-10 py-8">
+                                        <span className="text-[12px] font-bold text-antigravity-accent tracking-tighter opacity-70 group-hover:opacity-100 transition-opacity">
+                                            {tenant.email.toLowerCase()}
+                                        </span>
+                                    </td>
+                                    <td className="px-10 py-8">
+                                        <div className="flex justify-center">
+                                            <span className={clsx(
+                                                "inline-flex items-center gap-2.5 px-4 py-1.5 rounded-none text-[9px] font-black uppercase tracking-[0.2em] border shadow-sm transition-all duration-700",
+                                                tenant.status === 'PENDING_APPROVAL' && "bg-amber-500/10 text-amber-600 border-amber-500/20 shadow-amber-500/5",
+                                                tenant.status === 'ACTIVE' && "bg-emerald-500/10 text-emerald-600 border-emerald-500/20 shadow-emerald-500/5",
+                                                tenant.status === 'REJECTED' && "bg-rose-500/10 text-rose-600 border-rose-500/20 shadow-rose-500/5"
+                                            )}>
+                                                <div className={clsx(
+                                                    "w-1.5 h-1.5 rounded-none",
+                                                    tenant.status === 'PENDING_APPROVAL' ? "bg-amber-500 animate-pulse" :
+                                                        tenant.status === 'ACTIVE' ? "bg-emerald-500" : "bg-rose-500"
+                                                )}></div>
+                                                {t(`admin.status.${tenant.status.toLowerCase().replace('_approval', '')}`)}
+                                            </span>
+                                        </div>
+                                    </td>
+                                    <td className="px-10 py-8 text-right">
+                                        <div className="flex justify-end gap-3 opacity-0 group-hover:opacity-100 translate-x-4 group-hover:translate-x-0 transition-all duration-500">
+                                            <button
+                                                onClick={() => setSelectedTenant(tenant)}
+                                                className="w-10 h-10 rounded-none flex items-center justify-center transition-all bg-transparent text-black/40 dark:text-white/40 hover:text-black dark:hover:text-white active:scale-90"
+                                                title="View Registry Info"
+                                            >
+                                                <Eye size={18} />
+                                            </button>
+
+                                            {tenant.status === 'PENDING_APPROVAL' && (
+                                                <>
+                                                    <button
+                                                        onClick={() => handleAction(tenant.id, 'ACTIVE')}
+                                                        className="w-10 h-10 rounded-none flex items-center justify-center transition-all bg-transparent text-emerald-500/40 hover:text-emerald-500 active:scale-90"
+                                                        title="Authorize Node"
+                                                    >
+                                                        <Check size={18} />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleAction(tenant.id, 'REJECTED')}
+                                                        className="w-10 h-10 rounded-none flex items-center justify-center transition-all bg-transparent text-rose-500/40 hover:text-rose-500 active:scale-90"
+                                                        title="Reject Request"
+                                                    >
+                                                        <X size={18} />
+                                                    </button>
+                                                </>
+                                            )}
+
+                                            {tenant.status === 'ACTIVE' && (
+                                                <button
+                                                    onClick={() => setSelectedTenant(tenant)}
+                                                    className="w-10 h-10 rounded-none flex items-center justify-center transition-all bg-transparent text-antigravity-accent/40 hover:text-antigravity-accent active:scale-90"
+                                                    title="Protocol Config"
+                                                >
+                                                    <Settings size={18} />
+                                                </button>
+                                            )}
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             <TenantDetailsModal

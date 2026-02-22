@@ -11,7 +11,7 @@ PORTS="8080,5173,5174,8085,9190,9196,9195,5010,5015,5016,4002,4400"
 PIDS=$(lsof -ti:$PORTS 2>/dev/null)
 if [ ! -z "$PIDS" ]; then
     echo "$PIDS" | xargs kill -15 2>/dev/null || true
-    sleep 3
+    sleep 6
     # Limpieza final para procesos rebeldes
     echo "$PIDS" | xargs kill -9 2>/dev/null || true
 fi

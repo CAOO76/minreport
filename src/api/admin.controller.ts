@@ -90,6 +90,7 @@ export const listAccounts = async (req: Request, res: Response) => {
 export const adminLogin = async (req: Request, res: Response) => {
     const { email, password } = req.body;
 
+    console.log(`[ADMIN-LOGIN] Attempt for: ${email}`);
     if (email === env.SUPER_ADMIN_EMAIL && password === env.SUPER_ADMIN_PASSWORD) {
         // Create or get the Super Admin user in Firebase Auth
         let uid = 'super-admin-id';
@@ -190,11 +191,10 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
                 ? 'https://minreport-access.web.app'
                 : 'http://localhost:5173';
 
-            const actionLink = `${baseUrl}/setup-access?accountId=${accountId}&taxId=${taxId}&email=${tenantData.email}`;
 
             // 4. Update Firestore with uid and status in tenants
             await tenantRef.update({
-                status: 'ACTIVE',
+                status: 'APPROVED',
                 authUid: userRecord.uid,
                 processedAt: new Date().toISOString(),
                 processedBy: adminEmail,
@@ -260,7 +260,7 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
                     role: 'USER', // Default system role
                     memberships: memberships, // <--- CRITICAL: Multi-Tenancy Link
                     lastActiveAccountId: accountId, // Auto-select this account
-                    status: 'ACTIVE',
+                    status: 'APPROVED',
                     entitlements: {
                         pluginsEnabled: [],
                         storageLimit: 1073741824 // 1GB default
@@ -275,20 +275,50 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
                 console.log(`[ADMIN] Created new user document for ${userRecord.uid}`);
             }
 
+            const entityName = tenantData.company_name || tenantData.institution_name || tenantData.full_name || 'tu cuenta';
+            const actionLink = `${baseUrl}/setup-access?accountId=${uid}&email=${tenantData.email}&name=${encodeURIComponent(entityName)}&type=${tenantData.type}`;
+
             // 5. Send Notification Email
             await EmailService.sendEmail({
                 from: 'MinReport System <support@minreport.com>',
                 to: tenantData.email,
-                subject: '✅ Solicitud de Registro Aprobada',
+                subject: 'Solicitud de Registro Aprobada',
                 html: `
-                    <div style="font-family: sans-serif; max-width: 600px; color: #334155;">
-                        <h2 style="color: #4F46E5;">¡Buenas noticias!</h2>
-                        <p>Tu solicitud para <strong>${tenantData.company_name || tenantData.institution_name || 'tu cuenta'}</strong> ha sido aprobada.</p>
-                        <p>Ya puedes configurar tu acceso y comenzar a usar MINREPORT.</p>
-                        <br />
-                        <a href="https://minreport-access.web.app/setup-access?accountId=${uid}&taxId=${taxId || ''}&email=${tenantData.email}" style="background: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Configurar Acceso</a>
-                        <br /><br />
-                        <p style="font-size: 12px; color: #94a3b8;">Si el botón no funciona, copia y pega este enlace: ${actionLink}</p>
+                    <div style="font-family: 'Arial', sans-serif; max-width: 600px; color: #334155; padding: 40px 20px;">
+                        <div style="text-align: center; margin-bottom: 32px;">
+                            <img src="https://minreport-access.web.app/pwa-192x192.png" alt="MINREPORT" style="height: 48px; width: auto; opacity: 0.9;" />
+                        </div>
+                        
+                        <div style="background: #F8FAFC; border-left: 4px solid #0F172A; padding: 24px; margin-bottom: 24px;">
+                            <h2 style="color: #0F172A; font-size: 18px; margin-top: 0; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px;">Solicitud Aprobada</h2>
+                            <p style="margin: 0; font-size: 15px; line-height: 1.6;">
+                                Tu solicitud de registro ha sido validada exitosamente para operar en la plataforma.
+                            </p>
+                            
+                            <div style="margin-top: 24px; background: white; border: 1px solid #E2E8F0; padding: 16px; border-radius: 4px;">
+                                <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Entidad Registrada</p>
+                                <p style="margin: 0 0 16px 0; font-size: 16px; color: #0F172A; font-weight: bold;">${entityName}</p>
+                                
+                                <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Correo Asociado</p>
+                                <p style="margin: 0 0 16px 0; font-size: 14px; color: #0F172A;">${tenantData.email}</p>
+                                
+                                <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Tipo de Entorno</p>
+                                <p style="margin: 0; font-size: 14px; color: #0F172A;">${tenantData.type}</p>
+                            </div>
+                            
+                            <p style="margin: 24px 0 0 0; font-size: 15px; line-height: 1.6;">
+                                Por seguridad, deberás verificar tu identidad ingresando tu documento principal antes de establecer tu contraseña exclusiva de acceso.
+                            </p>
+                        </div>
+                        
+                        <div style="text-align: center; margin: 32px 0;">
+                            <a href="${actionLink}" style="background: #0F172A; color: white; padding: 16px 32px; text-decoration: none; font-weight: bold; display: inline-block; font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em; border-radius: 2px;">Configurar Acceso Seguro</a>
+                        </div>
+                        
+                        <hr style="border: 0; border-top: 1px solid #E2E8F0; margin: 32px 0;" />
+                        <p style="font-size: 10px; color: #94A3B8; text-align: center; margin: 0; text-transform: uppercase; letter-spacing: 0.1em;">
+                            MINREPORT SYSTEM INFRASTRUCTURE
+                        </p>
                     </div>
                 `
             });
@@ -310,15 +340,23 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
             await EmailService.sendEmail({
                 from: 'MinReport <ops@minreport.com>',
                 to: tenantData.email,
-                subject: 'Estado de tu solicitud en MinReport',
+                subject: 'Estado de Solicitud',
                 html: `
-                    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #f1f5f9; padding: 40px; border-radius: 16px; color: #334155;">
-                        <h2 style="color: #64748b;">Estado de tu Solicitud</h2>
-                        <p style="font-size: 16px; line-height: 1.6;">Lamentamos informarte que tu solicitud de acceso a MinReport no ha sido aprobada en esta ocasión.</p>
-                        <p><strong>Motivo:</strong> ${rejectionReason || 'La documentación proporcionada no ha podido ser validada conforme a nuestras políticas actuales.'}</p>
-                        <p style="font-size: 16px; line-height: 1.6;">Puedes volver a postular en el futuro si tu situación cambia o si cuentas con más información comercial.</p>
-                        <hr style="border: 0; border-top: 1px solid #f1f5f9; margin: 32px 0;" />
-                        <p style="font-size: 12px; color: #94a3b8; text-align: center;">MINREPORT Operations Security</p>
+                    <div style="font-family: 'Arial', sans-serif; max-width: 600px; color: #334155; padding: 40px 20px;">
+                        <div style="text-align: center; margin-bottom: 32px;">
+                            <img src="https://minreport-access.web.app/pwa-192x192.png" alt="MINREPORT" style="height: 48px; width: auto; opacity: 0.9;" />
+                        </div>
+                        
+                        <div style="background: #FFF1F2; border-left: 4px solid #E11D48; padding: 24px; margin-bottom: 24px;">
+                            <h2 style="color: #E11D48; font-size: 18px; margin-top: 0; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px;">Estado de Solicitud</h2>
+                            <p style="margin: 0; font-size: 15px; line-height: 1.6;">Lamentamos informarte que tu solicitud de acceso no ha sido aprobada.</p>
+                            <p style="margin: 12px 0 0 0; font-size: 15px; line-height: 1.6;"><strong>Motivo:</strong> ${rejectionReason || 'La documentación proporcionada no ha podido ser validada conforme a nuestras políticas actuales.'}</p>
+                        </div>
+                        
+                        <hr style="border: 0; border-top: 1px solid #E2E8F0; margin: 32px 0;" />
+                        <p style="font-size: 10px; color: #94A3B8; text-align: center; margin: 0; text-transform: uppercase; letter-spacing: 0.1em;">
+                            MINREPORT OPERATIONS SECURITY
+                        </p>
                     </div>
                 `
             });

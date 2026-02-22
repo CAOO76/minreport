@@ -80,9 +80,12 @@ export const Login = () => {
                     <div className="h-[1px] w-8" style={{ backgroundColor: 'rgb(198, 131, 70)' }}></div>
                 </div>
 
-                <div className="elite-tech-surface py-8 px-10 shadow-3xl animate-in fade-in zoom-in-95 duration-700 delay-100 relative">
+                <div className="elite-tech-surface py-12 px-10 shadow-3xl animate-in fade-in zoom-in-95 duration-700 delay-100 relative rounded-none overflow-hidden border-white/10">
                     {/* Interior Grid Layer */}
                     <div className="absolute inset-0 technical-grid opacity-20 pointer-events-none"></div>
+                    <div className="absolute top-0 right-0 p-4 opacity-10">
+                        <ShieldCheck size={40} className="text-antigravity-accent" />
+                    </div>
 
                     <form onSubmit={handleSubmit} className="space-y-10 relative z-10" autoComplete="off">
                         <div className="space-y-3">
