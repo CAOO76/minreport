@@ -16,7 +16,7 @@
     "backup:data": "npm run export:emulators && git add data && git commit -m \"Data Backup $(date)\"",
     "dev:all": "npm run sync:plugins && npm run build:functions && npx concurrently --kill-others \"npm run serve:emulators\" \"npm run dev:server\" \"npm run dev --prefix web\" \"npm run dev --prefix admin\" \"npm run watch:sdk\"",
     "dev:full": "bash scripts/dev-full.sh",
-    "watch:sdk": "nodemon --watch src/sdk -e ts --exec \"bash web/scripts/copy-sdk.sh && bash admin/scripts/copy-sdk.sh\"",
+    "watch:sdk": "nodemon --watch sdk -e ts --exec \"node scripts/sync-sdk-version.js && bash web/scripts/copy-sdk.sh && bash admin/scripts/copy-sdk.sh\"",
     "release:sdk": "ts-node scripts/release_sdk.ts",
     "sync:plugins": "npx ts-node scripts/sync_plugins.ts",
     "backup": "git add . && (git commit -m \"Auto-save\" || true) && git push",
