@@ -113,7 +113,8 @@ export const getAccountsById = async (req: Request, res: Response) => {
             type: accountData?.type || 'PERSONAL',
             role: m.role || 'MEMBER',
             authEmail: userData.email || '',
-            avatar: userData.photoURL || accountData?.avatar
+            avatar: userData.photoURL || accountData?.avatar,
+            status: userData.status || 'ACTIVE'
           };
         } catch (err) {
           console.error(`[AUTH-DIRECTORY] Failed to read account ${m.accountId}:`, err);
@@ -140,7 +141,8 @@ export const getAccountsById = async (req: Request, res: Response) => {
             type: data.type || 'BUSINESS',
             role: 'ADMINISTRADOR OPERATIVO',
             authEmail: data.primaryOperator?.email || '',
-            avatar: data.primaryOperator?.avatar
+            avatar: data.primaryOperator?.avatar,
+            status: data.status || 'ACTIVE'
           });
         }
       });
@@ -151,9 +153,42 @@ export const getAccountsById = async (req: Request, res: Response) => {
       return res.status(404).json({ message: 'No accounts found for this ID.' });
     }
 
+    // 3. Final Safety Deduplication & Integrity Filter (Maximum Isolation)
+    // Rules: Max 1 PERSONAL, Max 1 EDUCATIONAL, N BUSINESS. Exclude replaced/deleted.
+    const finalAccounts = new Map();
+    let personalAccountFound = false;
+    let educationalAccountFound = false;
+
+    // Sort by status priority (ACTIVE > APPROVED) to ensure we pick the most useful account
+    const sortedAccounts = [...accounts].sort((a, b) => {
+      if (a.status === 'ACTIVE' && b.status !== 'ACTIVE') return -1;
+      if (a.status !== 'ACTIVE' && b.status === 'ACTIVE') return 1;
+      return 0;
+    });
+
+    sortedAccounts.forEach(acc => {
+      // Exclude deactivated or replaced accounts
+      if (['REPLACED_BY_NEW_ENROLLMENT', 'DELETED', 'REJECTED'].includes(acc.status)) return;
+
+      if (acc.type === 'PERSONAL') {
+        if (!personalAccountFound) {
+          finalAccounts.set(acc.accountId, acc);
+          personalAccountFound = true;
+        }
+      } else if (acc.type === 'EDUCATIONAL') {
+        if (!educationalAccountFound) {
+          finalAccounts.set(acc.accountId, acc);
+          educationalAccountFound = true;
+        }
+      } else {
+        // BUSINESS/ENTERPRISE/OTHERS: Unique by accountId
+        finalAccounts.set(acc.accountId, acc);
+      }
+    });
+
     res.status(200).json({
-      fullName,
-      accounts
+      fullName: fullName || '',
+      accounts: Array.from(finalAccounts.values())
     });
 
   } catch (error: any) {

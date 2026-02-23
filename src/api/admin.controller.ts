@@ -156,6 +156,7 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
         }
 
         const tenantData = tenantDoc.data()!;
+        const entityName = tenantData.company_name || tenantData.institution_name || tenantData.full_name || 'tu cuenta';
 
         if (status === 'ACTIVE') {
             // Check if user already exists in Auth to prevent duplication
@@ -242,6 +243,8 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
                 const alreadyMember = currentMemberships.some((m: any) => m.accountId === accountId);
 
                 if (!alreadyMember) {
+                    // If PERSONAL, we should ideally replace or limit, but for now we follow the user_directory logic
+                    // which is the primary source for login. The 'users' collection is for Admin UI.
                     await db.collection('users').doc(userRecord.uid).update({
                         memberships: admin.firestore.FieldValue.arrayUnion(...memberships),
                         updatedAt: new Date().toISOString()
@@ -275,7 +278,75 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
                 console.log(`[ADMIN] Created new user document for ${userRecord.uid}`);
             }
 
-            const entityName = tenantData.company_name || tenantData.institution_name || tenantData.full_name || 'tu cuenta';
+            // 4.6 Sync with user_directory (Pasillo de Puertas Blindadas)
+            // This ensures the user is findable during the new login flow
+            const userDirRef = db.collection('user_directory').doc(taxId);
+            const userDirSnap = await userDirRef.get();
+
+            const accountRef = {
+                accountId: accountId,
+                authEmail: tenantData.email,
+                role: userRole,
+                type: tenantData.type,
+                accountName: entityName,
+                status: 'APPROVED'
+            };
+
+            if (userDirSnap.exists) {
+                const dirData = userDirSnap.data();
+                let accounts = dirData?.accounts || [];
+
+                if (tenantData.type === 'PERSONAL') {
+                    // Rule 1: PERSONAL (1:1 Estricto) - Remove any old reference
+                    accounts = accounts.filter((a: any) => a.type !== 'PERSONAL');
+                } else if (tenantData.type === 'EDUCATIONAL') {
+                    // Rule 2: EDUCATIONAL (1:1 Reemplazable)
+                    // If institution changes, the previous one is purged from directory and deactivated
+                    const prevEdu = accounts.find((a: any) => a.type === 'EDUCATIONAL');
+                    if (prevEdu && prevEdu.accountId !== accountId) {
+                        console.log(`[ADMIN-INTEGRITY] Replacing EDUCATIONAL account: ${prevEdu.accountId} -> ${accountId}`);
+
+                        // Deactivate previous enrollment
+                        await db.collection('tenants').doc(prevEdu.accountId).update({
+                            status: 'REPLACED_BY_NEW_ENROLLMENT',
+                            updatedAt: new Date().toISOString()
+                        });
+                        await db.collection('accounts').doc(prevEdu.accountId).update({
+                            status: 'REPLACED_BY_NEW_ENROLLMENT',
+                            updatedAt: new Date().toISOString()
+                        });
+
+                        // Clean up memberships in main user document
+                        const userDoc = await db.collection('users').doc(userRecord.uid).get();
+                        if (userDoc.exists) {
+                            const currentMems = userDoc.data()?.memberships || [];
+                            const updatedMems = currentMems.filter((m: any) => m.accountId !== prevEdu.accountId);
+                            await db.collection('users').doc(userRecord.uid).update({ memberships: updatedMems });
+                        }
+                    }
+                    accounts = accounts.filter((a: any) => a.type !== 'EDUCATIONAL');
+                } else {
+                    // Rule 3: BUSINESS (1:N) - Just prevent duplicate accountId
+                    accounts = accounts.filter((a: any) => a.accountId !== accountId);
+                }
+
+                accounts.push(accountRef);
+
+                await userDirRef.update({
+                    accounts,
+                    fullName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (dirData?.fullName || entityName),
+                    updatedAt: new Date().toISOString()
+                });
+            } else {
+                await userDirRef.set({
+                    run: taxId,
+                    fullName: tenantData.type === 'PERSONAL' ? tenantData.full_name : entityName,
+                    accounts: [accountRef],
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                });
+            }
+
             const actionLink = `${baseUrl}/setup-access?accountId=${uid}&email=${tenantData.email}&name=${encodeURIComponent(entityName)}&type=${tenantData.type}`;
 
             // 5. Send Notification Email

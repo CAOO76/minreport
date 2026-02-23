@@ -4,15 +4,12 @@
  * automatically when they are deployed.
  */
 export const SDK_METADATA = {
+    version: '2.0.1',
     changelog: [
-        "## [2.0.0] - 2026-02-05",
-        "Major SDK release with enhanced core functionality.",
-        "Removed global `MinReport.Data` access. Plugins must now use injected `context.storage`.",
-        "Updated `PluginLifeCycle.onInit` signature to require SecureContext.",
-        "Implemented SecureContext architecture for strict plugin isolation.",
-        "Introduced Capability-Based Access Control logic in the SDK.",
-        "Trace ID: 1770334583101"
-    ],
+    "Automated maintenance release.",
+    "Source Bump: v2.0.0 -> v2.0.1",
+    "Trace ID: 1771872982212"
+],
     author: 'MinReport Automation',
     releaseDate: new Date(),
     status: 'BETA' as const

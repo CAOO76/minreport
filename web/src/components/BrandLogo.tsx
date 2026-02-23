@@ -17,7 +17,7 @@ const BrandLogo: React.FC<BrandLogoProps> = ({ variant = 'imagotype', className,
     const theme = forcedTheme || contextTheme;
 
     if (loading) {
-        return <div className={`animate-pulse bg-slate-200 dark:bg-slate-700 rounded-lg ${className || 'w-32 h-8'}`}></div>;
+        return <div className={`animate-pulse bg-black/10 dark:bg-white/10 rounded-none border border-black/5 dark:border-white/5 ${className || 'w-32 h-8'}`}></div>;
     }
 
     const logoUrl = branding?.[theme]?.[variant];

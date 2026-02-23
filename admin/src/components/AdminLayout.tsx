@@ -14,8 +14,8 @@ export const AdminLayout = () => {
     };
 
     const navLinkClasses = ({ isActive }: { isActive: boolean }) =>
-        `w-12 h-12 flex items-center justify-center transition-all duration-300 relative group rounded-none ${isActive
-            ? 'bg-black dark:bg-white text-white dark:text-black shadow-xl'
+        `w-12 h-12 flex items-center justify-center transition-all duration-300 relative group rounded-none border border-transparent ${isActive
+            ? 'bg-black dark:bg-white text-white dark:text-black border-black/5 dark:border-white/10'
             : 'text-black/40 dark:text-white/30 hover:bg-black/5 dark:hover:bg-white/5 hover:text-black dark:hover:text-white'
         }`;
 
@@ -24,7 +24,7 @@ export const AdminLayout = () => {
             {/* Capa de Fondo Técnica */}
             <div className="absolute inset-0 technical-grid pointer-events-none opacity-40"></div>
 
-            <header className="h-20 bg-white/40 dark:bg-black/20 backdrop-blur-md border-b border-black/5 dark:border-white/5 flex items-center justify-between px-8 sticky top-0 z-50">
+            <header className="h-20 bg-black/5 dark:bg-black/20 backdrop-blur-md border-b border-black/5 dark:border-white/5 flex items-center justify-between px-8 sticky top-0 z-50">
                 <div className="flex items-center gap-4">
                     <BrandLogo variant="logotype" className="h-7 w-auto opacity-80" />
                     <div className="h-4 w-[1px] bg-black/10 dark:bg-white/10 mx-2"></div>
@@ -60,14 +60,14 @@ export const AdminLayout = () => {
                     <nav className="flex-1 flex flex-col gap-4">
                         <NavLink to="/" className={navLinkClasses} title="Inbox Requests">
                             <span className="material-symbols-rounded text-[24px]">inbox</span>
-                            <div className="absolute left-full ml-4 px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded-none opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">Inbox</div>
+                            <div className="absolute left-full ml-4 px-3 py-1.5 bg-black dark:bg-white text-white dark:text-black hud-label text-[8px] rounded-none opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 border border-white/10 dark:border-black/10">INBOX</div>
                         </NavLink>
 
                         <div className="w-8 h-px bg-black/5 dark:bg-white/5 mx-auto my-2" />
 
                         <NavLink to="/b2b" className={navLinkClasses} title="Enterprise Management">
                             <span className="material-symbols-rounded text-[24px]">domain</span>
-                            <div className="absolute left-full ml-4 px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded-none opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">B2B</div>
+                            <div className="absolute left-full ml-4 px-3 py-1.5 bg-black dark:bg-white text-white dark:text-black hud-label text-[8px] rounded-none opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 border border-white/10 dark:border-black/10">B2B_MANAGEMENT</div>
                         </NavLink>
                         <NavLink to="/edu" className={navLinkClasses} title="Educational">
                             <span className="material-symbols-rounded text-[24px]">school</span>

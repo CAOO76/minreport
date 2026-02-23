@@ -11,7 +11,7 @@ export const Button = ({ variant = 'primary', icon, children, className, ...prop
     return (
         <button
             className={clsx(
-                "flex items-center justify-center gap-2 px-6 py-2.5 rounded-md font-medium transition-all text-sm tracking-wide",
+                "flex items-center justify-center gap-2 px-6 py-2.5 rounded-none font-medium transition-all text-sm tracking-wide",
                 variant === 'primary' && "bg-primary text-white hover:bg-primary-hover border border-transparent",
                 variant === 'secondary' && "bg-transparent text-slate-700 dark:text-slate-200 border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800",
                 "disabled:opacity-50 disabled:cursor-not-allowed",

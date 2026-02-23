@@ -5,6 +5,7 @@ import { useSDKAutoSync } from '../hooks/useSDKAutoSync';
 import { SDKVersion } from '../types/sdk-admin';
 import { SDKVersionsTable } from '../components/admin/SDKVersionsTable';
 import { SDKManagementDrawer } from '../components/admin/SDKManagementDrawer';
+import { SDK_METADATA } from '../sdk-bundle/metadata';
 
 // Injected by Vite via define in vite.config.ts
 declare const __APP_VERSION__: string;
@@ -143,7 +144,7 @@ export const SDKPage: React.FC = () => {
             <footer className="pt-12 border-t border-black/5 dark:border-white/5 flex flex-col md:flex-row justify-between gap-6 hud-label !text-[10px] !text-black/20 dark:!text-white/20">
                 <div className="flex items-center gap-4">
                     <ShieldCheck className="text-emerald-500" size={14} />
-                    CORE_INTEGRITY_INDEX_v2.0.42
+                    CORE_INTEGRITY_INDEX_v{SDK_METADATA.version}
                 </div>
                 <div className="italic tracking-widest uppercase flex items-center gap-2">
                     Authorized_Access_Only

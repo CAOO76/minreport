@@ -13,13 +13,11 @@ import {
 import { db } from '../config/firebase';
 import { SDK_METADATA } from '../sdk-bundle/metadata';
 
-// Injected by Vite via define in vite.config.ts
-declare const __APP_VERSION__: string;
-
 /**
- * Hook to automatically synchronize the code version with Firestore.
- * If a new version is detected in the code (package.json) that isn't in DB,
- * it registers it automatically.
+ * Hook to automatically synchronize the SDK version with Firestore.
+ * Uses SDK_METADATA.version as the SOURCE OF TRUTH for version detection.
+ * This is decoupled from the Admin app version (__APP_VERSION__) to ensure
+ * that any SDK update is independently detected and registered.
  */
 export const useSDKAutoSync = () => {
     const [isSyncing, setIsSyncing] = useState(true);
@@ -31,27 +29,30 @@ export const useSDKAutoSync = () => {
         syncStarted.current = true;
 
         const syncSDK = async () => {
+            // ✅ SDK_METADATA.version is the single source of truth
+            const sdkVersion = SDK_METADATA.version;
+
             try {
                 const versionsRef = collection(db, 'admin_sdk_versions');
-                // Primary check: Document ID (New standard)
-                const docId = `v${__APP_VERSION__.replace(/\./g, '_')}`;
+                // Primary check: Document ID (Standard format v2_0_0)
+                const docId = `v${sdkVersion.replace(/\./g, '_')}`;
                 const versionDocRef = doc(db, 'admin_sdk_versions', docId);
                 const versionSnap = await getDoc(versionDocRef);
 
                 if (!versionSnap.exists()) {
                     // Secondary safety check: Search by field (for legacy random IDs)
-                    const q = query(versionsRef, where('versionNumber', '==', __APP_VERSION__));
+                    const q = query(versionsRef, where('versionNumber', '==', sdkVersion));
                     const snapshot = await getDocs(q);
 
                     if (snapshot.empty) {
-                        console.log(`🚀 [SDK Sync] New version detected: v${__APP_VERSION__}. Registering with ID ${docId}...`);
+                        console.log(`🚀 [SDK Sync] New SDK version detected: v${sdkVersion}. Registering with ID ${docId}...`);
 
                         const changelogStr = Array.isArray(SDK_METADATA.changelog)
                             ? SDK_METADATA.changelog.join('\n')
                             : SDK_METADATA.changelog;
 
                         await setDoc(versionDocRef, {
-                            versionNumber: __APP_VERSION__,
+                            versionNumber: sdkVersion,
                             changelog: changelogStr,
                             releaseDate: serverTimestamp(),
                             status: SDK_METADATA.status || 'BETA',
@@ -60,10 +61,10 @@ export const useSDKAutoSync = () => {
                         });
 
                         setNewVersionDetected(true);
-                        console.log(`✅ [SDK Sync] Version v${__APP_VERSION__} registered successfully.`);
+                        console.log(`✅ [SDK Sync] SDK v${sdkVersion} registered successfully.`);
                     } else {
                         // AUTO-MIGRATION: Merge and clean duplicates
-                        console.log(`🧹 [SDK Sync] Legacy records found for v${__APP_VERSION__}. Starting migration...`);
+                        console.log(`🧹 [SDK Sync] Legacy records found for v${sdkVersion}. Starting migration...`);
 
                         // Select the "best" data (STABLE > BETA > DEPRECATED)
                         const docs = snapshot.docs;
@@ -80,10 +81,10 @@ export const useSDKAutoSync = () => {
                         const deletePromises = docs.map(d => deleteDoc(d.ref));
                         await Promise.all(deletePromises);
 
-                        console.log(`✅ [SDK Sync] Migration of v${__APP_VERSION__} complete. Duplicates removed.`);
+                        console.log(`✅ [SDK Sync] Migration of v${sdkVersion} complete. Duplicates removed.`);
                     }
                 } else {
-                    console.log(`🛡️ [SDK Sync] Version v${__APP_VERSION__} is already up to date.`);
+                    console.log(`🛡️ [SDK Sync] SDK v${sdkVersion} is already registered. Up to date.`);
                 }
             } catch (error) {
                 console.error('❌ [SDK Sync] Error during auto-synchronization:', error);

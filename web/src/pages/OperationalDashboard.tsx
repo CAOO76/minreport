@@ -32,17 +32,18 @@ export const OperationalDashboard = () => {
 
     if (activePlugin) {
         return (
-            <div className="flex flex-col h-[calc(100vh-12rem)] bg-white dark:bg-zinc-900 rounded-3xl overflow-hidden shadow-xl border border-gray-100 dark:border-zinc-800 animate-in zoom-in-95 duration-300">
-                <div className="h-14 px-6 border-b border-gray-100 dark:border-zinc-800 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
+            <div className="flex flex-col h-[calc(100vh-12rem)] bg-white dark:bg-[#0D0D0D] rounded-none overflow-hidden border border-black/5 dark:border-white/5 animate-in zoom-in-95 duration-300 relative">
+                <div className="absolute inset-0 technical-grid pointer-events-none opacity-5"></div>
+                <div className="h-16 px-6 border-b border-black/5 dark:border-white/5 flex items-center justify-between relative z-10 bg-black/5">
+                    <div className="flex items-center gap-4">
                         <button
                             onClick={() => setActivePlugin(null)}
-                            className="p-1.5 hover:bg-gray-100 dark:hover:bg-white/5 rounded-lg transition-colors text-gray-500"
+                            className="p-2 hover:bg-black/10 dark:hover:bg-white/5 rounded-none transition-colors text-black/40 dark:text-white/40"
                         >
                             <span className="material-symbols-rounded">arrow_back</span>
                         </button>
-                        <span className="material-symbols-rounded text-indigo-600 dark:text-indigo-400">{activePlugin.icon || 'extension'}</span>
-                        <h2 className="font-bold text-gray-900 dark:text-white">{activePlugin.name}</h2>
+                        <span className="material-symbols-rounded text-antigravity-accent">{activePlugin.icon || 'extension'}</span>
+                        <h2 className="hud-label text-black dark:text-white">{activePlugin.name}</h2>
                     </div>
                 </div>
                 <div className="flex-1 bg-gray-50 dark:bg-black/20">
@@ -57,35 +58,35 @@ export const OperationalDashboard = () => {
             {/* Encabezado */}
             <header className="flex flex-col md:flex-row md:items-end justify-between gap-4">
                 <div>
-                    <h1 className="text-3xl font-black text-gray-900 dark:text-gray-100 tracking-tight">
-                        Panel de Control
+                    <h1 className="text-3xl font-black text-black dark:text-white uppercase tracking-tighter">
+                        SYSTEM_DASHBOARD
                     </h1>
-                    <p className="text-gray-500 dark:text-gray-400 mt-1">
-                        Bienvenido al centro operativo de <span className="font-bold text-indigo-600 dark:text-indigo-400">{currentAccount.name}</span>
+                    <p className="hud-label text-[10px] text-black/40 dark:text-white/40 mt-2">
+                        OPERATIONAL_CONTEXT: <span className="text-antigravity-accent opacity-100">{currentAccount.name}</span>
                     </p>
                 </div>
 
-                <div className="flex items-center gap-4 bg-white dark:bg-zinc-900 p-2 rounded-2xl border border-gray-100 dark:border-zinc-800 shadow-sm">
-                    <div className="px-3 border-r border-gray-100 dark:border-zinc-800">
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Estado</p>
-                        <div className="flex items-center gap-1.5">
-                            <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-red-500'}`} />
-                            <span className="text-xs font-bold">{isOnline ? 'Online' : 'Offline'}</span>
+                <div className="flex items-center gap-6 bg-black/5 dark:bg-white/5 p-4 rounded-none border border-black/5 dark:border-white/5">
+                    <div className="px-3 border-r border-black/10 dark:border-white/10">
+                        <p className="hud-label text-[9px] text-black/30 dark:text-white/20 mb-1">STATUS</p>
+                        <div className="flex items-center gap-2">
+                            <div className={`w-2 h-2 rounded-none ${isOnline ? 'bg-emerald-500' : 'bg-red-500 animate-pulse'}`} />
+                            <span className="text-[10px] font-black uppercase tracking-widest">{isOnline ? 'Online' : 'Offline'}</span>
                         </div>
                     </div>
                     <div className="px-3">
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Versión</p>
-                        <p className="text-xs font-bold text-gray-600 dark:text-gray-300">{APP_VERSION}</p>
+                        <p className="hud-label text-[9px] text-black/30 dark:text-white/20 mb-1">OS_VERSION</p>
+                        <p className="text-[10px] font-black">{APP_VERSION}</p>
                     </div>
                 </div>
             </header>
 
             {/* Grid de Aplicaciones */}
             <section className="space-y-4">
-                <div className="flex items-center justify-between">
-                    <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                        <span className="material-symbols-rounded text-indigo-600">apps</span>
-                        Mis Módulos Habilitados
+                <div className="flex items-center justify-between border-b border-black/5 dark:border-white/5 pb-4">
+                    <h2 className="hud-label text-black/40 dark:text-white/40 flex items-center gap-3">
+                        <span className="material-symbols-rounded text-lg">apps</span>
+                        [ACTIVE_MODULES_INDEX]
                     </h2>
                 </div>
 
@@ -107,23 +108,24 @@ export const OperationalDashboard = () => {
                         </button>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                         {plugins.map((plugin) => (
                             <motion.div
                                 key={plugin.id}
-                                whileHover={{ y: -5 }}
+                                whileHover={{ y: -2 }}
                                 whileTap={{ scale: 0.98 }}
                                 onClick={() => setActivePlugin(plugin)}
-                                className="group cursor-pointer p-6 rounded-3xl bg-white dark:bg-zinc-900 border border-gray-100 dark:border-zinc-800 hover:border-indigo-500/30 hover:shadow-xl transition-all flex flex-col justify-between h-48"
+                                className="group cursor-pointer p-6 rounded-none bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 hover:border-black dark:hover:border-white transition-all flex flex-col justify-between h-52 relative overflow-hidden"
                             >
-                                <div className="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-900/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400 text-2xl group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                                <div className="absolute inset-0 technical-grid opacity-5 pointer-events-none group-hover:opacity-10 transition-opacity"></div>
+                                <div className="w-12 h-12 rounded-none bg-black/5 dark:bg-white/10 flex items-center justify-center text-black/40 dark:text-white/40 text-2xl group-hover:bg-black group-hover:text-white dark:group-hover:bg-white dark:group-hover:text-black transition-all border border-black/5">
                                     <span className="material-symbols-rounded">{plugin.icon || 'extension'}</span>
                                 </div>
-                                <div>
-                                    <h3 className="font-bold text-gray-900 dark:text-white group-hover:text-indigo-600 transition-colors">
+                                <div className="relative z-10">
+                                    <h3 className="font-black text-[12px] uppercase tracking-widest text-black/80 dark:text-white/80 group-hover:text-black dark:group-hover:text-white transition-colors">
                                         {plugin.name}
                                     </h3>
-                                    <p className="text-[11px] text-gray-500 dark:text-gray-400 line-clamp-2 mt-1">
+                                    <p className="text-[10px] text-black/40 dark:text-white/40 line-clamp-2 mt-2 leading-relaxed font-bold uppercase tracking-tight">
                                         {plugin.description}
                                     </p>
                                 </div>

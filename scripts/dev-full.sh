@@ -20,12 +20,16 @@ fi
 echo "📡 Sincronizando IP local para acceso móvil..."
 bash scripts/sync-mobile.sh
 
-# 3. Distribución de SDK (Asegurar versión 2.0.0 en todas las interfaces)
+# 3. Sincronización de versión SDK (Fuente de verdad: sdk/package.json → sdk/metadata.ts)
+echo "🔢 Sincronizando versión SDK desde sdk/package.json..."
+node scripts/sync-sdk-version.js
+
+# 4. Distribución de SDK (Asegurar versión actualizada en todas las interfaces)
 echo "📦 Distribuyendo última versión del SDK..."
 bash web/scripts/copy-sdk.sh
 bash admin/scripts/copy-sdk.sh
 
-# 4. Lanzamiento paralelo de todos los servicios
+# 5. Lanzamiento paralelo de todos los servicios
 echo "🔥 Iniciando servicios en paralelo..."
 
 npx concurrently --kill-others \

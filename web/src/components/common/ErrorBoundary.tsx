@@ -1,5 +1,4 @@
-
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCcw } from 'lucide-react';
 
 interface Props {
@@ -35,23 +34,25 @@ class ErrorBoundary extends Component<Props, State> {
     public render() {
         if (this.state.hasError) {
             return (
-                <div className="h-screen w-screen flex flex-col items-center justify-center p-8 bg-zinc-950 text-white select-none">
-                    <div className="bg-red-500/10 border border-red-500/20 p-6 rounded-3xl flex flex-col items-center max-w-sm w-full">
-                        <div className="w-16 h-16 bg-red-500 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-red-500/20">
+                <div className="h-screen w-screen flex flex-col items-center justify-center p-8 bg-[#0D0D0D] text-white select-none relative overflow-hidden">
+                    <div className="absolute inset-0 technical-grid opacity-5 pointer-events-none"></div>
+                    <div className="bg-red-500/5 border border-red-500/20 p-8 rounded-none flex flex-col items-center max-w-sm w-full relative z-10">
+                        <div className="w-16 h-16 bg-red-600 rounded-none flex items-center justify-center mb-8 border border-red-500/40">
                             <AlertTriangle size={32} className="text-white" />
                         </div>
 
-                        <h1 className="text-xl font-bold mb-2">Error de Aplicación</h1>
-                        <p className="text-zinc-400 text-sm text-center mb-6">
-                            Se produjo un error crítico al renderizar la interfaz móvil.
+                        <h1 className="hud-label text-red-500 text-lg mb-2">[CRITICAL_FAULT_DETECTION]</h1>
+                        <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest text-center mb-8">
+                            Se ha detectado una ruptura en la integridad del renderizado.
                         </p>
 
-                        <div className="w-full bg-black/40 rounded-xl p-4 mb-6 border border-zinc-800">
-                            <p className="text-xs font-mono text-red-400 break-all">
+                        <div className="w-full bg-black/40 rounded-none p-5 mb-8 border border-white/5">
+                            <p className="hud-label text-red-500/60 text-[9px] mb-2">[EXCEPTION_LOG]</p>
+                            <p className="text-xs font-mono text-red-400/80 break-all">
                                 {this.state.error?.message}
                             </p>
                             {this.state.errorInfo && (
-                                <p className="text-[10px] font-mono text-zinc-600 mt-2 overflow-hidden h-20 opacity-50">
+                                <p className="text-[9px] font-mono text-white/20 mt-4 overflow-hidden h-20 opacity-40">
                                     {this.state.errorInfo.componentStack}
                                 </p>
                             )}
@@ -59,10 +60,10 @@ class ErrorBoundary extends Component<Props, State> {
 
                         <button
                             onClick={this.handleReset}
-                            className="w-full py-4 bg-white text-black font-bold rounded-2xl flex items-center justify-center gap-2 active:scale-95 transition-all"
+                            className="w-full py-5 bg-white text-black font-black text-[11px] uppercase tracking-[0.3em] rounded-none flex items-center justify-center gap-3 active:scale-95 transition-all shadow-antigravity-accent/5 shadow-2xl"
                         >
                             <RefreshCcw size={18} />
-                            Reiniciar App
+                            RECOVER_SYSTEM
                         </button>
                     </div>
                 </div>

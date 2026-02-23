@@ -29,22 +29,21 @@ export class ErrorBoundary extends Component<Props, State> {
     public render() {
         if (this.state.hasError) {
             return this.props.fallback || (
-                <div className="p-4 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-400">
-                    <h3 className="font-bold flex items-center gap-2">
-                        <span className="material-symbols-rounded text-lg">warning</span>
-                        Error de Plugin
+                <div className="p-6 bg-red-500/5 dark:bg-red-500/10 border border-red-500/20 rounded-none text-red-700 dark:text-red-400">
+                    <h3 className="hud-label text-red-600 dark:text-red-500 mb-2">
+                        [CORE_PLUGIN_FAULT]
                     </h3>
-                    <p className="text-sm opacity-80 mt-1">
-                        El plugin ha dejado de funcionar de forma inesperada.
+                    <p className="text-xs font-bold uppercase tracking-tight opacity-70">
+                        El módulo ha dejado de funcionar de forma inesperada.
                     </p>
                     <button
                         onClick={() => {
                             this.setState({ hasError: false });
                             this.props.onReset?.();
                         }}
-                        className="mt-3 text-xs font-semibold underline"
+                        className="mt-4 px-4 py-2 bg-red-600 text-white hud-label text-[9px] hover:bg-red-700 transition-all active:scale-95"
                     >
-                        Reintentar carga
+                        RETRY_INIT
                     </button>
                 </div>
             );

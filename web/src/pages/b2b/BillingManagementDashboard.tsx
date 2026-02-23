@@ -103,53 +103,55 @@ export const BillingManagementDashboard = () => {
     };
 
     return (
-        <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-6 flex flex-col items-center">
+        <div className="min-h-screen industrial-mineral-gradient p-8 flex flex-col items-center relative overflow-hidden">
+            <div className="absolute inset-0 technical-grid pointer-events-none opacity-10"></div>
 
             {/* Header */}
-            <div className="w-full max-w-3xl mb-8 flex justify-between items-center">
+            <div className="w-full max-w-4xl mb-10 flex justify-between items-end border-b border-black/5 dark:border-white/5 pb-8 relative z-10">
                 <div>
-                    <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                        Gestión Comercial
+                    <h1 className="text-3xl font-black text-black dark:text-white uppercase tracking-tighter">
+                        COMMERCIAL_CONTROL
                     </h1>
-                    <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">
+                    <p className="hud-label text-[10px] text-antigravity-accent mt-2">
                         {currentAccount.name}
                     </p>
                 </div>
-                <div className="px-3 py-1 bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 rounded-full text-xs font-bold uppercase tracking-wide flex items-center gap-2">
+                <div className="px-4 py-2 bg-black dark:bg-white text-white dark:text-black rounded-none hud-label text-[9px] border border-transparent flex items-center gap-3">
                     <CheckCircle size={14} />
-                    Suscripción Activa
+                    SUBSCRIPTION_ACTIVE
                 </div>
             </div>
 
             {hasOperator && !success ? (
                 // VIEW MODE: Operador ya asignado
-                <div className="w-full max-w-2xl bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
-                    <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50">
-                        <h2 className="text-lg font-bold text-gray-800 dark:text-gray-200 flex items-center gap-2">
-                            <Smartphone size={20} className="text-indigo-500" />
-                            Usuario Operativo Final
+                <div className="w-full max-w-3xl bg-black/5 dark:bg-white/5 rounded-none border border-black/10 dark:border-white/10 overflow-hidden relative z-10 group">
+                    <div className="absolute inset-0 technical-grid opacity-5 pointer-events-none group-hover:opacity-10 transition-opacity"></div>
+                    <div className="p-6 border-b border-black/5 dark:border-white/5 flex justify-between items-center bg-black/5">
+                        <h2 className="hud-label text-[10px] text-black/60 dark:text-white/60 flex items-center gap-3">
+                            <Smartphone size={20} className="text-antigravity-accent" />
+                            FINAL_OPERATIONAL_USER
                         </h2>
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${currentAccount.primaryOperator?.status === 'ACTIVE'
-                            ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-                            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                        <span className={`px-3 py-1.5 rounded-none text-[9px] font-black uppercase tracking-widest border ${currentAccount.primaryOperator?.status === 'ACTIVE'
+                            ? 'bg-black dark:bg-white text-white dark:text-black border-transparent'
+                            : 'bg-transparent text-black/40 dark:text-white/30 border-black/10'
                             }`}>
-                            {currentAccount.primaryOperator?.status === 'ACTIVE' ? 'Activo' : 'Invitación Enviada'}
+                            {currentAccount.primaryOperator?.status === 'ACTIVE' ? 'STATUS: ACTIVE' : 'STATUS: PENDING_SYNC'}
                         </span>
                     </div>
 
-                    <div className="p-6 space-y-4">
-                        <div className="flex items-start gap-4">
-                            <div className="w-12 h-12 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-bold text-xl">
+                    <div className="p-8 space-y-4 relative z-10">
+                        <div className="flex items-start gap-6">
+                            <div className="w-14 h-14 rounded-none bg-black/5 dark:bg-white/10 flex items-center justify-center text-black/40 dark:text-white/40 font-black text-xl border border-black/5">
                                 {currentAccount.primaryOperator?.name.charAt(0)}
                             </div>
-                            <div>
-                                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                            <div className="flex-1">
+                                <h3 className="text-lg font-black text-black dark:text-white uppercase tracking-tighter">
                                     {currentAccount.primaryOperator?.name}
                                 </h3>
-                                <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">
+                                <p className="hud-label text-[10px] text-antigravity-accent mt-1">
                                     {currentAccount.primaryOperator?.jobTitle}
                                 </p>
-                                <div className="flex items-center gap-2 mt-2 text-sm text-gray-600 dark:text-gray-300">
+                                <div className="flex items-center gap-3 mt-4 text-[11px] font-bold text-black/40 dark:text-white/30 uppercase tracking-tight">
                                     <Mail size={14} />
                                     {currentAccount.primaryOperator?.email}
                                 </div>
@@ -159,14 +161,15 @@ export const BillingManagementDashboard = () => {
                 </div>
             ) : (
                 // EDIT MODE: Formulario de Asignación
-                <div className="w-full max-w-lg bg-white dark:bg-gray-800 rounded-3xl shadow-xl shadow-gray-200/50 dark:shadow-none border border-gray-100 dark:border-gray-700 p-8">
-                    <div className="text-center mb-8">
-                        <div className="w-14 h-14 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                            <UserPlus size={28} />
+                <div className="w-full max-w-xl bg-black/5 dark:bg-white/5 rounded-none border border-black/10 dark:border-white/10 p-10 relative z-10 overflow-hidden group">
+                    <div className="absolute inset-0 technical-grid opacity-5 pointer-events-none group-hover:opacity-10 transition-opacity"></div>
+                    <div className="text-center mb-10 relative z-10">
+                        <div className="w-16 h-16 bg-black dark:bg-white text-white dark:text-black rounded-none flex items-center justify-center mx-auto mb-6 border border-transparent">
+                            <UserPlus size={32} />
                         </div>
-                        <h2 className="text-xl font-bold text-gray-900 dark:text-white">Asignar Operador</h2>
-                        <p className="text-gray-500 dark:text-gray-400 text-sm mt-2 leading-relaxed">
-                            Defina quién será el usuario final responsable de operar la plataforma técnica (Mapas, Reportes, Plugins).
+                        <h2 className="text-2xl font-black text-black dark:text-white uppercase tracking-tighter">DELEGATE_OPERATOR</h2>
+                        <p className="hud-label text-[10px] text-black/40 dark:text-white/40 mt-3 leading-relaxed max-w-sm mx-auto">
+                            AUTHORIZE_IDENTITY: RESPONSABLE DE LA OPERACIÓN PLATAFORMA (MAPS / REPORTS / SDK_PLUGINS).
                         </p>
                     </div>
 
@@ -182,46 +185,53 @@ export const BillingManagementDashboard = () => {
                             </button>
                         </div>
                     ) : (
-                        <form onSubmit={handleSubmit} className="space-y-5">
+                        <form onSubmit={handleSubmit} className="space-y-6 relative z-10" autoComplete="off">
                             <div className="space-y-2">
-                                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Nombre Completo</label>
+                                <label className="hud-label text-[9px] text-black/40 dark:text-white/40 ml-1">FULL_IDENTITY_NAME</label>
                                 <input
                                     required
                                     type="text"
+                                    autoComplete="off"
+                                    spellCheck="false"
+                                    data-lpignore="true"
                                     value={formData.name}
                                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                    className="w-full px-4 py-3 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all"
-                                    placeholder="Ej. Juan Pérez"
+                                    className="w-full px-5 py-4 rounded-none bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-black dark:text-white placeholder:opacity-20 outline-none transition-all focus:border-black dark:focus:border-white"
+                                    placeholder="IDENTITY_KEY"
                                 />
                             </div>
 
                             <div className="space-y-2">
-                                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Cargo / Puesto</label>
+                                <label className="hud-label text-[9px] text-black/40 dark:text-white/40 ml-1">DELEGATED_POSITION</label>
                                 <div className="relative">
                                     <input
                                         required
                                         type="text"
+                                        autoComplete="off"
+                                        spellCheck="false"
+                                        data-lpignore="true"
                                         value={formData.jobTitle}
                                         onChange={(e) => setFormData({ ...formData, jobTitle: e.target.value })}
-                                        className="w-full pl-10 pr-4 py-3 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all"
-                                        placeholder="Ej. Jefe de Operaciones"
+                                        className="w-full px-5 py-4 rounded-none bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-black dark:text-white placeholder:opacity-20 outline-none transition-all focus:border-black dark:focus:border-white"
+                                        placeholder="OPERATIONAL_ROLE"
                                     />
-                                    <Briefcase className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
                                 </div>
                             </div>
 
                             <div className="space-y-2">
-                                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest pl-1">Email Corporativo</label>
+                                <label className="hud-label text-[9px] text-black/40 dark:text-white/40 ml-1">COMM_EMAIL_NODE</label>
                                 <div className="relative">
                                     <input
                                         required
                                         type="email"
+                                        autoComplete="off"
+                                        spellCheck="false"
+                                        data-lpignore="true"
                                         value={formData.email}
                                         onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                                        className="w-full pl-10 pr-4 py-3 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all"
-                                        placeholder="juan@empresa.com"
+                                        className="w-full px-5 py-4 rounded-none bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-black dark:text-white placeholder:opacity-20 outline-none transition-all focus:border-black dark:focus:border-white"
+                                        placeholder="NODE@SYSTEM.COM"
                                     />
-                                    <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
                                 </div>
                             </div>
 

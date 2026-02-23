@@ -17,18 +17,20 @@ export const M3Switch: React.FC<M3SwitchProps> = ({ checked, onChange, disabled,
             disabled={disabled}
             onClick={() => onChange(!checked)}
             className={clsx(
-                "relative inline-flex h-8 w-14 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 outline-none",
+                "relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-none border transition-all duration-200 outline-none",
                 checked
-                    ? "bg-antigravity-accent dark:bg-antigravity-accent"
-                    : "bg-slate-200 dark:bg-slate-700",
-                disabled && "opacity-50 cursor-not-allowed",
+                    ? "bg-black dark:bg-white border-transparent"
+                    : "bg-black/5 dark:bg-white/5 border-black/10 dark:border-white/10",
+                disabled && "opacity-40 cursor-not-allowed",
                 className
             )}
         >
             <span
                 className={clsx(
-                    "pointer-events-none block h-6 w-6 rounded-full bg-white shadow-lg ring-0 transition-transform duration-200",
-                    checked ? "translate-x-7" : "translate-x-1"
+                    "pointer-events-none block h-5 w-5 rounded-none ring-0 transition-transform duration-200",
+                    checked
+                        ? "translate-x-6 bg-white dark:bg-black"
+                        : "translate-x-1 bg-black/20 dark:bg-white/20"
                 )}
             />
         </button>

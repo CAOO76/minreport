@@ -11,6 +11,7 @@ export interface AccountReference {
     type: AccountType;      // Tipo de cuenta (B2B, EDU, PERSONAL)
     avatar?: string;        // Avatar específico para esta cuenta
     accountName: string;    // Nombre de la cuenta para UI
+    status: string;         // [NEW] Estado de la cuenta (ACTIVE, APPROVED, etc)
     jobProfileId?: string;  // [NEW] Referencia al perfil de cargo asignado
 }
 

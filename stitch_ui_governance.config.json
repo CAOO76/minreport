@@ -1,0 +1,51 @@
+{
+    "skill_name": "STITCH-UI-Governance",
+    "version": "1.1.0",
+    "execution_mode": "resident_daemon",
+    "design_system": {
+        "theme": "Elite_Industrial_Minimalism",
+        "tokens": {
+            "colors": {
+                "background_primary": "#0D0D0D",
+                "surface_elevated": "#1A1A1A",
+                "text_primary": "#F2F2F2",
+                "text_secondary": "rgba(255, 255, 255, 0.4)",
+                "accent_copper": "#C68346",
+                "accent_action": "#C68346",
+                "border_subtle": "rgba(255, 255, 255, 0.1)",
+                "security_green": "#4ADE80",
+                "light_mode": {
+                    "background": "#FAFAFA",
+                    "text": "#000000",
+                    "secondary_text": "rgba(0, 0, 0, 0.4)",
+                    "border": "rgba(0, 0, 0, 0.1)"
+                }
+            },
+            "typography": {
+                "font_primary": "Atkinson Hyperlegible, sans-serif",
+                "font_code": "JetBrains Mono, monospace",
+                "scale": {
+                    "h1": "2.5rem",
+                    "body": "1rem",
+                    "caption": "0.75rem",
+                    "hud_tracking": "0.25em"
+                }
+            },
+            "ergonomics": {
+                "mobile_min_touch_target": "44px",
+                "spacing_base": "8px",
+                "border_radius_global": "0px"
+            }
+        },
+        "rules": [
+            "No utilizar sombras (drop-shadows); usar bordes sutiles (border_subtle) para separar contenedores.",
+            "Todas las entradas de formulario deben tener: autocomplete='off', spellcheck='false', data-lpignore='true'.",
+            "Branding: El isotipo debe ser flotante y medir exactamente 1/3 del ancho del contenedor del formulario.",
+            "Branding: El nombre 'MINREPORT®' debe estar centrado entre dos líneas horizontales de 1px color accent_copper.",
+            "HUD Labels: Usar tipografía mono-espaciada, negrita, mayúsculas con tracking de 0.25em.",
+            "Botones Primarios: Estilo icon-only, tamaño 150%, fondo contraste total (Blanco sobre Negro en DM, Negro sobre Blanco en LM).",
+            "Contraste: Manten un contraste de al menos 7:1 para métricas o datos críticos.",
+            "Interfaces móviles: Priorizar navegación en el tercio inferior de la pantalla."
+        ]
+    }
+}

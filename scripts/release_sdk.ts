@@ -106,6 +106,7 @@ async function main() {
  * automatically when they are deployed.
  */
 export const SDK_METADATA = {
+    version: '${newVersion}',
     changelog: ${JSON.stringify(changelog, null, 4)},
     author: 'MinReport Automation',
     releaseDate: new Date(),
@@ -113,7 +114,7 @@ export const SDK_METADATA = {
 };
 `;
     fs.writeFileSync(METADATA_PATH, metadataContent);
-    console.log(`✅ Updated src/sdk/metadata.ts`);
+    console.log(`✅ Updated src/sdk/metadata.ts with version ${newVersion}`);
 
     // 6. Git Control (Real Traceability)
     try {

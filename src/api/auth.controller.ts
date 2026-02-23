@@ -21,39 +21,53 @@ export const register = async (req: Request, res: Response) => {
         const data = validation.data;
         const tenantEmail = data.email.toLowerCase();
 
-        // 2. Updated Uniqueness Check based on Business Rules
-        if (data.type === 'ENTERPRISE' || data.type === 'PERSONAL') {
-            const idField = data.type === 'ENTERPRISE' ? 'rut' : 'run';
-            const idValue = (data as any)[idField];
+        // 2. Fundamental Integrity Rules (RUN vs Accounts)
+        const run = (data as any).run;
+        const rut = (data as any).rut;
 
-            // Check ID Uniqueness (RUT/RUN must be unique across system, unless previous request was REJECTED)
-            if (idValue) {
-                const querySnapshot = await db.collection('tenants').where(idField, '==', idValue).where('status', 'in', ['PENDING_APPROVAL', 'APPROVED', 'ACTIVE']).get();
-                if (!querySnapshot.empty) {
-                    return res.status(409).json({ error: `El ${idField.toUpperCase()} ya está registrado y en proceso o activo. Pide acceso a tu admin.` });
-                }
-            }
-
-            // Check Email Uniqueness ONLY for PERSONAL accounts
-            // Enterprise accounts allow same email for multiple companies (Multi-Tenancy)
-            if (data.type === 'PERSONAL') {
-                const emailQuery = await db.collection('tenants')
-                    .where('email', '==', tenantEmail)
-                    .where('type', '==', 'PERSONAL')
-                    .where('status', 'in', ['PENDING_APPROVAL', 'APPROVED', 'ACTIVE']) // Updated here
-                    .get();
-
-                if (!emailQuery.empty) {
-                    return res.status(409).json({ error: 'Ya existe una cuenta PERSONAL con este email en evaluación o activa.' });
-                }
-            }
-        } else { // 'EDUCATIONAL'
+        if (data.type === 'PERSONAL') {
+            // Rule 1: PERSONAL (1:1 Estricto)
+            // No new registration allowed if any active/pending account exists for this RUN
             const querySnapshot = await db.collection('tenants')
+                .where('run', '==', run)
+                .where('type', '==', 'PERSONAL')
+                .where('status', 'in', ['PENDING_APPROVAL', 'APPROVED', 'ACTIVE'])
+                .get();
+
+            if (!querySnapshot.empty) {
+                return res.status(409).json({
+                    error: 'IDENTIDAD_DUPLICADA: Ya posees una cuenta de uso personal. Utiliza la recuperación de credenciales o contacta a soporte técnico.'
+                });
+            }
+        } else if (data.type === 'EDUCATIONAL') {
+            // Rule 2: EDUCATIONAL (1:1 Reemplazable por RUN)
+            // Check if THIS specific institutional email is already in use
+            const emailQuery = await db.collection('tenants')
                 .where('email', '==', tenantEmail)
                 .where('status', 'in', ['PENDING_APPROVAL', 'APPROVED', 'ACTIVE'])
                 .get();
-            if (!querySnapshot.empty) {
-                return res.status(409).json({ error: 'El email ya está registrado y se encuentra en evaluación o activo. Pide acceso a tu admin.' });
+
+            if (!emailQuery.empty) {
+                return res.status(409).json({
+                    error: 'ACCESO_EXISTENTE: Este email ya está registrado. Utiliza la recuperación de credenciales.'
+                });
+            }
+
+            // Note: If the student changes institutions (new email), we allow the registration here.
+            // The previous educational account replacement logic must be handled in the Admin Approval controller.
+        } else if (data.type === 'ENTERPRISE') {
+            // Rule 3: BUSINESS (1:N per person, but 1:1 per TaxID for initial signup)
+            if (rut) {
+                const querySnapshot = await db.collection('tenants')
+                    .where('rut', '==', rut)
+                    .where('status', 'in', ['PENDING_APPROVAL', 'APPROVED', 'ACTIVE'])
+                    .get();
+
+                if (!querySnapshot.empty) {
+                    return res.status(409).json({
+                        error: 'ENTIDAD_REGISTRADA: Esta empresa ya se encuentra en proceso de validación o activa.'
+                    });
+                }
             }
         }
 

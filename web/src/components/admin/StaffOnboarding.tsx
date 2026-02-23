@@ -139,10 +139,10 @@ export const StaffOnboarding = () => {
             style={{ fontFamily: "'Atkinson Hyperlegible', sans-serif" }}
         >
             {/* Header */}
-            <div className="mb-8">
-                <div className="flex items-center gap-3 mb-2">
-                    <div className="w-12 h-12 rounded-xl bg-indigo-100 dark:bg-indigo-500/20 flex items-center justify-center">
-                        <UserPlus className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
+            <div className="mb-10">
+                <div className="flex items-center gap-4 mb-2">
+                    <div className="w-12 h-12 rounded-none bg-black/5 dark:bg-white/5 flex items-center justify-center border border-black/10 dark:border-white/10">
+                        <UserPlus className="w-6 h-6 text-black/60 dark:text-white/60" />
                     </div>
                     <div>
                         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
@@ -157,15 +157,15 @@ export const StaffOnboarding = () => {
 
             {/* Success Message */}
             {success && (
-                <Card className="!p-4 mb-6 !bg-green-50 dark:!bg-green-900/20 !border-green-500">
+                <Card className="!p-4 mb-8 !bg-emerald-500/5 dark:!bg-emerald-500/10 !border-emerald-500/20 !rounded-none">
                     <div className="flex items-center gap-3">
-                        <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0" />
+                        <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
                         <div>
-                            <p className="font-semibold text-green-900 dark:text-green-100">
-                                ¡Trabajador vinculado exitosamente!
+                            <p className="hud-label text-emerald-600 dark:text-emerald-400 mb-1">
+                                [SUCCESS_OPERATION]
                             </p>
-                            <p className="text-sm text-green-700 dark:text-green-300 mt-1">
-                                Se ha enviado un email con las instrucciones de acceso.
+                            <p className="text-sm text-emerald-900 dark:text-emerald-50 pr-4">
+                                Trabajador vinculado exitosamente. Se ha enviado un email con instrucciones.
                             </p>
                         </div>
                     </div>
@@ -174,14 +174,14 @@ export const StaffOnboarding = () => {
 
             {/* Error Message */}
             {error && (
-                <Card className="!p-4 mb-6 !bg-red-50 dark:!bg-red-900/20 !border-red-500">
+                <Card className="!p-4 mb-8 !bg-red-500/5 dark:!bg-red-500/10 !border-red-500/20 !rounded-none">
                     <div className="flex items-center gap-3">
                         <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0" />
                         <div>
-                            <p className="font-semibold text-red-900 dark:text-red-100">
-                                Error al vincular trabajador
+                            <p className="hud-label text-red-600 dark:text-red-400 mb-1">
+                                [ERROR_DETECTED]
                             </p>
-                            <p className="text-sm text-red-700 dark:text-red-300 mt-1">
+                            <p className="text-sm text-red-900 dark:text-red-50">
                                 {error}
                             </p>
                         </div>
@@ -195,27 +195,27 @@ export const StaffOnboarding = () => {
                     <div className="space-y-6">
                         {/* RUN */}
                         <div>
-                            <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                                <div className="flex items-center gap-2">
-                                    <User className="w-4 h-4" />
-                                    RUN del Trabajador
-                                </div>
+                            <label className="hud-label text-black/40 dark:text-white/40 mb-3">
+                                [01] RUN del Trabajador
                             </label>
                             <input
                                 type="text"
                                 value={run}
                                 onChange={handleRunChange}
                                 placeholder="12.345.678-9"
+                                autoComplete="off"
+                                spellCheck="false"
+                                data-lpignore="true"
                                 data-testid="worker-run-input"
                                 className={`
-                                    w-full px-4 py-3 rounded-lg 
-                                    bg-gray-50 dark:bg-gray-900 
-                                    border ${runError ? 'border-red-500' : 'border-gray-200 dark:border-gray-700'}
+                                    w-full px-5 py-4 rounded-none 
+                                    bg-black/5 dark:bg-white/5 
+                                    border ${runError ? 'border-red-500' : 'border-black/10 dark:border-white/10'}
                                     text-gray-900 dark:text-white 
-                                    placeholder-gray-400 
-                                    focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 
+                                    placeholder-black/20 dark:placeholder-white/10 
+                                    focus:outline-none focus:border-black dark:focus:border-white 
                                     transition-all
-                                    text-lg font-mono
+                                    text-xl font-bold tracking-widest
                                 `}
                                 autoComplete="off"
                             />
@@ -229,44 +229,43 @@ export const StaffOnboarding = () => {
 
                         {/* Nombre Completo */}
                         <div>
-                            <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                                Nombre Completo
+                            <label className="hud-label text-black/40 dark:text-white/40 mb-3">
+                                [02] Nombre Completo
                             </label>
                             <input
                                 type="text"
                                 value={fullName}
                                 onChange={(e) => setFullName(e.target.value)}
                                 placeholder="Juan Pérez González"
-                                data-testid="worker-name-input"
-                                className="w-full px-4 py-3 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
                                 autoComplete="off"
+                                spellCheck="false"
+                                data-lpignore="true"
+                                className="w-full px-5 py-4 rounded-none bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-gray-900 dark:text-white placeholder-black/20 dark:placeholder-white/10 focus:outline-none focus:border-black dark:focus:border-white transition-all font-bold"
                             />
                         </div>
 
                         {/* Email */}
                         <div>
-                            <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                                <div className="flex items-center gap-2">
-                                    <Mail className="w-4 h-4" />
-                                    Email Corporativo
-                                </div>
+                            <label className="hud-label text-black/40 dark:text-white/40 mb-3">
+                                [03] Email Corporativo
                             </label>
                             <input
                                 type="email"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
                                 placeholder="juan.perez@empresa.com"
-                                data-testid="worker-email-input"
-                                className={`
-                                    w-full px-4 py-3 rounded-lg 
-                                    bg-gray-50 dark:bg-gray-900 
-                                    border ${emailError ? 'border-red-500' : 'border-gray-200 dark:border-gray-700'}
-                                    text-gray-900 dark:text-white 
-                                    placeholder-gray-400 
-                                    focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 
-                                    transition-all
-                                `}
                                 autoComplete="off"
+                                spellCheck="false"
+                                data-lpignore="true"
+                                className={`
+                                    w-full px-5 py-4 rounded-none 
+                                    bg-black/5 dark:bg-white/5 
+                                    border ${emailError ? 'border-red-500' : 'border-black/10 dark:border-white/10'}
+                                    text-gray-900 dark:text-white 
+                                    placeholder-black/20 dark:placeholder-white/10 
+                                    focus:outline-none focus:border-black dark:focus:border-white 
+                                    transition-all font-bold
+                                `}
                             />
                             {emailError && (
                                 <p className="text-sm text-red-600 dark:text-red-400 mt-1 flex items-center gap-1">
@@ -278,21 +277,19 @@ export const StaffOnboarding = () => {
 
                         {/* Selector de Perfil de Cargo */}
                         <div>
-                            <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
-                                <div className="flex items-center gap-2">
-                                    <Briefcase className="w-4 h-4" />
-                                    Perfil de Cargo
-                                </div>
+                            <label className="hud-label text-black/40 dark:text-white/40 mb-4">
+                                [04] Perfil de Cargo / Rol Operativo
                             </label>
 
                             {profiles.length === 0 ? (
-                                <div className="p-8 text-center bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                                    <AlertCircle className="w-12 h-12 mx-auto mb-3 text-gray-400" />
-                                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                                        No hay perfiles de cargo creados
+                                <div className="p-8 text-center bg-black/5 dark:bg-white/5 rounded-none border border-black/10 dark:border-white/10 relative overflow-hidden">
+                                    <div className="absolute inset-0 technical-grid opacity-5 pointer-events-none"></div>
+                                    <AlertCircle className="w-10 h-10 mx-auto mb-4 text-black/20 dark:text-white/20" />
+                                    <p className="hud-label text-[10px] text-black/40 dark:text-white/40">
+                                        REQUIRED_PROFILES_MISSING
                                     </p>
-                                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                                        Crea un perfil antes de vincular trabajadores
+                                    <p className="text-[10px] text-black/30 dark:text-white/30 mt-2 font-bold uppercase tracking-tight">
+                                        CREATE_PROFILE_BEFORE_LINKING_WORKER
                                     </p>
                                 </div>
                             ) : (
@@ -306,49 +303,46 @@ export const StaffOnboarding = () => {
                                                 type="button"
                                                 onClick={() => setSelectedProfileId(profile.id)}
                                                 className={`
-                                                    p-4 rounded-lg border transition-all text-left
+                                                    p-5 rounded-none border transition-all text-left relative overflow-hidden
                                                     ${isSelected
-                                                        ? 'bg-indigo-50 dark:bg-indigo-500/10 border-indigo-500 ring-2 ring-indigo-500/20'
-                                                        : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-indigo-300 dark:hover:border-indigo-700'
+                                                        ? 'bg-black dark:bg-white text-white dark:text-black border-transparent'
+                                                        : 'bg-black/5 dark:bg-white/5 border-black/10 dark:border-white/10 hover:border-black/30 dark:hover:border-white/20'
                                                     }
                                                 `}
                                                 data-testid={`profile-card-${profile.name.replace(/\s+/g, '-').toLowerCase()}`}
                                             >
-                                                <div className="flex items-start gap-3">
+                                                <div className="flex items-start gap-4 z-10 relative">
                                                     <div className={`
-                                                        w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0
+                                                        w-10 h-10 rounded-none flex items-center justify-center flex-shrink-0
                                                         ${isSelected
-                                                            ? 'bg-indigo-100 dark:bg-indigo-500/20'
-                                                            : 'bg-gray-100 dark:bg-gray-700'
+                                                            ? 'bg-white/20 dark:bg-black/20'
+                                                            : 'bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5'
                                                         }
                                                     `}>
                                                         <span className={`
                                                             material-symbols-rounded text-xl
                                                             ${isSelected
-                                                                ? 'text-indigo-600 dark:text-indigo-400'
-                                                                : 'text-gray-500 dark:text-gray-400'
+                                                                ? 'text-white dark:text-black'
+                                                                : 'text-black/40 dark:text-white/40'
                                                             }
                                                         `}>
                                                             badge
                                                         </span>
                                                     </div>
                                                     <div className="flex-1 min-w-0">
-                                                        <h4 className="font-semibold text-sm text-gray-900 dark:text-white truncate">
+                                                        <h4 className={`font-black text-[11px] uppercase tracking-widest truncate ${isSelected ? 'text-white dark:text-black' : 'text-black dark:text-white'}`}>
                                                             {profile.name}
                                                         </h4>
-                                                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 line-clamp-2">
-                                                            {profile.description || 'Sin descripción'}
+                                                        <p className={`text-[10px] mt-1 line-clamp-2 ${isSelected ? 'text-white/60 dark:text-black/60' : 'text-black/40 dark:text-white/40'}`}>
+                                                            {profile.description || 'Sin descripción técnica del rol'}
                                                         </p>
-                                                        <div className="flex items-center gap-1 mt-2">
-                                                            <span className="material-symbols-rounded text-xs text-gray-400">
-                                                                extension
-                                                            </span>
-                                                            <span className="text-xs text-gray-500 dark:text-gray-400">
-                                                                {profile.allowedPlugins?.length || 0} plugins
-                                                            </span>
-                                                        </div>
                                                     </div>
                                                 </div>
+                                                {isSelected && (
+                                                    <div className="absolute top-0 right-0 p-2">
+                                                        <CheckCircle2 size={14} className="text-white dark:text-black opacity-40" />
+                                                    </div>
+                                                )}
                                             </button>
                                         );
                                     })}
@@ -373,18 +367,18 @@ export const StaffOnboarding = () => {
             </form>
 
             {/* Info Card */}
-            <Card className="!p-6 mt-6 !bg-blue-50 dark:!bg-blue-900/20 !border-blue-200 dark:!border-blue-800">
-                <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-500/20 flex items-center justify-center flex-shrink-0">
-                        <span className="material-symbols-rounded text-blue-600 dark:text-blue-400">
+            <Card className="!p-8 mt-10 !bg-black/5 dark:!bg-white/5 !border-black/5 dark:!border-white/5 !rounded-none">
+                <div className="flex items-start gap-5">
+                    <div className="w-12 h-12 rounded-none bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center justify-center flex-shrink-0">
+                        <span className="material-symbols-rounded text-black/40 dark:text-white/40">
                             info
                         </span>
                     </div>
                     <div>
-                        <h3 className="font-semibold text-blue-900 dark:text-blue-100 mb-2">
-                            ¿Cómo funciona?
-                        </h3>
-                        <ul className="text-sm text-blue-800 dark:text-blue-200 space-y-1">
+                        <p className="hud-label text-black/60 dark:text-white/60 mb-3">
+                            [OPERATIONAL_PROTOCOL]
+                        </p>
+                        <ul className="text-xs font-bold text-black/60 dark:text-white/50 space-y-2 uppercase tracking-tight">
                             <li>• El trabajador recibirá un email con instrucciones de acceso</li>
                             <li>• Heredará automáticamente los permisos del perfil asignado</li>
                             <li>• Podrá configurar su contraseña desde el enlace del email</li>

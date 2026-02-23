@@ -18,22 +18,22 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({ variant = 'imagotype', cla
     const theme = forcedTheme || contextTheme;
 
     if (loading) {
-        return <div className={`animate-pulse bg-slate-200 dark:bg-slate-700 rounded-none ${className || 'w-32 h-8'}`}></div>;
+        return <div className={`animate-pulse bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 rounded-none ${className || 'w-32 h-8'}`}></div>;
     }
 
     const logoUrl = branding?.[theme]?.[variant];
 
     if (!logoUrl) {
         return (
-            <div className={clsx("flex items-center gap-3", className)}>
+            <div className={clsx("flex items-center gap-4", className)}>
                 <div className="relative group/logo">
-                    <div className="relative w-8 h-8 flex items-center justify-center rounded-none">
-                        <span className="text-white dark:text-black font-black text-xs italic tracking-tighter">MR</span>
+                    <div className="relative w-9 h-9 flex items-center justify-center rounded-none border border-black dark:border-white bg-black dark:bg-white transition-all group-hover/logo:scale-105">
+                        <span className="text-white dark:text-black font-black text-xs tracking-tighter">MR®</span>
                     </div>
                 </div>
                 <div className="flex flex-col -space-y-1">
-                    <span className="text-lg font-black text-black dark:text-white uppercase tracking-tighter italic">MINREPORT</span>
-                    <span className="text-[8px] font-black text-antigravity-accent uppercase tracking-[0.3em] font-mono opacity-50">Industrial_Core</span>
+                    <span className="text-xl font-black text-black dark:text-white uppercase tracking-tighter">MINREPORT</span>
+                    <span className="hud-label text-[8px] text-antigravity-accent opacity-60">INDUSTRIAL.PROTOCOL</span>
                 </div>
             </div>
         );

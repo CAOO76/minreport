@@ -128,18 +128,18 @@ export const JobProfileManager = () => {
         <div className="h-full flex flex-col md:flex-row gap-6 p-6" style={{ fontFamily: "'Atkinson Hyperlegible', sans-serif" }}>
             {/* LISTA DE PERFILES */}
             <aside className="w-full md:w-80 flex flex-col gap-4">
-                <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-xl font-bold text-gray-900 dark:text-white" data-testid="page-title">
-                        Perfiles de Cargo
+                <div className="flex items-center justify-between mb-6">
+                    <h2 className="hud-label text-black dark:text-white" data-testid="page-title">
+                        [LISTA_PERFILES]
                     </h2>
                     <Button
                         variant="primary"
                         icon="add"
                         onClick={handleNewProfile}
-                        className="!p-2"
+                        className="!p-2 !rounded-none"
                         data-testid="add-profile-btn"
                     >
-                        Nuevo
+                        NEW_ROLE
                     </Button>
                 </div>
 
@@ -148,19 +148,19 @@ export const JobProfileManager = () => {
                         <button
                             key={profile.id}
                             onClick={() => handleSelectProfile(profile)}
-                            className={`w-full text-left p-4 rounded-lg border transition-all ${selectedProfile?.id === profile.id
-                                ? 'bg-indigo-50 dark:bg-indigo-500/10 border-indigo-500'
-                                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-indigo-300'
+                            className={`w-full text-left p-5 rounded-none border transition-all ${selectedProfile?.id === profile.id
+                                ? 'bg-black dark:bg-white text-white dark:text-black border-transparent'
+                                : 'bg-black/5 dark:bg-white/5 border-black/10 dark:border-white/10 hover:border-black/30'
                                 }`}
                             data-testid="profile-item"
                         >
-                            <h3 className="font-semibold text-gray-900 dark:text-white truncate">{profile.name}</h3>
-                            <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mt-1">{profile.description}</p>
+                            <h3 className={`font-black text-[11px] uppercase tracking-widest truncate ${selectedProfile?.id === profile.id ? 'text-white dark:text-black' : 'text-black dark:text-white'}`}>{profile.name}</h3>
+                            <p className={`text-[10px] line-clamp-2 mt-1 ${selectedProfile?.id === profile.id ? 'text-white/60 dark:text-black/60' : 'text-black/40 dark:text-white/40'}`}>{profile.description}</p>
                         </button>
                     ))}
                     {profiles.length === 0 && (
-                        <div className="p-8 text-center bg-gray-50 dark:bg-gray-900 rounded-lg border border-dashed border-gray-300 dark:border-gray-700">
-                            <p className="text-sm text-gray-400">No hay perfiles</p>
+                        <div className="p-8 text-center bg-black/5 dark:bg-white/5 rounded-none border border-black/10 dark:border-white/10">
+                            <p className="hud-label text-[10px] text-black/40 dark:text-white/40">NO_PROFILES_FOUND</p>
                         </div>
                     )}
                 </div>
@@ -178,13 +178,13 @@ export const JobProfileManager = () => {
                     <>
                         <Card className="!p-4">
                             <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 rounded-lg bg-indigo-100 dark:bg-indigo-500/20 flex items-center justify-center">
-                                        <ChevronRight className="text-indigo-600 dark:text-indigo-400" />
+                                <div className="flex items-center gap-4">
+                                    <div className="w-10 h-10 rounded-none bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center justify-center">
+                                        <ChevronRight className="text-black/40 dark:text-white/40" />
                                     </div>
                                     <div>
-                                        <h2 className="text-lg font-bold text-gray-900 dark:text-white">
-                                            {isEditing ? (selectedProfile ? 'Editar Perfil' : 'Nuevo Perfil') : selectedProfile?.name}
+                                        <h2 className="text-lg font-black uppercase tracking-tight text-gray-900 dark:text-white">
+                                            {isEditing ? (selectedProfile ? 'MOD_PROFILE' : 'INIT_PROFILE') : selectedProfile?.name}
                                         </h2>
                                     </div>
                                 </div>
@@ -208,36 +208,39 @@ export const JobProfileManager = () => {
 
                         <Card className="flex-1 overflow-y-auto space-y-6">
                             <div>
-                                <label className="block text-sm font-semibold mb-2">Nombre del Perfil</label>
+                                <label className="hud-label text-black/40 dark:text-white/40 mb-3">[01] Nombre del Perfil</label>
                                 <input
                                     type="text"
                                     value={formName}
                                     onChange={(e) => setFormName(e.target.value)}
                                     disabled={!isEditing}
                                     placeholder="ej: Operador CAEX"
-                                    className="w-full p-3 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white"
+                                    autoComplete="off"
+                                    spellCheck="false"
+                                    className="w-full p-4 rounded-none bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-gray-900 dark:text-white font-bold tracking-wide focus:outline-none focus:border-black dark:focus:border-white"
                                     data-testid="profile-name-input"
                                 />
                             </div>
 
                             <div>
-                                <label className="block text-sm font-semibold mb-2">Descripción</label>
+                                <label className="hud-label text-black/40 dark:text-white/40 mb-3">[02] Descripción Técnica</label>
                                 <textarea
                                     value={formDescription}
                                     onChange={(e) => setFormDescription(e.target.value)}
                                     disabled={!isEditing}
                                     placeholder="Responsabilidades del cargo..."
-                                    className="w-full p-3 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white resize-none"
-                                    rows={3}
+                                    autoComplete="off"
+                                    spellCheck="false"
+                                    className="w-full p-4 rounded-none bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-gray-900 dark:text-white resize-none font-medium h-32 focus:outline-none focus:border-black dark:focus:border-white"
                                     data-testid="profile-description-textarea"
                                 />
                             </div>
 
                             <div>
-                                <label className="block text-sm font-semibold mb-4">Herramientas Permitidas</label>
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                <label className="hud-label text-black/40 dark:text-white/40 mb-5">[03] CORE_PLUGINS_ACCESS</label>
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                                     {availablePlugins.map(plugin => (
-                                        <div key={plugin.id} className="p-4 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex items-center justify-between">
+                                        <div key={plugin.id} className="p-4 rounded-none bg-black/2[bg-black/2] dark:bg-white/5 border border-black/5 dark:border-white/10 flex items-center justify-between">
                                             <div className="flex items-center gap-3">
                                                 <div className="w-8 h-8 rounded bg-white dark:bg-gray-700 flex items-center justify-center">
                                                     <span className="material-symbols-rounded text-sm">extension</span>

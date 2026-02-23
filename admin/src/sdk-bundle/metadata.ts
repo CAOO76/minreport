@@ -4,6 +4,7 @@
  * automatically when they are deployed.
  */
 export const SDK_METADATA = {
+    version: '2.0.0',
     changelog: [
         "## [2.0.0] - 2026-02-05",
         "Major SDK release with enhanced core functionality.",
@@ -17,3 +18,4 @@ export const SDK_METADATA = {
     releaseDate: new Date(),
     status: 'BETA' as const
 };
+

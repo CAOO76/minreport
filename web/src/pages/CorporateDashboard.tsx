@@ -88,19 +88,19 @@ export const CorporateDashboard = () => {
     return (
         <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8 animate-in fade-in duration-700">
             {/* Header */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-black/5 dark:border-white/5 pb-8">
                 <div>
-                    <h1 className="text-3xl font-black text-slate-900 dark:text-white tracking-tight">
-                        Gestión Corporativa
+                    <h1 className="text-3xl font-black text-black dark:text-white uppercase tracking-tighter">
+                        CORPORATE_CONTROL
                     </h1>
-                    <p className="text-slate-500 dark:text-slate-400 mt-1 uppercase text-[10px] font-bold tracking-[0.2em]">
-                        Cuenta: {currentAccount?.name} • ID: {currentAccount?.taxId}
+                    <p className="hud-label text-[10px] text-antigravity-accent mt-2">
+                        ACCOUNT: {currentAccount?.name} • ID: {currentAccount?.taxId}
                     </p>
                 </div>
                 <div className="flex items-center gap-3">
-                    <div className="px-4 py-2 bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-100 dark:border-indigo-500/20 rounded-2xl flex items-center gap-2">
-                        <ShieldCheck className="text-indigo-600 dark:text-indigo-400" size={18} />
-                        <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wider">Acceso Corporativo</span>
+                    <div className="px-5 py-3 bg-black/5 dark:bg-white/5 border border-antigravity-accent/30 rounded-none flex items-center gap-3">
+                        <ShieldCheck className="text-antigravity-accent" size={18} />
+                        <span className="hud-label text-[10px] text-antigravity-accent">ACCESS_GRANTED: CORPORATE_VAULT</span>
                     </div>
                 </div>
             </div>
@@ -112,23 +112,25 @@ export const CorporateDashboard = () => {
                 <div className="lg:col-span-2 space-y-6">
                     {/* Metrics Cards */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="bg-white dark:bg-slate-900 p-6 rounded-[2rem] border border-slate-100 dark:border-slate-800 shadow-sm">
-                            <div className="w-12 h-12 bg-blue-50 dark:bg-blue-500/10 rounded-2xl flex items-center justify-center text-blue-600 dark:text-blue-400 mb-4">
+                        <div className="bg-black/5 dark:bg-white/5 p-8 rounded-none border border-black/5 dark:border-white/5 relative overflow-hidden group">
+                            <div className="absolute inset-0 technical-grid opacity-5 pointer-events-none group-hover:opacity-10 transition-opacity"></div>
+                            <div className="w-12 h-12 bg-black/5 dark:bg-white/10 rounded-none border border-black/10 dark:border-white/10 flex items-center justify-center text-black/40 dark:text-white/40 mb-6">
                                 <BarChart3 size={24} />
                             </div>
-                            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Uso de Almacenamiento</p>
-                            <h3 className="text-2xl font-black text-slate-900 dark:text-white mt-1">4.2 GB / 10 GB</h3>
-                            <div className="w-full h-2 bg-slate-100 dark:bg-slate-800 rounded-full mt-4 overflow-hidden">
-                                <div className="h-full bg-blue-500 w-[42%]" />
+                            <p className="hud-label text-[9px] text-black/40 dark:text-white/40">STORAGE_METRICS</p>
+                            <h3 className="text-2xl font-black text-black dark:text-white mt-1">4.2 GB <span className="text-xs opacity-40 font-mono">/ 10 GB</span></h3>
+                            <div className="w-full h-1.5 bg-black/5 dark:bg-white/5 rounded-none mt-6 overflow-hidden border border-black/5">
+                                <div className="h-full bg-antigravity-accent w-[42%]" />
                             </div>
                         </div>
-                        <div className="bg-white dark:bg-slate-900 p-6 rounded-[2rem] border border-slate-100 dark:border-slate-800 shadow-sm">
-                            <div className="w-12 h-12 bg-emerald-50 dark:bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-600 dark:text-emerald-400 mb-4">
+                        <div className="bg-black/5 dark:bg-white/5 p-8 rounded-none border border-black/5 dark:border-white/5 relative overflow-hidden group">
+                            <div className="absolute inset-0 technical-grid opacity-5 pointer-events-none group-hover:opacity-10 transition-opacity"></div>
+                            <div className="w-12 h-12 bg-antigravity-accent/10 rounded-none border border-antigravity-accent/20 flex items-center justify-center text-antigravity-accent mb-6">
                                 <CreditCard size={24} />
                             </div>
-                            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Plan Actual</p>
-                            <h3 className="text-2xl font-black text-slate-900 dark:text-white mt-1">Enterprise Pro</h3>
-                            <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold mt-2 uppercase">Próximo cobro: 15 Feb 2026</p>
+                            <p className="hud-label text-[9px] text-black/40 dark:text-white/40">SUBSCRIPTION_RANK</p>
+                            <h3 className="text-2xl font-black text-black dark:text-white mt-1 uppercase tracking-tighter">Enterprise_Pro</h3>
+                            <p className="hud-label text-[8px] text-antigravity-accent mt-3 opacity-80">NEXT_BILL: 15_FEB_2026</p>
                         </div>
                     </div>
 
@@ -144,13 +146,14 @@ export const CorporateDashboard = () => {
                     </div>
 
                     {/* NEW: Leadership Management Section */}
-                    <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-[2rem] overflow-hidden">
-                        <div className="p-6 border-b border-slate-50 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/20">
-                            <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 bg-indigo-100 dark:bg-indigo-500/20 rounded-lg flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                    <div className="bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 rounded-none overflow-hidden group">
+                        <div className="p-6 border-b border-black/5 dark:border-white/5 flex justify-between items-center bg-black/5 relative overflow-hidden">
+                            <div className="absolute inset-0 technical-grid opacity-5 pointer-events-none"></div>
+                            <div className="flex items-center gap-4 relative z-10">
+                                <div className="w-8 h-8 bg-black dark:bg-white rounded-none flex items-center justify-center text-white dark:text-black">
                                     <History size={16} />
                                 </div>
-                                <h3 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-widest">Delegados Operativos</h3>
+                                <h3 className="hud-label text-[10px] text-black/60 dark:text-white/60">OPERATIONAL_DELEGATES</h3>
                             </div>
                         </div>
 
@@ -166,41 +169,41 @@ export const CorporateDashboard = () => {
                                 </thead>
                                 <tbody>
                                     {currentAccount?.primaryOperator ? (
-                                        <tr className="group hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                                        <tr className="group hover:bg-black/5 transition-colors border-b border-black/5 dark:border-white/5">
                                             <td className="p-6">
-                                                <div className="flex items-center gap-3">
-                                                    <div className="w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded-xl flex items-center justify-center text-slate-500 dark:text-slate-400">
+                                                <div className="flex items-center gap-4">
+                                                    <div className="w-11 h-11 bg-black/5 dark:bg-white/5 rounded-none border border-black/10 dark:border-white/10 flex items-center justify-center text-black/40 dark:text-white/40">
                                                         <Fingerprint size={20} />
                                                     </div>
                                                     <div>
-                                                        <p className="text-sm font-black text-slate-900 dark:text-white">{currentAccount.primaryOperator.taxId || 'Sin ID'}</p>
-                                                        <p className="text-[10px] text-slate-500 uppercase font-bold tracking-tighter">
+                                                        <p className="text-sm font-black text-black dark:text-white uppercase tracking-tighter">{currentAccount.primaryOperator.taxId || 'Sin ID'}</p>
+                                                        <p className="hud-label text-[8px] text-black/30 dark:text-white/20 mt-1">
                                                             {currentAccount.primaryOperator.invitedAt
-                                                                ? `Asignado: ${new Date(currentAccount.primaryOperator.invitedAt).toLocaleDateString()}`
-                                                                : currentAccount.primaryOperator.email}
+                                                                ? `SYNCED: ${new Date(currentAccount.primaryOperator.invitedAt).toLocaleDateString()}`
+                                                                : 'WAITING_SYNC'}
                                                         </p>
                                                     </div>
                                                 </div>
                                             </td>
                                             <td className="p-6">
-                                                <p className="text-sm font-bold text-slate-700 dark:text-slate-300">{currentAccount.primaryOperator.name}</p>
-                                                <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold uppercase">{currentAccount.primaryOperator.jobTitle || 'ADMINISTRADOR OPERATIVO'}</p>
+                                                <p className="text-[12px] font-black uppercase text-black/80 dark:text-white/80">{currentAccount.primaryOperator.name}</p>
+                                                <p className="hud-label text-[9px] text-antigravity-accent mt-1">{currentAccount.primaryOperator.jobTitle || 'ADMINISTRADOR OPERATIVO'}</p>
                                             </td>
                                             <td className="p-6 text-center">
                                                 <span className={clsx(
-                                                    "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border",
+                                                    "px-3 py-1.5 rounded-none text-[9px] font-black uppercase tracking-[0.2em] border",
                                                     currentAccount.primaryOperator.status === 'ACTIVE'
-                                                        ? "bg-emerald-50 text-emerald-600 border-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20"
-                                                        : "bg-amber-50 text-amber-600 border-amber-100 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20"
+                                                        ? "bg-black dark:bg-white text-white dark:text-black border-transparent"
+                                                        : "bg-transparent text-black/40 dark:text-white/30 border-black/10 dark:border-white/10"
                                                 )}>
-                                                    {currentAccount.primaryOperator.status === 'ACTIVE' ? 'Activado' : 'Pendiente'}
+                                                    {currentAccount.primaryOperator.status === 'ACTIVE' ? 'STATUS: ACTIVE' : 'STATUS: PENDING'}
                                                 </span>
                                             </td>
                                             <td className="p-6 text-right">
                                                 <button
                                                     onClick={handleRemoveOperator}
                                                     disabled={loading}
-                                                    className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-all ml-auto disabled:opacity-50"
+                                                    className="w-10 h-10 border border-black/5 dark:border-white/5 rounded-none flex items-center justify-center text-black/40 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all ml-auto disabled:opacity-50"
                                                     title="Eliminar Delegado"
                                                 >
                                                     {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 size={18} />}
@@ -222,21 +225,22 @@ export const CorporateDashboard = () => {
 
                 {/* Right Col: Leadership Delegation */}
                 <div className="space-y-6">
-                    <div className="bg-slate-900 dark:bg-indigo-600 p-8 rounded-[2.5rem] text-white shadow-xl shadow-indigo-500/10">
-                        <div className="w-14 h-14 bg-white/10 rounded-2xl flex items-center justify-center mb-6">
-                            <UserPlus size={28} />
+                    <div className="bg-black dark:bg-white p-10 rounded-none text-white dark:text-black relative overflow-hidden group">
+                        <div className="absolute inset-0 technical-grid opacity-10 pointer-events-none group-hover:opacity-20 transition-opacity"></div>
+                        <div className="w-14 h-14 bg-antigravity-accent rounded-none flex items-center justify-center mb-8 relative z-10">
+                            <UserPlus size={28} className="text-white" />
                         </div>
-                        <h3 className="text-xl font-bold leading-tight">Delegación de Mando Operativo</h3>
-                        <p className="text-indigo-100/70 text-sm mt-3 leading-relaxed">
-                            Define quién será el responsable de la operación diaria, reportes y gestión de terreno.
+                        <h3 className="text-2xl font-black uppercase tracking-tighter leading-none relative z-10">COMMAND_DELEGATION</h3>
+                        <p className="hud-label text-[10px] mt-4 opacity-60 leading-relaxed relative z-10">
+                            AUTORIZAR NUEVO COMANDANTE OPERATIVO PARA GESTIÓN DE PROTOCOLOS Y TERRENO.
                         </p>
 
                         {!isInviting ? (
                             <button
                                 onClick={() => setIsInviting(true)}
-                                className="mt-8 w-full py-4 bg-white text-indigo-600 font-black rounded-2xl hover:bg-indigo-50 transition-all flex items-center justify-center gap-2 shadow-lg"
+                                className="mt-10 w-full py-5 bg-antigravity-accent text-white hud-label text-[10px] rounded-none hover:brightness-110 transition-all flex items-center justify-center gap-3 relative z-10"
                             >
-                                Asignar Administrador
+                                START_AUTH_PROTOCOL
                                 <ArrowRight size={18} />
                             </button>
                         ) : (
@@ -246,8 +250,8 @@ export const CorporateDashboard = () => {
                                 autoComplete="off"
                             >
                                 <div className="space-y-4">
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-bold text-indigo-200 uppercase tracking-widest ml-1">Nombre Completo</label>
+                                    <div className="space-y-2 relative z-10">
+                                        <label className="hud-label text-[9px] opacity-60 ml-1">FULL_IDENTITY_NAME</label>
                                         <div className="relative">
                                             <input
                                                 type="text"
@@ -255,55 +259,61 @@ export const CorporateDashboard = () => {
                                                 onChange={(e) => setInviteName(e.target.value)}
                                                 required
                                                 autoComplete="off"
-                                                placeholder="Nombre del Responsable"
-                                                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-white/30"
+                                                spellCheck="false"
+                                                data-lpignore="true"
+                                                placeholder="COMMANDER_NAME"
+                                                className="w-full px-5 py-4 bg-white/5 dark:bg-black/5 border border-white/10 dark:border-black/10 rounded-none text-white dark:text-black placeholder:opacity-20 focus:outline-none focus:border-antigravity-accent transition-all"
                                             />
                                         </div>
                                     </div>
 
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] font-bold text-indigo-200 uppercase tracking-widest ml-1">RUT del Responsable</label>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 relative z-10">
+                                        <div className="space-y-2">
+                                            <label className="hud-label text-[9px] opacity-60 ml-1">TAX_ID_RUT</label>
                                             <div className="relative">
-                                                <Fingerprint className="absolute left-4 top-1/2 -translate-y-1/2 text-indigo-300" size={16} />
                                                 <input
                                                     type="text"
                                                     value={inviteTaxId}
                                                     onChange={(e) => setInviteTaxId(formatRut(e.target.value))}
                                                     required
                                                     autoComplete="off"
-                                                    placeholder="12.345.678-k"
-                                                    className="w-full pl-11 pr-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-white/30"
+                                                    spellCheck="false"
+                                                    data-lpignore="true"
+                                                    placeholder="12.345.678-K"
+                                                    className="w-full px-5 py-4 bg-white/5 dark:bg-black/5 border border-white/10 dark:border-black/10 rounded-none text-white dark:text-black placeholder:opacity-20 focus:outline-none focus:border-antigravity-accent transition-all"
                                                 />
                                             </div>
                                         </div>
 
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] font-bold text-indigo-200 uppercase tracking-widest ml-1">Cargo / Puesto</label>
+                                        <div className="space-y-2">
+                                            <label className="hud-label text-[9px] opacity-60 ml-1">DELEGATED_ROLE</label>
                                             <input
                                                 type="text"
                                                 value={inviteJobTitle}
                                                 onChange={(e) => setInviteJobTitle(e.target.value)}
                                                 required
                                                 autoComplete="off"
-                                                placeholder="Ej: Gerente Op."
-                                                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-white/30"
+                                                spellCheck="false"
+                                                data-lpignore="true"
+                                                placeholder="OPERATIONAL_MANAGER"
+                                                className="w-full px-5 py-4 bg-white/5 dark:bg-black/5 border border-white/10 dark:border-black/10 rounded-none text-white dark:text-black placeholder:opacity-20 focus:outline-none focus:border-antigravity-accent transition-all"
                                             />
                                         </div>
                                     </div>
 
-                                    <div className="space-y-1">
-                                        <label className="text-[10px] font-bold text-indigo-200 uppercase tracking-widest ml-1">Email Corporativo</label>
+                                    <div className="space-y-2 relative z-10">
+                                        <label className="hud-label text-[9px] opacity-60 ml-1">COMM_EMAIL_NODE</label>
                                         <div className="relative">
-                                            <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-indigo-300" size={16} />
                                             <input
                                                 type="email"
                                                 value={inviteEmail}
                                                 onChange={(e) => setInviteEmail(e.target.value)}
                                                 required
                                                 autoComplete="off"
-                                                placeholder="ejemplo@empresa.com"
-                                                className="w-full pl-11 pr-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-white/30"
+                                                spellCheck="false"
+                                                data-lpignore="true"
+                                                placeholder="NODE@SYSTEM.COM"
+                                                className="w-full px-5 py-4 bg-white/5 dark:bg-black/5 border border-white/10 dark:border-black/10 rounded-none text-white dark:text-black placeholder:opacity-20 focus:outline-none focus:border-antigravity-accent transition-all"
                                             />
                                         </div>
                                     </div>
@@ -311,27 +321,27 @@ export const CorporateDashboard = () => {
 
                                 {status && (
                                     <div className={clsx(
-                                        "p-3 rounded-xl text-xs font-bold text-center animate-in zoom-in",
-                                        status.type === 'success' ? "bg-emerald-500/20 text-emerald-200" : "bg-rose-500/20 text-rose-200"
+                                        "p-4 rounded-none text-[10px] font-black uppercase tracking-widest text-center animate-in zoom-in border relative z-10",
+                                        status.type === 'success' ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-red-500/10 text-red-400 border-red-500/20"
                                     )}>
                                         {status.msg}
                                     </div>
                                 )}
 
-                                <div className="flex gap-2 pt-2">
+                                <div className="flex gap-4 pt-4 relative z-10">
                                     <button
                                         type="submit"
                                         disabled={loading}
-                                        className="flex-1 py-3 bg-white text-indigo-600 font-bold rounded-xl hover:bg-indigo-50 transition-all text-sm disabled:opacity-50 flex items-center justify-center"
+                                        className="flex-1 py-4 bg-antigravity-accent text-white hud-label text-[10px] rounded-none hover:brightness-110 transition-all disabled:opacity-50 flex items-center justify-center"
                                     >
-                                        {loading ? "Enviando..." : "Enviar Invitación"}
+                                        {loading ? "PROCESSING..." : "COMMIT_INVITATION"}
                                     </button>
                                     <button
                                         type="button"
                                         onClick={() => setIsInviting(false)}
-                                        className="px-4 py-3 bg-black/20 text-white font-bold rounded-xl hover:bg-black/30 transition-all text-sm"
+                                        className="px-6 py-4 bg-white/10 text-white dark:text-black dark:bg-black/10 hud-label text-[10px] rounded-none hover:bg-white/20 transition-all"
                                     >
-                                        Cancelar
+                                        ABORT
                                     </button>
                                 </div>
                             </form>
