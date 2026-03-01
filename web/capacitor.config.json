@@ -3,15 +3,15 @@
     "appName": "MinReport",
     "webDir": "dist",
     "server": {
-        "androidScheme": "https",
+        "androidScheme": "http",
+        "url": "http://192.168.1.85:5173",
+        "cleartext": true,
         "allowNavigation": [
-            "192.168.1.82",
-            "192.168.1.82",
-            "http://192.168.1.86:*",
+            "localhost",
+            "localhost:*",
+            "192.168.1.*",
             "10.0.2.2",
-            "10.0.2.2:*",
-            "http://10.0.2.2:*",
-            "localhost"
+            "10.0.2.2:*"
         ]
     },
     "plugins": {

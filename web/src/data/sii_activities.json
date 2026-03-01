@@ -1,0 +1,802 @@
+[
+    {
+        "code": "011111",
+        "label": "Cultivo de trigo"
+    },
+    {
+        "code": "011112",
+        "label": "Cultivo de maiz"
+    },
+    {
+        "code": "011113",
+        "label": "Cultivo de avena"
+    },
+    {
+        "code": "011114",
+        "label": "Cultivo de arroz"
+    },
+    {
+        "code": "011119",
+        "label": "Cultivo de otros cereales n.c.p."
+    },
+    {
+        "code": "011211",
+        "label": "Cultivo de porotos o frijoles"
+    },
+    {
+        "code": "011212",
+        "label": "Cultivo de lentejas"
+    },
+    {
+        "code": "011311",
+        "label": "Cultivo de soya"
+    },
+    {
+        "code": "011312",
+        "label": "Cultivo de maravilla (girasol)"
+    },
+    {
+        "code": "011313",
+        "label": "Cultivo de raps"
+    },
+    {
+        "code": "012111",
+        "label": "Cultivo de uva destinada a la produccion de vino"
+    },
+    {
+        "code": "012112",
+        "label": "Cultivo de uva de mesa"
+    },
+    {
+        "code": "012211",
+        "label": "Cultivo de paltas o aguacates"
+    },
+    {
+        "code": "012212",
+        "label": "Cultivo de pomelos y toronjas"
+    },
+    {
+        "code": "012213",
+        "label": "Cultivo de limones y limas"
+    },
+    {
+        "code": "012214",
+        "label": "Cultivo de naranjas"
+    },
+    {
+        "code": "012215",
+        "label": "Cultivo de mandarinas y clementinas"
+    },
+    {
+        "code": "012411",
+        "label": "Cultivo de manzanas"
+    },
+    {
+        "code": "012412",
+        "label": "Cultivo de peras y membrillos"
+    },
+    {
+        "code": "012511",
+        "label": "Cultivo de arandanos"
+    },
+    {
+        "code": "012512",
+        "label": "Cultivo de frambuesas"
+    },
+    {
+        "code": "012513",
+        "label": "Cultivo de frutillas"
+    },
+    {
+        "code": "012514",
+        "label": "Cultivo de moras"
+    },
+    {
+        "code": "012519",
+        "label": "Cultivo de otros frutos y bayas de zonas templadas n.c.p."
+    },
+    {
+        "code": "012711",
+        "label": "Cultivo de cafe"
+    },
+    {
+        "code": "012712",
+        "label": "Cultivo de té"
+    },
+    {
+        "code": "051000",
+        "label": "Extraccion y aglomeracion de carbon de piedra"
+    },
+    {
+        "code": "052000",
+        "label": "Extraccion y aglomeracion de lignito"
+    },
+    {
+        "code": "061000",
+        "label": "Extraccion de petroleo crudo"
+    },
+    {
+        "code": "062000",
+        "label": "Extraccion de gas natural"
+    },
+    {
+        "code": "071000",
+        "label": "Extraccion de minerales de hierro"
+    },
+    {
+        "code": "072100",
+        "label": "Extraccion de minerales de uranio y torio"
+    },
+    {
+        "code": "072910",
+        "label": "Extraccion de cobre"
+    },
+    {
+        "code": "072921",
+        "label": "Extraccion de oro"
+    },
+    {
+        "code": "072922",
+        "label": "Extraccion de plata"
+    },
+    {
+        "code": "072991",
+        "label": "Extraccion de molibdeno"
+    },
+    {
+        "code": "072992",
+        "label": "Extraccion de zinc y plomo"
+    },
+    {
+        "code": "072999",
+        "label": "Extraccion de otros minerales metaliferos no ferrosos n.c.p."
+    },
+    {
+        "code": "081001",
+        "label": "Extraccion de rocas ornamentales"
+    },
+    {
+        "code": "081002",
+        "label": "Extraccion de piedra caliza, yeso y tiza"
+    },
+    {
+        "code": "081003",
+        "label": "Extraccion de arena, ripio y arcilla"
+    },
+    {
+        "code": "089110",
+        "label": "Extraccion de minerales para la fabricacion de abonos y productos quimicos"
+    },
+    {
+        "code": "089120",
+        "label": "Extraccion de nitratos y yodo"
+    },
+    {
+        "code": "089130",
+        "label": "Extraccion de litio"
+    },
+    {
+        "code": "089300",
+        "label": "Extraccion de sal"
+    },
+    {
+        "code": "089900",
+        "label": "Explotacion de otras minas y canteras n.c.p."
+    },
+    {
+        "code": "091000",
+        "label": "Actividades de apoyo a la extraccion de petroleo y gas natural"
+    },
+    {
+        "code": "099000",
+        "label": "Actividades de apoyo para la explotacion de otras minas y canteras"
+    },
+    {
+        "code": "101011",
+        "label": "Explotacion de mataderos de bovinos, ovinos, porcinos, equinos y otros"
+    },
+    {
+        "code": "101012",
+        "label": "Explotacion de mataderos de aves"
+    },
+    {
+        "code": "101020",
+        "label": "Conservacion y preparacion de carne"
+    },
+    {
+        "code": "102001",
+        "label": "Elaboracion de congelados de pescados y mariscos"
+    },
+    {
+        "code": "102002",
+        "label": "Elaboracion de conservas de pescados y mariscos"
+    },
+    {
+        "code": "103000",
+        "label": "Elaboracion de frutas, legumbres y hortalizas"
+    },
+    {
+        "code": "104000",
+        "label": "Elaboracion de aceites y grasas de origen vegetal y animal"
+    },
+    {
+        "code": "105000",
+        "label": "Elaboracion de productos lacteos"
+    },
+    {
+        "code": "106100",
+        "label": "Elaboracion de productos de molineria"
+    },
+    {
+        "code": "107110",
+        "label": "Panaderia y pasteleria"
+    },
+    {
+        "code": "107300",
+        "label": "Elaboracion de cacaos y chocolates"
+    },
+    {
+        "code": "107901",
+        "label": "Elaboracion de té, café e infusiones"
+    },
+    {
+        "code": "110100",
+        "label": "Destilacion, rectificacion y mezclas de bebidas alcoholicas"
+    },
+    {
+        "code": "110200",
+        "label": "Elaboracion de vinos"
+    },
+    {
+        "code": "110400",
+        "label": "Elaboracion de bebidas no alcoholicas; prod. de aguas minerales"
+    },
+    {
+        "code": "131100",
+        "label": "Preparacion e hilatura de fibras textiles; tejedura de productos textiles"
+    },
+    {
+        "code": "141000",
+        "label": "Fabricacion de prendas de vestir, excepto prendas de piel"
+    },
+    {
+        "code": "151100",
+        "label": "Curtido y adobo de cueros; adobo y teñido de pieles"
+    },
+    {
+        "code": "152000",
+        "label": "Fabricacion de calzado"
+    },
+    {
+        "code": "161000",
+        "label": "Aserrado y acepilladura de madera"
+    },
+    {
+        "code": "162200",
+        "label": "Fabricacion de hojas de madera para chapado y tableros a base de madera"
+    },
+    {
+        "code": "170110",
+        "label": "Fabricacion de pulpa de madera, papel y carton"
+    },
+    {
+        "code": "181100",
+        "label": "Imprentas y servicios relacionados"
+    },
+    {
+        "code": "201100",
+        "label": "Fabricacion de sustancias quimicas basicas"
+    },
+    {
+        "code": "201200",
+        "label": "Fabricacion de abonos y compuestos de nitrogeno"
+    },
+    {
+        "code": "202100",
+        "label": "Fabricacion de plaguicidas y otros productos quimicos de uso agropecuario"
+    },
+    {
+        "code": "210000",
+        "label": "Fabricacion de productos farmaceuticos, sustancias quimicas medicinales"
+    },
+    {
+        "code": "239400",
+        "label": "Fabricacion de cemento, cal y yeso"
+    },
+    {
+        "code": "241000",
+        "label": "Industrias basicas de hierro y acero"
+    },
+    {
+        "code": "242000",
+        "label": "Fabricacion de productos primarios de metales preciosos y otros metales"
+    },
+    {
+        "code": "251100",
+        "label": "Fabricacion de estructuras metalicas y sus partes"
+    },
+    {
+        "code": "259200",
+        "label": "Tratamiento y revestimiento de metales; obras de ingenieria mecanica"
+    },
+    {
+        "code": "261000",
+        "label": "Fabricacion de componentes y tableros electronicos"
+    },
+    {
+        "code": "262000",
+        "label": "Fabricacion de computadores y equipo periferico"
+    },
+    {
+        "code": "263000",
+        "label": "Fabricacion de equipos de comunicacion"
+    },
+    {
+        "code": "271000",
+        "label": "Fabricacion de motores, dínamos, transformadores eléctricos"
+    },
+    {
+        "code": "281100",
+        "label": "Fabricacion de motores y turbinas, excepto para aeronaves, vehiculos"
+    },
+    {
+        "code": "281300",
+        "label": "Fabricacion de otras bombas, compresores, grifos y valvulas"
+    },
+    {
+        "code": "282200",
+        "label": "Fabricacion de maquinaria para la explotacion de minas y canteras"
+    },
+    {
+        "code": "282400",
+        "label": "Fabricacion de maquinaria para la elaboracion de alimentos, bebidas"
+    },
+    {
+        "code": "301100",
+        "label": "Construccion de buques y estructuras flotantes"
+    },
+    {
+        "code": "331200",
+        "label": "Reparacion de maquinaria"
+    },
+    {
+        "code": "331300",
+        "label": "Reparacion de equipo electronico y optico"
+    },
+    {
+        "code": "331400",
+        "label": "Reparacion de equipo electrico"
+    },
+    {
+        "code": "351010",
+        "label": "Generacion de energia electrica"
+    },
+    {
+        "code": "351020",
+        "label": "Transmision de energia electrica"
+    },
+    {
+        "code": "351030",
+        "label": "Distribucion de energia electrica"
+    },
+    {
+        "code": "360000",
+        "label": "Captacion, tratamiento y distribucion de agua"
+    },
+    {
+        "code": "381100",
+        "label": "Recogida de desechos no peligrosos"
+    },
+    {
+        "code": "410011",
+        "label": "Construccion de edificios completos o de partes de edificios"
+    },
+    {
+        "code": "410012",
+        "label": "Obras de ingenieria civil"
+    },
+    {
+        "code": "421000",
+        "label": "Construccion de carreteras y lineas de ferrocarril"
+    },
+    {
+        "code": "422000",
+        "label": "Construccion de proyectos de servicio publico"
+    },
+    {
+        "code": "429000",
+        "label": "Construccion de otras obras de ingenieria civil"
+    },
+    {
+        "code": "432100",
+        "label": "Instalaciones electricas"
+    },
+    {
+        "code": "432200",
+        "label": "Fontaneria, instalaciones de calefaccion y aire acondicionado"
+    },
+    {
+        "code": "439000",
+        "label": "Otras actividades especializadas de construccion"
+    },
+    {
+        "code": "451010",
+        "label": "Venta de vehiculos automotores nuevos"
+    },
+    {
+        "code": "452001",
+        "label": "Reparacion mecanica de vehiculos automotores"
+    },
+    {
+        "code": "461000",
+        "label": "Venta al por mayor a cambio de una retribucion o por contrata"
+    },
+    {
+        "code": "463000",
+        "label": "Venta al por mayor de alimentos, bebidas y tabaco"
+    },
+    {
+        "code": "465100",
+        "label": "Venta al por mayor de computadores, equipo periferico y programas"
+    },
+    {
+        "code": "465200",
+        "label": "Venta al por mayor de equipo, partes y piezas electronicos y de telecom."
+    },
+    {
+        "code": "465300",
+        "label": "Venta al por mayor de maquinaria, equipo y materiales agricolas"
+    },
+    {
+        "code": "465900",
+        "label": "Venta al por mayor de otra maquinaria y equipo"
+    },
+    {
+        "code": "466100",
+        "label": "Venta al por mayor de combustibles solidos, liquidos y gaseosos"
+    },
+    {
+        "code": "466300",
+        "label": "Venta al por mayor de materiales de construccion, art. de ferreteria"
+    },
+    {
+        "code": "469000",
+        "label": "Venta al por mayor no especializada"
+    },
+    {
+        "code": "471100",
+        "label": "Venta al por menor en comercios no especializados"
+    },
+    {
+        "code": "472101",
+        "label": "Venta al por menor de productos de panaderia y pasteleria"
+    },
+    {
+        "code": "474100",
+        "label": "Venta al por menor de computadores, equipo periferico y programas"
+    },
+    {
+        "code": "477300",
+        "label": "Venta al por menor de productos farmaceuticos y medicinales"
+    },
+    {
+        "code": "492101",
+        "label": "Transporte urbano de pasajeros via bus (microbus)"
+    },
+    {
+        "code": "492210",
+        "label": "Transporte de pasajeros via taxi"
+    },
+    {
+        "code": "492300",
+        "label": "Transporte de carga por carretera"
+    },
+    {
+        "code": "501100",
+        "label": "Transporte de pasajeros maritimo y de cabotaje"
+    },
+    {
+        "code": "511000",
+        "label": "Transporte de pasajeros por via aerea"
+    },
+    {
+        "code": "521001",
+        "label": "Almacenamiento y deposito de mercaderias"
+    },
+    {
+        "code": "522100",
+        "label": "Actividades de servicios vinculadas al transporte terrestre"
+    },
+    {
+        "code": "522200",
+        "label": "Actividades de servicios vinculadas al transporte acuatico"
+    },
+    {
+        "code": "522300",
+        "label": "Actividades de servicios vinculadas al transporte aéreo"
+    },
+    {
+        "code": "522400",
+        "label": "Manipulacion de carga"
+    },
+    {
+        "code": "522900",
+        "label": "Otras actividades de apoyo al transporte"
+    },
+    {
+        "code": "581100",
+        "label": "Edicion de libros"
+    },
+    {
+        "code": "582000",
+        "label": "Edicion de programas informaticos (software)"
+    },
+    {
+        "code": "591100",
+        "label": "Actividades de produccion de peliculas cinematograficas, videos"
+    },
+    {
+        "code": "611000",
+        "label": "Actividades de telecomunicaciones alambricas"
+    },
+    {
+        "code": "612000",
+        "label": "Actividades de telecomunicaciones inalambricas"
+    },
+    {
+        "code": "613000",
+        "label": "Actividades de telecomunicaciones por satelite"
+    },
+    {
+        "code": "619000",
+        "label": "Otras actividades de telecomunicaciones"
+    },
+    {
+        "code": "620100",
+        "label": "Actividades de programacion informatica"
+    },
+    {
+        "code": "620200",
+        "label": "Actividades de consultoria de informatica y de gestion de instalaciones"
+    },
+    {
+        "code": "620900",
+        "label": "Otras actividades de tecnologia de la informacion y de servicios"
+    },
+    {
+        "code": "631100",
+        "label": "Procesamiento de datos, hospedaje y actividades relacionadas"
+    },
+    {
+        "code": "631200",
+        "label": "Portales web"
+    },
+    {
+        "code": "641100",
+        "label": "Banca central"
+    },
+    {
+        "code": "641910",
+        "label": "Bancos"
+    },
+    {
+        "code": "661200",
+        "label": "Corretaje de valores y de contratos de productos basicos"
+    },
+    {
+        "code": "662200",
+        "label": "Actividades de agentes y corredores de seguros"
+    },
+    {
+        "code": "681010",
+        "label": "Alquiler de bienes inmuebles amoblados o con equipos"
+    },
+    {
+        "code": "681020",
+        "label": "Alquiler de bienes inmuebles propios o arrendados"
+    },
+    {
+        "code": "691000",
+        "label": "Actividades juridicas"
+    },
+    {
+        "code": "692000",
+        "label": "Actividades de contabilidad, teneduria de libros y auditoria"
+    },
+    {
+        "code": "701000",
+        "label": "Actividades de oficinas principales (Holdings)"
+    },
+    {
+        "code": "702000",
+        "label": "Actividades de consultoria de gestion"
+    },
+    {
+        "code": "711001",
+        "label": "Servicios de arquitectura y planificacion urbana y regional"
+    },
+    {
+        "code": "711002",
+        "label": "Servicios de ingenieria y consultoria tecnica"
+    },
+    {
+        "code": "712000",
+        "label": "Ensayos y analisis tecnicos"
+    },
+    {
+        "code": "721000",
+        "label": "Investigaciones y desarrollo experimental en el campo de las ciencias"
+    },
+    {
+        "code": "731000",
+        "label": "Publicidad"
+    },
+    {
+        "code": "741000",
+        "label": "Actividades especializadas de diseño"
+    },
+    {
+        "code": "749000",
+        "label": "Otras actividades profesionales, cientificas y tecnicas n.c.p."
+    },
+    {
+        "code": "750000",
+        "label": "Actividades veterinarias"
+    },
+    {
+        "code": "771000",
+        "label": "Alquiler y arrendamiento de vehiculos automotores"
+    },
+    {
+        "code": "773000",
+        "label": "Alquiler y arrendamiento de otros tipos de maquinaria, equipo y bienes"
+    },
+    {
+        "code": "781000",
+        "label": "Actividades de agencias de empleo"
+    },
+    {
+        "code": "791100",
+        "label": "Actividades de agencias de viajes"
+    },
+    {
+        "code": "801000",
+        "label": "Actividades de seguridad privada"
+    },
+    {
+        "code": "811000",
+        "label": "Actividades combinadas de apoyo a instalaciones"
+    },
+    {
+        "code": "812100",
+        "label": "Limpieza general de edificios"
+    },
+    {
+        "code": "821100",
+        "label": "Actividades combinadas de servicios administrativos de oficina"
+    },
+    {
+        "code": "823000",
+        "label": "Organizacion de convenciones y ferias de negocios"
+    },
+    {
+        "code": "829200",
+        "label": "Actividades de empaque y envasado"
+    },
+    {
+        "code": "829900",
+        "label": "Otras actividades de servicios de apoyo a las empresas n.c.p."
+    },
+    {
+        "code": "841100",
+        "label": "Actividades generales de la administracion publica"
+    },
+    {
+        "code": "851010",
+        "label": "Enseñanza preescolar publica"
+    },
+    {
+        "code": "851020",
+        "label": "Enseñanza preescolar privada"
+    },
+    {
+        "code": "852100",
+        "label": "Enseñanza primaria"
+    },
+    {
+        "code": "852200",
+        "label": "Enseñanza secundaria"
+    },
+    {
+        "code": "853100",
+        "label": "Enseñanza de formacion tecnica"
+    },
+    {
+        "code": "853200",
+        "label": "Enseñanza universitaria"
+    },
+    {
+        "code": "854100",
+        "label": "Enseñanza deportiva y de recreacion"
+    },
+    {
+        "code": "854900",
+        "label": "Cursos de capacitacion n.c.p."
+    },
+    {
+        "code": "861000",
+        "label": "Actividades de hospitales"
+    },
+    {
+        "code": "862001",
+        "label": "Actividades de medicos"
+    },
+    {
+        "code": "862002",
+        "label": "Actividades de odontologos"
+    },
+    {
+        "code": "869010",
+        "label": "Actividades de laboratorios clinicos"
+    },
+    {
+        "code": "869090",
+        "label": "Otras actividades de atencion de la salud humana n.c.p."
+    },
+    {
+        "code": "871000",
+        "label": "Actividades de atencion de enfermeria en instituciones"
+    },
+    {
+        "code": "900001",
+        "label": "Servicios de produccion de espectaculos artisticos"
+    },
+    {
+        "code": "910100",
+        "label": "Actividades de bibliotecas y archivos"
+    },
+    {
+        "code": "931100",
+        "label": "Gestion de instalaciones deportivas"
+    },
+    {
+        "code": "941100",
+        "label": "Actividades de organizaciones empresariales y de empleadores"
+    },
+    {
+        "code": "941200",
+        "label": "Actividades de organizaciones profesionales"
+    },
+    {
+        "code": "949100",
+        "label": "Actividades de organizaciones religiosas"
+    },
+    {
+        "code": "949200",
+        "label": "Actividades de organizaciones politicas"
+    },
+    {
+        "code": "951100",
+        "label": "Reparacion de computadores y equipo periferico"
+    },
+    {
+        "code": "951200",
+        "label": "Reparacion de equipos de comunicacion"
+    },
+    {
+        "code": "960100",
+        "label": "Lavado y limpieza de productos textiles y de piel"
+    },
+    {
+        "code": "960200",
+        "label": "Peluqueria y otros tratamientos de belleza"
+    },
+    {
+        "code": "960300",
+        "label": "Pompas funebres y actividades conexas"
+    },
+    {
+        "code": "960901",
+        "label": "Servicios de adiestramiento, guarderia y peluqueria de mascotas"
+    }
+]

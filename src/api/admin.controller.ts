@@ -213,6 +213,15 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
                 taxId: taxId, // Standardized field name
                 ownerId: userRecord.uid,
                 enabledPlugins: enabledPlugins || [], // [NEW] Sync to Account
+                // Sync new Enterprise details if they exist in the tenant request
+                giro: tenantData.industry || '',
+                direccionComercial: tenantData.address || '',
+                postal_code: tenantData.postal_code || '',
+                city: tenantData.city || '',
+                commune: tenantData.commune || '',
+                region: tenantData.region || '',
+                emailTributario: tenantData.billing_email || '', // we'll map billing_email to emailTributario
+                email_domain: tenantData.email_domain || '',
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
             }, { merge: true }); // Merge to allow partial updates if account exists

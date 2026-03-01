@@ -26,6 +26,10 @@ import { getAllPlugins } from './core/PluginRegistry';
 import { secureContextFactory } from './core/SecureContextFactory';
 import { JobProfilesPage } from './pages/JobProfilesPage';
 import { StaffPage } from './pages/StaffPage';
+import { EmpresaPage } from './pages/b2b/EmpresaPage';
+import { AdminsPage } from './pages/b2b/AdminsPage';
+import { MetricasPage } from './pages/b2b/MetricasPage';
+import { SuscripcionPage } from './pages/b2b/SuscripcionPage';
 
 import { useEffect } from 'react';
 import { MinReport } from '@minreport/sdk'; // Importing SDK via Alias
@@ -155,6 +159,10 @@ const AppRoutes = () => {
                     <Route path="/plugins" element={<ClientPluginsPage />} />
                     <Route path="/job-profiles" element={<JobProfilesPage />} />
                     <Route path="/staff" element={<StaffPage />} />
+                    <Route path="/b2b/empresa" element={<EmpresaPage />} />
+                    <Route path="/b2b/admins" element={<AdminsPage />} />
+                    <Route path="/b2b/metricas" element={<MetricasPage />} />
+                    <Route path="/b2b/suscripcion" element={<SuscripcionPage />} />
                     <Route path="/debug/error-boundary" element={<PluginErrorBoundaryDemo />} />
                     <Route path="/capture" element={<div>Capture View (Not implemented)</div>} />
                     <Route path="/menu" element={<div>Menu View (Not implemented)</div>} />

@@ -7,5 +7,5 @@ import { PluginManifest, PluginLifeCycle } from '../sdk-bundle';
 
 
 export const DISCOVERED_PLUGINS: { manifest: PluginManifest; instance: PluginLifeCycle }[] = [
-
+    
 ];

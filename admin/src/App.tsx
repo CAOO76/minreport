@@ -1,3 +1,4 @@
+import { M3Switch } from './components/M3Switch';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Dashboard } from './pages/Dashboard';
 import { Login } from './pages/Login';
@@ -5,7 +6,6 @@ import { AuthGuard } from './components/AuthGuard';
 import { BrandingSettings } from './pages/BrandingSettings';
 import { PluginsPage } from './pages/PluginsPage';
 import { SDKPage } from './pages/SDKPage';
-import { EnterpriseManagement } from './pages/EnterpriseManagement';
 import { EnterpriseDetail } from './pages/EnterpriseDetail';
 import { AdminLayout } from './components/AdminLayout';
 import { ThemeProvider } from './context/ThemeContext';
@@ -15,7 +15,6 @@ import { EduPage } from './pages/EduPage';
 import { PersonalPage } from './pages/PersonalPage';
 import { PluginExecutionPage } from './pages/PluginExecutionPage';
 import { UIAssetsSettings } from './pages/UIAssetsSettings';
-
 function App() {
     return (
         <ThemeProvider>
@@ -27,11 +26,10 @@ function App() {
 
                             <Route element={<AuthGuard><AdminLayout /></AuthGuard>}>
                                 <Route path="/" element={<Dashboard />} />
-                                <Route path="/enterprises" element={<EnterpriseManagement />} />
-                                <Route path="/enterprises/:id" element={<EnterpriseDetail />} />
 
                                 {/* Segmented Tenant Management Routes */}
                                 <Route path="/b2b" element={<B2BPage />} />
+                                <Route path="/b2b/:id" element={<EnterpriseDetail />} />
                                 <Route path="/personal" element={<PersonalPage />} />
                                 <Route path="/edu" element={<EduPage />} />
 

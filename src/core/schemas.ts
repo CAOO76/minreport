@@ -34,6 +34,14 @@ const enterpriseProfile = z.object({
     company_name: z.string().min(2, "Company name is required"),
     industry: z.string().min(2, "Industry is required"),
     rut: z.string(), // Company TAX ID
+    address: z.string().min(5, "Address is required"),
+    postal_code: z.string().optional().or(z.literal('')),
+    city: z.string().min(2, "City is required").optional().or(z.literal('')),
+    commune: z.string().min(2, "Commune is required").optional().or(z.literal('')),
+    region: z.string().min(2, "Region is required").optional().or(z.literal('')),
+    billing_email: z.string().email("Invalid billing email format"),
+    email_domain: z.string().optional().or(z.literal('')),
+    job_title: z.string().min(2, "Job title is required").optional().or(z.literal('')),
     website: z.string().transform(ensureProtocol).refine(val => {
         if (!val) return true;
         try {

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ChevronRight, AlertCircle, Info } from 'lucide-react';
+import { AlertCircle, Info } from 'lucide-react';
 import { ProfileService } from '../../services/ProfileService';
 import { getAllPlugins } from '../../core/PluginRegistry';
 import { useAuth } from '../../context/AuthContext';
@@ -129,8 +129,8 @@ export const JobProfileManager = () => {
             {/* LISTA DE PERFILES */}
             <aside className="w-full md:w-80 flex flex-col gap-4">
                 <div className="flex items-center justify-between mb-6">
-                    <h2 className="hud-label text-black dark:text-white" data-testid="page-title">
-                        [LISTA_PERFILES]
+                    <h2 className="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400" data-testid="page-title">
+                        Perfiles de Cargo
                     </h2>
                     <Button
                         variant="primary"
@@ -139,7 +139,7 @@ export const JobProfileManager = () => {
                         className="!p-2 !rounded-none"
                         data-testid="add-profile-btn"
                     >
-                        NEW_ROLE
+                        Nuevo Perfil
                     </Button>
                 </div>
 
@@ -159,8 +159,8 @@ export const JobProfileManager = () => {
                         </button>
                     ))}
                     {profiles.length === 0 && (
-                        <div className="p-8 text-center bg-black/5 dark:bg-white/5 rounded-none border border-black/10 dark:border-white/10">
-                            <p className="hud-label text-[10px] text-black/40 dark:text-white/40">NO_PROFILES_FOUND</p>
+                        <div className="p-8 text-center border border-gray-200 dark:border-gray-800">
+                            <p className="text-xs text-gray-400 uppercase tracking-wider">Sin perfiles definidos</p>
                         </div>
                     )}
                 </div>
@@ -178,16 +178,9 @@ export const JobProfileManager = () => {
                     <>
                         <Card className="!p-4">
                             <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-4">
-                                    <div className="w-10 h-10 rounded-none bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center justify-center">
-                                        <ChevronRight className="text-black/40 dark:text-white/40" />
-                                    </div>
-                                    <div>
-                                        <h2 className="text-lg font-black uppercase tracking-tight text-gray-900 dark:text-white">
-                                            {isEditing ? (selectedProfile ? 'MOD_PROFILE' : 'INIT_PROFILE') : selectedProfile?.name}
-                                        </h2>
-                                    </div>
-                                </div>
+                                <h2 className="text-sm font-bold uppercase tracking-tight text-gray-900 dark:text-white">
+                                    {isEditing ? (selectedProfile ? 'Editar Perfil' : 'Nuevo Perfil') : selectedProfile?.name}
+                                </h2>
                                 <div className="flex items-center gap-2">
                                     {!isEditing ? (
                                         <>
@@ -208,7 +201,7 @@ export const JobProfileManager = () => {
 
                         <Card className="flex-1 overflow-y-auto space-y-6">
                             <div>
-                                <label className="hud-label text-black/40 dark:text-white/40 mb-3">[01] Nombre del Perfil</label>
+                                <label className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-3">Nombre del Perfil</label>
                                 <input
                                     type="text"
                                     value={formName}
@@ -223,7 +216,7 @@ export const JobProfileManager = () => {
                             </div>
 
                             <div>
-                                <label className="hud-label text-black/40 dark:text-white/40 mb-3">[02] Descripción Técnica</label>
+                                <label className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-3">Descripción</label>
                                 <textarea
                                     value={formDescription}
                                     onChange={(e) => setFormDescription(e.target.value)}
@@ -237,7 +230,7 @@ export const JobProfileManager = () => {
                             </div>
 
                             <div>
-                                <label className="hud-label text-black/40 dark:text-white/40 mb-5">[03] CORE_PLUGINS_ACCESS</label>
+                                <label className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-5">Acceso a Módulos</label>
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                                     {availablePlugins.map(plugin => (
                                         <div key={plugin.id} className="p-4 rounded-none bg-black/2[bg-black/2] dark:bg-white/5 border border-black/5 dark:border-white/10 flex items-center justify-between">

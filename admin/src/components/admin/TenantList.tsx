@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { getTenants, updateTenantStatus, deleteTenant } from '../../services/api';
-import { Check, X, Clock, Trash2, Eye, Ban, Settings, Blocks, Cpu, ShieldCheck, Zap } from 'lucide-react';
+import { Check, X, Clock, Trash2, Eye, Ban, Settings, Blocks, Cpu, ShieldCheck, Zap, Users } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
+import { useNavigate } from 'react-router-dom';
 import { UserManagementDrawer } from './UserManagementDrawer';
 import { ConfirmationModal } from './ConfirmationModal';
 import { TenantDetailsModal } from './TenantDetailsModal';
@@ -32,6 +33,7 @@ interface TenantListProps {
 
 export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle }) => {
     const { t } = useTranslation();
+    const navigate = useNavigate();
     const [tenants, setTenants] = useState<Tenant[]>([]);
     const [loading, setLoading] = useState(true);
     const { toggleUserPlugin, updateUserStatus } = useAdminUsers();
@@ -243,6 +245,16 @@ export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle })
                                                     title="Módulo Config"
                                                 >
                                                     <Blocks size={18} />
+                                                </button>
+                                            )}
+
+                                            {tenant.status === 'ACTIVE' && type === 'ENTERPRISE' && (
+                                                <button
+                                                    onClick={() => navigate(`/b2b/${tenant.id}`)}
+                                                    className="w-10 h-10 rounded-none bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white flex items-center justify-center transition-all active:scale-90"
+                                                    title="Manage Node / Users"
+                                                >
+                                                    <Users size={18} />
                                                 </button>
                                             )}
 

@@ -8,7 +8,12 @@ import { useAuth } from '../context/AuthContext';
 
 const ClientLayout = () => {
     const { theme, toggleTheme } = useTheme();
-    const { signOut: signOutContext } = useAuth();
+    const { signOut: signOutContext, profile, currentAccount } = useAuth();
+
+    // Detectar rol para controlar visibilidad del sidebar
+    const membership = profile?.memberships?.find((m: any) => m.accountId === currentAccount?.id);
+    const isSubscriptionAdmin = membership?.role === 'SUBSCRIPTION_ADMIN' || membership?.role === 'BILLING_ONLY';
+    // SUBSCRIPTION_ADMIN: solo ve inicio (resto de funciones está en sus propias pestañas internas)
 
     // Clases para los botones del menú (Iconos centrados)
     const navLinkClasses = ({ isActive }: { isActive: boolean }) =>
@@ -59,25 +64,48 @@ const ClientLayout = () => {
                     </div>
 
                     {/* Navegación */}
-                    <nav className="flex-1 flex <SAME> gap-2">
-                        <NavLink to="/" className={navLinkClasses} title="Dashboard">
-                            <span className="material-symbols-rounded text-2xl">dashboard</span>
-                            <span className="sr-only">Dashboard</span>
-                        </NavLink>
-                        <NavLink to="/plugins" className={navLinkClasses} title="Mis Aplicaciones">
-                            <span className="material-symbols-rounded text-2xl">apps</span>
-                            <span className="sr-only">Mis Aplicaciones</span>
-                        </NavLink>
-
-                        {/* E2E Selectors Support */}
-                        <NavLink to="/job-profiles" className={navLinkClasses} title="Job Profiles">
-                            <span className="material-symbols-rounded text-2xl">demography</span>
-                            <span className="sr-only">Job Profiles</span>
-                        </NavLink>
-                        <NavLink to="/staff" className={navLinkClasses} title="Staff">
-                            <span className="material-symbols-rounded text-2xl">badge</span>
-                            <span className="sr-only">Staff</span>
-                        </NavLink>
+                    <nav className="flex-1 flex flex-col gap-2">
+                        {isSubscriptionAdmin ? (
+                            /* ── Nav B2B: Administrador de Suscripción ── */
+                            <>
+                                <NavLink to="/b2b/empresa" className={navLinkClasses} title="Datos de la Empresa">
+                                    <span className="material-symbols-rounded text-2xl">business</span>
+                                    <span className="sr-only">Datos de la Empresa</span>
+                                </NavLink>
+                                <NavLink to="/b2b/admins" className={navLinkClasses} title="Administradores Generales">
+                                    <span className="material-symbols-rounded text-2xl">manage_accounts</span>
+                                    <span className="sr-only">Administradores Generales</span>
+                                </NavLink>
+                                <NavLink to="/b2b/metricas" className={navLinkClasses} title="Métricas de Uso">
+                                    <span className="material-symbols-rounded text-2xl">bar_chart</span>
+                                    <span className="sr-only">Métricas de Uso</span>
+                                </NavLink>
+                                <NavLink to="/b2b/suscripcion" className={navLinkClasses} title="Suscripción MINREPORT">
+                                    <span className="material-symbols-rounded text-2xl">receipt_long</span>
+                                    <span className="sr-only">Suscripción MINREPORT</span>
+                                </NavLink>
+                            </>
+                        ) : (
+                            /* ── Nav Operacional: General Admin y otros ── */
+                            <>
+                                <NavLink to="/" className={navLinkClasses} title="Panel Principal">
+                                    <span className="material-symbols-rounded text-2xl">dashboard</span>
+                                    <span className="sr-only">Panel Principal</span>
+                                </NavLink>
+                                <NavLink to="/plugins" className={navLinkClasses} title="Módulos Instalados">
+                                    <span className="material-symbols-rounded text-2xl">apps</span>
+                                    <span className="sr-only">Módulos Instalados</span>
+                                </NavLink>
+                                <NavLink to="/job-profiles" className={navLinkClasses} title="Perfiles de Cargo">
+                                    <span className="material-symbols-rounded text-2xl">demography</span>
+                                    <span className="sr-only">Perfiles de Cargo</span>
+                                </NavLink>
+                                <NavLink to="/staff" className={navLinkClasses} title="Personal de Terreno">
+                                    <span className="material-symbols-rounded text-2xl">badge</span>
+                                    <span className="sr-only">Personal de Terreno</span>
+                                </NavLink>
+                            </>
+                        )}
                     </nav>
 
                     {/* Botón Salir */}

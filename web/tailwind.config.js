@@ -9,6 +9,7 @@ export default {
         extend: {
             fontFamily: {
                 sans: ['"Atkinson Hyperlegible"', 'sans-serif'],
+                atkinson: ['"Atkinson Hyperlegible"', 'sans-serif'],
             },
             colors: {
                 // Paleta personalizada "Antigravity / Modern"

@@ -40,7 +40,7 @@ export const EnterpriseDetail = () => {
             if (accSnap.exists()) {
                 setAccount({ id: accSnap.id, ...accSnap.data() });
             } else {
-                navigate('/enterprises');
+                navigate('/b2b');
                 return;
             }
 
@@ -82,7 +82,7 @@ export const EnterpriseDetail = () => {
         try {
             await deleteTenant(id!);
             alert('Cuenta eliminada correctamente');
-            navigate('/enterprises');
+            navigate('/b2b');
         } catch (error) {
             console.error('Error deleting account:', error);
             alert('Error al eliminar cuenta');
@@ -128,11 +128,11 @@ export const EnterpriseDetail = () => {
         <div className="space-y-12 animate-in fade-in duration-1000 pb-24">
             <header className="flex flex-col gap-8">
                 <button
-                    onClick={() => navigate('/enterprises')}
+                    onClick={() => navigate('/b2b')}
                     className="group flex items-center gap-3 text-black/40 dark:text-white/40 hover:text-black dark:hover:text-white transition-all text-xs font-black uppercase tracking-widest"
                 >
                     <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" />
-                    Back_to_Inventory
+                    Inventory_Return
                 </button>
 
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-10">

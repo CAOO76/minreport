@@ -148,6 +148,45 @@ export const getAccountsById = async (req: Request, res: Response) => {
       });
     }
 
+    // 3. Search in 'tenants' (Pending requests)
+    const tenantsRef = db.collection('tenants');
+
+    // Search by rut
+    const tenantRutSnapshot = await tenantsRef.where('rut', 'in', finalSearchValues).get();
+    tenantRutSnapshot.docs.forEach(docSnap => {
+      const data = docSnap.data();
+      if (!fullName) fullName = data.applicant_name || data.full_name;
+
+      if (!accounts.find(a => a.accountId === docSnap.id)) {
+        accounts.push({
+          accountId: docSnap.id,
+          accountName: data.company_name || data.institution_name || 'Solicitud Pendiente',
+          type: data.type,
+          role: 'APPLICANT',
+          authEmail: data.email,
+          status: data.status || 'PENDING_APPROVAL'
+        });
+      }
+    });
+
+    // Search by run
+    const tenantRunSnapshot = await tenantsRef.where('run', 'in', finalSearchValues).get();
+    tenantRunSnapshot.docs.forEach(docSnap => {
+      const data = docSnap.data();
+      if (!fullName) fullName = data.full_name || data.applicant_name;
+
+      if (!accounts.find(a => a.accountId === docSnap.id)) {
+        accounts.push({
+          accountId: docSnap.id,
+          accountName: data.type === 'PERSONAL' ? 'Cuenta Personal' : (data.institution_name || 'Solicitud Educacional'),
+          type: data.type,
+          role: 'APPLICANT',
+          authEmail: data.email,
+          status: data.status || 'PENDING_APPROVAL'
+        });
+      }
+    });
+
     if (accounts.length === 0) {
       console.warn(`[AUTH-DIRECTORY] ❌ No accounts found for variants:`, finalSearchValues);
       return res.status(404).json({ message: 'No accounts found for this ID.' });

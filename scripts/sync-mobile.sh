@@ -1,42 +1,27 @@
 #!/bin/zsh
 
 # Script para sincronizar la IP del iMac con el entorno móvil
+# ESTRATEGIA PRINCIPAL: ADB Reverse (USB) → localhost:5173
+# ESTRATEGIA FALLBACK: WiFi IP directa
 
 echo "🔍 Detectando IP local del iMac..."
-
-# Intentar obtener la IP de en0 (WiFi) o en1 (Ethernet)
 IP_ADDRESS=$(ipconfig getifaddr en0 || ipconfig getifaddr en1)
 
 if [ -z "$IP_ADDRESS" ]; then
-    echo "❌ No se pudo detectar la IP local. Verifica tu conexión a red."
-    exit 1
+    echo "⚠️  No se pudo detectar la IP local. Continuando sin actualizar .env..."
+else
+    echo "✅ IP detectada: $IP_ADDRESS"
 fi
-
-echo "✅ IP detectada: $IP_ADDRESS"
 
 # Actualizar .env en la carpeta web
 ENV_FILE="web/.env"
-CAP_JSON="web/capacitor.config.json"
-CAP_TS="web/capacitor.config.ts"
-
-if [ -f "$ENV_FILE" ]; then
+if [ -f "$ENV_FILE" ] && [ ! -z "$IP_ADDRESS" ]; then
     echo "📝 Actualizando IP en $ENV_FILE..."
     sed -i '' "s|VITE_API_URL=.*|VITE_API_URL=http://$IP_ADDRESS:8080|g" "$ENV_FILE"
     echo "🚀 VITE_API_URL -> http://$IP_ADDRESS:8080"
 fi
 
-if [ -f "$CAP_JSON" ]; then
-    echo "📝 Actualizando IP en $CAP_JSON..."
-    sed -i '' "s|\"192.168.1.*\"|\"$IP_ADDRESS\"|g" "$CAP_JSON"
-    sed -i '' "s|http://192.168.1.*:5173|http://$IP_ADDRESS:5173|g" "$CAP_JSON"
-fi
-
-if [ -f "$CAP_TS" ]; then
-    echo "📝 Actualizando IP en $CAP_TS..."
-    sed -i '' "s|url: 'http://192.168.1.*:5173'|url: 'http://$IP_ADDRESS:5173'|g" "$CAP_TS"
-fi
-
-# ADB Reverse (Para asegurar conexión en dispositivos conectados por USB/Emuladores)
+# ADB Reverse (Método preferido: dispositivo USB conectado)
 ADB_PATH=""
 if [ -f "$HOME/Library/Android/sdk/platform-tools/adb" ]; then
     ADB_PATH="$HOME/Library/Android/sdk/platform-tools/adb"
@@ -47,19 +32,40 @@ elif command -v adb &> /dev/null; then
 fi
 
 if [ ! -z "$ADB_PATH" ]; then
-    echo "🔗 Configurando ADB Reverse tcp:5173 y tcp:8080..."
-    $ADB_PATH reverse tcp:5173 tcp:5173
-    $ADB_PATH reverse tcp:8080 tcp:8080
-    
-    # TRUCO MAESTRO: Reverse para la IP antigua (.85) si es posible (solo funciona si el dispositivo lo permite)
-    # Esto es un intento de "cache busting" a nivel de red
-    # $ADB_PATH reverse tcp:5173 tcp:5173
+    DEVICES=$($ADB_PATH devices | grep -v "List of devices" | grep "device$" | wc -l | tr -d ' ')
+    if [ "$DEVICES" -gt "0" ]; then
+        echo "📱 Dispositivo USB detectado. Configurando ADB Reverse (localhost)..."
+        $ADB_PATH reverse tcp:5173 tcp:5173
+        $ADB_PATH reverse tcp:8080 tcp:8080
+        $ADB_PATH reverse tcp:8085 tcp:8085
+        echo "✅ ADB Reverse activo: localhost:5173 → Vite | localhost:8080 → API"
+
+        # Asegurar que capacitor apunta a localhost (ADB reverse)
+        CAP_JSON="web/capacitor.config.json"
+        CAP_TS="web/capacitor.config.ts"
+        if [ -f "$CAP_JSON" ]; then
+            sed -i '' 's|"url": "http://.*:[0-9]*"|"url": "http://localhost:5173"|g' "$CAP_JSON"
+            echo "📝 capacitor.config.json → url: http://localhost:5173"
+        fi
+        if [ -f "$CAP_TS" ]; then
+            sed -i '' "s|url: 'http://.*:[0-9]*'|url: 'http://localhost:5173'|g" "$CAP_TS"
+            echo "📝 capacitor.config.ts  → url: http://localhost:5173"
+        fi
+    else
+        echo "⚠️  Sin dispositivo USB. Usando WiFi: $IP_ADDRESS:5173"
+        # Fallback: IP directa por WiFi
+        CAP_JSON="web/capacitor.config.json"
+        if [ -f "$CAP_JSON" ] && [ ! -z "$IP_ADDRESS" ]; then
+            sed -i '' "s|\"url\": \"http://.*:[0-9]*\"|\"url\": \"http://$IP_ADDRESS:5173\"|g" "$CAP_JSON"
+            echo "📝 capacitor.config.json → url: http://$IP_ADDRESS:5173"
+        fi
+    fi
 else
     echo "⚠️ ADB no encontrado, saltando reverse proxy."
 fi
 
 # Sincronizar con Capacitor
-echo "🔄 Compilando y sincronizando assets nativos con Capacitor..."
-cd web && /usr/local/bin/node ./node_modules/.bin/cap sync android
+echo "🔄 Sincronizando assets nativos con Capacitor..."
+/usr/local/bin/node web/node_modules/.bin/cap sync android --project web
 
-echo "✨ Proceso completado. Reinicia la app en Android Studio."
+echo "✨ Proceso completado. Presiona Run (▶️) en Android Studio."

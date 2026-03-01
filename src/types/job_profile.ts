@@ -1,5 +1,5 @@
 
-export type UserRole = 'OWNER' | 'ADMIN' | 'BILLING_ONLY' | 'OPERATOR';
+export type UserRole = 'OWNER' | 'ADMIN' | 'BILLING_ONLY' | 'OPERATOR' | 'SUBSCRIPTION_ADMIN' | 'GENERAL_ADMIN' | 'INTERNAL_USER';
 
 export type AccountType = 'PERSONAL' | 'BUSINESS' | 'EDUCATIONAL' | 'ENTERPRISE';
 

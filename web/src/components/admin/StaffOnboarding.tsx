@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { UserPlus, Briefcase, Mail, User, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2 } from 'lucide-react';
 import { StaffService, type WorkerData } from '../../services/StaffService';
 import { ProfileService } from '../../services/ProfileService';
 import { useAuth } from '../../context/AuthContext';
@@ -139,54 +139,27 @@ export const StaffOnboarding = () => {
             style={{ fontFamily: "'Atkinson Hyperlegible', sans-serif" }}
         >
             {/* Header */}
-            <div className="mb-10">
-                <div className="flex items-center gap-4 mb-2">
-                    <div className="w-12 h-12 rounded-none bg-black/5 dark:bg-white/5 flex items-center justify-center border border-black/10 dark:border-white/10">
-                        <UserPlus className="w-6 h-6 text-black/60 dark:text-white/60" />
-                    </div>
-                    <div>
-                        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                            Alta de Trabajador
-                        </h1>
-                        <p className="text-sm text-gray-500 dark:text-gray-400">
-                            Vincula un nuevo miembro al equipo
-                        </p>
-                    </div>
-                </div>
+            <div className="mb-10 border-b border-gray-200 dark:border-gray-800 pb-6">
+                <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Alta de Trabajador</h1>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Registra un nuevo colaborador y asígnale un perfil de cargo.</p>
             </div>
 
             {/* Success Message */}
             {success && (
-                <Card className="!p-4 mb-8 !bg-emerald-500/5 dark:!bg-emerald-500/10 !border-emerald-500/20 !rounded-none">
-                    <div className="flex items-center gap-3">
-                        <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
-                        <div>
-                            <p className="hud-label text-emerald-600 dark:text-emerald-400 mb-1">
-                                [SUCCESS_OPERATION]
-                            </p>
-                            <p className="text-sm text-emerald-900 dark:text-emerald-50 pr-4">
-                                Trabajador vinculado exitosamente. Se ha enviado un email con instrucciones.
-                            </p>
-                        </div>
-                    </div>
-                </Card>
+                <div className="flex items-center gap-3 p-4 mb-8 border border-emerald-500/30 bg-emerald-500/5 dark:bg-emerald-500/10">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+                    <p className="text-sm text-emerald-800 dark:text-emerald-300">
+                        Trabajador vinculado exitosamente. Se ha enviado un email con instrucciones de acceso.
+                    </p>
+                </div>
             )}
 
             {/* Error Message */}
             {error && (
-                <Card className="!p-4 mb-8 !bg-red-500/5 dark:!bg-red-500/10 !border-red-500/20 !rounded-none">
-                    <div className="flex items-center gap-3">
-                        <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0" />
-                        <div>
-                            <p className="hud-label text-red-600 dark:text-red-400 mb-1">
-                                [ERROR_DETECTED]
-                            </p>
-                            <p className="text-sm text-red-900 dark:text-red-50">
-                                {error}
-                            </p>
-                        </div>
-                    </div>
-                </Card>
+                <div className="flex items-center gap-3 p-4 mb-8 border border-red-500/30 bg-red-500/5 dark:bg-red-500/10">
+                    <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0" />
+                    <p className="text-sm text-red-800 dark:text-red-300">{error}</p>
+                </div>
             )}
 
             {/* Form */}
@@ -195,8 +168,8 @@ export const StaffOnboarding = () => {
                     <div className="space-y-6">
                         {/* RUN */}
                         <div>
-                            <label className="hud-label text-black/40 dark:text-white/40 mb-3">
-                                [01] RUN del Trabajador
+                            <label className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-3 block">
+                                RUN del Trabajador
                             </label>
                             <input
                                 type="text"
@@ -217,7 +190,6 @@ export const StaffOnboarding = () => {
                                     transition-all
                                     text-xl font-bold tracking-widest
                                 `}
-                                autoComplete="off"
                             />
                             {runError && (
                                 <p className="text-sm text-red-600 dark:text-red-400 mt-1 flex items-center gap-1">
@@ -229,8 +201,8 @@ export const StaffOnboarding = () => {
 
                         {/* Nombre Completo */}
                         <div>
-                            <label className="hud-label text-black/40 dark:text-white/40 mb-3">
-                                [02] Nombre Completo
+                            <label className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-3 block">
+                                Nombre Completo
                             </label>
                             <input
                                 type="text"
@@ -246,8 +218,8 @@ export const StaffOnboarding = () => {
 
                         {/* Email */}
                         <div>
-                            <label className="hud-label text-black/40 dark:text-white/40 mb-3">
-                                [03] Email Corporativo
+                            <label className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-3 block">
+                                Email Corporativo
                             </label>
                             <input
                                 type="email"
@@ -258,13 +230,13 @@ export const StaffOnboarding = () => {
                                 spellCheck="false"
                                 data-lpignore="true"
                                 className={`
-                                    w-full px-5 py-4 rounded-none 
-                                    bg-black/5 dark:bg-white/5 
-                                    border ${emailError ? 'border-red-500' : 'border-black/10 dark:border-white/10'}
-                                    text-gray-900 dark:text-white 
-                                    placeholder-black/20 dark:placeholder-white/10 
-                                    focus:outline-none focus:border-black dark:focus:border-white 
-                                    transition-all font-bold
+                                    w-full px-5 py-4 rounded-none
+                                bg-black /5 dark:bg-white/5
+                            border ${emailError ? 'border-red-500' : 'border-black/10 dark:border-white/10'}
+                            text-gray-900 dark:text-white
+                            placeholder-black/20 dark:placeholder-white/10
+                            focus:outline-none focus:border-black dark:focus:border-white
+                            transition-all font-bold
                                 `}
                             />
                             {emailError && (
@@ -277,20 +249,14 @@ export const StaffOnboarding = () => {
 
                         {/* Selector de Perfil de Cargo */}
                         <div>
-                            <label className="hud-label text-black/40 dark:text-white/40 mb-4">
-                                [04] Perfil de Cargo / Rol Operativo
+                            <label className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-4 block">
+                                Perfil de Cargo
                             </label>
 
                             {profiles.length === 0 ? (
-                                <div className="p-8 text-center bg-black/5 dark:bg-white/5 rounded-none border border-black/10 dark:border-white/10 relative overflow-hidden">
-                                    <div className="absolute inset-0 technical-grid opacity-5 pointer-events-none"></div>
-                                    <AlertCircle className="w-10 h-10 mx-auto mb-4 text-black/20 dark:text-white/20" />
-                                    <p className="hud-label text-[10px] text-black/40 dark:text-white/40">
-                                        REQUIRED_PROFILES_MISSING
-                                    </p>
-                                    <p className="text-[10px] text-black/30 dark:text-white/30 mt-2 font-bold uppercase tracking-tight">
-                                        CREATE_PROFILE_BEFORE_LINKING_WORKER
-                                    </p>
+                                <div className="p-6 text-center border border-gray-200 dark:border-gray-800">
+                                    <p className="text-sm text-gray-500 dark:text-gray-400">No hay perfiles de cargo disponibles.</p>
+                                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Crea al menos un perfil antes de registrar personal.</p>
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -366,26 +332,14 @@ export const StaffOnboarding = () => {
                 </Card>
             </form>
 
-            {/* Info Card */}
-            <Card className="!p-8 mt-10 !bg-black/5 dark:!bg-white/5 !border-black/5 dark:!border-white/5 !rounded-none">
-                <div className="flex items-start gap-5">
-                    <div className="w-12 h-12 rounded-none bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center justify-center flex-shrink-0">
-                        <span className="material-symbols-rounded text-black/40 dark:text-white/40">
-                            info
-                        </span>
-                    </div>
-                    <div>
-                        <p className="hud-label text-black/60 dark:text-white/60 mb-3">
-                            [OPERATIONAL_PROTOCOL]
-                        </p>
-                        <ul className="text-xs font-bold text-black/60 dark:text-white/50 space-y-2 uppercase tracking-tight">
-                            <li>• El trabajador recibirá un email con instrucciones de acceso</li>
-                            <li>• Heredará automáticamente los permisos del perfil asignado</li>
-                            <li>• Podrá configurar su contraseña desde el enlace del email</li>
-                        </ul>
-                    </div>
-                </div>
-            </Card>
+            {/* Info */}
+            <div className="mt-8 border-t border-gray-200 dark:border-gray-800 pt-6">
+                <ul className="text-xs text-gray-500 dark:text-gray-400 space-y-1.5">
+                    <li>• El colaborador recibirá un email con instrucciones de acceso.</li>
+                    <li>• Heredará automáticamente los permisos del perfil asignado.</li>
+                    <li>• Podrá configurar su contraseña desde el enlace del email.</li>
+                </ul>
+            </div>
         </div>
     );
 };

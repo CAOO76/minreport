@@ -5,10 +5,11 @@ const config: CapacitorConfig = {
     appName: 'MinReport',
     webDir: 'dist',
     server: {
-        // 🔥 LIVE RELOAD: Apunta a tu servidor Vite local (DESARROLLO)
-        // ⚠️ Este archivo es para desarrollo con Android Studio
-        // ⚠️ Para APK de producción, usa: npm run build:apk
-        url: 'http://192.168.1.86:5175',
+        // 🔥 LIVE RELOAD via ADB Reverse (USB)
+        // ADB Reverse mapea localhost:5173 del dispositivo → Mac:5173 (Vite web)
+        // Comando: adb reverse tcp:5173 tcp:5173
+        // ✅ No depende de IP WiFi — siempre funciona con cable USB
+        url: 'http://localhost:5173',
         cleartext: true,
         androidScheme: 'http'
     },
