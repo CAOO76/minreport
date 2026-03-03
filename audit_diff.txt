@@ -1,0 +1,1569 @@
+diff --git a/src/api/admin.controller.ts b/src/api/admin.controller.ts
+index dfe80bd..c0e1e81 100644
+--- a/src/api/admin.controller.ts
++++ b/src/api/admin.controller.ts
+@@ -1,10 +1,43 @@
+ import { Request, Response } from 'express';
+-import { db, auth } from '../config/firebase';
+-import { Resend } from 'resend';
++import admin, { db, auth } from '../config/firebase';
++import { EmailService } from '../services/EmailService';
+ import { env } from '../config/env';
+ import { z } from 'zod';
++import { exec } from 'child_process';
++import { promisify } from 'util';
++import fs from 'fs';
++import path from 'path';
++import https from 'https';
++
++const execAsync = promisify(exec);
++
++const downloadFile = async (url: string, dest: string): Promise<void> => {
++    console.log(`[DevOps] Executing download via curl to follow redirects: ${dest}`);
++    // -L follows redirects, -o specifies output file, -s is silent but we want errors
++    await execAsync(`curl -L "${url}" -o "${dest}"`);
++    if (!fs.existsSync(dest) || fs.statSync(dest).size < 100) {
++        throw new Error(`Download failed or file too small: ${dest}`);
++    }
++};
++
++// [NEW] Helper: Audit Action Logger
++const auditAction = async (actorEmail: string, action: string, targetId: string, details?: any) => {
++    try {
++        await db.collection('audit_logs').add({
++            actor: actorEmail,
++            action,
++            targetId,
++            details: details || {},
++            timestamp: admin.firestore.FieldValue.serverTimestamp(),
++            ip: '127.0.0.1' // In a real deployment, extract from req currently not passed here
++        });
++        console.log(`[AUDIT] Action logged: ${action} by ${actorEmail}`);
++    } catch (error) {
++        console.error('[AUDIT] Failed to log action:', error);
++    }
++};
++
+ 
+-const resend = new Resend(env.RESEND_API_KEY);
+ 
+ export const listTenants = async (req: Request, res: Response) => {
+     try {
+@@ -30,13 +63,71 @@ export const listTenants = async (req: Request, res: Response) => {
+     }
+ };
+ 
++export const listAccounts = async (req: Request, res: Response) => {
++    try {
++        const type = req.query.type as string;
++        let query: any = db.collection('accounts');
++
++        if (type) {
++            query = query.where('type', '==', type);
++        }
++
++        const snapshot = await query.orderBy('createdAt', 'desc').get();
++        console.log(`[ADMIN] Found ${snapshot.size} accounts in Firestore (type: ${type || 'ALL'})`);
++
++        const accounts = snapshot.docs.map((doc: any) => ({
++            id: doc.id,
++            ...doc.data()
++        }));
++
++        return res.status(200).json(accounts);
++    } catch (error) {
++        console.error('[ADMIN] Error listing accounts:', error);
++        return res.status(500).json({ error: 'Failed to fetch accounts' });
++    }
++};
++
+ export const adminLogin = async (req: Request, res: Response) => {
+     const { email, password } = req.body;
+ 
++    console.log(`[ADMIN-LOGIN] Attempt for: ${email}`);
+     if (email === env.SUPER_ADMIN_EMAIL && password === env.SUPER_ADMIN_PASSWORD) {
++        // Create or get the Super Admin user in Firebase Auth
++        let uid = 'super-admin-id';
++        try {
++            const user = await auth.getUserByEmail(env.SUPER_ADMIN_EMAIL);
++            uid = user.uid;
++        } catch (e) {
++            // If doesn't exist, Create it (though it should exist by script)
++            const newUser = await auth.createUser({
++                email: env.SUPER_ADMIN_EMAIL,
++                password: env.SUPER_ADMIN_PASSWORD,
++                displayName: 'Super Admin'
++            });
++            uid = newUser.uid;
++            // Set claims
++            await auth.setCustomUserClaims(uid, { role: 'SUPER_ADMIN' });
++        }
++
++        // Generate Custom Token for Client SDK
++        const firebaseToken = await auth.createCustomToken(uid, { role: 'SUPER_ADMIN' });
++
++        // [NEW] Ensure Super Admin document exists in Firestore for Rule compatibility
++        console.log(`[ADMIN] Ensuring Super Admin doc exists for UID: ${uid}`);
++        await db.collection('users').doc(uid).set({
++            uid,
++            email: env.SUPER_ADMIN_EMAIL,
++            displayName: 'Super Admin',
++            role: 'SUPER_ADMIN',
++            status: 'ACTIVE',
++            updatedAt: new Date().toISOString()
++        }, { merge: true });
++        console.log(`[ADMIN] Super Admin doc synced successfully`);
++
+         return res.status(200).json({
+             success: true,
+             token: 'master-admin-access-token',
++            firebaseToken, // Return the custom token
+             user: { email: env.SUPER_ADMIN_EMAIL, role: 'super-admin' }
+         });
+     }
+@@ -44,10 +135,13 @@ export const adminLogin = async (req: Request, res: Response) => {
+     return res.status(401).json({ error: 'Invalid admin credentials' });
+ };
+ 
+-export const updateTenantStatus = async (req: Request, res: Response) => {
++import { AuthRequest } from '../middleware/admin';
++
++export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
+     console.log('Admin Params received:', req.params);
+     const { uid } = req.params;
+-    const { status, rejectionReason } = req.body;
++    const { status, rejectionReason, observations, enabledPlugins } = req.body;
++    const adminEmail = req.user?.email || 'master-admin';
+ 
+     if (!['ACTIVE', 'REJECTED'].includes(status)) {
+         return res.status(400).json({ error: 'Invalid status' });
+@@ -62,6 +156,7 @@ export const updateTenantStatus = async (req: Request, res: Response) => {
+         }
+ 
+         const tenantData = tenantDoc.data()!;
++        const entityName = tenantData.company_name || tenantData.institution_name || tenantData.full_name || 'tu cuenta';
+ 
+         if (status === 'ACTIVE') {
+             // Check if user already exists in Auth to prevent duplication
+@@ -84,78 +179,287 @@ export const updateTenantStatus = async (req: Request, res: Response) => {
+ 
+             // 2. Set Custom Claims
+             await auth.setCustomUserClaims(userRecord.uid, {
+-                role: 'admin',
++                role: 'USER', // Standard system role, consistent with Firestore doc
+                 tier: tenantData.type,
+-                tenantId: userRecord.uid
++                tenantId: uid // Correctly points to Account ID (Tenant), not User ID
+             });
+ 
+-            // 3. Generate "Magic" Activation Link (Password Reset)
+-            const rawLink = await auth.generatePasswordResetLink(tenantData.email);
+-
+-            // Extract oobCode from the raw Firebase link
+-            const url = new URL(rawLink);
+-            const oobCode = url.searchParams.get('oobCode');
+-
+-            // Construct custom activation URL
+-            // In dev: http://localhost:5173/auth/action
+-            // In prod: should use the public domain
++            // 3. Generate Custom Activation Link
++            // We use a custom route that handles both Identity setup and Access setup
++            const accountId = uid;
++            const taxId = 'rut' in tenantData ? tenantData.rut : ('run' in tenantData ? tenantData.run : null);
+             const baseUrl = process.env.NODE_ENV === 'production'
+                 ? 'https://minreport-access.web.app'
+                 : 'http://localhost:5173';
+ 
+-            const actionLink = `${baseUrl}/auth/action?mode=resetPassword&oobCode=${oobCode}`;
+ 
+-            // 4. Update Firestore with uid and status
++            // 4. Update Firestore with uid and status in tenants
+             await tenantRef.update({
+-                status: 'ACTIVE',
++                status: 'APPROVED',
+                 authUid: userRecord.uid,
++                processedAt: new Date().toISOString(),
++                processedBy: adminEmail,
++                observations: observations || null,
++                enabledPlugins: enabledPlugins || [], // [NEW] Persist plugin preferences
+                 updatedAt: new Date().toISOString()
+             });
+ 
+-            // 5. Notify Success with Professional Template
+-            await resend.emails.send({
+-                from: 'MinReport <ops@minreport.com>',
++            // 4.1 Create Account Document (The Business Entity)
++            // We use the tenant ID as the Account ID for simplicity and traceability
++            await db.collection('accounts').doc(accountId).set({
++                id: accountId,
++                name: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
++                type: tenantData.type,
++                taxId: taxId, // Standardized field name
++                ownerId: userRecord.uid,
++                enabledPlugins: enabledPlugins || [], // [NEW] Sync to Account
++                // Sync new Enterprise details if they exist in the tenant request
++                giro: tenantData.industry || '',
++                direccionComercial: tenantData.address || '',
++                postal_code: tenantData.postal_code || '',
++                city: tenantData.city || '',
++                commune: tenantData.commune || '',
++                region: tenantData.region || '',
++                emailTributario: tenantData.billing_email || '', // we'll map billing_email to emailTributario
++                email_domain: tenantData.email_domain || '',
++                createdAt: new Date().toISOString(),
++                updatedAt: new Date().toISOString()
++            }, { merge: true }); // Merge to allow partial updates if account exists
++
++            // 4.5 Create/Sync User Document in 'users' collection for Admin Management
++            // This ensures the user appears in the User Management section
++
++            // Determine role based on segregation B2B requirements
++            // Enterprise (B2B) initial access is always 'BILLING_ONLY' (Management Hub)
++            const userRole = tenantData.type === 'ENTERPRISE'
++                ? 'BILLING_ONLY'
++                : 'OWNER';
++
++            const memberships = [{
++                accountId: accountId,
++                role: userRole,
++                companyName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
++                joinedAt: Date.now()
++            }];
++
++            // Check if user document already exists
++            const existingUserDoc = await db.collection('users').doc(userRecord.uid).get();
++
++            if (existingUserDoc.exists) {
++                // User exists: Check for existing membership to avoid duplicates
++                const userData = existingUserDoc.data();
++                const currentMemberships = userData?.memberships || [];
++                const alreadyMember = currentMemberships.some((m: any) => m.accountId === accountId);
++
++                if (!alreadyMember) {
++                    // Update memberships and protect taxId if not set.
++                    // Use filter + push to REPLACE existing entries for same accountId,
++                    // preventing duplicates from accumulating in the array.
++                    const existingMems = userData?.memberships || [];
++                    const cleanedMems = existingMems.filter((m: any) => m.accountId !== accountId);
++                    cleanedMems.push(...memberships);
++
++                    const updateData: any = {
++                        memberships: cleanedMems,
++                        updatedAt: new Date().toISOString()
++                    };
++
++                    if (!userData?.taxId) {
++                        updateData.taxId = taxId;
++                    }
++
++                    await db.collection('users').doc(userRecord.uid).update(updateData);
++                    console.log(`[ADMIN] Added new membership to existing user ${userRecord.uid}`);
++                } else {
++                    console.log(`[ADMIN] User ${userRecord.uid} already member of ${accountId}, skipping add.`);
++                }
++            } else {
++                // New user, create full document
++                await db.collection('users').doc(userRecord.uid).set({
++                    uid: userRecord.uid,
++                    email: tenantData.email,
++                    taxId: taxId, // NEW: Standardized Identity Document
++                    displayName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
++                    role: 'USER', // Default system role
++                    memberships: memberships, // <--- CRITICAL: Multi-Tenancy Link
++                    lastActiveAccountId: accountId, // Auto-select this account
++                    status: 'APPROVED',
++                    entitlements: {
++                        pluginsEnabled: [],
++                        storageLimit: 1073741824 // 1GB default
++                    },
++                    stats: {
++                        storageUsed: 0,
++                        lastLogin: null
++                    },
++                    createdAt: new Date().toISOString(),
++                    updatedAt: new Date().toISOString()
++                });
++                console.log(`[ADMIN] Created new user document for ${userRecord.uid}`);
++            }
++
++            // 4.6 Sync with user_directory (Pasillo de Puertas Blindadas)
++            // This ensures the user is findable during the new login flow
++            const userDirRef = db.collection('user_directory').doc(taxId);
++            const userDirSnap = await userDirRef.get();
++
++            const accountRef = {
++                accountId: accountId,
++                authEmail: tenantData.email,
++                role: userRole,
++                type: tenantData.type,
++                accountName: entityName,
++                status: 'APPROVED'
++            };
++
++            if (userDirSnap.exists) {
++                const dirData = userDirSnap.data();
++                let accounts = dirData?.accounts || [];
++
++                if (tenantData.type === 'PERSONAL') {
++                    // Rule 1: PERSONAL (1:1 Estricto) - Remove any old reference
++                    accounts = accounts.filter((a: any) => a.type !== 'PERSONAL');
++                } else if (tenantData.type === 'EDUCATIONAL') {
++                    // Rule 2: EDUCATIONAL (1:1 Reemplazable)
++                    // If institution changes, the previous one is purged from directory and deactivated
++                    const prevEdu = accounts.find((a: any) => a.type === 'EDUCATIONAL');
++                    if (prevEdu && prevEdu.accountId !== accountId) {
++                        console.log(`[ADMIN-INTEGRITY] Replacing EDUCATIONAL account: ${prevEdu.accountId} -> ${accountId}`);
++
++                        // Deactivate previous enrollment
++                        await db.collection('tenants').doc(prevEdu.accountId).update({
++                            status: 'REPLACED_BY_NEW_ENROLLMENT',
++                            updatedAt: new Date().toISOString()
++                        });
++                        await db.collection('accounts').doc(prevEdu.accountId).update({
++                            status: 'REPLACED_BY_NEW_ENROLLMENT',
++                            updatedAt: new Date().toISOString()
++                        });
++
++                        // Clean up memberships in main user document
++                        const userDoc = await db.collection('users').doc(userRecord.uid).get();
++                        if (userDoc.exists) {
++                            const currentMems = userDoc.data()?.memberships || [];
++                            const updatedMems = currentMems.filter((m: any) => m.accountId !== prevEdu.accountId);
++                            await db.collection('users').doc(userRecord.uid).update({ memberships: updatedMems });
++                        }
++                    }
++                    accounts = accounts.filter((a: any) => a.type !== 'EDUCATIONAL');
++                } else {
++                    // Rule 3: BUSINESS (1:N) - Just prevent duplicate accountId
++                    accounts = accounts.filter((a: any) => a.accountId !== accountId);
++                }
++
++                accounts.push(accountRef);
++
++                await userDirRef.update({
++                    accounts,
++                    fullName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (dirData?.fullName || entityName),
++                    updatedAt: new Date().toISOString()
++                });
++            } else {
++                await userDirRef.set({
++                    run: taxId,
++                    fullName: tenantData.type === 'PERSONAL' ? tenantData.full_name : entityName,
++                    accounts: [accountRef],
++                    createdAt: new Date().toISOString(),
++                    updatedAt: new Date().toISOString()
++                });
++            }
++
++            // 4.7 Sync with accounts/{id}/members subcollection (NEW: Ensure Titular is in members)
++            const memberRef = db.collection('accounts').doc(accountId).collection('members').doc(userRecord.uid);
++            await memberRef.set({
++                userId: userRecord.uid,
++                email: tenantData.email,
++                fullName: tenantData.type === 'PERSONAL' ? tenantData.full_name : entityName,
++                run: taxId,
++                role: userRole,
++                status: 'ACTIVE',
++                joinedAt: Date.now()
++            });
++
++            const actionLink = `${baseUrl}/setup-access?accountId=${uid}&email=${tenantData.email}&name=${encodeURIComponent(entityName)}&type=${tenantData.type}`;
++
++            // 5. Send Notification Email
++            await EmailService.sendEmail({
++                from: 'MinReport System <support@minreport.com>',
+                 to: tenantData.email,
+-                subject: '¡Bienvenido a MinReport! Activa tu cuenta',
++                subject: 'Solicitud de Registro Aprobada',
+                 html: `
+-                    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #f1f5f9; padding: 40px; border-radius: 16px; color: #334155;">
+-                        <h1 style="color: #4F46E5; margin-bottom: 8px;">¡Bienvenido a MinReport!</h1>
+-                        <p style="font-size: 16px; line-height: 1.6;">Hola, tu solicitud ha sido aprobada con éxito. Estamos emocionados de tenerte a bordo.</p>
+-                        <p style="font-size: 16px; line-height: 1.6;">Para comenzar, debes configurar tu contraseña y activar tu acceso haciendo clic en el siguiente botón:</p>
++                    <div style="font-family: 'Arial', sans-serif; max-width: 600px; color: #334155; padding: 40px 20px;">
++                        <div style="text-align: center; margin-bottom: 32px;">
++                            <img src="https://minreport-access.web.app/pwa-192x192.png" alt="MINREPORT" style="height: 48px; width: auto; opacity: 0.9;" />
++                        </div>
+                         
+-                        <div style="text-align: center; margin: 32px 0;">
+-                            <a href="${actionLink}" style="background: #4F46E5; color: white; padding: 16px 32px; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 16px; display: inline-block;">Activar Mi Cuenta</a>
++                        <div style="background: #F8FAFC; border-left: 4px solid #0F172A; padding: 24px; margin-bottom: 24px;">
++                            <h2 style="color: #0F172A; font-size: 18px; margin-top: 0; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px;">Solicitud Aprobada</h2>
++                            <p style="margin: 0; font-size: 15px; line-height: 1.6;">
++                                Tu solicitud de registro ha sido validada exitosamente para operar en la plataforma.
++                            </p>
++                            
++                            <div style="margin-top: 24px; background: white; border: 1px solid #E2E8F0; padding: 16px; border-radius: 4px;">
++                                <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Entidad Registrada</p>
++                                <p style="margin: 0 0 16px 0; font-size: 16px; color: #0F172A; font-weight: bold;">${entityName}</p>
++                                
++                                <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Correo Asociado</p>
++                                <p style="margin: 0 0 16px 0; font-size: 14px; color: #0F172A;">${tenantData.email}</p>
++                                
++                                <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Tipo de Entorno</p>
++                                <p style="margin: 0; font-size: 14px; color: #0F172A;">${tenantData.type}</p>
++                            </div>
++                            
++                            <p style="margin: 24px 0 0 0; font-size: 15px; line-height: 1.6;">
++                                Por seguridad, deberás verificar tu identidad ingresando tu documento principal antes de establecer tu contraseña exclusiva de acceso.
++                            </p>
+                         </div>
+                         
+-                        <p style="font-size: 14px; color: #64748b;">Si el botón no funciona, copia y pega este enlace en tu navegador:</p>
+-                        <p style="font-size: 12px; word-break: break-all; color: #4F46E5;">${actionLink}</p>
++                        <div style="text-align: center; margin: 32px 0;">
++                            <a href="${actionLink}" style="background: #0F172A; color: white; padding: 16px 32px; text-decoration: none; font-weight: bold; display: inline-block; font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em; border-radius: 2px;">Configurar Acceso Seguro</a>
++                        </div>
+                         
+-                        <hr style="border: 0; border-top: 1px solid #f1f5f9; margin: 32px 0;" />
+-                        <p style="font-size: 12px; color: #94a3b8; text-align: center;">Este es un mensaje automático del sistema de operaciones de MINREPORT.</p>
++                        <hr style="border: 0; border-top: 1px solid #E2E8F0; margin: 32px 0;" />
++                        <p style="font-size: 10px; color: #94A3B8; text-align: center; margin: 0; text-transform: uppercase; letter-spacing: 0.1em;">
++                            MINREPORT SYSTEM INFRASTRUCTURE
++                        </p>
+                     </div>
+                 `
+             });
+-        } else {
+-            // 1. Update Firestore to REJECTED
++
++            // [AUDIT] Log Approval
++            await auditAction(adminEmail, 'APPROVE_TENANT', uid, { type: tenantData.type });
++
++        } else if (status === 'REJECTED') {
+             await tenantRef.update({
+                 status: 'REJECTED',
+                 rejectionReason: rejectionReason || 'No cumple con los requisitos mínimos',
++                processedAt: new Date().toISOString(),
++                processedBy: adminEmail,
++                observations: observations || null,
+                 updatedAt: new Date().toISOString()
+             });
+ 
+             // 2. Notify Rejection
+-            await resend.emails.send({
++            await EmailService.sendEmail({
+                 from: 'MinReport <ops@minreport.com>',
+                 to: tenantData.email,
+-                subject: 'Estado de tu solicitud en MinReport',
++                subject: 'Estado de Solicitud',
+                 html: `
+-                    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #f1f5f9; padding: 40px; border-radius: 16px; color: #334155;">
+-                        <h2 style="color: #64748b;">Estado de tu Solicitud</h2>
+-                        <p style="font-size: 16px; line-height: 1.6;">Lamentamos informarte que tu solicitud de acceso a MinReport no ha sido aprobada en esta ocasión.</p>
+-                        <p><strong>Motivo:</strong> ${rejectionReason || 'La documentación proporcionada no ha podido ser validada conforme a nuestras políticas actuales.'}</p>
+-                        <p style="font-size: 16px; line-height: 1.6;">Puedes volver a postular en el futuro si tu situación cambia o si cuentas con más información comercial.</p>
+-                        <hr style="border: 0; border-top: 1px solid #f1f5f9; margin: 32px 0;" />
+-                        <p style="font-size: 12px; color: #94a3b8; text-align: center;">MINREPORT Operations Security</p>
++                    <div style="font-family: 'Arial', sans-serif; max-width: 600px; color: #334155; padding: 40px 20px;">
++                        <div style="text-align: center; margin-bottom: 32px;">
++                            <img src="https://minreport-access.web.app/pwa-192x192.png" alt="MINREPORT" style="height: 48px; width: auto; opacity: 0.9;" />
++                        </div>
++                        
++                        <div style="background: #FFF1F2; border-left: 4px solid #E11D48; padding: 24px; margin-bottom: 24px;">
++                            <h2 style="color: #E11D48; font-size: 18px; margin-top: 0; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px;">Estado de Solicitud</h2>
++                            <p style="margin: 0; font-size: 15px; line-height: 1.6;">Lamentamos informarte que tu solicitud de acceso no ha sido aprobada.</p>
++                            <p style="margin: 12px 0 0 0; font-size: 15px; line-height: 1.6;"><strong>Motivo:</strong> ${rejectionReason || 'La documentación proporcionada no ha podido ser validada conforme a nuestras políticas actuales.'}</p>
++                        </div>
++                        
++                        <hr style="border: 0; border-top: 1px solid #E2E8F0; margin: 32px 0;" />
++                        <p style="font-size: 10px; color: #94A3B8; text-align: center; margin: 0; text-transform: uppercase; letter-spacing: 0.1em;">
++                            MINREPORT OPERATIONS SECURITY
++                        </p>
+                     </div>
+                 `
+             });
+@@ -168,27 +472,255 @@ export const updateTenantStatus = async (req: Request, res: Response) => {
+     }
+ };
+ 
++/**
++ * DELETE /api/admin/tenants/:uid
++ * Soft Delete: Marks status as DELETED, prevents access, retains data for 30 days.
++ * Also decouples user memberships to preserve identity.
++ */
++export const deleteTenant = async (req: Request, res: Response) => {
++    try {
++        const { uid } = req.params;
++        const actor = (req as any).user?.email || 'system';
++
++        console.log(`[SOFT-DELETE] Initiated for tenant ${uid} by ${actor}`);
++
++        // 1. Update Tenant Status (Soft Delete)
++        await db.collection('tenants').doc(uid).update({
++            status: 'DELETED',
++            deletedAt: new Date().toISOString(),
++            deletedBy: actor
++        });
++
++        // 2. Update Account Status (Blocks Access)
++        const accountRef = db.collection('accounts').doc(uid);
++        const accountDoc = await accountRef.get();
++        if (accountDoc.exists) {
++            await accountRef.update({
++                status: 'DELETED',
++                deletedAt: new Date().toISOString()
++            });
++        }
++
++        // 3. Audit
++        await auditAction(actor, 'SOFT_DELETE_TENANT', uid, { retentionDays: 30 });
++
++        return res.status(200).json({
++            success: true,
++            message: 'Account moved to trash (Soft Delete). Data retained for 30 days.'
++        });
++
++    } catch (error) {
++        console.error('[ADMIN] Error soft-deleting tenant:', error);
++        return res.status(500).json({ error: 'Failed to delete tenant' });
++    }
++};
++
++/**
++ * DELETE /api/admin/tenants/:uid/purge
++ * Hard Delete: Permanently removes data from Firestore and Storage.
++ * Super Admin Only.
++ */
++export const purgeTenant = async (req: Request, res: Response) => {
++    try {
++        const { uid } = req.params;
++        const actor = (req as any).user?.email || 'system';
++
++        console.log(`[HARD-PURGE] Initiated for tenant ${uid} by ${actor}`);
++
++        // 1. Delete Firestore Documents
++        await db.collection('tenants').doc(uid).delete();
++        await db.collection('accounts').doc(uid).delete();
++
++        // 2. Audit
++        await auditAction(actor, 'PURGE_TENANT', uid, { outcome: 'PERMANENT_DATA_LOSS' });
++
++        return res.status(200).json({
++            success: true,
++            message: 'Tenant permanently purged.'
++        });
++    } catch (error) {
++        console.error('[ADMIN] Purge error:', error);
++        return res.status(500).json({ error: 'Failed to purge tenant' });
++    }
++};
+ 
+ export const getBrandingSettings = async (req: Request, res: Response) => {
+-  try {
+-    const doc = await db.collection('settings').doc('branding').get();
+-    if (!doc.exists) {
+-      // Return defaults if not exist
+-      return res.json({ siteName: 'MinReport', primaryColor: '#000000' });
++    try {
++        const doc = await db.collection('settings').doc('branding').get();
++        if (!doc.exists) {
++            return res.json({ siteName: 'MinReport', primaryColor: '#000000' });
++        }
++        res.json(doc.data());
++    } catch (error) {
++        console.error('Error getting branding settings:', error);
++        res.status(500).json({ message: 'Internal server error.' });
+     }
+-    res.json(doc.data());
+-  } catch (error) {
+-    console.error('Error getting branding settings:', error);
+-    res.status(500).json({ message: 'Internal server error.' });
+-  }
+ };
+ 
+ export const updateBrandingSettings = async (req: Request, res: Response) => {
+-  try {
+-    await db.collection('settings').doc('branding').set(req.body, { merge: true });
+-    res.json({ success: true });
+-  } catch (error) {
+-    console.error('Error updating branding settings:', error);
+-    res.status(500).json({ message: 'Internal server error.' });
+-  }
++    try {
++        const settings = req.body;
++        await db.collection('settings').doc('branding').set(settings, { merge: true });
++
++        // 🔥 AUTOMATED DEVOPS: Sync icons with local filesystem (Zero-Code Solution)
++        // We do this in background to not block the UI
++        const syncAssets = async () => {
++            try {
++                const rootDir = process.cwd();
++                const webPublicDir = path.join(rootDir, 'web/public');
++                const androidResDir = path.join(rootDir, 'web/android/app/src/main/res');
++                console.log(`[DevOps] Sync starting. rootDir: ${rootDir}`);
++
++                // 1. Sync PWA Icons (Web Browser)
++                const pwaIconUrl = settings.light?.pwaIcon || settings.dark?.pwaIcon || settings.light?.isotype;
++                if (pwaIconUrl) {
++                    console.log('[DevOps] Syncing PWA Icons...');
++                    const ext = pwaIconUrl.toLowerCase().includes('.svg') ? '.svg' : '.png';
++                    const tempIcon = path.join(rootDir, `temp_pwa_master${ext}`);
++                    await downloadFile(pwaIconUrl, tempIcon);
++
++                    // Sync to Web App
++                    if (fs.existsSync(webPublicDir)) {
++                        if (ext === '.svg') {
++                            // Direct copy for SVGs to maintain vector quality
++                            fs.copyFileSync(tempIcon, path.join(webPublicDir, 'branding/master_icon.svg'));
++                            console.log('[DevOps] SVG Master Icon updated in web/public/branding');
++                        } else {
++                            await execAsync(`sips -z 192 192 "${tempIcon}" --out "${path.join(webPublicDir, 'pwa-192x192.png')}"`);
++                            await execAsync(`sips -z 512 512 "${tempIcon}" --out "${path.join(webPublicDir, 'pwa-512x512.png')}"`);
++                            console.log('[DevOps] PNG PWA Icons updated in web/public');
++                        }
++                    }
++                    if (fs.existsSync(tempIcon)) fs.unlinkSync(tempIcon);
++                }
++
++                // 2. Sync Native Mobile Icons (Android)
++                // [BRANDING-AUTO] Safe-Zone Logic: Enforce 66% safe area to prevent clipping
++                const appIconUrl = settings.dark?.appIcon || settings.light?.appIcon;
++                if (appIconUrl && fs.existsSync(androidResDir)) {
++                    console.log('[DevOps] Syncing Native Mobile Icons with Safe Zone...');
++                    const ext = appIconUrl.toLowerCase().includes('.svg') ? '.svg' : '.png';
++                    const tempAppIcon = path.join(rootDir, `temp_app_master${ext}`);
++                    await downloadFile(appIconUrl, tempAppIcon);
++
++                    const mipmapConfigs = [
++                        { dir: 'mipmap-mdpi', size: 48, adaptive: 108 },
++                        { dir: 'mipmap-hdpi', size: 72, adaptive: 162 },
++                        { dir: 'mipmap-xhdpi', size: 96, adaptive: 216 },
++                        { dir: 'mipmap-xxhdpi', size: 144, adaptive: 324 },
++                        { dir: 'mipmap-xxxhdpi', size: 192, adaptive: 432 },
++                    ];
++
++                    for (const config of mipmapConfigs) {
++                        const targetDir = path.join(androidResDir, config.dir);
++                        if (fs.existsSync(targetDir)) {
++                            // [SAFE-ZONE] Resize to 66% of target and pad with transparency
++                            // For adaptive icons (108dp default), the safe zone is roughly 72px center
++                            const safeSize = Math.floor(config.size * 0.66);
++                            const adaptiveSafeSize = Math.floor(config.adaptive * 0.66);
++
++                            if (ext === '.svg') {
++                                // For SVGs on Mac, sips can still rasterize them to PNG for Android Res
++                                await execAsync(`sips -s format png -z ${safeSize} ${safeSize} "${tempAppIcon}" --out "${path.join(targetDir, 'ic_launcher.png')}"`);
++                                await execAsync(`sips -s format png -z ${adaptiveSafeSize} ${adaptiveSafeSize} "${tempAppIcon}" --out "${path.join(targetDir, 'ic_launcher_foreground.png')}"`);
++                            } else {
++                                await execAsync(`sips -z ${safeSize} ${safeSize} "${tempAppIcon}" --out "${path.join(targetDir, 'ic_launcher.png')}"`);
++                                await execAsync(`sips -z ${adaptiveSafeSize} ${adaptiveSafeSize} "${tempAppIcon}" --out "${path.join(targetDir, 'ic_launcher_foreground.png')}"`);
++                            }
++
++                            // Pad to original size (Centering)
++                            await execAsync(`sips --padToHeightWidth ${config.size} ${config.size} "${path.join(targetDir, 'ic_launcher.png')}"`);
++                            await execAsync(`sips --padToHeightWidth ${config.adaptive} ${config.adaptive} "${path.join(targetDir, 'ic_launcher_foreground.png')}"`);
++
++                            // Compatibility Round Icon
++                            fs.copyFileSync(path.join(targetDir, 'ic_launcher.png'), path.join(targetDir, 'ic_launcher_round.png'));
++                        }
++                    }
++                    console.log('[DevOps] Android Native Icons updated with Safe Zone');
++                    if (fs.existsSync(tempAppIcon)) fs.unlinkSync(tempAppIcon);
++                }
++            } catch (syncErr) {
++                console.error('[DevOps Error] Failed to sync assets to local filesystem:', syncErr);
++            }
++        };
++
++        syncAssets(); // Runs in background
++
++        res.json({ success: true });
++    } catch (error) {
++        console.error('Error updating branding settings:', error);
++        res.status(500).json({ message: 'Internal server error.' });
++    }
++};
++
++// [NEW] System Metrics Endpoint
++export const getSystemMetrics = async (req: Request, res: Response) => {
++    try {
++        const tenantsCount = (await db.collection('tenants').count().get()).data().count;
++        const usersCount = (await db.collection('users').count().get()).data().count;
++
++        // Calculate storage (approximate via aggregation or metadata)
++        // For now, mocking aggregated storage query for performance
++        const storageUsed = 0; // TODO: Implement proper aggregation
++
++        return res.status(200).json({
++            tenants: tenantsCount,
++            users: usersCount,
++            storageUsed,
++            activeSessions: Math.floor(usersCount * 0.2) // Mock estimation
++        });
++    } catch (error) {
++        console.error('Error fetching metrics:', error);
++        return res.status(500).json({ error: 'Failed to metrics' });
++    }
++};
++
++// [NEW] Audit Logs Endpoint
++export const getAuditLogs = async (req: Request, res: Response) => {
++    try {
++        const limit = parseInt(req.query.limit as string) || 50;
++        const snapshot = await db.collection('audit_logs')
++            .orderBy('timestamp', 'desc')
++            .limit(limit)
++            .get();
++
++        const logs = snapshot.docs.map(doc => ({
++            id: doc.id,
++            ...doc.data(),
++            // Convert Timestamp to ISO string if needed, or send as is
++            // timestamp: doc.data().timestamp?.toDate().toISOString()
++        }));
++
++        return res.status(200).json(logs);
++    } catch (error) {
++        console.error('Error fetching audit logs:', error);
++        return res.status(500).json({ error: 'Failed to fetch logs' });
++    }
++};
++export const getUIAssetsSettings = async (req: Request, res: Response) => {
++    try {
++        const doc = await db.collection('settings').doc('ui_assets').get();
++        if (!doc.exists) {
++            return res.json({
++                login_bg: '',
++                dashboard_bg: '',
++                sidebar_bg: ''
++            });
++        }
++        res.json(doc.data());
++    } catch (error) {
++        console.error('Error getting UI assets settings:', error);
++        res.status(500).json({ message: 'Internal server error.' });
++    }
++};
++
++export const updateUIAssetsSettings = async (req: Request, res: Response) => {
++    try {
++        const settings = req.body;
++        await db.collection('settings').doc('ui_assets').set(settings, { merge: true });
++        res.json({ success: true });
++    } catch (error) {
++        console.error('Error updating UI assets settings:', error);
++        res.status(500).json({ message: 'Internal server error.' });
++    }
+ };
+diff --git a/src/api/auth_tunnel.controller.ts b/src/api/auth_tunnel.controller.ts
+new file mode 100644
+index 0000000..bc67e21
+--- /dev/null
++++ b/src/api/auth_tunnel.controller.ts
+@@ -0,0 +1,171 @@
++import { Request, Response } from 'express';
++import { db, auth } from '../config/firebase';
++import { verifyPassword } from '../utils/security';
++
++/**
++ * Normaliza un RUT/RUN chileno en todos los formatos posibles para búsqueda resiliente.
++ * Ejemplo: '77.609.112-K' → ['77609112K', '77609112-K', '77.609.112-K']
++ */
++function getRutVariants(rawTaxId: string): string[] {
++    const variants = new Set<string>();
++
++    // 1. Completamente limpio (sin puntos, sin guión)
++    const clean = rawTaxId.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
++    variants.add(clean);
++
++    if (clean.length >= 2) {
++        const body = clean.slice(0, -1); // números
++        const dv = clean.slice(-1);     // dígito verificador
++
++        // 2. Con guión: XXXXXXXX-K
++        variants.add(`${body}-${dv}`);
++
++        // 3. Con puntos y guión (formato estándar chileno): XX.XXX.XXX-K
++        const formatted = body.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + '-' + dv;
++        variants.add(formatted);
++    }
++
++    // 4. El valor original también, por si el usuario lo ingresó con formato válido
++    const original = rawTaxId.trim().toUpperCase();
++    variants.add(original);
++
++    return Array.from(variants);
++}
++
++/**
++ * @route POST /api/auth/tunnel/challenge
++ * @desc Autentica un usuario por RUT/RUN + clave para una cuenta específica
++ * @access Public (Step 2 of Login)
++ * 
++ * Arquitectura "Pasillo de Puertas Blindadas":
++ * - Identidad primaria: RUT/RUN del usuario (Chile) — NO el email
++ * - El email es solo canal de contacto, no un identificador de acceso
++ * - Resolución: user_directory (RUT/RUN) → /users (memberships) → verificar hash
++ */
++export const challengeAccountAccess = async (req: Request, res: Response) => {
++    try {
++        const { accountId, taxId, password } = req.body;
++
++        if (!accountId || !taxId || !password) {
++            return res.status(400).json({ error: 'accountId, taxId (RUT/RUN) y password son requeridos.' });
++        }
++
++        const variants = getRutVariants(taxId);
++        console.log(`[AUTH-TUNNEL] Challenge: accountId=${accountId}, RUT/RUN variants=${JSON.stringify(variants)}`);
++
++        // ============================================================
++        // PASO 1: Resolver la identidad por RUT/RUN en user_directory
++        // ============================================================
++        let authEmail: string | null = null;
++        let foundVariant: string | null = null;
++
++        for (const variant of variants) {
++            const dirSnap = await db.collection('user_directory').doc(variant).get();
++            if (dirSnap.exists) {
++                const dirData = dirSnap.data();
++                const accountEntry = (dirData?.accounts || []).find((a: any) => a.accountId === accountId);
++                if (accountEntry) {
++                    authEmail = accountEntry.authEmail;
++                    foundVariant = variant;
++                    console.log(`[AUTH-TUNNEL] ✅ Identidad resuelta: user_directory["${variant}"] → email: ${authEmail}`);
++                    break;
++                } else {
++                    console.log(`[AUTH-TUNNEL] 🔍 user_directory["${variant}"] existe pero no tiene accountId ${accountId}. Cuentas: ${JSON.stringify((dirData?.accounts || []).map((a: any) => a.accountId))}`);
++                }
++            } else {
++                console.log(`[AUTH-TUNNEL] 🔍 user_directory["${variant}"] — NO EXISTE`);
++            }
++        }
++
++        // Fallback: buscar directamente en /users por taxId
++        if (!authEmail) {
++            console.warn(`[AUTH-TUNNEL] ⚠️ No encontrado en user_directory. Buscando en /users por taxId...`);
++            const usersSnap = await db.collection('users').where('taxId', 'in', variants).limit(1).get();
++            if (!usersSnap.empty) {
++                authEmail = usersSnap.docs[0].data().email;
++                console.log(`[AUTH-TUNNEL] ✅ Identidad resuelta via /users: email=${authEmail}`);
++            }
++        }
++
++        if (!authEmail) {
++            console.warn(`[AUTH-TUNNEL] ❌ Identidad no encontrada para variants: ${JSON.stringify(variants)}`);
++            return res.status(404).json({ error: 'RUT/RUN no registrado en el sistema.' });
++        }
++
++        // ============================================================
++        // PASO 2: Buscar el usuario en /users por email (resuelto internamente)
++        // ============================================================
++        const userSnapshot = await db.collection('users').where('email', '==', authEmail).limit(1).get();
++
++        if (userSnapshot.empty) {
++            console.warn(`[AUTH-TUNNEL] ❌ No user document para email: ${authEmail}`);
++            return res.status(404).json({ error: 'Cuenta no inicializada. Contacta a soporte.' });
++        }
++
++        const userDoc = userSnapshot.docs[0];
++        const userData = userDoc.data();
++        const memberships: any[] = userData.memberships || [];
++
++        console.log(`[AUTH-TUNNEL] Usuario encontrado: UID=${userDoc.id}, memberships=${memberships.length}`);
++
++        // ============================================================
++        // PASO 3: Buscar el membership — priorizar el que tiene passwordHash
++        // ============================================================
++        const accountMemberships = memberships.filter((m: any) => m.accountId === accountId);
++
++        if (accountMemberships.length === 0) {
++            console.warn(`[AUTH-TUNNEL] ❌ UID ${userDoc.id} no tiene membership para ${accountId}. Cuentas: ${JSON.stringify(memberships.map((m: any) => m.accountId))}`);
++            return res.status(403).json({ error: 'Sin acceso a esta cuenta.' });
++        }
++
++        // Preferir el membership con passwordHash activo
++        const membership = accountMemberships.find((m: any) => !!m.passwordHash) || accountMemberships[0];
++
++        // ============================================================
++        // PASO 4: Verificar contraseña
++        // ============================================================
++        if (!membership.passwordHash) {
++            console.warn(`[AUTH-TUNNEL] ❌ passwordHash ausente para account ${accountId}. UID: ${userDoc.id}`);
++            return res.status(401).json({ error: 'Cuenta no activada. Revisa tu email de bienvenida para crear tu clave de acceso.' });
++        }
++
++        console.log(`[AUTH-TUNNEL-DEBUG] Verificando clave: input_len=${password.length}, hash_len=${membership.passwordHash.length}`);
++
++        const isValid = verifyPassword(password, membership.passwordHash);
++
++        if (!isValid) {
++            console.warn(`[AUTH-TUNNEL] ❌ Contraseña incorrecta. account=${accountId}, UID=${userDoc.id}`);
++            return res.status(401).json({ error: 'RUT/RUN o contraseña incorrectos.' });
++        }
++
++        // ============================================================
++        // PASO 5: Emitir Custom Token con claims de sesión
++        // ============================================================
++        const customToken = await auth.createCustomToken(userDoc.id, {
++            activeAccountId: accountId,
++            role: membership.role,
++            type: membership.type || 'BUSINESS'
++        });
++
++        await userDoc.ref.update({
++            lastActiveAccountId: accountId,
++            lastLogin: new Date().toISOString()
++        });
++
++        console.log(`[AUTH-TUNNEL] ✅ Login exitoso. UID=${userDoc.id}, account=${accountId}, role=${membership.role}`);
++
++        return res.status(200).json({
++            success: true,
++            firebaseToken: customToken,
++            user: {
++                displayName: userData.displayName || userData.fullName,
++                role: membership.role,
++                activeAccountId: accountId
++            }
++        });
++
++    } catch (error) {
++        console.error('[AUTH-TUNNEL] Challenge Error:', error);
++        return res.status(500).json({ error: 'Error interno durante el challenge de autenticación.' });
++    }
++};
+diff --git a/src/api/setup.controller.ts b/src/api/setup.controller.ts
+new file mode 100644
+index 0000000..d389967
+--- /dev/null
++++ b/src/api/setup.controller.ts
+@@ -0,0 +1,248 @@
++import { Request, Response } from 'express';
++import admin, { db } from '../config/firebase';
++import { hashPassword } from '../utils/security';
++import { formatRut } from '../utils/rut';
++
++/**
++ * @route POST /api/auth/tunnel/setup-password
++ * @desc Set the initial password for a specific account access
++ * @access Public (Link from email)
++ */
++export const setupAccountPassword = async (req: Request, res: Response) => {
++    try {
++        const { taxId, accountId, password } = req.body;
++
++        if (!taxId || !accountId || !password) {
++            return res.status(400).json({ error: 'Missing required fields' });
++        }
++
++        if (password.length < 8) {
++            return res.status(400).json({ error: 'Password must be at least 8 characters long' });
++        }
++
++        // Normalize taxId formats for resilient lookup
++        const cleanTaxId = taxId.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
++        const formattedTaxId = formatRut(cleanTaxId);
++        const searchValues = new Set([formattedTaxId, cleanTaxId]);
++
++        if (cleanTaxId.length >= 2) {
++            const body = cleanTaxId.slice(0, -1);
++            const dv = cleanTaxId.slice(-1);
++            searchValues.add(`${body}-${dv}`);
++        }
++        const finalSearchValues = Array.from(searchValues);
++        console.log('[SETUP-CORE] Searching for User with TaxID variants:', finalSearchValues);
++
++        // 1. Find User by taxId
++        const usersRef = db.collection('users');
++        const snapshot = await usersRef.where('taxId', 'in', finalSearchValues).limit(1).get();
++
++        if (snapshot.empty) {
++            console.warn('[SETUP-CORE] Identity not found in /users for variants:', finalSearchValues);
++
++            // FALLBACK 1: Search by Email (Resilience for RUT/RUN mismatch in same profile)
++            const { email: inputEmail } = req.body;
++            if (inputEmail) {
++                console.log('[SETUP-CORE] Attempting fallback search by email:', inputEmail);
++                const { auth } = await import('../config/firebase');
++                try {
++                    const userRecord = await auth.getUserByEmail(inputEmail.toLowerCase().trim());
++                    const userDocRef = db.collection('users').doc(userRecord.uid);
++                    const userDoc = await userDocRef.get();
++
++                    if (userDoc.exists) {
++                        const userData = userDoc.data();
++                        const memberships = userData?.memberships || [];
++                        const isMember = memberships.some((m: any) => m.accountId === accountId);
++
++                        if (isMember) {
++                            console.log('[SETUP-CORE] Identity found via email fallback. UID:', userRecord.uid);
++                            return updateUserPassword(userDocRef, memberships, accountId, password, res, formattedTaxId);
++                        } else {
++                            console.warn('[SETUP-CORE] User found by email but is not a member of account:', accountId);
++                        }
++                    }
++                } catch (e) {
++                    console.error('[SETUP-CORE] Email fallback error:', e);
++                }
++            }
++
++            // FALLBACK 2: Search in Account Members (Internal B2B Workflow)
++            const membersRef = db.collection('accounts').doc(accountId).collection('members');
++            const memberSnapshot = await membersRef.where('run', 'in', finalSearchValues).limit(1).get();
++
++            if (!memberSnapshot.empty) {
++                const memberData = memberSnapshot.docs[0].data();
++                const userId = memberData.userId;
++                console.log('[SETUP-CORE] Identity found in account members. UID:', userId);
++
++                const userDocRef = db.collection('users').doc(userId);
++                const userDoc = await userDocRef.get();
++                const memberships = userDoc.exists ? (userDoc.data()?.memberships || []) : [];
++
++                // If it's a new internal user that hasn't been synced to /users yet
++                if (!userDoc.exists) {
++                    const { auth } = await import('../config/firebase');
++                    const userRecord = await auth.getUser(userId);
++                    const initialMemberships = [{
++                        accountId,
++                        role: memberData.role || 'ADMIN',
++                        type: 'BUSINESS',
++                        status: 'PENDING'
++                    }];
++
++                    await userDocRef.set({
++                        taxId: formattedTaxId,
++                        email: userRecord.email,
++                        fullName: memberData.fullName,
++                        memberships: initialMemberships,
++                        updatedAt: Date.now()
++                    });
++
++                    return updateUserPassword(userDocRef, initialMemberships, accountId, password, res, formattedTaxId);
++                }
++
++                return updateUserPassword(userDocRef, memberships, accountId, password, res, formattedTaxId);
++            }
++
++            // FALLBACK 3: User invited but 'users' doc not synced yet (Legacy/Specific cases)
++            const accountsRef = db.collection('accounts');
++            const delegateSnapshot = await accountsRef.where('primaryOperator.taxId', 'in', finalSearchValues).limit(1).get();
++
++            if (delegateSnapshot.empty) {
++                return res.status(404).json({ error: 'Identity record not found' });
++            }
++
++            // Sync User Doc on the fly
++            const accountDoc = delegateSnapshot.docs[0];
++            const accData = accountDoc.data();
++            const email = accData.primaryOperator.email;
++
++            // Need the Auth UID
++            const { auth } = await import('../config/firebase');
++            const userRecord = await auth.getUserByEmail(email);
++
++            const newUserDocRef = db.collection('users').doc(userRecord.uid);
++            const newMemberships = [{
++                accountId: accountDoc.id,
++                role: 'ADMINISTRADOR OPERATIVO',
++                type: 'BUSINESS',
++                status: 'PENDING'
++            }];
++
++            await newUserDocRef.set({
++                taxId,
++                email,
++                fullName: accData.primaryOperator.name,
++                memberships: newMemberships,
++                updatedAt: Date.now()
++            });
++
++            return updateUserPassword(newUserDocRef, newMemberships, accountId, password, res, formattedTaxId);
++        } else {
++            const userDocRef = snapshot.docs[0].ref;
++            const userData = snapshot.docs[0].data();
++            const memberships = userData.memberships || [];
++            return updateUserPassword(userDocRef, memberships, accountId, password, res, formattedTaxId);
++        }
++    } catch (error) {
++        console.error('[AUTH-TUNNEL] Setup Password Error:', error);
++        return res.status(500).json({ error: 'Failed to establish security credentials' });
++    }
++};
++
++/**
++ * Helper to update user password in memberships and Firebase Auth
++ */
++export const updateUserPassword = async (userDocRef: any, memberships: any[], accountId: string, password: string, res: Response, taxId?: string) => {
++    try {
++        // 2. Find specific membership
++        const mIndex = memberships.findIndex((m: any) => m.accountId === accountId);
++
++        if (mIndex === -1) {
++            return res.status(404).json({ error: 'Membership link not found' });
++        }
++
++        // 3. Hash and Store password
++        const { hashPassword } = await import('../utils/security');
++        const userUid = userDocRef.id;
++        const passwordHash = hashPassword(password);
++        memberships[mIndex].passwordHash = passwordHash;
++        memberships[mIndex].activatedAt = new Date().toISOString();
++        memberships[mIndex].status = 'ACTIVE';
++
++        // 3.5 Sync status to the account's members subcollection
++        try {
++            const memberRef = db.collection('accounts').doc(accountId).collection('members').doc(userUid);
++            const memberDoc = await memberRef.get();
++            if (memberDoc.exists) {
++                await memberRef.update({
++                    status: 'ACTIVE',
++                    activatedAt: admin.firestore.FieldValue.serverTimestamp()
++                });
++                console.log(`[AUTH-TUNNEL] ✅ Member status synced to ACTIVE for UID: ${userUid} in Account: ${accountId}`);
++            }
++        } catch (memberSyncError) {
++            console.error('[AUTH-TUNNEL] ❌ Failed to sync member status:', memberSyncError);
++        }
++
++        // 3.7 Sync status to user_directory (Lookup Cache)
++        if (taxId) {
++            try {
++                // Try several formats as user_directory ID
++                const cleanTaxId = taxId.replace(/\./g, "").replace(/-/g, "").trim().toUpperCase();
++                const variants = [taxId, cleanTaxId];
++                if (cleanTaxId.length >= 2) variants.push(`${cleanTaxId.slice(0, -1)}-${cleanTaxId.slice(-1)}`);
++
++                for (const variant of variants) {
++                    const dirRef = db.collection('user_directory').doc(variant);
++                    const dirSnap = await dirRef.get();
++                    if (dirSnap.exists) {
++                        const dirData = dirSnap.data() || {};
++                        const dirAccounts = dirData.accounts || [];
++                        const accIdx = dirAccounts.findIndex((a: any) => a.accountId === accountId);
++                        if (accIdx !== -1) {
++                            dirAccounts[accIdx].status = 'ACTIVE';
++                            await dirRef.update({ accounts: dirAccounts });
++                            console.log(`[AUTH-TUNNEL] ✅ user_directory synced to ACTIVE for TaxID: ${variant}`);
++                        }
++                    }
++                }
++            } catch (dirSyncError) {
++                console.error('[AUTH-TUNNEL] ❌ Failed to sync user_directory:', dirSyncError);
++            }
++        }
++
++        // 4. Sync with Firebase Auth
++        console.log(`[AUTH-TUNNEL] Syncing password with Firebase Auth for UID: ${userUid}`);
++        const { auth } = await import('../config/firebase');
++        await auth.updateUser(userUid, {
++            password: password,
++            emailVerified: true
++        });
++
++        // 5. Update the User document
++        await userDocRef.update({
++            memberships: memberships,
++            updatedAt: Date.now()
++        });
++
++        // 6. Update the Tenant/Request status if needed
++        const tenantSnap = await db.collection('tenants').doc(accountId).get();
++        if (tenantSnap.exists) {
++            await tenantSnap.ref.update({
++                status: 'ACTIVE',
++                activatedAt: new Date().toISOString()
++            });
++        }
++
++        return res.status(200).json({
++            success: true,
++            message: 'Password established successfully. You can now log in.'
++        });
++
++    } catch (error) {
++        console.error('[AUTH-TUNNEL] Setup Password Error:', error);
++        return res.status(500).json({ error: 'Failed to establish security credentials' });
++    }
++};
+diff --git a/src/api/staff.controller.ts b/src/api/staff.controller.ts
+new file mode 100644
+index 0000000..c0be698
+--- /dev/null
++++ b/src/api/staff.controller.ts
+@@ -0,0 +1,384 @@
++import { Request, Response, Router } from 'express';
++import admin, { db, auth } from '../config/firebase';
++import { EmailService } from '../services/EmailService';
++import { env } from '../config/env';
++
++const router = Router();
++
++
++/**
++ * POST /api/staff/create-worker
++ * Crea un trabajador en Firebase Auth y envía email de configuración de contraseña
++ * 
++ * Este endpoint es llamado por StaffService.recruitWorker() durante el onboarding
++ */
++router.post('/create-worker', async (req: Request, res: Response) => {
++    try {
++        const { email, displayName, run, accountId, accountName } = req.body;
++
++        if (!email || !displayName || !run || !accountId || !accountName) {
++            return res.status(400).json({ error: 'Email, nombre, RUN, cuenta y nombre de cuenta son requeridos' });
++        }
++
++        const normalizedEmail = email.toLowerCase().trim();
++
++        console.log('[Staff API] Creando trabajador:', { email: normalizedEmail, displayName, accountName });
++
++        // 1. Verificar si el usuario ya existe
++        let userRecord;
++        let isNewUser = false;
++        try {
++            userRecord = await auth.getUserByEmail(normalizedEmail);
++            console.log('[Staff API] Usuario ya existe:', userRecord.uid);
++        } catch (error: any) {
++            if (error.code !== 'auth/user-not-found') {
++                throw error;
++            }
++            // 2. Crear usuario en Firebase Auth if not exists
++            userRecord = await auth.createUser({
++                email: normalizedEmail,
++                emailVerified: false,
++                displayName: displayName,
++                disabled: false
++            });
++            isNewUser = true;
++            console.log('[Staff API] Usuario creado con UID:', userRecord.uid);
++        }
++
++        // 3. Generar link de configuración de contraseña
++        const rawLink = await auth.generatePasswordResetLink(normalizedEmail);
++        const url = new URL(rawLink);
++        const oobCode = url.searchParams.get('oobCode');
++
++        // 4. Construir link personalizado para setup-access
++        const baseUrl = process.env.NODE_ENV === 'production'
++            ? 'https://minreport-access.web.app'
++            : 'http://localhost:5173';
++
++        const encodedName = encodeURIComponent(displayName || 'Miembro del Equipo');
++        const encodedAccountName = encodeURIComponent(accountName);
++        const setupLink = `${baseUrl}/setup-access?accountId=${accountId}&email=${normalizedEmail}&name=${encodedName}&accountName=${encodedAccountName}&type=BUSINESS&oobCode=${oobCode}`;
++
++        // 5. Enviar email de bienvenida con RESEND
++        try {
++            await EmailService.sendEmail({
++                from: 'MinReport Onboarding <no-reply@minreport.com>',
++                to: normalizedEmail,
++                subject: 'Configuración de Acceso Operativo',
++                html: `
++                    <div style="font-family: 'Arial', sans-serif; max-width: 600px; color: #334155; padding: 40px 20px;">
++                        <div style="text-align: center; margin-bottom: 32px;">
++                            <img src="https://minreport-access.web.app/pwa-192x192.png" alt="MINREPORT" style="height: 48px; width: auto; opacity: 0.9;" />
++                        </div>
++                        
++                        <div style="background: #F8FAFC; border-left: 4px solid #0F172A; padding: 24px; border-radius: 0px; margin-bottom: 24px;">
++                            <p style="margin: 0; font-size: 16px; line-height: 1.6; font-weight: bold; color: #0F172A; text-transform: uppercase;">
++                                ONBOARDING: ${displayName}
++                            </p>
++                            <p style="margin: 12px 0 0 0; font-size: 15px; line-height: 1.6;">
++                                Has sido añadido como operador activo al sistema para la entidad <strong>${accountName}</strong>. Para habilitar tu ingreso, necesitas configurar tu contraseña de cuenta.
++                            </p>
++
++                            <div style="margin-top: 24px; background: white; border: 1px solid #E2E8F0; padding: 16px; border-radius: 4px;">
++                                <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Entidad Vinculada</p>
++                                <p style="margin: 0 0 16px 0; font-size: 16px; color: #0F172A; font-weight: bold;">${accountName}</p>
++                                
++                                <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Correo Asociado</p>
++                                <p style="margin: 0 0 16px 0; font-size: 14px; color: #0F172A;">${normalizedEmail}</p>
++                                
++                                <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Tipo de Entorno</p>
++                                <p style="margin: 0; font-size: 14px; color: #0F172A;">Operación Corporativa (BUSINESS)</p>
++                            </div>
++                            
++                            <p style="margin: 24px 0 0 0; font-size: 15px; line-height: 1.6;">
++                                Por seguridad, deberás verificar tu identidad ingresando tu documento principal antes de establecer tu contraseña exclusiva de acceso.
++                            </p>
++                        </div>
++
++                        <div style="text-align: center; margin: 32px 0;">
++                            <a href="${setupLink}" 
++                               style="background: #0F172A; 
++                                      color: white; 
++                                      padding: 16px 32px; 
++                                      text-decoration: none; 
++                                      font-weight: bold; 
++                                      display: inline-block;
++                                      font-size: 14px;
++                                      text-transform: uppercase;
++                                      letter-spacing: 0.1em;
++                                      border-radius: 2px;">
++                                Configurar Credenciales
++                            </a>
++                        </div>
++
++                        <div style="background: #FFFBEB; border-left: 4px solid #F59E0B; padding: 16px; border-radius: 0px; margin-top: 24px;">
++                            <p style="margin: 0; font-size: 14px; color: #92400E;">
++                                <strong>IMPORTANTE:</strong> Este enlace de seguridad expira en 24 horas por políticas de acceso.
++                            </p>
++                        </div>
++
++                        <hr style="border: 0; border-top: 1px solid #E2E8F0; margin: 32px 0;" />
++
++                        <p style="font-size: 10px; color: #94A3B8; text-align: center; margin: 0; text-transform: uppercase; letter-spacing: 0.1em;">
++                            MINREPORT SECURITY INFRASTRUCTURE
++                        </p>
++                    </div>
++                `
++            });
++
++            console.log('[Staff API] Email de bienvenida enviado a:', normalizedEmail);
++        } catch (emailError) {
++            console.error('[Staff API] Error al enviar email:', emailError);
++        }
++
++        // [ACTO F] BACKEND PERSISTENCE: Coordinated Writes
++        try {
++            console.log('[Staff API] Executing structural writes for:', run);
++            const batch = db.batch();
++
++            // 1. user_directory (Pasillo de Puertas)
++            const userDirRef = db.collection('user_directory').doc(run);
++            batch.set(userDirRef, {
++                run: run,
++                fullName: displayName,
++                accounts: admin.firestore.FieldValue.arrayUnion({
++                    accountId: accountId,
++                    authEmail: normalizedEmail,
++                    role: 'OPERATOR',
++                    type: 'BUSINESS',
++                    accountName: accountName,
++                    status: 'PENDING'
++                }),
++                updatedAt: new Date().toISOString()
++            }, { merge: true });
++
++            // 2. user profile (/users) - Atomic but careful with taxId
++            const userProfileRef = db.collection('users').doc(userRecord.uid);
++            const userProfileSnap = await userProfileRef.get();
++            const existingTaxId = userProfileSnap.exists ? userProfileSnap.data()?.taxId : null;
++
++            const membership = {
++                accountId: accountId,
++                role: 'OPERATOR',
++                companyName: accountName,
++                joinedAt: Date.now()
++            };
++
++            const userUpdate: any = {
++                uid: userRecord.uid,
++                email: normalizedEmail,
++                fullName: displayName,
++                role: 'USER',
++                memberships: admin.firestore.FieldValue.arrayUnion(membership),
++                status: 'PENDING',
++                updatedAt: Date.now()
++            };
++
++            // Only set taxId if not already present in the profile
++            if (!existingTaxId) {
++                userUpdate.taxId = run;
++            }
++
++            batch.set(userProfileRef, userUpdate, { merge: true });
++
++            // 3. account members (/accounts/{id}/members) - THE MISSING LINK
++            const memberRef = db.collection('accounts').doc(accountId).collection('members').doc(userRecord.uid);
++            batch.set(memberRef, {
++                userId: userRecord.uid,
++                email: normalizedEmail,
++                fullName: displayName,
++                run: run,
++                role: 'OPERATOR',
++                status: 'PENDING',
++                invitedAt: Date.now()
++            });
++
++            await batch.commit();
++            console.log('[Staff API] ✅ Structural integrity writes completed for operator');
++        } catch (dirErr) {
++            console.error('[Staff API] ⚠️ Failed to force background persistence:', dirErr);
++        }
++
++        return res.status(201).json({
++            uid: userRecord.uid,
++            isNewUser: isNewUser,
++            message: isNewUser ? 'Usuario creado y email de configuración enviado' : 'Vínculo actualizado y email de acceso enviado'
++        });
++
++    } catch (error: any) {
++        console.error('[Staff API] Error al crear trabajador:', error);
++        return res.status(500).json({
++            error: error.message || 'Error al crear trabajador'
++        });
++    }
++});
++
++/**
++ * POST /api/staff/designate-admin
++ * Designa un Administrador General para una cuenta B2B.
++ * Envía invitación y vincula con rol ADMIN.
++ */
++router.post('/designate-admin', async (req: Request, res: Response) => {
++    try {
++        const { email, displayName, run, accountId, accountName } = req.body;
++
++        if (!email || !displayName || !run || !accountId || !accountName) {
++            return res.status(400).json({ error: 'Email, nombre, RUN y cuenta son requeridos' });
++        }
++
++        const normalizedEmail = email.toLowerCase().trim();
++        console.log('[Staff API] Designando Administrador General:', { email: normalizedEmail, accountName });
++
++        // 1. Verificar/Crear Usuario
++        let userRecord;
++        let isNewUser = false;
++        try {
++            userRecord = await auth.getUserByEmail(normalizedEmail);
++        } catch (error: any) {
++            if (error.code !== 'auth/user-not-found') throw error;
++            userRecord = await auth.createUser({
++                email: normalizedEmail,
++                emailVerified: false,
++                displayName: displayName,
++                disabled: false
++            });
++            isNewUser = true;
++        }
++
++        // 2. Generar Link de Configuración
++        const rawLink = await auth.generatePasswordResetLink(normalizedEmail);
++        const url = new URL(rawLink);
++        const oobCode = url.searchParams.get('oobCode');
++
++        const baseUrl = process.env.NODE_ENV === 'production'
++            ? 'https://minreport-access.web.app'
++            : 'http://localhost:5173';
++
++        const encodedName = encodeURIComponent(displayName);
++        const encodedAccountName = encodeURIComponent(accountName);
++        const setupLink = `${baseUrl}/setup-access?accountId=${accountId}&email=${normalizedEmail}&name=${encodedName}&accountName=${encodedAccountName}&type=BUSINESS&oobCode=${oobCode}`;
++
++        // 3. Enviar Invitación (Email)
++        try {
++            await EmailService.sendEmail({
++                from: 'MinReport <no-reply@minreport.com>',
++                to: normalizedEmail,
++                subject: `Designación: Administrador General - ${accountName}`,
++                html: `
++                    <div style="font-family: 'Arial', sans-serif; max-width: 600px; color: #334155; padding: 40px 20px;">
++                        <div style="text-align: center; margin-bottom: 32px;">
++                            <img src="https://minreport-access.web.app/pwa-192x192.png" alt="MINREPORT" style="height: 48px; width: auto;" />
++                        </div>
++                        
++                        <div style="background: #F8FAFC; border-left: 4px solid #C68346; padding: 24px; margin-bottom: 24px;">
++                            <p style="margin: 0; font-size: 16px; font-weight: bold; color: #0F172A; text-transform: uppercase; letter-spacing: 0.05em;">
++                                Designación de Cargo: Administrador General
++                            </p>
++                            <p style="margin: 16px 0 0 0; font-size: 15px; line-height: 1.6;">
++                                Estimado(a) ${displayName}, has sido formalmente designado como <strong>Administrador General</strong> para gestionar la cuenta corporativa de <strong>${accountName}</strong> en MinReport.
++                            </p>
++                            
++                            <div style="margin-top: 24px; background: white; border: 1px solid #E2E8F0; padding: 16px;">
++                                <p style="margin: 0 0 4px 0; font-size: 11px; color: #64748B; text-transform: uppercase; font-weight: bold;">Empresa que designa</p>
++                                <p style="margin: 0; font-size: 16px; color: #0F172A; font-weight: bold;">${accountName}</p>
++                            </div>
++                        </div>
++
++                        <p style="font-size: 14px; line-height: 1.6; color: #475569;">
++                            Este cargo te otorga privilegios para gestionar el personal operativo, configurar perfiles de cargo y administrar la seguridad interna de la empresa en la plataforma.
++                        </p>
++
++                        <div style="text-align: center; margin: 32px 0;">
++                            <a href="${setupLink}" 
++                               style="background: #C68346; color: white; padding: 16px 32px; text-decoration: none; font-weight: bold; display: inline-block; font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em; border-radius: 2px;">
++                                Configurar Credenciales de Acceso
++                            </a>
++                        </div>
++
++                        <p style="font-size: 12px; color: #94A3B8; text-align: center; margin-top: 40px;">
++                            Este es un proceso interno de la empresa. Si no reconoces esta designación, contacta al administrador de TI de tu organización.
++                        </p>
++                    </div>
++                `
++            });
++        } catch (e) {
++            console.error('[Staff API] Error enviando email de administrador:', e);
++        }
++
++        // 4. Sincronización de Perfil: Coordinated Writes
++        try {
++            console.log('[Staff API] Executing structural writes for admin:', run);
++            const batch = db.batch();
++
++            const membership = {
++                accountId: accountId,
++                role: 'ADMIN',
++                companyName: accountName,
++                joinedAt: Date.now()
++            };
++
++            // 1. user_directory
++            const userDirRef = db.collection('user_directory').doc(run);
++            batch.set(userDirRef, {
++                run: run,
++                fullName: displayName,
++                accounts: admin.firestore.FieldValue.arrayUnion({
++                    accountId: accountId,
++                    authEmail: normalizedEmail,
++                    role: 'ADMIN',
++                    type: 'BUSINESS',
++                    accountName: accountName,
++                    status: 'PENDING'
++                }),
++                updatedAt: new Date().toISOString()
++            }, { merge: true });
++
++            // 2. user profile (/users) - Atomic but careful with taxId
++            const userProfileRef = db.collection('users').doc(userRecord.uid);
++            const userProfileSnap = await userProfileRef.get();
++            const existingTaxId = userProfileSnap.exists ? userProfileSnap.data()?.taxId : null;
++
++            const userUpdate: any = {
++                uid: userRecord.uid,
++                email: normalizedEmail,
++                fullName: displayName,
++                role: 'USER',
++                memberships: admin.firestore.FieldValue.arrayUnion(membership),
++                status: 'PENDING',
++                updatedAt: Date.now()
++            };
++
++            // Only set taxId if not already present in the profile
++            if (!existingTaxId) {
++                userUpdate.taxId = run;
++            }
++
++            batch.set(userProfileRef, userUpdate, { merge: true });
++
++            // 3. account members (/accounts/{id}/members) - THE MISSING LINK
++            const memberRef = db.collection('accounts').doc(accountId).collection('members').doc(userRecord.uid);
++            batch.set(memberRef, {
++                userId: userRecord.uid,
++                email: normalizedEmail,
++                fullName: displayName,
++                run: run,
++                role: 'ADMIN',
++                status: 'PENDING',
++                invitedAt: Date.now()
++            });
++
++            await batch.commit();
++            console.log('[Staff API] ✅ Structural integrity writes completed for admin');
++        } catch (dirErr) {
++            console.error('[Staff API] ⚠️ Failed to force background persistence:', dirErr);
++        }
++
++        return res.status(201).json({ uid: userRecord.uid, isNewUser });
++
++    } catch (error: any) {
++        console.error('[Staff API] Error designating admin:', error);
++        return res.status(500).json({ error: error.message });
++    }
++});
++
++export default router;

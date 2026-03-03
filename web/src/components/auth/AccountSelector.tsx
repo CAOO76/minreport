@@ -31,7 +31,8 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
         onSelectAccount(account);
     };
 
-    const renderIcon = (type: string) => {
+    const renderIcon = (type?: string) => {
+        if (!type) return 'account_circle';
         switch (type.toUpperCase()) {
             case 'BUSINESS':
             case 'ENTERPRISE':
@@ -45,14 +46,17 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
         }
     };
 
-    const getStatusLabel = (status: string) => {
-        switch (status.toUpperCase()) {
+    const getStatusLabel = (status?: string) => {
+        if (!status) return 'ACTIVO'; // Fallback
+        const s = status.toString().toUpperCase();
+        switch (s) {
             case 'PENDING_APPROVAL': return 'EN REVISIÓN';
             case 'APPROVED': return 'APROBADO';
             case 'ACTIVE': return 'ACTIVO';
             case 'REJECTED': return 'RECHAZADO';
             case 'SUSPENDED': return 'SUSPENDIDO';
-            default: return status;
+            case 'PENDING': return 'INVITACIÓN';
+            default: return s;
         }
     };
 

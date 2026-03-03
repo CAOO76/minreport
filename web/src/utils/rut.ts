@@ -36,3 +36,20 @@ export const validateRut = (rut: string): boolean => {
 
     return dv === expectedDv;
 };
+export type EntityType = 'PERSONAL' | 'EXTRANJERO_PROVISORIO' | 'B2B_TRADICIONAL' | 'B2B_GOBIERNO' | 'B2B_MODERNO' | 'SECTORIAL_INVALIDO';
+
+export const getEntityTypeByRut = (rut: string | number): EntityType => {
+    const cleanRut = String(rut).replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
+    const body = cleanRut.slice(0, -1);
+    const rutNumber = parseInt(body, 10);
+
+    if (isNaN(rutNumber)) return 'SECTORIAL_INVALIDO';
+
+    if (rutNumber < 40000000) return 'PERSONAL';
+    if (rutNumber < 50000000) return 'EXTRANJERO_PROVISORIO';
+    if (rutNumber < 60000000) return 'B2B_TRADICIONAL';
+    if (rutNumber < 70000000) return 'B2B_GOBIERNO';
+    if (rutNumber < 100000000) return 'B2B_MODERNO';
+
+    return 'SECTORIAL_INVALIDO'; // +100 millones (IPE, IPA, etc.)
+};

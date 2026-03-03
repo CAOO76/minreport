@@ -4,7 +4,7 @@
     "webDir": "dist",
     "server": {
         "androidScheme": "http",
-        "url": "http://192.168.1.85:5173",
+        "url": "http://192.168.1.87:5173",
         "cleartext": true,
         "allowNavigation": [
             "localhost",

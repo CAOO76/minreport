@@ -20,6 +20,18 @@ export const hashPassword = (password: string): string => {
 };
 
 /**
+ * Generates a secure, cryptographically random token for setup links.
+ * Used instead of Firebase Auth reset links since we decouple identity from email.
+ * @returns { token: string, hashedToken: string, expiresAt: number }
+ */
+export const generateSetupToken = () => {
+    const rawToken = randomBytes(32).toString('base64url'); // URL safe
+    const hashedToken = pbkdf2Sync(rawToken, 'setup_salt', 1000, 32, 'sha256').toString('hex');
+    const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+    return { rawToken, hashedToken, expiresAt };
+};
+
+/**
  * Verifies a password against a stored hash
  */
 export const verifyPassword = (password: string, storedHash: string): boolean => {

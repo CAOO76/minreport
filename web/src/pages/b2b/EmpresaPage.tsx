@@ -445,24 +445,24 @@ export const EmpresaPage = () => {
                         )}
                     </div>
                     <div>
-                        <label className={LBL}>Código Postal</label>
-                        <input type="text" disabled={!editing} autoComplete="off"
-                            value={form.postalCode} onChange={e => f('postalCode', e.target.value)} className={INP} placeholder="Cód. Postal (opcional)" />
+                        <label className={LBL}>Código Postal <span className="text-[8px] opacity-40 italic ml-1">(Auto)</span></label>
+                        <input type="text" disabled autoComplete="off"
+                            value={form.postalCode} className={INP + ' cursor-not-allowed opacity-50'} placeholder="Cód. Postal" />
                     </div>
                     <div>
-                        <label className={LBL}>Región</label>
-                        <input type="text" disabled={!editing} autoComplete="off"
-                            value={form.regionComercial} onChange={e => f('regionComercial', e.target.value)} className={INP} />
+                        <label className={LBL}>Región <span className="text-[8px] opacity-40 italic ml-1">(Auto)</span></label>
+                        <input type="text" disabled autoComplete="off"
+                            value={form.regionComercial} className={INP + ' cursor-not-allowed opacity-50'} />
                     </div>
                     <div>
-                        <label className={LBL}>Ciudad</label>
-                        <input type="text" disabled={!editing} autoComplete="off"
-                            value={form.ciudadComercial} onChange={e => f('ciudadComercial', e.target.value)} className={INP} />
+                        <label className={LBL}>Ciudad <span className="text-[8px] opacity-40 italic ml-1">(Auto)</span></label>
+                        <input type="text" disabled autoComplete="off"
+                            value={form.ciudadComercial} className={INP + ' cursor-not-allowed opacity-50'} />
                     </div>
                     <div>
-                        <label className={LBL}>Comuna</label>
-                        <input type="text" disabled={!editing} autoComplete="off"
-                            value={form.comunaComercial} onChange={e => f('comunaComercial', e.target.value)} className={INP} />
+                        <label className={LBL}>Comuna <span className="text-[8px] opacity-40 italic ml-1">(Auto)</span></label>
+                        <input type="text" disabled autoComplete="off"
+                            value={form.comunaComercial} className={INP + ' cursor-not-allowed opacity-50'} />
                     </div>
                     <div className="md:col-span-3">
                         <label className={LBL}>Dirección Sucursal Operativa <span className="font-normal normal-case text-gray-400">(si aplica)</span></label>

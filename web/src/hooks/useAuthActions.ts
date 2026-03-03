@@ -10,7 +10,7 @@ interface UseAuthActionsReturn {
     loading: boolean;
     error: string;
     checkIdentity: (run: string) => Promise<void>;
-    loginToAccount: (account: AccountReference, password: string) => Promise<void>;
+    loginToAccount: (account: AccountReference, password: string, taxId: string) => Promise<void>;
     resetFlow: () => void;
 }
 
@@ -71,7 +71,7 @@ export const useAuthActions = (): UseAuthActionsReturn => {
     /**
      * Paso C: Login a cuenta específica usando authEmail segregado
      */
-    const loginToAccount = async (account: AccountReference, password: string) => {
+    const loginToAccount = async (account: AccountReference, password: string, taxId: string) => {
         setLoading(true);
         setError('');
 
@@ -81,7 +81,7 @@ export const useAuthActions = (): UseAuthActionsReturn => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     accountId: account.accountId,
-                    authEmail: account.authEmail,
+                    taxId: taxId, // RUT/RUN — identificador principal del usuario
                     password
                 })
             });

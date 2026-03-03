@@ -6,7 +6,7 @@ import BrandLogo from '../components/BrandLogo';
 import { ThemeSwitch } from '../components/ThemeSwitch';
 import { LanguageSwitch } from '../components/LanguageSwitch';
 import { registerUser, checkAccountsById, RegisterData } from '../services/auth';
-import { formatRut, validateRut } from '../utils/rut';
+import { formatRut, validateRut, getEntityTypeByRut, EntityType } from '../utils/rut';
 import { SUPPORTED_COUNTRIES } from '../../../src/core/constants';
 import clsx from 'clsx';
 import siiActivities from '../data/sii_activities.json';
@@ -22,7 +22,8 @@ export const Register = () => {
     // Wizard State
     const [step, setStep] = useState(1);
 
-    const [type, setType] = useState<AccountType>('ENTERPRISE');
+    const [type, setType] = useState<AccountType | null>(null);
+    const [entityType, setEntityType] = useState<EntityType | null>(null);
     const totalSteps = type === 'ENTERPRISE' ? 5 : 4;
     const [eduProfile, setEduProfile] = useState<EducationalProfile | null>(null);
 
@@ -127,7 +128,10 @@ export const Register = () => {
 
         if (!sublocality) sublocality = locality;
 
-        const formattedAddress = `${route} ${streetNumber}`.trim() || description;
+        // Mejorar el formato para evitar ambigüedad entre ciudades (Calle nro, Comuna, Región)
+        const street = `${route}${streetNumber ? ' ' + streetNumber : ''}`.trim();
+        const addressParts = [street, locality, adminArea1].filter(Boolean);
+        const formattedAddress = addressParts.join(', ') || description;
 
         // Auto-fill form fields
         setFormData((prev: any) => ({
@@ -171,6 +175,16 @@ export const Register = () => {
             finalValue = formatRut(value);
         }
         setFormData((prev: any) => ({ ...prev, [name]: finalValue }));
+
+        // Auto-detect entity_type if Chile
+        if (name === 'rut' || name === 'run') {
+            if (formData.country === 'CL' && validateRut(finalValue)) {
+                const identified = getEntityTypeByRut(finalValue);
+                setEntityType(identified);
+            } else {
+                setEntityType(null);
+            }
+        }
         setError('');
     };
 
@@ -180,18 +194,21 @@ export const Register = () => {
     };
 
     const verifyIdentityAndAdvance = async () => {
-        const taxIdField = type === 'ENTERPRISE' ? 'rut' : 'run';
-        const rawId = (formData as any)[taxIdField];
+        // En el Paso 1, usamos 'rut' como campo primario de entrada
+        const rawId = formData.rut;
 
         if (!rawId) {
-            setError(`Debe ingresar su ${(formData.country === 'CL' ? taxIdField.toUpperCase() : 'Identificador')}`);
+            setError(`Debe ingresar su ${(formData.country === 'CL' ? 'RUT' : 'Identificador')}`);
             return;
         }
 
         if (formData.country === 'CL' && !validateRut(rawId)) {
-            setError(`Formato de ${taxIdField.toUpperCase()} inválido`);
+            setError(`Formato de RUT/RUN inválido`);
             return;
         }
+
+        // Sincronizar 'run' con 'rut' para compatibilidad con perfiles PERSONALES/EDUCATIONALES
+        setFormData(prev => ({ ...prev, run: rawId, rut: rawId }));
 
         setIsCheckingId(true);
         setError('');
@@ -201,45 +218,20 @@ export const Register = () => {
 
             // Regla de Integridad de Cuentas:
             if (accounts && accounts.length > 0) {
-                if (type === 'PERSONAL') {
-                    const hasPersonal = accounts.some(acc => acc.type === 'PERSONAL');
-                    if (hasPersonal) {
-                        const isPending = accounts.find(acc => acc.type === 'PERSONAL')?.status === 'PENDING_APPROVAL';
-                        setError(isPending
-                            ? 'SOLICITUD EN PROCESO: Ya tienes una petición de Cuenta Personal pendiente de aprobación.'
-                            : 'RESTRICCIÓN: Ya existe una CA-Personal activa asociada a este RUN.');
-                        setIsCheckingId(false);
-                        return;
-                    }
+                // Si ya se identificó como Empresa (50m-99m) y hay cuenta, bloquear.
+                const isB2B = entityType?.startsWith('B2B_');
+
+                if (isB2B && accounts.some(acc => acc.type === 'ENTERPRISE' || acc.type === 'BUSINESS')) {
+                    setError('ENTIDAD REGISTRADA: Esta empresa ya posee un entorno activo o pendiente.');
+                    setIsCheckingId(false);
+                    return;
                 }
 
-                if (type === 'EDUCATIONAL') {
-                    const hasEducational = accounts.some(acc => acc.type === 'EDUCATIONAL');
-                    if (hasEducational) {
-                        const isPending = accounts.find(acc => acc.type === 'EDUCATIONAL')?.status === 'PENDING_APPROVAL';
-                        setError(isPending
-                            ? 'SOLICITUD EN PROCESO: Ya tienes una petición de Cuenta Educacional pendiente de aprobación.'
-                            : 'RESTRICCIÓN: Ya existe una CA-Educacional activa asociada a este RUN.');
-                        setIsCheckingId(false);
-                        return;
-                    }
-                }
-
-                if (type === 'ENTERPRISE') {
-                    const hasEnterprise = accounts.some(acc => acc.type === 'ENTERPRISE' || acc.type === 'BUSINESS');
-                    if (hasEnterprise) {
-                        const isPending = accounts.find(acc => acc.type === 'ENTERPRISE' || acc.type === 'BUSINESS')?.status === 'PENDING_APPROVAL';
-                        setError(isPending
-                            ? 'SOLICITUD EN PROCESO: Esta empresa ya tiene una petición de registro pendiente de validación.'
-                            : 'ENTIDAD REGISTRADA: Esta empresa ya posee un entorno activo en MINREPORT.');
-                        setIsCheckingId(false);
-                        return;
-                    }
-                }
+                // Otras validaciones se harán después de seleccionar el tipo específico en el Paso 2
             }
 
             // Validación Pasada (No existe cuenta conflictiva)
-            setStep(3);
+            setStep(2); // Avanzar a selección de tipo
         } catch (err: any) {
             setError('Fallo de conexión al Directorio de Identidades. Intente nuevamente.');
             console.error(err);
@@ -251,8 +243,17 @@ export const Register = () => {
     const handleNextStep = () => {
         setError('');
 
-        if (step === 2) {
+        if (step === 1) {
             verifyIdentityAndAdvance();
+            return;
+        }
+
+        if (step === 2) {
+            if (!type) {
+                setError('Debe seleccionar un tipo de entorno para continuar');
+                return;
+            }
+            setStep(3);
             return;
         }
 
@@ -309,7 +310,7 @@ export const Register = () => {
         setType(selectedType);
         setError('');
         setEduProfile(null);
-        setStep(2);
+        setStep(3); // El Paso 1 fue ID, Paso 2 fue Selección, Paso 3 es Datos
     };
 
     const handleCancel = () => {
@@ -325,6 +326,7 @@ export const Register = () => {
                 email: formData.email,
                 country: formData.country,
                 type,
+                entity_type: entityType,
                 ...(type === 'ENTERPRISE' && {
                     applicant_name: formData.applicant_name,
                     job_title: formData.job_title,
@@ -528,7 +530,7 @@ export const Register = () => {
                                                 {type === 'ENTERPRISE' && <span className="material-symbols-rounded text-[12px]">domain</span>}
                                                 {type === 'EDUCATIONAL' && <span className="material-symbols-rounded text-[12px]">school</span>}
                                                 {type === 'PERSONAL' && <span className="material-symbols-rounded text-[12px]">person</span>}
-                                                <span>{t(`tabs.${type.toLowerCase()}`)}</span>
+                                                <span>{t(`tabs.${type?.toLowerCase() || ''}`)}</span>
                                             </div>
                                         )}
                                     </div>
@@ -538,44 +540,28 @@ export const Register = () => {
                                 </div>
 
                                 {step === 1 && (
-                                    <div className="space-y-4">
-                                        <button onClick={() => handleTypeSelect('ENTERPRISE')} className="w-full p-6 border border-black/10 dark:border-white/10 hover:border-antigravity-accent hover:bg-antigravity-accent/5 transition-all text-left flex items-start gap-4 group bg-black/5 dark:bg-white/5 rounded-none">
-                                            <span className="material-symbols-rounded text-2xl text-black/40 dark:text-white/40 group-hover:text-antigravity-accent transition-colors shrink-0">domain</span>
-                                            <div>
-                                                <h3 className="font-black uppercase tracking-widest text-sm mb-1 group-hover:text-antigravity-accent transition-colors">{t('tabs.enterprise')}</h3>
-                                                <p className="text-[11px] text-black/60 dark:text-white/60 leading-relaxed font-medium">Diseñado para operaciones mineras, contratistas y corporaciones. Acceso completo a módulos industriales.</p>
-                                            </div>
-                                        </button>
-                                        <button onClick={() => handleTypeSelect('EDUCATIONAL')} className="w-full p-6 border border-black/10 dark:border-white/10 hover:border-antigravity-accent hover:bg-antigravity-accent/5 transition-all text-left flex items-start gap-4 group bg-black/5 dark:bg-white/5 rounded-none">
-                                            <span className="material-symbols-rounded text-2xl text-black/40 dark:text-white/40 group-hover:text-antigravity-accent transition-colors shrink-0">school</span>
-                                            <div>
-                                                <h3 className="font-black uppercase tracking-widest text-sm mb-1 group-hover:text-antigravity-accent transition-colors">{t('tabs.educational')}</h3>
-                                                <p className="text-[11px] text-black/60 dark:text-white/60 leading-relaxed font-medium">Entorno de aprendizaje para universidades, docentes y alumnos orientados a la industria minera.</p>
-                                            </div>
-                                        </button>
-                                        <button onClick={() => handleTypeSelect('PERSONAL')} className="w-full p-6 border border-black/10 dark:border-white/10 hover:border-antigravity-accent hover:bg-antigravity-accent/5 transition-all text-left flex items-start gap-4 group bg-black/5 dark:bg-white/5 rounded-none">
-                                            <span className="material-symbols-rounded text-2xl text-black/40 dark:text-white/40 group-hover:text-antigravity-accent transition-colors shrink-0">person</span>
-                                            <div>
-                                                <h3 className="font-black uppercase tracking-widest text-sm mb-1 group-hover:text-antigravity-accent transition-colors">{t('tabs.personal')}</h3>
-                                                <p className="text-[11px] text-black/60 dark:text-white/60 leading-relaxed font-medium">Para profesionales independientes o proyectos personales con funcionalidades reducidas.</p>
-                                            </div>
-                                        </button>
-                                    </div>
-                                )}
-
-                                {step === 2 && (
-                                    <div className="space-y-8">
+                                    <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-500">
                                         <div className="p-4 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 rounded-none">
                                             <p className="text-[11px] text-black/60 dark:text-white/60 font-medium leading-relaxed">
-                                                Para garantizar la integridad y aplicar políticas de gobernanza, necesitamos verificar si ya posee un entorno asignado.
+                                                Para garantizar la integridad y aplicar políticas de gobernanza, necesitamos verificar su identidad antes de configurar su entorno.
                                             </p>
                                         </div>
                                         {renderSelect('country', 'public', '00', SUPPORTED_COUNTRIES.map(c => ({ value: c.code, label: c.name })))}
-                                        {type === 'ENTERPRISE' && renderInput('rut', 'id_card', '01', 'text', activeCountry.placeholder)}
-                                        {(type === 'EDUCATIONAL' || type === 'PERSONAL') && renderInput('run', 'id_card', '01', 'text', activeCountry.placeholder)}
+                                        {formData.country === 'CL' && (
+                                            <div className="space-y-4">
+                                                {renderInput('rut', 'id_card', '01', 'text', 'RUT / RUN (EJ: 12.345.678-5)')}
+                                                {entityType === 'SECTORIAL_INVALIDO' && (
+                                                    <div className="p-3 bg-rose-500/10 border border-rose-500/20">
+                                                        <p className="text-[9px] text-rose-500 font-bold uppercase">Identificador Provisorio: No apto para registro autónomo.</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                        {formData.country !== 'CL' && renderInput('rut', 'id_card', '01', 'text', activeCountry.placeholder)}
+
                                         <button
                                             onClick={handleNextStep}
-                                            disabled={isCheckingId}
+                                            disabled={isCheckingId || (formData.country === 'CL' && entityType === 'SECTORIAL_INVALIDO')}
                                             className="w-full py-6 bg-black dark:bg-white text-white dark:text-black font-black transition-all shadow-3xl active:scale-[0.98] disabled:opacity-30 flex justify-center items-center rounded-none"
                                         >
                                             {isCheckingId ? (
@@ -584,6 +570,45 @@ export const Register = () => {
                                                 <span className="material-symbols-rounded text-2xl">arrow_forward</span>
                                             )}
                                         </button>
+                                    </div>
+                                )}
+
+                                {step === 2 && (
+                                    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                        {(entityType === 'B2B_TRADICIONAL' || entityType === 'B2B_GOBIERNO' || entityType === 'B2B_MODERNO' || !entityType) && (
+                                            <button onClick={() => handleTypeSelect('ENTERPRISE')} className="w-full p-6 border border-black/10 dark:border-white/10 hover:border-antigravity-accent hover:bg-antigravity-accent/5 transition-all text-left flex items-start gap-4 group bg-black/5 dark:bg-white/5 rounded-none">
+                                                <span className="material-symbols-rounded text-2xl text-black/40 dark:text-white/40 group-hover:text-antigravity-accent transition-colors shrink-0">domain</span>
+                                                <div>
+                                                    <h3 className="font-black uppercase tracking-widest text-sm mb-1 group-hover:text-antigravity-accent transition-colors">{t('tabs.enterprise')}</h3>
+                                                    <p className="text-[11px] text-black/60 dark:text-white/60 leading-relaxed font-medium">Diseñado para operaciones mineras, contratistas y corporaciones. Acceso completo a módulos industriales.</p>
+                                                </div>
+                                            </button>
+                                        )}
+
+                                        {(entityType === 'PERSONAL' || entityType === 'EXTRANJERO_PROVISORIO' || !entityType) && (
+                                            <>
+                                                <button onClick={() => handleTypeSelect('EDUCATIONAL')} className="w-full p-6 border border-black/10 dark:border-white/10 hover:border-antigravity-accent hover:bg-antigravity-accent/5 transition-all text-left flex items-start gap-4 group bg-black/5 dark:bg-white/5 rounded-none">
+                                                    <span className="material-symbols-rounded text-2xl text-black/40 dark:text-white/40 group-hover:text-antigravity-accent transition-colors shrink-0">school</span>
+                                                    <div>
+                                                        <h3 className="font-black uppercase tracking-widest text-sm mb-1 group-hover:text-antigravity-accent transition-colors">{t('tabs.educational')}</h3>
+                                                        <p className="text-[11px] text-black/60 dark:text-white/60 leading-relaxed font-medium">Entorno de aprendizaje para universidades, docentes y alumnos orientados a la industria minera.</p>
+                                                    </div>
+                                                </button>
+                                                <button onClick={() => handleTypeSelect('PERSONAL')} className="w-full p-6 border border-black/10 dark:border-white/10 hover:border-antigravity-accent hover:bg-antigravity-accent/5 transition-all text-left flex items-start gap-4 group bg-black/5 dark:bg-white/5 rounded-none">
+                                                    <span className="material-symbols-rounded text-2xl text-black/40 dark:text-white/40 group-hover:text-antigravity-accent transition-colors shrink-0">person</span>
+                                                    <div>
+                                                        <h3 className="font-black uppercase tracking-widest text-sm mb-1 group-hover:text-antigravity-accent transition-colors">{t('tabs.personal')}</h3>
+                                                        <p className="text-[11px] text-black/60 dark:text-white/60 leading-relaxed font-medium">Para profesionales independientes o proyectos personales con funcionalidades reducidas.</p>
+                                                    </div>
+                                                </button>
+                                            </>
+                                        )}
+
+                                        {entityType === 'EXTRANJERO_PROVISORIO' && (
+                                            <div className="p-4 bg-amber-500/5 border border-amber-500/20 text-[10px] uppercase font-bold text-amber-600 dark:text-amber-400">
+                                                Nota: RUT de Inversionista detectado. Solo se permite registro de cuenta Personal/Profesional.
+                                            </div>
+                                        )}
                                     </div>
                                 )}
 
@@ -607,7 +632,7 @@ export const Register = () => {
                                         {type === 'ENTERPRISE' && (
                                             <div className="space-y-6">
                                                 <h3 className="text-[10px] font-bold uppercase tracking-widest text-black/40 dark:text-white/40 border-b border-black/10 dark:border-white/10 pb-2">Información de la Entidad</h3>
-                                                {renderInput('company_name', 'apartment', '01', 'text', 'RAZÓN SOCIAL')}
+                                                {renderInput('company_name', 'domain', '01', 'text', 'RAZÓN SOCIAL')}
 
                                                 {/* Giro Comercial */}
                                                 <div className="space-y-3">
@@ -775,24 +800,13 @@ export const Register = () => {
                                     <div className="space-y-8 animate-in fade-in zoom-in-95 duration-500">
                                         <div className="elite-tech-surface bg-black/5 dark:bg-white/5 p-8 border border-black/10 dark:border-white/10 space-y-8 rounded-none h-auto">
 
-                                            {/* Sección 1: Entidad e Identificación */}
+                                            {/* Sección 1: Datos Específicos según Tipo (Ahora Primero) */}
                                             <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 fill-mode-both">
-                                                {renderSectionHeader("ENTIDAD")}
-                                                {renderPreviewRow(t('form.country'), activeCountry.name)}
-                                                {renderPreviewRow(
-                                                    formData.country === 'CL'
-                                                        ? (type === 'ENTERPRISE' ? 'RUT EMPRESA' : 'RUN TITULAR')
-                                                        : 'TAX ID / IDENTIFICADOR',
-                                                    (type === 'ENTERPRISE' ? formData.rut : formData.run) || ''
-                                                )}
-                                            </div>
-
-                                            {/* Sección 2: Datos Específicos según Tipo */}
-                                            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150 fill-mode-both border-t border-black/5 dark:border-white/5 pt-4">
                                                 {type === 'ENTERPRISE' && (
                                                     <>
                                                         {renderSectionHeader("DATOS CORPORATIVOS")}
                                                         {renderPreviewRow("RAZÓN SOCIAL", formData.company_name || '')}
+                                                        {renderPreviewRow("RUT EMPRESA", formData.rut || '')}
                                                         {renderPreviewRow("GIRO COMERCIAL", formData.industry || '')}
                                                         {renderPreviewRow("EMAIL FACTURACIÓN", formData.billing_email || '')}
                                                         {renderPreviewRow("SITIO WEB", formData.website || '')}
@@ -803,6 +817,7 @@ export const Register = () => {
                                                     <>
                                                         {renderSectionHeader("DATOS INSTITUCIONALES")}
                                                         {renderPreviewRow("INSTITUCIÓN", formData.institution_name || '')}
+                                                        {renderPreviewRow("RUN TITULAR", formData.run || '')}
                                                         {renderPreviewRow("PERFIL", eduProfile || '')}
                                                         {renderPreviewRow("PROGRAMA / CARRERA", formData.program_name || '')}
                                                         {renderPreviewRow("FECHA TITULACIÓN", formData.graduation_date || '')}
@@ -813,22 +828,24 @@ export const Register = () => {
                                                 {type === 'PERSONAL' && (
                                                     <>
                                                         {renderSectionHeader("PERFIL PROFESIONAL")}
+                                                        {renderPreviewRow("RUN TITULAR", formData.run || '')}
                                                         {renderPreviewRow("TIPO DE USO", formData.usage_profile === 'PROFESSIONAL' ? t('form.professional') : t('form.personal'))}
                                                     </>
                                                 )}
                                             </div>
 
-                                            {/* Sección 3: Ubicación (Explícita) */}
-                                            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 delay-300 fill-mode-both border-t border-black/5 dark:border-white/5 pt-4">
+                                            {/* Sección 2: Ubicación (Integrando País) */}
+                                            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150 fill-mode-both border-t border-black/5 dark:border-white/5 pt-4">
                                                 {renderSectionHeader("UBICACIÓN")}
+                                                {renderPreviewRow("PAÍS", activeCountry.name)}
                                                 {renderPreviewRow("DIRECCIÓN SEDE", formData.address || '')}
                                                 {renderPreviewRow("COMUNA / CIUDAD", formData.commune || formData.city || '')}
                                                 {renderPreviewRow("REGIÓN / ESTADO", formData.region || '')}
                                                 {renderPreviewRow("CÓDIGO POSTAL", formData.postal_code || '')}
                                             </div>
 
-                                            {/* Sección 4: Contacto / Administrador */}
-                                            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 delay-450 fill-mode-both border-t border-black/5 dark:border-white/5 pt-4">
+                                            {/* Sección 3: Contacto / Administrador */}
+                                            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 delay-300 fill-mode-both border-t border-black/5 dark:border-white/5 pt-4">
                                                 {renderSectionHeader(type === 'ENTERPRISE' ? "ADMINISTRADOR" : "TITULAR")}
                                                 {renderPreviewRow(
                                                     type === 'PERSONAL' ? "NOMBRE COMPLETO" : "NOMBRE SOLICITANTE",

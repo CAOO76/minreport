@@ -1,8 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { signInWithCustomToken } from 'firebase/auth';
-import { auth } from '../config/firebase';
-import { useTranslation } from 'react-i18next';
 import { ArrowLeft, ArrowRight, Loader2, Lock, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import BrandLogo from '../components/BrandLogo';
 import { LanguageSwitch } from '../components/LanguageSwitch';
@@ -11,8 +8,6 @@ import { Link } from 'react-router-dom';
 import { formatRut } from '../utils/rut';
 import { useAuthActions } from '../hooks/useAuthActions';
 import AccountSelector from '../components/auth/AccountSelector';
-import { AccountReference } from '../types/user_directory';
-import { AccountType } from '../../../src/types/auth';
 
 // Definición de Tipos para la UI
 type LoginStep = 'IDENTIFICATION' | 'ACCOUNT_SELECTION' | 'CHALLENGE';
@@ -91,7 +86,8 @@ export const Login = () => {
         if (!selectedAccount) return;
 
         try {
-            await loginToAccount(selectedAccount, password);
+            // taxId es el RUT/RUN ingresado por el usuario — identificador permanente de la identidad
+            await loginToAccount(selectedAccount, password, taxId);
             setPassword('');
             navigate('/');
         } catch (err: any) {
@@ -100,7 +96,7 @@ export const Login = () => {
     };
 
     // --- RENDERIZADORES DE ICONOS MATERIAL ---
-    const renderIcon = (type: AccountType | string) => {
+    const renderIcon = (type: string) => {
         switch (type) {
             case 'BUSINESS':
             case 'ENTERPRISE':

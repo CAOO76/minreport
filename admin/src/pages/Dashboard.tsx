@@ -14,14 +14,32 @@ interface Tenant {
     createdAt: any;
     company_name?: string;
     institution_name?: string;
+    applicant_name?: string;
+    job_title?: string;
     full_name?: string;
     rut?: string;
     run?: string;
+    entity_type?: string;
+    industry?: string;
+    billing_email?: string;
+    website?: string;
+    institution_website?: string;
+    program_name?: string;
+    graduation_date?: string;
+    usage_profile?: string;
+    address?: string;
+    city?: string;
+    commune?: string;
+    region?: string;
+    postal_code?: string;
     processedBy?: string;
     processedAt?: string;
     rejectionReason?: string;
     observations?: string;
     enabledPlugins?: string[];
+    profile?: string;
+    country?: string;
+    email_domain?: string;
 }
 
 export const Dashboard = () => {
@@ -47,6 +65,12 @@ export const Dashboard = () => {
     useEffect(() => {
         fetchTenants();
     }, []);
+
+    const pendingCounts = {
+        PERSONAL: tenants.filter(t => t.type === 'PERSONAL' && t.status === 'PENDING_APPROVAL').length,
+        EDUCATIONAL: tenants.filter(t => t.type === 'EDUCATIONAL' && t.status === 'PENDING_APPROVAL').length,
+        ENTERPRISE: tenants.filter(t => t.type === 'ENTERPRISE' && t.status === 'PENDING_APPROVAL').length,
+    };
 
     const handleAction = async (id: string, status: 'ACTIVE' | 'REJECTED', data?: { rejectionReason?: string, observations?: string, enabledPlugins?: string[] }) => {
         try {
@@ -88,7 +112,7 @@ export const Dashboard = () => {
         return matchesTab && matchesSearch && matchesStatus;
     });
 
-    const TabButton = ({ type, symbol }: { type: typeof activeTab, symbol: string }) => {
+    const TabButton = ({ type, symbol, count }: { type: typeof activeTab, symbol: string, count: number }) => {
         return (
             <button
                 onClick={() => setActiveTab(type)}
@@ -99,12 +123,19 @@ export const Dashboard = () => {
                         : "text-black/30 dark:text-white/20 hover:text-black/60 dark:hover:text-white/50"
                 )}
             >
-                <span className={clsx(
-                    "material-symbols-rounded text-[22px] transition-transform duration-500",
-                    activeTab === type ? "scale-110" : "opacity-60"
-                )}>
-                    {symbol}
-                </span>
+                <div className="relative flex flex-col items-center">
+                    <span className={clsx(
+                        "material-symbols-rounded text-[22px] transition-transform duration-500",
+                        activeTab === type ? "scale-110" : "opacity-60"
+                    )}>
+                        {symbol}
+                    </span>
+                    {count > 0 && (
+                        <span className="absolute -top-1.5 -right-3 px-1.5 py-0.5 bg-antigravity-accent text-white text-[8px] font-black leading-none min-w-[14px] flex items-center justify-center rounded-none shadow-sm animate-in zoom-in-50 duration-300">
+                            {count}
+                        </span>
+                    )}
+                </div>
                 {activeTab === type && (
                     <div className="absolute bottom-3 w-1 h-1 bg-antigravity-accent rounded-none"></div>
                 )}
@@ -127,9 +158,9 @@ export const Dashboard = () => {
 
                     {/* 1. Account type selectors (Left) */}
                     <div className="flex gap-4 items-center">
-                        <TabButton type="PERSONAL" symbol="person" />
-                        <TabButton type="EDUCATIONAL" symbol="school" />
-                        <TabButton type="ENTERPRISE" symbol="domain" />
+                        <TabButton type="PERSONAL" symbol="person" count={pendingCounts.PERSONAL} />
+                        <TabButton type="EDUCATIONAL" symbol="school" count={pendingCounts.EDUCATIONAL} />
+                        <TabButton type="ENTERPRISE" symbol="domain" count={pendingCounts.ENTERPRISE} />
                     </div>
                 </div>
 
@@ -180,16 +211,16 @@ export const Dashboard = () => {
                                     </span>
                                 </th>
                                 <th className="px-10 py-6 hud-label">
+                                    <span className="material-symbols-rounded text-[24px]">person_check</span>
+                                </th>
+                                <th className="px-10 py-6 hud-label">
                                     <span className="material-symbols-rounded text-[24px]">id_card</span>
                                 </th>
                                 <th className="px-10 py-6 hud-label">
                                     <span className="material-symbols-rounded text-[24px]">alternate_email</span>
                                 </th>
-                                <th className="px-10 py-6 hud-label text-center">
-                                    <span className="material-symbols-rounded text-[24px]">person_check</span>
-                                </th>
                                 <th className="px-10 py-6 hud-label text-right">
-                                    <span className="material-symbols-rounded text-[24px]">rule</span>
+                                    <span className="material-symbols-rounded text-[24px]">visibility</span>
                                 </th>
                             </tr>
                         </thead>
@@ -229,6 +260,16 @@ export const Dashboard = () => {
                                     </td>
                                     <td className="px-10 py-8">
                                         <div className="flex flex-col">
+                                            <span className="text-[11px] font-black text-black dark:text-white uppercase tracking-tight">
+                                                {tenant.applicant_name || tenant.full_name}
+                                                {tenant.job_title && (
+                                                    <span className="text-black/30 dark:text-white/20"> / {tenant.job_title}</span>
+                                                )}
+                                            </span>
+                                        </div>
+                                    </td>
+                                    <td className="px-10 py-8">
+                                        <div className="flex flex-col">
                                             <span className="text-[11px] font-black text-black/40 dark:text-white/30 uppercase font-mono tracking-widest grayscale group-hover:grayscale-0 transition-all">
                                                 {tenant.rut || tenant.run}
                                             </span>
@@ -260,40 +301,11 @@ export const Dashboard = () => {
                                         <div className="flex justify-end gap-3 opacity-0 group-hover:opacity-100 translate-x-4 group-hover:translate-x-0 transition-all duration-500">
                                             <button
                                                 onClick={() => setSelectedTenant(tenant)}
-                                                className="w-10 h-10 rounded-none flex items-center justify-center transition-all bg-transparent text-black/40 dark:text-white/40 hover:text-black dark:hover:text-white active:scale-90"
-                                                title="View Registry Info"
+                                                className="w-12 h-12 rounded-none flex items-center justify-center transition-all bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/40 hover:text-black dark:hover:text-white active:scale-90 border border-transparent hover:border-antigravity-accent/30"
+                                                title="View Detailed Protocol"
                                             >
-                                                <Eye size={18} />
+                                                <Eye size={20} />
                                             </button>
-
-                                            {tenant.status === 'PENDING_APPROVAL' && (
-                                                <>
-                                                    <button
-                                                        onClick={() => handleAction(tenant.id, 'ACTIVE')}
-                                                        className="w-10 h-10 rounded-none flex items-center justify-center transition-all bg-transparent text-emerald-500/40 hover:text-emerald-500 active:scale-90"
-                                                        title="Authorize Node"
-                                                    >
-                                                        <Check size={18} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleAction(tenant.id, 'REJECTED')}
-                                                        className="w-10 h-10 rounded-none flex items-center justify-center transition-all bg-transparent text-rose-500/40 hover:text-rose-500 active:scale-90"
-                                                        title="Reject Request"
-                                                    >
-                                                        <X size={18} />
-                                                    </button>
-                                                </>
-                                            )}
-
-                                            {tenant.status === 'ACTIVE' && (
-                                                <button
-                                                    onClick={() => setSelectedTenant(tenant)}
-                                                    className="w-10 h-10 rounded-none flex items-center justify-center transition-all bg-transparent text-antigravity-accent/40 hover:text-antigravity-accent active:scale-90"
-                                                    title="Protocol Config"
-                                                >
-                                                    <Settings size={18} />
-                                                </button>
-                                            )}
                                         </div>
                                     </td>
                                 </tr>

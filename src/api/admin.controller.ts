@@ -1,7 +1,9 @@
-import { Request, Response } from 'express';
+import express, { Request, Response } from 'express';
 import admin, { db, auth } from '../config/firebase';
 import { EmailService } from '../services/EmailService';
 import { env } from '../config/env';
+import { generateSetupToken } from '../utils/security';
+import { formatRut } from '../utils/rut';
 import { z } from 'zod';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -39,7 +41,7 @@ const auditAction = async (actorEmail: string, action: string, targetId: string,
 
 
 
-export const listTenants = async (req: Request, res: Response) => {
+export const listTenants = async (req: express.Request, res: express.Response) => {
     try {
         const status = req.query.status as string;
         let query: any = db.collection('tenants');
@@ -63,7 +65,7 @@ export const listTenants = async (req: Request, res: Response) => {
     }
 };
 
-export const listAccounts = async (req: Request, res: Response) => {
+export const listAccounts = async (req: express.Request, res: express.Response) => {
     try {
         const type = req.query.type as string;
         let query: any = db.collection('accounts');
@@ -87,7 +89,7 @@ export const listAccounts = async (req: Request, res: Response) => {
     }
 };
 
-export const adminLogin = async (req: Request, res: Response) => {
+export const adminLogin = async (req: express.Request, res: express.Response) => {
     const { email, password } = req.body;
 
     console.log(`[ADMIN-LOGIN] Attempt for: ${email}`);
@@ -137,7 +139,7 @@ export const adminLogin = async (req: Request, res: Response) => {
 
 import { AuthRequest } from '../middleware/admin';
 
-export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
+export const updateTenantStatus = async (req: AuthRequest, res: express.Response) => {
     console.log('Admin Params received:', req.params);
     const { uid } = req.params;
     const { status, rejectionReason, observations, enabledPlugins } = req.body;
@@ -159,39 +161,55 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
         const entityName = tenantData.company_name || tenantData.institution_name || tenantData.full_name || 'tu cuenta';
 
         if (status === 'ACTIVE') {
-            // Check if user already exists in Auth to prevent duplication
+            const taxId = 'rut' in tenantData ? tenantData.rut : ('run' in tenantData ? tenantData.run : null);
+            if (!taxId) {
+                return res.status(400).json({ error: 'Falta RUT/RUN en el registro del tenant.' });
+            }
+
+            // Normalizamos el RUT/RUN para usarlo como UID inmutable
+            const cleanTaxId = taxId.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
+
+            // Generar Email Sintético para Bypassar Firebase Auth "Email already in use" restricción
+            const syntheticAuthEmail = `${cleanTaxId.toLowerCase()}@auth.minreport.internal`;
+
+            // 1. Forzar Creación/Busqueda de Usuario usando el RUT/RUN como UID
             let userRecord;
             try {
-                userRecord = await auth.getUserByEmail(tenantData.email);
+                userRecord = await auth.getUser(cleanTaxId);
             } catch (authError: any) {
                 if (authError.code === 'auth/user-not-found') {
-                    // 1. Create User in Firebase Auth
                     userRecord = await auth.createUser({
-                        email: tenantData.email,
+                        uid: cleanTaxId, // 🚨 EL UID AHORA ES EL RUT NORMALIZADO
+                        email: syntheticAuthEmail, // Usamos email sintético para blindar Firebase Auth identity mergers.
                         emailVerified: true,
                         displayName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
                         disabled: false
                     });
+                    console.log(`[ADMIN-IDENTITY] Creado Identity Titular con UID estricto y correo asilado: ${cleanTaxId}`);
                 } else {
                     throw authError;
                 }
             }
 
-            // 2. Set Custom Claims
+            // Si el email sintético del usuario existente cambió por migración, lo actualizamos solo referencialmente
+            if (userRecord.email !== syntheticAuthEmail) {
+                await auth.updateUser(cleanTaxId, { email: syntheticAuthEmail });
+            }
+
+            // 2. Set Custom Claims usando el RUT UID
             await auth.setCustomUserClaims(userRecord.uid, {
-                role: 'USER', // Standard system role, consistent with Firestore doc
+                role: 'USER',
                 tier: tenantData.type,
-                tenantId: uid // Correctly points to Account ID (Tenant), not User ID
+                tenantId: uid
             });
 
-            // 3. Generate Custom Activation Link
-            // We use a custom route that handles both Identity setup and Access setup
+            // 3. Generar Custom Setup Token (Reemplaza Firebase Auth Reset Link)
             const accountId = uid;
-            const taxId = 'rut' in tenantData ? tenantData.rut : ('run' in tenantData ? tenantData.run : null);
             const baseUrl = process.env.NODE_ENV === 'production'
                 ? 'https://minreport-access.web.app'
                 : 'http://localhost:5173';
 
+            const { rawToken, hashedToken, expiresAt } = generateSetupToken();
 
             // 4. Update Firestore with uid and status in tenants
             await tenantRef.update({
@@ -205,29 +223,26 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
             });
 
             // 4.1 Create Account Document (The Business Entity)
-            // We use the tenant ID as the Account ID for simplicity and traceability
             await db.collection('accounts').doc(accountId).set({
                 id: accountId,
                 name: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
                 type: tenantData.type,
-                taxId: taxId, // Standardized field name
+                taxId: taxId,
                 ownerId: userRecord.uid,
-                enabledPlugins: enabledPlugins || [], // [NEW] Sync to Account
-                // Sync new Enterprise details if they exist in the tenant request
+                enabledPlugins: enabledPlugins || [],
                 giro: tenantData.industry || '',
                 direccionComercial: tenantData.address || '',
                 postal_code: tenantData.postal_code || '',
                 city: tenantData.city || '',
                 commune: tenantData.commune || '',
                 region: tenantData.region || '',
-                emailTributario: tenantData.billing_email || '', // we'll map billing_email to emailTributario
+                emailTributario: tenantData.billing_email || '',
                 email_domain: tenantData.email_domain || '',
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
-            }, { merge: true }); // Merge to allow partial updates if account exists
+            }, { merge: true });
 
-            // 4.5 Create/Sync User Document in 'users' collection for Admin Management
-            // This ensures the user appears in the User Management section
+            // 4.5 Create/Sync User Document in 'users' collection for Titular
 
             // Determine role based on segregation B2B requirements
             // Enterprise (B2B) initial access is always 'BILLING_ONLY' (Management Hub)
@@ -252,26 +267,33 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
                 const alreadyMember = currentMemberships.some((m: any) => m.accountId === accountId);
 
                 if (!alreadyMember) {
-                    // If PERSONAL, we should ideally replace or limit, but for now we follow the user_directory logic
-                    // which is the primary source for login. The 'users' collection is for Admin UI.
-                    await db.collection('users').doc(userRecord.uid).update({
-                        memberships: admin.firestore.FieldValue.arrayUnion(...memberships),
+                    // Update memberships and protect taxId if not set.
+                    // Use filter + push to REPLACE existing entries for same accountId,
+                    // preventing duplicates from accumulating in the array.
+                    const existingMems = userData?.memberships || [];
+                    const cleanedMems = existingMems.filter((m: any) => m.accountId !== accountId);
+                    cleanedMems.push(...memberships);
+
+                    const updateData: any = {
+                        memberships: cleanedMems,
                         updatedAt: new Date().toISOString()
-                    });
-                    console.log(`[ADMIN] Added new membership to existing user ${userRecord.uid}`);
+                    };
+
+                    await db.collection('users').doc(userRecord.uid).update(updateData);
+                    console.log(`[ADMIN-IDENTITY] Titular account membership synced for ${userRecord.uid}`);
                 } else {
-                    console.log(`[ADMIN] User ${userRecord.uid} already member of ${accountId}, skipping add.`);
+                    console.log(`[ADMIN-IDENTITY] Titular ${userRecord.uid} already member, skipping add.`);
                 }
             } else {
                 // New user, create full document
                 await db.collection('users').doc(userRecord.uid).set({
                     uid: userRecord.uid,
                     email: tenantData.email,
-                    taxId: taxId, // NEW: Standardized Identity Document
+                    taxId: formatRut(taxId), // Standardized format
                     displayName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
-                    role: 'USER', // Default system role
-                    memberships: memberships, // <--- CRITICAL: Multi-Tenancy Link
-                    lastActiveAccountId: accountId, // Auto-select this account
+                    role: 'USER',
+                    memberships: memberships,
+                    lastActiveAccountId: accountId,
                     status: 'APPROVED',
                     entitlements: {
                         pluginsEnabled: [],
@@ -356,7 +378,29 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
                 });
             }
 
-            const actionLink = `${baseUrl}/setup-access?accountId=${uid}&email=${tenantData.email}&name=${encodeURIComponent(entityName)}&type=${tenantData.type}`;
+            // 4.7 Sync with accounts/{id}/members subcollection (NEW: Ensure Titular is in members)
+            const memberRef = db.collection('accounts').doc(accountId).collection('members').doc(userRecord.uid);
+            await memberRef.set({
+                userId: userRecord.uid,
+                email: tenantData.email,
+                fullName: tenantData.type === 'PERSONAL' ? tenantData.full_name : entityName,
+                run: taxId,
+                role: userRole,
+                status: 'ACTIVE',
+                joinedAt: Date.now()
+            });
+
+            // 4.8 Save Setup Token to initiate password creation
+            await db.collection('setup_tokens').doc(rawToken).set({
+                accountId,
+                taxId: cleanTaxId,
+                hashedToken,
+                expiresAt,
+                used: false,
+                createdAt: Date.now()
+            });
+
+            const actionLink = `${baseUrl}/setup-access?accountId=${uid}&taxId=${cleanTaxId}&name=${encodeURIComponent(entityName)}&type=${tenantData.type}&token=${rawToken}`;
 
             // 5. Send Notification Email
             await EmailService.sendEmail({
@@ -450,11 +494,106 @@ export const updateTenantStatus = async (req: AuthRequest, res: Response) => {
 };
 
 /**
+ * Helper to cleanup members of an account. 
+ * If a user has no other memberships after this account is removed, 
+ * they are fully purged from Firebase Auth, /users, and /user_directory.
+ */
+async function cleanupAccountMembers(accountId: string, isPurge: boolean = false) {
+    try {
+        const membersSnap = await db.collection('accounts').doc(accountId).collection('members').get();
+        if (membersSnap.empty) {
+            console.log(`[CLEANUP] No members found in subcollection for account ${accountId}`);
+
+            // Reintentar buscar en /users (escaneo completo) por seguridad si la subcolección falló
+            const usersSnap = await db.collection('users').get();
+            for (const userDoc of usersSnap.docs) {
+                const userData = userDoc.data();
+                const memberships = userData.memberships || [];
+                if (memberships.some((m: any) => m.accountId === accountId)) {
+                    await processUserCleanup(userDoc.id, userData.taxId, accountId, memberships, isPurge);
+                }
+            }
+            return;
+        }
+
+        for (const memberDoc of membersSnap.docs) {
+            const userId = memberDoc.id; // UID
+            const memberData = memberDoc.data();
+            const taxId = memberData.run || memberData.rut || memberData.taxId; // Dependiendo de la versión
+
+            const userDoc = await db.collection('users').doc(userId).get();
+            if (userDoc.exists) {
+                const userData = userDoc.data()!;
+                const memberships = userData.memberships || [];
+                const actualTaxId = userData.taxId || taxId;
+                await processUserCleanup(userId, actualTaxId, accountId, memberships, isPurge);
+            }
+        }
+    } catch (e) {
+        console.error(`[CLEANUP] Failed to cleanup members for account ${accountId}:`, e);
+    }
+}
+
+async function processUserCleanup(userId: string, taxId: string, accountId: string, memberships: any[], isPurge: boolean) {
+    // Filtrar membresías
+    const filteredMemberships = memberships.filter((m: any) => m.accountId !== accountId);
+
+    if (filteredMemberships.length === 0) {
+        // El usuario ya no tiene cuentas en MINREPORT. ¡PURGAR!
+        console.log(`[CLEANUP] User ${userId} (${taxId}) has no remaining accounts. Deleting from DB and Auth.`);
+
+        // 1. Delete from users
+        await db.collection('users').doc(userId).delete();
+
+        // 2. Delete from user_directory
+        if (taxId) {
+            const cleanTaxId = taxId.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
+            await db.collection('user_directory').doc(cleanTaxId).delete();
+            // Delete formatted variant too just in case
+            await db.collection('user_directory').doc(taxId).delete();
+        }
+
+        // 3. Delete from Firebase Auth
+        try {
+            await auth.deleteUser(userId);
+            console.log(`[CLEANUP] ✅ Firebase Auth account deleted for UID: ${userId}`);
+        } catch (authErr: any) {
+            console.warn(`[CLEANUP] ⚠️ Failed to delete Firebase Auth user ${userId}:`, authErr.message);
+        }
+
+    } else {
+        // Al usuario aún le quedan otras cuentas en MINREPORT.
+        console.log(`[CLEANUP] User ${userId} (${taxId}) still has ${filteredMemberships.length} accounts. Updating.`);
+
+        // 1. Update users
+        await db.collection('users').doc(userId).update({ memberships: filteredMemberships });
+
+        // 2. Update user_directory
+        if (taxId) {
+            const cleanTaxId = taxId.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
+            try {
+                const dirRef = db.collection('user_directory').doc(cleanTaxId);
+                const dirDoc = await dirRef.get();
+                if (dirDoc.exists) {
+                    const dirData = dirDoc.data()!;
+                    const dirAccounts = (dirData.accounts || []).filter((a: any) => a.accountId !== accountId);
+                    if (dirAccounts.length === 0) {
+                        await dirRef.delete();
+                    } else {
+                        await dirRef.update({ accounts: dirAccounts });
+                    }
+                }
+            } catch (dirErr) { }
+        }
+    }
+}
+
+/**
  * DELETE /api/admin/tenants/:uid
  * Soft Delete: Marks status as DELETED, prevents access, retains data for 30 days.
  * Also decouples user memberships to preserve identity.
  */
-export const deleteTenant = async (req: Request, res: Response) => {
+export const deleteTenant = async (req: express.Request, res: express.Response) => {
     try {
         const { uid } = req.params;
         const actor = (req as any).user?.email || 'system';
@@ -478,6 +617,9 @@ export const deleteTenant = async (req: Request, res: Response) => {
             });
         }
 
+        // 2.5 Cleanup users attached to this account
+        await cleanupAccountMembers(uid, false);
+
         // 3. Audit
         await auditAction(actor, 'SOFT_DELETE_TENANT', uid, { retentionDays: 30 });
 
@@ -497,12 +639,15 @@ export const deleteTenant = async (req: Request, res: Response) => {
  * Hard Delete: Permanently removes data from Firestore and Storage.
  * Super Admin Only.
  */
-export const purgeTenant = async (req: Request, res: Response) => {
+export const purgeTenant = async (req: express.Request, res: express.Response) => {
     try {
         const { uid } = req.params;
         const actor = (req as any).user?.email || 'system';
 
         console.log(`[HARD-PURGE] Initiated for tenant ${uid} by ${actor}`);
+
+        // 0.5 Cleanup users attached to this account (Before deleting the account doc)
+        await cleanupAccountMembers(uid, true);
 
         // 1. Delete Firestore Documents
         await db.collection('tenants').doc(uid).delete();
@@ -521,7 +666,7 @@ export const purgeTenant = async (req: Request, res: Response) => {
     }
 };
 
-export const getBrandingSettings = async (req: Request, res: Response) => {
+export const getBrandingSettings = async (req: express.Request, res: express.Response) => {
     try {
         const doc = await db.collection('settings').doc('branding').get();
         if (!doc.exists) {
@@ -534,7 +679,7 @@ export const getBrandingSettings = async (req: Request, res: Response) => {
     }
 };
 
-export const updateBrandingSettings = async (req: Request, res: Response) => {
+export const updateBrandingSettings = async (req: express.Request, res: express.Response) => {
     try {
         const settings = req.body;
         await db.collection('settings').doc('branding').set(settings, { merge: true });
@@ -631,7 +776,7 @@ export const updateBrandingSettings = async (req: Request, res: Response) => {
 };
 
 // [NEW] System Metrics Endpoint
-export const getSystemMetrics = async (req: Request, res: Response) => {
+export const getSystemMetrics = async (req: express.Request, res: express.Response) => {
     try {
         const tenantsCount = (await db.collection('tenants').count().get()).data().count;
         const usersCount = (await db.collection('users').count().get()).data().count;
@@ -653,7 +798,7 @@ export const getSystemMetrics = async (req: Request, res: Response) => {
 };
 
 // [NEW] Audit Logs Endpoint
-export const getAuditLogs = async (req: Request, res: Response) => {
+export const getAuditLogs = async (req: express.Request, res: express.Response) => {
     try {
         const limit = parseInt(req.query.limit as string) || 50;
         const snapshot = await db.collection('audit_logs')
@@ -674,7 +819,7 @@ export const getAuditLogs = async (req: Request, res: Response) => {
         return res.status(500).json({ error: 'Failed to fetch logs' });
     }
 };
-export const getUIAssetsSettings = async (req: Request, res: Response) => {
+export const getUIAssetsSettings = async (req: express.Request, res: express.Response) => {
     try {
         const doc = await db.collection('settings').doc('ui_assets').get();
         if (!doc.exists) {
@@ -691,7 +836,7 @@ export const getUIAssetsSettings = async (req: Request, res: Response) => {
     }
 };
 
-export const updateUIAssetsSettings = async (req: Request, res: Response) => {
+export const updateUIAssetsSettings = async (req: express.Request, res: express.Response) => {
     try {
         const settings = req.body;
         await db.collection('settings').doc('ui_assets').set(settings, { merge: true });

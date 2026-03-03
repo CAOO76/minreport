@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Check, X as XIcon, MapPin, Phone, FileText, Calendar, History, Shield, Info, MessageSquare, Activity } from 'lucide-react';
+import { X, Check, X as XIcon, MapPin, Phone, FileText, Calendar, History, Shield, Info, MessageSquare, Activity, Globe, Mail, Badge, BookOpen, GraduationCap } from 'lucide-react';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 
@@ -13,18 +13,34 @@ interface Tenant {
     company_name?: string;
     institution_name?: string;
     full_name?: string;
+    applicant_name?: string;
+    job_title?: string;
     rut?: string;
     run?: string;
+    entity_type?: string;
+    industry?: string;
+    billing_email?: string;
+    website?: string;
+    institution_website?: string;
+    program_name?: string;
+    graduation_date?: string;
+    usage_profile?: string;
     address?: string;
+    city?: string;
+    commune?: string;
+    region?: string;
+    postal_code?: string;
     address_place_id?: string;
     phone?: string;
-    website?: string;
     position?: string;
     processedBy?: string;
     processedAt?: string;
     rejectionReason?: string;
     observations?: string;
     enabledPlugins?: string[];
+    profile?: string;
+    country?: string;
+    email_domain?: string;
 }
 
 interface TenantDetailsModalProps {
@@ -50,6 +66,11 @@ export const TenantDetailsModal: React.FC<TenantDetailsModalProps> = ({
 
     const getDisplayName = () => tenant.company_name || tenant.institution_name || tenant.full_name;
     const getIdNumber = () => tenant.rut || tenant.run || 'N/A';
+    const getApplicantInfo = () => {
+        const name = tenant.applicant_name || tenant.full_name;
+        const job = tenant.job_title || tenant.position;
+        return name ? `${name}${job ? ` / ${job}` : ''}` : 'N/A';
+    };
 
     return (
         <AnimatePresence>
@@ -118,23 +139,143 @@ export const TenantDetailsModal: React.FC<TenantDetailsModalProps> = ({
                             {/* Body */}
                             <div className="relative z-10 p-10 overflow-y-auto space-y-12">
 
-                                {/* Info Section */}
-                                <div className="grid grid-cols-2 gap-10">
-                                    <div className="space-y-2">
-                                        <label className="hud-label flex items-center gap-2">
-                                            <FileText size={14} className="opacity-50" />
-                                            Tax Identifier
-                                        </label>
-                                        <p className="text-lg font-black text-black dark:text-white tracking-widest font-mono">{getIdNumber()}</p>
-                                    </div>
-                                    <div className="space-y-2">
-                                        <label className="hud-label flex items-center gap-2">
-                                            <Calendar size={14} className="opacity-50" />
-                                            Registration Date
-                                        </label>
-                                        <p className="text-lg font-black text-black dark:text-white tracking-widest font-mono italic">
-                                            {new Date(tenant.createdAt._seconds ? tenant.createdAt._seconds * 1000 : tenant.createdAt).toLocaleDateString()}
-                                        </p>
+                                {/* Info Registry Section */}
+                                <div className="space-y-10">
+                                    <h3 className="hud-label !text-antigravity-accent tracking-[0.4em] flex items-center gap-3">
+                                        <Info size={14} className="shrink-0" />
+                                        Request Master Record
+                                    </h3>
+
+                                    <div className="grid grid-cols-2 gap-x-12 gap-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
+                                        <div className="space-y-1.5 px-4 border-l-2 border-black/5 dark:border-white/5">
+                                            <label className="text-[9px] font-black text-black/40 dark:text-white/30 uppercase tracking-[0.2em]">Entity Identity</label>
+                                            <p className="text-sm font-black text-black dark:text-white tracking-tight uppercase leading-none">{getDisplayName()}</p>
+                                            <p className="text-[11px] font-mono font-bold text-copper-500 tracking-widest mt-1 italic">{getIdNumber()}</p>
+                                            {tenant.entity_type && (
+                                                <span className="inline-block mt-2 px-2 py-0.5 bg-black/5 dark:bg-white/5 text-[8px] font-black uppercase tracking-widest border border-black/10 dark:border-white/10">
+                                                    {tenant.entity_type}
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        <div className="space-y-1.5 px-4 border-l-2 border-black/5 dark:border-white/5">
+                                            <label className="text-[9px] font-black text-black/40 dark:text-white/30 uppercase tracking-[0.2em]">Authorized Applicant</label>
+                                            <p className="text-sm font-black text-black dark:text-white tracking-tight leading-none uppercase">{getApplicantInfo()}</p>
+                                            <div className="flex items-center gap-2 mt-2">
+                                                <Mail size={10} className="text-antigravity-accent opacity-60" />
+                                                <p className="text-[11px] font-bold text-antigravity-accent tracking-tighter italic">{tenant.email.toLowerCase()}</p>
+                                            </div>
+                                        </div>
+
+                                        {/* Dynamic Fields per Type */}
+                                        {tenant.type === 'ENTERPRISE' && (
+                                            <>
+                                                <div className="space-y-1.5 px-4 border-l-2 border-black/5 dark:border-white/5">
+                                                    <label className="text-[9px] font-black text-black/40 dark:text-white/30 uppercase tracking-[0.2em]">Business Activity</label>
+                                                    <div className="flex items-start gap-2">
+                                                        <Activity size={12} className="mt-0.5 opacity-40 shrink-0" />
+                                                        <p className="text-[11px] font-bold text-black/60 dark:text-white/60 leading-relaxed uppercase italic">
+                                                            {tenant.industry || 'No_Giro_Specified'}
+                                                        </p>
+                                                    </div>
+                                                    {tenant.email_domain && (
+                                                        <p className="text-[9px] font-mono opacity-40 uppercase ml-5 tracking-widest mt-0.5">Authorized Domain: @{tenant.email_domain}</p>
+                                                    )}
+                                                </div>
+                                                <div className="space-y-1.5 px-4 border-l-2 border-black/5 dark:border-white/5">
+                                                    <label className="text-[9px] font-black text-black/40 dark:text-white/30 uppercase tracking-[0.2em]">Billing & Digital</label>
+                                                    <div className="space-y-2">
+                                                        {tenant.billing_email && (
+                                                            <div className="flex items-center gap-2">
+                                                                <FileText size={12} className="opacity-40" />
+                                                                <span className="text-[10px] font-mono font-bold text-black/60 dark:text-white/60 italic lowercase">{tenant.billing_email}</span>
+                                                            </div>
+                                                        )}
+                                                        {tenant.website && (
+                                                            <div className="flex items-center gap-2">
+                                                                <Globe size={12} className="opacity-40" />
+                                                                <span className="text-[10px] font-mono font-bold text-antigravity-accent italic lowercase">{tenant.website}</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </>
+                                        )}
+
+                                        {tenant.type === 'EDUCATIONAL' && (
+                                            <>
+                                                <div className="space-y-1.5 px-4 border-l-2 border-black/5 dark:border-white/5">
+                                                    <label className="text-[9px] font-black text-black/40 dark:text-white/30 uppercase tracking-[0.2em]">Academic Track</label>
+                                                    <div className="flex items-start gap-2">
+                                                        <GraduationCap size={12} className="mt-0.5 opacity-40 shrink-0" />
+                                                        <div className="space-y-1">
+                                                            <p className="text-[11px] font-bold text-black/60 dark:text-white/60 leading-relaxed uppercase italic">
+                                                                {tenant.program_name || 'Program_Not_Specified'}
+                                                            </p>
+                                                            {tenant.profile && (
+                                                                <span className="inline-block px-1.5 py-0.5 bg-antigravity-accent/10 text-antigravity-accent text-[8px] font-black uppercase tracking-widest border border-antigravity-accent/20">
+                                                                    {tenant.profile}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    {tenant.graduation_date && (
+                                                        <p className="text-[9px] font-mono opacity-40 uppercase ml-5 tracking-widest mt-0.5">EST. Grad: {tenant.graduation_date}</p>
+                                                    )}
+                                                </div>
+                                                <div className="space-y-1.5 px-4 border-l-2 border-black/5 dark:border-white/5">
+                                                    <label className="text-[9px] font-black text-black/40 dark:text-white/30 uppercase tracking-[0.2em]">Institutional Access</label>
+                                                    {tenant.institution_website && (
+                                                        <div className="flex items-center gap-2">
+                                                            <Globe size={12} className="opacity-40" />
+                                                            <span className="text-[10px] font-mono font-bold text-antigravity-accent italic lowercase">{tenant.institution_website}</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </>
+                                        )}
+
+                                        {tenant.type === 'PERSONAL' && tenant.usage_profile && (
+                                            <div className="space-y-1.5 px-4 border-l-2 border-black/5 dark:border-white/5">
+                                                <label className="text-[9px] font-black text-black/40 dark:text-white/30 uppercase tracking-[0.2em]">Usage Protocol</label>
+                                                <p className="text-sm font-black text-black dark:text-white tracking-tight leading-none uppercase italic border border-black/10 dark:border-white/10 px-3 py-2 bg-black/5 dark:bg-white/5 inline-block">
+                                                    {tenant.usage_profile}
+                                                </p>
+                                            </div>
+                                        )}
+
+                                        {/* Physical & Metadata */}
+                                        <div className="space-y-1.5 px-4 border-l-2 border-black/5 dark:border-white/5">
+                                            <label className="text-[9px] font-black text-black/40 dark:text-white/30 uppercase tracking-[0.2em]">Operational Geodata</label>
+                                            <p className="text-[11px] font-bold text-black dark:text-white leading-relaxed uppercase italic">
+                                                {tenant.address || 'Address_Not_Specified'}
+                                            </p>
+                                            <div className="flex flex-wrap gap-2 mt-2">
+                                                {[tenant.country, tenant.commune, tenant.city, tenant.region, tenant.postal_code].filter(Boolean).map((loc, idx) => (
+                                                    <span key={idx} className="px-1.5 py-0.5 bg-black/5 dark:bg-white/5 text-[8px] font-black uppercase text-black/40 dark:text-white/40 border border-black/5 dark:border-white/5 italic">
+                                                        {loc}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-1.5 px-4 border-l-2 border-black/5 dark:border-white/5">
+                                            <label className="text-[9px] font-black text-black/40 dark:text-white/30 uppercase tracking-[0.2em]">Protocol Attributes</label>
+                                            <div className="flex flex-wrap gap-x-6 gap-y-3 mt-1">
+                                                <div className="flex items-center gap-2">
+                                                    <Calendar size={12} className="opacity-40" />
+                                                    <span className="text-[10px] font-mono font-black text-black/60 dark:text-white/60 uppercase italic">
+                                                        {new Date(tenant.createdAt._seconds ? tenant.createdAt._seconds * 1000 : tenant.createdAt).toLocaleDateString()}
+                                                    </span>
+                                                </div>
+                                                {tenant.phone && (
+                                                    <div className="flex items-center gap-2">
+                                                        <Phone size={12} className="opacity-40" />
+                                                        <span className="text-[10px] font-mono font-black text-black/60 dark:text-white/60 uppercase italic">{tenant.phone}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
 

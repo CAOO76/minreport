@@ -45,6 +45,7 @@ app.get('/health', (req, res) => {
 
 // Public Routes
 app.get('/api/settings/branding', getPublicBrandingSettings);
+app.get('/api/settings/ui-assets', getUIAssetsSettings); // Public for Login/Setup
 app.get('/api/public/accounts-by-id/:taxId([^/]+)', getAccountsById);
 
 // Routes
@@ -67,9 +68,9 @@ app.delete('/api/admin/tenants/:uid', requireSuperAdmin, deleteTenant);
 app.delete('/api/admin/tenants/:uid/purge', requireSuperAdmin, purgeTenant); // Hard Delete
 app.get('/api/admin/settings/branding', requireSuperAdmin, getBrandingSettings);
 app.put('/api/admin/settings/branding', requireSuperAdmin, updateBrandingSettings);
-app.get('/api/admin/metrics', requireSuperAdmin, getSystemMetrics); // [NEW] System Dashboard
-app.get('/api/admin/audit-logs', requireSuperAdmin, getAuditLogs); // [NEW] Traceability
-app.get('/api/admin/settings/ui-assets', getUIAssetsSettings);
+app.get('/api/admin/metrics', requireSuperAdmin, getSystemMetrics); // requireSuperAdmin already verifies token
+app.get('/api/admin/audit-logs', requireSuperAdmin, getAuditLogs);
+app.get('/api/admin/settings/ui-assets', requireSuperAdmin, getUIAssetsSettings); // Keep protected for admin panel
 app.put('/api/admin/settings/ui-assets', requireSuperAdmin, updateUIAssetsSettings);
 
 // Start Server

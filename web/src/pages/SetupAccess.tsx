@@ -1,23 +1,27 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate, Link } from 'react-router-dom';
-import { Loader2, Lock, Eye, EyeOff, ShieldCheck, ArrowRight } from 'lucide-react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { Loader2, ShieldCheck, ArrowRight } from 'lucide-react';
 import BrandLogo from '../components/BrandLogo';
 import { LanguageSwitch } from '../components/LanguageSwitch';
 import { ThemeSwitch } from '../components/ThemeSwitch';
 import { formatRut } from '../utils/rut';
+import { useAuth } from '../context/AuthContext';
 
 export const SetupAccess = () => {
     const navigate = useNavigate();
+    const { signOut } = useAuth();
     const [searchParams] = useSearchParams();
 
     // Context from URL
     const accountId = searchParams.get('accountId');
-    const email = searchParams.get('email');
+    const token = searchParams.get('token'); // Custom Token (reemplazo de oobCode)
+    const urlTaxId = searchParams.get('taxId'); // Identidad estricta desde URL
     const name = searchParams.get('name') || '';
-    const type = searchParams.get('type') || 'PERSONAL';
+    const accountName = searchParams.get('accountName') || '';
+    const type = searchParams.get('type') || 'BUSINESS';
 
     // States
-    const [taxId, setTaxId] = useState('');
+    const [taxId, setTaxId] = useState(urlTaxId ? formatRut(urlTaxId) : '');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
@@ -27,10 +31,10 @@ export const SetupAccess = () => {
     const [bgImage, setBgImage] = useState('');
 
     useEffect(() => {
-        if (!accountId) {
+        if (!accountId || !token) {
             setError('Enlace de activación inválido o expirado. Asegúrate de copiar el enlace completo desde tu correo.');
         }
-    }, [accountId]);
+    }, [accountId, token]);
 
     // Fetch UI Backgrounds for Industrial Look
     useEffect(() => {
@@ -77,8 +81,9 @@ export const SetupAccess = () => {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    taxId: taxId.replace(/[^0-9Kk]/g, '').toUpperCase(), // Send clean RUT
+                    taxId: taxId.replace(/[^0-9Kk]/g, '').toUpperCase(), // Identity verification payload
                     accountId,
+                    token, // Send custom token, backend verifies and decodes everything else
                     password
                 }),
             });
@@ -90,7 +95,8 @@ export const SetupAccess = () => {
             }
 
             setSuccess(true);
-            setTimeout(() => {
+            setTimeout(async () => {
+                await signOut(); // Clear any existing auth session to ensure landing on login
                 navigate('/login', { replace: true });
             }, 3000);
 
@@ -133,7 +139,7 @@ export const SetupAccess = () => {
                         </div>
                         <h2 className="text-2xl font-black uppercase tracking-tight mb-2">Clave Establecida</h2>
                         <p className="text-sm text-black/60 dark:text-white/60 mb-8">
-                            Tu acceso seguro ha sido configurado correctamente. Transfiriendo a la consola central...
+                            Tu acceso seguro ha sido configurado correctamente. Transfiriendo al Logon Público...
                         </p>
                         <Loader2 className="w-8 h-8 animate-spin text-antigravity-accent" />
                     </div>
@@ -186,8 +192,15 @@ export const SetupAccess = () => {
                         <h2 className="text-2xl font-black uppercase tracking-tight leading-none mb-1">
                             {name ? decodeURIComponent(name) : 'NUEVO ACCESO'}
                         </h2>
-                        <p className="text-[9px] font-mono text-black/20 dark:text-white/20 uppercase tracking-[0.3em]">
-                            ID: {email || 'NO_DETECTED'}
+                        {accountName && (
+                            <div className="mt-2 py-1 px-3 bg-[#C68346]/10 border border-[#C68346]/20 inline-block">
+                                <p className="text-[10px] font-bold text-[#C68346] uppercase tracking-widest">
+                                    {decodeURIComponent(accountName)}
+                                </p>
+                            </div>
+                        )}
+                        <p className="text-[9px] font-mono text-black/20 dark:text-white/20 uppercase tracking-[0.3em] mt-3">
+                            ID: {urlTaxId ? formatRut(urlTaxId) : 'IDENTIDAD PENDIENTE'}
                         </p>
                     </div>
 
@@ -263,7 +276,7 @@ export const SetupAccess = () => {
 
                         <button
                             type="submit"
-                            disabled={loading || !!error || !accountId}
+                            disabled={loading || !!error || !accountId || !token}
                             className="w-full py-6 bg-black dark:bg-white text-white dark:text-black font-black uppercase tracking-[0.3em] text-[12px] transition-all shadow-3xl active:scale-[0.98] disabled:opacity-30 flex items-center justify-center gap-4 mt-4"
                         >
                             {loading ? (

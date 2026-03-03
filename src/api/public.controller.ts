@@ -27,6 +27,24 @@ export const getPublicBrandingSettings = async (req: Request, res: Response) => 
 import { formatRut } from '../utils/rut';
 
 /**
+ * Generates all possible RUT/RUN formats for resilient lookup.
+ */
+function getRutVariants(rawTaxId: string): string[] {
+  const variants = new Set<string>();
+  const clean = rawTaxId.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
+  variants.add(clean);
+  if (clean.length >= 2) {
+    const body = clean.slice(0, -1);
+    const dv = clean.slice(-1);
+    variants.add(`${body}-${dv}`);
+    const formatted = body.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + '-' + dv;
+    variants.add(formatted);
+  }
+  variants.add(rawTaxId.trim().toUpperCase());
+  return Array.from(variants);
+}
+
+/**
  * @route GET /api/public/accounts-by-id/:taxId
  * @desc Get accounts associated with a Tax ID (RUT/RUN)
  * @access Public
@@ -39,20 +57,8 @@ export const getAccountsById = async (req: Request, res: Response) => {
   try {
     const { taxId } = req.params;
 
-    // Normalize taxId formats for resilient lookup
-    const cleanTaxId = taxId.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
-    const formattedTaxId = formatRut(cleanTaxId);
-
-    const searchValues = new Set([formattedTaxId, cleanTaxId]);
-
-    // Add semi-clean variant (12345678-9) if possible
-    if (cleanTaxId.length >= 2) {
-      const body = cleanTaxId.slice(0, -1);
-      const dv = cleanTaxId.slice(-1);
-      searchValues.add(`${body}-${dv}`);
-    }
-
-    const finalSearchValues = Array.from(searchValues);
+    // Use shared resilient variant generator
+    const finalSearchValues = getRutVariants(taxId);
 
     console.log(`[AUTH-DIRECTORY] Searching for TaxID: "${taxId}"`);
     console.log(`[AUTH-DIRECTORY] Normalized variants:`, finalSearchValues);
@@ -72,83 +78,22 @@ export const getAccountsById = async (req: Request, res: Response) => {
 
         return res.status(200).json({
           fullName: userData?.fullName || '',
-          accounts: userData?.accounts || []
+          accounts: (userData?.accounts || []).map((acc: any) => ({
+            ...acc,
+            status: acc.status || 'ACTIVE' // Defensive fallback
+          }))
         });
       }
     }
 
-    console.log(`[AUTH-DIRECTORY] ⚠️ Not found in user_directory, falling back to legacy search`);
+    console.log(`[AUTH-DIRECTORY] ⚠️ Not found in user_directory, falling back to tenants only`);
 
     // ============================================================
-    // FALLBACK: Búsqueda Legacy (users + accounts)
+    // FALLBACK 2: Pending Applications (Tenants)
     // ============================================================
     let accounts: any[] = [];
     let fullName: string = '';
 
-    // 1. Search in 'users' collection
-    const usersRef = db.collection('users');
-    const userSnapshot = await usersRef.where('taxId', 'in', finalSearchValues).limit(1).get();
-
-    console.log(`[AUTH-DIRECTORY] Legacy users found: ${userSnapshot.size}`);
-
-    if (!userSnapshot.empty) {
-      const userData = userSnapshot.docs[0].data();
-      fullName = userData.displayName || userData.fullName;
-      const memberships = userData.memberships || [];
-
-      const accountResults = await Promise.all(memberships.map(async (m: any) => {
-        try {
-          const accountSnap = await db.collection('accounts').doc(m.accountId).get();
-
-          if (!accountSnap.exists) {
-            console.warn(`[AUTH-DIRECTORY] Ghost membership excluded: ${m.accountId}`);
-            return null;
-          }
-
-          const accountData = accountSnap.data();
-
-          return {
-            accountId: m.accountId,
-            accountName: accountData?.name || `Cuenta ${m.accountId.slice(0, 4)}`,
-            type: accountData?.type || 'PERSONAL',
-            role: m.role || 'MEMBER',
-            authEmail: userData.email || '',
-            avatar: userData.photoURL || accountData?.avatar,
-            status: userData.status || 'ACTIVE'
-          };
-        } catch (err) {
-          console.error(`[AUTH-DIRECTORY] Failed to read account ${m.accountId}:`, err);
-          return null;
-        }
-      }));
-
-      accounts = accountResults.filter(a => a !== null);
-    }
-
-    // 2. Search in 'accounts' for primaryOperator assignment
-    const accountsRef = db.collection('accounts');
-    const delegateSnapshot = await accountsRef.where('primaryOperator.taxId', 'in', finalSearchValues).get();
-
-    if (!delegateSnapshot.empty) {
-      delegateSnapshot.docs.forEach(docSnap => {
-        const data = docSnap.data();
-        if (!fullName) fullName = data.primaryOperator?.name;
-
-        if (!accounts.find(a => a.accountId === docSnap.id)) {
-          accounts.push({
-            accountId: docSnap.id,
-            accountName: data.name || 'Empresa sin nombre',
-            type: data.type || 'BUSINESS',
-            role: 'ADMINISTRADOR OPERATIVO',
-            authEmail: data.primaryOperator?.email || '',
-            avatar: data.primaryOperator?.avatar,
-            status: data.status || 'ACTIVE'
-          });
-        }
-      });
-    }
-
-    // 3. Search in 'tenants' (Pending requests)
     const tenantsRef = db.collection('tenants');
 
     // Search by rut
@@ -189,11 +134,11 @@ export const getAccountsById = async (req: Request, res: Response) => {
 
     if (accounts.length === 0) {
       console.warn(`[AUTH-DIRECTORY] ❌ No accounts found for variants:`, finalSearchValues);
-      return res.status(404).json({ message: 'No accounts found for this ID.' });
+      return res.status(404).json({ message: 'No accounts found for the provided Tax ID.' });
     }
 
-    // 3. Final Safety Deduplication & Integrity Filter (Maximum Isolation)
-    // Rules: Max 1 PERSONAL, Max 1 EDUCATIONAL, N BUSINESS. Exclude replaced/deleted.
+    // 3. Final Safety Deduplication & Integrity Filter
+    // Rules: Max 1 PERSONAL, Max 1 EDUCATIONAL, N BUSINESS.
     const finalAccounts = new Map();
     let personalAccountFound = false;
     let educationalAccountFound = false;
@@ -205,9 +150,9 @@ export const getAccountsById = async (req: Request, res: Response) => {
       return 0;
     });
 
-    sortedAccounts.forEach(acc => {
-      // Exclude deactivated or replaced accounts
-      if (['REPLACED_BY_NEW_ENROLLMENT', 'DELETED', 'REJECTED'].includes(acc.status)) return;
+    for (const acc of sortedAccounts) {
+      // Prevent duplicates by Account ID
+      if (finalAccounts.has(acc.accountId)) continue;
 
       if (acc.type === 'PERSONAL') {
         if (!personalAccountFound) {
@@ -220,15 +165,15 @@ export const getAccountsById = async (req: Request, res: Response) => {
           educationalAccountFound = true;
         }
       } else {
-        // BUSINESS/ENTERPRISE/OTHERS: Unique by accountId
+        // Business / Enterprise accounts have no limit per RUN
         finalAccounts.set(acc.accountId, acc);
       }
-    });
+    }
 
-    res.status(200).json({
-      fullName: fullName || '',
-      accounts: Array.from(finalAccounts.values())
-    });
+    const resultArray = Array.from(finalAccounts.values());
+
+    console.log(`[AUTH-DIRECTORY] ✅ Returning ${resultArray.length} legacy/tenant accounts`);
+    return res.status(200).json({ fullName, accounts: resultArray });
 
   } catch (error: any) {
     console.error('[AUTH-DIRECTORY] ❌ Error fetching accounts by ID:', error);

@@ -1,11 +1,12 @@
 import { z } from 'zod';
-import { validateRut } from '../utils/rut';
+import { validateRut, getEntityTypeByRut } from '../utils/rut';
 import { PUBLIC_EMAIL_DOMAINS } from './constants';
 
 // Base schema for shared fields
 const baseSchema = z.object({
     email: z.string().email("Invalid email format"),
     country: z.string().min(2, "Country is required"),
+    entity_type: z.enum(['PERSONAL', 'EXTRANJERO_PROVISORIO', 'B2B_TRADICIONAL', 'B2B_GOBIERNO', 'B2B_MODERNO', 'SECTORIAL_INVALIDO']).optional(),
 });
 
 // Validation helpers
@@ -110,6 +111,21 @@ export const registerSchema = baseSchema.and(
             message: `Invalid ID Document (${taxIdField.toUpperCase()}) for ${data.country}`,
             path: [taxIdField],
         });
+    }
+
+    // 3. Entity Type consistency check for Chile
+    if (data.country === 'CL') {
+        const rutNum = parseInt(taxIdValue.replace(/\./g, '').replace(/-/g, '').slice(0, -1), 10);
+        if (!isNaN(rutNum)) {
+            const identifiedType = getEntityTypeByRut(taxIdValue);
+            if (identifiedType === 'SECTORIAL_INVALIDO') {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: "Identificador Provisorio no válido para el registro oficial en MINREPORT.",
+                    path: [taxIdField],
+                });
+            }
+        }
     }
 });
 

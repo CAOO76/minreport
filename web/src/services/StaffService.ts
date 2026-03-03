@@ -1,4 +1,4 @@
-import { db } from '../config/firebase';
+import { db, auth } from '../config/firebase';
 import { getApiUrl } from '../utils/network';
 import { collection, doc, getDoc, setDoc, updateDoc, arrayUnion, query, where, getDocs, limit } from 'firebase/firestore';
 import type { AccountReference, UserDirectory } from '../types/user_directory';
@@ -46,8 +46,7 @@ export class StaffService {
     static async recruitWorker(
         accountId: string,
         workerData: WorkerData,
-        accountName: string,
-        currentUserId: string
+        accountName: string
     ): Promise<RecruitResult> {
         try {
             const normalizedRun = this.normalizeRun(workerData.run);
@@ -107,7 +106,8 @@ export class StaffService {
                         email: normalizedEmail,
                         displayName: workerData.fullName,
                         run: normalizedRun,
-                        accountId: accountId
+                        accountId: accountId,
+                        accountName: accountName
                     })
                 });
 
@@ -130,6 +130,7 @@ export class StaffService {
                 role: 'OPERATOR',
                 type: 'BUSINESS',
                 accountName: accountName,
+                status: 'PENDING', // Force PENDING for B2B flow
                 jobProfileId: workerData.jobProfileId
             };
 
@@ -139,32 +140,85 @@ export class StaffService {
                 updatedAt: Date.now()
             });
 
-            // PASO D: Agregar miembro a la cuenta
-            const memberRef = doc(db, 'accounts', accountId, 'members', userId);
-            await setDoc(memberRef, {
-                userId: userId,
-                email: normalizedEmail,
-                fullName: workerData.fullName,
-                run: normalizedRun,
-                jobProfileId: workerData.jobProfileId,
-                role: 'OPERATOR',
-                status: isNewUser ? 'PENDING' : 'ACTIVE',
-                invitedAt: Date.now(),
-                invitedBy: currentUserId
-            });
+            // PASO D: Agregar miembro a la cuenta (OMITIDO - DELEGADO AL BACKEND PARA INTEGRALIDAD)
+            // El backend ahora maneja la escritura coordinada en accounts/{id}/members, users/ y user_directory
 
             return {
                 success: true,
                 userId: userId,
                 isNewUser: isNewUser
             };
-
         } catch (error: any) {
             console.error('[StaffService] Error en onboarding:', error);
             return {
                 success: false,
                 isNewUser: false,
                 error: error.message || 'Error desconocido'
+            };
+        }
+    }
+
+    /**
+     * Designa un Administrador General
+     * Llama al backend para crear/vincular usuario y envía email de bienvenida.
+     * Luego persiste en la subcolección 'members' de la cuenta.
+     */
+    static async designateAdmin(
+        accountId: string,
+        adminData: { run: string, name: string, lastName: string, email: string },
+        accountName: string
+    ): Promise<RecruitResult> {
+        try {
+            const normalizedRun = this.normalizeRun(adminData.run);
+            const normalizedEmail = adminData.email.toLowerCase().trim();
+            const fullName = `${adminData.name} ${adminData.lastName}`;
+
+            console.log('[StaffService] Designando Administrador General:', { run: normalizedRun, accountId });
+
+            // 1. Backend: Auth flow + Email + Directory Sync
+            const response = await fetch(`${this.API_URL}/staff/designate-admin`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: normalizedEmail,
+                    displayName: fullName,
+                    run: normalizedRun,
+                    accountId: accountId,
+                    accountName: accountName
+                })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Error al procesar designación en servidor');
+            }
+
+            const { uid, isNewUser } = await response.json();
+
+            // 2. Persistencia en subcolección 'members' de la cuenta B2B
+            const memberRef = doc(db, 'accounts', accountId, 'members', uid);
+            await setDoc(memberRef, {
+                userId: uid,
+                email: normalizedEmail,
+                fullName: fullName,
+                run: normalizedRun,
+                role: 'ADMIN',
+                status: 'PENDING', // Force PENDING for B2B flow
+                invitedAt: Date.now(),
+                invitedBy: auth.currentUser?.uid || 'system'
+            });
+
+            return {
+                success: true,
+                userId: uid,
+                isNewUser: isNewUser
+            };
+        } catch (error: any) {
+            console.error('[StaffService] Error en designación admin:', error);
+            return {
+                success: false,
+                isNewUser: false,
+                error: error.message || 'Error inesperado'
             };
         }
     }

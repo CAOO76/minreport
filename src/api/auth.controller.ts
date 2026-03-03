@@ -74,6 +74,7 @@ export const register = async (req: Request, res: Response) => {
         // 3. Save Request to Firestore (Using auto-generated ID)
         const tenantData = {
             ...data,
+            entity_type: (data as any).entity_type || null,
             email: tenantEmail,
             status: 'PENDING_APPROVAL',
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -209,7 +210,7 @@ export const inviteUser = async (req: Request, res: Response) => {
             }
 
             await userRef.set({
-                taxId: taxId || userDoc.data()?.taxId || null,
+                taxId: userDoc.data()?.taxId || taxId || null,
                 email: normalizedEmail,
                 fullName: req.body.name || userDoc.data()?.fullName || normalizedEmail.split('@')[0],
                 memberships,
@@ -254,11 +255,11 @@ export const inviteUser = async (req: Request, res: Response) => {
             const oobCode = url.searchParams.get('oobCode');
 
             // Redirect to setup-access instead of standard reset
-            link = `${baseUrl}/setup-access?accountId=${accountId}&email=${normalizedEmail}&name=${entityNameEncoded}&type=BUSINESS&oobCode=${oobCode}`;
+            link = `${baseUrl}/setup-access?accountId=${accountId}&email=${normalizedEmail}&name=${entityNameEncoded}&accountName=${entityNameEncoded}&type=BUSINESS&oobCode=${oobCode}`;
         } else {
             console.log(`[B2B-INVITE] Generating link for EXISTING user: ${normalizedEmail}`);
             // Point to setup-access anyway so they can set their SPECIFIC password for this account
-            link = `${baseUrl}/setup-access?accountId=${accountId}&email=${normalizedEmail}&name=${entityNameEncoded}&type=BUSINESS`;
+            link = `${baseUrl}/setup-access?accountId=${accountId}&email=${normalizedEmail}&name=${entityNameEncoded}&accountName=${entityNameEncoded}&type=BUSINESS`;
         }
 
         // 5. Send Email via Resend
