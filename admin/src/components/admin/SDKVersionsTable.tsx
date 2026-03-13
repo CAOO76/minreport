@@ -8,7 +8,6 @@ interface SDKVersionsTableProps {
     isLoading: boolean;
     onViewDetails: (version: SDKVersion) => void;
     onDownload: (version: SDKVersion) => void;
-    onDelete?: (id: string) => void;
 }
 
 /**
@@ -19,8 +18,7 @@ export const SDKVersionsTable: React.FC<SDKVersionsTableProps> = ({
     versions,
     isLoading,
     onViewDetails,
-    onDownload,
-    onDelete
+    onDownload
 }) => {
 
     // Helper to format date
@@ -43,85 +41,62 @@ export const SDKVersionsTable: React.FC<SDKVersionsTableProps> = ({
     };
 
     return (
-        <div className="elite-tech-surface rounded-none shadow-3xl overflow-hidden border-black/5 dark:border-white/5 relative">
-            <div className="absolute inset-0 technical-grid pointer-events-none opacity-20"></div>
-
-            <div className="overflow-x-auto relative z-10">
+        <div className="bg-white dark:bg-zinc-950 rounded-none overflow-hidden border border-black/5 dark:border-white/5">
+            <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                     <thead>
-                        <tr className="bg-black/5 dark:bg-white/5 border-b border-black/10 dark:border-white/10">
-                            <th className="px-10 py-6 hud-label">Build_Fingerprint</th>
-                            <th className="px-10 py-6 hud-label">Status_Protocol</th>
-                            <th className="px-10 py-6 hud-label text-center">Deployment_Date</th>
-                            <th className="px-10 py-6 hud-label max-w-[200px]">Validation_Logs</th>
-                            <th className="px-10 py-6 hud-label text-right">Actions</th>
+                        <tr className="bg-slate-50 dark:bg-zinc-900/50 border-b border-black/5 dark:border-white/5">
+                            <th className="px-8 py-4 text-[10px] font-bold text-black/40 dark:text-white/30 tracking-widest uppercase">VERSIÓN_SDK</th>
+                            <th className="px-8 py-4 text-[10px] font-bold text-black/40 dark:text-white/30 tracking-widest uppercase">PROTOCOLO_ESTADO</th>
+                            <th className="px-8 py-4 text-[10px] font-bold text-black/40 dark:text-white/30 tracking-widest uppercase text-center">FECHA_DESPLIEGUE</th>
+                            <th className="px-8 py-4 text-[10px] font-bold text-black/40 dark:text-white/30 tracking-widest uppercase text-right">ACCIONES</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-black/5 dark:divide-white/5">
                         {isLoading ? (
                             Array.from({ length: 3 }).map((_, i) => (
-                                <tr key={`skeleton-${i}`} className="animate-pulse">
-                                    <td colSpan={5} className="px-10 py-8">
-                                        <div className="h-6 bg-black/5 dark:bg-white/5 rounded-none w-3/4"></div>
+                                <tr key={`skeleton-${i}`}>
+                                    <td colSpan={4} className="px-8 py-6">
+                                        <div className="h-4 bg-black/5 dark:bg-white/5 rounded-none w-1/2"></div>
                                     </td>
                                 </tr>
                             ))
                         ) : versions.length === 0 ? (
                             <tr>
-                                <td colSpan={5} className="px-10 py-20 text-center">
-                                    <div className="flex flex-col items-center gap-4 opacity-20">
-                                        <Cpu size={40} />
-                                        <span className="hud-label italic tracking-[0.3em]">EMPTY_REPOSITORY_DATA</span>
-                                    </div>
+                                <td colSpan={4} className="px-8 py-16 text-center">
+                                    <span className="text-[10px] font-bold text-black/20 dark:text-white/10 uppercase tracking-[0.4em]">SIN_DATOS_EN_REPOSITORIO</span>
                                 </td>
                             </tr>
                         ) : versions.map((version) => (
-                            <tr key={version.id} className={clsx(
-                                "hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors group",
-                                version.status === 'STABLE' && "bg-antigravity-accent/[0.02]"
-                            )}>
-                                <td className="px-10 py-6">
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-10 h-10 rounded-none bg-black dark:bg-white text-white dark:text-black flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                                            <span className="text-[12px] font-black italic">v{version.versionNumber}</span>
+                            <tr key={version.id} className="hover:bg-slate-50 dark:hover:bg-zinc-900/40 transition-colors">
+                                <td className="px-8 py-4">
+                                    <div className="flex items-center gap-3">
+                                        <div className="flex items-center justify-center">
+                                            <span className="text-[11px] font-bold text-black dark:text-white">v{version.versionNumber}</span>
                                         </div>
-                                        <div className="flex flex-col">
-                                            <span className="text-[13px] font-black text-black dark:text-white uppercase tracking-tighter">SDK_CORE_RUNTIME</span>
-                                            {version.status === 'STABLE' && (
-                                                <span className="text-[9px] font-black text-antigravity-accent uppercase tracking-[0.2em] italic">GOLDEN_BUILD</span>
-                                            )}
-                                        </div>
+                                        <span className="text-[12px] font-bold text-black dark:text-white tracking-widest uppercase">Runtime_Core</span>
                                     </div>
                                 </td>
-                                <td className="px-10 py-6">
+                                <td className="px-8 py-4">
                                     <span className={clsx(
-                                        "inline-flex items-center px-4 py-1.5 rounded-none text-[9px] font-black uppercase tracking-[0.15em] border shadow-sm transition-all duration-500",
-                                        version.status === 'STABLE' && "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
-                                        version.status === 'BETA' && "bg-amber-500/10 text-amber-600 border-amber-500/20",
-                                        version.status === 'DEPRECATED' && "bg-rose-500/10 text-rose-600 border-rose-500/20"
+                                        "inline-flex items-center px-0 py-1 text-[9px] font-bold uppercase tracking-widest",
+                                        version.status === 'STABLE' && "text-emerald-600",
+                                        version.status === 'BETA' && "text-amber-600",
+                                        version.status === 'DEPRECATED' && "text-rose-600"
                                     )}>
-                                        <div className={clsx("w-1 h-1 rounded-none mr-2",
-                                            version.status === 'STABLE' ? "bg-emerald-500" :
-                                                version.status === 'BETA' ? "bg-amber-500" : "bg-rose-500"
-                                        )}></div>
                                         {version.status}
                                     </span>
                                 </td>
-                                <td className="px-10 py-6 text-center">
-                                    <span className="text-[11px] font-black text-black/40 dark:text-white/30 uppercase font-mono tracking-tight grayscale group-hover:grayscale-0 transition-all">
+                                <td className="px-8 py-4 text-center">
+                                    <span className="text-[11px] font-medium text-black/40 dark:text-white/30 font-mono">
                                         {formatDate(version.releaseDate)}
                                     </span>
                                 </td>
-                                <td className="px-10 py-6 max-w-[200px]">
-                                    <p className="text-[11px] font-bold text-black/50 dark:text-white/40 leading-relaxed uppercase tracking-tighter italic">
-                                        {truncateText(version.changelog, 60)}
-                                    </p>
-                                </td>
-                                <td className="px-10 py-6 text-right">
-                                    <div className="flex justify-end gap-3">
+                                <td className="px-8 py-4 text-right">
+                                    <div className="flex justify-end gap-6 text-black/40 dark:text-white/40">
                                         <button
                                             onClick={() => onViewDetails(version)}
-                                            className="w-10 h-10 rounded-none bg-black/5 dark:bg-white/5 hover:bg-black dark:hover:bg-white text-black/40 dark:text-white/40 hover:text-white dark:hover:text-black flex items-center justify-center transition-all active:scale-90"
+                                            className="hover:text-black dark:hover:text-white transition-colors"
                                         >
                                             <Eye size={18} />
                                         </button>
@@ -129,22 +104,14 @@ export const SDKVersionsTable: React.FC<SDKVersionsTableProps> = ({
                                             onClick={() => onDownload(version)}
                                             disabled={version.status === 'DEPRECATED'}
                                             className={clsx(
-                                                "w-10 h-10 rounded-none flex items-center justify-center transition-all active:scale-90",
+                                                "transition-colors",
                                                 version.status === 'DEPRECATED'
-                                                    ? "bg-rose-500/5 text-rose-500/20 cursor-not-allowed border border-rose-500/10"
-                                                    : "bg-antigravity-accent text-white shadow-premium hover:scale-110"
+                                                    ? "opacity-10 cursor-not-allowed"
+                                                    : "text-[#C68346] hover:text-[#b3733a]"
                                             )}
                                         >
                                             <Download size={18} />
                                         </button>
-                                        {onDelete && (
-                                            <button
-                                                onClick={() => onDelete(version.id)}
-                                                className="w-10 h-10 rounded-none bg-black/5 dark:bg-white/5 hover:bg-rose-500 hover:text-white text-rose-500/40 flex items-center justify-center transition-all active:scale-90"
-                                            >
-                                                <Trash2 size={18} />
-                                            </button>
-                                        )}
                                     </div>
                                 </td>
                             </tr>

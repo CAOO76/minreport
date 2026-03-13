@@ -13,6 +13,10 @@ export interface PluginManifest {
     name: string;
     version: string;
     author: string;
+    description?: string;
+    website?: string;
+    category?: 'production' | 'safety' | 'geology' | 'fleet' | 'hr' | 'other';
+    permissions?: string[];
 }
 
 /**

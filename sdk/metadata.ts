@@ -4,13 +4,14 @@
  * automatically when they are deployed.
  */
 export const SDK_METADATA = {
-    version: '2.0.1',
+    version: '2.1.0',
     changelog: [
-    "Automated maintenance release.",
-    "Source Bump: v2.0.0 -> v2.0.1",
-    "Trace ID: 1771872982212"
+    "Elite Industrial Minimalism UI Refresh.",
+    "Added SDKSwitch, SDKBadge, SDKMetric, and SDKIcon.",
+    "Extended manifest for Marketplace and Third-party support.",
+    "Enforced Atkinson Hyperlegible and rounded-none geometry."
 ],
-    author: 'MinReport Automation',
+    author: 'MinReport Engineering',
     releaseDate: new Date(),
-    status: 'BETA' as const
+    status: 'PRODUCTION-READY' as const
 };

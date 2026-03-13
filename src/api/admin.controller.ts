@@ -15,10 +15,10 @@ const execAsync = promisify(exec);
 
 const downloadFile = async (url: string, dest: string): Promise<void> => {
     console.log(`[DevOps] Executing download via curl to follow redirects: ${dest}`);
-    // -L follows redirects, -o specifies output file, -s is silent but we want errors
+    // -L follows redirects, -o specifies output file
     await execAsync(`curl -L "${url}" -o "${dest}"`);
-    if (!fs.existsSync(dest) || fs.statSync(dest).size < 100) {
-        throw new Error(`Download failed or file too small: ${dest}`);
+    if (!fs.existsSync(dest) || fs.statSync(dest).size < 1) { // Changed from 100 to 1 for small SVGs
+        throw new Error(`Download failed or file empty: ${dest}`);
     }
 };
 
@@ -703,9 +703,15 @@ export const updateBrandingSettings = async (req: express.Request, res: express.
 
                     // Sync to Web App
                     if (fs.existsSync(webPublicDir)) {
+                        const brandingDir = path.join(webPublicDir, 'branding');
+                        if (!fs.existsSync(brandingDir)) {
+                            fs.mkdirSync(brandingDir, { recursive: true });
+                            console.log(`[DevOps] Created missing directory: ${brandingDir}`);
+                        }
+
                         if (ext === '.svg') {
                             // Direct copy for SVGs to maintain vector quality
-                            fs.copyFileSync(tempIcon, path.join(webPublicDir, 'branding/master_icon.svg'));
+                            fs.copyFileSync(tempIcon, path.join(brandingDir, 'master_icon.svg'));
                             console.log('[DevOps] SVG Master Icon updated in web/public/branding');
                         } else {
                             await execAsync(`sips -z 192 192 "${tempIcon}" --out "${path.join(webPublicDir, 'pwa-192x192.png')}"`);
@@ -719,6 +725,7 @@ export const updateBrandingSettings = async (req: express.Request, res: express.
                 // 2. Sync Native Mobile Icons (Android)
                 // [BRANDING-AUTO] Safe-Zone Logic: Enforce 66% safe area to prevent clipping
                 const appIconUrl = settings.dark?.appIcon || settings.light?.appIcon;
+                console.log(`[DevOps] Mobile Icon Sync check. appIconUrl: ${appIconUrl ? 'PRESENT' : 'MISSING'}`);
                 if (appIconUrl && fs.existsSync(androidResDir)) {
                     console.log('[DevOps] Syncing Native Mobile Icons with Safe Zone...');
                     const ext = appIconUrl.toLowerCase().includes('.svg') ? '.svg' : '.png';
@@ -758,9 +765,20 @@ export const updateBrandingSettings = async (req: express.Request, res: express.
                             fs.copyFileSync(path.join(targetDir, 'ic_launcher.png'), path.join(targetDir, 'ic_launcher_round.png'));
                         }
                     }
-                    console.log('[DevOps] Android Native Icons updated with Safe Zone');
                     if (fs.existsSync(tempAppIcon)) fs.unlinkSync(tempAppIcon);
                 }
+
+                // [PERSISTENCE-FIX] Force Database Export on local emulator.
+                if (process.env.FIRESTORE_EMULATOR_HOST) {
+                    console.log('[DevOps] Branding saved. Forcing Firebase Emulator data export to prevent data loss on forced exit...');
+                    try {
+                        await execAsync('firebase emulators:export ./data --force', { cwd: rootDir });
+                        console.log('[DevOps] Firebase Emulator data automatically exported to ./data.');
+                    } catch (exportErr: any) {
+                        console.warn('[DevOps Warning] Auto-export failed. Ensure firebase CLI is available:', exportErr.message);
+                    }
+                }
+
             } catch (syncErr) {
                 console.error('[DevOps Error] Failed to sync assets to local filesystem:', syncErr);
             }
@@ -840,6 +858,20 @@ export const updateUIAssetsSettings = async (req: express.Request, res: express.
     try {
         const settings = req.body;
         await db.collection('settings').doc('ui_assets').set(settings, { merge: true });
+
+        // [PERSISTENCE-FIX] Force Database Export on local emulator.
+        if (process.env.FIRESTORE_EMULATOR_HOST) {
+            console.log('[DevOps] UI Assets saved. Forcing Firebase Emulator data export to prevent data loss on forced exit...');
+            try {
+                // Determine root env path to execute firebase command successfully
+                const rootDir = path.resolve(__dirname, '../../..');
+                await execAsync('firebase emulators:export ./data --force', { cwd: rootDir });
+                console.log('[DevOps] Firebase Emulator data automatically exported to ./data.');
+            } catch (exportErr: any) {
+                console.warn('[DevOps Warning] Auto-export failed. Ensure firebase CLI is available:', exportErr.message);
+            }
+        }
+
         res.json({ success: true });
     } catch (error) {
         console.error('Error updating UI assets settings:', error);

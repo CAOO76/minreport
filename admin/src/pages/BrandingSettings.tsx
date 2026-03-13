@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import clsx from 'clsx';
 import { getBrandingSettings, updateBrandingSettings } from '../services/api';
-import { storage } from '../config/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db, storage } from '../config/firebase';
 
 interface LogoSet {
     isotype: string;
@@ -144,11 +145,11 @@ const BrandingSection: React.FC<{
                                         type.charAt(0).toUpperCase() + type.slice(1)}
                             </label>
                             <span className="text-[10px] text-black/30 dark:text-white/30 font-black uppercase tracking-widest mt-1">
-                                {type === 'isotype' ? 'Master (Min 512x512px)' :
-                                    type === 'logotype' ? 'Horizontal (HD)' :
-                                        type === 'imagotype' ? 'Unified (Min 512px)' :
-                                            type === 'pwaIcon' ? 'Web Icon (512x512px)' :
-                                                'App Master (1024x1024px)'}
+                                {type === 'isotype' ? 'Master Vector (1024x1024px)' :
+                                    type === 'logotype' ? 'Horizontal Brand (Min 1024px Width)' :
+                                        type === 'imagotype' ? 'Unified Branding (Min 1024px)' :
+                                            type === 'pwaIcon' ? 'Web App Icon (512x512px)' :
+                                                'Native App Isotype (1024x1024px)'}
                             </span>
                         </div>
 
@@ -195,23 +196,26 @@ export const BrandingSettings: React.FC = () => {
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
-        const fetchSettings = async () => {
-            setIsLoading(true);
-            try {
-                const response = await getBrandingSettings();
-                const data = response.data || {};
+        // [REAL-TIME] Sustituir el fetch de una sola vez por onSnapshot para evitar datos stale
+        const docRef = doc(db, 'settings', 'branding');
+        const unsubscribe = onSnapshot(docRef, (docSnap) => {
+            if (docSnap.exists()) {
+                const data = docSnap.data() as BrandingSettingsData;
                 setSettings({
                     light: { ...DEFAULT_SETTINGS.light, ...(data.light || {}) },
                     dark: { ...DEFAULT_SETTINGS.dark, ...(data.dark || {}) },
                 });
-            } catch (error) {
-                console.error('Failed to fetch branding settings', error);
+            } else {
                 setSettings(DEFAULT_SETTINGS);
-            } finally {
-                setIsLoading(false);
             }
-        };
-        fetchSettings();
+            setIsLoading(false);
+        }, (error) => {
+            console.error('Failed to listen to branding settings', error);
+            setSettings(DEFAULT_SETTINGS);
+            setIsLoading(false);
+        });
+
+        return () => unsubscribe();
     }, []);
 
     const handleFileChange = (type: string, file: File | null) => {

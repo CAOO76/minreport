@@ -15,7 +15,7 @@ export const AdminLayout = () => {
 
     const navLinkClasses = ({ isActive }: { isActive: boolean }) =>
         `w-12 h-12 flex items-center justify-center transition-all duration-300 relative group rounded-none border border-transparent ${isActive
-            ? 'bg-black dark:bg-white text-white dark:text-black border-black/5 dark:border-white/10'
+            ? 'bg-antigravity-accent text-white shadow-md border-antigravity-accent'
             : 'text-black/40 dark:text-white/30 hover:bg-black/5 dark:hover:bg-white/5 hover:text-black dark:hover:text-white'
         }`;
 
