@@ -2,12 +2,14 @@
 
 Bienvenido al ecosistema de desarrollo de MINREPORT. Esta guía detalla cómo crear plugins compatibles con el estándar "Elite Industrial Minimalism" y listos para el Marketplace especializado.
 
-## 1. Filosofía de Diseño
-Para mantener la coherencia estética en todo el sistema, es obligatorio seguir estas reglas:
-- **Tipografía**: Usar exclusivamente `font-atkinson`.
-- **Bordes**: Todos los componentes deben tener `rounded-none` (bordes rectos).
+## 1. Filosofía de Diseño ("Elite Industrial Minimalism")
+Para mantener la coherencia estética e industrial en todo el sistema, es **obligatorio** seguir estas directrices:
+- **Tipografía**: Usar exclusivamente `Atkinson Hyperlegible` (clase Tailwind: `font-atkinson`) para absolutamente todo texto.
+- **Componentes e Íconos**: Restringido a Material Design 3 (m3.material.io). Usar los componentes del SDK (ej. `SDKSwitch` M3) en lugar de HTML nativos.
+- **Formularios Seguros**: Por normativa de seguridad, desactivar siempre el autocompletado en los inputs (`autocomplete="off"`).
+- **Modo Claro/Oscuro**: Soporte para ambos modos es obligatorio. Mantener fondos limpios con acentos metálicos y evitar colores genéricos puros.
+- **Bordes**: Todos los contenedores base deben tener bordes rectos (`rounded-none`).
 - **Acento**: El color de acción principal es el **Copper** (`#C68346`).
-- **Contraste**: Mantener fondos claros/oscuros limpios con acentos metálicos.
 
 ## 2. Componentes de UI Disponibles
 Importa los componentes directamente desde el SDK para asegurar compatibilidad:
@@ -47,9 +49,11 @@ Cada plugin debe incluir un `manifest.json` o exportar un objeto `PluginManifest
 ```
 
 ## 4. Estándares Técnicos
-- **Región**: Todos los procesamientos deben ser compatibles con `southamerica-west1`.
-- **Seguridad**: Nunca uses IDs globales; utiliza siempre el `SecureContext` proporcionado en el método `onInit`.
-- **PWA**: Asegura que tus componentes sean responsivos y funcionen en dispositivos móviles.
+- **Global Ledger**: Todas las transacciones financieras DEBEN pasar por `FinancialEventSchema` e inyectarse vía el Singleton `eventBus` público del SDK. Nunca persistir montos localmente.
+- **Soporte Offline (Edge)**: Diseña asumiendo pérdida de red intermitente. El `SecureContext` expone `storage.saveOfflineData` y `network` (IndexedDB/Capacitor) para retener operaciones en faena antes de sincronizar.
+- **Región GCP**: Todos los procesamientos serverless deben ser compatibles con `southamerica-west1`.
+- **Seguridad UID**: No uses variables globales; utiliza siempre el `SecureContext` proporcionado en el método `onInit`.
+- **PWA / Android**: Asegura que la UI de tu plugin sea netamente responsiva y soporte ejecución dentro de Capacitor WebView.
 
 ---
 © 2026 MINREPORT® - Mining Control System.

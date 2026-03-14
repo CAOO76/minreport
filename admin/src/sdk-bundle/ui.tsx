@@ -96,7 +96,7 @@ export const SDKInput: React.FC<SDKInputProps> = ({ label, error, className = ''
     );
 };
 
-// --- SDKSwitch (M3 Interface) ---
+// --- SDKSwitch (M3 Compliant) ---
 interface SDKSwitchProps {
     checked: boolean;
     onChange: (checked: boolean) => void;
@@ -106,20 +106,31 @@ interface SDKSwitchProps {
 
 export const SDKSwitch: React.FC<SDKSwitchProps> = ({ checked, onChange, label, disabled = false }) => {
     return (
-        <label className={`flex items-center gap-3 cursor-pointer select-none font-atkinson ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}>
-            <div className="relative">
-                <input 
-                    type="checkbox" 
-                    className="sr-only" 
-                    checked={checked} 
-                    onChange={e => !disabled && onChange(e.target.checked)}
-                    disabled={disabled}
+        <div className={`flex items-center gap-3 select-none font-atkinson ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}>
+            <button
+                type="button"
+                role="switch"
+                aria-checked={checked}
+                disabled={disabled}
+                onClick={() => !disabled && onChange(!checked)}
+                className={`group relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-none border transition-all duration-300 ease-in-out focus-visible:outline-none focus:border-[#C68346] ${
+                    checked 
+                        ? "bg-black dark:bg-white border-transparent" 
+                        : "bg-black/5 dark:bg-white/5 border-black/10 dark:border-white/10"
+                }`}
+            >
+                <span
+                    className={`pointer-events-none block h-5 w-5 rounded-none ring-0 transition-all duration-300 ease-in-out ${
+                        checked 
+                            ? "translate-x-6 bg-white dark:bg-black" 
+                            : "translate-x-1 bg-black/20 dark:bg-white/20"
+                    }`}
                 />
-                <div className={`w-10 h-5 transition-colors duration-200 border ${checked ? 'bg-[#C68346] border-[#C68346]' : 'bg-slate-200 dark:bg-zinc-800 border-slate-300 dark:border-zinc-700'}`}></div>
-                <div className={`absolute left-0.5 top-0.5 w-4 h-4 transition-transform duration-200 ${checked ? 'translate-x-5 bg-white' : 'translate-x-0 bg-white dark:bg-zinc-400'}`}></div>
-            </div>
-            {label && <span className="text-xs font-medium text-slate-700 dark:text-zinc-300 uppercase tracking-wider">{label}</span>}
-        </label>
+                {/* Overlay Hover M3 */}
+                <span className="absolute inset-0 rounded-none opacity-0 group-hover:opacity-5 bg-[#C68346] transition-opacity" />
+            </button>
+            {label && <span className="text-xs font-medium text-slate-700 dark:text-zinc-300 uppercase tracking-wider cursor-pointer" onClick={() => !disabled && onChange(!checked)}>{label}</span>}
+        </div>
     );
 };
 

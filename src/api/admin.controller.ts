@@ -89,8 +89,18 @@ export const listAccounts = async (req: express.Request, res: express.Response) 
     }
 };
 
+const adminLoginSchema = z.object({
+    email: z.string().email(),
+    password: z.string()
+});
+
 export const adminLogin = async (req: express.Request, res: express.Response) => {
-    const { email, password } = req.body;
+    // [SEC-SHIELD] Validación estricta de entrada
+    const parseResult = adminLoginSchema.safeParse(req.body);
+    if (!parseResult.success) {
+        return res.status(400).json({ error: 'Invalid payload (SEC-SHIELD Intervention)', details: parseResult.error.format() });
+    }
+    const { email, password } = parseResult.data;
 
     console.log(`[ADMIN-LOGIN] Attempt for: ${email}`);
     if (email === env.SUPER_ADMIN_EMAIL && password === env.SUPER_ADMIN_PASSWORD) {
@@ -139,15 +149,24 @@ export const adminLogin = async (req: express.Request, res: express.Response) =>
 
 import { AuthRequest } from '../middleware/admin';
 
+const updateTenantStatusSchema = z.object({
+    status: z.enum(['ACTIVE', 'REJECTED']),
+    rejectionReason: z.string().optional().nullable(),
+    observations: z.string().optional().nullable(),
+    enabledPlugins: z.array(z.string()).optional()
+});
+
 export const updateTenantStatus = async (req: AuthRequest, res: express.Response) => {
     console.log('Admin Params received:', req.params);
     const { uid } = req.params;
-    const { status, rejectionReason, observations, enabledPlugins } = req.body;
-    const adminEmail = req.user?.email || 'master-admin';
-
-    if (!['ACTIVE', 'REJECTED'].includes(status)) {
-        return res.status(400).json({ error: 'Invalid status' });
+    
+    // [SEC-SHIELD] Validación estricta y limpieza de payload
+    const parseResult = updateTenantStatusSchema.safeParse(req.body);
+    if (!parseResult.success) {
+        return res.status(400).json({ error: 'Invalid payload (SEC-SHIELD Intervention)', details: parseResult.error.format() });
     }
+    const { status, rejectionReason, observations, enabledPlugins } = parseResult.data;
+    const adminEmail = req.user?.email || 'master-admin';
 
     try {
         const tenantRef = db.collection('tenants').doc(uid);

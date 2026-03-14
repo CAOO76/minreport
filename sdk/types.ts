@@ -20,21 +20,29 @@ export interface PluginManifest {
 }
 
 /**
- * API de Almacenamiento Seguro (Scoped Storage)
- * Cada plugin recibe una instancia que SOLO puede escribir en su propio path.
+ * API de Almacenamiento Seguro para entorno Edge (Offline-First)
+ * Abstrae IndexedDB y Capacitor Preferences para el plugin.
  */
 export interface StorageAPI {
-    /**
-     * Guarda el resultado de un procesamiento realizado por el plugin.
-     * @param entityId ID de la entidad relacionada (ej. ID de stockpile)
-     * @param data Objeto con resultados. Debe ser serializable.
-     */
+    /** Guarda el resultado de un procesamiento (Mina Offline) */
     saveProcessingResult(entityId: string, data: Record<string, any>): Promise<void>;
 
-    /**
-     * Obtiene la configuración guardada del plugin para una entidad específica.
-     */
+    /** Obtiene la configuración o datos locales guardados */
     getConfig(entityId: string): Promise<Record<string, any> | null>;
+
+    /** Guarda datos genéricos en IndexedDB para sincronización posterior */
+    saveOfflineData(key: string, data: any): Promise<void>;
+}
+
+/**
+ * API de Red para resiliencia en mina
+ */
+export interface NetworkAPI {
+    /** Escucha los cambios de estado de red (Capacitor Network) */
+    onNetworkStatusChange(callback: (status: { connected: boolean; connectionType: string }) => void): void;
+    
+    /** Fuerza el vaciado de la cola IndexedDB al recuperar conexión */
+    syncOfflineQueue(): Promise<void>;
 }
 
 /**
@@ -46,8 +54,9 @@ export interface SecureContext {
     projectId: string;
     userId: string;
 
-    // Capacidades inyectadas (solo existen si se solicitaron en el manifiesto)
+    // Capacidades inyectadas
     storage: StorageAPI;
+    network: NetworkAPI; // [EDGE-OPTIMIZER] Network management
 
     // Estado del entorno
     isOffline: boolean;
