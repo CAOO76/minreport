@@ -1,0 +1,161 @@
+{
+  "version": "2.0.0",
+  "description": "Orquestador de Skills Globales Antigravity - Registro de Agentes Especializados",
+  "activeSkills": [
+    {
+      "id": 1,
+      "name": "3D-DIGITAL-TWIN",
+      "path": "skills/3D-DIGITAL-TWIN/SKILL.md",
+      "domain": "visualization",
+      "trigger": ["3D", "gemelo digital", "maquinaria", "camión", "sensor", "react-three-fiber"]
+    },
+    {
+      "id": 2,
+      "name": "AI-OPPORTUNITY-SCANNER",
+      "path": "skills/AI-OPPORTUNITY-SCANNER/SKILL.md",
+      "domain": "machine-learning",
+      "trigger": ["machine learning", "predicción", "anomalía", "mantenimiento predictivo", "ML"]
+    },
+    {
+      "id": 3,
+      "name": "EDGE-OPTIMIZER",
+      "path": "skills/EDGE-OPTIMIZER/SKILL.md",
+      "domain": "offline",
+      "trigger": ["offline", "IndexedDB", "Capacitor", "sin red", "faena", "sincronización"]
+    },
+    {
+      "id": 4,
+      "name": "EVENT-LEDGER-AUDITOR",
+      "path": "skills/EVENT-LEDGER-AUDITOR/SKILL.md",
+      "domain": "event-bus",
+      "trigger": ["transacción", "evento", "SystemEventSchema", "auditoría", "flujo de negocio"]
+    },
+    {
+      "id": 5,
+      "name": "MCP-NOTEBOOK-BRIDGE",
+      "path": "skills/MCP-NOTEBOOK-BRIDGE/SKILL.md",
+      "domain": "knowledge",
+      "mode": "PHYSICAL_STRICT",
+      "trigger": ["normativa", "CORFO", "límite térmico", "Google Drive", "cuaderno", "NotebookLM"]
+    },
+    {
+      "id": 6,
+      "name": "SEC-SHIELD-ISO27001",
+      "path": "skills/SEC-SHIELD-ISO27001/SKILL.md",
+      "domain": "security",
+      "trigger": ["seguridad", "ISO 27001", "vulnerabilidad", "micro-frontend", "aislamiento"]
+    },
+    {
+      "id": 7,
+      "name": "STITCH-UI-Governance",
+      "path": "skills/STITCH-UI/SKILL.md",
+      "domain": "design",
+      "trigger": ["diseño", "Atkinson", "Material Design 3", "M3", "componente", "UI", "UX"]
+    },
+    {
+      "id": 8,
+      "name": "MCP-GITHUB-ENTERPRISE",
+      "path": "skills/MCP-NOTEBOOK-BRIDGE/SKILL.md",
+      "domain": "devops",
+      "mode": "GLOBAL_PAT",
+      "trigger": ["github", "commit", "pull request", "repositorio", "respaldar", "branch"]
+    },
+    {
+      "id": 9,
+      "name": "MOBILE-NATIVE-ARCHITECT",
+      "path": "skills/MOBILE-NATIVE-ARCHITECT/SKILL.md",
+      "domain": "mobile",
+      "mode": "NATIVE_STRICT",
+      "trigger": ["iOS", "Android", "SwiftUI", "Kotlin", "Compose", "Capacitor", "nativo", "mobile", "Room database", "CoreData"]
+    },
+    {
+      "id": 10,
+      "name": "NOTEBOOK-MCP-OPERATOR",
+      "path": "skills/NOTEBOOK-MCP-OPERATOR/SKILL.md",
+      "domain": "knowledge",
+      "mode": "PHYSICAL_STRICT",
+      "trigger": ["NotebookLM", "puente físico", "instalar MCP", "autenticación", "runbook", "notebooklm-mcp-server"]
+    },
+    {
+      "id": 11,
+      "name": "AUTONOMOUS-QA-TESTER",
+      "path": "skills/AUTONOMOUS-QA-TESTER/SKILL.md",
+      "domain": "qa-automation",
+      "mode": "QA_STRICT",
+      "trigger": ["test", "QA", "vitest", "playwright", "cobertura", "veta", "SystemEventSchema", "bug", "regresión"]
+    },
+    {
+      "id": 12,
+      "name": "SCHEMA-MIGRATION-ENGINEER",
+      "path": "skills/SCHEMA-MIGRATION-ENGINEER/SKILL.md",
+      "domain": "database",
+      "mode": "SCHEMA_STRICT",
+      "trigger": ["base de datos", "migración", "schema", "firestore rules", "prisma", "drizzle", "SystemEventSchema", "backup", "DROP"]
+    },
+    {
+      "id": 13,
+      "name": "OBSERVABILITY-HEALER",
+      "path": "skills/OBSERVABILITY-HEALER/SKILL.md",
+      "domain": "sre",
+      "mode": "HEALER_STRICT",
+      "trigger": ["error", "excepción", "sentry", "datadog", "hotfix", "producción", "stack trace", "triaje", "diagnóstico"]
+    },
+    {
+      "id": 14,
+      "name": "CLOUD-DEPLOYMENT-COMMANDER",
+      "path": "skills/CLOUD-DEPLOYMENT-COMMANDER/SKILL.md",
+      "domain": "devops",
+      "mode": "DEPLOY_STRICT",
+      "trigger": ["firebase", "despliegue", "deploy", "build", "vite build", "CORS", "hosting", "cloud"]
+    },
+    {
+      "id": 15,
+      "name": "SOCIAL-EDGE-INTEGRATOR",
+      "path": "skills/SOCIAL-EDGE-INTEGRATOR/SKILL.md",
+      "domain": "social",
+      "mode": "SOCIAL_STRICT",
+      "trigger": ["telegram", "whatsapp", "chat", "intención", "SystemEvent", "NLP", "bot", "omnicanal"]
+    },
+    {
+      "id": 16,
+      "name": "I18N-AUTOMATION-ARCHITECT",
+      "path": "skills/I18N-AUTOMATION-ARCHITECT/SKILL.md",
+      "domain": "localization",
+      "mode": "I18N_STRICT",
+      "trigger": ["i18n", "traducción", "idioma", "hardcoded", "español", "inglés", "portugués", "lenguaje"]
+    },
+    {
+      "id": 17,
+      "name": "PWA-INSTALLABILITY-ARCHITECT",
+      "path": "skills/PWA-INSTALLABILITY-ARCHITECT/SKILL.md",
+      "domain": "frontend-infrastructure",
+      "mode": "PWA_STRICT",
+      "trigger": ["pwa", "instalar", "service worker", "workbox", "manifest", "offline web", "dinosaurio", "pantalla de inicio", "vite-plugin-pwa"]
+    },
+    {
+      "id": 18,
+      "name": "SECURE-GITOPS-ENGINEER",
+      "path": "skills/SECURE-GITOPS-ENGINEER/SKILL.md",
+      "domain": "gitops",
+      "mode": "GITOPS_STRICT",
+      "trigger": ["git", "github", "commit", "push", "pull request", "secreto", "token", "fuga", "gitops", "aduana"]
+    }
+  ],
+  "globalRules": {
+    "prohibitions": [
+      "hallucinate_regulations",
+      "use_app_engine",
+      "old_xml_layouts",
+      "objective_c",
+      "localstore_tokens_unencrypted",
+      "hardcoded_ui_text"
+    ],
+    "mandatories": [
+      "atkinson_hyperlegible_font",
+      "southamerica_west1_region",
+      "autocomplete_off_forms",
+      "offline_first_database",
+      "triple_platform_scaffolding"
+    ]
+  }
+}
