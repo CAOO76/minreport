@@ -516,14 +516,14 @@ export const Register = () => {
                                 <div className="space-y-2 mb-8 animate-in fade-in duration-500">
                                     <div className="flex justify-between items-start mb-2">
                                         <h2 className="text-2xl font-black uppercase tracking-tighter">
-                                            {step === 1 && "Tipo de Entorno"}
-                                            {step === 2 && "Identificación"}
-                                            {step === 3 && type === 'ENTERPRISE' && "Datos Corporativos"}
-                                            {step === 3 && type === 'EDUCATIONAL' && "Datos Institucionales"}
-                                            {step === 3 && type === 'PERSONAL' && "Datos Biográficos"}
-                                            {step === 4 && type !== 'ENTERPRISE' && "Revisión Final"}
-                                            {step === 4 && type === 'ENTERPRISE' && "Datos Solicitante"}
-                                            {step === 5 && type === 'ENTERPRISE' && "Revisión Final"}
+                                            {step === 1 && t('register.step_type', "Tipo de Entorno")}
+                                            {step === 2 && t('register.step_identification', "Identificación")}
+                                            {step === 3 && type === 'ENTERPRISE' && t('register.step_corporate_data', "Datos Corporativos")}
+                                            {step === 3 && type === 'EDUCATIONAL' && t('register.step_institutional_data', "Datos Institucionales")}
+                                            {step === 3 && type === 'PERSONAL' && t('register.step_biographic_data', "Datos Biográficos")}
+                                            {step === 4 && type !== 'ENTERPRISE' && t('register.step_final_review', "Revisión Final")}
+                                            {step === 4 && type === 'ENTERPRISE' && t('register.step_applicant_data', "Datos Solicitante")}
+                                            {step === 5 && type === 'ENTERPRISE' && t('register.step_final_review', "Revisión Final")}
                                         </h2>
                                         {step > 1 && (
                                             <div className="flex items-center gap-2 text-[9px] text-antigravity-accent uppercase font-black tracking-[0.2em] px-3 py-1.5 bg-antigravity-accent/10 border border-antigravity-accent/20 rounded-none">
@@ -543,7 +543,7 @@ export const Register = () => {
                                     <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-500">
                                         <div className="p-4 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 rounded-none">
                                             <p className="text-[11px] text-black/60 dark:text-white/60 font-medium leading-relaxed">
-                                                Para garantizar la integridad y aplicar políticas de gobernanza, necesitamos verificar su identidad antes de configurar su entorno.
+                                                {t('register.identity_verification_info', 'Para garantizar la integridad y aplicar políticas de gobernanza, necesitamos verificar su identidad antes de configurar su entorno.')}
                                             </p>
                                         </div>
                                         {renderSelect('country', 'public', '00', SUPPORTED_COUNTRIES.map(c => ({ value: c.code, label: c.name })))}
@@ -580,7 +580,7 @@ export const Register = () => {
                                                 <span className="material-symbols-rounded text-2xl text-black/40 dark:text-white/40 group-hover:text-antigravity-accent transition-colors shrink-0">domain</span>
                                                 <div>
                                                     <h3 className="font-black uppercase tracking-widest text-sm mb-1 group-hover:text-antigravity-accent transition-colors">{t('tabs.enterprise')}</h3>
-                                                    <p className="text-[11px] text-black/60 dark:text-white/60 leading-relaxed font-medium">Diseñado para operaciones mineras, contratistas y corporaciones. Acceso completo a módulos industriales.</p>
+                                                    <p className="text-[11px] text-black/60 dark:text-white/60 leading-relaxed font-medium">{t('register.enterprise_desc', 'Diseñado para operaciones mineras, contratistas y corporaciones. Acceso completo a módulos industriales.')}</p>
                                                 </div>
                                             </button>
                                         )}
@@ -591,14 +591,14 @@ export const Register = () => {
                                                     <span className="material-symbols-rounded text-2xl text-black/40 dark:text-white/40 group-hover:text-antigravity-accent transition-colors shrink-0">school</span>
                                                     <div>
                                                         <h3 className="font-black uppercase tracking-widest text-sm mb-1 group-hover:text-antigravity-accent transition-colors">{t('tabs.educational')}</h3>
-                                                        <p className="text-[11px] text-black/60 dark:text-white/60 leading-relaxed font-medium">Entorno de aprendizaje para universidades, docentes y alumnos orientados a la industria minera.</p>
+                                                        <p className="text-[11px] text-black/60 dark:text-white/60 leading-relaxed font-medium">{t('register.educational_desc', 'Entorno de aprendizaje para universidades, docentes y alumnos orientados a la industria minera.')}</p>
                                                     </div>
                                                 </button>
                                                 <button onClick={() => handleTypeSelect('PERSONAL')} className="w-full p-6 border border-black/10 dark:border-white/10 hover:border-antigravity-accent hover:bg-antigravity-accent/5 transition-all text-left flex items-start gap-4 group bg-black/5 dark:bg-white/5 rounded-none">
                                                     <span className="material-symbols-rounded text-2xl text-black/40 dark:text-white/40 group-hover:text-antigravity-accent transition-colors shrink-0">person</span>
                                                     <div>
                                                         <h3 className="font-black uppercase tracking-widest text-sm mb-1 group-hover:text-antigravity-accent transition-colors">{t('tabs.personal')}</h3>
-                                                        <p className="text-[11px] text-black/60 dark:text-white/60 leading-relaxed font-medium">Para profesionales independientes o proyectos personales con funcionalidades reducidas.</p>
+                                                        <p className="text-[11px] text-black/60 dark:text-white/60 leading-relaxed font-medium">{t('register.personal_desc', 'Para profesionales independientes o proyectos personales con funcionalidades reducidas.')}</p>
                                                     </div>
                                                 </button>
                                             </>
@@ -606,7 +606,7 @@ export const Register = () => {
 
                                         {entityType === 'EXTRANJERO_PROVISORIO' && (
                                             <div className="p-4 bg-amber-500/5 border border-amber-500/20 text-[10px] uppercase font-bold text-amber-600 dark:text-amber-400">
-                                                Nota: RUT de Inversionista detectado. Solo se permite registro de cuenta Personal/Profesional.
+                                                {t('register.investor_rut_warning', 'Nota: RUT de Inversionista detectado. Solo se permite registro de cuenta Personal/Profesional.')}
                                             </div>
                                         )}
                                     </div>

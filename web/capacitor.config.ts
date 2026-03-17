@@ -5,11 +5,9 @@ const config: CapacitorConfig = {
     appName: 'MinReport',
     webDir: 'dist',
     server: {
-        // 🔥 LIVE RELOAD via ADB Reverse (USB)
-        // ADB Reverse mapea localhost:5173 del dispositivo → Mac:5173 (Vite web)
-        // Comando: adb reverse tcp:5173 tcp:5173
-        // ✅ No depende de IP WiFi — siempre funciona con cable USB
-        url: 'http://localhost:5173',
+        // 🔥 LIVE RELOAD via Local IP (WiFi)
+        // Permite la conexión directa desde el celular físico conectado a la misma red WiFi
+        url: 'http://192.168.1.86:5173',
         cleartext: true,
         androidScheme: 'http'
     },

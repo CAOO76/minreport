@@ -124,7 +124,7 @@ export const SetPassword = () => {
                             </button>
                         </div>
                     ) : (
-                        <form onSubmit={handleSetPassword} className="space-y-6">
+                        <form onSubmit={handleSetPassword} className="space-y-6" autoComplete="off">
                             <div className="space-y-1.5">
                                 <label className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest px-1">
                                     {t('auth.new_password', 'Nueva Contraseña')}
@@ -137,7 +137,7 @@ export const SetPassword = () => {
                                         className="w-full px-5 py-4 rounded-2xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-slate-900 dark:text-white transition-all font-medium"
                                         placeholder="••••••••"
                                         required
-                                        autoComplete="new-password"
+                                        autoComplete="off"
                                     />
                                     <button
                                         type="button"
@@ -160,7 +160,7 @@ export const SetPassword = () => {
                                     className="w-full px-5 py-4 rounded-2xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none text-slate-900 dark:text-white transition-all font-medium"
                                     placeholder="••••••••"
                                     required
-                                    autoComplete="new-password"
+                                    autoComplete="off"
                                 />
                             </div>
 

@@ -114,7 +114,17 @@ export const OperationalDashboard = () => {
                                 key={plugin.id}
                                 whileHover={{ y: -2 }}
                                 whileTap={{ scale: 0.98 }}
-                                onClick={() => setActivePlugin(plugin)}
+                                onClick={() => {
+                                    const core = MinReport.Core as any;
+                                    if (core && core.emitEvent) {
+                                        core.emitEvent('system_event', {
+                                            type: 'MODULE_OPENED',
+                                            pluginId: plugin.id,
+                                            timestamp: Date.now()
+                                        });
+                                    }
+                                    setActivePlugin(plugin);
+                                }}
                                 className="group cursor-pointer p-6 rounded-none bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 hover:border-black dark:hover:border-white transition-all flex flex-col justify-between h-52 relative overflow-hidden"
                             >
                                 <div className="absolute inset-0 technical-grid opacity-5 pointer-events-none group-hover:opacity-10 transition-opacity"></div>

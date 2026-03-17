@@ -204,7 +204,7 @@ export const SetupAccess = () => {
                         </p>
                     </div>
 
-                    <form onSubmit={handleSubmit} className="space-y-8 relative z-10" autoComplete="off">
+                    <form onSubmit={handleSubmit} className="space-y-4 relative z-10" autoComplete="off">
                         <div className="space-y-3">
                             <div className="flex justify-between items-end px-1">
                                 <label className="hud-label text-black/60 dark:text-white/60">Verificación (RUT / RUN)</label>

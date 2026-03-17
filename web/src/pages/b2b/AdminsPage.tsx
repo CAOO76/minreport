@@ -188,23 +188,23 @@ export const AdminsPage = () => {
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
                                         <label className={labelClass}>Nombres</label>
-                                        <input required type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className={inputClass} placeholder="Ej. Roberto" />
+                                        <input required type="text" autoComplete="off" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className={inputClass} placeholder="Ej. Roberto" />
                                     </div>
                                     <div>
                                         <label className={labelClass}>Apellidos</label>
-                                        <input required type="text" value={form.lastName} onChange={e => setForm({ ...form, lastName: e.target.value })} className={inputClass} placeholder="Ej. Lagos" />
+                                        <input required type="text" autoComplete="off" value={form.lastName} onChange={e => setForm({ ...form, lastName: e.target.value })} className={inputClass} placeholder="Ej. Lagos" />
                                     </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
                                         <label className={labelClass}>Identificador (RUN)</label>
-                                        <input required type="text" value={form.run}
+                                        <input required type="text" autoComplete="off" value={form.run}
                                             onChange={e => setForm({ ...form, run: formatRut(e.target.value) })}
                                             className={`${inputClass} font-mono`} placeholder="12.345.678-9" />
                                     </div>
                                     <div>
                                         <label className={labelClass}>Email Corporativo</label>
-                                        <input required type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className={inputClass} placeholder="r.lagos@empresa.cl" />
+                                        <input required type="email" autoComplete="off" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className={inputClass} placeholder="r.lagos@empresa.cl" />
                                     </div>
                                 </div>
                             </div>
@@ -343,6 +343,7 @@ export const AdminsPage = () => {
                                     <p className="text-[10px] font-black uppercase tracking-[0.2em] text-antigravity-accent">Validación de seguridad</p>
                                     <input
                                         type="text"
+                                        autoComplete="off"
                                         value={confirmText}
                                         onChange={(e) => setConfirmText(e.target.value.toUpperCase())}
                                         className={`${inputClass} text-center font-black tracking-[0.5em] text-lg py-4`}
@@ -384,6 +385,7 @@ export const AdminsPage = () => {
                                     <p className="text-[10px] font-black uppercase tracking-[0.2em] text-red-500">Validación Crítica</p>
                                     <input
                                         type="text"
+                                        autoComplete="off"
                                         value={revokeConfirmText}
                                         onChange={(e) => setRevokeConfirmText(e.target.value.toUpperCase())}
                                         className={`${inputClass} text-center font-black tracking-[0.5em] text-lg py-4 border-red-500/50 focus:border-red-500`}

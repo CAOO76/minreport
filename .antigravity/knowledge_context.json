@@ -1,0 +1,19 @@
+{
+  "project": {
+    "id": "minreport-core",
+    "name": "MINREPORT",
+    "type": "APP",
+    "description": "Plataforma Core Institucional y B2B para minería y contratistas.",
+    "version": "1.0.0"
+  },
+  "architecture": {
+    "frameworks": ["react", "vite", "capacitor"],
+    "design_system": "STITCH-UI-Governance",
+    "offline_first": true,
+    "i18n": ["es", "en", "pt"]
+  },
+  "bridge": {
+    "sync": true,
+    "notebook_mcp_enabled": true
+  }
+}

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Loader2, Lock, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import BrandLogo from '../components/BrandLogo';
+import { useTranslation } from 'react-i18next';
 import { LanguageSwitch } from '../components/LanguageSwitch';
 import { ThemeSwitch } from '../components/ThemeSwitch';
 import { Link } from 'react-router-dom';
@@ -14,6 +15,7 @@ type LoginStep = 'IDENTIFICATION' | 'ACCOUNT_SELECTION' | 'CHALLENGE';
 
 export const Login = () => {
     const navigate = useNavigate();
+    const { t } = useTranslation();
 
     // Hook de Autenticación (Nueva Arquitectura)
     const {
@@ -232,10 +234,10 @@ export const Login = () => {
                             <p className="text-[9px] font-mono text-black/20 dark:text-white/20 uppercase tracking-[0.3em]">SECURE_ISOLATION_ZONE</p>
                         </div>
 
-                        <form onSubmit={handleLogin} className="space-y-10 relative z-10" autoComplete="off">
+                        <form onSubmit={handleLogin} className="space-y-6 relative z-10" autoComplete="off">
                             <div className="space-y-3">
                                 <div className="flex justify-between items-end px-1">
-                                    <label className="hud-label text-black/60 dark:text-white/60">Contraseña Táctica</label>
+                                    <label className="hud-label text-black/60 dark:text-white/60">{t('login.tactical_password', 'Contraseña Táctica')}</label>
                                     <span className="text-[10px] font-mono text-black/20 dark:text-white/20">[02]</span>
                                 </div>
                                 <div className="relative group">
@@ -249,7 +251,7 @@ export const Login = () => {
                                         placeholder="••••••••"
                                         required
                                         autoFocus
-                                        autoComplete="new-password"
+                                        autoComplete="off"
                                         spellCheck="false"
                                         data-lpignore="true"
                                         onCopy={(e) => e.preventDefault()}
@@ -280,7 +282,7 @@ export const Login = () => {
                                         <Loader2 className="w-5 h-5 animate-spin text-black" />
                                     ) : (
                                         <>
-                                            <span>ACCEDER_ENTORNO</span>
+                                            <span>{t('login.access_environment', 'ACCEDER_ENTORNO')}</span>
                                             <Lock size={16} />
                                         </>
                                     )}
@@ -296,7 +298,7 @@ export const Login = () => {
                                     className="w-full py-4 text-black/30 dark:text-white/30 hover:text-black dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 font-mono font-bold uppercase tracking-[0.2em] text-[9px] transition-all flex items-center justify-center gap-4 border border-transparent hover:border-black/10 dark:hover:border-white/10"
                                 >
                                     <ArrowLeft size={14} />
-                                    <span>[CANCEL_REQUEST]</span>
+                                    <span>{t('login.cancel_request', '[CANCEL_REQUEST]')}</span>
                                 </button>
                             </div>
                         </form>
@@ -308,7 +310,7 @@ export const Login = () => {
                         <ShieldCheck size={14} className="text-emerald-600 dark:text-emerald-400" />
                     </div>
                     <p className="text-[10px] text-black/60 dark:text-white uppercase tracking-[0.3em] font-black">
-                        © {new Date().getFullYear()} MINREPORT. TODOS LOS DERECHOS RESERVADOS.
+                        © {new Date().getFullYear()} MINREPORT. {t('login.all_rights_reserved', 'TODOS LOS DERECHOS RESERVADOS.')}
                     </p>
                 </footer>
 

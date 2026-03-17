@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import type { AccountReference } from '../../types/user_directory';
 import clsx from 'clsx';
-import { ShieldCheck, ArrowRight } from 'lucide-react';
+
+import { useTranslation } from 'react-i18next';
 
 interface AccountSelectorProps {
     accounts: AccountReference[];
@@ -24,6 +25,7 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
     onCancel,
     loading = false
 }) => {
+    const { t } = useTranslation();
     const [selectedId, setSelectedId] = useState<string | null>(null);
 
     const handleSelect = (account: AccountReference) => {
@@ -47,15 +49,15 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
     };
 
     const getStatusLabel = (status?: string) => {
-        if (!status) return 'ACTIVO'; // Fallback
+        if (!status) return t('status.active', 'ACTIVO'); // Fallback
         const s = status.toString().toUpperCase();
         switch (s) {
-            case 'PENDING_APPROVAL': return 'EN REVISIÓN';
-            case 'APPROVED': return 'APROBADO';
-            case 'ACTIVE': return 'ACTIVO';
-            case 'REJECTED': return 'RECHAZADO';
-            case 'SUSPENDED': return 'SUSPENDIDO';
-            case 'PENDING': return 'INVITACIÓN';
+            case 'PENDING_APPROVAL': return t('status.pending_approval', 'EN REVISIÓN');
+            case 'APPROVED': return t('status.approved', 'APROBADO');
+            case 'ACTIVE': return t('status.active', 'ACTIVO');
+            case 'REJECTED': return t('status.rejected', 'RECHAZADO');
+            case 'SUSPENDED': return t('status.suspended', 'SUSPENDIDO');
+            case 'PENDING': return t('status.pending', 'INVITACIÓN');
             default: return s;
         }
     };
@@ -67,10 +69,10 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
                     [DETECTED_IDENTITY_NODES]
                 </p>
                 <h2 className="text-2xl font-black text-black dark:text-white uppercase tracking-tight leading-none mb-1">
-                    Cuentas Asociadas
+                    {t('auth.associated_accounts', 'Cuentas Asociadas')}
                 </h2>
                 <p className="text-[9px] font-mono text-black/20 dark:text-white/20 uppercase tracking-[0.3em]">
-                    SECURITY_ISOLATION_ZONE: {accounts?.length || 0} PERFILES
+                    SECURITY_ISOLATION_ZONE: {accounts?.length || 0} {t('auth.profiles', 'PERFILES')}
                 </p>
             </div>
 
@@ -173,7 +175,7 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
                         <span className="material-symbols-rounded text-[20px] text-black/40 dark:text-white/40 group-hover:text-antigravity-accent">undo</span>
                     </div>
                     <span className="text-[9px] font-black text-black/30 dark:text-white/30 uppercase tracking-[0.3em] group-hover:text-black dark:group-hover:text-white transition-colors">
-                        Usar otro documento de identidad
+                        {t('auth.use_other_id', 'Usar otro documento de identidad')}
                     </span>
                 </button>
             </div>

@@ -1,0 +1,6 @@
+{
+  "type": "APP",
+  "firebase": {
+    "mode": "production"
+  }
+}

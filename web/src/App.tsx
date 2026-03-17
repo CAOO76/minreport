@@ -21,6 +21,8 @@ import OfflineIndicator from './components/common/OfflineIndicator';
 import AccountSelector from './components/auth/AccountSelector';
 import LoadingScreen from './components/common/LoadingScreen';
 import ErrorBoundary from './components/common/ErrorBoundary';
+import { PWAInstallPrompt } from './components/common/PWAInstallPrompt';
+import SyncIndicator from './components/common/SyncIndicator';
 import PluginErrorBoundaryDemo from './core/plugins/PluginErrorBoundaryDemo';
 import { getAllPlugins } from './core/PluginRegistry';
 import { secureContextFactory } from './core/SecureContextFactory';
@@ -194,6 +196,8 @@ function App() {
                             <AppRoutes />
                         </BrowserRouter>
                         <OfflineIndicator />
+                        <SyncIndicator />
+                        <PWAInstallPrompt />
                     </AuthProvider>
                 </BrandingProvider>
             </ThemeProvider>

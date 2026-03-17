@@ -306,7 +306,7 @@ const MobileLogin: React.FC = () => {
                     )}
 
                     {step === 'CHALLENGE' && (
-                        <form onSubmit={handleLogin} className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-500" autoComplete="off">
+                        <form onSubmit={handleLogin} className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-500" autoComplete="off">
                             <div className="space-y-3">
                                 <div className="flex justify-between items-end px-1">
                                     <label className="hud-label">Credencial de Seguridad</label>
