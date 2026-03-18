@@ -1,6 +1,6 @@
 {
   "name": "minreport-core",
-  "version": "2.1.0",
+  "version": "2.2.1",
   "description": "MINREPORT: Sistema inteligente de control y reportabilidad para la pequeña minería (SaaS + Mobile + Plugins)",
   "main": "dist/index.js",
   "scripts": {
