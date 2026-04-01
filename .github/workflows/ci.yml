@@ -2,13 +2,13 @@ name: CI - Build & Verify
 
 on:
   push:
-    branches: [ main, master, MINREPORT_ANTIGRAVITY ]
+    branches: [ main, master, MINREPORT_ANTIGRAVITY, 'feature/*', 'fix/*', 'hotfix/*' ]
   pull_request:
-    branches: [ main, master, MINREPORT_ANTIGRAVITY ]
+    branches: [ main, master, MINREPORT_ANTIGRAVITY, 'feature/*', 'fix/*', 'hotfix/*' ]
 
 jobs:
-  build:
-    name: Build & Verify
+  build-and-deploy:
+    name: Build, Verify & Deploy
     runs-on: ubuntu-latest
 
     steps:
@@ -21,9 +21,12 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      - name: Build Backend Core (Root)
+      - name: Install Root Dependencies
+        run: npm ci
+
+      - name: Sync Plugins & Build Core
         run: |
-          npm ci
+          npm run sync:plugins
           npm run build
 
       - name: Build Cloud Functions
@@ -43,3 +46,21 @@ jobs:
           cd admin
           npm ci
           npm run build
+
+      - name: Deploy to Firebase Hosting (Preview)
+        if: github.event_name == 'pull_request'
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_MINREPORT_8F2A8 }}'
+          projectId: minreport-8f2a8
+
+      - name: Deploy to Firebase (Production)
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/MINREPORT_ANTIGRAVITY')
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_MINREPORT_8F2A8 }}'
+          channelId: live
+          projectId: minreport-8f2a8
+
