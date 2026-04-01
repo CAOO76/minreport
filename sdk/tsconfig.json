@@ -15,7 +15,8 @@
         "jsx": "react-jsx",
         "moduleResolution": "bundler",
         "allowSyntheticDefaultImports": true,
-        "esModuleInterop": true
+        "esModuleInterop": true,
+        "typeRoots": ["./node_modules/@types"]
     },
     "include": [
         "**/*.ts",
