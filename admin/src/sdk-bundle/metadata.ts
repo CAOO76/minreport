@@ -4,14 +4,12 @@
  * automatically when they are deployed.
  */
 export const SDK_METADATA = {
-    version: '2.2.0',
+    version: '3.0.0',
     changelog: [
-        "Global Ledger Contract: Nueva validación estricta Zod (FinancialEventSchema).",
-        "GlobalEventBus: Implementación de Singleton con manejo de errores y desuscripción segura.",
-        "Consolidación de API Pública: Exportación estructurada de core, schemas y tipos.",
-        "Refactor Industrial: SDKSwitch mejorado con el estándar Material Design 3."
-    ],
-    author: 'MinReport Engineering',
+    "Sincronización Monorepo: Versión unificada v2.2.1 para todo el ecosistema MINREPORT.",
+    "Mantenimiento: Optimización de tipos y cumplimiento estricto de seguridad autocomplete='off'."
+],
+    author: 'MinReport Automation',
     releaseDate: new Date(),
-    status: 'PRODUCTION-READY' as const
+    status: 'BETA' as const
 };

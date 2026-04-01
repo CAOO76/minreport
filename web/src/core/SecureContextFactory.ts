@@ -1,7 +1,7 @@
 import {
     getFirestore,
     doc,
-    updateDoc,
+    setDoc,
     getDoc,
     Firestore
 } from 'firebase/firestore';
@@ -24,7 +24,7 @@ export class SecureContextFactory {
 
     /**
      * Crea un contexto seguro para un plugin específico.
-     * @param pluginId ID único del plugin (ej. 'stockpile-control')
+     * @param pluginId ID único del plugin (ej. 'mi-plugin')
      * @param projectId ID del proyecto actual
      * @param userId ID del usuario actual
      */
@@ -34,59 +34,39 @@ export class SecureContextFactory {
             userId,
             isOffline: !navigator.onLine,
             theme: 'light', // TODO: Conectar con hook de tema real
-
-            // Inyección de Storage Scoped
-            storage: this.createStorageAPI(pluginId)
+            storage: this.createStorageAPI(pluginId),
+            network: this.createNetworkAPI()
         };
     }
 
     private createStorageAPI(pluginId: string): StorageAPI {
         const db = this.db;
 
+        /**
+         * Ruta de almacenamiento aislada por plugin:
+         * plugin_data/{pluginId}/records/{entityId}
+         *
+         * Esta estrategia garantiza:
+         * - Aislamiento total: ningún plugin puede leer/escribir datos de otro.
+         * - Agnosticismo: el Core no asume ninguna colección de negocio específica.
+         * - Las Firestore Security Rules pueden restringir por ruta de plugin.
+         */
+        const scopedPath = (entityId: string) =>
+            doc(db, 'plugin_data', pluginId, 'records', entityId);
+
         return {
             async saveProcessingResult(entityId: string, data: Record<string, any>): Promise<void> {
+                if (!entityId || typeof entityId !== 'string') {
+                    throw new Error('[SecureStorage] EntityId inválido');
+                }
                 try {
-                    // Validamos que entityId sea seguro
-                    if (!entityId || typeof entityId !== 'string') {
-                        throw new Error('EntityId inválido');
-                    }
+                    await setDoc(scopedPath(entityId), {
+                        ...data,
+                        _updatedAt: new Date().toISOString(),
+                        _byPlugin: pluginId
+                    }, { merge: true });
 
-                    // Referencia estricta a la colección donde viven las entidades principales
-                    // Asumimos 'acopios' por ahora, pero esto podría ser dinámico según el tipo de plugin
-                    // TODO: El plugin debería declarar qué tipo de entidad maneja.
-                    // Por seguridad en V1, asumimos que los plugins enrichment trabajan sobre 'procesos' o 'acopios'
-                    // Para este ejemplo usaremos una colección genérica o detectada.
-
-                    // IMPROVEMENT: En un sistema real, el entityId ya traería su colección o el plugin declara "target: acopios"
-                    // Por ahora, asumimos que 'entityId' es un documento en una colección conocida o el plugin 
-                    // está extendiendo un documento específico.
-
-                    // PATRÓN: extensions.{pluginId}
-                    // Escribimos en la colección 'entities' (meta-colección) o directamente en la colección del negocio.
-                    // Para ser agnóstico, vamos a requerir que el Core sepa la colección, pero aquí 
-                    // simplificaremos asumiendo que el plugin guarda preferencias de usuario o datos asociados a un ID global.
-
-                    // ESTRATEGIA: Guardar en una subcolección de plugins del sistema o en el documento mismo.
-                    // Usaremos 'projects/{projectId}/plugins_data/{entityId}' para máximo aislamiento y no tocar la data core?
-                    // NO, el requerimiento es "extendEntity". Volvemos al patrón extensions.
-
-                    // Para simplificar la implementación del factory sin saber la colección:
-                    // Vamos a asumir que los plugins de 'stockpile' operan en 'stockpiles'.
-                    const collectionName = 'stockpiles';
-
-                    const docRef = doc(db, collectionName, entityId);
-                    const updatePath = `extensions.${pluginId}`;
-
-                    await updateDoc(docRef, {
-                        [updatePath]: {
-                            ...data,
-                            _updatedAt: new Date().toISOString(),
-                            _byPlugin: pluginId
-                        }
-                    });
-
-                    console.log(`[SecureStorage] Guardado exitoso para ${pluginId} en ${entityId}`);
-
+                    console.log(`[SecureStorage] Guardado exitoso: plugin_data/${pluginId}/records/${entityId}`);
                 } catch (error) {
                     console.error(`[SecureStorage] Error guardando datos de plugin ${pluginId}`, error);
                     throw new Error('No se pudo guardar la información del plugin. Permiso denegado o error de red.');
@@ -95,19 +75,36 @@ export class SecureContextFactory {
 
             async getConfig(entityId: string): Promise<Record<string, any> | null> {
                 try {
-                    const collectionName = 'stockpiles'; // Mismo hardcode temporal
-                    const docRef = doc(db, collectionName, entityId);
-                    const snapshot = await getDoc(docRef);
-
-                    if (snapshot.exists()) {
-                        const data = snapshot.data();
-                        return data?.extensions?.[pluginId] || null;
-                    }
-                    return null;
+                    const snapshot = await getDoc(scopedPath(entityId));
+                    return snapshot.exists() ? snapshot.data() : null;
                 } catch (error) {
                     console.error(`[SecureStorage] Error leyendo config de plugin ${pluginId}`, error);
                     return null;
                 }
+            },
+
+            async saveOfflineData(key: string, data: any): Promise<void> {
+                // Fallback: en web persiste en localStorage bajo namespace del plugin
+                try {
+                    const nsKey = `minreport.plugin.${pluginId}.${key}`;
+                    localStorage.setItem(nsKey, JSON.stringify({ data, _savedAt: new Date().toISOString() }));
+                } catch (error) {
+                    console.warn(`[SecureStorage] saveOfflineData fallback failed for ${pluginId}`, error);
+                }
+            }
+        };
+    }
+
+    private createNetworkAPI() {
+        return {
+            onNetworkStatusChange(callback: (status: { connected: boolean; connectionType: string }) => void): void {
+                const handler = () => callback({ connected: navigator.onLine, connectionType: 'unknown' });
+                window.addEventListener('online', handler);
+                window.addEventListener('offline', handler);
+            },
+            async syncOfflineQueue(): Promise<void> {
+                // El Core web no gestiona cola offline directo — delegado al Service Worker
+                console.log('[NetworkAPI] syncOfflineQueue: delegado al Service Worker');
             }
         };
     }

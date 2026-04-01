@@ -30,4 +30,4 @@ echo "🔥 Hot Reload estará activo - los cambios se reflejarán automáticamen
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-vite --host
+vite --host --clearScreen false

@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Puzzle, Settings } from 'lucide-react';
+import { X, Settings, Loader2 } from 'lucide-react';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 import { M3Switch } from '../ui/M3Switch';
+import { getFirestore, collection, getDocs } from 'firebase/firestore';
 
 interface Tenant {
     id: string;
@@ -12,6 +13,14 @@ interface Tenant {
     full_name?: string;
     status: 'ACTIVE' | 'PENDING_APPROVAL' | 'REJECTED' | 'SUSPENDED' | 'DELETED';
     enabledPlugins?: string[];
+}
+
+interface CatalogPlugin {
+    id: string;
+    label: string;
+    description: string;
+    icon: string;
+    status: string;
 }
 
 interface TenantPluginsModalProps {
@@ -28,20 +37,35 @@ export const TenantPluginsModal: React.FC<TenantPluginsModalProps> = ({
     onUpdatePlugins
 }) => {
     const { t } = useTranslation();
+    const [availablePlugins, setAvailablePlugins] = useState<CatalogPlugin[]>([]);
+    const [loadingPlugins, setLoadingPlugins] = useState(false);
+
+    // Cargar catálogo de plugins desde Firestore al abrir el modal
+    useEffect(() => {
+        if (!isOpen) return;
+        const fetchPlugins = async () => {
+            setLoadingPlugins(true);
+            try {
+                const db = getFirestore();
+                const snap = await getDocs(collection(db, 'plugins'));
+                const catalog: CatalogPlugin[] = snap.docs.map(doc => ({
+                    id: doc.id,
+                    ...(doc.data() as Omit<CatalogPlugin, 'id'>)
+                }));
+                setAvailablePlugins(catalog);
+            } catch (err) {
+                console.error('[TenantPluginsModal] Error cargando catálogo de plugins:', err);
+                setAvailablePlugins([]);
+            } finally {
+                setLoadingPlugins(false);
+            }
+        };
+        fetchPlugins();
+    }, [isOpen]);
 
     if (!tenant) return null;
 
     const getDisplayName = () => tenant.company_name || tenant.institution_name || tenant.full_name;
-
-    const availablePlugins = [
-        {
-            id: 'stockpile-control',
-            name: 'Stockpile Control',
-            type: 'Módulo Operacional',
-            icon: 'inventory_2',
-            description: 'Gestión de inventarios y movimientos de material.'
-        }
-    ];
 
     return (
         <AnimatePresence>
@@ -87,8 +111,18 @@ export const TenantPluginsModal: React.FC<TenantPluginsModalProps> = ({
                                 Plugins Disponibles
                             </h3>
 
-                            <div className="space-y-3">
-                                {availablePlugins.map(plugin => {
+                            {loadingPlugins ? (
+                                <div className="flex items-center justify-center py-12 gap-3 text-slate-400">
+                                    <Loader2 size={18} className="animate-spin" />
+                                    <span className="text-sm font-medium">Cargando catálogo...</span>
+                                </div>
+                            ) : availablePlugins.length === 0 ? (
+                                <div className="py-12 text-center rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700">
+                                    <span className="material-symbols-rounded text-3xl text-slate-300 dark:text-slate-600">extension_off</span>
+                                    <p className="mt-2 text-sm text-slate-400 dark:text-slate-500">No hay plugins disponibles en el catálogo.</p>
+                                </div>
+                            ) : (
+                                availablePlugins.map(plugin => {
                                     const isEnabled = tenant.enabledPlugins?.includes(plugin.id) || false;
 
                                     return (
@@ -100,18 +134,13 @@ export const TenantPluginsModal: React.FC<TenantPluginsModalProps> = ({
                                                         ? "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400"
                                                         : "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-600"
                                                 )}>
-                                                    <span className="material-symbols-rounded">{plugin.icon}</span>
+                                                    <span className="material-symbols-rounded">{plugin.icon || 'extension'}</span>
                                                 </div>
                                                 <div>
-                                                    <h4 className="font-bold text-slate-900 dark:text-white text-lg">{plugin.name}</h4>
-                                                    <div className="flex items-center gap-2 mt-0.5">
-                                                        <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700/50 px-1.5 py-0.5 rounded">
-                                                            {plugin.type}
-                                                        </span>
-                                                        <span className="text-xs text-slate-400 dark:text-slate-500 font-mono">
-                                                            v1.0.0
-                                                        </span>
-                                                    </div>
+                                                    <h4 className="font-bold text-slate-900 dark:text-white text-lg">{plugin.label}</h4>
+                                                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 max-w-xs line-clamp-1">
+                                                        {plugin.description}
+                                                    </p>
                                                 </div>
                                             </div>
 
@@ -136,8 +165,8 @@ export const TenantPluginsModal: React.FC<TenantPluginsModalProps> = ({
                                             </div>
                                         </div>
                                     );
-                                })}
-                            </div>
+                                })
+                            )}
 
                             {/* Coming Soon Section - Moved to bottom and minimized */}
                             <div className="mt-8 pt-6 border-t border-slate-100 dark:border-slate-800">

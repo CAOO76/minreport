@@ -46,8 +46,8 @@ bash web/scripts/copy-sdk.sh
 bash admin/scripts/copy-sdk.sh
 
 # 4.5 Registro en Base de Datos (Auto-Discovery preventivo)
-echo "🗄️ Registrando versión en Base de Datos..."
-FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 node scripts/auto-register-sdk.js
+echo "🗄️ Registrando versión en Base de Datos (en background esperando emuladores)..."
+(sleep 15 && FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 node scripts/auto-register-sdk.js) &
 
 
 # 5. Lanzamiento paralelo de todos los servicios

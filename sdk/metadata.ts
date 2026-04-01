@@ -4,7 +4,7 @@
  * automatically when they are deployed.
  */
 export const SDK_METADATA = {
-    version: '2.2.1',
+    version: '3.0.0',
     changelog: [
     "Sincronización Monorepo: Versión unificada v2.2.1 para todo el ecosistema MINREPORT.",
     "Mantenimiento: Optimización de tipos y cumplimiento estricto de seguridad autocomplete='off'."

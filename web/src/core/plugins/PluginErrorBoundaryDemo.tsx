@@ -3,8 +3,12 @@ import PluginErrorBoundary from './PluginErrorBoundary';
 import PluginLoader from './PluginLoader';
 import { getAllPlugins } from '../PluginRegistry';
 
-// Registro Central (Simulado por la importación de PluginRegistry oben)
-// getAllPlugins nos permite listar las herramientas disponibles
+/**
+ * PluginErrorBoundaryDemo
+ * Componente de demostración del Muro de Contención.
+ * Es 100% agnóstico: no hardcodea ningún plugin específico.
+ * Usa dinámicamente el primer plugin disponible en el registro del Core.
+ */
 const allAvailablePlugins = getAllPlugins();
 
 const BuggyComponent = () => {
@@ -23,12 +27,16 @@ export const PluginErrorBoundaryDemo = () => {
                 <p className="text-slate-500 dark:text-zinc-400 font-sans">
                     Verificación de aislamiento de errores en widgets de terceros.
                 </p>
-                <div className="flex gap-2 mt-4">
-                    {allAvailablePlugins.map(p => (
+                <div className="flex flex-wrap gap-2 mt-4">
+                    {allAvailablePlugins.length > 0 ? allAvailablePlugins.map(p => (
                         <span key={p.id} className="text-[10px] font-bold bg-slate-200 dark:bg-zinc-800 px-3 py-1 rounded-full text-slate-600 dark:text-zinc-400">
                             ID: {p.id} ({p.name})
                         </span>
-                    ))}
+                    )) : (
+                        <span className="text-[10px] font-bold bg-slate-200 dark:bg-zinc-800 px-3 py-1 rounded-full text-slate-500 dark:text-zinc-500">
+                            Sin plugins conectados
+                        </span>
+                    )}
                 </div>
             </header>
 
@@ -38,13 +46,13 @@ export const PluginErrorBoundaryDemo = () => {
                     <span className="text-xs font-bold text-emerald-500 uppercase tracking-widest px-3 py-1 bg-emerald-500/10 rounded-full font-sans">
                         Plugin Operativo
                     </span>
-                    <PluginErrorBoundary pluginName="Monitor de Inventario">
+                    <PluginErrorBoundary pluginName="Plugin Operativo">
                         <div className="p-8 bg-white dark:bg-zinc-800 rounded-[32px] border border-slate-200 dark:border-zinc-700 shadow-sm flex flex-col gap-4">
                             <div className="flex items-center gap-3">
                                 <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center">
-                                    <span className="material-symbols-rounded text-emerald-600">inventory_2</span>
+                                    <span className="material-symbols-rounded text-emerald-600">check_circle</span>
                                 </div>
-                                <h2 className="font-bold text-xl font-sans text-slate-900 dark:text-white">Control de Stock</h2>
+                                <h2 className="font-bold text-xl font-sans text-slate-900 dark:text-white">Plugin Operativo</h2>
                             </div>
                             <p className="text-slate-500 dark:text-zinc-400 text-sm font-sans leading-relaxed">
                                 Este es un plugin que funciona correctamente y no lanza excepciones.
@@ -63,7 +71,7 @@ export const PluginErrorBoundaryDemo = () => {
                         Plugin Inestable
                     </span>
                     <PluginErrorBoundary
-                        pluginName="Stockpile Control"
+                        pluginName="Plugin Inestable (Simulación)"
                         onReset={() => setShouldExplode(false)}
                     >
                         {shouldExplode ? (
@@ -74,7 +82,7 @@ export const PluginErrorBoundaryDemo = () => {
                                     <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center">
                                         <span className="material-symbols-rounded text-amber-600">warning</span>
                                     </div>
-                                    <h2 className="font-bold text-xl font-sans text-slate-900 dark:text-white">Stockpile Control</h2>
+                                    <h2 className="font-bold text-xl font-sans text-slate-900 dark:text-white">Plugin Inestable</h2>
                                 </div>
                                 <p className="text-slate-500 dark:text-zinc-400 text-sm font-sans leading-relaxed">
                                     Al presionar el botón de abajo, este plugin lanzará una excepción fatal (Exception).
@@ -102,10 +110,17 @@ export const PluginErrorBoundaryDemo = () => {
                             <PluginLoader pluginId="plugin-inexistente" />
                         </div>
 
-                        {/* Caso 2: Carga Exitosa (Plugin Real) */}
+                        {/* Caso 2: Primer plugin disponible en el registro (100% dinámico) */}
                         <div className="space-y-2">
                             <p className="text-xs text-slate-400 font-bold uppercase ml-2">Estado: Registro & Carga (Plugin Real)</p>
-                            <PluginLoader pluginId="stockpile-control" />
+                            {allAvailablePlugins.length > 0 ? (
+                                <PluginLoader pluginId={allAvailablePlugins[0].id} />
+                            ) : (
+                                <div className="p-6 rounded-[24px] border-2 border-dashed border-slate-200 dark:border-zinc-800 text-center">
+                                    <span className="material-symbols-rounded text-2xl text-slate-300 dark:text-zinc-600">extension_off</span>
+                                    <p className="text-xs text-slate-400 mt-2">No hay plugins conectados al Core.</p>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
