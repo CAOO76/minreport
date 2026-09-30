@@ -1,3 +1,4 @@
+import { MiningAICopilot } from '../components/ai/MiningAICopilot';
 import { Outlet, NavLink } from 'react-router-dom';
 import BrandLogo from '../components/BrandLogo';
 
@@ -92,6 +93,18 @@ const ClientLayout = () => {
                                     <span className="material-symbols-rounded text-2xl">dashboard</span>
                                     <span className="sr-only">Panel Principal</span>
                                 </NavLink>
+                                <NavLink to="/opermaq" className={navLinkClasses} title="OPERMAQ (Flota y Equipos)">
+                                    <span className="material-symbols-rounded text-2xl">local_shipping</span>
+                                    <span className="sr-only">OPERMAQ</span>
+                                </NavLink>
+                                <NavLink to="/stockpile" className={navLinkClasses} title="STOCKPILE (Cubicaciones)">
+                                    <span className="material-symbols-rounded text-2xl">layers</span>
+                                    <span className="sr-only">STOCKPILE</span>
+                                </NavLink>
+                                <NavLink to="/mining-flow" className={navLinkClasses} title="MINING FLOW (Finanzas y Flujos)">
+                                    <span className="material-symbols-rounded text-2xl">payments</span>
+                                    <span className="sr-only">MINING FLOW</span>
+                                </NavLink>
                                 <NavLink to="/plugins" className={navLinkClasses} title="Módulos Instalados">
                                     <span className="material-symbols-rounded text-2xl">apps</span>
                                     <span className="sr-only">Módulos Instalados</span>
@@ -122,6 +135,9 @@ const ClientLayout = () => {
                 <main className="flex-1 overflow-auto p-8 relative">
                     <Outlet />
                 </main>
+
+                {/* [CAPA 4 AI] Copiloto de Inteligencia Minera Resiliente */}
+                <MiningAICopilot />
             </div>
         </div>
     );

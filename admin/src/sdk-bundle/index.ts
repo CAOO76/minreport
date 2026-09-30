@@ -8,6 +8,7 @@ import { entityManager } from './data/EntityManager';
 import * as UI from './ui';
 import * as Types from './types';
 import * as Schemas from './schemas/FinancialEvent';
+import { DevTools } from './utils/portAllocator';
 
 /**
  * MinReport SDK Global Object
@@ -37,12 +38,16 @@ export const MinReport = {
     Types: Types,
 
     /** Contratos Zod inmutables (Global Ledger, etc.) */
-    Schemas: Schemas
+    Schemas: Schemas,
+
+    /** Herramientas para el entorno de desarrollo y compilación de plugins */
+    DevTools: DevTools
 };
 
 // Re-exportación para facilitar el uso de componentes UI tipados
 export * from './types';
 export * from './ui';
+export { DevTools } from './utils/portAllocator';
 
 // ============================================================================
 // --- API PÚBLICA DEL GLOBAL LEDGER (CONTRATO STRICTO) ---

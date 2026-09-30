@@ -4,29 +4,52 @@ export default {
         "./index.html",
         "./src/**/*.{js,ts,jsx,tsx}",
     ],
-    darkMode: 'class', // Fundamental para que el botón de Sol/Luna funcione
+    darkMode: 'class',
     theme: {
         extend: {
             fontFamily: {
-                sans: ['"Atkinson Hyperlegible"', 'sans-serif'],
+                sans: ['"Atkinson Hyperlegible"', '"Google Sans"', 'system-ui', '-apple-system', 'sans-serif'],
+                google: ['"Google Sans"', '"Google Sans Text"', 'sans-serif'],
+                mono: ['"Google Sans Text"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
                 atkinson: ['"Atkinson Hyperlegible"', 'sans-serif'],
             },
+            spacing: {
+                'fib-8': '8px',
+                'fib-13': '13px',
+                'fib-21': '21px',
+                'fib-34': '34px',
+                'fib-55': '55px',
+                'fib-89': '89px',
+            },
             colors: {
-                // Paleta personalizada "Antigravity / Modern"
+                // Acentos Funcionales Industriales (Estándar CABISEG)
+                industrial: {
+                    copper: '#C68346', // Acento Oficial MINREPORT Cobre
+                    yellow: '#FFCD00',
+                    cyan: '#00AEEF',   // Cian Tecnológico
+                    darkBase: '#000000',
+                    darkElevated: '#030406',
+                    darkPanel: '#07090D',
+                    darkBorder: '#12151C',
+                    lightBase: '#FFFFFF',
+                    lightElevated: '#F8FAFC',
+                    lightBorder: '#E2E8F0',
+                },
+                // Paleta antigravity adaptada
                 antigravity: {
                     light: {
-                        bg: '#FAFAFA',
-                        surface: '#FFFFFF',
-                        text: '#0D0D0D',
-                        muted: 'rgba(0, 0, 0, 0.4)',
-                        border: 'rgba(0, 0, 0, 0.05)',
+                        bg: '#FFFFFF',
+                        surface: '#F8FAFC',
+                        text: '#0F172A',
+                        muted: '#64748B',
+                        border: '#E2E8F0',
                     },
                     dark: {
                         bg: '#000000',
-                        surface: '#0D0D0D',
-                        text: '#F2F2F2',
-                        muted: 'rgba(255, 255, 255, 0.4)',
-                        border: 'rgba(255, 255, 255, 0.05)',
+                        surface: '#07090D',
+                        text: '#F3F4F6',
+                        muted: '#8A93A6',
+                        border: '#12151C',
                     },
                     accent: '#C68346',
                 },
@@ -34,7 +57,6 @@ export default {
             boxShadow: {
                 DEFAULT: 'none',
                 'none': 'none',
-                '3xl': '0 35px 60px -15px rgba(0, 0, 0, 0.3)',
             },
             borderRadius: {
                 'none': '0',

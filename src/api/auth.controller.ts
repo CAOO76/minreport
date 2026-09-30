@@ -1,14 +1,181 @@
+import { formatRut } from "../utils/rut";
 import { Request, Response } from 'express';
 import admin, { db, auth } from '../config/firebase';
 import { EmailService } from '../services/EmailService';
 import { registerSchema } from '../core/schemas';
+import { generateSetupToken } from '../utils/security';
 import { env } from '../config/env';
 
 
 
 export const register = async (req: Request, res: Response) => {
     try {
-        // 1. Validate Input
+        const body = req.body;
+        console.log('[AUTH-REGISTER] Request received for:', body.email || body.billingEmail);
+
+        // 1. Detección de Registro Legal B2B (Estándar CABISEG / Ley 19.628)
+        const isB2BRegistration = Boolean(body.businessName && body.companyTaxId && body.acceptTermsAndPrivacy);
+
+        if (isB2BRegistration) {
+            const { RegisterTitularAccountSchema } = await import('../core/schemas');
+            const validation = RegisterTitularAccountSchema.safeParse(body);
+
+            if (!validation.success) {
+                return res.status(400).json({
+                    error: 'Error de Validación Legal B2B',
+                    details: validation.error.format()
+                });
+            }
+
+            const data = validation.data;
+            const normalizedEmail = data.email.toLowerCase().trim();
+            const companyTaxId = data.companyTaxId.trim();
+
+            // Verificar si la empresa ya tiene cuenta activa por su RUT
+            const existingAccounts = await db.collection('accounts')
+                .where('taxId', '==', companyTaxId)
+                .where('status', '==', 'ACTIVE')
+                .get();
+
+            if (!existingAccounts.empty) {
+                return res.status(409).json({
+                    error: 'ENTIDAD_EXISTENTE: Ya existe una Cuenta Titular registrada para este RUT de empresa. Solicite acceso al Administrador Titular o contacte soporte.'
+                });
+            }
+
+            // Detección automática de dominio educacional
+            const emailDomain = normalizedEmail.split('@')[1] || '';
+            const isEduDomain = emailDomain.includes('.edu') || emailDomain.includes('.ac.') || emailDomain.includes('uchile.cl') || emailDomain.includes('usach.cl');
+
+            // Obtener o crear usuario en Firebase Auth
+            let userRecord;
+            try {
+                userRecord = await auth.getUserByEmail(normalizedEmail);
+            } catch (e: any) {
+                if (e.code === 'auth/user-not-found') {
+                    userRecord = await auth.createUser({
+                        email: normalizedEmail,
+                        displayName: data.fullName,
+                        password: req.body.password || (Math.random().toString(36).slice(-8) + 'Min2026!'),
+                    });
+                } else {
+                    throw e;
+                }
+            }
+
+            const uid = userRecord.uid;
+
+            // 2. Crear Cuenta Titular B2B (Tenant Workspace)
+            const accountRef = db.collection('accounts').doc();
+            const accountId = accountRef.id;
+
+            const accountData = {
+                id: accountId,
+                name: data.businessName.trim(),
+                taxId: companyTaxId,
+                type: isEduDomain ? 'EDUCATIONAL' : 'BUSINESS',
+                classification: isEduDomain ? 'edu' : 'b2b',
+                status: 'ACTIVE', // SOBERANÍA INMEDIATA - CERO APROBACIÓN MANUAL
+                ownerId: uid,
+                billingEmail: data.billingEmail.toLowerCase().trim(),
+                legalAddress: data.legalAddress.trim(),
+                commune: data.commune.trim(),
+                region: data.region.trim(),
+                mandatario: {
+                    fullName: data.fullName.trim(),
+                    taxId: data.personalTaxId.trim(),
+                    email: normalizedEmail,
+                    jobTitle: data.jobTitle || 'Mandatario Legal'
+                },
+                contract: {
+                    plan: isEduDomain ? 'ACADEMIC_SANDBOX' : 'ENTERPRISE_B2B_CORE',
+                    status: 'ACTIVE',
+                    billingCycle: 'MENSUAL',
+                    // Módulos satélites: Todos accesibles en fase de desarrollo
+                    activeModules: {
+                        opermaq: true,
+                        stockpile: true,
+                        miningFlow: true
+                    },
+                    activatedAt: Date.now()
+                },
+                enabledPlugins: ['opermaq', 'stockpile', 'mining-flow'],
+                compliance: {
+                    law: 'Ley N° 19.628 (Protección de Datos Personales Chile)',
+                    privacyPolicyVersion: '2026.1',
+                    termsAccepted: true,
+                    termsAcceptedAt: Date.now(),
+                    ipAddress: req.ip || req.socket.remoteAddress || '127.0.0.1'
+                },
+                createdAt: Date.now(),
+                updatedAt: Date.now()
+            };
+
+            await accountRef.set(accountData);
+
+            // 3. Crear Membresía del Titular en la Cuenta (Rol: ADMIN / OWNER)
+            const memberRef = accountRef.collection('members').doc(uid);
+            await memberRef.set({
+                id: uid,
+                userId: uid,
+                fullName: data.fullName.trim(),
+                email: normalizedEmail,
+                run: data.personalTaxId.trim(),
+                role: 'ADMIN',
+                status: 'ACTIVE',
+                joinedAt: Date.now(),
+                isOwner: true
+            });
+
+            // 4. Actualizar Documento del Usuario
+            const userRef = db.collection('users').doc(uid);
+            const userDoc = await userRef.get();
+            let currentMemberships = userDoc.exists ? (userDoc.data()?.memberships || []) : [];
+
+            // Remover membresía previa si existía y agregar la nueva
+            currentMemberships = currentMemberships.filter((m: any) => m.accountId !== accountId);
+            currentMemberships.push({
+                accountId,
+                accountName: data.businessName.trim(),
+                role: 'ADMIN',
+                type: isEduDomain ? 'EDUCATIONAL' : 'BUSINESS',
+                status: 'ACTIVE',
+                joinedAt: Date.now()
+            });
+
+            await userRef.set({
+                uid,
+                email: normalizedEmail,
+                fullName: data.fullName.trim(),
+                taxId: data.personalTaxId.trim(),
+                primaryAccountId: accountId,
+                memberships: currentMemberships,
+                classification: isEduDomain ? 'edu' : 'b2b',
+                updatedAt: Date.now()
+            }, { merge: true });
+
+            // Registro en tenants para compatibilidad con paneles existentes
+            await db.collection('tenants').doc(accountId).set({
+                ...accountData,
+                email: normalizedEmail,
+                company_name: data.businessName.trim(),
+                rut: companyTaxId,
+                status: 'ACTIVE'
+            });
+
+            console.log();
+
+            return res.status(201).json({
+                success: true,
+                message: 'Cuenta Titular B2B creada y activada exitosamente.',
+                accountId,
+                accountName: data.businessName.trim(),
+                userId: uid,
+                isEdu: isEduDomain
+            });
+        }
+
+        // --- FLUJO LEGACY COMPATIBLE ---
         const validation = registerSchema.safeParse(req.body);
 
         if (!validation.success) {
@@ -21,13 +188,10 @@ export const register = async (req: Request, res: Response) => {
         const data = validation.data;
         const tenantEmail = data.email.toLowerCase();
 
-        // 2. Fundamental Integrity Rules (RUN vs Accounts)
         const run = (data as any).run;
         const rut = (data as any).rut;
 
         if (data.type === 'PERSONAL') {
-            // Rule 1: PERSONAL (1:1 Estricto)
-            // No new registration allowed if any active/pending account exists for this RUN
             const querySnapshot = await db.collection('tenants')
                 .where('run', '==', run)
                 .where('type', '==', 'PERSONAL')
@@ -40,8 +204,6 @@ export const register = async (req: Request, res: Response) => {
                 });
             }
         } else if (data.type === 'EDUCATIONAL') {
-            // Rule 2: EDUCATIONAL (1:1 Reemplazable por RUN)
-            // Check if THIS specific institutional email is already in use
             const emailQuery = await db.collection('tenants')
                 .where('email', '==', tenantEmail)
                 .where('status', 'in', ['PENDING_APPROVAL', 'APPROVED', 'ACTIVE'])
@@ -52,11 +214,7 @@ export const register = async (req: Request, res: Response) => {
                     error: 'ACCESO_EXISTENTE: Este email ya está registrado. Utiliza la recuperación de credenciales.'
                 });
             }
-
-            // Note: If the student changes institutions (new email), we allow the registration here.
-            // The previous educational account replacement logic must be handled in the Admin Approval controller.
         } else if (data.type === 'ENTERPRISE') {
-            // Rule 3: BUSINESS (1:N per person, but 1:1 per TaxID for initial signup)
             if (rut) {
                 const querySnapshot = await db.collection('tenants')
                     .where('rut', '==', rut)
@@ -71,7 +229,6 @@ export const register = async (req: Request, res: Response) => {
             }
         }
 
-        // 3. Save Request to Firestore (Using auto-generated ID)
         const tenantData = {
             ...data,
             entity_type: (data as any).entity_type || null,
@@ -83,54 +240,17 @@ export const register = async (req: Request, res: Response) => {
 
         await db.collection('tenants').add(tenantData);
 
-        // 4. Send Email to Super Admin (Notification)
-        try {
-            await EmailService.sendEmail({
-                from: 'MinReport System <onboarding@minreport.com>',
-                to: env.SUPER_ADMIN_EMAIL,
-                subject: `Nueva Solicitud: ${data.type}`,
-                html: `
-                    <div style="font-family: 'Arial', sans-serif; max-width: 600px; color: #334155; padding: 40px 20px;">
-                        <div style="text-align: center; margin-bottom: 32px;">
-                            <img src="https://minreport-access.web.app/pwa-192x192.png" alt="MINREPORT" style="height: 48px; width: auto; opacity: 0.9;" />
-                        </div>
-                        <div style="background: #F8FAFC; border-left: 4px solid #0F172A; padding: 24px; margin-bottom: 24px;">
-                            <h2 style="color: #0F172A; font-size: 18px; margin-top: 0; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px;">Nueva Solicitud de Registro</h2>
-                            <p style="margin: 0; font-size: 15px; line-height: 1.6;">Se ha recibido una nueva solicitud para unirse al ecosistema MINREPORT.</p>
-                            <hr style="border: 0; border-top: 1px solid #E2E8F0; margin: 16px 0;" />
-                            <p style="margin: 8px 0; font-size: 14px;"><strong>Tipo:</strong> ${data.type}</p>
-                            <p style="margin: 8px 0; font-size: 14px;"><strong>Nombre:</strong> ${data.type === 'PERSONAL' ? (data as any).full_name : (data as any).company_name || (data as any).institution_name}</p>
-                            <p style="margin: 8px 0; font-size: 14px;"><strong>Email:</strong> ${data.email}</p>
-                            <p style="margin: 8px 0; font-size: 14px;"><strong>Identificador:</strong> ${'rut' in data ? (data as any).rut : 'run' in data ? (data as any).run : 'N/A'}</p>
-                        </div>
-                        <div style="text-align: center; margin: 32px 0;">
-                            <a href="https://minreport-access.web.app/admin" style="background: #0F172A; color: white; padding: 16px 32px; text-decoration: none; font-weight: bold; display: inline-block; font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em; border-radius: 2px;">Revisar en el Panel</a>
-                        </div>
-                        <hr style="border: 0; border-top: 1px solid #E2E8F0; margin: 32px 0;" />
-                        <p style="font-size: 10px; color: #94A3B8; text-align: center; margin: 0; text-transform: uppercase; letter-spacing: 0.1em;">
-                            MINREPORT SYSTEM INFRASTRUCTURE
-                        </p>
-                    </div>
-                `
-            });
-        } catch (emailError) {
-            console.error('Failed to send admin notification:', emailError);
-        }
-
-        return res.status(201).json({
+        return res.status(200).json({
             success: true,
-            message: 'Solicitud enviada correctamente. Pendiente de aprobación administrativa.'
+            message: 'Solicitud registrada correctamente.'
         });
 
     } catch (error: any) {
-        console.error('Registration error:', error);
-        return res.status(500).json({ error: 'Error interno del servidor al procesar el registro' });
+        console.error('Register Error:', error);
+        return res.status(500).json({ error: error.message || 'Registration failed' });
     }
 };
 
-import { formatRut } from '../utils/rut';
-
-// [NEW] Invitation B2B Logic
 export const inviteUser = async (req: Request, res: Response) => {
     try {
         let { email, accountId, companyName, taxId } = req.body;
@@ -241,26 +361,26 @@ export const inviteUser = async (req: Request, res: Response) => {
             console.log(`[B2B-INVITE] ✅ Account updated successfully.`);
         }
 
-        // 4. Generate Activation Link (Always context-aware for B2B)
-        const baseUrl = process.env.NODE_ENV === 'production'
+        // 4. Generate Activation Link con Custom Setup Token (Consistente con staff/admin/setup)
+        const { rawToken, hashedToken, expiresAt } = generateSetupToken();
+        const cleanTaxId = taxId ? taxId.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase() : userRecord.uid;
+
+        await db.collection('setup_tokens').doc(rawToken).set({
+            accountId,
+            taxId: cleanTaxId,
+            hashedToken,
+            expiresAt,
+            used: false,
+            createdAt: Date.now()
+        });
+
+        const baseUrl = process.env.APP_URL || (process.env.NODE_ENV === 'production'
             ? 'https://minreport-access.web.app'
-            : 'http://localhost:5173';
+            : 'http://localhost:5173');
 
         const entityNameEncoded = encodeURIComponent(companyName || 'MinReport');
-
-        if (isNewUser) {
-            console.log(`[B2B-INVITE] Generating activation link for NEW user: ${normalizedEmail}`);
-            const rawLink = await auth.generatePasswordResetLink(normalizedEmail);
-            const url = new URL(rawLink);
-            const oobCode = url.searchParams.get('oobCode');
-
-            // Redirect to setup-access instead of standard reset
-            link = `${baseUrl}/setup-access?accountId=${accountId}&email=${normalizedEmail}&name=${entityNameEncoded}&accountName=${entityNameEncoded}&type=BUSINESS&oobCode=${oobCode}`;
-        } else {
-            console.log(`[B2B-INVITE] Generating link for EXISTING user: ${normalizedEmail}`);
-            // Point to setup-access anyway so they can set their SPECIFIC password for this account
-            link = `${baseUrl}/setup-access?accountId=${accountId}&email=${normalizedEmail}&name=${entityNameEncoded}&accountName=${entityNameEncoded}&type=BUSINESS`;
-        }
+        link = `${baseUrl}/setup-access?accountId=${accountId}&taxId=${cleanTaxId}&name=${entityNameEncoded}&accountName=${entityNameEncoded}&type=BUSINESS&token=${rawToken}`;
+        console.log(`[B2B-INVITE] Token de configuración generado para ${normalizedEmail}: ${rawToken.substring(0, 8)}...`);
 
         // 5. Send Email via Resend
         await EmailService.sendEmail({

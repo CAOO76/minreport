@@ -99,8 +99,7 @@ export const StaffOnboarding = () => {
             const result = await StaffService.recruitWorker(
                 currentAccount.id,
                 workerData,
-                currentAccount.name || 'Empresa',
-                user.uid
+                currentAccount.name || 'Empresa'
             );
 
             if (result.success) {

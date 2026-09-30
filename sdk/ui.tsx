@@ -6,7 +6,7 @@ import React, { ReactNode } from 'react';
  * Estética: Elite Industrial Minimalism (Standard: rounded-none, Accent: Copper).
  */
 
-const COPPER_ACCENT = "#C68346";
+export const COPPER_ACCENT = "#C68346";
 
 // --- SDKCard ---
 interface SDKCardProps {

@@ -33,6 +33,18 @@ export interface Account {
     type: AccountType;
     taxId?: string; // Tax ID, unique per account
     ownerId: string; // User UID who owns this account
+    subscriptionPlan?: string;
+    modules?: {
+        opermaq?: boolean;
+        stockpile?: boolean;
+        miningFlow?: boolean;
+        [key: string]: boolean | undefined;
+    };
+    ley19628Consent?: {
+        acceptedAt: string;
+        legalMandate: string;
+        ipAddress?: string;
+    };
     primaryOperator?: {
         name: string;
         email: string;

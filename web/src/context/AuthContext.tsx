@@ -36,7 +36,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 console.warn("[AUTH-CONTEXT] Safety timeout reached. Forcing loading to false.");
                 setLoading(false);
             }
-        }, 10000);
+        }, 2000);
 
         const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
             clearTimeout(safetyTimeout);
@@ -67,15 +67,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 const data = snapshot.data() as UserProfile;
                 setProfile(data);
             } else {
-                // Defensive: If on localhost, wait a bit before clearing profile 
-                // to handle emulator sync latency
-                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                    console.warn(`[AUTH-CONTEXT] Profile briefly missing for ${user.uid}, waiting for sync...`);
-                    // We don't call setProfile(null) immediately to avoid UI jumps
-                } else {
-                    console.error("User profile not found for uid:", user.uid);
-                    setProfile(null);
-                }
+                setProfile(null);
+                setLoading(false);
             }
         }, (error) => {
             console.error("Error fetching user profile:", error);
@@ -118,8 +111,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Set ID (triggers listener)
             setActiveAccountId(targetId);
 
-            // Stop loading if we have profile but no account selected (valid state)
-            if (profile && !targetId) setLoading(false);
+            // Stop loading if no target account resolved
+            if (!targetId) setLoading(false);
 
         }).catch(err => {
             console.error("Token error", err);

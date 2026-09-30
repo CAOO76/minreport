@@ -34,33 +34,35 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
-// 🔥 FORZAR LONG POLLING PARA EVITAR FREEZE EN PLAYWRIGHT 🔥
-const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+// Determinación estricta de entorno: Emuladores locales vs Producción Cloud
+const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+const useEmulators = isLocal && import.meta.env.VITE_USE_FIREBASE_EMULATOR !== 'false';
 
 const db = initializeFirestore(app, {
-    // Desactivar persistencia en local/test para evitar "Unexpected state" con long polling
-    localCache: isLocal ? undefined : persistentLocalCache({
+    // En producción habilitamos caché persistente multi-tab (Offline-First Capa 2/3)
+    localCache: useEmulators ? undefined : persistentLocalCache({
         tabManager: persistentMultipleTabManager()
     }),
-    experimentalForceLongPolling: true,
+    experimentalForceLongPolling: useEmulators,
 });
 
 const storage = getStorage(app);
 
-// 🔥🔥🔥 FORZADO BRUTAL PARA E2E (HTTP/LONG-POLLING) 🔥🔥🔥
-// Nota: Tu proyecto (firebase.json) usa el puerto 9190 para Auth.
-console.warn("%c🚨 FRONTEND: EMULADORES ACTIVOS (HTTP/LONG-POLLING) 🚨", "color: orange; font-weight: bold; font-size: 14px;");
-
-try {
-    // Usamos el mismo host que la aplicación para evitar discrepancias de origen (localhost vs 127.0.0.1)
-    const host = window.location.hostname;
-    const AUTH_URL = `http://${host}:9190`;
-    connectAuthEmulator(auth, AUTH_URL, { disableWarnings: true });
-    connectFirestoreEmulator(db, host, 8085);
-    connectStorageEmulator(storage, host, 9195);
-    console.log(`✅ FRONTEND: Conexión emuladores (${host}) exitosa.`);
-} catch (e) {
-    console.error("❌ FRONTEND: Fallo crítico en parche de emuladores:", e);
+// Conexión a Emuladores SOLO si está explícitamente activado para pruebas locales
+if (useEmulators) {
+    console.warn("%c🚨 FRONTEND: EMULADORES ACTIVOS (HTTP/LONG-POLLING) 🚨", "color: orange; font-weight: bold; font-size: 14px;");
+    try {
+        const host = window.location.hostname;
+        const AUTH_URL = `http://${host}:9190`;
+        connectAuthEmulator(auth, AUTH_URL, { disableWarnings: true });
+        connectFirestoreEmulator(db, host, 8085);
+        connectStorageEmulator(storage, host, 9195);
+        console.log(`✅ FRONTEND: Conexión emuladores (${host}) exitosa.`);
+    } catch (e) {
+        console.error("❌ FRONTEND: Fallo al conectar emuladores:", e);
+    }
+} else {
+    console.log("🚀 [FRONTEND] Conectado a Firebase Cloud Services (Southamerica-West1)");
 }
 
 // 🔥 EXPOSICIÓN PARA E2E (Permite a Playwright verificar el estado) 🔥

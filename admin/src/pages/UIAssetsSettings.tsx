@@ -1,97 +1,108 @@
 import React, { useState, useEffect } from 'react';
 import { getUIAssetsSettings, updateUIAssetsSettings, UIAssetsData } from '../services/api';
-import { storage } from '../config/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { AlertTriangle, ImageIcon, ShieldCheck } from 'lucide-react';
-import clsx from 'clsx';
-
-const INITIAL_DATA: UIAssetsData = {
-    login_bg: '',
-    dashboard_bg: '',
-    sidebar_bg: ''
-};
+import { storage } from '../config/firebase';
 
 const uploadAssetToStorage = async (file: File, path: string): Promise<string> => {
-    try {
-        const storageRef = ref(storage, path);
-        const snapshot = await uploadBytes(storageRef, file);
-        return await getDownloadURL(snapshot.ref);
-    } catch (error) {
-        console.error("Upload failed:", error);
-        throw new Error("Failed to upload asset.");
+    const storageRef = ref(storage, path);
+    const snapshot = await uploadBytes(storageRef, file);
+    return await getDownloadURL(snapshot.ref);
+};
+
+const fixAssetUrl = (url?: string): string => {
+    if (!url) return '';
+    const currentHost = location.hostname;
+    if (currentHost !== 'localhost' && currentHost !== '127.0.0.1') {
+        return url.replace(/localhost|127\.0\.0\.1/g, currentHost);
     }
+    return url;
 };
 
-const UIAssetPreview: React.FC<{
-    file: File | null,
-    existingUrl: string,
-    label: string,
-    description: string
-}> = ({ file, existingUrl, label, description }) => {
-    const [preview, setPreview] = useState<string | null>(null);
+interface SubstrateDefinition {
+    id: keyof UIAssetsData;
+    label: string;
+    description: string;
+    targetModule: string;
+    recommendedDim: string;
+    maxWeight: string;
+}
 
-    useEffect(() => {
-        if (file) {
-            const reader = new FileReader();
-            reader.onloadend = () => setPreview(reader.result as string);
-            reader.readAsDataURL(file);
-        } else if (existingUrl) {
-            setPreview(existingUrl);
-        } else {
-            setPreview(null);
-        }
-    }, [file, existingUrl]);
-
-    return (
-        <div className="group relative elite-tech-surface !rounded-none overflow-hidden aspect-video flex flex-col justify-end p-8 border-black/5 dark:border-white/5 shadow-2xl transition-all duration-700 hover:scale-[1.02] hover:shadow-antigravity-accent/20">
-            {/* Dark technical overlay */}
-            <div className="absolute inset-0 technical-grid pointer-events-none opacity-40 z-10"></div>
-
-            {preview ? (
-                <div className="absolute inset-0 z-0">
-                    <img src={preview} alt={label} className="w-full h-full object-cover brightness-[0.5] contrast-[1.1] group-hover:scale-110 transition-transform duration-[2000ms] ease-out" />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent"></div>
-                </div>
-            ) : (
-                <div className="absolute inset-0 z-0 flex flex-col items-center justify-center bg-black/10 dark:bg-white/5 m-4 rounded-none border-2 border-dashed border-black/10 dark:border-white/10">
-                    <ImageIcon className="text-black/10 dark:text-white/10 mb-2" size={32} />
-                    <span className="hud-label !text-[10px] opacity-20">Awaiting Atmospheric Asset</span>
-                </div>
-            )}
-
-            <div className="relative z-20 space-y-2">
-                <div className="flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 rounded-none bg-antigravity-accent"></div>
-                    <h4 className="text-white font-black text-sm uppercase tracking-[0.2em] m-0 italic">{label}</h4>
-                </div>
-                <p className="text-white/50 text-[10px] font-bold leading-relaxed max-w-[80%] uppercase tracking-widest">{description}</p>
-            </div>
-        </div>
-    );
-};
+const SUBSTRATES: SubstrateDefinition[] = [
+    {
+        id: 'login_bg',
+        label: 'Sustrato de Acceso (Login)',
+        description: 'Fondo de pantalla principal para la vista de autenticación y pasarela de acceso.',
+        targetModule: 'Módulo de Identidad y Autenticación',
+        recommendedDim: '1920 × 1080 px (16:9)',
+        maxWeight: '< 350 KB',
+    },
+    {
+        id: 'dashboard_bg',
+        label: 'Sustrato del Panel Principal (Dashboard)',
+        description: 'Textura de fondo para el lienzo del cuadro de mando operativo y módulos de datos.',
+        targetModule: 'Cuadro de Mando y Módulos Satélites',
+        recommendedDim: '2560 × 1440 px (16:9)',
+        maxWeight: '< 400 KB',
+    },
+    {
+        id: 'sidebar_bg',
+        label: 'Sustrato de Navegación Lateral (Sidebar)',
+        description: 'Fondo textural para la barra de navegación vertical y accesos directos de navegación.',
+        targetModule: 'Layout Global de Navegación',
+        recommendedDim: '400 × 1200 px (Vertical)',
+        maxWeight: '< 150 KB',
+    },
+];
 
 export const UIAssetsSettings: React.FC = () => {
-    const [settings, setSettings] = useState<UIAssetsData>(INITIAL_DATA);
+    const [settings, setSettings] = useState<UIAssetsData>({
+        login_bg: '',
+        dashboard_bg: '',
+        sidebar_bg: '',
+    });
     const [files, setFiles] = useState<{ [key: string]: File | null }>({});
-    const [isSaving, setIsSaving] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
+    const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
     useEffect(() => {
         const fetchSettings = async () => {
             try {
-                const { data } = await getUIAssetsSettings();
-                setSettings(data);
+                const response = await getUIAssetsSettings();
+                if (response.data) {
+                    setSettings(response.data);
+                }
             } catch (error) {
-                console.error('Failed to fetch UI assets', error);
+                console.error('Error al consultar sustratos de interfaz:', error);
             } finally {
                 setIsLoading(false);
             }
         };
+
         fetchSettings();
     }, []);
 
-    const handleFileChange = (type: string, file: File | null) => {
-        setFiles(prev => ({ ...prev, [type]: file }));
+    const handleFileChange = (id: keyof UIAssetsData, file: File | null) => {
+        if (!file) {
+            setFiles(prev => {
+                const copy = { ...prev };
+                delete copy[id];
+                return copy;
+            });
+            return;
+        }
+
+        const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
+        if (!validTypes.includes(file.type)) {
+            setNotification({
+                type: 'error',
+                message: 'Formato no admitido. Se requiere imagen en formato WebP, PNG o JPG.',
+            });
+            setTimeout(() => setNotification(null), 4000);
+            return;
+        }
+
+        setFiles(prev => ({ ...prev, [id]: file }));
     };
 
     const handleSave = async () => {
@@ -100,7 +111,7 @@ export const UIAssetsSettings: React.FC = () => {
             const updated = { ...settings };
             for (const [key, file] of Object.entries(files)) {
                 if (file) {
-                    const ext = file.name.split('.').pop();
+                    const ext = file.name.split('.').pop() || 'webp';
                     const url = await uploadAssetToStorage(file, `ui_assets/${key}.${ext}`);
                     (updated as any)[key] = url;
                 }
@@ -108,119 +119,260 @@ export const UIAssetsSettings: React.FC = () => {
             await updateUIAssetsSettings(updated);
             setSettings(updated);
             setFiles({});
-            alert('Atmospheric synchronization successful.');
+            setNotification({
+                type: 'success',
+                message: 'Sustratos de interfaz visual actualizados y sincronizados con éxito.',
+            });
+            setTimeout(() => setNotification(null), 3500);
         } catch (error) {
-            alert('Core UI Asset update failed.');
+            console.error('Error al guardar sustratos de interfaz:', error);
+            setNotification({
+                type: 'error',
+                message: 'Error al persistir los sustratos en el servidor o Cloud Storage.',
+            });
+            setTimeout(() => setNotification(null), 4000);
         } finally {
             setIsSaving(false);
         }
     };
 
-    if (isLoading) return (
-        <div className="p-12 flex flex-col items-center justify-center space-y-6">
-            <div className="w-16 h-16 border-b-2 border-antigravity-accent rounded-none animate-spin"></div>
-            <div className="hud-label animate-pulse tracking-[1em]">CALIBRATING_OPTICS</div>
-        </div>
-    );
+    const pendingCount = Object.keys(files).length;
+    const registeredCount = SUBSTRATES.filter(s => !!settings[s.id]).length;
+
+    if (isLoading) {
+        return (
+            <div className="py-21 text-center font-mono text-xs text-[#8A93A6]">
+                [Consultando catálogo de medios y sustratos de interfaz...]
+            </div>
+        );
+    }
 
     return (
-        <div className="max-w-[1400px] mx-auto space-y-16 animate-in fade-in duration-1000 pb-24">
-            <header className="flex flex-col md:flex-row md:items-end justify-between gap-10">
-                <div className="space-y-3">
-                    <div className="flex items-center gap-3">
-                        <div className="w-8 h-[2px] bg-antigravity-accent"></div>
-                        <span className="hud-label !text-antigravity-accent italic">ATOMIC_UI_ENVIRONMENT</span>
-                    </div>
-                    <h2 className="text-5xl font-black text-black dark:text-white tracking-tighter uppercase m-0 italic">Atmospheric_Assets</h2>
-                    <p className="text-black/50 dark:text-white/40 font-medium text-base max-w-xl leading-relaxed">
-                        Controla la estética mineral del sistema. Gestiona texturas de acero, grafito y carbono para mantener la integridad visual del nodo.
+        <div className="space-y-8 font-sans">
+            {/* Cabecera Técnica */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-[#E2E8F0] dark:border-[#12151C]">
+                <div>
+                    <h1 className="text-xl font-bold tracking-tight text-[#0F172A] dark:text-[#F3F4F6]">
+                        Biblioteca de Medios del Sistema
+                    </h1>
+                    <p className="text-xs text-[#475569] dark:text-[#8A93A6] mt-0.5">
+                        Administración de fondos y sustratos visuales para las superficies del entorno de operaciones.
                     </p>
                 </div>
-                <button
-                    onClick={handleSave}
-                    disabled={isSaving}
-                    className="group relative px-12 py-5 bg-black dark:bg-white text-white dark:text-black font-black rounded-none shadow-premium hover:scale-105 active:scale-95 transition-all disabled:opacity-50 overflow-hidden"
-                >
-                    <span className="relative z-10 uppercase tracking-widest text-sm">
-                        {isSaving ? 'Recalibrating...' : 'Sync Environment'}
+
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={handleSave}
+                        disabled={isSaving || pendingCount === 0}
+                        className="px-4 py-2 text-xs font-mono bg-[#C68346] text-white hover:opacity-90 disabled:opacity-40 transition-opacity flex items-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+                    >
+                        <span className={`material-symbols-outlined text-[16px] ${isSaving ? 'animate-spin' : ''}`}>
+                            {isSaving ? 'sync' : 'save'}
+                        </span>
+                        <span>{isSaving ? 'Sincronizando...' : 'Guardar Sustratos'}</span>
+                    </button>
+                </div>
+            </div>
+
+            {/* Notificación Operativa Inline */}
+            {notification && (
+                <div className={`px-4 py-2.5 border text-xs font-mono flex items-center gap-2 ${
+                    notification.type === 'success'
+                        ? 'bg-neutral-50 dark:bg-[#07090D] border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6]'
+                        : 'bg-red-50 dark:bg-red-950/20 border-red-300 dark:border-red-900 text-red-700 dark:text-red-400'
+                }`}>
+                    <span className="material-symbols-outlined text-[16px] text-[#C68346]">
+                        {notification.type === 'success' ? 'check_circle' : 'error'}
                     </span>
-                    {!isSaving && <div className="absolute inset-0 bg-antigravity-accent opacity-0 group-hover:opacity-100 transition-opacity mix-blend-overlay"></div>}
-                </button>
-            </header>
+                    <span>{notification.message}</span>
+                </div>
+            )}
 
-            <div className="elite-tech-surface p-12 rounded-none shadow-3xl border-black/5 dark:border-white/5 relative">
-                <div className="absolute inset-0 technical-grid pointer-events-none opacity-20"></div>
+            {/* Macro-Layout en Proporción Áurea (61.8% / 38.2%) */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                {/* Área Mayor (~61.8%): Visor e Inspección Técnica de Sustratos */}
+                <div className="lg:col-span-8 space-y-6">
+                    <div className="flex items-center justify-between pb-2 border-b border-[#E2E8F0] dark:border-[#12151C]">
+                        <h2 className="text-xs font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
+                            Sustratos Visuales de Interfaz ({registeredCount} / {SUBSTRATES.length})
+                        </h2>
+                        <span className="text-[11px] font-mono text-[#8A93A6]">
+                            Formatos admitidos: WebP / PNG / JPG
+                        </span>
+                    </div>
 
-                <div className="relative z-10 grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-12">
-                    {[
-                        { id: 'login_bg', label: 'Security Gateway', desc: 'Acceso principal al sistema. Debe transmitir robustez y encriptación.' },
-                        { id: 'dashboard_bg', label: 'Central Hub', desc: 'Panel de operaciones. Minimalismo mineral en grafitos profundos.' },
-                        { id: 'sidebar_bg', label: 'Navigation Texture', desc: 'Sustrato visual para los protocolos de navegación lateral.' }
-                    ].map(asset => (
-                        <div key={asset.id} className="space-y-6">
-                            <UIAssetPreview
-                                file={files[asset.id] || null}
-                                existingUrl={(settings as any)[asset.id]}
-                                label={asset.label}
-                                description={asset.desc}
-                            />
-                            <div className="relative group/input">
-                                <input
-                                    type="file"
-                                    accept="image/*"
-                                    autoComplete="off"
-                                    onChange={(e) => handleFileChange(asset.id, e.target.files?.[0] || null)}
-                                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                                />
-                                <div className="h-12 flex items-center justify-center rounded-none bg-black dark:bg-white text-white dark:text-black text-[10px] font-black uppercase tracking-widest border-2 border-transparent group-hover/input:bg-antigravity-accent group-hover/input:text-white transition-all shadow-lg active:scale-95">
-                                    {files[asset.id] ? files[asset.id]?.name.slice(0, 20) : `Inject ${asset.label}`}
+                    <div className="space-y-6">
+                        {SUBSTRATES.map((substrate) => {
+                            const currentFile = files[substrate.id];
+                            const existingUrl = fixAssetUrl(settings[substrate.id]);
+                            const previewSrc = currentFile ? URL.createObjectURL(currentFile) : existingUrl;
+                            const isDeclared = !!previewSrc;
+
+                            return (
+                                <div
+                                    key={substrate.id}
+                                    className="border border-[#E2E8F0] dark:border-[#12151C] bg-white dark:bg-[#07090D] p-5 space-y-4"
+                                >
+                                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                                        <div className="space-y-1">
+                                            <div className="flex items-center gap-2">
+                                                <h3 className="font-bold text-sm text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    {substrate.label}
+                                                </h3>
+                                                <span className="font-mono text-[10px] text-[#8A93A6] bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5">
+                                                    {substrate.id}
+                                                </span>
+                                            </div>
+                                            <p className="text-xs text-[#475569] dark:text-[#8A93A6] leading-relaxed">
+                                                {substrate.description}
+                                            </p>
+                                        </div>
+                                        <div className="text-right sm:shrink-0 font-mono text-[11px] text-[#8A93A6]">
+                                            <div>{substrate.recommendedDim}</div>
+                                            <div className="text-[10px] text-[#5A6072]">Peso máx: {substrate.maxWeight}</div>
+                                        </div>
+                                    </div>
+
+                                    {/* Visor Panorámico Blindado (16:9) */}
+                                    <div className="relative border border-[#E2E8F0] dark:border-[#12151C] bg-neutral-50 dark:bg-[#030406] overflow-hidden aspect-video max-h-[260px] flex items-center justify-center">
+                                        {previewSrc ? (
+                                            <img
+                                                src={previewSrc}
+                                                alt={substrate.label}
+                                                draggable={false}
+                                                onContextMenu={(e) => e.preventDefault()}
+                                                className="w-full h-full object-cover select-none pointer-events-none"
+                                            />
+                                        ) : (
+                                            <div className="text-center font-mono text-xs text-[#94A3B8] dark:text-[#5A6072] italic p-6 select-none">
+                                                [Información técnica no declarada en ficha]
+                                            </div>
+                                        )}
+                                        <div className="absolute top-2 left-2 px-2 py-0.5 bg-black/60 backdrop-blur-sm text-white font-mono text-[10px]">
+                                            {substrate.targetModule}
+                                        </div>
+                                    </div>
+
+                                    {/* Control Quirúrgico de Archivo */}
+                                    <div className="pt-2 border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                        <div className="font-mono text-xs text-[#8A93A6] truncate">
+                                            {currentFile ? (
+                                                <span className="text-[#C68346] font-semibold">
+                                                    Listo para subir: {currentFile.name} ({(currentFile.size / 1024).toFixed(1)} KB)
+                                                </span>
+                                            ) : isDeclared ? (
+                                                <span className="text-neutral-500">
+                                                    [Activo persistido en Cloud Storage]
+                                                </span>
+                                            ) : (
+                                                <span className="italic text-[#94A3B8] dark:text-[#5A6072]">
+                                                    [Sin activo asignado]
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        <label className="relative cursor-pointer shrink-0">
+                                            <input
+                                                type="file"
+                                                accept="image/jpeg,image/png,image/webp"
+                                                autoComplete="off"
+                                                onChange={(e) => handleFileChange(substrate.id, e.target.files?.[0] || null)}
+                                                className="sr-only"
+                                            />
+                                            <span className="py-1.5 px-3 text-xs font-mono inline-block border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#030406] text-[#0F172A] dark:text-[#F3F4F6] hover:border-[#C68346] transition-colors">
+                                                {currentFile ? 'Cambiar archivo' : isDeclared ? 'Reemplazar sustrato' : 'Cargar sustrato'}
+                                            </span>
+                                        </label>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* Área Menor (~38.2%): Panel de Rendimiento y Gobernanza de Medios */}
+                <div className="lg:col-span-4 space-y-6">
+                    {/* Presupuesto de Rendimiento Frontend */}
+                    <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-white dark:bg-[#07090D] p-5 space-y-4">
+                        <div className="pb-3 border-b border-[#E2E8F0] dark:border-[#12151C]">
+                            <h3 className="text-xs font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
+                                Presupuesto de Rendimiento (CWV)
+                            </h3>
+                            <p className="text-xs text-[#8A93A6] mt-0.5">
+                                Parámetros de higiene de red para asegurar LCP &lt; 1.2 s.
+                            </p>
+                        </div>
+
+                        <div className="space-y-3 font-mono text-xs">
+                            <div className="p-3 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#030406]">
+                                <div className="text-[10px] text-[#8A93A6] uppercase">LCP (Largest Contentful Paint)</div>
+                                <div className="text-sm font-bold text-[#0F172A] dark:text-[#F3F4F6] mt-0.5 tabular-nums">&lt; 1.2 segundos</div>
+                                <div className="text-[10px] text-[#475569] dark:text-[#8A93A6] mt-1 font-sans">
+                                    Los fondos de pantalla no deben bloquear el hilo principal ni retrasar la pintura del contenido crítico.
+                                </div>
+                            </div>
+
+                            <div className="p-3 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#030406]">
+                                <div className="text-[10px] text-[#8A93A6] uppercase">Compresión y Formato</div>
+                                <div className="text-sm font-bold text-[#0F172A] dark:text-[#F3F4F6] mt-0.5">WebP Nativo</div>
+                                <div className="text-[10px] text-[#475569] dark:text-[#8A93A6] mt-1 font-sans">
+                                    Se recomienda codificar los fondos en formato WebP con calidad 80-85% para reducir el payload en un 60% respecto a JPG/PNG.
                                 </div>
                             </div>
                         </div>
-                    ))}
-                </div>
-
-                <div className="mt-16 p-8 rounded-none glass-card border-amber-500/20 bg-amber-500/5 flex gap-6 items-start">
-                    <div className="w-12 h-12 rounded-none bg-amber-500/10 flex items-center justify-center shrink-0">
-                        <AlertTriangle className="text-amber-500" size={24} />
                     </div>
-                    <div className="space-y-3">
-                        <h5 className="text-amber-600 dark:text-amber-500 font-black text-xs uppercase tracking-widest flex items-center gap-2">
-                            Industrial Visual Protocol v4.0
-                        </h5>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                            <ul className="text-[10px] text-amber-700/60 dark:text-amber-400/50 font-black space-y-2 uppercase tracking-tighter">
-                                <li className="flex items-center gap-2">
-                                    <div className="w-1 h-1 rounded-none bg-amber-500"></div>
-                                    Prohibido: Elementos orgánicos o figurativos
-                                </li>
-                                <li className="flex items-center gap-2">
-                                    <div className="w-1 h-1 rounded-none bg-amber-500"></div>
-                                    Prohibido: Gradientes artificiales de color
-                                </li>
-                            </ul>
-                            <ul className="text-[10px] text-emerald-600/60 dark:text-emerald-400/50 font-black space-y-2 uppercase tracking-tighter">
-                                <li className="flex items-center gap-2">
-                                    <div className="w-1 h-1 rounded-none bg-emerald-500"></div>
-                                    Requerido: Macro-fotografía mineral/metálica
-                                </li>
-                                <li className="flex items-center gap-2">
-                                    <div className="w-1 h-1 rounded-full bg-emerald-500"></div>
-                                    Requerido: Rango HEX #000000 - #1F1F1F
-                                </li>
-                            </ul>
+
+                    {/* Directivas de Almacenamiento y Caché */}
+                    <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-white dark:bg-[#07090D] p-5 space-y-4">
+                        <div className="pb-3 border-b border-[#E2E8F0] dark:border-[#12151C]">
+                            <h3 className="text-xs font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
+                                Directivas de Entrega de Medios
+                            </h3>
+                            <p className="text-xs text-[#8A93A6] mt-0.5">
+                                Arquitectura de entrega mediante Cloudflare Edge.
+                            </p>
+                        </div>
+
+                        <div className="space-y-3 text-xs text-[#475569] dark:text-[#8A93A6]">
+                            <div className="flex items-start gap-2">
+                                <span className="material-symbols-outlined text-[16px] text-[#C68346] shrink-0 mt-0.5">
+                                    cloud_done
+                                </span>
+                                <div>
+                                    <strong className="text-[#0F172A] dark:text-[#F3F4F6]">Caché Inmutable:</strong> Cabecera <code>Cache-Control: public, max-age=31536000, immutable</code> para garantizar entrega instantánea desde CDN Edge.
+                                </div>
+                            </div>
+
+                            <div className="flex items-start gap-2">
+                                <span className="material-symbols-outlined text-[16px] text-[#C68346] shrink-0 mt-0.5">
+                                    security
+                                </span>
+                                <div>
+                                    <strong className="text-[#0F172A] dark:text-[#F3F4F6]">Blindaje de Medios:</strong> Todos los visores bloquean arrastre de imagen (<code>drag-disabled</code>) y menú contextual para resguardo de propiedad intelectual.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Resumen de Estado */}
+                    <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#030406] p-4 font-mono text-xs text-[#8A93A6] space-y-2">
+                        <div className="flex justify-between items-center">
+                            <span>Destino de Persistencia:</span>
+                            <span className="text-[#0F172A] dark:text-[#F3F4F6]">Firestore: settings/ui_assets</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                            <span>Almacenamiento:</span>
+                            <span className="text-[#0F172A] dark:text-[#F3F4F6]">Cloud Storage: /ui_assets/*</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                            <span>Modificaciones pendientes:</span>
+                            <span className={pendingCount > 0 ? 'text-[#C68346] font-bold' : 'text-[#8A93A6]'}>
+                                {pendingCount} activo(s)
+                            </span>
                         </div>
                     </div>
                 </div>
             </div>
-
-            <footer className="pt-12 border-t border-black/5 dark:border-white/5 flex flex-col md:flex-row justify-between gap-6 hud-label !text-[10px] !text-black/20 dark:!text-white/20">
-                <div className="flex items-center gap-4">
-                    <ShieldCheck className="text-emerald-500" size={14} />
-                    ATMOSPHERIC_INTEGRITY_CHECKED
-                </div>
-                <div className="italic tracking-widest">MINREPORT OPTICS UNIT</div>
-            </footer>
         </div>
     );
 };

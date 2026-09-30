@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Download, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 interface BeforeInstallPromptEvent extends Event {
@@ -16,7 +15,7 @@ export const PWAInstallPrompt: React.FC = () => {
         const handler = (e: Event) => {
             e.preventDefault();
             setDeferredPrompt(e as BeforeInstallPromptEvent);
-            // Mostrar el prompt solo si no fue descartado previamente en la sesión
+            // No mostrar si ya fue descartado en la sesión
             if (!sessionStorage.getItem('pwa_prompt_dismissed')) {
                 setIsVisible(true);
             }
@@ -44,35 +43,46 @@ export const PWAInstallPrompt: React.FC = () => {
         sessionStorage.setItem('pwa_prompt_dismissed', 'true');
     };
 
-    if (!isVisible) return null;
+    // No interrumpir flujos críticos de autenticación
+    const isAuthPage = typeof window !== 'undefined' && 
+        (window.location.pathname.includes('/login') || window.location.pathname.includes('/register'));
+
+    if (!isVisible || isAuthPage) return null;
 
     return (
-        <div className="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-96 bg-white dark:bg-[#1f1f1f] border border-black/10 dark:border-white/10 shadow-2xl z-[9999] p-4 flex gap-4 animate-in slide-in-from-bottom-5">
-            <div className="w-12 h-12 bg-black/5 dark:bg-white/5 flex items-center justify-center shrink-0">
-                <Download className="text-antigravity-accent" size={24} />
+        <div className="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-96 bg-white dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] shadow-lg z-[9999] p-4 flex gap-4 font-sans select-none">
+            <div className="w-10 h-10 bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center shrink-0">
+                <span className="material-symbols-outlined text-[#C68346] text-[20px]">
+                    download
+                </span>
             </div>
             <div className="flex-1">
-                <h3 className="font-black text-sm uppercase tracking-tight text-black dark:text-white mb-1">
+                <h3 className="font-bold text-xs uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6] mb-1">
                     {t('pwa.install_title', 'Instalar MINREPORT')}
                 </h3>
-                <p className="text-[11px] text-black/60 dark:text-white/60 mb-3 leading-tight">
+                <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] mb-3 leading-normal">
                     {t('pwa.install_desc', 'Instale la aplicación para garantizar acceso offline y mayor rendimiento en terreno.')}
                 </p>
                 <div className="flex gap-2">
                     <button
                         onClick={handleInstallClick}
-                        className="flex-1 bg-antigravity-accent text-white text-[10px] font-black uppercase tracking-wider py-2 transition-transform active:scale-95"
+                        className="flex-1 bg-[#C68346] hover:opacity-90 text-white text-[10px] font-mono uppercase tracking-wider py-1.5 transition-opacity cursor-pointer"
                     >
-                        {t('pwa.install_button', 'Instalar')}
+                        {t('pwa.install_button', 'Instalar Aplicación')}
                     </button>
                     <button
                         onClick={handleDismiss}
-                        className="w-8 flex items-center justify-center border border-black/10 dark:border-white/10 text-black/40 dark:text-white/40 hover:text-black dark:hover:text-white transition-colors"
+                        className="w-8 flex items-center justify-center border border-[#E2E8F0] dark:border-[#12151C] text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-white transition-colors cursor-pointer"
+                        title="Descartar"
                     >
-                        <X size={14} />
+                        <span className="material-symbols-outlined text-[16px]">
+                            close
+                        </span>
                     </button>
                 </div>
             </div>
         </div>
     );
 };
+
+export default PWAInstallPrompt;

@@ -1,7 +1,15 @@
 import axios from 'axios';
 
-const MI_IP_IMAC = "192.168.1.87";
-const API_BASE = location.hostname === 'localhost' ? 'http://localhost:8080/api/admin' : `http://${MI_IP_IMAC}:8080/api/admin`;
+// [WEB 3.0 DYNAMIC RESOLUTION] Resuelve dinámicamente según el host activo (localhost, WiFi o nube)
+const resolveApiBase = () => {
+    if (import.meta.env.VITE_API_URL) {
+        return `${import.meta.env.VITE_API_URL}/api/admin`;
+    }
+    const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+    return `http://${host}:8080/api/admin`;
+};
+
+const API_BASE = resolveApiBase();
 
 const api = axios.create({
     baseURL: API_BASE,
@@ -34,7 +42,7 @@ export const purgeTenant = (uid: string) =>
 export const getAccounts = (type?: string) =>
     api.get('/accounts', { params: { type } });
 
-interface LogoSet {
+export interface LogoSet {
     isotype: string;
     logotype: string;
     imagotype: string;
@@ -42,9 +50,11 @@ interface LogoSet {
     appIcon?: string;
 }
 
-interface BrandingSettings {
+export interface BrandingSettings {
     light: LogoSet;
     dark: LogoSet;
+    siteName?: string;
+    primaryColor?: string;
 }
 
 export const getBrandingSettings = () => api.get<BrandingSettings>('/settings/branding');
@@ -62,3 +72,12 @@ export const getUIAssetsSettings = () => api.get<UIAssetsData>('/settings/ui-ass
 export const updateUIAssetsSettings = (data: UIAssetsData) => api.put('/settings/ui-assets', data);
 
 export default api;
+
+export const getAccountUsers = (accountId: string) =>
+    api.get(`/accounts/${accountId}/users`);
+
+export const getAuditLogs = (limit: number = 50) =>
+    api.get('/audit-logs', { params: { limit } });
+
+export const getAITelemetry = () =>
+    api.get('/ai-telemetry');

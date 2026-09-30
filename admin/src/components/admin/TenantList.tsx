@@ -1,15 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getTenants, updateTenantStatus, deleteTenant } from '../../services/api';
-import { Check, X, Clock, Trash2, Eye, Ban, Settings, Blocks, Cpu, ShieldCheck, Zap, Users } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
-import clsx from 'clsx';
 import { useNavigate } from 'react-router-dom';
-import { UserManagementDrawer } from './UserManagementDrawer';
 import { ConfirmationModal } from './ConfirmationModal';
-import { TenantDetailsModal } from './TenantDetailsModal';
-import { TenantPluginsModal } from './TenantPluginsModal';
-import { useAdminUsers } from '../../hooks/useAdminUsers';
-import { UserProfile } from '../../types/admin';
 
 interface Tenant {
     id: string;
@@ -32,24 +24,24 @@ interface TenantListProps {
 }
 
 export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle }) => {
-    const { t } = useTranslation();
     const navigate = useNavigate();
     const [tenants, setTenants] = useState<Tenant[]>([]);
     const [loading, setLoading] = useState(true);
-    const { toggleUserPlugin, updateUserStatus } = useAdminUsers();
+    const [notification, setNotification] = useState<string | null>(null);
 
-    const [managingUser, setManagingUser] = useState<UserProfile | null>(null);
-    const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-    const [selectedTenant, setSelectedTenant] = useState<Tenant | null>(null);
-    const [selectedPluginTenant, setSelectedPluginTenant] = useState<Tenant | null>(null);
-    const [actionModal, setActionModal] = useState<{ isOpen: boolean, tenant: Tenant | null, action: 'DELETE' | 'SUSPEND' } | null>(null);
+    const [actionModal, setActionModal] = useState<{
+        isOpen: boolean;
+        tenant: Tenant | null;
+        action: 'DELETE' | 'SUSPEND' | 'ACTIVATE';
+    } | null>(null);
 
     const fetchTenants = async () => {
+        setLoading(true);
         try {
             const { data } = await getTenants();
             setTenants(data.filter((t: Tenant) => t.type === type && (t.status === 'ACTIVE' || t.status === 'SUSPENDED' || t.status === 'APPROVED')));
         } catch (error) {
-            console.error('Error fetching tenants:', error);
+            console.error('Error al consultar cuentas:', error);
         } finally {
             setLoading(false);
         }
@@ -59,280 +51,187 @@ export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle })
         fetchTenants();
     }, [type]);
 
-    const handleManageUser = (tenant: Tenant) => {
-        const profile: UserProfile = {
-            uid: tenant.id,
-            email: tenant.email,
-            displayName: tenant.type === 'ENTERPRISE' ? tenant.company_name! : (tenant.full_name || tenant.institution_name!),
-            role: 'USER',
-            status: tenant.status as any,
-            entitlements: {
-                pluginsEnabled: tenant.enabledPlugins || [],
-                storageLimit: 0
-            },
-            stats: {
-                lastLogin: '',
-                storageUsed: 0
+    const handleActionConfirm = async () => {
+        if (!actionModal?.tenant) return;
+        const tenant = actionModal.tenant;
+        const action = actionModal.action;
+
+        try {
+            if (action === 'DELETE') {
+                await deleteTenant(tenant.id);
+                setTenants(prev => prev.filter(t => t.id !== tenant.id));
+                setNotification('Cuenta eliminada del registro');
+            } else {
+                const nextStatus = action === 'SUSPEND' ? 'SUSPENDED' : 'ACTIVE';
+                await updateTenantStatus(tenant.id, nextStatus as any);
+                setTenants(prev => prev.map(t => t.id === tenant.id ? { ...t, status: nextStatus as any } : t));
+                setNotification(`Cuenta ${nextStatus === 'ACTIVE' ? 'activada' : 'suspendida'}`);
             }
-        };
-        setManagingUser(profile);
-        setIsDrawerOpen(true);
-    };
-
-    const handleAction = async (id: string, status: 'ACTIVE' | 'REJECTED' | 'SUSPENDED' | 'DELETED', data?: any) => {
-        try {
-            await updateTenantStatus(id, status as any, data);
-            setTenants(prev => prev.map(t => {
-                if (t.id === id) {
-                    return {
-                        ...t,
-                        status: status as any,
-                        ...(data?.enabledPlugins ? { enabledPlugins: data.enabledPlugins } : {})
-                    };
-                }
-                return t;
-            }));
             setActionModal(null);
-            if (status !== 'ACTIVE') {
-                setSelectedTenant(null);
-            }
+            setTimeout(() => setNotification(null), 3000);
         } catch (error) {
-            alert('Error updating status');
+            console.error('Error al ejecutar acción:', error);
+            setNotification('Error al procesar acción');
+            setTimeout(() => setNotification(null), 3000);
         }
     };
 
-    const handleUpdatePlugins = async (tenantId: string, newPlugins: string[]) => {
-        try {
-            await updateTenantStatus(tenantId, 'ACTIVE', { enabledPlugins: newPlugins });
-            setTenants(prev => prev.map(t => {
-                if (t.id === tenantId) {
-                    return { ...t, enabledPlugins: newPlugins };
-                }
-                return t;
-            }));
-            setSelectedPluginTenant(prev => prev ? { ...prev, enabledPlugins: newPlugins } : null);
-        } catch (error) {
-            console.error('Failed to update plugins', error);
-            alert('Error al actualizar plugins');
-        }
-    };
-
-    const handleDelete = async (id: string) => {
-        try {
-            await deleteTenant(id);
-            setTenants(prev => prev.filter(t => t.id !== id));
-            setActionModal(null);
-        } catch (error) {
-            console.error('Error deleting tenant:', error);
-            alert('Error al eliminar la cuenta. Verifica los permisos.');
-        }
+    const handleNavigateDetail = (tenantId: string) => {
+        if (type === 'ENTERPRISE') navigate(`/b2b/${tenantId}`);
+        else if (type === 'EDUCATIONAL') navigate(`/edu/${tenantId}`);
+        else navigate(`/personal/${tenantId}`);
     };
 
     return (
-        <div className="space-y-10 animate-in fade-in duration-1000 pb-24">
-            <header className="flex flex-col md:flex-row md:items-end justify-between gap-8">
-                <div className="space-y-3">
-                    <div className="flex items-center gap-3">
-                        <div className="w-8 h-[2px] bg-antigravity-accent"></div>
-                        <span className="hud-label !text-antigravity-accent italic">ACCOUNT_TENANT_PROTOCOL</span>
-                    </div>
-                    <h1 className="text-5xl font-black text-black dark:text-white tracking-tighter m-0 uppercase italic">
-                        {title.replace(' ', '_')}
+        <div className="space-y-6 font-sans">
+            {/* Cabecera Técnica */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-[#E2E8F0] dark:border-[#12151C]">
+                <div>
+                    <h1 className="text-xl font-bold tracking-tight text-[#0F172A] dark:text-[#F3F4F6]">
+                        {title}
                     </h1>
-                    <p className="text-black/50 dark:text-white/40 font-medium text-base max-w-xl leading-relaxed">
+                    <p className="text-xs text-[#475569] dark:text-[#8A93A6] mt-0.5">
                         {subtitle}
                     </p>
                 </div>
 
-                <div className="flex gap-4">
-                    <div className="p-4 glass-card flex items-center gap-4 border-black/5 dark:border-white/5">
-                        <div className="w-10 h-10 bg-black/5 dark:bg-white/10 rounded-none flex items-center justify-center text-antigravity-accent">
-                            <Zap size={20} />
-                        </div>
-                        <div>
-                            <div className="text-[9px] font-black text-black/30 dark:text-white/20 uppercase tracking-widest">Active_Nodes</div>
-                            <div className="text-xl font-black text-black dark:text-white font-mono">{tenants.filter(t => t.status === 'ACTIVE').length}</div>
-                        </div>
-                    </div>
+                <div className="flex items-center gap-3">
+                    <span className="font-mono text-xs text-[#475569] dark:text-[#8A93A6]">
+                        Registros: <span className="tabular-nums font-bold text-[#0F172A] dark:text-[#F3F4F6]">{tenants.length}</span>
+                    </span>
+                    <button
+                        onClick={fetchTenants}
+                        disabled={loading}
+                        className="bg-transparent border-0 outline-none p-1.5 text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors cursor-pointer flex items-center gap-1.5 text-xs"
+                        title="Actualizar lista"
+                    >
+                        <span className={`material-symbols-outlined text-[18px] ${loading ? 'animate-spin' : ''}`}>sync</span>
+                        <span>Actualizar</span>
+                    </button>
                 </div>
-            </header>
+            </div>
 
-            <div className="elite-tech-surface rounded-none shadow-3xl overflow-hidden border-black/5 dark:border-white/5 relative">
-                <div className="absolute inset-0 technical-grid pointer-events-none opacity-20"></div>
+            {/* Notificación Operativa Inline */}
+            {notification && (
+                <div className="px-3 py-2 bg-neutral-100 dark:bg-neutral-900 border border-[#E2E8F0] dark:border-[#12151C] text-xs font-mono text-[#0F172A] dark:text-[#F3F4F6] flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[16px] text-[#C68346]">info</span>
+                    <span>{notification}</span>
+                </div>
+            )}
 
-                <div className="overflow-x-auto relative z-10">
-                    <table className="w-full text-left border-collapse">
-                        <thead>
-                            <tr className="bg-black/5 dark:bg-white/5 border-b border-black/10 dark:border-white/10">
-                                <th className="px-10 py-6 hud-label">
-                                    {type === 'ENTERPRISE' ? 'Entity_Identity' : type === 'EDUCATIONAL' ? 'Campus_Registry' : 'Subject_Name'}
-                                </th>
-                                <th className="px-10 py-6 hud-label">
-                                    {type === 'ENTERPRISE' ? 'Fiscal_RUT' : 'Civil_RUN'}
-                                </th>
-                                <th className="px-10 py-6 hud-label">Digital_Endpoint</th>
-                                <th className="px-10 py-6 hud-label text-center">Status_Matrix</th>
-                                <th className="px-10 py-6 hud-label text-right">Protocol_Actions</th>
+            {/* Tabla Técnica en Modo Informe */}
+            <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-white dark:bg-[#07090D] overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                        <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#030406] font-mono text-[#475569] dark:text-[#8A93A6]">
+                            <th className="py-2.5 px-4 font-semibold">Identificación / Titular</th>
+                            <th className="py-2.5 px-4 font-semibold">RUT / RUN</th>
+                            <th className="py-2.5 px-4 font-semibold">Correo Electrónico</th>
+                            <th className="py-2.5 px-4 font-semibold">Estado</th>
+                            <th className="py-2.5 px-4 font-semibold text-right">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
+                        {loading ? (
+                            <tr>
+                                <td colSpan={5} className="py-8 px-4 text-center text-[#8A93A6] font-mono">
+                                    [Consultando registros...]
+                                </td>
                             </tr>
-                        </thead>
-                        <tbody className="divide-y divide-black/5 dark:divide-white/5">
-                            {loading ? (
-                                <tr><td colSpan={5} className="px-10 py-24 text-center">
-                                    <div className="flex flex-col items-center gap-4 animate-pulse opacity-40">
-                                        <Cpu size={40} className="animate-spin duration-[3s]" />
-                                        <span className="hud-label italic tracking-[0.3em]">SYNCHRONIZING_DATA_STREAM...</span>
-                                    </div>
-                                </td></tr>
-                            ) : tenants.length === 0 ? (
-                                <tr><td colSpan={5} className="px-10 py-24 text-center">
-                                    <div className="flex flex-col items-center gap-4 opacity-10 grayscale">
-                                        <ShieldCheck size={60} />
-                                        <span className="hud-label italic tracking-[0.4em]">NO_RECORDS_IN_CURRENT_BUFFER</span>
-                                    </div>
-                                </td></tr>
-                            ) : tenants.map((tenant) => (
-                                <tr key={tenant.id} className="hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors group">
-                                    <td className="px-10 py-6">
-                                        <div className="flex items-center gap-4">
-                                            <div className="w-10 h-10 rounded-none bg-black dark:bg-white text-white dark:text-black flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                                                <span className="text-[12px] font-black italic">
-                                                    {(type === 'ENTERPRISE' ? tenant.company_name : (tenant.full_name || tenant.institution_name))?.substring(0, 2).toUpperCase()}
-                                                </span>
-                                            </div>
-                                            <div className="flex flex-col">
-                                                <span className="text-[13px] font-black text-black dark:text-white uppercase tracking-tighter">
-                                                    {type === 'ENTERPRISE' ? tenant.company_name : (tenant.full_name || tenant.institution_name)}
-                                                </span>
-                                            </div>
-                                        </div>
+                        ) : tenants.length === 0 ? (
+                            <tr>
+                                <td colSpan={5} className="py-8 px-4 text-center text-[#8A93A6] font-mono">
+                                    [No se registran cuentas activas en esta categoría]
+                                </td>
+                            </tr>
+                        ) : (
+                            tenants.map((tenant) => (
+                                <tr key={tenant.id} className="hover:bg-black/[0.01] dark:hover:bg-white/[0.01]">
+                                    <td className="py-3 px-4 font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                        <button
+                                            onClick={() => handleNavigateDetail(tenant.id)}
+                                            className="bg-transparent border-0 outline-none p-0 text-left hover:text-[#C68346] transition-colors cursor-pointer font-bold"
+                                        >
+                                            {type === 'ENTERPRISE' ? tenant.company_name : (tenant.full_name || tenant.institution_name || '-')}
+                                        </button>
                                     </td>
-                                    <td className="px-10 py-6">
-                                        <span className="text-[11px] font-black text-black/40 dark:text-white/30 uppercase font-mono tracking-tight grayscale group-hover:grayscale-0 transition-all">
-                                            {tenant.rut || tenant.run || 'NOT_DECLARED'}
+                                    <td className="py-3 px-4 font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
+                                        {tenant.rut || tenant.run || '[No declarado]'}
+                                    </td>
+                                    <td className="py-3 px-4 font-mono text-[#475569] dark:text-[#8A93A6]">
+                                        {tenant.email.toLowerCase()}
+                                    </td>
+                                    <td className="py-3 px-4">
+                                        <span className={`inline-flex items-center gap-1.5 font-mono text-[11px] ${
+                                            (tenant.status === 'ACTIVE' || tenant.status === 'APPROVED')
+                                                ? 'text-emerald-600 dark:text-emerald-400'
+                                                : tenant.status === 'SUSPENDED'
+                                                ? 'text-amber-600 dark:text-amber-400'
+                                                : 'text-neutral-500'
+                                        }`}>
+                                            <span className={`w-1.5 h-1.5 rounded-full ${
+                                                (tenant.status === 'ACTIVE' || tenant.status === 'APPROVED') ? 'bg-emerald-500' :
+                                                tenant.status === 'SUSPENDED' ? 'bg-amber-500' : 'bg-neutral-400'
+                                            }`} />
+                                            {(tenant.status === 'ACTIVE' || tenant.status === 'APPROVED') ? 'Activa' :
+                                             tenant.status === 'SUSPENDED' ? 'Suspendida' : tenant.status}
                                         </span>
                                     </td>
-                                    <td className="px-10 py-6">
-                                        <span className="text-[11px] font-bold text-antigravity-accent tracking-tighter opacity-70 group-hover:opacity-100 transition-opacity">
-                                            {tenant.email.toLowerCase()}
-                                        </span>
-                                    </td>
-                                    <td className="px-10 py-6">
-                                        <div className="flex justify-center">
-                                            <span className={clsx(
-                                                "inline-flex items-center gap-2 px-4 py-1.5 rounded-none text-[9px] font-black uppercase tracking-[0.15em] border shadow-sm transition-all duration-500",
-                                                tenant.status === 'PENDING_APPROVAL' && "bg-amber-500/10 text-amber-600 border-amber-500/20",
-                                                tenant.status === 'APPROVED' && "bg-cyan-500/10 text-cyan-500 border-cyan-500/20",
-                                                tenant.status === 'ACTIVE' && "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
-                                                tenant.status === 'REJECTED' && "bg-rose-500/10 text-rose-600 border-rose-500/20",
-                                                tenant.status === 'SUSPENDED' && "bg-black/5 text-black/40 border-black/10 dark:bg-white/5 dark:text-white/30 dark:border-white/10"
-                                            )}>
-                                                <div className={clsx("w-1 h-1 rounded-none",
-                                                    tenant.status === 'PENDING_APPROVAL' ? "bg-amber-500" :
-                                                        tenant.status === 'APPROVED' ? "bg-cyan-500" :
-                                                            tenant.status === 'ACTIVE' ? "bg-emerald-500" :
-                                                                tenant.status === 'REJECTED' ? "bg-rose-500" : "bg-black/30 dark:bg-white/20"
-                                                )}></div>
-                                                {t(`admin.status.${tenant.status.toLowerCase().replace('_approval', '')}`)}
-                                            </span>
-                                        </div>
-                                    </td>
-                                    <td className="px-10 py-6 text-right">
-                                        <div className="flex justify-end gap-3 opacity-0 group-hover:opacity-100 transition-all duration-500">
-                                            {tenant.status === 'ACTIVE' && (
-                                                <button
-                                                    onClick={() => setSelectedPluginTenant(tenant)}
-                                                    className="w-10 h-10 rounded-none bg-indigo-500/10 text-indigo-500 hover:bg-indigo-500 hover:text-white flex items-center justify-center transition-all active:scale-90"
-                                                    title="Módulo Config"
-                                                >
-                                                    <Blocks size={18} />
-                                                </button>
-                                            )}
-
-                                            {tenant.status === 'ACTIVE' && type === 'ENTERPRISE' && (
-                                                <button
-                                                    onClick={() => navigate(`/b2b/${tenant.id}`)}
-                                                    className="w-10 h-10 rounded-none bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white flex items-center justify-center transition-all active:scale-90"
-                                                    title="Manage Node / Users"
-                                                >
-                                                    <Users size={18} />
-                                                </button>
-                                            )}
-
+                                    <td className="py-3 px-4 text-right">
+                                        <div className="flex items-center justify-end gap-1">
+                                            {/* Acción 1: Ficha Técnica Oficial (Informe Completo) */}
                                             <button
-                                                onClick={() => setSelectedTenant(tenant)}
-                                                className="w-10 h-10 rounded-none bg-black/5 dark:bg-white/5 hover:bg-black dark:hover:bg-white text-black/40 dark:text-white/40 hover:text-white dark:hover:text-black flex items-center justify-center transition-all active:scale-90"
-                                                title="Protocol Inspector"
+                                                onClick={() => handleNavigateDetail(tenant.id)}
+                                                className="bg-transparent border-0 outline-none p-1 text-neutral-400 hover:text-[#C68346] transition-colors cursor-pointer"
+                                                title="Ver Ficha Técnica"
                                             >
-                                                <Settings size={18} />
+                                                <span className="material-symbols-outlined text-[18px]">description</span>
                                             </button>
 
-                                            <button
-                                                onClick={() => handleManageUser(tenant)}
-                                                className="w-10 h-10 rounded-none bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white flex items-center justify-center transition-all active:scale-90"
-                                                title="Entity Profile"
-                                            >
-                                                <Eye size={18} />
-                                            </button>
-
-                                            {tenant.status === 'ACTIVE' && (
+                                            {/* Acción 2: Suspender / Activar */}
+                                            {(tenant.status === 'ACTIVE' || tenant.status === 'APPROVED') ? (
                                                 <button
                                                     onClick={() => setActionModal({ isOpen: true, tenant, action: 'SUSPEND' })}
-                                                    className="w-10 h-10 rounded-none bg-amber-500/10 text-amber-500 hover:bg-amber-500 hover:text-white flex items-center justify-center transition-all active:scale-90"
-                                                    title="Halt Protocol"
+                                                    className="bg-transparent border-0 outline-none p-1 text-neutral-400 hover:text-amber-600 transition-colors cursor-pointer"
+                                                    title="Suspender cuenta"
                                                 >
-                                                    <Ban size={18} />
+                                                    <span className="material-symbols-outlined text-[18px]">block</span>
+                                                </button>
+                                            ) : (
+                                                <button
+                                                    onClick={() => setActionModal({ isOpen: true, tenant, action: 'ACTIVATE' })}
+                                                    className="bg-transparent border-0 outline-none p-1 text-neutral-400 hover:text-emerald-600 transition-colors cursor-pointer"
+                                                    title="Reactivar cuenta"
+                                                >
+                                                    <span className="material-symbols-outlined text-[18px]">check_circle</span>
                                                 </button>
                                             )}
 
+                                            {/* Acción 3: Eliminar Registro */}
                                             <button
                                                 onClick={() => setActionModal({ isOpen: true, tenant, action: 'DELETE' })}
-                                                className="w-10 h-10 rounded-none bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white flex items-center justify-center transition-all active:scale-90"
-                                                title="Purge Entry"
+                                                className="bg-transparent border-0 outline-none p-1 text-neutral-400 hover:text-rose-600 transition-colors cursor-pointer"
+                                                title="Eliminar registro"
                                             >
-                                                <Trash2 size={18} />
+                                                <span className="material-symbols-outlined text-[18px]">delete</span>
                                             </button>
                                         </div>
                                     </td>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
+                            ))
+                        )}
+                    </tbody>
+                </table>
             </div>
 
-            {/* Modals */}
-            <TenantDetailsModal
-                isOpen={!!selectedTenant}
-                onClose={() => setSelectedTenant(null)}
-                tenant={selectedTenant as any}
-                onAction={handleAction as any}
-            />
-
-            <TenantPluginsModal
-                isOpen={!!selectedPluginTenant}
-                onClose={() => setSelectedPluginTenant(null)}
-                tenant={selectedPluginTenant as any}
-                onUpdatePlugins={handleUpdatePlugins}
-            />
-
-            <UserManagementDrawer
-                isOpen={isDrawerOpen}
-                onClose={() => setIsDrawerOpen(false)}
-                user={managingUser}
-                toggleUserPlugin={toggleUserPlugin}
-                updateUserStatus={updateUserStatus}
-            />
-
+            {/* Modal de Confirmación HITL por Palabra Clave */}
             {actionModal && (
                 <ConfirmationModal
                     isOpen={actionModal.isOpen}
                     onClose={() => setActionModal(null)}
                     action={actionModal.action}
                     targetName={type === 'ENTERPRISE' ? actionModal.tenant?.company_name : actionModal.tenant?.full_name}
-                    onConfirm={() => {
-                        if (actionModal.action === 'DELETE') handleDelete(actionModal.tenant!.id);
-                        if (actionModal.action === 'SUSPEND') handleAction(actionModal.tenant!.id, 'SUSPENDED');
-                    }}
+                    onConfirm={handleActionConfirm}
                 />
             )}
         </div>

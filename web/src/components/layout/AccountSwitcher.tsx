@@ -32,7 +32,6 @@ const AccountSwitcher: React.FC = () => {
                 className="w-full flex items-center justify-between p-4 rounded-none bg-black/40 hover:bg-black/60 transition-all border border-white/5 group relative overflow-hidden"
             >
                 <div className="absolute inset-0 technical-grid opacity-5 pointer-events-none"></div>
-            >
                 <div className="flex items-center gap-3 overflow-hidden">
                     <div className="w-10 h-10 rounded-none bg-white/5 flex items-center justify-center text-white/40 group-hover:bg-antigravity-accent group-hover:text-white transition-all border border-white/5">
                         <Building2 size={20} />

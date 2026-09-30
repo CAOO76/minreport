@@ -1,91 +1,84 @@
 import React, { useState } from 'react';
-import { AlertTriangle } from 'lucide-react';
 
 interface ConfirmationModalProps {
     isOpen: boolean;
     onClose: () => void;
     onConfirm: () => void;
-    action: 'DELETE' | 'SUSPEND';
+    action: 'DELETE' | 'SUSPEND' | 'ACTIVATE';
     targetName?: string;
 }
 
-export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({ isOpen, onClose, onConfirm, action, targetName }) => {
-    const [confirmationText, setConfirmationText] = useState('');
-    const requiredText = action === 'DELETE' ? 'ELIMINAR' : 'SUSPENDER';
-    const isMatched = confirmationText === requiredText;
+export const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
+    isOpen,
+    onClose,
+    onConfirm,
+    action,
+    targetName
+}) => {
+    const [keyword, setKeyword] = useState('');
 
     if (!isOpen) return null;
 
+    const requiredText = action === 'DELETE' ? 'ELIMINAR' : action === 'SUSPEND' ? 'SUSPENDER' : 'ACTIVAR';
+    const isMatched = keyword === requiredText;
+
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-            <div className="bg-white dark:bg-[#1A1A1A] rounded-none shadow-none max-w-md w-full overflow-hidden border border-black dark:border-white/10 animate-scale-in relative">
-                <div className="absolute inset-0 technical-grid opacity-5 pointer-events-none"></div>
-
-                {/* Header de Peligro */}
-                <div className="bg-red-500/10 dark:bg-red-500/10 px-6 py-6 border-b border-red-500/20 flex items-center gap-4 relative z-10">
-                    <div className="p-3 bg-red-500 text-white rounded-none">
-                        <AlertTriangle size={24} />
-                    </div>
-                    <div>
-                        <h3 className="hud-label text-red-600 dark:text-red-400">
-                            {action === 'DELETE' ? 'SYSTEM_PURGE' : 'SYSTEM_SUSPENSION'}
-                        </h3>
-                        <p className="hud-label text-[9px] opacity-60 mt-1">CONFIRMATION_REQUIRED</p>
-                    </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-white dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] max-w-md w-full p-6 space-y-4">
+                <div className="flex items-center gap-2 text-[#0F172A] dark:text-[#F3F4F6]">
+                    <span className={`material-symbols-outlined text-[20px] ${action === 'DELETE' ? 'text-rose-500' : 'text-amber-500'}`}>
+                        warning
+                    </span>
+                    <h3 className="text-sm font-bold uppercase tracking-wider font-mono">
+                        {action === 'DELETE' ? 'Confirmar Eliminación' : action === 'SUSPEND' ? 'Confirmar Suspensión' : 'Confirmar Activación'}
+                    </h3>
                 </div>
 
-                <div className="p-8 space-y-6 relative z-10">
-                    <p className="text-[13px] text-black/60 dark:text-white/60 font-medium leading-relaxed">
-                        ESTA OPERACIÓN ES CRÍTICA. ESTÁ A PUNTO DE <strong className="text-black dark:text-white">{action === 'DELETE' ? 'ELIMINAR PERMANENTEMENTE' : 'SUSPENDER EL ACCESO'}</strong> A LA CUENTA: <span className="font-mono bg-black/5 dark:bg-white/5 px-2 py-0.5 rounded-none border border-black/5 dark:border-white/10 uppercase">{targetName || 'UNKNOWN_TARGET'}</span>.
-                    </p>
+                <p className="text-xs text-[#475569] dark:text-[#8A93A6] leading-relaxed">
+                    Operación crítica sobre la cuenta: <strong className="text-[#0F172A] dark:text-[#F3F4F6] font-mono">{targetName || 'Registro seleccionado'}</strong>.
+                    {action === 'DELETE'
+                        ? ' Se borrarán de forma irreversible los accesos y registros asociados.'
+                        : action === 'SUSPEND'
+                        ? ' Se suspenderá el acceso operativo de todos sus usuarios vinculados.'
+                        : ' Se restablecerá el acceso de los usuarios vinculados a los módulos habilitados.'}
+                </p>
 
-                    {action === 'DELETE' && (
-                        <div className="hud-label text-[9px] bg-red-500 text-white p-4 rounded-none border border-red-600">
-                            WARNING: ESTA ACCIÓN BORRARÁ TODOS LOS DATOS, USUARIOS Y REGISTROS HISTÓRICOS. IRREVERSIBLE.
-                        </div>
-                    )}
-
-                    <div className="space-y-3 pt-2">
-                        <label className="hud-label text-[9px] opacity-40">
-                            INPUT_KEY_CODE: <span className="text-black dark:text-white">"{requiredText}"</span>
-                        </label>
-                        <input
-                            type="text"
-                            value={confirmationText}
-                            onChange={(e) => setConfirmationText(e.target.value)}
-                            placeholder={requiredText}
-                            autoComplete="off"
-                            spellCheck="false"
-                            data-lpignore="true"
-                            className="w-full px-5 py-4 rounded-none bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 focus:border-red-500 outline-none transition-all font-black text-center tracking-[0.5em] uppercase placeholder:opacity-20"
-                            autoFocus
-                        />
-                    </div>
+                <div className="space-y-1.5">
+                    <label className="block text-[11px] font-mono text-[#8A93A6]">
+                        Escribe <span className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">"{requiredText}"</span> para autorizar:
+                    </label>
+                    <input
+                        type="text"
+                        autoComplete="off"
+                        spellCheck={false}
+                        value={keyword}
+                        onChange={(e) => setKeyword(e.target.value.toUpperCase())}
+                        placeholder={requiredText}
+                        className="w-full px-3 py-2 bg-[#F8FAFC] dark:bg-[#030406] border border-[#E2E8F0] dark:border-[#12151C] text-xs font-mono tracking-widest text-[#0F172A] dark:text-[#F3F4F6] outline-none"
+                        autoFocus
+                    />
                 </div>
 
-                <div className="px-8 py-6 bg-black/5 dark:bg-white/5 border-t border-black/5 dark:border-white/5 flex justify-end gap-4 relative z-10">
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E2E8F0] dark:border-[#12151C]">
                     <button
                         onClick={onClose}
-                        className="hud-label text-[10px] opacity-40 hover:opacity-100 transition-opacity"
+                        className="px-3 py-1.5 text-xs font-mono bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-white transition-colors"
                     >
-                        ABORT_ACTION
+                        Cancelar
                     </button>
                     <button
                         onClick={onConfirm}
                         disabled={!isMatched}
-                        className={clsx(
-                            "px-8 py-3 rounded-none hud-label text-[10px] transition-all",
-                            isMatched
-                                ? "bg-red-600 text-white hover:bg-red-700"
-                                : "bg-black/10 dark:bg-white/10 text-black/20 dark:text-white/10 cursor-not-allowed"
-                        )}
+                        className={`px-4 py-1.5 text-xs font-mono transition-opacity ${
+                            action === 'DELETE'
+                                ? 'bg-rose-600 text-white disabled:opacity-30'
+                                : 'bg-[#C68346] text-white disabled:opacity-30'
+                        }`}
                     >
-                        {action === 'DELETE' ? 'COMMIT_PURGE' : 'COMMIT_SUSPENSION'}
+                        Confirmar
                     </button>
                 </div>
             </div>
         </div>
     );
 };
-
-import clsx from 'clsx';

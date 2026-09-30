@@ -11,19 +11,15 @@ export const LanguageSwitch = () => {
         i18n.changeLanguage(nextLang);
     };
 
-    const getDisplayText = () => {
-        const lang = i18n.language?.split('-')[0] || 'es';
-        if (lang === 'es') return 'ES | EN';
-        if (lang === 'en') return 'EN | PT';
-        return 'PT | ES';
-    };
+    const currentLang = (i18n.language?.split('-')[0] || 'es').toUpperCase();
 
     return (
         <button
             onClick={toggleLanguage}
-            className="text-[10px] font-bold px-2.5 py-1.5 rounded-none text-slate-500 hover:text-primary transition-all uppercase tracking-widest"
+            className="bg-transparent border-0 outline-none px-2 py-1 text-[11px] font-mono text-neutral-400 hover:text-[#0F172A] dark:hover:text-white transition-colors cursor-pointer"
+            title="Cambiar idioma (ES / EN / PT)"
         >
-            {getDisplayText()}
+            [{currentLang}]
         </button>
     );
 };

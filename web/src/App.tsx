@@ -1,11 +1,15 @@
+import { MinReportSessionProvider } from './context/MinReportSessionContext';
+import { OpermaqModule } from './modules/opermaq/OpermaqModule';
+import { StockpileModule } from './modules/stockpile/StockpileModule';
+import { MiningFlowModule } from './modules/mining-flow/MiningFlowModule';
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
 import { Register } from './pages/Register';
-import { SetPassword } from './pages/SetPassword';
 import { Login } from './pages/Login';
+import { SetupAccess } from './pages/SetupAccess';
+import { SetPassword } from './pages/SetPassword';
 import { Dashboard } from './pages/Dashboard';
 import { CorporateDashboard } from './pages/CorporateDashboard';
-import { SetupAccess } from './pages/SetupAccess';
 import { ClientPluginsPage } from './pages/ClientPluginsPage';
 import { BrandingProvider } from './context/BrandingContext';
 import { ThemeProvider } from './context/ThemeContext';
@@ -17,7 +21,6 @@ import MobileDashboard from './pages/mobile/MobileDashboard';
 import MobileTools from './pages/mobile/MobileTools';
 import MobileProfile from './pages/mobile/MobileProfile';
 import { useIsMobile } from './hooks/useIsMobile';
-import OfflineIndicator from './components/common/OfflineIndicator';
 import AccountSelector from './components/auth/AccountSelector';
 import LoadingScreen from './components/common/LoadingScreen';
 import ErrorBoundary from './components/common/ErrorBoundary';
@@ -57,7 +60,7 @@ const PluginInitializer = () => {
             };
 
             // Only System SUPER_ADMIN sees all plugins.
-            const isSystemAdmin = profile.role === 'SUPER_ADMIN';
+            const isSystemAdmin = (profile as any)?.role === 'SUPER_ADMIN';
 
             const entitlements = isSystemAdmin
                 ? getAllPlugins().map((p: any) => p.id)
@@ -131,13 +134,11 @@ const DashboardRouter = () => {
 const AppRoutes = () => {
     const { user, loading } = useAuth();
 
-    if (loading) return <LoadingScreen />;
-
     return (
         <Routes>
-            {/* Public / Auth Routes */}
-            <Route path="/login" element={user ? <Navigate to="/dashboard" /> : <Login />} />
-            <Route path="/register" element={user ? <Navigate to="/dashboard" /> : <Register />} />
+            {/* Public / Auth Routes (Carga instantánea sin pantalla negra bloqueante) */}
+            <Route path="/login" element={(!loading && user) ? <Navigate to="/dashboard" /> : <Login />} />
+            <Route path="/register" element={(!loading && user) ? <Navigate to="/dashboard" /> : <Register />} />
             <Route path="/setup-access" element={<SetupAccess />} />
             <Route path="/auth/action" element={<SetPassword />} />
 
@@ -158,6 +159,10 @@ const AppRoutes = () => {
             <Route element={<PluginInitializer />}>
                 <Route element={<RequireAuthLayout />}>
                     <Route path="/dashboard" element={<DashboardRouter />} />
+                    {/* [MONOLITO MODULAR WEB 3.0] Módulos Industriales Centralizados */}
+                    <Route path="/opermaq" element={<OpermaqModule />} />
+                    <Route path="/stockpile" element={<StockpileModule />} />
+                    <Route path="/mining-flow" element={<MiningFlowModule />} />
                     <Route path="/plugins" element={<ClientPluginsPage />} />
                     <Route path="/job-profiles" element={<JobProfilesPage />} />
                     <Route path="/staff" element={<StaffPage />} />
@@ -192,12 +197,13 @@ function App() {
             <ThemeProvider>
                 <BrandingProvider>
                     <AuthProvider>
+                    <MinReportSessionProvider>
                         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
                             <AppRoutes />
                         </BrowserRouter>
-                        <OfflineIndicator />
-                        <SyncIndicator />
+                                                <SyncIndicator />
                         <PWAInstallPrompt />
+                    </MinReportSessionProvider>
                     </AuthProvider>
                 </BrandingProvider>
             </ThemeProvider>

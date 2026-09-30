@@ -1,101 +1,144 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import React from 'react';
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
-import { BrandLogo } from './BrandLogo';
 import { LanguageSwitch } from './LanguageSwitch';
+import { BrandLogo } from './BrandLogo';
+import { ErrorBoundary } from './ErrorBoundary';
 
-export const AdminLayout = () => {
+export const AdminLayout: React.FC = () => {
     const { theme, toggleTheme } = useTheme();
     const navigate = useNavigate();
 
     const handleLogout = () => {
         localStorage.removeItem('admin_token');
-        localStorage.removeItem('admin_user');
         navigate('/login');
     };
 
     const navLinkClasses = ({ isActive }: { isActive: boolean }) =>
-        `w-12 h-12 flex items-center justify-center transition-all duration-300 relative group rounded-none border border-transparent ${isActive
-            ? 'bg-antigravity-accent text-white shadow-md border-antigravity-accent'
-            : 'text-black/40 dark:text-white/30 hover:bg-black/5 dark:hover:bg-white/5 hover:text-black dark:hover:text-white'
+        `w-10 h-10 flex items-center justify-center transition-colors relative group cursor-pointer ${
+            isActive
+                ? 'text-[#C68346]'
+                : 'text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
         }`;
 
     return (
-        <div className="min-h-screen industrial-mineral-gradient transition-colors flex flex-col relative overflow-hidden">
-            {/* Capa de Fondo Técnica */}
-            <div className="absolute inset-0 technical-grid pointer-events-none opacity-40"></div>
-
-            <header className="h-20 bg-black/5 dark:bg-black/20 backdrop-blur-md border-b border-black/5 dark:border-white/5 flex items-center justify-between px-8 sticky top-0 z-50">
-                <div className="flex items-center gap-4">
-                    <BrandLogo variant="logotype" className="h-7 w-auto opacity-80" />
-                    <div className="h-4 w-[1px] bg-black/10 dark:bg-white/10 mx-2"></div>
-                    <span className="hud-label !text-antigravity-accent opacity-80">Admin Operations</span>
+        <div className="min-h-screen bg-white dark:bg-[#030406] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col font-sans">
+            {/* Cabecera Principal */}
+            <header className="h-14 border-b border-[#E2E8F0] dark:border-[#12151C] bg-white dark:bg-[#07090D] sticky top-0 z-30 px-6 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                    <BrandLogo className="h-6 w-auto" />
+                    <span className="text-[#94A3B8] dark:text-[#5A6072] text-xs font-mono">/</span>
+                    <span className="text-xs font-mono font-medium text-[#475569] dark:text-[#8A93A6] tracking-wider uppercase">
+                        Administración
+                    </span>
                 </div>
 
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
                     <LanguageSwitch />
+                    <div className="w-[1px] h-4 bg-[#E2E8F0] dark:bg-[#12151C] mx-1" />
                     <button
                         onClick={toggleTheme}
-                        className="w-10 h-10 flex items-center justify-center rounded-none text-black/60 dark:text-white/60 hover:text-black dark:hover:text-white transition-all"
+                        className="bg-transparent border-0 outline-none p-1.5 text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors cursor-pointer flex items-center justify-center"
+                        title={theme === 'dark' ? 'Modo claro' : 'Modo oscuro'}
+                        aria-label="Alternar tema"
                     >
-                        <span className="material-symbols-rounded text-[24px]">
+                        <span className="material-symbols-outlined text-[18px]">
                             {theme === 'dark' ? 'light_mode' : 'dark_mode'}
                         </span>
                     </button>
                     <button
                         onClick={handleLogout}
-                        className="w-10 h-10 flex items-center justify-center rounded-none text-rose-500 hover:text-rose-500/80 transition-all"
-                        title="Logout"
+                        className="bg-transparent border-0 outline-none p-1.5 text-neutral-400 hover:text-rose-600 transition-colors cursor-pointer flex items-center justify-center"
+                        title="Cerrar sesión"
+                        aria-label="Cerrar sesión"
                     >
-                        <span className="material-symbols-rounded text-[24px]">logout</span>
+                        <span className="material-symbols-outlined text-[18px]">logout</span>
                     </button>
                 </div>
             </header>
 
             <div className="flex flex-1 overflow-hidden relative">
-                <aside className="w-24 bg-white/30 dark:bg-black/20 backdrop-blur-xl border-r border-black/5 dark:border-white/5 flex flex-col items-center py-8 z-20">
-                    <div className="mb-10 p-2 rounded-none">
-                        <BrandLogo variant="isotype" className="h-10 w-10" />
-                    </div>
-
-                    <nav className="flex-1 flex flex-col gap-4">
-                        <NavLink to="/" className={navLinkClasses} title="Inbox Requests">
-                            <span className="material-symbols-rounded text-[24px]">inbox</span>
-                            <div className="absolute left-full ml-4 px-3 py-1.5 bg-black dark:bg-white text-white dark:text-black hud-label text-[8px] rounded-none opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 border border-white/10 dark:border-black/10">INBOX</div>
+                {/* Barra Lateral */}
+                <aside className="w-14 bg-white dark:bg-[#07090D] border-r border-[#E2E8F0] dark:border-[#12151C] flex flex-col items-center py-4 z-20">
+                    <nav className="flex-1 flex flex-col items-center gap-2">
+                        {/* Solicitudes / Inbox */}
+                        <NavLink to="/" className={navLinkClasses} title="Solicitudes pendientes">
+                            <span className="material-symbols-outlined text-[20px]">inbox</span>
+                            <div className="absolute left-full ml-2 px-2 py-1 bg-[#0F172A] dark:bg-white text-white dark:text-[#0F172A] text-[10px] font-mono rounded-none opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+                                Bandeja
+                            </div>
                         </NavLink>
 
-                        <div className="w-8 h-px bg-black/5 dark:bg-white/5 mx-auto my-2" />
+                        <div className="w-5 h-px bg-[#E2E8F0] dark:bg-[#12151C] my-1" />
 
-                        <NavLink to="/b2b" className={navLinkClasses} title="Enterprise Management">
-                            <span className="material-symbols-rounded text-[24px]">domain</span>
-                            <div className="absolute left-full ml-4 px-3 py-1.5 bg-black dark:bg-white text-white dark:text-black hud-label text-[8px] rounded-none opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 border border-white/10 dark:border-black/10">B2B_MANAGEMENT</div>
+                        {/* Cuentas */}
+                        <NavLink to="/b2b" className={navLinkClasses} title="Cuentas B2B">
+                            <span className="material-symbols-outlined text-[20px]">domain</span>
+                            <div className="absolute left-full ml-2 px-2 py-1 bg-[#0F172A] dark:bg-white text-white dark:text-[#0F172A] text-[10px] font-mono rounded-none opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+                                B2B
+                            </div>
                         </NavLink>
-                        <NavLink to="/edu" className={navLinkClasses} title="Educational">
-                            <span className="material-symbols-rounded text-[24px]">school</span>
+                        <NavLink to="/edu" className={navLinkClasses} title="Cuentas Educativas">
+                            <span className="material-symbols-outlined text-[20px]">school</span>
+                            <div className="absolute left-full ml-2 px-2 py-1 bg-[#0F172A] dark:bg-white text-white dark:text-[#0F172A] text-[10px] font-mono rounded-none opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+                                Educacional
+                            </div>
                         </NavLink>
-                        <NavLink to="/personal" className={navLinkClasses} title="Personal">
-                            <span className="material-symbols-rounded text-[24px]">person</span>
+                        <NavLink to="/personal" className={navLinkClasses} title="Cuentas Personales">
+                            <span className="material-symbols-outlined text-[20px]">person</span>
+                            <div className="absolute left-full ml-2 px-2 py-1 bg-[#0F172A] dark:bg-white text-white dark:text-[#0F172A] text-[10px] font-mono rounded-none opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+                                Personal
+                            </div>
                         </NavLink>
 
-                        <div className="w-8 h-px bg-black/5 dark:bg-white/5 mx-auto my-2" />
+                        <div className="w-5 h-px bg-[#E2E8F0] dark:bg-[#12151C] my-1" />
 
-                        <NavLink to="/branding" className={navLinkClasses} title="UI/UX Core">
-                            <span className="material-symbols-rounded text-[24px]">palette</span>
+                        {/* Módulos Operativos */}
+                        <NavLink to="/modules" className={navLinkClasses} title="Módulos del Sistema">
+                            <span className="material-symbols-outlined text-[20px]">deployed_code</span>
+                            <div className="absolute left-full ml-2 px-2 py-1 bg-[#0F172A] dark:bg-white text-white dark:text-[#0F172A] text-[10px] font-mono rounded-none opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+                                Módulos
+                            </div>
                         </NavLink>
-                        <NavLink to="/plugins" className={navLinkClasses} title="Extensions">
-                            <span className="material-symbols-rounded text-[24px]">extension</span>
+
+                        {/* Inferencia & Auditoría */}
+                        <NavLink to="/ai-telemetry" className={navLinkClasses} title="Servicio de Inferencia">
+                            <span className="material-symbols-outlined text-[20px]">memory</span>
+                            <div className="absolute left-full ml-2 px-2 py-1 bg-[#0F172A] dark:bg-white text-white dark:text-[#0F172A] text-[10px] font-mono rounded-none opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+                                Inferencia IA
+                            </div>
                         </NavLink>
-                        <NavLink to="/ui-assets" className={navLinkClasses} title="Media Library">
-                            <span className="material-symbols-rounded text-[24px]">photo_library</span>
+                        <NavLink to="/audit" className={navLinkClasses} title="Registro de Auditoría">
+                            <span className="material-symbols-outlined text-[20px]">policy</span>
+                            <div className="absolute left-full ml-2 px-2 py-1 bg-[#0F172A] dark:bg-white text-white dark:text-[#0F172A] text-[10px] font-mono rounded-none opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+                                Auditoría
+                            </div>
                         </NavLink>
-                        <NavLink to="/sdk" className={navLinkClasses} title="SDK">
-                            <span className="material-symbols-rounded text-[24px]">developer_mode</span>
+
+                        <div className="w-5 h-px bg-[#E2E8F0] dark:bg-[#12151C] my-1" />
+
+                        {/* Personalización */}
+                        <NavLink to="/branding" className={navLinkClasses} title="Identidad Visual">
+                            <span className="material-symbols-outlined text-[20px]">palette</span>
+                            <div className="absolute left-full ml-2 px-2 py-1 bg-[#0F172A] dark:bg-white text-white dark:text-[#0F172A] text-[10px] font-mono rounded-none opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+                                Identidad
+                            </div>
+                        </NavLink>
+                        <NavLink to="/ui-assets" className={navLinkClasses} title="Biblioteca de Medios">
+                            <span className="material-symbols-outlined text-[20px]">image</span>
+                            <div className="absolute left-full ml-2 px-2 py-1 bg-[#0F172A] dark:bg-white text-white dark:text-[#0F172A] text-[10px] font-mono rounded-none opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+                                Medios
+                            </div>
                         </NavLink>
                     </nav>
                 </aside>
 
-                <main className="flex-1 overflow-auto p-12 relative z-10 scroll-smooth">
-                    <div className="max-w-[var(--max-width)] mx-auto">
-                        <Outlet />
+                {/* Área de Contenido Principal */}
+                <main className="flex-1 overflow-auto p-8 relative z-10">
+                    <div className="max-w-[1280px] mx-auto">
+                        <ErrorBoundary>
+                            <Outlet />
+                        </ErrorBoundary>
                     </div>
                 </main>
             </div>

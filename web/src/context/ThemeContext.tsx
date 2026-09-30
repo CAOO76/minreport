@@ -1,5 +1,4 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { Capacitor } from '@capacitor/core';
 
 type Theme = 'light' | 'dark';
 

@@ -8,11 +8,7 @@ echo "🚀 Iniciando desarrollo paralelo Web + Android..."
 # Asegurar que Node y NPM estén en el PATH
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
-# Copiar SDK
-echo "📦 Copiando SDK..."
-bash scripts/copy-sdk.sh
-
-# Abrir Android Studio en segundo plano
+# Abrir Android Studio en segundo plano si existe
 echo "📱 Abriendo Android Studio..."
 AS_PATH="/Applications/Android Studio.app"
 if [ -d "$AS_PATH" ]; then

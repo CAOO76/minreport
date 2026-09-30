@@ -2,131 +2,105 @@ import { z } from 'zod';
 import { validateRut, getEntityTypeByRut } from '../utils/rut';
 import { PUBLIC_EMAIL_DOMAINS } from './constants';
 
-// Base schema for shared fields
+/**
+ * ESTÁNDAR LEGAL CHILENO B2B (Ley 19.628 y Reforma de Protección de Datos Personales)
+ * Registro Oficial de Cuentas Titulares (Empresas / Organizaciones)
+ */
+export const RegisterTitularAccountSchema = z.object({
+    // 1. Identificación del Mandatario / Administrador Titular
+    fullName: z.string().min(3, 'El nombre del mandatario es obligatorio'),
+    email: z.string().email('Formato de correo corporativo inválido'),
+    personalTaxId: z.string().refine(validateRut, { message: 'RUT del mandatario inválido (formato 12.345.678-9)' }),
+    jobTitle: z.string().min(2, 'El cargo del mandatario es obligatorio').optional().or(z.literal('')),
+
+    // 2. Identificación Legal de la Persona Jurídica (Empresa Mandante / Contratista)
+    businessName: z.string().min(3, 'La Razón Social de la empresa es obligatoria'),
+    companyTaxId: z.string().refine(validateRut, { message: 'RUT de empresa inválido (formato 12.345.678-9)' }),
+    billingEmail: z.string().email('Correo de facturación electrónica DTE inválido'),
+    legalAddress: z.string().min(4, 'Dirección legal de la empresa obligatoria'),
+    commune: z.string().min(2, 'Comuna obligatoria'),
+    region: z.string().min(2, 'Región obligatoria'),
+
+    // 3. Consentimiento Legal Explícito (Obligatorio Ley 19.628)
+    acceptTermsAndPrivacy: z.literal(true, {
+        errorMap: () => ({ message: 'Debe aceptar formalmente los términos y política de privacidad conforme a la Ley 19.628' })
+    }),
+});
+
+export type RegisterTitularAccountInput = z.infer<typeof RegisterTitularAccountSchema>;
+
+/**
+ * Autogestión Interna de Usuarios por la Cuenta Titular (Zero-Intervention MINREPORT)
+ */
+export const CreateInternalUserSchema = z.object({
+    email: z.string().email('Correo de usuario inválido'),
+    fullName: z.string().min(3, 'Nombre completo obligatorio'),
+    role: z.enum(['ADMIN', 'SUPERVISOR', 'OPERATOR', 'VIEWER']),
+    faenaId: z.string().min(1, 'Faena o área asignada obligatoria').default('general'),
+    assignedModules: z.array(z.enum(['opermaq', 'stockpile', 'miningFlow'])).min(1, 'Debe asignar al menos un módulo'),
+});
+
+export type CreateInternalUserInput = z.infer<typeof CreateInternalUserSchema>;
+
+/**
+ * Módulos de la Plataforma (Cobro por uso / Todos habilitados en fase de desarrollo)
+ */
+export const ContractModulesSchema = z.object({
+    opermaq: z.boolean().default(true),
+    stockpile: z.boolean().default(true),
+    miningFlow: z.boolean().default(true),
+});
+
+export type ContractModulesInput = z.infer<typeof ContractModulesSchema>;
+
+// --- COMPATIBILIDAD CON WIZARD LEGACY ---
 const baseSchema = z.object({
-    email: z.string().email("Invalid email format"),
-    country: z.string().min(2, "Country is required"),
+    email: z.string().email('Invalid email format'),
+    country: z.string().min(2, 'Country is required'),
     entity_type: z.enum(['PERSONAL', 'EXTRANJERO_PROVISORIO', 'B2B_TRADICIONAL', 'B2B_GOBIERNO', 'B2B_MODERNO', 'SECTORIAL_INVALIDO']).optional(),
 });
 
-// Validation helpers
-const validateTaxId = (val: string, country: string) => {
-    if (country === 'CL') return validateRut(val);
-    if (country === 'BR') {
-        const digits = val.replace(/\D/g, '');
-        return digits.length === 11 || digits.length === 14;
-    }
-    if (country === 'PE') {
-        return /^\d{11}$/.test(val);
-    }
-    return val.length >= 5; // Default for others
-};
-
-const ensureProtocol = (url: string) => {
-    if (!url) return url;
-    if (url.startsWith('http://') || url.startsWith('https://')) return url;
-    return `https://${url}`;
-};
-
-// Profile specific schemas
 const enterpriseProfile = z.object({
     type: z.literal('ENTERPRISE'),
-    applicant_name: z.string().min(2, "Applicant name is required"),
-    company_name: z.string().min(2, "Company name is required"),
-    industry: z.string().min(2, "Industry is required"),
-    rut: z.string(), // Company TAX ID
-    address: z.string().min(5, "Address is required"),
+    applicant_name: z.string().min(2, 'Applicant name is required'),
+    company_name: z.string().min(2, 'Company name is required'),
+    industry: z.string().min(2, 'Industry is required'),
+    rut: z.string(),
+    address: z.string().min(5, 'Address is required'),
     postal_code: z.string().optional().or(z.literal('')),
-    city: z.string().min(2, "City is required").optional().or(z.literal('')),
-    commune: z.string().min(2, "Commune is required").optional().or(z.literal('')),
-    region: z.string().min(2, "Region is required").optional().or(z.literal('')),
-    billing_email: z.string().email("Invalid billing email format"),
+    city: z.string().min(2, 'City is required').optional().or(z.literal('')),
+    commune: z.string().min(2, 'Commune is required').optional().or(z.literal('')),
+    region: z.string().min(2, 'Region is required').optional().or(z.literal('')),
+    billing_email: z.string().email('Invalid billing email format'),
     email_domain: z.string().optional().or(z.literal('')),
-    job_title: z.string().min(2, "Job title is required").optional().or(z.literal('')),
-    website: z.string().transform(ensureProtocol).refine(val => {
-        if (!val) return true;
-        try {
-            new URL(val);
-            return true;
-        } catch {
-            return false;
-        }
-    }, { message: "Invalid website URL" }).optional().or(z.literal('')),
+    job_title: z.string().min(2, 'Job title is required').optional().or(z.literal('')),
+    website: z.string().optional().or(z.literal('')),
 });
 
 const educationalProfile = z.object({
     type: z.literal('EDUCATIONAL'),
-    profile: z.enum(['ALUMNO', 'ACADEMICO']), // New Profile Requirement
-    applicant_name: z.string().min(2, "Applicant name is required"),
-    run: z.string(), // Identity Document (Natural Person)
-    institution_name: z.string().min(2, "Institution name is required"),
-    institution_website: z.string().transform(ensureProtocol).refine(val => {
-        try {
-            new URL(val);
-            return true;
-        } catch {
-            return false;
-        }
-    }, { message: "Valid institution website is required" }),
-    program_name: z.string().min(2, "Program name (Major) is required"),
-    graduation_date: z.string().refine(val => new Date(val) > new Date(), {
-        message: "Graduation date must be in the future"
-    }),
+    profile: z.enum(['ALUMNO', 'ACADEMICO']),
+    applicant_name: z.string().min(2, 'Applicant name is required'),
+    run: z.string(),
+    institution_name: z.string().min(2, 'Institution name is required'),
+    institution_website: z.string().optional().or(z.literal('')),
+    program_name: z.string().min(2, 'Program name is required'),
+    graduation_date: z.string().optional().or(z.literal('')),
 });
 
 const personalProfile = z.object({
     type: z.literal('PERSONAL'),
-    full_name: z.string().min(2, "Full name is required"),
-    run: z.string(), // Identity Document (Natural Person)
+    full_name: z.string().min(2, 'Full name is required'),
+    run: z.string(),
     usage_profile: z.enum(['PERSONAL', 'PROFESSIONAL']),
 });
 
-// Discriminated Union with refinement for dynamic validation
 export const registerSchema = baseSchema.and(
     z.discriminatedUnion('type', [
         enterpriseProfile,
         educationalProfile,
         personalProfile,
     ])
-).superRefine((data, ctx) => {
-    // 1. Strict Email Validation for EDUCATIONAL (MinReport Edu-Gatekeeper Layer 1)
-    if (data.type === 'EDUCATIONAL') {
-        const domain = data.email.split('@')[1]?.toLowerCase();
-        if (domain && PUBLIC_EMAIL_DOMAINS.includes(domain)) {
-            ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: "Institutional email required (.edu, .cl, etc)",
-                path: ['email'],
-            });
-        }
-    }
-
-    // 2. Tax ID Validation (Mandatory for ALL types in the new ID-centric architecture)
-    const taxIdField = (data.type === 'ENTERPRISE') ? 'rut' : 'run';
-    const taxIdValue = (data as any)[taxIdField];
-
-    if (!validateTaxId(taxIdValue, data.country)) {
-        ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: `Invalid ID Document (${taxIdField.toUpperCase()}) for ${data.country}`,
-            path: [taxIdField],
-        });
-    }
-
-    // 3. Entity Type consistency check for Chile
-    if (data.country === 'CL') {
-        const rutNum = parseInt(taxIdValue.replace(/\./g, '').replace(/-/g, '').slice(0, -1), 10);
-        if (!isNaN(rutNum)) {
-            const identifiedType = getEntityTypeByRut(taxIdValue);
-            if (identifiedType === 'SECTORIAL_INVALIDO') {
-                ctx.addIssue({
-                    code: z.ZodIssueCode.custom,
-                    message: "Identificador Provisorio no válido para el registro oficial en MINREPORT.",
-                    path: [taxIdField],
-                });
-            }
-        }
-    }
-});
+);
 
 export type RegisterInput = z.infer<typeof registerSchema>;

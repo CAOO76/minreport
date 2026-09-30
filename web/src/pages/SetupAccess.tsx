@@ -1,26 +1,29 @@
-import { useState, useEffect } from 'react';
+/**
+ * MINREPORT - ACTIVACIÓN DE ACCESO Y CONFIGURACIÓN DE CLAVE (Capa 2 / Capa 3)
+ * Cumple con el estándar de Minimalismo Industrial Puro (CABISEG).
+ * Tipografía Google Sans. Proporción Áurea (1:1.618). Acentos #FFCD00 y #00AEEF.
+ */
+
+import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Loader2, ShieldCheck, ArrowRight } from 'lucide-react';
-import BrandLogo from '../components/BrandLogo';
-import { LanguageSwitch } from '../components/LanguageSwitch';
-import { ThemeSwitch } from '../components/ThemeSwitch';
+import { Loader2, ArrowRight, Shield, Check, Building2 } from 'lucide-react';
 import { formatRut } from '../utils/rut';
 import { useAuth } from '../context/AuthContext';
+import { getApiUrl } from '../utils/network';
 
-export const SetupAccess = () => {
+export const SetupAccess: React.FC = () => {
     const navigate = useNavigate();
     const { signOut } = useAuth();
     const [searchParams] = useSearchParams();
 
-    // Context from URL
+    // Parámetros context-aware desde URL
     const accountId = searchParams.get('accountId');
-    const token = searchParams.get('token'); // Custom Token (reemplazo de oobCode)
-    const urlTaxId = searchParams.get('taxId'); // Identidad estricta desde URL
+    const token = searchParams.get('token');
+    const urlTaxId = searchParams.get('taxId');
     const name = searchParams.get('name') || '';
     const accountName = searchParams.get('accountName') || '';
-    const type = searchParams.get('type') || 'BUSINESS';
 
-    // States
+    // Estados
     const [taxId, setTaxId] = useState(urlTaxId ? formatRut(urlTaxId) : '');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
@@ -28,35 +31,18 @@ export const SetupAccess = () => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState(false);
-    const [bgImage, setBgImage] = useState('');
 
     useEffect(() => {
         if (!accountId || !token) {
-            setError('Enlace de activación inválido o expirado. Asegúrate de copiar el enlace completo desde tu correo.');
+            setError('Enlace de activación inválido o expirado. Verifique el enlace completo enviado a su correo.');
         }
     }, [accountId, token]);
-
-    // Fetch UI Backgrounds for Industrial Look
-    useEffect(() => {
-        const fetchUI = async () => {
-            try {
-                const response = await fetch(`${import.meta.env.VITE_API_URL}/api/settings/ui-assets`);
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data.login_bg) setBgImage(data.login_bg);
-                }
-            } catch (err) {
-                console.warn('UI Assets not available yet.');
-            }
-        };
-        fetchUI();
-    }, []);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
         if (!taxId || taxId.trim().length < 8) {
-            setError('Ingresa un RUT/RUN válido para verificar tu identidad.');
+            setError('Ingrese un RUT/RUN válido para verificar su identidad.');
             return;
         }
 
@@ -74,16 +60,13 @@ export const SetupAccess = () => {
         setError('');
 
         try {
-            const apiBase = import.meta.env.VITE_API_URL || '';
-            const response = await fetch(`${apiBase}/api/auth/tunnel/setup-password`, {
+            const response = await fetch(getApiUrl('/api/auth/tunnel/setup-password'), {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    taxId: taxId.replace(/[^0-9Kk]/g, '').toUpperCase(), // Identity verification payload
+                    taxId: taxId.replace(/[^0-9Kk]/g, '').toUpperCase(),
                     accountId,
-                    token, // Send custom token, backend verifies and decodes everything else
+                    token,
                     password
                 }),
             });
@@ -91,57 +74,40 @@ export const SetupAccess = () => {
             const data = await response.json();
 
             if (!response.ok) {
-                throw new Error(data.error || 'Configuración fallida');
+                throw new Error(data.error || 'Fallo al establecer credenciales');
             }
 
             setSuccess(true);
             setTimeout(async () => {
-                await signOut(); // Clear any existing auth session to ensure landing on login
+                await signOut();
                 navigate('/login', { replace: true });
-            }, 3000);
+            }, 2500);
 
         } catch (err: any) {
-            console.error('Setup failed:', err);
-            setError(err.message || 'Error de conexión. Intenta nuevamente.');
+            console.error('[SETUP] Fallo en configuración:', err);
+            setError(err.message || 'Error de conexión con el servidor de seguridad.');
         } finally {
             setLoading(false);
         }
     };
 
-    // --- RENDERIZADORES DE ICONOS MATERIAL ---
-    const renderIcon = (type: string) => {
-        switch (type.toUpperCase()) {
-            case 'BUSINESS':
-            case 'ENTERPRISE':
-                return 'business';
-            case 'EDUCATIONAL':
-                return 'school';
-            case 'PERSONAL':
-                return 'person';
-            default:
-                return 'enhanced_encryption';
-        }
-    };
-
     if (success) {
         return (
-            <div className="min-h-screen flex items-center justify-center p-4 transition-colors relative overflow-hidden industrial-mineral-gradient">
-                {bgImage && (
-                    <div className="absolute inset-0 z-0">
-                        <img src={bgImage} alt="industrial atmosphere" className="w-full h-full object-cover brightness-[0.3] dark:brightness-[0.2]" />
-                        <div className="absolute inset-0 bg-black/50 backdrop-blur-[1px]"></div>
+            <div className="min-h-screen bg-[#000000] text-[#F3F4F6] flex items-center justify-center p-4 font-sans select-none">
+                <div className="w-full max-w-md p-8 bg-[#07090D] border border-emerald-500/30 text-center space-y-6 shadow-2xl">
+                    <div className="w-16 h-16 mx-auto bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
+                        <Check size={32} className="text-emerald-400" />
                     </div>
-                )}
-                <div className="w-full max-w-[400px] relative z-10 text-center text-black dark:text-white animate-in fade-in zoom-in-95 duration-700">
-                    <div className="elite-tech-surface p-12 shadow-3xl flex flex-col items-center">
-                        <div className="w-24 h-24 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-6">
-                            <span className="material-symbols-rounded text-[48px] text-emerald-500">check_circle</span>
-                        </div>
-                        <h2 className="text-2xl font-black uppercase tracking-tight mb-2">Clave Establecida</h2>
-                        <p className="text-sm text-black/60 dark:text-white/60 mb-8">
-                            Tu acceso seguro ha sido configurado correctamente. Transfiriendo al Logon Público...
+                    <div>
+                        <h2 className="text-xl font-bold uppercase tracking-tight text-[#F3F4F6]">
+                            Credenciales Establecidas
+                        </h2>
+                        <p className="text-xs text-[#8A93A6] mt-2 leading-relaxed">
+                            Su acceso seguro ha sido configurado exitosamente. Redirigiendo a la pantalla de ingreso...
                         </p>
-                        <Loader2 className="w-8 h-8 animate-spin text-antigravity-accent" />
+                    </div>
+                    <div className="flex justify-center pt-2">
+                        <Loader2 className="w-5 h-5 animate-spin text-[#00AEEF]" />
                     </div>
                 </div>
             </div>
@@ -149,161 +115,163 @@ export const SetupAccess = () => {
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center p-4 transition-colors relative overflow-hidden industrial-mineral-gradient">
-            {/* Background Layer with mineral texture */}
-            {bgImage && (
-                <div className="absolute inset-0 z-0">
-                    <img src={bgImage} alt="industrial atmosphere" className="w-full h-full object-cover brightness-[0.3] dark:brightness-[0.2]" />
-                    <div className="absolute inset-0 bg-black/50 backdrop-blur-[1px]"></div>
-                </div>
-            )}
+        <div className="min-h-screen bg-[#000000] text-[#F3F4F6] flex flex-col md:flex-row antialiased font-sans select-none">
+            
+            {/* PANEL PRINCIPAL: Hero Técnico en Proporción Áurea (61.8%) */}
+            <div className="hidden md:flex md:w-[61.8%] flex-col justify-between p-12 lg:p-16 border-r border-[#12151C] bg-[#030406] relative overflow-hidden">
+                <div className="absolute -top-40 -left-40 w-96 h-96 bg-[#FFCD00]/5 rounded-full blur-[140px] pointer-events-none" />
+                <div className="absolute -bottom-40 right-0 w-96 h-96 bg-[#00AEEF]/5 rounded-full blur-[140px] pointer-events-none" />
 
-            <div className="absolute top-6 right-6 flex items-center gap-3 z-50">
-                <LanguageSwitch />
-                <ThemeSwitch />
+                <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-[#FFCD00] text-black flex items-center justify-center font-bold text-sm tracking-tighter">
+                        MR
+                    </div>
+                    <div>
+                        <span className="text-sm font-bold tracking-[0.2em] uppercase text-white">MINREPORT</span>
+                        <span className="text-[10px] text-[#8A93A6] block font-mono">SEGURIDAD Y CONTROL DE IDENTIDAD</span>
+                    </div>
+                </div>
+
+                <div className="space-y-6 max-w-xl z-10">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/5 border border-white/10 text-[10px] uppercase font-bold tracking-[0.2em] text-[#00AEEF]">
+                        <Shield size={12} />
+                        <span>ACTIVACIÓN DE ENTORNO OPERATIVO</span>
+                    </div>
+
+                    <h1 className="text-4xl lg:text-5xl font-bold tracking-tight uppercase leading-[0.95] text-[#F3F4F6]">
+                        Configuración de Acceso Corporativo.
+                    </h1>
+
+                    <p className="text-sm text-[#8A93A6] leading-relaxed">
+                        Ha recibido una invitación oficial para operar dentro de la infraestructura de MINREPORT. 
+                        Valide su RUN de mandatario o trabajador y fije su contraseña exclusiva de faena.
+                    </p>
+
+                    {accountName && (
+                        <div className="p-4 bg-white/[0.02] border border-white/10 flex items-center gap-3">
+                            <Building2 size={18} className="text-[#FFCD00] shrink-0" />
+                            <div>
+                                <span className="text-[10px] text-[#8A93A6] uppercase tracking-wider block font-bold">Empresa Asignada</span>
+                                <span className="text-sm font-bold text-[#F3F4F6] uppercase">{decodeURIComponent(accountName)}</span>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-[#5A6072] font-mono border-t border-white/5 pt-4">
+                    <span>DS 132 REGLAMENTO DE SEGURIDAD MINERA</span>
+                    <span>SHA-256 ISOLATED PASSKEY TUNNEL</span>
+                </div>
             </div>
 
-            <div className="w-full max-w-[400px] relative z-10 transition-all duration-700 text-black dark:text-white">
-
-                {/* Logo Flotante perfectamente alineado */}
-                <div className="mb-6 px-10 flex justify-center">
-                    <BrandLogo variant="isotype" className="w-1/4 h-auto relative z-10" />
+            {/* PANEL SECUNDARIO: Formulario de Activación (38.2%) */}
+            <div className="w-full md:w-[38.2%] flex flex-col justify-between p-8 lg:p-12 bg-[#07090D]">
+                <div className="flex items-center justify-between md:hidden pb-6 border-b border-[#12151C]">
+                    <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 bg-[#FFCD00] text-black flex items-center justify-center font-bold text-xs">MR</div>
+                        <span className="text-xs font-bold tracking-[0.2em] uppercase">MINREPORT</span>
+                    </div>
+                    <span className="text-[10px] font-mono text-[#8A93A6]">ACTIVACIÓN</span>
                 </div>
 
-                <div className="flex items-center justify-center gap-4 mb-6 animate-in fade-in slide-in-from-top-4 duration-1000 delay-200">
-                    <div className="h-[1px] w-8" style={{ backgroundColor: 'rgb(198, 131, 70)' }}></div>
-                    <p className="hud-label" style={{ color: 'rgb(198, 131, 70)' }}>MINREPORT®</p>
-                    <div className="h-[1px] w-8" style={{ backgroundColor: 'rgb(198, 131, 70)' }}></div>
-                </div>
-
-                <div className="elite-tech-surface p-12 animate-in fade-in zoom-in-95 duration-700 w-full shadow-3xl">
-                    <div className="absolute inset-0 technical-grid opacity-20 pointer-events-none"></div>
-
-                    <div className="text-center mb-10 relative z-10">
-                        <div className="w-20 h-20 bg-white/5 text-white border border-white/10 flex items-center justify-center mx-auto mb-6 shadow-2xl relative overflow-hidden">
-                            <div className="absolute inset-0 technical-grid opacity-10"></div>
-                            <span className="material-symbols-rounded text-[40px] relative z-10">
-                                {renderIcon(type)}
-                            </span>
-                        </div>
-                        <p className="hud-label text-black/40 dark:text-white/40 mb-2">
-                            [ACTIVACIÓN DE CUENTA]
-                        </p>
-                        <h2 className="text-2xl font-black uppercase tracking-tight leading-none mb-1">
-                            {name ? decodeURIComponent(name) : 'NUEVO ACCESO'}
+                <div className="max-w-sm w-full mx-auto my-auto space-y-6">
+                    <div>
+                        <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-[#00AEEF]">
+                            PASO ÚNICO DE REGISTRO
+                        </span>
+                        <h2 className="text-2xl font-bold tracking-tight uppercase text-[#F3F4F6] mt-1">
+                            {name ? decodeURIComponent(name) : 'Establecer Contraseña'}
                         </h2>
-                        {accountName && (
-                            <div className="mt-2 py-1 px-3 bg-[#C68346]/10 border border-[#C68346]/20 inline-block">
-                                <p className="text-[10px] font-bold text-[#C68346] uppercase tracking-widest">
-                                    {decodeURIComponent(accountName)}
-                                </p>
-                            </div>
-                        )}
-                        <p className="text-[9px] font-mono text-black/20 dark:text-white/20 uppercase tracking-[0.3em] mt-3">
-                            ID: {urlTaxId ? formatRut(urlTaxId) : 'IDENTIDAD PENDIENTE'}
+                        <p className="text-xs text-[#8A93A6] mt-1">
+                            Confirme su identidad y defina su clave de acceso para este entorno.
                         </p>
                     </div>
 
-                    <form onSubmit={handleSubmit} className="space-y-4 relative z-10" autoComplete="off">
-                        <div className="space-y-3">
-                            <div className="flex justify-between items-end px-1">
-                                <label className="hud-label text-black/60 dark:text-white/60">Verificación (RUT / RUN)</label>
-                                <span className="text-[10px] font-mono text-black/20 dark:text-white/20">[01]</span>
-                            </div>
+                    <form onSubmit={handleSubmit} className="space-y-4" autoComplete="off">
+                        <div>
+                            <label className="block text-[10px] font-bold uppercase tracking-wider text-[#8A93A6] mb-1.5">
+                                RUN / RUT del Usuario
+                            </label>
                             <input
                                 type="text"
+                                required
                                 value={taxId}
                                 onChange={(e) => setTaxId(formatRut(e.target.value))}
-                                className="premium-input text-center tracking-[0.2em] bg-black/5 dark:bg-black/80 font-mono"
                                 placeholder="12.345.678-9"
-                                required
-                                autoFocus
-                                spellCheck="false"
-                                data-lpignore="true"
+                                className="w-full px-3.5 py-2.5 bg-black/40 border border-[#12151C] focus:border-[#00AEEF] text-sm text-[#F3F4F6] font-mono outline-none transition-colors"
                             />
                         </div>
 
-                        <div className="space-y-3">
-                            <div className="flex justify-between items-end px-1">
-                                <label className="hud-label text-black/60 dark:text-white/60">Contraseña Táctica</label>
-                                <span className="text-[10px] font-mono text-black/20 dark:text-white/20">[02]</span>
-                            </div>
-                            <div className="relative group">
+                        <div>
+                            <label className="block text-[10px] font-bold uppercase tracking-wider text-[#8A93A6] mb-1.5">
+                                Nueva Contraseña Operativa (min 8 caracteres)
+                            </label>
+                            <div className="relative">
                                 <input
-                                    type={showPassword ? "text" : "password"}
+                                    type={showPassword ? 'text' : 'password'}
+                                    required
+                                    minLength={8}
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="premium-input pr-14 text-center tracking-[0.4em] bg-black/5 dark:bg-black/80"
-                                    placeholder="••••••••"
-                                    required
-                                    autoComplete="new-password"
-                                    spellCheck="false"
+                                    placeholder="••••••••••••"
+                                    className="w-full px-3.5 py-2.5 bg-black/40 border border-[#12151C] focus:border-[#00AEEF] text-sm text-[#F3F4F6] outline-none transition-colors"
                                 />
                                 <button
                                     type="button"
                                     onClick={() => setShowPassword(!showPassword)}
-                                    className="absolute right-5 top-1/2 -translate-y-1/2 text-black/40 dark:text-white/40 hover:text-black dark:hover:text-white transition-colors"
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8A93A6] hover:text-white text-xs font-mono"
                                 >
-                                    <span className="material-symbols-rounded text-[20px]">
-                                        {showPassword ? 'visibility_off' : 'visibility'}
-                                    </span>
+                                    {showPassword ? 'OCULTAR' : 'VER'}
                                 </button>
                             </div>
                         </div>
 
-                        <div className="space-y-3">
-                            <div className="flex justify-between items-end px-1">
-                                <label className="hud-label text-black/60 dark:text-white/60">Confirmar</label>
-                                <span className="text-[10px] font-mono text-black/20 dark:text-white/20">[03]</span>
-                            </div>
+                        <div>
+                            <label className="block text-[10px] font-bold uppercase tracking-wider text-[#8A93A6] mb-1.5">
+                                Confirmar Contraseña
+                            </label>
                             <input
-                                type={showPassword ? "text" : "password"}
+                                type={showPassword ? 'text' : 'password'}
+                                required
+                                minLength={8}
                                 value={confirmPassword}
                                 onChange={(e) => setConfirmPassword(e.target.value)}
-                                className="premium-input text-center tracking-[0.4em] bg-black/5 dark:bg-black/80"
-                                placeholder="••••••••"
-                                required
-                                autoComplete="new-password"
-                                spellCheck="false"
+                                placeholder="••••••••••••"
+                                className="w-full px-3.5 py-2.5 bg-black/40 border border-[#12151C] focus:border-[#00AEEF] text-sm text-[#F3F4F6] outline-none transition-colors"
                             />
                         </div>
 
                         {error && (
-                            <div className="p-4 rounded-2xl bg-rose-500/10 text-rose-500 dark:text-rose-400 text-[11px] font-bold text-center border border-rose-500/20 animate-in fade-in slide-in-from-top-2">
+                            <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-mono">
                                 {error}
                             </div>
                         )}
 
                         <button
                             type="submit"
-                            disabled={loading || !!error || !accountId || !token}
-                            className="w-full py-6 bg-black dark:bg-white text-white dark:text-black font-black uppercase tracking-[0.3em] text-[12px] transition-all shadow-3xl active:scale-[0.98] disabled:opacity-30 flex items-center justify-center gap-4 mt-4"
+                            disabled={loading || !token || !accountId}
+                            className="w-full py-3 bg-[#FFCD00] hover:bg-[#FFCD00]/90 text-black text-xs font-bold uppercase tracking-[0.15em] flex items-center justify-center gap-2 transition-opacity disabled:opacity-50 mt-2"
                         >
                             {loading ? (
-                                <Loader2 className="w-7 h-7 animate-spin text-white dark:text-black" />
+                                <Loader2 size={16} className="animate-spin text-black" />
                             ) : (
                                 <>
-                                    <span>CONFIRMAR EXCLUSIVIDAD</span>
-                                    <ArrowRight size={24} />
+                                    <span>Activar y Confirmar Clave</span>
+                                    <ArrowRight size={14} />
                                 </>
                             )}
                         </button>
                     </form>
-
-                    <p className="mt-8 pt-6 border-t border-black/5 dark:border-white/5 text-[9px] text-center text-black/30 dark:text-white/30 font-mono tracking-widest leading-relaxed relative z-10">
-                        ESTA CLAVE ES AISLADA E INDEPENDIENTE. SOLO TIENE VALIDEZ PARA LA OPERACIÓN EN ESTE ENTORNO ESPECÍFICO.
-                    </p>
                 </div>
 
-                <footer className="mt-8 text-center space-y-4 opacity-40 hover:opacity-100 transition-opacity duration-500">
-                    <div className="flex justify-center">
-                        <ShieldCheck size={14} className="text-emerald-600 dark:text-emerald-400" />
-                    </div>
-                    <p className="text-[10px] text-black/60 dark:text-white uppercase tracking-[0.3em] font-black">
-                        © {new Date().getFullYear()} MINREPORT. SECURE INFRASTRUCTURE.
+                <div className="border-t border-[#12151C] pt-4 text-center">
+                    <p className="text-[10px] text-[#5A6072] font-mono uppercase tracking-wider">
+                        MINREPORT SECURE TUNNEL · CHILE
                     </p>
-                </footer>
+                </div>
             </div>
         </div>
     );
 };
+
+export default SetupAccess;

@@ -54,6 +54,8 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({ variant = 'imagotype', cla
             loading="eager"
             className={`object-contain max-w-full max-h-full select-none transition-all duration-500 print:invert-0 print:brightness-100 ${isSvg ? 'rendering-crisp' : ''} ${needsInvert ? 'dark:invert dark:brightness-200' : ''} ${className || ''}`}
             draggable={false}
+            onContextMenu={(e) => e.preventDefault()}
+            style={{ WebkitUserDrag: "none" } as React.CSSProperties}
         />
     );
 };

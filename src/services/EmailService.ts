@@ -23,16 +23,23 @@ export class EmailService {
             return this.mockEmail(options);
         }
 
+        // Permitir sobreescribir el remitente mediante variable de entorno o usar el predeterminado
+        const sender = process.env.RESEND_FROM_EMAIL || options.from;
+
         try {
-            await resend.emails.send({
-                from: options.from,
+            const result = await resend.emails.send({
+                from: sender,
                 to: options.to,
                 subject: options.subject,
                 html: options.html
             });
-            console.log(`[EmailService] Email sent to ${options.to}: ${options.subject}`);
-        } catch (error) {
-            console.error(`[EmailService] Failed to send email to ${options.to}:`, error);
+            console.log(`[EmailService] Email enviado exitosamente a ${options.to}: ${options.subject} (ID: ${result.data?.id || 'OK'})`);
+        } catch (error: any) {
+            console.error(`[EmailService] Fallo al enviar email a ${options.to}:`, error?.message || error);
+            // Si el dominio personalizado no está verificado en Resend y estamos fuera de producción estricta, registrar y no bloquear
+            if (error?.message?.includes('Domain not verified') || error?.statusCode === 403) {
+                console.warn(`[EmailService] ⚠️ Dominio de remitente no verificado en Resend. Verifique DNS DKIM/SPF o configure RESEND_FROM_EMAIL=onboarding@resend.dev`);
+            }
             throw error;
         }
     }

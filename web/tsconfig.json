@@ -27,7 +27,7 @@
         "baseUrl": ".",
         "paths": {
             "@minreport/sdk": [
-                "../sdk"
+                "src/sdk-bundle/index.ts"
             ],
             "@minreport/*": [
                 "../_plugins/*/src/plugin.ts"

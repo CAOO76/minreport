@@ -1,21 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
-import { MinReport } from '@minreport/sdk';
+import { MinReport, PluginManifest } from '@minreport/sdk';
 import { PluginLoader } from '../core/plugins/PluginLoader';
-
-interface ClientPlugin {
-    id: string;
-    name: string;
-    icon: string;
-    description: string;
-}
 
 export const ClientPluginsPage = () => {
     useTranslation();
-    const [plugins, setPlugins] = useState<any[]>([]);
+    const [plugins, setPlugins] = useState<PluginManifest[]>([]);
     const [loading, setLoading] = useState(true);
-    const [activePlugin, setActivePlugin] = useState<any | null>(null);
+    const [activePlugin, setActivePlugin] = useState<PluginManifest | null>(null);
 
     useEffect(() => {
         // Load real plugins from SDK

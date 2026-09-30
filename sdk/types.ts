@@ -16,6 +16,7 @@ export interface PluginManifest {
     description?: string;
     website?: string;
     category?: 'production' | 'safety' | 'geology' | 'fleet' | 'hr' | 'other';
+    icon?: string;
     permissions?: string[];
 }
 
