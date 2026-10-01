@@ -103,7 +103,7 @@ export const BrandingProvider: React.FC<{ children: ReactNode }> = ({ children }
 
     const customIcon = theme === 'dark' ? branding.dark?.pwaIcon : branding.light?.pwaIcon;
     if (customIcon && !customIcon.includes('master_')) {
-      const link = document.querySelector("link[rel~='icon']");
+      const link = document.querySelector<HTMLLinkElement>("link[rel~='icon']");
       if (link) link.href = customIcon;
     }
   }, [branding, theme]);

@@ -36,7 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.helloWorld = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const logger = __importStar(require("firebase-functions/logger"));
-exports.helloWorld = (0, https_1.onRequest)((request, response) => {
+exports.helloWorld = (0, https_1.onRequest)({ region: "southamerica-west1" }, (request, response) => {
     logger.info("Hello logs!", { structuredData: true });
     response.send("Hello from Firebase!");
 });
