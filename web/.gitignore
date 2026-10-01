@@ -1,2 +1,3 @@
-# SDK Bundle (copied during build)
-src/sdk-bundle/
+# web specific ignores
+dist/
+

@@ -16,7 +16,8 @@
     "assets:generate": "npx @capacitor/assets generate --android --assetPath assets",
     "test": "vitest",
     "test:ui": "vitest --ui",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "prebuild": "bash scripts/copy-sdk.sh"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.1",

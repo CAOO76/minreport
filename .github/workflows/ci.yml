@@ -37,12 +37,14 @@ jobs:
         run: |
           cd web
           npm ci
+          bash scripts/copy-sdk.sh
           npm run build
 
       - name: Build Admin Panel
         run: |
           cd admin
           npm ci
+          bash scripts/copy-sdk.sh
           npm run build
 
       - name: Deploy to Firebase Hosting (Preview)
