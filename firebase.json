@@ -9,6 +9,7 @@
     "rules": "storage.rules"
   },
   "hosting": {
+    "target": "minreport-web",
     "public": "web/dist",
     "ignore": [
       "firebase.json",
@@ -76,8 +77,7 @@
     },
     "functions": {
       "port": 9196,
-      "host": "0.0.0.0",
-      "env": "services/functions/.env.local"
+      "host": "0.0.0.0"
     },
     "hosting": {
       "port": 5010,

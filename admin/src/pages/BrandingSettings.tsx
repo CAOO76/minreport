@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { updateBrandingSettings, getBrandingSettings, LogoSet, BrandingSettings as BrandingSettingsType } from '../services/api';
+import { updateBrandingSettings, LogoSet, BrandingSettings as BrandingSettingsType } from '../services/api';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db, storage } from '../config/firebase';

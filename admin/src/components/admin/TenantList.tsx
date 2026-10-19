@@ -49,6 +49,7 @@ export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle })
 
     useEffect(() => {
         fetchTenants();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [type]);
 
     const handleActionConfirm = async () => {

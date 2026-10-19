@@ -39,20 +39,20 @@ export const M3Switch: React.FC<M3SwitchProps> = ({
 
                 {/* Track */}
                 <div className={clsx(
-                    "w-12 h-7 rounded-full transition-all duration-300 border-2",
+                    "w-12 h-7 rounded-none transition-all duration-300 border-2",
                     checked
                         ? "bg-antigravity-accent border-antigravity-accent"
                         : "bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-600"
                 )}>
                     {/* Thumb */}
                     <div className={clsx(
-                        "absolute top-1 left-1 w-5 h-5 rounded-full transition-all duration-300 flex items-center justify-center shadow-sm",
+                        "absolute top-1 left-1 w-5 h-5 rounded-none transition-all duration-300 flex items-center justify-center shadow-none",
                         checked
                             ? "translate-x-5 bg-white scale-110"
                             : "bg-slate-400 dark:bg-slate-600 shadow-none"
                     )}>
                         {checked && (
-                            <span className="material-symbols-rounded text-[14px] text-antigravity-accent font-black">check</span>
+                            <span className="material-symbols-outlined text-[14px] text-antigravity-accent font-black">check</span>
                         )}
                     </div>
                 </div>

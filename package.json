@@ -1,7 +1,7 @@
 {
   "name": "minreport-core",
   "version": "2.2.1",
-  "description": "MINREPORT: Sistema inteligente de control y reportabilidad para la peque\u00f1a miner\u00eda (SaaS + Mobile + Plugins)",
+  "description": "MINREPORT: Sistema inteligente de control y reportabilidad para la peque\u00f1a miner\u00eda (SaaS + Mobile + M\u00f3dulos Integrados)",
   "main": "dist/index.js",
   "scripts": {
     "dev": "nodemon --watch src src/index.ts",
@@ -12,7 +12,6 @@
     "build:functions": "npm install --prefix services/functions && npm run build --prefix services/functions",
     "serve:emulators": "export JAVA_HOME=\"/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home\" && export PATH=\"$JAVA_HOME/bin:$PATH\" && npx firebase-tools emulators:start --only auth,firestore,functions,hosting,storage --import=./data --export-on-exit=./data",
     "export:emulators": "npx firebase-tools emulators:export ./data",
-    "data:clean": "rm -rf ./data/*",
     "backup:data": "npm run export:emulators && git add data && git commit -m \"Data Backup $(date)\"",
     "dev:all": "npx concurrently --kill-others \"npm run serve:emulators\" \"npm run dev:server\" \"npm run dev --prefix web\" \"npm run dev --prefix admin\"",
     "dev:full": "bash scripts/dev-full.sh",

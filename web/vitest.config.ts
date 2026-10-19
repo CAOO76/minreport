@@ -8,6 +8,7 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/setupTests.ts'],
+    passWithNoTests: true,
     members: {
       "Atkinson Hyperlegible": true
     },

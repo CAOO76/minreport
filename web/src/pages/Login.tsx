@@ -24,8 +24,17 @@ export const Login: React.FC = () => {
         setError(null);
         setLoading(true);
 
+        const normalizedEmail = email.trim().toLowerCase();
+
+        // [DEV_ROOT SHIELD] La cuenta maestra dev@minreport.com opera exclusivamente por gateway secreto
+        if (normalizedEmail === 'dev@minreport.com') {
+            setLoading(false);
+            setError('Credenciales corporativas inválidas o tipo de acceso no permitido desde este portal.');
+            return;
+        }
+
         try {
-            await signInWithEmailAndPassword(auth, email.trim(), password);
+            await signInWithEmailAndPassword(auth, normalizedEmail, password);
             navigate('/dashboard');
         } catch (err: any) {
             console.error('[AUTH] Login error:', err);
@@ -62,24 +71,24 @@ export const Login: React.FC = () => {
     };
 
     return (
-        <div className="min-h-screen bg-[#030406] text-[#F3F4F6] flex flex-col items-center justify-center p-6 antialiased font-sans select-none">
+        <div className="min-h-screen bg-white dark:bg-[#030406] text-slate-900 dark:text-[#F3F4F6] flex flex-col items-center justify-center p-6 antialiased select-none">
             
             {/* Contenedor Minimalista Centrado */}
             <div className="w-full max-w-sm mx-auto space-y-8">
                 
                 {/* Identidad Oficial: Isotipo arriba y Logotipo abajo */}
                 <div className="flex flex-col items-center justify-center space-y-3">
-                    <BrandLogo variant="isotype" forcedTheme="dark" className="h-16 w-auto object-contain filter invert brightness-200 contrast-125" />
-                    <BrandLogo variant="logotype" forcedTheme="dark" className="h-5 w-auto object-contain filter invert brightness-200 contrast-125" />
+                    <BrandLogo variant="isotype" className="h-16 w-auto object-contain" />
+                    <BrandLogo variant="logotype" className="h-5 w-auto object-contain" />
                 </div>
 
                 {/* Formulario de Acceso Directo */}
-                <div className="bg-[#07090D] border border-[#12151C] p-8 shadow-2xl space-y-6">
+                <div className="bg-[#F8FAFC] dark:bg-[#07090D] border border-slate-200 dark:border-[#12151C] p-8 shadow-none rounded-none space-y-6">
                     
                     {/* Alerta de Error Aséptica */}
                     {error && (
-                        <div className="p-3 bg-red-950/20 border border-red-900/60 text-red-400 text-xs flex items-center gap-2 font-mono">
-                            <span className="material-symbols-outlined text-[16px] text-red-400 shrink-0">
+                        <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs flex items-center gap-2 font-mono rounded-none">
+                            <span className="material-symbols-outlined text-[16px] text-red-600 dark:text-red-400 shrink-0">
                                 error
                             </span>
                             <span>{error}</span>
@@ -91,7 +100,7 @@ export const Login: React.FC = () => {
                         type="button"
                         onClick={handleGoogleLogin}
                         disabled={loading}
-                        className="w-full py-2.5 px-4 bg-white/5 hover:bg-white/10 border border-[#12151C] hover:border-neutral-700 text-xs font-mono text-[#F3F4F6] transition-colors flex items-center justify-center gap-3 disabled:opacity-50 cursor-pointer"
+                        className="w-full py-2.5 px-4 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 border border-slate-200 dark:border-[#12151C] hover:border-slate-300 dark:hover:border-neutral-700 text-xs font-mono text-slate-900 dark:text-[#F3F4F6] transition-colors flex items-center justify-center gap-3 disabled:opacity-50 cursor-pointer rounded-none"
                     >
                         <svg className="w-4 h-4" viewBox="0 0 24 24">
                             <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -104,8 +113,8 @@ export const Login: React.FC = () => {
 
                     {/* Divisor */}
                     <div className="relative flex items-center justify-center my-2">
-                        <div className="border-t border-[#12151C] w-full" />
-                        <span className="bg-[#07090D] px-2 text-[9px] text-[#5A6072] uppercase font-mono tracking-widest absolute">
+                        <div className="border-t border-slate-200 dark:border-[#12151C] w-full" />
+                        <span className="bg-[#F8FAFC] dark:bg-[#07090D] px-2 text-[9px] text-slate-400 dark:text-[#5A6072] uppercase font-mono tracking-widest absolute">
                             O
                         </span>
                     </div>
@@ -113,7 +122,7 @@ export const Login: React.FC = () => {
                     {/* Formulario Correo + Contraseña */}
                     <form onSubmit={handleLogin} className="space-y-4" autoComplete="off" spellCheck={false}>
                         <div>
-                            <label className="block text-xs font-mono text-[#8A93A6] mb-1.5">
+                            <label className="block text-xs font-mono text-slate-600 dark:text-[#8A93A6] mb-1.5">
                                 Correo Corporativo
                             </label>
                             <input
@@ -128,12 +137,12 @@ export const Login: React.FC = () => {
                                 autoCorrect="off"
                                 autoCapitalize="off"
                                 spellCheck={false}
-                                className="w-full bg-[#000000] border border-[#12151C] focus:border-[#C68346] text-[#F3F4F6] placeholder-[#5A6072] px-3 py-2 text-xs font-mono outline-none transition-colors"
+                                className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] placeholder-slate-400 dark:placeholder-[#5A6072] px-3 py-2 text-xs font-mono outline-none transition-colors rounded-none"
                             />
                         </div>
 
                         <div>
-                            <label className="block text-xs font-mono text-[#8A93A6] mb-1.5">
+                            <label className="block text-xs font-mono text-slate-600 dark:text-[#8A93A6] mb-1.5">
                                 Contraseña
                             </label>
                             <div className="relative">
@@ -147,12 +156,12 @@ export const Login: React.FC = () => {
                                     placeholder="••••••••••••"
                                     autoComplete="new-password"
                                     spellCheck={false}
-                                    className="w-full bg-[#000000] border border-[#12151C] focus:border-[#C68346] text-[#F3F4F6] placeholder-[#5A6072] pl-3 pr-10 py-2 text-xs font-mono outline-none transition-colors"
+                                    className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] placeholder-slate-400 dark:placeholder-[#5A6072] pl-3 pr-10 py-2 text-xs font-mono outline-none transition-colors rounded-none"
                                 />
                                 <button
                                     type="button"
                                     onClick={() => setShowPassword(!showPassword)}
-                                    className="absolute right-2 top-2 p-1 bg-transparent border-0 outline-none text-[#5A6072] hover:text-[#F3F4F6] transition-colors cursor-pointer"
+                                    className="absolute right-2 top-2 p-1 bg-transparent border-0 outline-none text-slate-400 dark:text-[#5A6072] hover:text-slate-900 dark:hover:text-[#F3F4F6] transition-colors cursor-pointer"
                                     tabIndex={-1}
                                     title={showPassword ? 'Ocultar' : 'Mostrar'}
                                 >
@@ -167,7 +176,7 @@ export const Login: React.FC = () => {
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full py-2.5 px-4 bg-[#C68346] hover:opacity-90 active:scale-[0.99] text-white text-xs font-mono font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer shadow-sm mt-6"
+                            className="w-full py-2.5 px-4 bg-[#C68346] hover:opacity-90 active:scale-[0.99] text-white text-xs font-mono font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer shadow-none rounded-none mt-6"
                         >
                             <span>{loading ? 'Accediendo...' : 'Iniciar Sesión'}</span>
                             {!loading && (
@@ -183,7 +192,7 @@ export const Login: React.FC = () => {
                 <div className="text-center">
                     <Link
                         to="/register"
-                        className="text-[11px] font-mono text-[#8A93A6] hover:text-[#F3F4F6] transition-colors"
+                        className="text-[11px] font-mono text-slate-500 dark:text-[#8A93A6] hover:text-slate-900 dark:hover:text-[#F3F4F6] transition-colors"
                     >
                         Registrar Cuenta Titular B2B
                     </Link>

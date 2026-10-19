@@ -1,16 +1,9 @@
+import { lazy, Suspense } from 'react';
 import { MinReportSessionProvider } from './context/MinReportSessionContext';
-import { OpermaqModule } from './modules/opermaq/OpermaqModule';
-import { StockpileModule } from './modules/stockpile/StockpileModule';
-import { MiningFlowModule } from './modules/mining-flow/MiningFlowModule';
-import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
-import { Register } from './pages/Register';
 import { Login } from './pages/Login';
-import { SetupAccess } from './pages/SetupAccess';
-import { SetPassword } from './pages/SetPassword';
 import { Dashboard } from './pages/Dashboard';
-import { CorporateDashboard } from './pages/CorporateDashboard';
-import { ClientPluginsPage } from './pages/ClientPluginsPage';
 import { BrandingProvider } from './context/BrandingContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -19,72 +12,30 @@ import MobileLayout from './layouts/MobileLayout';
 import MobileLogin from './pages/mobile/MobileLogin';
 import MobileDashboard from './pages/mobile/MobileDashboard';
 import MobileTools from './pages/mobile/MobileTools';
-import MobileProfile from './pages/mobile/MobileProfile';
 import { useIsMobile } from './hooks/useIsMobile';
 import AccountSelector from './components/auth/AccountSelector';
 import LoadingScreen from './components/common/LoadingScreen';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import { PWAInstallPrompt } from './components/common/PWAInstallPrompt';
 import SyncIndicator from './components/common/SyncIndicator';
-import PluginErrorBoundaryDemo from './core/plugins/PluginErrorBoundaryDemo';
-import { getAllPlugins } from './core/PluginRegistry';
-import { secureContextFactory } from './core/SecureContextFactory';
-import { JobProfilesPage } from './pages/JobProfilesPage';
-import { StaffPage } from './pages/StaffPage';
-import { EmpresaPage } from './pages/b2b/EmpresaPage';
-import { AdminsPage } from './pages/b2b/AdminsPage';
-import { MetricasPage } from './pages/b2b/MetricasPage';
-import { SuscripcionPage } from './pages/b2b/SuscripcionPage';
 
-import { useEffect } from 'react';
-import { MinReport } from '@minreport/sdk'; // Importing SDK via Alias
-
-/**
- * PluginInitializer handles the SDK initialization logic globally.
- * It ensures plugins are loaded regardless of whether the user is on mobile or desktop.
- * As a layout route, it must render an Outlet.
- */
-const PluginInitializer = () => {
-    const { user, profile, currentAccount, loading } = useAuth();
-
-    useEffect(() => {
-        const initPlugins = async () => {
-            if (!user || !currentAccount || !profile) return;
-
-            const context = {
-                accountId: currentAccount.id,
-                userId: user.uid,
-                userRole: profile.memberships.find((m: any) => m.accountId === currentAccount.id)?.role || 'VIEWER',
-                projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'minreport-demo',
-                isOffline: !navigator.onLine
-            };
-
-            // Only System SUPER_ADMIN sees all plugins.
-            const isSystemAdmin = (profile as any)?.role === 'SUPER_ADMIN';
-
-            const entitlements = isSystemAdmin
-                ? getAllPlugins().map((p: any) => p.id)
-                : (currentAccount.enabledPlugins || []);
-
-            console.log(`[SDK-INIT] Initializing for ${isSystemAdmin ? 'SystemAdmin' : 'Account:' + currentAccount.id}`, entitlements);
-
-            try {
-                await MinReport.Core.initializePlugins((pluginId) => {
-                    return secureContextFactory.create(pluginId, context.projectId, context.userId);
-                }, entitlements);
-                console.log("[SDK-INIT] Plugins initialized successfully");
-            } catch (error) {
-                console.error("[SDK-INIT] Plugin initialization failed:", error);
-            }
-        };
-
-        if (!loading) {
-            initPlugins();
-        }
-    }, [currentAccount, user, profile, loading]);
-
-    return <Outlet />;
-};
+// Code-split heavy modules & secondary pages (Capa 2 Performance)
+const OpermaqModule = lazy(() => import('./modules/opermaq/OpermaqModule').then(m => ({ default: m.OpermaqModule })));
+const StockpileModule = lazy(() => import('./modules/stockpile/StockpileModule').then(m => ({ default: m.StockpileModule })));
+const MiningFlowModule = lazy(() => import('./modules/mining-flow/MiningFlowModule').then(m => ({ default: m.MiningFlowModule })));
+const CorporateDashboard = lazy(() => import('./pages/CorporateDashboard').then(m => ({ default: m.CorporateDashboard })));
+const Register = lazy(() => import('./pages/Register').then(m => ({ default: m.Register })));
+const SetupAccess = lazy(() => import('./pages/SetupAccess').then(m => ({ default: m.SetupAccess })));
+const SetPassword = lazy(() => import('./pages/SetPassword').then(m => ({ default: m.SetPassword })));
+const JobProfilesPage = lazy(() => import('./pages/JobProfilesPage').then(m => ({ default: m.JobProfilesPage })));
+const StaffPage = lazy(() => import('./pages/StaffPage').then(m => ({ default: m.StaffPage })));
+const EmpresaPage = lazy(() => import('./pages/b2b/EmpresaPage').then(m => ({ default: m.EmpresaPage })));
+const AdminsPage = lazy(() => import('./pages/b2b/AdminsPage').then(m => ({ default: m.AdminsPage })));
+const MetricasPage = lazy(() => import('./pages/b2b/MetricasPage').then(m => ({ default: m.MetricasPage })));
+const SuscripcionPage = lazy(() => import('./pages/b2b/SuscripcionPage').then(m => ({ default: m.SuscripcionPage })));
+const MobileProfile = lazy(() => import('./pages/mobile/MobileProfile'));
+const DevVaultGateway = lazy(() => import('./pages/dev/DevVaultGateway').then(m => ({ default: m.DevVaultGateway })));
+import DevImpersonationHUD from './components/dev/DevImpersonationHUD';
 
 const RequireAuthLayout = () => {
     const { user, profile, currentAccount, loading, switchAccount, signOut } = useAuth();
@@ -94,7 +45,6 @@ const RequireAuthLayout = () => {
     if (loading) return <LoadingScreen />;
     if (!user) return <Navigate to="/login" replace />;
     if (!currentAccount) {
-        console.log('[E2E-NAV] RequireAuthLayout: No currentAccount, showing Selector');
         return (
             <div className="min-h-screen bg-antigravity-light-bg dark:bg-antigravity-dark-bg flex items-center justify-center p-4">
                 <div className="w-full max-w-md">
@@ -108,7 +58,6 @@ const RequireAuthLayout = () => {
         );
     }
 
-    console.log(`[E2E-NAV] RequireAuthLayout rendering Layout (${isMobile ? 'Mobile' : 'Desktop'})`);
     return <Layout />;
 };
 
@@ -118,9 +67,10 @@ const DashboardRouter = () => {
     const membership = profile?.memberships.find((m: any) => m.accountId === currentAccount?.id);
     const userRole = membership?.role;
 
-    // Detect Enterprise/Business accounts (case-insensitive)
+    // Detectar clasificación de cuenta (Web 3.0 Identity System)
+    const classification = currentAccount?.classification;
     const type = currentAccount?.type?.toUpperCase();
-    const isEnterpriseAccount = type === 'ENTERPRISE' || type === 'BUSINESS';
+    const isEnterpriseAccount = classification === 'b2b-corporate' || type === 'ENTERPRISE' || type === 'BUSINESS';
 
     // Corporate Logic: Owner of B2B account or BILLING_ONLY role
     const isCorporateView = isEnterpriseAccount && (
@@ -136,44 +86,42 @@ const AppRoutes = () => {
 
     return (
         <Routes>
-            {/* Public / Auth Routes (Carga instantánea sin pantalla negra bloqueante) */}
+            {/* Public / Auth Routes */}
             <Route path="/login" element={(!loading && user) ? <Navigate to="/dashboard" /> : <Login />} />
             <Route path="/register" element={(!loading && user) ? <Navigate to="/dashboard" /> : <Register />} />
             <Route path="/setup-access" element={<SetupAccess />} />
             <Route path="/auth/action" element={<SetPassword />} />
 
-            {/* Login Móvil Independiente (Prioridad sobre rutas protegidas) */}
+            {/* Portal Secreto de Desarrollo (Aislado / noindex) */}
+            <Route path="/dev-vault-gateway" element={<DevVaultGateway />} />
+
+            {/* Login Móvil Independiente */}
             <Route path="/mobile/login" element={<MobileLogin />} />
 
             {/* 📱 Rutas Móviles (Protegidas) */}
-            <Route element={<PluginInitializer />}>
-                <Route path="/mobile" element={<MobileLayout />}>
-                    <Route path="dashboard" element={<MobileDashboard />} />
-                    <Route path="tools" element={<MobileTools />} />
-                    <Route path="profile" element={<MobileProfile />} />
-                    <Route index element={<Navigate to="/mobile/dashboard" replace />} />
-                </Route>
+            <Route path="/mobile" element={<RequireAuthLayout />}>
+                <Route path="dashboard" element={<MobileDashboard />} />
+                <Route path="tools" element={<MobileTools />} />
+                <Route path="profile" element={<MobileProfile />} />
+                <Route index element={<Navigate to="/mobile/dashboard" replace />} />
             </Route>
 
             {/* Protected Routes with Client Layout */}
-            <Route element={<PluginInitializer />}>
-                <Route element={<RequireAuthLayout />}>
-                    <Route path="/dashboard" element={<DashboardRouter />} />
-                    {/* [MONOLITO MODULAR WEB 3.0] Módulos Industriales Centralizados */}
-                    <Route path="/opermaq" element={<OpermaqModule />} />
-                    <Route path="/stockpile" element={<StockpileModule />} />
-                    <Route path="/mining-flow" element={<MiningFlowModule />} />
-                    <Route path="/plugins" element={<ClientPluginsPage />} />
-                    <Route path="/job-profiles" element={<JobProfilesPage />} />
-                    <Route path="/staff" element={<StaffPage />} />
-                    <Route path="/b2b/empresa" element={<EmpresaPage />} />
-                    <Route path="/b2b/admins" element={<AdminsPage />} />
-                    <Route path="/b2b/metricas" element={<MetricasPage />} />
-                    <Route path="/b2b/suscripcion" element={<SuscripcionPage />} />
-                    <Route path="/debug/error-boundary" element={<PluginErrorBoundaryDemo />} />
-                    <Route path="/capture" element={<div>Capture View (Not implemented)</div>} />
-                    <Route path="/menu" element={<div>Menu View (Not implemented)</div>} />
-                </Route>
+            <Route element={<RequireAuthLayout />}>
+                <Route path="/dashboard" element={<DashboardRouter />} />
+                {/* [MONOLITO MODULAR WEB 3.0] Módulos Industriales Centralizados */}
+                <Route path="/opermaq" element={<OpermaqModule />} />
+                <Route path="/stockpile" element={<StockpileModule />} />
+                <Route path="/mining-flow" element={<MiningFlowModule />} />
+                <Route path="/job-profiles" element={<JobProfilesPage />} />
+                <Route path="/staff" element={<StaffPage />} />
+                <Route path="/b2b/empresa" element={<EmpresaPage />} />
+                <Route path="/b2b/admins" element={<AdminsPage />} />
+                <Route path="/b2b/metricas" element={<MetricasPage />} />
+                <Route path="/b2b/suscripcion" element={<SuscripcionPage />} />
+
+                {/* Redirección limpia de rutas legacy */}
+                <Route path="/plugins" element={<Navigate to="/dashboard" replace />} />
             </Route>
 
             {/* Root and Fallback */}
@@ -197,13 +145,18 @@ function App() {
             <ThemeProvider>
                 <BrandingProvider>
                     <AuthProvider>
-                    <MinReportSessionProvider>
-                        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-                            <AppRoutes />
-                        </BrowserRouter>
-                                                <SyncIndicator />
-                        <PWAInstallPrompt />
-                    </MinReportSessionProvider>
+                        <MinReportSessionProvider>
+                            <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+                                <div className="min-h-screen bg-antigravity-light-bg dark:bg-antigravity-dark-bg text-antigravity-light-text dark:text-antigravity-dark-text transition-colors duration-300">
+                                    <DevImpersonationHUD />
+                                    <Suspense fallback={<LoadingScreen />}>
+                                        <AppRoutes />
+                                    </Suspense>
+                                    <PWAInstallPrompt />
+                                    <SyncIndicator />
+                                </div>
+                            </BrowserRouter>
+                        </MinReportSessionProvider>
                     </AuthProvider>
                 </BrandingProvider>
             </ThemeProvider>

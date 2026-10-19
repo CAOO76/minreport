@@ -128,6 +128,22 @@ app.post('/api/auth/invite', requireAuth, inviteUser); // [NEW] B2B Invitation
 // Staff Routes (Onboarding)
 app.use('/api/staff', staffRoutes); // [NEW] Staff Management
 
+// DEV Root & Test-Pilot Governance Routes (Isolated Secret Gateway)
+import { 
+    devLogin, 
+    requireDevRoot, 
+    createTestPilotAccount, 
+    listTestPilots, 
+    revokeTestPilot, 
+    impersonateClient 
+} from './api/dev.controller';
+
+app.post('/api/dev/auth/login', devLogin);
+app.post('/api/dev/test-pilots', requireDevRoot, createTestPilotAccount);
+app.get('/api/dev/test-pilots', requireDevRoot, listTestPilots);
+app.delete('/api/dev/test-pilots/:id', requireDevRoot, revokeTestPilot);
+app.post('/api/dev/impersonate-client', requireDevRoot, impersonateClient);
+
 // Admin Routes (Protected)
 app.get('/api/admin/tenants', requireSuperAdmin, listTenants);
 app.get('/api/admin/accounts', requireSuperAdmin, listAccounts); // [NEW] Accounts Management
@@ -143,10 +159,19 @@ app.get('/api/admin/audit-logs', requireSuperAdmin, getAuditLogs);
 app.get('/api/admin/settings/ui-assets', requireSuperAdmin, getUIAssetsSettings); // Keep protected for admin panel
 app.put('/api/admin/settings/ui-assets', requireSuperAdmin, updateUIAssetsSettings);
 
+import { ensureDevRootAccount } from './services/bootstrap.service';
+
 // Start Server
 const port = parseInt(env.PORT, 10);
-app.listen(port, '0.0.0.0', () => {
+app.listen(port, '0.0.0.0', async () => {
     console.log(`🚀 Server running on port ${port}`);
     console.log(`📡 Host: 0.0.0.0 (¡Acceso Móvil Habilitado!)`);
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+    
+    // Inserción y blindaje determinista por código de cuenta DEV
+    try {
+        await ensureDevRootAccount();
+    } catch (bootstrapErr) {
+        console.error('[CORE-API] ⚠️ Error durante bootstrapping inicial de DEV:', bootstrapErr);
+    }
 });

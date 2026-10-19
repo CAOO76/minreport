@@ -1,5 +1,9 @@
 
-export type UserRole = 'OWNER' | 'ADMIN' | 'BILLING_ONLY' | 'OPERATOR' | 'SUBSCRIPTION_ADMIN' | 'GENERAL_ADMIN' | 'INTERNAL_USER';
+export type UserSystemRole = 'DEV_ROOT' | 'OWNER' | 'ADMIN' | 'SUPERVISOR' | 'OPERATOR' | 'STUDENT' | 'TEST_PILOT' | 'VIEWER';
+
+export type UserRole = UserSystemRole | 'INTERNAL_USER' | 'BILLING_ONLY' | 'SUBSCRIPTION_ADMIN' | 'GENERAL_ADMIN';
+
+export type AccountClassification = 'dev-root' | 'b2b-corporate' | 'edu-academic' | 'test-pilot';
 
 export type AccountType = 'PERSONAL' | 'BUSINESS' | 'EDUCATIONAL' | 'ENTERPRISE';
 
@@ -56,5 +60,12 @@ export interface Account {
     };
     createdAt: number;
     updatedAt: number;
+    classification?: AccountClassification;
+    licensing?: {
+        maxUsers: number;
+        allowInternalUsers: boolean;
+        isCommercial: boolean;
+        watermarkRequired: boolean;
+    };
     enabledPlugins?: string[]; // [NEW] Definitive Plugin Management
 }

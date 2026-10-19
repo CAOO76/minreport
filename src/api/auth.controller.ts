@@ -5,6 +5,7 @@ import { EmailService } from '../services/EmailService';
 import { registerSchema } from '../core/schemas';
 import { generateSetupToken } from '../utils/security';
 import { env } from '../config/env';
+import { classifyEmailDomain } from '../utils/domain-classifier';
 
 
 
@@ -43,9 +44,10 @@ export const register = async (req: Request, res: Response) => {
                 });
             }
 
-            // Detección automática de dominio educacional
-            const emailDomain = normalizedEmail.split('@')[1] || '';
-            const isEduDomain = emailDomain.includes('.edu') || emailDomain.includes('.ac.') || emailDomain.includes('uchile.cl') || emailDomain.includes('usach.cl');
+            // Detección automática por dominio de correo (Estándar Web 3.0 MINREPORT)
+            const domainClassification = classifyEmailDomain(normalizedEmail);
+            const isEduDomain = domainClassification.isAcademic;
+            const accountClassification = domainClassification.classification; // 'edu-academic' | 'b2b-corporate'
 
             // Obtener o crear usuario en Firebase Auth
             let userRecord;
@@ -65,7 +67,7 @@ export const register = async (req: Request, res: Response) => {
 
             const uid = userRecord.uid;
 
-            // 2. Crear Cuenta Titular B2B (Tenant Workspace)
+            // 2. Crear Cuenta Titular B2B / EDU (Workspace)
             const accountRef = db.collection('accounts').doc();
             const accountId = accountRef.id;
 
@@ -74,7 +76,8 @@ export const register = async (req: Request, res: Response) => {
                 name: data.businessName.trim(),
                 taxId: companyTaxId,
                 type: isEduDomain ? 'EDUCATIONAL' : 'BUSINESS',
-                classification: isEduDomain ? 'edu' : 'b2b',
+                classification: accountClassification,
+                licensing: domainClassification.defaultLicensing,
                 status: 'ACTIVE', // SOBERANÍA INMEDIATA - CERO APROBACIÓN MANUAL
                 ownerId: uid,
                 billingEmail: data.billingEmail.toLowerCase().trim(),
@@ -91,10 +94,10 @@ export const register = async (req: Request, res: Response) => {
                     plan: isEduDomain ? 'ACADEMIC_SANDBOX' : 'ENTERPRISE_B2B_CORE',
                     status: 'ACTIVE',
                     billingCycle: 'MENSUAL',
-                    // Módulos satélites: Todos accesibles en fase de desarrollo
                     activeModules: {
                         opermaq: true,
                         stockpile: true,
+                        'mining-flow': true,
                         miningFlow: true
                     },
                     activatedAt: Date.now()
@@ -257,6 +260,28 @@ export const inviteUser = async (req: Request, res: Response) => {
 
         if (!email || !accountId) {
             return res.status(400).json({ error: 'Email and Account ID are required' });
+        }
+
+        // [LICENSING GUARD] Verificar restricciones de licencia (Cuentas EDU: 1 solo usuario, no internos)
+        const accountDoc = await db.collection('accounts').doc(accountId).get();
+        if (accountDoc.exists) {
+            const accData = accountDoc.data()!;
+            const licensing = accData.licensing;
+
+            if (licensing && licensing.allowInternalUsers === false) {
+                return res.status(403).json({
+                    error: 'LICENCIA_RESTRINGIDA: Las cuentas académicas/educacionales operan con un usuario único y no permiten invitar usuarios internos.'
+                });
+            }
+
+            if (licensing && licensing.maxUsers) {
+                const membersSnap = await db.collection('accounts').doc(accountId).collection('members').get();
+                if (membersSnap.size >= licensing.maxUsers) {
+                    return res.status(403).json({
+                        error: `LIMITE_USUARIOS_ALCANZADO: Este tipo de cuenta permite un máximo de ${licensing.maxUsers} usuario(s).`
+                    });
+                }
+            }
         }
 
         // Normalize inputs

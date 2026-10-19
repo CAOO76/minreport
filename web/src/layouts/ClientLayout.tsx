@@ -18,9 +18,9 @@ const ClientLayout = () => {
 
     // Clases para los botones del menú (Iconos centrados)
     const navLinkClasses = ({ isActive }: { isActive: boolean }) =>
-        `w-12 h-12 flex items-center justify-center rounded-xl transition-all mb-2 ${isActive
-            ? 'bg-antigravity-accent text-white shadow-md' // Activo: Azul Antigravity
-            : 'text-antigravity-light-muted dark:text-antigravity-dark-muted hover:bg-antigravity-light-bg dark:hover:bg-antigravity-dark-bg hover:text-antigravity-light-text dark:hover:text-antigravity-dark-text' // Inactivo
+        `w-12 h-12 flex items-center justify-center rounded-none shadow-none transition-all mb-2 cursor-pointer ${isActive
+            ? 'bg-[#C68346] text-white' // Activo: Cobre Industrial MINREPORT
+            : 'text-[#8A93A6] hover:bg-black/5 dark:hover:bg-white/5 hover:text-[#0F172A] dark:hover:text-[#F3F4F6]' // Inactivo
         }`;
 
     return (
@@ -40,10 +40,10 @@ const ClientLayout = () => {
                     {/* Botón Claro/Oscuro */}
                     <button
                         onClick={toggleTheme}
-                        className="p-2 text-antigravity-light-muted dark:text-antigravity-dark-muted hover:text-antigravity-light-text dark:hover:text-antigravity-dark-text transition-colors rounded-full hover:bg-antigravity-light-bg dark:hover:bg-antigravity-dark-bg"
+                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center rounded-none"
                         title={theme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
                     >
-                        <span className="material-symbols-rounded">
+                        <span className="material-symbols-outlined text-[20px]">
                             {theme === 'dark' ? 'light_mode' : 'dark_mode'}
                         </span>
                     </button>
@@ -70,51 +70,47 @@ const ClientLayout = () => {
                             /* ── Nav B2B: Administrador de Suscripción ── */
                             <>
                                 <NavLink to="/b2b/empresa" className={navLinkClasses} title="Datos de la Empresa">
-                                    <span className="material-symbols-rounded text-2xl">business</span>
+                                    <span className="material-symbols-outlined text-2xl">business</span>
                                     <span className="sr-only">Datos de la Empresa</span>
                                 </NavLink>
                                 <NavLink to="/b2b/admins" className={navLinkClasses} title="Administradores Generales">
-                                    <span className="material-symbols-rounded text-2xl">manage_accounts</span>
+                                    <span className="material-symbols-outlined text-2xl">manage_accounts</span>
                                     <span className="sr-only">Administradores Generales</span>
                                 </NavLink>
                                 <NavLink to="/b2b/metricas" className={navLinkClasses} title="Métricas de Uso">
-                                    <span className="material-symbols-rounded text-2xl">bar_chart</span>
+                                    <span className="material-symbols-outlined text-2xl">bar_chart</span>
                                     <span className="sr-only">Métricas de Uso</span>
                                 </NavLink>
                                 <NavLink to="/b2b/suscripcion" className={navLinkClasses} title="Suscripción MINREPORT">
-                                    <span className="material-symbols-rounded text-2xl">receipt_long</span>
+                                    <span className="material-symbols-outlined text-2xl">receipt_long</span>
                                     <span className="sr-only">Suscripción MINREPORT</span>
                                 </NavLink>
                             </>
                         ) : (
                             /* ── Nav Operacional: General Admin y otros ── */
                             <>
-                                <NavLink to="/" className={navLinkClasses} title="Panel Principal">
-                                    <span className="material-symbols-rounded text-2xl">dashboard</span>
+                                <NavLink to="/dashboard" className={navLinkClasses} title="Panel Principal">
+                                    <span className="material-symbols-outlined text-2xl">dashboard</span>
                                     <span className="sr-only">Panel Principal</span>
                                 </NavLink>
                                 <NavLink to="/opermaq" className={navLinkClasses} title="OPERMAQ (Flota y Equipos)">
-                                    <span className="material-symbols-rounded text-2xl">local_shipping</span>
+                                    <span className="material-symbols-outlined text-2xl">local_shipping</span>
                                     <span className="sr-only">OPERMAQ</span>
                                 </NavLink>
                                 <NavLink to="/stockpile" className={navLinkClasses} title="STOCKPILE (Cubicaciones)">
-                                    <span className="material-symbols-rounded text-2xl">layers</span>
+                                    <span className="material-symbols-outlined text-2xl">layers</span>
                                     <span className="sr-only">STOCKPILE</span>
                                 </NavLink>
                                 <NavLink to="/mining-flow" className={navLinkClasses} title="MINING FLOW (Finanzas y Flujos)">
-                                    <span className="material-symbols-rounded text-2xl">payments</span>
+                                    <span className="material-symbols-outlined text-2xl">payments</span>
                                     <span className="sr-only">MINING FLOW</span>
                                 </NavLink>
-                                <NavLink to="/plugins" className={navLinkClasses} title="Módulos Instalados">
-                                    <span className="material-symbols-rounded text-2xl">apps</span>
-                                    <span className="sr-only">Módulos Instalados</span>
-                                </NavLink>
                                 <NavLink to="/job-profiles" className={navLinkClasses} title="Perfiles de Cargo">
-                                    <span className="material-symbols-rounded text-2xl">demography</span>
+                                    <span className="material-symbols-outlined text-2xl">demography</span>
                                     <span className="sr-only">Perfiles de Cargo</span>
                                 </NavLink>
                                 <NavLink to="/staff" className={navLinkClasses} title="Personal de Terreno">
-                                    <span className="material-symbols-rounded text-2xl">badge</span>
+                                    <span className="material-symbols-outlined text-2xl">badge</span>
                                     <span className="sr-only">Personal de Terreno</span>
                                 </NavLink>
                             </>
@@ -124,10 +120,10 @@ const ClientLayout = () => {
                     {/* Botón Salir */}
                     <button
                         onClick={() => signOutContext()}
-                        className="w-12 h-12 flex items-center justify-center rounded-xl transition-all mt-auto text-antigravity-light-muted dark:text-antigravity-dark-muted hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-500"
+                        className="w-10 h-10 flex items-center justify-center rounded-none transition-colors mt-auto text-antigravity-light-muted dark:text-antigravity-dark-muted hover:text-red-500 bg-transparent border-0 cursor-pointer"
                         title="Cerrar Sesión"
                     >
-                        <span className="material-symbols-rounded text-2xl">logout</span>
+                        <span className="material-symbols-outlined text-2xl">logout</span>
                     </button>
                 </aside>
 

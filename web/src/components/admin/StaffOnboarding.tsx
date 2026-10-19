@@ -285,7 +285,7 @@ export const StaffOnboarding = () => {
                                                         }
                                                     `}>
                                                         <span className={`
-                                                            material-symbols-rounded text-xl
+                                                            material-symbols-outlined text-xl
                                                             ${isSelected
                                                                 ? 'text-white dark:text-black'
                                                                 : 'text-black/40 dark:text-white/40'

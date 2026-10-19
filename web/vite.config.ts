@@ -1,24 +1,13 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
-import path from 'path'
-import fs from 'fs'
-
-const aliasesJsonPath = path.resolve(__dirname, '../scripts/plugin_aliases.json');
-const pluginAliases = fs.existsSync(aliasesJsonPath)
-    ? JSON.parse(fs.readFileSync(aliasesJsonPath, 'utf8'))
-    : {};
 
 // https://vitejs.dev/config/
 export default defineConfig({
     envDir: '..',
     resolve: {
         preserveSymlinks: true,
-        dedupe: ['react', 'react-dom', 'firebase'],
-        alias: {
-            '@minreport/sdk': path.resolve(__dirname, 'src/sdk-bundle/index.ts'),
-            ...pluginAliases
-        }
+        dedupe: ['react', 'react-dom', 'firebase']
     },
     plugins: [
         react(),
@@ -111,7 +100,31 @@ export default defineConfig({
         rollupOptions: {
             external: [],
             output: {
-                manualChunks: undefined
+                manualChunks(id) {
+                    if (id.includes('node_modules')) {
+                        if (id.includes('@firebase/firestore') || id.includes('firebase/firestore')) {
+                            return 'vendor-firestore';
+                        }
+                        if (id.includes('firebase')) {
+                            return 'vendor-firebase';
+                        }
+                        if (id.includes('framer-motion')) {
+                            return 'vendor-motion';
+                        }
+                        if (id.includes('lucide-react')) {
+                            return 'vendor-icons';
+                        }
+                        if (id.includes('@capacitor')) {
+                            return 'vendor-capacitor';
+                        }
+                        if (id.includes('i18next') || id.includes('react-i18next')) {
+                            return 'vendor-i18n';
+                        }
+                        if (id.includes('react-dom') || id.includes('react-router-dom') || id.includes('/react/')) {
+                            return 'vendor-react';
+                        }
+                    }
+                }
             }
         }
     }

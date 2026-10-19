@@ -4,7 +4,7 @@
 
 @layer base {
     :root {
-        --font-atkinson: "Atkinson Hyperlegible", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        --font-atkinson: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
     body {
@@ -21,9 +21,8 @@
 }
 
 /* Material Symbols - Declaración estricta inmutable */
-.material-symbols-outlined,
-.material-symbols-rounded {
-    font-family: 'Material Symbols Outlined', 'Material Symbols Rounded' !important;
+.material-symbols-outlined {
+    font-family: 'Material Symbols Outlined' !important;
     font-weight: 400 !important;
     font-style: normal !important;
     font-size: 20px;

@@ -16,7 +16,7 @@ export const TenantDetailsModal: React.FC<TenantDetailsModalProps> = ({
     const [isRejecting, setIsRejecting] = useState(false);
     const [rejectionReason, setRejectionReason] = useState('');
     const [confirmRejectKeyword, setConfirmRejectKeyword] = useState('');
-    const [observations, setObservations] = useState('');
+    const observations = '';
 
     if (!isOpen || !tenant) return null;
 

@@ -10,8 +10,32 @@ import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import https from 'https';
+import { isProtectedSystemAccount } from '../services/bootstrap.service';
 
 const execAsync = promisify(exec);
+
+const exchangeCustomTokenForIdToken = async (customToken: string): Promise<string> => {
+    try {
+        const emulatorHost = process.env.FIREBASE_AUTH_EMULATOR_HOST;
+        const apiKey = process.env.VITE_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || 'fake-api-key';
+        const url = emulatorHost
+            ? `http://${emulatorHost}/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${apiKey}`
+            : `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${apiKey}`;
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: customToken, returnSecureToken: true })
+        });
+        if (response.ok) {
+            const data: any = await response.json();
+            return data.idToken || customToken;
+        }
+    } catch (e) {
+        console.warn('[ADMIN-AUTH] Could not exchange custom token for idToken:', e);
+    }
+    return customToken;
+};
 
 const downloadFile = async (url: string, dest: string): Promise<void> => {
     console.log(`[DevOps] Executing download via curl to follow redirects: ${dest}`);
@@ -136,10 +160,13 @@ export const adminLogin = async (req: express.Request, res: express.Response) =>
         }, { merge: true });
         console.log(`[ADMIN] Super Admin doc synced successfully`);
 
+        // Exchange custom token for valid Firebase ID token
+        const idToken = await exchangeCustomTokenForIdToken(firebaseToken);
+
         return res.status(200).json({
             success: true,
-            token: 'master-admin-access-token',
-            firebaseToken, // Return the custom token
+            token: idToken,
+            firebaseToken, // Return the custom token for SDKs
             user: { email: env.SUPER_ADMIN_EMAIL, role: 'super-admin' }
         });
     }
@@ -187,32 +214,24 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
 
             // Normalizamos el RUT/RUN para usarlo como UID inmutable
             const cleanTaxId = taxId.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
+            const realEmail = (tenantData.email || `${cleanTaxId.toLowerCase()}@minreport.com`).toLowerCase().trim();
 
-            // Generar Email Sintético para Bypassar Firebase Auth "Email already in use" restricción
-            const syntheticAuthEmail = `${cleanTaxId.toLowerCase()}@auth.minreport.internal`;
-
-            // 1. Forzar Creación/Busqueda de Usuario usando el RUT/RUN como UID
+            // 1. Forzar Creación/Búsqueda de Usuario usando el email real
             let userRecord;
             try {
-                userRecord = await auth.getUser(cleanTaxId);
+                userRecord = await auth.getUserByEmail(realEmail);
             } catch (authError: any) {
                 if (authError.code === 'auth/user-not-found') {
                     userRecord = await auth.createUser({
-                        uid: cleanTaxId, // 🚨 EL UID AHORA ES EL RUT NORMALIZADO
-                        email: syntheticAuthEmail, // Usamos email sintético para blindar Firebase Auth identity mergers.
+                        email: realEmail,
                         emailVerified: true,
                         displayName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
                         disabled: false
                     });
-                    console.log(`[ADMIN-IDENTITY] Creado Identity Titular con UID estricto y correo asilado: ${cleanTaxId}`);
+                    console.log(`[ADMIN-IDENTITY] Creado Identity Titular con email real: ${realEmail} (UID: ${userRecord.uid})`);
                 } else {
                     throw authError;
                 }
-            }
-
-            // Si el email sintético del usuario existente cambió por migración, lo actualizamos solo referencialmente
-            if (userRecord.email !== syntheticAuthEmail) {
-                await auth.updateUser(cleanTaxId, { email: syntheticAuthEmail });
             }
 
             // 2. Set Custom Claims usando el RUT UID
@@ -237,7 +256,7 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
                 processedAt: new Date().toISOString(),
                 processedBy: adminEmail,
                 observations: observations || null,
-                enabledPlugins: enabledPlugins || [], // [NEW] Persist plugin preferences
+                enabledPlugins: (enabledPlugins && enabledPlugins.length > 0) ? enabledPlugins : ['opermaq', 'stockpile', 'mining-flow'],
                 updatedAt: new Date().toISOString()
             });
 
@@ -248,7 +267,7 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
                 type: tenantData.type,
                 taxId: taxId,
                 ownerId: userRecord.uid,
-                enabledPlugins: enabledPlugins || [],
+                enabledPlugins: (enabledPlugins && enabledPlugins.length > 0) ? enabledPlugins : ['opermaq', 'stockpile', 'mining-flow'],
                 giro: tenantData.industry || '',
                 direccionComercial: tenantData.address || '',
                 postal_code: tenantData.postal_code || '',
@@ -554,6 +573,12 @@ async function cleanupAccountMembers(accountId: string, isPurge: boolean = false
 }
 
 async function processUserCleanup(userId: string, taxId: string, accountId: string, memberships: any[], isPurge: boolean) {
+    // [ANTI-PURGE GUARDRAIL] Blindaje absoluto para cuentas DEV_ROOT y SUPER_ADMIN
+    if (isProtectedSystemAccount(userId) || isProtectedSystemAccount(taxId)) {
+        console.warn(`[CLEANUP-GUARD] Identidad protegida detectada (${userId} / ${taxId}). Purga o eliminación abortada.`);
+        return;
+    }
+
     // Filtrar membresías
     const filteredMemberships = memberships.filter((m: any) => m.accountId !== accountId);
 
@@ -617,6 +642,10 @@ export const deleteTenant = async (req: express.Request, res: express.Response) 
         const { uid } = req.params;
         const actor = (req as any).user?.email || 'system';
 
+        if (isProtectedSystemAccount(uid)) {
+            return res.status(403).json({ error: 'Operación denegada: No se pueden eliminar cuentas raíz de desarrollo o del sistema.' });
+        }
+
         console.log(`[SOFT-DELETE] Initiated for tenant ${uid} by ${actor}`);
 
         // 1. Update Tenant Status (Soft Delete)
@@ -662,6 +691,10 @@ export const purgeTenant = async (req: express.Request, res: express.Response) =
     try {
         const { uid } = req.params;
         const actor = (req as any).user?.email || 'system';
+
+        if (isProtectedSystemAccount(uid)) {
+            return res.status(403).json({ error: 'Operación denegada: No se pueden purgar cuentas raíz de desarrollo o del sistema.' });
+        }
 
         console.log(`[HARD-PURGE] Initiated for tenant ${uid} by ${actor}`);
 

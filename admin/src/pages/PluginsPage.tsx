@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { db } from '../config/firebase';
 import { collection, getDocs, doc, setDoc, serverTimestamp, query, orderBy } from 'firebase/firestore';
 import { M3Switch } from '../components/M3Switch';
+import { SYSTEM_MODULES } from '../constants/modules';
 
 interface OperationalModule {
     key: string;
@@ -10,26 +11,12 @@ interface OperationalModule {
     status: 'ACTIVE' | 'DISABLED';
 }
 
-const DEFAULT_INTERNAL_MODULES: OperationalModule[] = [
-    {
-        key: 'opermaq',
-        label: 'OPERMAQ',
-        scope: 'Telemetría y registro operativo de maquinaria pesada.',
-        status: 'ACTIVE'
-    },
-    {
-        key: 'stockpile',
-        label: 'STOCKPILE',
-        scope: 'Cálculo volumétrico y cubicación topográfica de acopios.',
-        status: 'ACTIVE'
-    },
-    {
-        key: 'mining-flow',
-        label: 'MINING FLOW',
-        scope: 'Monitoreo de flujo y transporte de mineral.',
-        status: 'ACTIVE'
-    }
-];
+const DEFAULT_INTERNAL_MODULES: OperationalModule[] = SYSTEM_MODULES.map(m => ({
+    key: m.key,
+    label: m.label,
+    scope: m.scope,
+    status: 'ACTIVE'
+}));
 
 export const PluginsPage: React.FC = () => {
     const [modules, setModules] = useState<OperationalModule[]>(DEFAULT_INTERNAL_MODULES);

@@ -1,13 +1,6 @@
 import React, { useState } from 'react';
-import { 
-    Cpu, 
-    X, 
-    Send, 
-    Loader2, 
-    Check
-} from 'lucide-react';
-import { useMinReportSession } from '../../context/MinReportSessionContext';
 import { getApiUrl } from '../../utils/network';
+import { auth } from '../../config/firebase';
 
 interface AIProposal {
     id: string;
@@ -21,7 +14,6 @@ interface AIProposal {
 }
 
 export const MiningAICopilot: React.FC = () => {
-    const { session } = useMinReportSession();
     const [isOpen, setIsOpen] = useState(false);
     const [activeTab, setActiveTab] = useState<'copilot' | 'proposals'>('copilot');
     const [inputPrompt, setInputPrompt] = useState('');
@@ -77,8 +69,8 @@ export const MiningAICopilot: React.FC = () => {
         setLoading(true);
 
         try {
-            // Intentar inferencia con el endpoint de Capa 4
-            const token = session?.role; // Placeholder de token
+            // Inferencia resiliente con el enjambre de Capa 4
+            const token = await auth.currentUser?.getIdToken();
             const res = await fetch(getApiUrl('/api/ai/inference'), {
                 method: 'POST',
                 headers: { 
@@ -142,10 +134,10 @@ export const MiningAICopilot: React.FC = () => {
             {/* Botón Flotante Minimalista Industrial */}
             <button
                 onClick={() => setIsOpen(true)}
-                className="fixed bottom-6 right-6 z-40 bg-[#0F172A] dark:bg-[#07090D] border border-white/20 text-[#FFCD00] hover:text-white px-3.5 py-2.5 shadow-2xl flex items-center gap-2.5 transition-all cursor-pointer group"
+                className="fixed bottom-6 right-6 z-40 bg-[#0F172A] dark:bg-[#07090D] border border-white/20 text-[#C68346] hover:text-white px-3.5 py-2.5 shadow-none flex items-center gap-2.5 transition-all cursor-pointer group"
                 title="Copiloto de IA Minera (Gemini Swarm)"
             >
-                <Cpu size={16} className="text-[#FFCD00] group-hover:scale-110 transition-transform" />
+                <span className="material-symbols-outlined text-[18px] text-[#C68346] group-hover:scale-110 transition-transform">smart_toy</span>
                 <span className="text-[10px] font-bold uppercase tracking-[0.2em] font-mono text-white hidden sm:inline">
                     IA MINERA
                 </span>
@@ -157,13 +149,13 @@ export const MiningAICopilot: React.FC = () => {
             {/* Drawer Lateral Paramétrico de Proporción Áurea (38.2%) */}
             {isOpen && (
                 <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm">
-                    <div className="w-full sm:w-[480px] lg:w-[38.2vw] h-full bg-[#07090D] border-l border-[#12151C] flex flex-col justify-between shadow-2xl animate-in slide-in-from-right duration-300">
+                    <div className="w-full sm:w-[480px] lg:w-[38.2vw] h-full bg-[#07090D] border-l border-[#12151C] flex flex-col justify-between shadow-none animate-in slide-in-from-right duration-300">
                         
                         {/* Header del Copiloto */}
                         <div className="p-4 border-b border-[#12151C] flex items-center justify-between bg-[#030406]">
                             <div className="flex items-center gap-2.5">
-                                <div className="p-1.5 bg-[#FFCD00]/10 border border-[#FFCD00]/30 text-[#FFCD00]">
-                                    <Cpu size={16} />
+                                <div className="p-1.5 bg-[#C68346]/10 border border-[#C68346]/30 text-[#C68346] flex items-center justify-center">
+                                    <span className="material-symbols-outlined text-[18px]">smart_toy</span>
                                 </div>
                                 <div>
                                     <div className="flex items-center gap-2">
@@ -182,9 +174,10 @@ export const MiningAICopilot: React.FC = () => {
 
                             <button
                                 onClick={() => setIsOpen(false)}
-                                className="p-1 text-[#8A93A6] hover:text-white transition-colors cursor-pointer bg-transparent border-0"
+                                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-white transition-colors cursor-pointer flex items-center"
+                                title="Cerrar panel"
                             >
-                                <X size={18} />
+                                <span className="material-symbols-outlined text-[18px]">close</span>
                             </button>
                         </div>
 
@@ -192,9 +185,9 @@ export const MiningAICopilot: React.FC = () => {
                         <div className="flex border-b border-[#12151C] bg-[#030406]">
                             <button
                                 onClick={() => setActiveTab('copilot')}
-                                className={`flex-1 py-2 text-[10px] font-bold uppercase tracking-wider text-center transition-colors border-b-2 ${
+                                className={`flex-1 py-2 text-[10px] font-bold uppercase tracking-wider text-center transition-colors border-b-2 cursor-pointer ${
                                     activeTab === 'copilot'
-                                        ? 'border-[#FFCD00] text-white bg-white/[0.02]'
+                                        ? 'border-[#C68346] text-white bg-white/[0.02]'
                                         : 'border-transparent text-[#8A93A6] hover:text-white'
                                 }`}
                             >
@@ -202,7 +195,7 @@ export const MiningAICopilot: React.FC = () => {
                             </button>
                             <button
                                 onClick={() => setActiveTab('proposals')}
-                                className={`flex-1 py-2 text-[10px] font-bold uppercase tracking-wider text-center transition-colors border-b-2 flex items-center justify-center gap-1.5 ${
+                                className={`flex-1 py-2 text-[10px] font-bold uppercase tracking-wider text-center transition-colors border-b-2 flex items-center justify-center gap-1.5 cursor-pointer ${
                                     activeTab === 'proposals'
                                         ? 'border-[#00AEEF] text-white bg-white/[0.02]'
                                         : 'border-transparent text-[#8A93A6] hover:text-white'
@@ -225,7 +218,7 @@ export const MiningAICopilot: React.FC = () => {
                                             key={idx}
                                             className={`p-3 text-xs leading-relaxed ${
                                                 m.role === 'user'
-                                                    ? 'bg-[#12151C] text-white border-l-2 border-[#FFCD00] ml-6'
+                                                    ? 'bg-[#12151C] text-white border-l-2 border-[#C68346] ml-6'
                                                     : 'bg-[#030406] text-[#F3F4F6] border border-[#12151C] mr-4'
                                             }`}
                                         >
@@ -241,7 +234,7 @@ export const MiningAICopilot: React.FC = () => {
 
                                     {loading && (
                                         <div className="p-3 bg-[#030406] border border-[#12151C] flex items-center gap-2 text-xs text-[#8A93A6] font-mono">
-                                            <Loader2 size={14} className="animate-spin text-[#FFCD00]" />
+                                            <span className="material-symbols-outlined text-[16px] animate-spin text-[#C68346]">progress_activity</span>
                                             <span>Sintetizando telemetría y reglas de faena...</span>
                                         </div>
                                     )}
@@ -259,7 +252,7 @@ export const MiningAICopilot: React.FC = () => {
                                             className="p-3 bg-[#030406] border border-[#12151C] space-y-3"
                                         >
                                             <div className="flex items-center justify-between text-[10px]">
-                                                <span className="font-bold uppercase tracking-wider text-[#FFCD00]">
+                                                <span className="font-bold uppercase tracking-wider text-[#C68346]">
                                                     {prop.module}
                                                 </span>
                                                 <span className="text-[#8A93A6] font-mono">
@@ -286,14 +279,14 @@ export const MiningAICopilot: React.FC = () => {
                                                 <div className="flex gap-2 pt-1">
                                                     <button
                                                         onClick={() => handleAcceptProposal(prop.id)}
-                                                        className="flex-1 py-1.5 bg-[#FFCD00] text-black text-[10px] font-bold uppercase tracking-wider hover:opacity-90 flex items-center justify-center gap-1 cursor-pointer"
+                                                        className="flex-1 py-1.5 bg-[#C68346] hover:bg-[#b07238] text-white text-[10px] font-bold uppercase tracking-wider flex items-center justify-center gap-1 cursor-pointer transition-colors border-0"
                                                     >
-                                                        <Check size={12} />
+                                                        <span className="material-symbols-outlined text-[14px]">check</span>
                                                         <span>Aprobar Sugerencia</span>
                                                     </button>
                                                     <button
                                                         onClick={() => handleRejectProposal(prop.id)}
-                                                        className="px-3 py-1.5 border border-white/10 text-[10px] font-bold uppercase tracking-wider hover:bg-white/5 text-[#8A93A6] cursor-pointer"
+                                                        className="px-3 py-1.5 border border-white/10 text-[10px] font-bold uppercase tracking-wider hover:bg-white/5 text-[#8A93A6] cursor-pointer bg-transparent"
                                                     >
                                                         Descartar
                                                     </button>
@@ -311,20 +304,20 @@ export const MiningAICopilot: React.FC = () => {
 
                         {/* Input de Consulta */}
                         {activeTab === 'copilot' && (
-                            <form onSubmit={handleSendMessage} className="p-3 border-t border-[#12151C] bg-[#030406] flex gap-2">
+                            <form onSubmit={handleSendMessage} autoComplete="off" spellCheck={false} className="p-3 border-t border-[#12151C] bg-[#030406] flex gap-2">
                                 <input
                                     type="text"
                                     value={inputPrompt}
                                     onChange={e => setInputPrompt(e.target.value)}
                                     placeholder="Consultar falla de equipo, ley de acopio, normativa..."
-                                    className="flex-1 px-3 py-2 bg-[#000000] border border-[#12151C] text-xs text-white focus:border-[#FFCD00] outline-none font-sans"
+                                    className="flex-1 px-3 py-2 bg-[#000000] border border-[#12151C] text-xs text-white focus:border-[#C68346] outline-none font-sans"
                                 />
                                 <button
                                     type="submit"
                                     disabled={loading || !inputPrompt.trim()}
-                                    className="px-3.5 bg-[#FFCD00] text-black hover:opacity-90 transition-opacity disabled:opacity-40 flex items-center justify-center cursor-pointer"
+                                    className="px-3.5 bg-[#C68346] hover:bg-[#b07238] text-white transition-colors disabled:opacity-40 flex items-center justify-center cursor-pointer border-0"
                                 >
-                                    <Send size={14} />
+                                    <span className="material-symbols-outlined text-[16px]">send</span>
                                 </button>
                             </form>
                         )}

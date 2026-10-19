@@ -1,12 +1,5 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import path from 'path'
-import fs from 'fs'
-
-const aliasesJsonPath = path.resolve(__dirname, '../scripts/plugin_aliases.json');
-const pluginAliases = fs.existsSync(aliasesJsonPath)
-    ? JSON.parse(fs.readFileSync(aliasesJsonPath, 'utf8'))
-    : {};
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -16,13 +9,32 @@ export default defineConfig({
     },
     resolve: {
         preserveSymlinks: true,
-        dedupe: ['firebase'],
-        alias: {
-            ...pluginAliases
-        }
+        dedupe: ['firebase']
     },
     plugins: [react()],
     server: {
-        port: 5174 // Different port from client client app (5173)
+        port: 5174
+    },
+    build: {
+        rollupOptions: {
+            output: {
+                manualChunks(id) {
+                    if (id.includes('node_modules')) {
+                        if (id.includes('firebase')) {
+                            return 'vendor-firebase';
+                        }
+                        if (id.includes('framer-motion')) {
+                            return 'vendor-motion';
+                        }
+                        if (id.includes('lucide-react')) {
+                            return 'vendor-icons';
+                        }
+                        if (id.includes('react-dom') || id.includes('react-router-dom') || id.includes('/react/')) {
+                            return 'vendor-react';
+                        }
+                    }
+                }
+            }
+        }
     }
 })

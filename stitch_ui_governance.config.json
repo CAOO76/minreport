@@ -4,7 +4,8 @@
         "theme": "Elite Industrial Minimalism"
     },
     "typography": {
-        "primaryFont": "Atkinson Hyperlegible",
+        "primaryFont": "Atkinson Hyperlegible Next",
+        "monoFont": "Atkinson Hyperlegible Mono",
         "headingWeights": [
             600,
             700
@@ -16,6 +17,7 @@
     },
     "colors": {
         "accent": "#C68346",
+        "accentCyan": "#00AEEF",
         "backgrounds": {
             "light": "#FFFFFF",
             "dark": "#111827",

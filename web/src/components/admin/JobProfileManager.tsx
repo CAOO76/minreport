@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { AlertCircle, Info } from 'lucide-react';
 import { ProfileService } from '../../services/ProfileService';
-import { getAllPlugins } from '../../core/PluginRegistry';
+import { SYSTEM_MODULES } from '../../constants/modules';
 import { useAuth } from '../../context/AuthContext';
 import type { JobProfile } from '../../types/job_profile';
 import { Button } from '../Button';
@@ -13,7 +13,7 @@ import M3Switch from '../common/M3Switch';
  * 
  * Panel de administración para gestionar Perfiles de Cargo (Job Profiles).
  * Permite a las empresas B2B crear perfiles estandarizados con conjuntos
- * específicos de plugins asignados.
+ * específicos de módulos integrados asignados.
  */
 
 export const JobProfileManager = () => {
@@ -28,8 +28,8 @@ export const JobProfileManager = () => {
     const [formDescription, setFormDescription] = useState('');
     const [formPlugins, setFormPlugins] = useState<string[]>([]);
 
-    // Obtener plugins disponibles
-    const availablePlugins = getAllPlugins();
+    // Módulos integrados del sistema disponibles
+    const availableModules = SYSTEM_MODULES;
 
     // Cargar perfiles
     useEffect(() => {
@@ -232,21 +232,21 @@ export const JobProfileManager = () => {
                             <div>
                                 <label className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-5">Acceso a Módulos</label>
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                    {availablePlugins.map(plugin => (
-                                        <div key={plugin.id} className="p-4 rounded-none bg-black/2[bg-black/2] dark:bg-white/5 border border-black/5 dark:border-white/10 flex items-center justify-between">
+                                    {availableModules.map(mod => (
+                                        <div key={mod.id} className="p-4 rounded-none bg-black/2 dark:bg-white/5 border border-black/5 dark:border-white/10 flex items-center justify-between">
                                             <div className="flex items-center gap-3">
-                                                <div className="w-8 h-8 rounded bg-white dark:bg-gray-700 flex items-center justify-center">
-                                                    <span className="material-symbols-rounded text-sm">extension</span>
+                                                <div className="w-8 h-8 rounded-none bg-white dark:bg-gray-700 flex items-center justify-center">
+                                                    <span className="material-symbols-outlined text-sm">{mod.icon}</span>
                                                 </div>
                                                 <div>
-                                                    <p className="text-sm font-medium">{plugin.name}</p>
-                                                    <p className="text-xs text-gray-500">v{plugin.version}</p>
+                                                    <p className="text-sm font-medium">{mod.name}</p>
+                                                    <p className="text-xs text-gray-500">v{mod.version}</p>
                                                 </div>
                                             </div>
                                             <M3Switch
-                                                checked={formPlugins.includes(plugin.id)}
-                                                onChange={() => isEditing && handleTogglePlugin(plugin.id)}
-                                                data-testid={`plugin-switch-${plugin.id}`}
+                                                checked={formPlugins.includes(mod.id)}
+                                                onChange={() => isEditing && handleTogglePlugin(mod.id)}
+                                                data-testid={`plugin-switch-${mod.id}`}
                                                 disabled={!isEditing}
                                             />
                                         </div>

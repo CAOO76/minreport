@@ -8,10 +8,19 @@ export default {
     theme: {
         extend: {
             fontFamily: {
-                sans: ['"Atkinson Hyperlegible"', 'sans-serif'],
+                sans: ['"Atkinson Hyperlegible Next"', '"Atkinson Hyperlegible"', 'sans-serif'],
+                mono: ['"Atkinson Hyperlegible Mono"', 'ui-monospace', 'monospace'],
+            },
+            spacing: {
+                'fib-8': '8px',
+                'fib-13': '13px',
+                'fib-21': '21px',
+                'fib-34': '34px',
+                'fib-55': '55px',
+                'fib-89': '89px',
             },
             colors: {
-                // Paleta Antigravity (Google) - Consistente con web
+                // Paleta Oficial MINREPORT
                 antigravity: {
                     light: {
                         bg: '#FAFAFA',
@@ -33,7 +42,6 @@ export default {
             boxShadow: {
                 DEFAULT: 'none',
                 'none': 'none',
-                '3xl': '0 35px 60px -15px rgba(0, 0, 0, 0.3)',
             },
             borderRadius: {
                 'none': '0',

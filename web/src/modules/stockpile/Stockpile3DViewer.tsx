@@ -1,5 +1,4 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { RotateCw, ZoomIn, ZoomOut } from 'lucide-react';
 
 interface Stockpile3DViewerProps {
     stockpileTag: string;
@@ -94,7 +93,7 @@ export const Stockpile3DViewer: React.FC<Stockpile3DViewerProps> = ({
 
             // Dibujar meridianos / líneas estructurales
             if (viewMode === 'WIREFRAME') {
-                ctx.strokeStyle = 'rgba(255, 205, 0, 0.35)'; // Amarillo CABISEG sutil
+                ctx.strokeStyle = 'rgba(198, 131, 70, 0.45)'; // Cobre Industrial MINREPORT
                 for (let s = 0; s < segments; s += 4) {
                     const angle = (s / segments) * Math.PI * 2 + radY;
                     ctx.beginPath();
@@ -112,7 +111,7 @@ export const Stockpile3DViewer: React.FC<Stockpile3DViewerProps> = ({
             }
 
             // Vértice superior (Cresta del acopio)
-            ctx.fillStyle = '#FFCD00';
+            ctx.fillStyle = '#C68346';
             ctx.beginPath();
             ctx.arc(cx, cy - maxHeight * Math.cos(radX), 3, 0, Math.PI * 2);
             ctx.fill();
@@ -169,8 +168,12 @@ export const Stockpile3DViewer: React.FC<Stockpile3DViewerProps> = ({
                         </button>
                     ))}
                     {onClose && (
-                        <button onClick={onClose} className="text-[#8A93A6] hover:text-white ml-2 text-xs">
-                            Cerrar
+                        <button 
+                            onClick={onClose} 
+                            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-white transition-colors cursor-pointer flex items-center"
+                            title="Cerrar visor"
+                        >
+                            <span className="material-symbols-outlined text-[16px]">close</span>
                         </button>
                     )}
                 </div>
@@ -197,31 +200,31 @@ export const Stockpile3DViewer: React.FC<Stockpile3DViewerProps> = ({
                 <div className="absolute top-3 left-3 space-y-1 font-mono text-[9px] pointer-events-none bg-black/70 p-2 border border-white/5">
                     <p className="text-[#8A93A6]">VOLUMEN: <span className="text-white font-bold">{volumeM3.toLocaleString('es-CL')} m³</span></p>
                     <p className="text-[#8A93A6]">DENSIDAD: <span className="text-[#00AEEF] font-bold">{density} t/m³</span></p>
-                    <p className="text-[#8A93A6]">MASA EST.: <span className="text-[#FFCD00] font-bold">{(volumeM3 * density).toLocaleString('es-CL', { maximumFractionDigits: 1 })} Ton</span></p>
+                    <p className="text-[#8A93A6]">MASA EST.: <span className="text-[#C68346] font-bold">{(volumeM3 * density).toLocaleString('es-CL', { maximumFractionDigits: 1 })} Ton</span></p>
                 </div>
 
                 {/* Controles de Vista */}
                 <div className="absolute bottom-3 right-3 flex items-center gap-1 bg-black/80 p-1 border border-white/10">
                     <button
                         onClick={() => setZoom(prev => Math.min(1.8, prev + 0.15))}
-                        className="p-1 text-[#8A93A6] hover:text-white"
+                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-white transition-colors cursor-pointer flex items-center"
                         title="Acercar"
                     >
-                        <ZoomIn size={14} />
+                        <span className="material-symbols-outlined text-[16px]">zoom_in</span>
                     </button>
                     <button
                         onClick={() => setZoom(prev => Math.max(0.6, prev - 0.15))}
-                        className="p-1 text-[#8A93A6] hover:text-white"
+                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-white transition-colors cursor-pointer flex items-center"
                         title="Alejar"
                     >
-                        <ZoomOut size={14} />
+                        <span className="material-symbols-outlined text-[16px]">zoom_out</span>
                     </button>
                     <button
                         onClick={() => setRotation({ x: 35, y: 45 })}
-                        className="p-1 text-[#8A93A6] hover:text-white"
+                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-white transition-colors cursor-pointer flex items-center"
                         title="Restablecer rotación"
                     >
-                        <RotateCw size={14} />
+                        <span className="material-symbols-outlined text-[16px]">sync</span>
                     </button>
                 </div>
             </div>

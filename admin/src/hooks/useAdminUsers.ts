@@ -5,10 +5,7 @@ import {
     getDocs,
     updateDoc,
     addDoc,
-    query,
-    where,
-    serverTimestamp,
-    DocumentData
+    serverTimestamp
 } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
 import { UserProfile, UserStatus } from '../types/admin';

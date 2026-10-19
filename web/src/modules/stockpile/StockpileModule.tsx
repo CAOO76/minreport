@@ -1,10 +1,18 @@
-import { Stockpile3DViewer } from './Stockpile3DViewer';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
 import { offlineStorage, StockpileSurveyRecord } from '../../core/offline/OfflineStorage';
 import { syncQueueEngine } from '../../core/offline/SyncQueueEngine';
 import { Layers, Scan, ArrowUpRight, AlertCircle, Calculator, X, Check } from 'lucide-react';
 import { calculationEngine, StockpileCalculationInput } from './calculation-engine';
+
+const Stockpile3DViewer = lazy(() => import('./Stockpile3DViewer'));
+
+const Stockpile3DFallback: React.FC = () => (
+    <div className="bg-[#030406] border border-[#12151C] p-8 text-center text-[#8A93A6] font-mono text-xs flex flex-col items-center justify-center h-64 gap-2">
+        <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
+        <span className="text-[10px] uppercase tracking-wider">Iniciando Gemelo Digital 3D (Capa 2)...</span>
+    </div>
+);
 
 interface StockpileRecord {
     id: string;
@@ -174,14 +182,16 @@ export const StockpileModule: React.FC = () => {
 
             {/* [CAPA 2 & 3D-DIGITAL-TWIN] Gemelo Digital Topográfico Activo */}
             {active3DStk && (
-                <Stockpile3DViewer
-                    stockpileTag={active3DStk.tag}
-                    material={active3DStk.material}
-                    volumeM3={active3DStk.volumeM3}
-                    density={active3DStk.density}
-                    shape={active3DStk.shape}
-                    onClose={() => setActive3DStk(null)}
-                />
+                <Suspense fallback={<Stockpile3DFallback />}>
+                    <Stockpile3DViewer
+                        stockpileTag={active3DStk.tag}
+                        material={active3DStk.material}
+                        volumeM3={active3DStk.volumeM3}
+                        density={active3DStk.density}
+                        shape={active3DStk.shape}
+                        onClose={() => setActive3DStk(null)}
+                    />
+                </Suspense>
             )}
 
             {/* Modal de Cubicación Manual / Asistida */}
@@ -430,7 +440,7 @@ export const StockpileModule: React.FC = () => {
                                     <div className="flex items-center justify-center gap-2">
                                         <button 
                                             onClick={() => setActive3DStk(stk)}
-                                            className="text-[#FFCD00] hover:underline text-[10px] font-bold uppercase tracking-wider font-mono cursor-pointer"
+                                            className="text-[#C68346] hover:underline text-[10px] font-bold uppercase tracking-wider font-mono cursor-pointer"
                                         >
                                             3D
                                         </button>

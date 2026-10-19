@@ -8,7 +8,7 @@
     "dev:mobile": "bash scripts/dev-mobile.sh",
     "clean:android": "bash scripts/clean-android.sh",
     "build:apk": "bash scripts/build-apk.sh",
-    "build": "vite build",
+    "build": "BROWSERSLIST_IGNORE_OLD_DATA=true vite build",
     "preview": "vite preview --host",
     "android": "npx cap run android -l",
     "cap:sync": "npx cap sync",
@@ -16,8 +16,7 @@
     "assets:generate": "npx @capacitor/assets generate --android --assetPath assets",
     "test": "vitest",
     "test:ui": "vitest --ui",
-    "test:coverage": "vitest run --coverage",
-    "prebuild": "bash scripts/copy-sdk.sh"
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.1",

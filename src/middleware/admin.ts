@@ -14,22 +14,15 @@ export const requireSuperAdmin = async (req: AuthRequest, res: Response, next: N
         }
 
         const token = authHeader.split('Bearer ')[1];
-
-        // MASTER TOKEN CHECK
-        if (token === 'master-admin-access-token') {
-            console.log('[SECURITY] Master Token accepted');
-            return next();
-        }
-
         const decodedToken = await auth.verifyIdToken(token);
 
-        // Logic: Allow if user has admin claim OR email matches SUPER_ADMIN_EMAIL
-        const isSuperAdmin = decodedToken.email === env.SUPER_ADMIN_EMAIL;
-        const hasAdminClaim = decodedToken.admin === true;
+        // Logic: Allow if user has admin claim OR email matches SUPER_ADMIN_EMAIL or DEV_ROOT
+        const isSuperAdmin = decodedToken.email === env.SUPER_ADMIN_EMAIL || decodedToken.email === 'dev@minreport.com';
+        const hasAdminClaim = decodedToken.role === 'SUPER_ADMIN' || decodedToken.role === 'DEV_ROOT' || decodedToken.admin === true || decodedToken.isMasterDev === true;
 
         if (!isSuperAdmin && !hasAdminClaim) {
             console.warn(`[SECURITY] Unauthorized admin access attempt: ${decodedToken.email}`);
-            console.log(`[SECURITY] Expected: ${env.SUPER_ADMIN_EMAIL}, Got: ${decodedToken.email}`);
+            console.log(`[SECURITY] Expected: ${env.SUPER_ADMIN_EMAIL} or dev@minreport.com, Got: ${decodedToken.email}`);
             return res.status(403).json({ error: 'Forbidden: Admin access only' });
         }
 

@@ -6,6 +6,8 @@ import { useTranslation } from 'react-i18next';
 import { ThemeSwitch } from '../components/ThemeSwitch';
 import { LanguageSwitch } from '../components/LanguageSwitch';
 import { BrandLogo } from '../components/BrandLogo';
+import { auth } from '../config/firebase';
+import { signInWithCustomToken } from 'firebase/auth';
 
 export const Login = () => {
     const { t } = useTranslation();
@@ -40,8 +42,6 @@ export const Login = () => {
             localStorage.setItem('admin_user', JSON.stringify(data.user));
 
             if (data.firebaseToken) {
-                const { auth } = await import('../config/firebase');
-                const { signInWithCustomToken } = await import('firebase/auth');
                 await signInWithCustomToken(auth, data.firebaseToken);
             }
 
@@ -80,7 +80,7 @@ export const Login = () => {
                     <div className="h-[1px] w-8" style={{ backgroundColor: 'rgb(198, 131, 70)' }}></div>
                 </div>
 
-                <div className="elite-tech-surface py-12 px-10 shadow-3xl animate-in fade-in zoom-in-95 duration-700 delay-100 relative rounded-none overflow-hidden border-white/10">
+                <div className="elite-tech-surface py-12 px-10 shadow-none animate-in fade-in zoom-in-95 duration-700 delay-100 relative rounded-none overflow-hidden border border-black/10 dark:border-white/10">
                     {/* Interior Grid Layer */}
                     <div className="absolute inset-0 technical-grid opacity-20 pointer-events-none"></div>
                     <div className="absolute top-0 right-0 p-4 opacity-10">
@@ -90,7 +90,7 @@ export const Login = () => {
                     <form onSubmit={handleSubmit} className="space-y-10 relative z-10" autoComplete="off">
                         <div className="space-y-3">
                             <div className="flex justify-between items-end px-1">
-                                <span className="material-symbols-rounded text-black/40 dark:text-white/40 mb-1">alternate_email</span>
+                                <span className="material-symbols-outlined text-black/40 dark:text-white/40 mb-1">alternate_email</span>
                                 <span className="text-[10px] font-mono text-black/20 dark:text-white/20">[01]</span>
                             </div>
                             <input
@@ -109,7 +109,7 @@ export const Login = () => {
 
                         <div className="space-y-3">
                             <div className="flex justify-between items-end px-1">
-                                <span className="material-symbols-rounded text-black/40 dark:text-white/40 mb-1">key</span>
+                                <span className="material-symbols-outlined text-black/40 dark:text-white/40 mb-1">key</span>
                                 <span className="text-[10px] font-mono text-black/20 dark:text-white/20">[02]</span>
                             </div>
                             <div className="relative">
@@ -136,7 +136,7 @@ export const Login = () => {
 
                         {error && (
                             <div className="p-4 rounded-none bg-rose-500/10 text-rose-400 text-[10px] font-mono font-bold flex items-center gap-3 border border-rose-500/30 animate-in fade-in slide-in-from-bottom-2">
-                                <span className="material-symbols-rounded text-base">error</span>
+                                <span className="material-symbols-outlined text-base">error</span>
                                 <span className="uppercase tracking-tight">{error}</span>
                             </div>
                         )}
@@ -144,7 +144,7 @@ export const Login = () => {
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full py-6 px-8 rounded-none bg-black dark:bg-white text-white dark:text-black font-black uppercase tracking-[0.3em] text-[12px] transition-all flex items-center justify-center shadow-3xl active:scale-[0.98] disabled:opacity-30"
+                            className="w-full py-6 px-8 rounded-none bg-black dark:bg-white text-white dark:text-black font-black uppercase tracking-[0.3em] text-[12px] transition-all flex items-center justify-center shadow-none active:scale-[0.98] disabled:opacity-30 cursor-pointer"
                         >
                             {loading ? (
                                 <div className="w-6 h-6 border-2 border-black/20 dark:border-white/20 border-t-black dark:border-t-white rounded-full animate-spin" />

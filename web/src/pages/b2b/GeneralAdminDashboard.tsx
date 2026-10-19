@@ -144,14 +144,14 @@ export const GeneralAdminDashboard = () => {
                     </div>
                 </div>
 
-                {/* Plugin Manager Sidebar */}
+                {/* Module Manager Sidebar */}
                 <div className="lg:col-span-1">
                     {selectedUserId ? (
                         <StaffManager userId={selectedUserId} userName={staff.find(s => s.id === selectedUserId)?.lastName || ''} />
                     ) : (
                         <div className="border border-dashed border-gray-300 dark:border-gray-700 h-full min-h-[400px] flex flex-col items-center justify-center p-8 text-center bg-gray-50/50 dark:bg-[#1F2937]/50 rounded-none">
                             <span className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-2">Permisos de Módulo</span>
-                            <p className="text-sm text-gray-500">Seleccione un colaborador en la tabla de Gestión de Personal para configurar los plugins a los que tiene acceso en la mina.</p>
+                            <p className="text-sm text-gray-500">Seleccione un colaborador en la tabla de Gestión de Personal para configurar los módulos operacionales a los que tiene acceso en la mina.</p>
                         </div>
                     )}
                 </div>

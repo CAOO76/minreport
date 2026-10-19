@@ -24,7 +24,7 @@ export const ThemeSwitch = () => {
             className="p-2 rounded-none text-slate-500 hover:text-antigravity-accent transition-colors"
             aria-label="Toggle Theme"
         >
-            <span className="material-symbols-rounded text-xl block">
+            <span className="material-symbols-outlined text-xl block">
                 {theme === 'light' ? 'light_mode' : 'dark_mode'}
             </span>
         </button>

@@ -91,7 +91,7 @@ export const Register = () => {
     };
 
     return (
-        <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#030406] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col font-sans transition-colors selection:bg-[#FFCD00] selection:text-black">
+        <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#030406] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col font-sans transition-colors selection:bg-[#C68346] selection:text-white">
             {/* Header Técnico */}
             <header className="w-full border-b border-black/5 dark:border-white/5 py-4 px-6 lg:px-12 flex justify-between items-center bg-white/70 dark:bg-[#07090D]/80 backdrop-blur-md sticky top-0 z-30">
                 <div className="flex items-center gap-4">
@@ -111,8 +111,8 @@ export const Register = () => {
                 
                 {/* Panel Hero Informativo (Área ~ 38.2% en Desktop) */}
                 <div className="lg:col-span-5 space-y-6 lg:sticky lg:top-24">
-                    <div className="p-8 bg-white dark:bg-[#07090D] border border-black/5 dark:border-white/10 space-y-6 shadow-sm">
-                        <div className="inline-flex items-center gap-2 text-[#C68346] dark:text-[#FFCD00] text-[11px] font-bold uppercase tracking-[0.2em]">
+                    <div className="p-8 bg-white dark:bg-[#07090D] border border-black/5 dark:border-white/10 space-y-6">
+                        <div className="inline-flex items-center gap-2 text-[#C68346] text-[11px] font-bold uppercase tracking-[0.2em]">
                             <Scale size={16} />
                             <span>CONTRATACIÓN B2B LEGAL</span>
                         </div>
@@ -185,7 +185,7 @@ export const Register = () => {
                                 Su espacio de trabajo ha sido aprovisionado. Redirigiendo al portal de inicio de sesión para acceder a su consola de administración...
                             </p>
                             <div className="pt-4">
-                                <Loader2 className="animate-spin mx-auto text-[#FFCD00]" size={20} />
+                                <Loader2 className="animate-spin mx-auto text-[#C68346]" size={20} />
                             </div>
                         </div>
                     ) : (
@@ -201,7 +201,7 @@ export const Register = () => {
                             {/* SECCIÓN 1: IDENTIFICACIÓN DE LA PERSONA JURÍDICA */}
                             <div className="space-y-4">
                                 <div className="flex items-center gap-2 border-b border-black/5 dark:border-white/10 pb-2">
-                                    <Building2 size={16} className="text-[#C68346] dark:text-[#FFCD00]" />
+                                    <Building2 size={16} className="text-[#C68346]" />
                                     <h2 className="text-xs font-bold uppercase tracking-[0.15em] text-[#0F172A] dark:text-[#F3F4F6]">
                                         1. Datos de la Persona Jurídica (Empresa)
                                     </h2>
@@ -219,7 +219,7 @@ export const Register = () => {
                                             onChange={handleChange}
                                             placeholder="Ej. Minera Los Pelambres SpA"
                                             required
-                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#FFCD00] transition-colors rounded-none"
+                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#C68346] transition-colors rounded-none"
                                         />
                                     </div>
 
@@ -234,7 +234,7 @@ export const Register = () => {
                                             onChange={handleChange}
                                             placeholder="76.123.456-7"
                                             required
-                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs font-mono text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#FFCD00] transition-colors rounded-none"
+                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs font-mono text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#C68346] transition-colors rounded-none"
                                         />
                                     </div>
 
@@ -249,7 +249,7 @@ export const Register = () => {
                                             onChange={handleChange}
                                             placeholder="dte@empresa.cl"
                                             required
-                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#FFCD00] transition-colors rounded-none"
+                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#C68346] transition-colors rounded-none"
                                         />
                                     </div>
 
@@ -264,7 +264,7 @@ export const Register = () => {
                                             onChange={handleChange}
                                             placeholder="Av. Andrés Bello 2711, Piso 18"
                                             required
-                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#FFCD00] transition-colors rounded-none"
+                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#C68346] transition-colors rounded-none"
                                         />
                                     </div>
 
@@ -279,7 +279,7 @@ export const Register = () => {
                                             onChange={handleChange}
                                             placeholder="Las Condes"
                                             required
-                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#FFCD00] transition-colors rounded-none"
+                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#C68346] transition-colors rounded-none"
                                         />
                                     </div>
 
@@ -294,7 +294,7 @@ export const Register = () => {
                                             onChange={handleChange}
                                             placeholder="Región Metropolitana"
                                             required
-                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#FFCD00] transition-colors rounded-none"
+                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#C68346] transition-colors rounded-none"
                                         />
                                     </div>
                                 </div>
@@ -303,7 +303,7 @@ export const Register = () => {
                             {/* SECCIÓN 2: IDENTIFICACIÓN DEL MANDATARIO TITULAR */}
                             <div className="space-y-4">
                                 <div className="flex items-center gap-2 border-b border-black/5 dark:border-white/10 pb-2">
-                                    <UserCheck size={16} className="text-[#C68346] dark:text-[#FFCD00]" />
+                                    <UserCheck size={16} className="text-[#C68346]" />
                                     <h2 className="text-xs font-bold uppercase tracking-[0.15em] text-[#0F172A] dark:text-[#F3F4F6]">
                                         2. Mandatario y Administrador de Cuenta Titular
                                     </h2>
@@ -321,7 +321,7 @@ export const Register = () => {
                                             onChange={handleChange}
                                             placeholder="Nombre y Apellidos"
                                             required
-                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#FFCD00] transition-colors rounded-none"
+                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#C68346] transition-colors rounded-none"
                                         />
                                     </div>
 
@@ -336,7 +336,7 @@ export const Register = () => {
                                             onChange={handleChange}
                                             placeholder="12.345.678-9"
                                             required
-                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs font-mono text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#FFCD00] transition-colors rounded-none"
+                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs font-mono text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#C68346] transition-colors rounded-none"
                                         />
                                     </div>
 
@@ -350,7 +350,7 @@ export const Register = () => {
                                             value={formData.jobTitle}
                                             onChange={handleChange}
                                             placeholder="Ej. Gerente de Operaciones / Abastecimiento"
-                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#FFCD00] transition-colors rounded-none"
+                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#C68346] transition-colors rounded-none"
                                         />
                                     </div>
 
@@ -365,7 +365,7 @@ export const Register = () => {
                                             onChange={handleChange}
                                             placeholder="mandatario@empresa.cl"
                                             required
-                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#FFCD00] transition-colors rounded-none"
+                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#C68346] transition-colors rounded-none"
                                         />
                                     </div>
 
@@ -381,7 +381,7 @@ export const Register = () => {
                                             placeholder="••••••••••••"
                                             required
                                             minLength={8}
-                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs font-mono text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#FFCD00] transition-colors rounded-none"
+                                            className="w-full bg-transparent border border-black/10 dark:border-white/15 px-3 py-2.5 text-xs font-mono text-[#0F172A] dark:text-[#F3F4F6] placeholder-black/20 dark:placeholder-white/20 focus:outline-none focus:border-[#C68346] dark:focus:border-[#C68346] transition-colors rounded-none"
                                         />
                                     </div>
                                 </div>
@@ -403,7 +403,7 @@ export const Register = () => {
                                         <button
                                             type="button"
                                             onClick={() => setShowTermsModal(true)}
-                                            className="text-[#C68346] dark:text-[#FFCD00] underline font-bold hover:opacity-80 inline-block"
+                                            className="text-[#C68346] underline font-bold hover:opacity-80 inline-block"
                                         >
                                             Términos de Servicio B2B
                                         </button>.
@@ -423,11 +423,11 @@ export const Register = () => {
                                 <button
                                     type="submit"
                                     disabled={loading}
-                                    className="w-full sm:w-auto px-8 py-3.5 bg-[#0F172A] hover:bg-black dark:bg-[#FFCD00] dark:hover:bg-[#E6B800] text-white dark:text-black font-bold uppercase tracking-[0.15em] text-xs transition-all flex items-center justify-center gap-3 disabled:opacity-50 cursor-pointer rounded-none"
+                                    className="w-full sm:w-auto px-8 py-3.5 bg-[#C68346] hover:bg-[#b3733a] text-white font-bold uppercase tracking-[0.15em] text-xs transition-all flex items-center justify-center gap-3 disabled:opacity-50 cursor-pointer rounded-none"
                                 >
                                     {loading ? (
                                         <>
-                                            <Loader2 size={16} className="animate-spin" />
+                                            <Loader2 size={16} className="animate-spin text-white" />
                                             <span>REGISTRANDO CUENTA...</span>
                                         </>
                                     ) : (
@@ -446,10 +446,10 @@ export const Register = () => {
             {/* Modal de Términos B2B y Ley 19.628 */}
             {showTermsModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-                    <div className="bg-white dark:bg-[#07090D] border border-black/10 dark:border-white/10 max-w-2xl w-full p-6 sm:p-8 space-y-4 max-h-[85vh] overflow-y-auto rounded-none shadow-2xl">
+                    <div className="bg-white dark:bg-[#07090D] border border-black/10 dark:border-white/10 max-w-2xl w-full p-6 sm:p-8 space-y-4 max-h-[85vh] overflow-y-auto rounded-none">
                         <div className="flex justify-between items-center border-b border-black/5 dark:border-white/10 pb-3">
                             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest">
-                                <FileText size={16} className="text-[#C68346] dark:text-[#FFCD00]" />
+                                <FileText size={16} className="text-[#C68346]" />
                                 <span>Términos B2B y Política de Privacidad (Ley 19.628)</span>
                             </div>
                             <button

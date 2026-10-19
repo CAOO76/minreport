@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useTheme } from '../context/ThemeContext';
 import { useBranding } from '../context/BrandingContext';
 
@@ -10,32 +10,80 @@ interface BrandLogoProps {
     forcedTheme?: 'light' | 'dark';
 }
 
-const BrandLogo: React.FC<BrandLogoProps> = ({ variant = 'imagotype', className, forcedTheme }) => {
+export const BrandLogo: React.FC<BrandLogoProps> = ({ variant = 'imagotype', className = '', forcedTheme }) => {
     const { theme: contextTheme } = useTheme();
-    const { branding, loading } = useBranding();
+    const { branding } = useBranding();
     const theme = forcedTheme || contextTheme;
 
-    // Activo maestro oficial local siempre disponible
     const officialLocalUrl = `/branding/master_${variant}.svg`;
-    const logoUrl = branding?.[theme]?.[variant] || officialLocalUrl;
+    const [imgSrc, setImgSrc] = useState<string>(officialLocalUrl);
+    const [hasError, setHasError] = useState<boolean>(false);
 
-    if (loading && !logoUrl) {
-        return <div className={`animate-pulse bg-white/5 border border-white/10 ${className || 'w-36 h-10'}`} />;
+    useEffect(() => {
+        const firestoreUrl = branding?.[theme]?.[variant];
+        if (firestoreUrl && firestoreUrl.trim() !== '' && !firestoreUrl.includes('localhost:9195')) {
+            setImgSrc(firestoreUrl);
+            setHasError(false);
+        } else {
+            setImgSrc(officialLocalUrl);
+            setHasError(false);
+        }
+    }, [branding, theme, variant, officialLocalUrl]);
+
+    // Fallback vectorial industrial puro si el activo falla en red o almacenamiento
+    if (hasError) {
+        if (variant === 'isotype') {
+            return (
+                <div className={`flex items-center justify-center select-none pointer-events-none ${className}`}>
+                    <svg viewBox="0 0 32 32" className="w-full h-full" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <polygon points="16,2 30,10 30,22 16,30 2,22 2,10" stroke="#C68346" strokeWidth="2" fill="none" />
+                        <line x1="16" y1="2" x2="16" y2="30" stroke="#C68346" strokeWidth="1.5" />
+                        <line x1="2" y1="10" x2="16" y2="18" stroke="#C68346" strokeWidth="1.5" />
+                        <line x1="30" y1="10" x2="16" y2="18" stroke="#C68346" strokeWidth="1.5" />
+                    </svg>
+                </div>
+            );
+        }
+        if (variant === 'logotype') {
+            return (
+                <div className={`flex items-center justify-center select-none pointer-events-none ${className}`}>
+                    <span className="font-sans font-bold tracking-[0.25em] text-[#0F172A] dark:text-[#F3F4F6] uppercase text-sm">
+                        MINREPORT
+                    </span>
+                </div>
+            );
+        }
+        return (
+            <div className={`flex items-center gap-3 select-none pointer-events-none ${className}`}>
+                <svg viewBox="0 0 32 32" className="h-8 w-8 shrink-0" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <polygon points="16,2 30,10 30,22 16,30 2,22 2,10" stroke="#C68346" strokeWidth="2" fill="none" />
+                    <line x1="16" y1="2" x2="16" y2="30" stroke="#C68346" strokeWidth="1.5" />
+                    <line x1="2" y1="10" x2="16" y2="18" stroke="#C68346" strokeWidth="1.5" />
+                    <line x1="30" y1="10" x2="16" y2="18" stroke="#C68346" strokeWidth="1.5" />
+                </svg>
+                <span className="font-sans font-bold tracking-[0.25em] text-[#0F172A] dark:text-[#F3F4F6] uppercase text-sm">
+                    MINREPORT
+                </span>
+            </div>
+        );
     }
-
-    // Invertir a blanco en tema oscuro para contraste WCAG AAA
-    const isDark = (forcedTheme === 'dark') || theme === 'dark';
 
     return (
         <img
-            src={logoUrl}
-            key={logoUrl}
+            src={imgSrc}
             alt={`MINREPORT ${variant}`}
             loading="eager"
-            className={`object-contain max-w-full max-h-full select-none transition-all duration-300 ${
-                isDark ? 'filter invert brightness-200 contrast-125' : ''
-            } ${className || ''}`}
+            onError={() => {
+                if (imgSrc !== officialLocalUrl) {
+                    setImgSrc(officialLocalUrl);
+                } else {
+                    setHasError(true);
+                }
+            }}
+            className={`object-contain select-none pointer-events-none dark:invert dark:brightness-200 dark:contrast-125 ${className}`}
             draggable={false}
+            onContextMenu={(e) => e.preventDefault()}
+            style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
         />
     );
 };

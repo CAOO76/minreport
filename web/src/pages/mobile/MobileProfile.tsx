@@ -1,11 +1,9 @@
-
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { signOut } from 'firebase/auth';
 import { auth } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
-import { LogOut, ShieldCheck, Mail, Building2, UserCircle, Sun, Moon } from 'lucide-react';
 
 const MobileProfile: React.FC = () => {
     const navigate = useNavigate();
@@ -21,7 +19,6 @@ const MobileProfile: React.FC = () => {
         }
     };
 
-    // Determinar etiqueta de rol para mostrar
     const getRoleLabel = () => {
         const type = currentAccount?.type;
         if (type === 'EDUCATIONAL') return 'Estudiante / Académico';
@@ -31,71 +28,74 @@ const MobileProfile: React.FC = () => {
     };
 
     return (
-        <div className="space-y-8 px-1 pt-4">
+        <div className="space-y-6 px-1 pt-4">
 
             {/* Avatar Section */}
-            <div className="flex flex-col items-center text-center relative pt-4">
+            <div className="flex flex-col items-center text-center relative pt-2 pb-4 border-b border-slate-200 dark:border-[#12151C]">
                 {/* Theme Toggle Button - Absolute Top Right */}
                 <button
                     onClick={toggleTheme}
-                    className="absolute right-2 top-0 p-2.5 rounded-full bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-zinc-700 transition-colors shadow-sm"
+                    className="absolute right-0 top-0 bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center rounded-none"
                     aria-label="Toggle Theme"
+                    title={theme === 'light' ? 'Activar modo oscuro' : 'Activar modo claro'}
                 >
-                    {theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}
+                    <span className="material-symbols-outlined text-[20px]">
+                        {theme === 'light' ? 'dark_mode' : 'light_mode'}
+                    </span>
                 </button>
 
-                <div className="w-24 h-24 rounded-full bg-gray-200 dark:bg-zinc-800 flex items-center justify-center mb-4 border-4 border-white dark:border-black shadow-lg">
+                <div className="w-20 h-20 rounded-none bg-[#C68346]/10 flex items-center justify-center mb-3 border border-[#C68346]/30 shadow-none">
                     {user?.photoURL ? (
-                        <img src={user.photoURL} alt="Profile" className="w-full h-full rounded-full object-cover" />
+                        <img src={user.photoURL} alt="Profile" className="w-full h-full rounded-none object-cover" />
                     ) : (
-                        <UserCircle size={64} className="text-gray-400 dark:text-gray-500" />
+                        <span className="material-symbols-outlined text-[40px] text-[#C68346]">person</span>
                     )}
                 </div>
-                <h1 className="text-2xl font-bold text-gray-900 dark:text-white font-atkinson">
+                <h1 className="text-lg font-bold uppercase tracking-tight text-slate-900 dark:text-[#F3F4F6]">
                     {user?.displayName || 'Usuario'}
                 </h1>
-                <div className="flex items-center gap-2 mt-2 px-3 py-1 bg-indigo-50 dark:bg-indigo-900/30 rounded-full">
-                    <ShieldCheck size={14} className="text-indigo-600 dark:text-indigo-400" />
-                    <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wide font-atkinson">
+                <div className="flex items-center gap-1.5 mt-2 px-2.5 py-1 bg-[#C68346]/10 border border-[#C68346]/20 rounded-none">
+                    <span className="material-symbols-outlined text-[#C68346] text-[14px]">verified_user</span>
+                    <span className="text-[10px] font-bold text-[#C68346] uppercase tracking-wider font-mono">
                         {getRoleLabel()}
                     </span>
                 </div>
             </div>
 
             {/* Info Cards (Read Only) */}
-            <div className="space-y-4">
-                <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-zinc-800 flex items-center gap-4">
-                    <div className="p-3 bg-gray-50 dark:bg-zinc-800 rounded-xl">
-                        <Mail size={20} className="text-gray-500 dark:text-gray-400" />
+            <div className="space-y-3">
+                <div className="bg-[#F8FAFC] dark:bg-[#07090D] p-3.5 rounded-none shadow-none border border-slate-200 dark:border-[#12151C] flex items-center gap-3">
+                    <div className="p-2 bg-white dark:bg-[#030406] border border-slate-200 dark:border-[#12151C] rounded-none">
+                        <span className="material-symbols-outlined text-slate-500 dark:text-[#8A93A6] text-[18px]">mail</span>
                     </div>
-                    <div>
-                        <p className="text-xs text-gray-500 dark:text-gray-500 uppercase font-bold">Correo Electrónico</p>
-                        <p className="text-sm font-medium text-gray-900 dark:text-white">{user?.email}</p>
+                    <div className="min-w-0 flex-1">
+                        <p className="text-[10px] text-slate-500 dark:text-[#8A93A6] uppercase font-bold tracking-wider font-mono">Correo Electrónico</p>
+                        <p className="text-xs font-mono text-slate-900 dark:text-[#F3F4F6] truncate mt-0.5">{user?.email}</p>
                     </div>
                 </div>
 
-                <div className="bg-white dark:bg-zinc-900 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-zinc-800 flex items-center gap-4">
-                    <div className="p-3 bg-gray-50 dark:bg-zinc-800 rounded-xl">
-                        <Building2 size={20} className="text-gray-500 dark:text-gray-400" />
+                <div className="bg-[#F8FAFC] dark:bg-[#07090D] p-3.5 rounded-none shadow-none border border-slate-200 dark:border-[#12151C] flex items-center gap-3">
+                    <div className="p-2 bg-white dark:bg-[#030406] border border-slate-200 dark:border-[#12151C] rounded-none">
+                        <span className="material-symbols-outlined text-slate-500 dark:text-[#8A93A6] text-[18px]">corporate_fare</span>
                     </div>
-                    <div>
-                        <p className="text-xs text-gray-500 dark:text-gray-500 uppercase font-bold">Organización</p>
-                        <p className="text-sm font-medium text-gray-900 dark:text-white">{currentAccount?.name || 'N/A'}</p>
+                    <div className="min-w-0 flex-1">
+                        <p className="text-[10px] text-slate-500 dark:text-[#8A93A6] uppercase font-bold tracking-wider font-mono">Organización</p>
+                        <p className="text-xs font-mono text-slate-900 dark:text-[#F3F4F6] truncate mt-0.5">{currentAccount?.name || 'N/A'}</p>
                     </div>
                 </div>
             </div>
 
             {/* Danger Zone */}
-            <div className="pt-8 pb-8">
+            <div className="pt-4 pb-8 space-y-3">
                 <button
                     onClick={handleLogout}
-                    className="w-full py-4 rounded-2xl border-2 border-red-100 dark:border-red-900/30 text-red-600 dark:text-red-500 font-bold text-lg hover:bg-red-50 dark:hover:bg-red-900/10 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+                    className="w-full py-3 rounded-none border border-rose-500/30 text-rose-500 font-bold text-xs uppercase tracking-wider hover:bg-rose-500/10 active:scale-[0.99] transition-colors flex items-center justify-center gap-2 cursor-pointer bg-transparent"
                 >
-                    <LogOut size={20} />
+                    <span className="material-symbols-outlined text-[16px]">logout</span>
                     Cerrar Sesión
                 </button>
-                <p className="text-center text-xs text-gray-400 mt-4">
-                    MinReport Mobile v1.0.0 (Build 240)
+                <p className="text-center text-[10px] text-slate-400 dark:text-[#5A6072] font-mono">
+                    MINREPORT Mobile v1.0.0
                 </p>
             </div>
         </div>

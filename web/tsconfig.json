@@ -23,22 +23,10 @@
         "noFallthroughCasesInSwitch": true,
         "types": [
             "vite/client"
-        ],
-        "baseUrl": ".",
-        "paths": {
-            "@minreport/sdk": [
-                "src/sdk-bundle/index.ts"
-            ],
-            "@minreport/*": [
-                "../_plugins/*/src/plugin.ts"
-            ]
-        }
+        ]
     },
     "include": [
         "src"
-    ],
-    "exclude": [
-        "../sdk"
     ],
     "references": [
         {

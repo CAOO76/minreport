@@ -11,44 +11,60 @@ service cloud.firestore {
         );
     }
 
+    // Helper: Verify if user is DEV_ROOT
+    function isDevRoot() {
+      return request.auth != null && 
+        (
+          request.auth.token.role == 'DEV_ROOT' ||
+          request.auth.token.isMasterDev == true ||
+          request.auth.token.email == 'dev@minreport.com' ||
+          request.auth.uid == 'dev-master-root-uid'
+        );
+    }
+
     // Helper: Check if user belongs to an account
     function isAccountMember(accountId) {
       return request.auth != null && (
         isSuperAdmin() ||
+        isDevRoot() ||
         request.auth.token.activeAccountId == accountId ||
         get(/databases/$(database)/documents/accounts/$(accountId)).data.ownerId == request.auth.uid
       );
     }
 
-    // SEGURIDAD BANCARIA: Prohibida lectura pública de RUTs
-    // Solo usuarios autenticados autorizados o Super Admins pueden consultar
+    // SEGURIDAD BANCARIA: Directorio de identificación RUT
     match /user_directory/{run} {
       allow read: if request.auth != null;
-      allow write: if isSuperAdmin();
+      allow write: if isSuperAdmin() || isDevRoot();
     }
 
-    // Perfiles de usuario (Lectura restringida al propio UID)
+    // Perfiles de usuario
     match /users/{userId} {
-      allow read, write: if isSuperAdmin();
+      // Blindaje de cuenta maestra DEV
+      allow read, write: if userId == 'dev-master-root-uid' ? isDevRoot() : (isSuperAdmin() || isDevRoot());
       allow read: if request.auth != null && request.auth.uid == userId;
       allow list: if request.auth != null && request.query.limit != null && request.query.limit <= 1;
       allow update: if request.auth != null && request.auth.uid == userId && 
                     request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActiveAccountId', 'memberships', 'notificationsSettings']);
-      allow delete: if isSuperAdmin();
+      // Prohibición absoluta de purga para cuentas protegidas de sistema
+      allow delete: if isSuperAdmin() && userId != 'dev-master-root-uid' && userId != 'super-admin-uid';
     }
 
-    // CUENTAS Y ESPACIOS DE TRABAJO TITULARES B2B
+    // CUENTAS Y ESPACIOS DE TRABAJO TITULARES (Web 3.0)
     match /accounts/{accountId} {
       allow get: if isAccountMember(accountId);
       allow list: if request.auth != null && (
         isSuperAdmin() || 
+        isDevRoot() ||
         resource.data.ownerId == request.auth.uid ||
         (resource.data.primaryOperator != null && resource.data.primaryOperator.email == request.auth.token.email)
       );
-      allow create: if request.auth != null; // Creado por registro titular B2B
-      allow delete: if isSuperAdmin();
+      allow create: if request.auth != null;
+      // Prohibido eliminar el sandbox maestro DEV
+      allow delete: if isSuperAdmin() && accountId != 'dev-master-sandbox';
       allow update: if request.auth != null && (
         isSuperAdmin() ||
+        isDevRoot() ||
         (resource.data.ownerId == request.auth.uid) ||
         (request.auth.token.activeAccountId == accountId)
       );
@@ -60,15 +76,21 @@ service cloud.firestore {
 
       // Subcolección: Miembros Internos
       match /members/{memberId} {
+        // En cuentas EDU, prohibido agregar más miembros si la cuenta tiene allowInternalUsers == false
         allow read, write: if isAccountMember(accountId);
       }
+    }
+
+    // [DEV_ROOT] REGISTRO SEGREGADO DE CUENTAS TEST-PILOT (Colaboradores)
+    match /test_pilots/{pilotId} {
+      allow read, write: if isDevRoot() || isSuperAdmin();
     }
 
     // [CAPA 3] AUDIT LEDGER INMUTABLE (Append-Only)
     match /audit_ledger/{logId} {
       allow create: if request.auth != null;
       allow read: if request.auth != null && isAccountMember(resource.data.tenantId);
-      allow update, delete: if false; // Prohibida cualquier modificación (Inmutable)
+      allow update, delete: if false; // Inmutable
     }
 
     // [OPERMAQ] Flota y Pautas de Inspección DS 132
@@ -76,7 +98,6 @@ service cloud.firestore {
       allow read: if request.auth != null;
       allow write: if request.auth != null && isAccountMember(request.resource.data.tenantId);
     }
-    // [OPERMAQ] Inspecciones de Flota
     match /inspections/{inspectionId} {
       allow read, write: if request.auth != null;
     }
@@ -105,13 +126,13 @@ service cloud.firestore {
       allow write: if isSuperAdmin();
     }
 
-    // Solicitudes Educacionales (Edu Gatekeeper)
+    // Solicitudes y Tenants
     match /tenants/{tenantId} {
-      allow read, write: if isSuperAdmin();
+      allow read, write: if isSuperAdmin() || isDevRoot();
       allow create: if request.auth != null;
     }
     match /edu_whitelists/{docId} {
-      allow read, write: if isSuperAdmin();
+      allow read, write: if isSuperAdmin() || isDevRoot();
     }
 
     // Mensajería y Notificaciones

@@ -1,366 +1,181 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { signInWithCustomToken, signOut } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { auth, db } from '../../config/firebase';
-import { formatRut } from '../../utils/rut';
-import {
-    Eye,
-    EyeOff,
-    Loader2,
-    AlertTriangle,
-    ArrowRight,
-    ArrowLeft,
-    ChevronRight,
-    Lock
-} from 'lucide-react';
-import { getApiUrl } from '../../utils/network';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { auth } from '../../config/firebase';
 import { LanguageSwitch } from '../../components/LanguageSwitch';
 import { ThemeSwitch } from '../../components/ThemeSwitch';
+import BrandLogo from '../../components/BrandLogo';
 
-type LoginStep = 'IDENTIFICATION' | 'ACCOUNT_SELECTION' | 'CHALLENGE';
-type AccountType = 'B2B' | 'EDU' | 'PERSONAL';
-
-interface DetectedAccount {
-    id: string;
-    name: string;
-    type: AccountType;
-    authEmail: string; // [FIX] Required for challenge
-}
-
-const MobileLogin: React.FC = () => {
+export const MobileLogin: React.FC = () => {
     const navigate = useNavigate();
 
-    // Estados del Flujo
-    const [step, setStep] = useState<LoginStep>('IDENTIFICATION');
-    const [taxId, setTaxId] = useState('');
+    // Estados de Formulario
+    const [identifier, setIdentifier] = useState(''); // Email o RUT
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // Data State
-    const [detectedAccounts, setDetectedAccounts] = useState<DetectedAccount[]>([]);
-    const [selectedAccount, setSelectedAccount] = useState<DetectedAccount | null>(null);
-
-    // Reset on error/backtrack
-    const handleBack = () => {
-        if (step === 'ACCOUNT_SELECTION') setStep('IDENTIFICATION');
-        if (step === 'CHALLENGE') setStep('ACCOUNT_SELECTION');
-        setError(null);
+    const resolveApiUrl = (endpoint: string) => {
+        const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+        return `http://${host}:8080${endpoint}`;
     };
 
-    // 1. Detección de Cuentas (ID-Céntrico)
-    const handleIdentificationSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!taxId.trim()) return;
-
-        setLoading(true);
-        setError(null);
-
-        try {
-            const response = await fetch(getApiUrl(`/api/public/accounts-by-id/${taxId}`));
-
-            if (!response.ok) {
-                const data = await response.json();
-                setError(data.message || 'ID no encontrado en el sistema.');
-                setLoading(false);
-                return;
-            }
-
-            const data = await response.json();
-
-            if (data.accounts.length === 0) {
-                setError('Este RUT no tiene cuentas asociadas.');
-                setLoading(false);
-                return;
-            }
-
-            // Mapear y Deduplicar por accountId (evitar duplicados por múltiples roles)
-            const accountMap = new Map();
-            data.accounts.forEach((acc: any) => {
-                if (!accountMap.has(acc.accountId)) {
-                    accountMap.set(acc.accountId, {
-                        id: acc.accountId,
-                        name: acc.accountName,
-                        type: acc.type,
-                        authEmail: acc.authEmail // [FIX] Store for challenge
-                    });
-                }
-            });
-
-            setDetectedAccounts(Array.from(accountMap.values()));
-            setStep('ACCOUNT_SELECTION');
-
-        } catch (err: any) {
-            console.error('Error detecting accounts:', err);
-            setError(`Error de conexión. Verifica que tu servidor esté activo.`);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    // 2. Selección de Cuenta
-    const handleAccountSelect = (account: DetectedAccount) => {
-        setSelectedAccount(account);
-        setStep('CHALLENGE');
-        setPassword('');
-        setError(null);
-    };
-
-    // 3. Desafío de Login (Tunnel)
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!taxId || !password || !selectedAccount) return;
-
-        setLoading(true);
         setError(null);
+        setLoading(true);
+
+        const cleanInput = identifier.trim().toLowerCase();
+
+        // [DEV_ROOT SHIELD] Bloqueo de cuenta maestra en terminal móvil
+        if (cleanInput === 'dev@minreport.com') {
+            setLoading(false);
+            setError('Credenciales corporativas inválidas o tipo de cuenta no autorizada en terminal móvil.');
+            return;
+        }
 
         try {
-            // A. Desafío Túnel
-            const response = await fetch(getApiUrl('/api/auth/tunnel/challenge'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    taxId,
-                    accountId: selectedAccount.id,
-                    authEmail: selectedAccount.authEmail, // [FIX] Critical parameter
-                    password
-                })
-            });
+            let targetEmail = cleanInput;
 
-            const data = await response.json();
-
-            if (!response.ok) {
-                setError(data.error || 'Credenciales inválidas.');
-                setLoading(false);
-                return;
-            }
-
-            // B. Autenticación Firebase (Token Personalizado)
-            const userCredential = await signInWithCustomToken(auth, data.firebaseToken);
-            const user = userCredential.user;
-
-            // C. Gatekeeper B2B Admin (Safety Check)
-            const accountRef = doc(db, 'accounts', selectedAccount.id);
-            const accountSnap = await getDoc(accountRef);
-
-            if (accountSnap.exists()) {
-                const accountData = accountSnap.data();
-
-                // Fetch user specific role in this account
-                const userRef = doc(db, 'users', user.uid);
-                const userSnap = await getDoc(userRef);
-                const userData = userSnap.data();
-                const membership = userData?.memberships?.find((m: any) => m.accountId === selectedAccount.id);
-                const role = membership?.role || 'MEMBER';
-
-                if (accountData.type === 'ENTERPRISE' && role === 'OWNER') {
-                    await signOut(auth);
-                    setError("Acceso móvil restringido para administradores. Use la versión de escritorio.");
-                    setLoading(false);
-                    return;
+            // Si no contiene '@', se asume que es un RUT y se resuelve su correo en el directorio
+            if (!cleanInput.includes('@')) {
+                const resp = await fetch(resolveApiUrl(`/api/public/accounts-by-id/${encodeURIComponent(cleanInput)}`));
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const firstAccount = data.accounts?.[0];
+                    if (firstAccount?.authEmail) {
+                        targetEmail = firstAccount.authEmail.toLowerCase().trim();
+                    }
                 }
             }
 
-            // D. Navegación Exitosa
+            // Autenticación oficial unificada con Firebase Auth
+            await signInWithEmailAndPassword(auth, targetEmail, password);
             navigate('/mobile/dashboard');
-
         } catch (err: any) {
-            console.error('Mobile Login Error:', err);
-            setError(`Error de conexión al servidor. Verifica que tu servidor esté activo.`);
+            console.error('[MOBILE-LOGIN] Error:', err);
+            if (
+                err.code === 'auth/invalid-credential' || 
+                err.code === 'auth/user-not-found' || 
+                err.code === 'auth/wrong-password' ||
+                err.code === 'auth/invalid-email'
+            ) {
+                setError('Credenciales operativas inválidas o usuario no registrado.');
+            } else {
+                setError('Error de conexión con la infraestructura de autenticación.');
+            }
         } finally {
             setLoading(false);
         }
     };
 
     return (
-        <div className="h-screen w-screen overflow-hidden bg-white dark:bg-black text-black dark:text-white flex flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] relative industrial-mineral-gradient">
-            {/* Background Layer Grid Overlay */}
-            <div className="absolute inset-0 technical-grid opacity-10 pointer-events-none"></div>
-
-            <div className="h-20 flex items-center px-8 relative z-50">
-                {step !== 'IDENTIFICATION' ? (
-                    <button
-                        onClick={handleBack}
-                        className="p-3 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 rounded-none transition-all active:scale-95"
-                    >
-                        <ArrowLeft size={20} className="text-black dark:text-white" />
-                    </button>
-                ) : (
-                    <div className="flex items-center gap-2">
-                        <LanguageSwitch />
-                        <ThemeSwitch />
-                    </div>
-                )}
-                <div className="flex-1 text-center">
-                    <p className="hud-label text-black/40 dark:text-white/20">MNR_SECURE_PROTO_v2.0</p>
-                </div>
-                <div className="w-20"></div> {/* Spacer for symmetry */}
-            </div>
-
-            <div className="flex-1 flex flex-col px-8 overflow-y-auto pb-12">
-
-                {/* Visual Header */}
-                <div className="py-12 flex flex-col items-center">
-                    <div className="w-24 h-24 bg-black dark:bg-white flex items-center justify-center border border-black/10 dark:border-white/10 mb-8 transition-transform hover:scale-105 duration-700 relative">
-                        <div className="absolute inset-0 technical-grid opacity-20"></div>
-                        <Lock className="text-white dark:text-black w-10 h-10 relative z-10" />
-                    </div>
-
-                    {step === 'IDENTIFICATION' && (
-                        <div className="text-center">
-                            <span className="material-symbols-rounded text-6xl text-emerald-500">input</span>
-                        </div>
-                    )}
-                    {step === 'ACCOUNT_SELECTION' && (
-                        <div className="text-center">
-                            <h1 className="text-4xl font-black tracking-tight uppercase leading-none">SELECT_ENV</h1>
-                            <p className="hud-label mt-4 text-center">
-                                [{detectedAccounts.length}_VULCAN_ENVIRONMENTS_DETECTED]
-                            </p>
-                        </div>
-                    )}
-                    {step === 'CHALLENGE' && selectedAccount && (
-                        <div className="text-center">
-                            <h1 className="text-3xl font-black tracking-tight uppercase leading-none">{selectedAccount.name}</h1>
-                            <p className="hud-label mt-4 text-center">
-                                [CHALLENGE_ACTIVE] INGRESA CREDENCIAL DE ACCESO
-                            </p>
-                        </div>
-                    )}
+        <div className="min-h-screen w-full bg-white dark:bg-[#000000] text-slate-900 dark:text-[#F3F4F6] flex flex-col justify-between p-6 select-none font-sans antialiased">
+            
+            {/* Header Técnico */}
+            <header className="flex items-center justify-between border-b border-slate-200 dark:border-[#12151C] pb-4">
+                <div className="flex items-center gap-2">
+                    <BrandLogo variant="isotype" className="h-6 w-auto object-contain" />
+                    <span className="font-mono text-xs uppercase tracking-widest text-slate-800 dark:text-[#F3F4F6] font-bold">
+                        MINREPORT MOBILE
+                    </span>
                 </div>
 
-                {/* Main Form Area */}
-                <div className="space-y-6">
-                    {error && (
-                        <div className="p-4 bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20 rounded-2xl flex items-start gap-3 animate-in fade-in slide-in-from-top-2 duration-300">
-                            <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
-                            <p className="text-sm text-red-600 dark:text-red-400 font-medium">{error}</p>
-                        </div>
-                    )}
-
-                    {step === 'IDENTIFICATION' && (
-                        <form onSubmit={handleIdentificationSubmit} className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500" autoComplete="off">
-                            <div className="space-y-3">
-                                <div className="flex justify-between items-end px-1">
-                                    <label className="hud-label">Documento ID (RUT / RUN)</label>
-                                    <span className="text-[10px] font-mono opacity-20">[01]</span>
-                                </div>
-                                <div className="relative">
-                                    <input
-                                        type="text"
-                                        className="premium-input text-center text-2xl tracking-[0.2em] h-20"
-                                        placeholder="12.345.678-9"
-                                        value={taxId}
-                                        onChange={(e) => setTaxId(formatRut(e.target.value))}
-                                        required
-                                        autoFocus
-                                        autoComplete="off"
-                                        spellCheck="false"
-                                        autoCorrect="off"
-                                        autoCapitalize="off"
-                                        data-lpignore="true"
-                                    />
-                                </div>
-                            </div>
-                            <button
-                                type="submit"
-                                disabled={loading || !taxId}
-                                className="w-full h-20 bg-black dark:bg-white text-white dark:text-black font-black uppercase tracking-[0.3em] text-[14px] rounded-none shadow-2xl active:scale-[0.98] transition-all flex items-center justify-center gap-4 disabled:opacity-30"
-                            >
-                                {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : (
-                                    <>
-                                        <span>CONTINUAR</span>
-                                        <ArrowRight size={20} />
-                                    </>
-                                )}
-                            </button>
-                        </form>
-                    )}
-
-                    {step === 'ACCOUNT_SELECTION' && (
-                        <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-500">
-                            {detectedAccounts.map((acc) => (
-                                <button
-                                    key={acc.id}
-                                    onClick={() => handleAccountSelect(acc)}
-                                    className="w-full p-6 bg-black/5 dark:bg-black/80 border border-black/10 dark:border-white/5 rounded-none flex items-center gap-5 active:scale-[0.99] transition-all text-left shadow-lg overflow-hidden relative group"
-                                >
-                                    <div className="absolute inset-0 technical-grid opacity-5 group-hover:opacity-10 transition-opacity"></div>
-                                    <div className="w-14 h-14 bg-black/10 dark:bg-white/5 flex items-center justify-center border border-black/5 dark:border-white/5 relative z-10 transition-transform group-hover:scale-105">
-                                        <span className="material-symbols-rounded text-[28px] text-black/60 dark:text-white/40">
-                                            {acc.type === 'B2B' ? 'corporate_fare' : 'person'}
-                                        </span>
-                                    </div>
-                                    <div className="flex-1 relative z-10">
-                                        <p className="font-black text-lg uppercase tracking-tight text-black dark:text-white leading-tight mb-1">{acc.name}</p>
-                                        <p className="hud-label text-black/30 dark:text-white/30">{acc.type}_CHALLENGE</p>
-                                    </div>
-                                    <div className="text-black/10 dark:text-white/10 group-hover:text-black dark:group-hover:text-white transition-all">
-                                        <ChevronRight size={24} />
-                                    </div>
-                                </button>
-                            ))}
-                        </div>
-                    )}
-
-                    {step === 'CHALLENGE' && (
-                        <form onSubmit={handleLogin} className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-500" autoComplete="off">
-                            <div className="space-y-3">
-                                <div className="flex justify-between items-end px-1">
-                                    <label className="hud-label">Credencial de Seguridad</label>
-                                    <span className="text-[10px] font-mono text-black/20 dark:text-white/20">[02]</span>
-                                </div>
-                                <div className="relative">
-                                    <input
-                                        type={showPassword ? 'text' : 'password'}
-                                        className="premium-input bg-black/5 dark:bg-black/60 h-20"
-                                        placeholder="••••••••"
-                                        value={password}
-                                        onChange={(e) => setPassword(e.target.value)}
-                                        required
-                                        autoComplete="new-password"
-                                        spellCheck="false"
-                                        autoCorrect="off"
-                                        autoCapitalize="off"
-                                        data-lpignore="true"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowPassword(!showPassword)}
-                                        className="absolute right-0 top-0 h-full px-6 text-black/30 dark:text-white/30 hover:text-black dark:hover:text-white transition-colors"
-                                    >
-                                        {showPassword ? <EyeOff size={22} /> : <Eye size={22} />}
-                                    </button>
-                                </div>
-                            </div>
-                            <button
-                                type="submit"
-                                disabled={loading}
-                                className="w-full h-20 bg-black dark:bg-white text-white dark:text-black font-black uppercase tracking-[0.3em] text-[14px] rounded-none shadow-2xl active:scale-[0.98] transition-all flex items-center justify-center gap-4 disabled:opacity-30"
-                            >
-                                {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : (
-                                    <>
-                                        <span>ACCEDER AL ENTORNO</span>
-                                        <ArrowRight size={20} />
-                                    </>
-                                )}
-                            </button>
-                        </form>
-                    )}
+                <div className="flex items-center gap-2">
+                    <LanguageSwitch />
+                    <ThemeSwitch />
                 </div>
+            </header>
 
-                <div className="mt-8 text-center px-4">
-                    <p className="text-xs text-gray-400 dark:text-zinc-600 leading-relaxed">
-                        Al ingresar, aceptas los términos de uso y las políticas de seguridad de MINREPORT.
+            {/* Contenedor Central */}
+            <main className="w-full max-w-sm mx-auto my-auto space-y-6">
+                <div className="space-y-1">
+                    <h1 className="font-mono text-sm uppercase tracking-wider text-slate-900 dark:text-[#F3F4F6] font-bold">
+                        Acceso Operativo de Faena
+                    </h1>
+                    <p className="font-sans text-xs text-slate-500 dark:text-[#8A93A6]">
+                        Ingrese con su correo corporativo o RUT registrado
                     </p>
                 </div>
 
-            </div>
+                <form onSubmit={handleLogin} autoComplete="off" spellCheck={false} className="bg-slate-50 dark:bg-[#07090D] border border-slate-200 dark:border-[#12151C] p-6 space-y-4 rounded-none shadow-none">
+                    
+                    {error && (
+                        <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs font-mono flex items-center gap-2 rounded-none">
+                            <span className="material-symbols-outlined text-[16px] text-red-600 dark:text-red-400 shrink-0">
+                                error
+                            </span>
+                            <span>{error}</span>
+                        </div>
+                    )}
 
-            {/* Footer Safe Area */}
-            <div className="h-[env(safe-area-inset-bottom)]" />
+                    <div>
+                        <label className="block text-[11px] font-mono text-slate-600 dark:text-[#8A93A6] uppercase tracking-wider mb-1.5">
+                            Correo Corporativo o RUT
+                        </label>
+                        <input
+                            type="text"
+                            value={identifier}
+                            onChange={(e) => setIdentifier(e.target.value)}
+                            placeholder="operador@minera.cl o 12.345.678-9"
+                            required
+                            autoFocus
+                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] px-3 py-2 font-mono text-xs text-slate-900 dark:text-[#F3F4F6] outline-none rounded-none transition-colors"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-[11px] font-mono text-slate-600 dark:text-[#8A93A6] uppercase tracking-wider mb-1.5">
+                            Contraseña
+                        </label>
+                        <div className="relative">
+                            <input
+                                type={showPassword ? 'text' : 'password'}
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                placeholder="••••••••••••"
+                                required
+                                className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] px-3 py-2 pr-10 font-mono text-xs text-slate-900 dark:text-[#F3F4F6] outline-none rounded-none transition-colors"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setShowPassword(!showPassword)}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                            >
+                                <span className="material-symbols-outlined text-[18px]">
+                                    {showPassword ? 'visibility_off' : 'visibility'}
+                                </span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <button
+                        type="submit"
+                        disabled={loading}
+                        className="w-full py-2.5 bg-[#C68346] hover:bg-[#b07238] text-black font-mono font-bold text-xs uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none flex items-center justify-center gap-2"
+                    >
+                        {loading ? (
+                            <span>VALIDANDO...</span>
+                        ) : (
+                            <>
+                                <span>INGRESAR A FAENA</span>
+                                <span className="material-symbols-outlined text-[16px]">
+                                    arrow_forward
+                                </span>
+                            </>
+                        )}
+                    </button>
+                </form>
+            </main>
+
+            {/* Footer Técnico */}
+            <footer className="border-t border-slate-200 dark:border-[#12151C] pt-4 text-center">
+                <p className="font-mono text-[10px] text-slate-500 dark:text-[#5A6072] uppercase tracking-widest">
+                    SISTEMA MINERO INTEGRADO MINREPORT
+                </p>
+            </footer>
+
         </div>
     );
 };

@@ -26,6 +26,7 @@ export const EmpresaPage = () => {
     const [showAddressDropdown, setShowAddressDropdown] = useState(false);
     const [addressPredictions, setAddressPredictions] = useState<any[]>([]);
     const addressDropdownRef = useRef<HTMLDivElement>(null);
+    const [confirmWord, setConfirmWord] = useState('');
 
     const googleApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
     const { isLoaded: isGoogleLoaded, loadError: googleLoadError, getPredictions, getPlaceDetails } = useGooglePlaces(googleApiKey);
@@ -181,6 +182,7 @@ export const EmpresaPage = () => {
         setSearchTerm('');
         setShowDropdown(false);
         setEditing(false);
+        setConfirmWord('');
         setSaveError(null);
     };
 
@@ -235,6 +237,7 @@ export const EmpresaPage = () => {
 
             setSaveSuccess(true);
             setEditing(false);
+            setConfirmWord('');
             setSearchTerm('');
             setShowDropdown(false);
 
@@ -252,7 +255,7 @@ export const EmpresaPage = () => {
     if (!currentAccount) return null;
 
     return (
-        <div className="max-w-4xl mx-auto py-8 px-6 space-y-10" style={{ fontFamily: "'Atkinson Hyperlegible', sans-serif" }}>
+        <div className="max-w-4xl mx-auto py-8 px-6 space-y-10">
 
             {/* Header */}
             <div className="flex items-start justify-between border-b border-gray-200 dark:border-gray-800 pb-6">
@@ -271,14 +274,14 @@ export const EmpresaPage = () => {
                     {!editing ? (
                         <button
                             onClick={() => setEditing(true)}
-                            className="text-xs font-bold uppercase tracking-wider px-4 py-2 border border-[#C68346] text-[#C68346] hover:bg-[#C68346]/10 transition-colors rounded-none"
+                            className="text-xs font-bold uppercase tracking-wider px-4 py-2 border border-[#C68346] text-[#C68346] hover:bg-[#C68346]/10 transition-colors rounded-none cursor-pointer"
                         >
                             Editar
                         </button>
                     ) : (
                         <button
                             onClick={handleCancelEdit}
-                            className="text-xs font-bold uppercase tracking-wider px-4 py-2 border border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors rounded-none"
+                            className="text-xs font-bold uppercase tracking-wider px-4 py-2 border border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors rounded-none cursor-pointer"
                         >
                             Cancelar
                         </button>
@@ -289,7 +292,7 @@ export const EmpresaPage = () => {
             {/* Error de guardado */}
             {saveError && (
                 <div className="flex items-start gap-3 p-3 bg-red-500/10 border border-red-500/30 rounded-none text-xs text-red-500 font-mono">
-                    <span className="material-symbols-rounded text-base shrink-0">warning</span>
+                    <span className="material-symbols-outlined text-base shrink-0">warning</span>
                     {saveError}
                 </div>
             )}
@@ -297,7 +300,7 @@ export const EmpresaPage = () => {
             {/* ── Sección: Identificación Legal ── */}
             <section>
                 <p className={SECTION_TITLE}>
-                    <span className="material-symbols-rounded text-base">gavel</span>
+                    <span className="material-symbols-outlined text-base">gavel</span>
                     Identificación Legal
                 </p>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -380,7 +383,7 @@ export const EmpresaPage = () => {
             {/* ── Sección: Direcciones ── */}
             <section>
                 <p className={SECTION_TITLE}>
-                    <span className="material-symbols-rounded text-base">location_on</span>
+                    <span className="material-symbols-outlined text-base">location_on</span>
                     Direcciones
                 </p>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -390,7 +393,7 @@ export const EmpresaPage = () => {
                             <div className="relative" ref={addressDropdownRef}>
                                 <div className="relative">
                                     <input
-                                        type="text" autoComplete="off"
+                                        type="text" autoComplete="off" spellCheck={false}
                                         placeholder="Buscar dirección principal..."
                                         value={showAddressDropdown ? addressSearchTerm : form.direccionComercial}
                                         onFocus={() => setShowAddressDropdown(true)}
@@ -410,7 +413,7 @@ export const EmpresaPage = () => {
                                 {googleLoadError && (
                                     <div className="mt-2 p-3 bg-red-500/5 border border-red-500/10 space-y-1">
                                         <p className="text-[9px] text-red-500 uppercase font-bold tracking-tighter flex items-center gap-2">
-                                            <span className="material-symbols-rounded text-sm">warning</span>
+                                            <span className="material-symbols-outlined text-sm">warning</span>
                                             Error de Configuración Google Maps
                                         </p>
                                         <p className="text-[9px] text-red-500/70 uppercase font-medium leading-tight">
@@ -422,11 +425,11 @@ export const EmpresaPage = () => {
                                     </div>
                                 )}
                                 {showAddressDropdown && addressSearchTerm && addressPredictions.length > 0 && (
-                                    <div className="absolute z-[100] w-full mt-1 bg-white dark:bg-[#1a2233] border border-gray-200 dark:border-gray-800 shadow-xl max-h-60 overflow-y-auto rounded-none">
+                                    <div className="absolute z-[100] w-full mt-1 bg-white dark:bg-[#07090D] border border-gray-200 dark:border-gray-800 shadow-none max-h-60 overflow-y-auto rounded-none">
                                         {addressPredictions.map((pred) => (
                                             <button key={pred.place_id} type="button"
                                                 onClick={() => handleSelectAddress(pred.place_id, pred.description)}
-                                                className="w-full text-left px-4 py-3 hover:bg-gray-50 dark:hover:bg-white/5 border-b border-gray-100 dark:border-gray-800 last:border-0 transition-colors"
+                                                className="w-full text-left px-4 py-3 hover:bg-gray-50 dark:hover:bg-white/5 border-b border-gray-100 dark:border-gray-800 last:border-0 transition-colors cursor-pointer"
                                             >
                                                 <p className="text-xs font-bold text-gray-900 dark:text-white truncate">
                                                     {pred.structured_formatting.main_text}
@@ -475,33 +478,33 @@ export const EmpresaPage = () => {
             {/* ── Sección: Contacto Oficial ── */}
             <section>
                 <p className={SECTION_TITLE}>
-                    <span className="material-symbols-rounded text-base">contact_mail</span>
+                    <span className="material-symbols-outlined text-base">contact_mail</span>
                     Contacto Oficial
                 </p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label className={LBL}>Email Comercial</label>
-                        <input type="email" disabled={!editing} autoComplete="off"
+                        <input type="email" disabled={!editing} autoComplete="off" spellCheck={false}
                             value={form.emailComercial} onChange={e => f('emailComercial', e.target.value)} className={INP} />
                     </div>
                     <div>
                         <label className={LBL}>Email Tributario {isChilean && '/ SII'}</label>
-                        <input type="email" disabled={!editing} autoComplete="off"
+                        <input type="email" disabled={!editing} autoComplete="off" spellCheck={false}
                             value={form.emailTributario} onChange={e => f('emailTributario', e.target.value)} className={INP} placeholder="DTE / SII" />
                     </div>
                     <div>
                         <label className={LBL}>Dominio Corporativo</label>
-                        <input type="text" disabled={!editing} autoComplete="off"
+                        <input type="text" disabled={!editing} autoComplete="off" spellCheck={false}
                             value={form.emailDomain} onChange={e => f('emailDomain', e.target.value)} className={INP} placeholder="ej. empresa.cl" />
                     </div>
                     <div>
                         <label className={LBL}>Teléfono Principal</label>
-                        <input type="tel" disabled={!editing} autoComplete="off"
+                        <input type="tel" disabled={!editing} autoComplete="off" spellCheck={false}
                             value={form.telefonoPrincipal} onChange={e => f('telefonoPrincipal', e.target.value)} className={INP} />
                     </div>
                     <div>
                         <label className={LBL}>Teléfono Secundario</label>
-                        <input type="tel" disabled={!editing} autoComplete="off"
+                        <input type="tel" disabled={!editing} autoComplete="off" spellCheck={false}
                             value={form.telefonoSecundario} onChange={e => f('telefonoSecundario', e.target.value)} className={INP} />
                     </div>
                 </div>
@@ -510,7 +513,7 @@ export const EmpresaPage = () => {
             {/* ── Sección: Identidad Visual ── */}
             <section>
                 <p className={SECTION_TITLE}>
-                    <span className="material-symbols-rounded text-base">image</span>
+                    <span className="material-symbols-outlined text-base">image</span>
                     Identidad Visual
                 </p>
                 <div className="flex items-center gap-6">
@@ -521,13 +524,25 @@ export const EmpresaPage = () => {
                 </div>
             </section>
 
-            {/* ── Botón Guardar ── */}
+            {/* ── Botón Guardar con HITL Obligatorio ── */}
             {editing && (
-                <div className="flex justify-end pt-4 border-t border-gray-200 dark:border-gray-800">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-6 border-t border-gray-200 dark:border-gray-800">
+                    <div className="flex items-center gap-3 w-full sm:w-auto">
+                        <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-500">Confirmación HITL:</span>
+                        <input
+                            type="text"
+                            value={confirmWord}
+                            onChange={e => setConfirmWord(e.target.value.toUpperCase())}
+                            placeholder='Escriba "ACTUALIZAR"'
+                            autoComplete="off"
+                            spellCheck={false}
+                            className="px-3 py-1.5 text-xs font-mono font-bold border border-gray-300 dark:border-gray-700 bg-transparent text-slate-900 dark:text-white rounded-none tracking-widest uppercase focus:border-[#C68346] outline-none"
+                        />
+                    </div>
                     <button
                         onClick={handleSave}
-                        disabled={saving}
-                        className="flex items-center gap-2 bg-[#C68346] hover:bg-[#b0743e] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold uppercase tracking-wider text-xs py-2.5 px-8 rounded-none transition-colors"
+                        disabled={saving || confirmWord !== 'ACTUALIZAR'}
+                        className="w-full sm:w-auto flex items-center justify-center gap-2 bg-[#C68346] hover:bg-[#b0743e] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold uppercase tracking-wider text-xs py-2.5 px-8 rounded-none transition-colors cursor-pointer"
                     >
                         {saving ? (
                             <><Loader2 className="w-3 h-3 animate-spin" /> Guardando...</>

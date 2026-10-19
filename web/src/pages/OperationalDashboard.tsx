@@ -1,148 +1,102 @@
-import { useState, useEffect } from 'react';
-import { MinReport } from '@minreport/sdk';
 import { useAuth } from '../context/AuthContext';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import { useNavigate } from 'react-router-dom';
-import { PluginLoader } from '../core/plugins/PluginLoader';
 import { motion } from 'framer-motion';
+import { SYSTEM_MODULES, SystemModuleInfo } from '../constants/modules';
 
 export const OperationalDashboard = () => {
     const { currentAccount } = useAuth();
     const { isOnline } = useNetworkStatus();
     const navigate = useNavigate();
 
-    const [plugins, setPlugins] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [activePlugin, setActivePlugin] = useState<any | null>(null);
-
-    useEffect(() => {
-        const init = () => {
-            const active = MinReport.Core.getActivePlugins();
-            setPlugins(active);
-            setLoading(false);
-        };
-        const timer = setTimeout(init, 500);
-        return () => clearTimeout(timer);
-    }, []);
-
     // Fallback de seguridad
     if (!currentAccount) return null;
 
-    const APP_VERSION = '__APP_VERSION__' in window ? (window as any).__APP_VERSION__ : 'v1.0.0';
+    const APP_VERSION = '__APP_VERSION__' in window ? (window as any).__APP_VERSION__ : 'v3.0.0';
 
-    if (activePlugin) {
-        return (
-            <div className="flex flex-col h-[calc(100vh-12rem)] bg-white dark:bg-[#0D0D0D] rounded-none overflow-hidden border border-black/5 dark:border-white/5 animate-in zoom-in-95 duration-300 relative">
-                <div className="absolute inset-0 technical-grid pointer-events-none opacity-5"></div>
-                <div className="h-16 px-6 border-b border-black/5 dark:border-white/5 flex items-center justify-between relative z-10 bg-black/5">
-                    <div className="flex items-center gap-4">
-                        <button
-                            onClick={() => setActivePlugin(null)}
-                            className="p-2 hover:bg-black/10 dark:hover:bg-white/5 rounded-none transition-colors text-black/40 dark:text-white/40"
-                        >
-                            <span className="material-symbols-rounded">arrow_back</span>
-                        </button>
-                        <span className="material-symbols-rounded text-antigravity-accent">{activePlugin.icon || 'extension'}</span>
-                        <h2 className="hud-label text-black dark:text-white">{activePlugin.name}</h2>
-                    </div>
-                </div>
-                <div className="flex-1 bg-gray-50 dark:bg-black/20">
-                    <PluginLoader pluginId={activePlugin.id} />
-                </div>
-            </div>
-        );
-    }
+    // Módulos autorizados para la cuenta actual
+    const rawKeys = (currentAccount as any)?.enabledPlugins;
+    const enabledKeys: string[] = (Array.isArray(rawKeys) && rawKeys.length > 0)
+        ? rawKeys
+        : ['opermaq', 'stockpile', 'mining-flow'];
+    const activeModules: SystemModuleInfo[] = SYSTEM_MODULES.filter(mod => enabledKeys.includes(mod.id));
 
     return (
-        <div className="max-w-6xl mx-auto py-8 px-4 space-y-8 animate-in fade-in duration-500 font-atkinson">
-            {/* Encabezado */}
-            <header className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+        <div className="max-w-6xl mx-auto py-8 px-4 space-y-8 animate-in fade-in duration-500 font-sans">
+            {/* Encabezado Técnico Aséptico */}
+            <header className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-slate-200 dark:border-[#12151C] pb-6">
                 <div>
-                    <h1 className="text-3xl font-black text-black dark:text-white uppercase tracking-tighter">
-                        SYSTEM_DASHBOARD
+                    <h1 className="text-2xl font-bold text-slate-900 dark:text-white uppercase tracking-tight">
+                        Panel de Control Operacional
                     </h1>
-                    <p className="hud-label text-[10px] text-black/40 dark:text-white/40 mt-2">
-                        OPERATIONAL_CONTEXT: <span className="text-antigravity-accent opacity-100">{currentAccount.name}</span>
+                    <p className="text-xs text-slate-500 dark:text-[#8A93A6] mt-1 font-mono">
+                        Contexto Operativo: <span className="text-[#C68346] font-bold">{currentAccount.name}</span>
                     </p>
                 </div>
 
-                <div className="flex items-center gap-6 bg-black/5 dark:bg-white/5 p-4 rounded-none border border-black/5 dark:border-white/5">
-                    <div className="px-3 border-r border-black/10 dark:border-white/10">
-                        <p className="hud-label text-[9px] text-black/30 dark:text-white/20 mb-1">STATUS</p>
+                <div className="flex items-center gap-6 bg-[#F8FAFC] dark:bg-[#07090D] p-3.5 rounded-none border border-slate-200 dark:border-[#12151C]">
+                    <div className="px-3 border-r border-slate-200 dark:border-[#12151C]">
+                        <p className="text-[9px] font-mono text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-0.5">ESTADO RED</p>
                         <div className="flex items-center gap-2">
                             <div className={`w-2 h-2 rounded-none ${isOnline ? 'bg-emerald-500' : 'bg-red-500 animate-pulse'}`} />
-                            <span className="text-[10px] font-black uppercase tracking-widest">{isOnline ? 'Online' : 'Offline'}</span>
+                            <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                                {isOnline ? 'En línea' : 'Sin conexión'}
+                            </span>
                         </div>
                     </div>
                     <div className="px-3">
-                        <p className="hud-label text-[9px] text-black/30 dark:text-white/20 mb-1">OS_VERSION</p>
-                        <p className="text-[10px] font-black">{APP_VERSION}</p>
+                        <p className="text-[9px] font-mono text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-0.5">SISTEMA</p>
+                        <p className="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-300">{APP_VERSION}</p>
                     </div>
                 </div>
             </header>
 
-            {/* Grid de Aplicaciones */}
+            {/* Módulos Industriales Centralizados */}
             <section className="space-y-4">
-                <div className="flex items-center justify-between border-b border-black/5 dark:border-white/5 pb-4">
-                    <h2 className="hud-label text-black/40 dark:text-white/40 flex items-center gap-3">
-                        <span className="material-symbols-rounded text-lg">apps</span>
-                        [ACTIVE_MODULES_INDEX]
+                <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#12151C] pb-3">
+                    <h2 className="text-xs font-mono font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                        <span className="material-symbols-outlined text-base text-[#C68346]">apps</span>
+                        Módulos Operativos Integrados
                     </h2>
+                    <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+                        {activeModules.length} activos
+                    </span>
                 </div>
 
-                {loading ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {[1, 2, 3].map(i => (
-                            <div key={i} className="h-44 rounded-3xl bg-gray-100 dark:bg-white/5 animate-pulse" />
-                        ))}
-                    </div>
-                ) : plugins.length === 0 ? (
-                    <div className="p-12 text-center rounded-3xl border-2 border-dashed border-gray-200 dark:border-zinc-800">
-                        <span className="material-symbols-rounded text-4xl mb-4 text-gray-300">extension_off</span>
-                        <p className="font-bold text-gray-500">No hay módulos activos actualmente</p>
-                        <button
-                            onClick={() => navigate('/plugins')}
-                            className="mt-4 text-indigo-600 font-bold hover:underline"
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                    {activeModules.map((module) => (
+                        <motion.div
+                            key={module.id}
+                            whileHover={{ y: -2 }}
+                            whileTap={{ scale: 0.98 }}
+                            onClick={() => navigate(module.path)}
+                            className="group cursor-pointer p-6 rounded-none bg-[#F8FAFC] dark:bg-[#07090D] border border-slate-200 dark:border-[#12151C] hover:border-[#C68346] dark:hover:border-[#C68346] transition-all flex flex-col justify-between h-52 relative overflow-hidden shadow-none"
                         >
-                            Explorar catálogo
-                        </button>
-                    </div>
-                ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                        {plugins.map((plugin) => (
-                            <motion.div
-                                key={plugin.id}
-                                whileHover={{ y: -2 }}
-                                whileTap={{ scale: 0.98 }}
-                                onClick={() => {
-                                    const core = MinReport.Core as any;
-                                    if (core && core.emitEvent) {
-                                        core.emitEvent('system_event', {
-                                            type: 'MODULE_OPENED',
-                                            pluginId: plugin.id,
-                                            timestamp: Date.now()
-                                        });
-                                    }
-                                    setActivePlugin(plugin);
-                                }}
-                                className="group cursor-pointer p-6 rounded-none bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 hover:border-black dark:hover:border-white transition-all flex flex-col justify-between h-52 relative overflow-hidden"
-                            >
-                                <div className="absolute inset-0 technical-grid opacity-5 pointer-events-none group-hover:opacity-10 transition-opacity"></div>
-                                <div className="w-12 h-12 rounded-none bg-black/5 dark:bg-white/10 flex items-center justify-center text-black/40 dark:text-white/40 text-2xl group-hover:bg-black group-hover:text-white dark:group-hover:bg-white dark:group-hover:text-black transition-all border border-black/5">
-                                    <span className="material-symbols-rounded">{plugin.icon || 'extension'}</span>
+                            <div className="flex items-start justify-between">
+                                <div className="w-12 h-12 rounded-none bg-[#C68346]/10 border border-[#C68346]/20 flex items-center justify-center text-[#C68346] group-hover:bg-[#C68346] group-hover:text-white transition-colors">
+                                    <span className="material-symbols-outlined text-2xl">{module.icon}</span>
                                 </div>
-                                <div className="relative z-10">
-                                    <h3 className="font-black text-[12px] uppercase tracking-widest text-black/80 dark:text-white/80 group-hover:text-black dark:group-hover:text-white transition-colors">
-                                        {plugin.name}
-                                    </h3>
-                                    <p className="text-[10px] text-black/40 dark:text-white/40 line-clamp-2 mt-2 leading-relaxed font-bold uppercase tracking-tight">
-                                        {plugin.description}
-                                    </p>
-                                </div>
-                            </motion.div>
-                        ))}
-                    </div>
-                )}
+                                <span className="text-[9px] font-mono text-slate-400 dark:text-slate-500 uppercase tracking-widest">
+                                    v{module.version}
+                                </span>
+                            </div>
+
+                            <div className="space-y-1 mt-4">
+                                <h3 className="font-bold text-sm uppercase tracking-tight text-slate-900 dark:text-white group-hover:text-[#C68346] transition-colors">
+                                    {module.name}
+                                </h3>
+                                <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed">
+                                    {module.scope}
+                                </p>
+                            </div>
+
+                            <div className="pt-3 border-t border-slate-200 dark:border-[#12151C] flex items-center justify-between text-[10px] font-mono font-bold uppercase tracking-wider text-[#C68346]">
+                                <span>Acceder</span>
+                                <span className="material-symbols-outlined text-sm group-hover:translate-x-1 transition-transform">arrow_forward</span>
+                            </div>
+                        </motion.div>
+                    ))}
+                </div>
             </section>
         </div>
     );

@@ -102,10 +102,12 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
                                 <img
                                     src={account.avatar}
                                     alt={account.accountName}
-                                    className="w-full h-full object-cover relative z-10"
+                                    draggable={false}
+                                    onContextMenu={(e) => e.preventDefault()}
+                                    className="w-full h-full object-cover relative z-10 select-none pointer-events-none"
                                 />
                             ) : (
-                                <span className="material-symbols-rounded text-[28px] relative z-10">
+                                <span className="material-symbols-outlined text-[28px] relative z-10">
                                     {renderIcon(account.type)}
                                 </span>
                             )}
@@ -130,7 +132,7 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
 
                                 {/* Status Pip Badge */}
                                 <div className={clsx(
-                                    "inline-flex items-center gap-2 px-2 py-0.5 rounded-none text-[8px] font-black uppercase tracking-[0.15em] border shadow-sm transition-all duration-700",
+                                    "inline-flex items-center gap-2 px-2 py-0.5 rounded-none text-[8px] font-black uppercase tracking-[0.15em] border shadow-none transition-all duration-700",
                                     account.status === 'PENDING_APPROVAL' && "bg-amber-500/10 text-amber-600 border-amber-500/20",
                                     account.status === 'APPROVED' && "bg-cyan-500/10 text-cyan-500 border-cyan-500/20",
                                     account.status === 'ACTIVE' && "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
@@ -156,7 +158,7 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
                             {selectedId === account.accountId && loading ? (
                                 <div className="w-5 h-5 border-2 border-antigravity-accent border-t-transparent rounded-full animate-spin" />
                             ) : (
-                                <span className="material-symbols-rounded text-[24px]">
+                                <span className="material-symbols-outlined text-[24px]">
                                     {selectedId === account.accountId ? 'check_circle' : 'chevron_right'}
                                 </span>
                             )}
@@ -172,7 +174,7 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
                     className="group flex flex-col items-center gap-3 mx-auto transition-all duration-500 disabled:opacity-30"
                 >
                     <div className="w-10 h-10 border border-black/10 dark:border-white/10 flex items-center justify-center group-hover:border-antigravity-accent transition-colors">
-                        <span className="material-symbols-rounded text-[20px] text-black/40 dark:text-white/40 group-hover:text-antigravity-accent">undo</span>
+                        <span className="material-symbols-outlined text-[20px] text-black/40 dark:text-white/40 group-hover:text-antigravity-accent">undo</span>
                     </div>
                     <span className="text-[9px] font-black text-black/30 dark:text-white/30 uppercase tracking-[0.3em] group-hover:text-black dark:group-hover:text-white transition-colors">
                         {t('auth.use_other_id', 'Usar otro documento de identidad')}

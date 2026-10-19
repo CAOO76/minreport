@@ -25,36 +25,37 @@ router.post('/create-worker', async (req: express.Request, res: express.Response
         const normalizedEmail = email.toLowerCase().trim();
         const cleanRun = run.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
 
-        // Generar Email Sintético para Bypassar Firebase Auth "Email already in use" restricción
-        const syntheticAuthEmail = `${cleanRun.toLowerCase()}@auth.minreport.internal`;
+        console.log('[Staff API] Creando trabajador (Email real):', { emailReal: normalizedEmail, displayName, accountName, cleanRun });
 
-        console.log('[Staff API] Creando trabajador (RUT Islado):', { emailReal: normalizedEmail, emailSintetico: syntheticAuthEmail, displayName, accountName, cleanRun });
-
-        // 1. Forzar Creación/Busqueda usando el RUN como UID
+        // 1. Forzar Creación/Búsqueda usando el email real del usuario
         let userRecord;
         let isNewUser = false;
         try {
-            userRecord = await auth.getUser(cleanRun);
-            console.log('[Staff API] Usuario ya existe con UID(RUN):', userRecord.uid);
-
-            // Sincronizar email sintético si no lo tiene por migración
-            if (userRecord.email !== syntheticAuthEmail) {
-                await auth.updateUser(cleanRun, { email: syntheticAuthEmail });
-            }
+            userRecord = await auth.getUserByEmail(normalizedEmail);
+            console.log('[Staff API] Usuario ya existe con email:', normalizedEmail, 'UID:', userRecord.uid);
         } catch (error: any) {
             if (error.code !== 'auth/user-not-found') {
                 throw error;
             }
-            // 2. Crear usuario interno en Firebase Auth con UID = RUN y Email Sintético
-            userRecord = await auth.createUser({
-                uid: cleanRun,
-                email: syntheticAuthEmail,
-                emailVerified: false,
-                displayName: displayName,
-                disabled: false
-            });
-            isNewUser = true;
-            console.log('[Staff API] Usuario interno creado con UID:', userRecord.uid, syntheticAuthEmail);
+            // 2. Intentar buscar por RUN/UID previo por compatibilidad
+            try {
+                userRecord = await auth.getUser(cleanRun);
+                await auth.updateUser(cleanRun, { email: normalizedEmail });
+            } catch (runErr: any) {
+                if (runErr.code === 'auth/user-not-found') {
+                    // Crear usuario interno en Firebase Auth con su email real
+                    userRecord = await auth.createUser({
+                        email: normalizedEmail,
+                        emailVerified: false,
+                        displayName: displayName,
+                        disabled: false
+                    });
+                    isNewUser = true;
+                    console.log('[Staff API] Usuario interno creado con UID:', userRecord.uid, normalizedEmail);
+                } else {
+                    throw runErr;
+                }
+            }
         }
 
         // 3. Generar token criptográfico para Custom Setup Link

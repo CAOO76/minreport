@@ -254,7 +254,7 @@ export const OpermaqModule: React.FC = () => {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-black/5 dark:border-white/10 pb-4">
                 <div>
                     <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-[#8A93A6]">
-                        <Truck size={14} className="text-[#FFCD00]" />
+                        <Truck size={14} className="text-[#C68346]" />
                         <span>GESTIÓN INTEGRAL DE ACTIVOS PESADOS Y MAQUINARIA</span>
                     </div>
                     <h1 className="text-xl sm:text-2xl font-bold tracking-tight uppercase text-[#0F172A] dark:text-[#F3F4F6] mt-1">
@@ -265,7 +265,7 @@ export const OpermaqModule: React.FC = () => {
                 <div className="flex items-center gap-3">
                     <button
                         onClick={() => setIsCheckinOpen(true)}
-                        className="px-4 py-2 bg-[#FFCD00] text-black text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-opacity rounded-none flex items-center gap-2"
+                        className="px-4 py-2 bg-[#C68346] text-white text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-opacity rounded-none flex items-center gap-2"
                     >
                         <ClipboardCheck size={14} />
                         <span>Registrar Check-in</span>
@@ -318,7 +318,7 @@ export const OpermaqModule: React.FC = () => {
                         placeholder="Buscar por código, tipo o chofer..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full pl-9 pr-3 py-1.5 text-xs bg-transparent border border-black/10 dark:border-white/10 focus:outline-none focus:border-[#FFCD00] rounded-none"
+                        className="w-full pl-9 pr-3 py-1.5 text-xs bg-transparent border border-black/10 dark:border-white/10 focus:outline-none focus:border-[#C68346] rounded-none"
                     />
                 </div>
 
@@ -342,10 +342,10 @@ export const OpermaqModule: React.FC = () => {
             {/* Modal de Check-in Diario / Pauta de Inspección */}
             {isCheckinOpen && (
                 <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white dark:bg-[#07090D] border border-black/15 dark:border-white/20 w-full max-w-lg p-6 shadow-2xl space-y-6">
+                    <div className="bg-white dark:bg-[#07090D] border border-black/15 dark:border-white/20 w-full max-w-lg p-6 space-y-6 rounded-none">
                         <div className="flex items-center justify-between border-b border-black/10 dark:border-white/10 pb-3">
                             <div className="flex items-center gap-2">
-                                <ClipboardCheck size={18} className="text-[#FFCD00]" />
+                                <ClipboardCheck size={18} className="text-[#C68346]" />
                                 <h2 className="text-sm font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
                                     Pauta Pre-Uso de Maquinaria
                                 </h2>
@@ -412,7 +412,7 @@ export const OpermaqModule: React.FC = () => {
                                         type="checkbox" 
                                         checked={checkinForm.brakes}
                                         onChange={e => setCheckinForm(prev => ({ ...prev, brakes: e.target.checked }))}
-                                        className="accent-[#FFCD00]" 
+                                        className="accent-[#C68346]" 
                                     />
                                     <span>Frenos de Servicio y Retardador Operativos</span>
                                 </label>
@@ -422,7 +422,7 @@ export const OpermaqModule: React.FC = () => {
                                         type="checkbox" 
                                         checked={checkinForm.hydraulics}
                                         onChange={e => setCheckinForm(prev => ({ ...prev, hydraulics: e.target.checked }))}
-                                        className="accent-[#FFCD00]" 
+                                        className="accent-[#C68346]" 
                                     />
                                     <span>Circuito Hidráulico sin fugas visibles</span>
                                 </label>
@@ -432,7 +432,7 @@ export const OpermaqModule: React.FC = () => {
                                         type="checkbox" 
                                         checked={checkinForm.oilLevel}
                                         onChange={e => setCheckinForm(prev => ({ ...prev, oilLevel: e.target.checked }))}
-                                        className="accent-[#FFCD00]" 
+                                        className="accent-[#C68346]" 
                                     />
                                     <span>Nivel de Aceite Motor en rango nominal</span>
                                 </label>
@@ -442,7 +442,7 @@ export const OpermaqModule: React.FC = () => {
                                         type="checkbox" 
                                         checked={checkinForm.fireExtinguisher}
                                         onChange={e => setCheckinForm(prev => ({ ...prev, fireExtinguisher: e.target.checked }))}
-                                        className="accent-[#FFCD00]" 
+                                        className="accent-[#C68346]" 
                                     />
                                     <span>Extintor PQS y Sistema Ansul Válidos</span>
                                 </label>
@@ -452,7 +452,7 @@ export const OpermaqModule: React.FC = () => {
                                         type="checkbox" 
                                         checked={checkinForm.lightsBeacon}
                                         onChange={e => setCheckinForm(prev => ({ ...prev, lightsBeacon: e.target.checked }))}
-                                        className="accent-[#FFCD00]" 
+                                        className="accent-[#C68346]" 
                                     />
                                     <span>Baliza destellante y Pértiga de Seguridad Operativas</span>
                                 </label>
@@ -476,7 +476,7 @@ export const OpermaqModule: React.FC = () => {
                                     accept="image/*"
                                     capture="environment"
                                     onChange={handleImageCapture}
-                                    className="block w-full text-xs text-[#8A93A6] file:mr-3 file:py-1 file:px-2.5 file:border-0 file:text-[10px] file:font-bold file:uppercase file:tracking-wider file:bg-[#0F172A] file:text-white dark:file:bg-[#FFCD00] dark:file:text-black cursor-pointer"
+                                    className="block w-full text-xs text-[#8A93A6] file:mr-3 file:py-1 file:px-2.5 file:border-0 file:text-[10px] file:font-bold file:uppercase file:tracking-wider file:bg-[#0F172A] file:text-white dark:file:bg-[#C68346] dark:file:text-white cursor-pointer rounded-none"
                                 />
                                 {isOptimizingImage && (
                                     <p className="text-[9px] text-[#00AEEF] animate-pulse font-mono">Comprimiendo imagen con Canvas WebP...</p>
@@ -490,13 +490,13 @@ export const OpermaqModule: React.FC = () => {
                                         setEvidenceImage(null);
                                         setIsCheckinOpen(false);
                                     }}
-                                    className="px-4 py-2 border border-black/10 dark:border-white/15 text-xs font-bold uppercase tracking-wider hover:bg-black/5 dark:hover:bg-white/5"
+                                    className="px-4 py-2 border border-black/10 dark:border-white/15 text-xs font-bold uppercase tracking-wider hover:bg-black/5 dark:hover:bg-white/5 rounded-none"
                                 >
                                     Cancelar
                                 </button>
                                 <button
                                     type="submit"
-                                    className="px-5 py-2 bg-[#FFCD00] text-black text-xs font-bold uppercase tracking-wider flex items-center gap-1.5"
+                                    className="px-5 py-2 bg-[#C68346] text-white text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 rounded-none cursor-pointer"
                                 >
                                     <Check size={14} />
                                     <span>Firmar Pauta de Turno</span>

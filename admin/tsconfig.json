@@ -24,9 +24,6 @@
         ],
         "baseUrl": ".",
         "paths": {
-            "@minreport/*": [
-                "../_plugins/*/src/plugin.ts"
-            ],
             "firebase": [
                 "./node_modules/firebase"
             ],

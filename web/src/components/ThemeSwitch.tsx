@@ -6,10 +6,11 @@ export const ThemeSwitch = () => {
     return (
         <button
             onClick={toggleTheme}
-            className="p-2 rounded-xl text-slate-500 hover:text-antigravity-accent hover:bg-antigravity-accent/5 dark:hover:bg-antigravity-accent/10 transition-colors border border-transparent hover:border-antigravity-accent/20 bg-white/50 dark:bg-black/20 backdrop-blur-sm"
+            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center justify-center rounded-none"
             aria-label="Toggle Theme"
+            title={theme === 'light' ? 'Activar modo oscuro' : 'Activar modo claro'}
         >
-            <span className="material-symbols-rounded text-xl block">
+            <span className="material-symbols-outlined text-[20px] block">
                 {theme === 'light' ? 'light_mode' : 'dark_mode'}
             </span>
         </button>

@@ -27,10 +27,24 @@ const db = admin.firestore();
 const auth = admin.auth();
 
 /**
- * Reset all collections
+const PROTECTED_TEST_IDS = new Set([
+    'dev-master-root-uid',
+    'dev-master-sandbox',
+    'super-admin-uid',
+    'super-admin-id'
+]);
+
+const isProtectedRecord = (id: string, email?: string) => {
+    if (PROTECTED_TEST_IDS.has(id)) return true;
+    if (email && (email.toLowerCase() === 'dev@minreport.com' || email.toLowerCase().includes('superadmin'))) return true;
+    return false;
+};
+
+/**
+ * Reset all collections (Safeguarding protected system & dev accounts)
  */
 export async function resetDatabase() {
-    console.log('🗑️  Resetting database...');
+    console.log('🗑️  Resetting database (preserving protected system accounts)...');
 
     const collections = [
         'tenants',
@@ -45,19 +59,23 @@ export async function resetDatabase() {
         const batch = db.batch();
 
         snapshot.docs.forEach(doc => {
-            batch.delete(doc.ref);
+            if (!isProtectedRecord(doc.id)) {
+                batch.delete(doc.ref);
+            }
         });
 
         await batch.commit();
-        console.log(`  ✅ Cleared ${collectionName}`);
+        console.log(`  ✅ Cleared ${collectionName} (protected entries preserved)`);
     }
 
-    // Delete all Auth users
+    // Delete non-protected Auth users
     const listUsersResult = await auth.listUsers();
     for (const userRecord of listUsersResult.users) {
-        await auth.deleteUser(userRecord.uid);
+        if (!isProtectedRecord(userRecord.uid, userRecord.email)) {
+            await auth.deleteUser(userRecord.uid);
+        }
     }
-    console.log('  ✅ Cleared Auth users');
+    console.log('  ✅ Cleared test Auth users (DEV & Super Admin preserved)');
 }
 
 /**

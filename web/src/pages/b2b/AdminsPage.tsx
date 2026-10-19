@@ -136,21 +136,21 @@ export const AdminsPage = () => {
     if (initialLoading) {
         return (
             <div className="flex flex-col items-center justify-center h-[70vh] space-y-6">
-                <span className="material-symbols-rounded text-4xl animate-spin text-antigravity-accent">sync</span>
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-antigravity-light-muted dark:text-antigravity-dark-muted">Sincronizando Directorio de Confianza</p>
+                <span className="material-symbols-outlined text-4xl animate-spin text-antigravity-accent">sync</span>
+                <p className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-antigravity-light-muted dark:text-antigravity-dark-muted">Sincronizando Directorio de Confianza</p>
             </div>
         );
     }
 
     return (
-        <div className={containerClass} style={{ fontFamily: '"Atkinson Hyperlegible", sans-serif' }}>
+        <div className={containerClass}>
 
             {/* 1. Header Section - Asymmetric and Spacious */}
             <header className={sectionHeaderClass}>
                 <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
                     <div>
                         <div className="flex items-center gap-3 mb-4">
-                            <span className="material-symbols-rounded text-antigravity-accent text-3xl">verified_user</span>
+                            <span className="material-symbols-outlined text-antigravity-accent text-3xl">verified_user</span>
                             <span className="h-[1px] w-12 bg-antigravity-accent/20 md:block hidden" />
                         </div>
                         <h1 className="text-3xl font-black uppercase tracking-tight text-antigravity-light-text dark:text-antigravity-dark-text">
@@ -179,7 +179,7 @@ export const AdminsPage = () => {
                 <section className="xl:col-span-4 space-y-6">
                     <div className={cardClass}>
                         <div className="flex items-center gap-2 mb-8">
-                            <span className="material-symbols-rounded text-antigravity-accent">person_add</span>
+                            <span className="material-symbols-outlined text-antigravity-accent">person_add</span>
                             <h2 className="text-xs font-black uppercase tracking-widest">Nueva Designación</h2>
                         </div>
 
@@ -212,7 +212,7 @@ export const AdminsPage = () => {
                             {error && (
                                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
                                     className="p-4 bg-red-500/5 border-l-2 border-red-500 text-[11px] text-red-500 font-bold flex items-start gap-3">
-                                    <span className="material-symbols-rounded text-sm">warning</span>
+                                    <span className="material-symbols-outlined text-sm">warning</span>
                                     <span className="uppercase tracking-wide">{error}</span>
                                 </motion.div>
                             )}
@@ -220,14 +220,14 @@ export const AdminsPage = () => {
                             <button
                                 type="submit"
                                 disabled={admins.length >= 2 || loading}
-                                className="group w-full bg-antigravity-light-text dark:bg-antigravity-dark-text text-antigravity-light-surface dark:text-antigravity-dark-surface py-4 px-6 text-[10px] font-black uppercase tracking-[0.2em] transition-all hover:bg-antigravity-accent hover:text-white disabled:opacity-10 disabled:grayscale flex items-center justify-center gap-2"
+                                className="group w-full bg-antigravity-light-text dark:bg-antigravity-dark-text text-antigravity-light-surface dark:text-antigravity-dark-surface py-4 px-6 text-[10px] font-black uppercase tracking-[0.2em] transition-all hover:bg-antigravity-accent hover:text-white disabled:opacity-10 disabled:grayscale flex items-center justify-center gap-2 cursor-pointer"
                             >
                                 {loading ? (
-                                    <span className="material-symbols-rounded animate-spin">refresh</span>
+                                    <span className="material-symbols-outlined animate-spin">refresh</span>
                                 ) : (
                                     <>
                                         <span>Iniciar Designación</span>
-                                        <span className="material-symbols-rounded text-sm transition-transform group-hover:translate-x-1">arrow_forward</span>
+                                        <span className="material-symbols-outlined text-sm transition-transform group-hover:translate-x-1">arrow_forward</span>
                                     </>
                                 )}
                             </button>
@@ -260,7 +260,7 @@ export const AdminsPage = () => {
                                         <tr>
                                             <td colSpan={5} className="px-8 py-24 text-center">
                                                 <div className="flex flex-col items-center gap-4 opacity-30">
-                                                    <span className="material-symbols-rounded text-5xl">person_off</span>
+                                                    <span className="material-symbols-outlined text-5xl">person_off</span>
                                                     <p className="text-xs font-bold uppercase tracking-[0.2em]">Sin Cargos Designados</p>
                                                 </div>
                                             </td>
@@ -298,15 +298,15 @@ export const AdminsPage = () => {
                                                             <button
                                                                 onClick={() => handleResendInvitation(admin)}
                                                                 disabled={loading}
-                                                                className="text-[9px] font-black uppercase tracking-widest text-antigravity-accent hover:underline flex items-center gap-1"
+                                                                className="text-[9px] font-black uppercase tracking-widest text-antigravity-accent hover:underline flex items-center gap-1 cursor-pointer"
                                                             >
-                                                                <span className="material-symbols-rounded text-sm">mail</span>
+                                                                <span className="material-symbols-outlined text-sm">mail</span>
                                                                 Reenviar
                                                             </button>
                                                         )}
                                                         <button
                                                             onClick={() => handleRevokePreConfirm(admin)}
-                                                            className="text-[9px] font-black uppercase tracking-widest text-red-500/60 hover:text-red-500 transition-colors"
+                                                            className="text-[9px] font-black uppercase tracking-widest text-red-500/60 hover:text-red-500 transition-colors cursor-pointer"
                                                         >
                                                             Revocar
                                                         </button>
@@ -329,9 +329,9 @@ export const AdminsPage = () => {
                         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                             onClick={() => setShowConfirmModal(false)} className="absolute inset-0 bg-black/60 backdrop-blur-md" />
                         <motion.div initial={{ scale: 0.98, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.98, opacity: 0 }}
-                            className="relative w-full max-w-lg bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-antigravity-light-border dark:border-antigravity-dark-border p-12 shadow-2xl">
+                            className="relative w-full max-w-lg bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-antigravity-light-border dark:border-antigravity-dark-border p-12 shadow-none rounded-none">
                             <header className="mb-10">
-                                <span className="material-symbols-rounded text-antigravity-accent text-4xl mb-6">gavel</span>
+                                <span className="material-symbols-outlined text-antigravity-accent text-4xl mb-6">gavel</span>
                                 <h3 className="text-xl font-black uppercase tracking-tight mb-2">Confirmar <span className="text-antigravity-accent">Designación</span></h3>
                                 <p className="text-sm text-antigravity-light-muted dark:text-antigravity-dark-muted leading-relaxed">
                                     Estás delegando autoridad administrativa a <span className="font-bold text-antigravity-light-text dark:text-antigravity-dark-text italic">{form.name} {form.lastName}</span>.
@@ -344,6 +344,7 @@ export const AdminsPage = () => {
                                     <input
                                         type="text"
                                         autoComplete="off"
+                                        spellCheck="false"
                                         value={confirmText}
                                         onChange={(e) => setConfirmText(e.target.value.toUpperCase())}
                                         className={`${inputClass} text-center font-black tracking-[0.5em] text-lg py-4`}
@@ -354,7 +355,7 @@ export const AdminsPage = () => {
                                 <button
                                     onClick={handleDesignate}
                                     disabled={confirmText !== 'DESIGNAR'}
-                                    className="w-full bg-antigravity-accent hover:bg-antigravity-accent/80 disabled:opacity-20 text-white py-5 text-xs font-black uppercase tracking-[0.3em] transition-all"
+                                    className="w-full bg-antigravity-accent hover:bg-antigravity-accent/80 disabled:opacity-20 text-white py-5 text-xs font-black uppercase tracking-[0.3em] transition-all cursor-pointer rounded-none"
                                 >
                                     Confirmar Poder Delegado
                                 </button>
@@ -371,9 +372,9 @@ export const AdminsPage = () => {
                         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                             onClick={() => setShowRevokeModal(false)} className="absolute inset-0 bg-black/80 backdrop-blur-md" />
                         <motion.div initial={{ scale: 0.98, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.98, opacity: 0 }}
-                            className="relative w-full max-w-lg bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-red-500/30 p-12 shadow-2xl">
+                            className="relative w-full max-w-lg bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-red-500/30 p-12 shadow-none rounded-none">
                             <header className="mb-10">
-                                <span className="material-symbols-rounded text-red-500 text-4xl mb-6">danger</span>
+                                <span className="material-symbols-outlined text-red-500 text-4xl mb-6">warning</span>
                                 <h3 className="text-xl font-black uppercase tracking-tight mb-2 text-red-500">Revocar <span className="text-antigravity-light-text dark:text-antigravity-dark-text">Acceso</span></h3>
                                 <p className="text-sm text-antigravity-light-muted dark:text-antigravity-dark-muted leading-relaxed">
                                     Esta acción eliminará de forma inmediata todos los privilegios de <span className="font-bold text-red-500">{selectedAdminToRevoke.fullName}</span>.
@@ -386,6 +387,7 @@ export const AdminsPage = () => {
                                     <input
                                         type="text"
                                         autoComplete="off"
+                                        spellCheck="false"
                                         value={revokeConfirmText}
                                         onChange={(e) => setRevokeConfirmText(e.target.value.toUpperCase())}
                                         className={`${inputClass} text-center font-black tracking-[0.5em] text-lg py-4 border-red-500/50 focus:border-red-500`}
@@ -395,7 +397,7 @@ export const AdminsPage = () => {
                                 <button
                                     onClick={handleConfirmRevoke}
                                     disabled={revokeConfirmText !== 'REVOCAR' || loading}
-                                    className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-20 text-white py-5 text-xs font-black uppercase tracking-[0.3em] transition-all"
+                                    className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-20 text-white py-5 text-xs font-black uppercase tracking-[0.3em] transition-all cursor-pointer rounded-none"
                                 >
                                     {loading ? 'Procesando...' : 'Ejecutar Revocación'}
                                 </button>

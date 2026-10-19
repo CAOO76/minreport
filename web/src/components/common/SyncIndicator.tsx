@@ -18,12 +18,13 @@ export const SyncIndicator: React.FC = () => {
         }
     };
 
-    // No mostrar indicadores operativos ni de telemetría en flujos públicos de autenticación
+    // No mostrar indicadores operativos en flujos de autenticación ni portales de acceso
     const isAuthPage = typeof window !== 'undefined' && 
         (window.location.pathname.includes('/login') || 
          window.location.pathname.includes('/register') ||
          window.location.pathname.includes('/setup-access') ||
-         window.location.pathname.includes('/auth/action'));
+         window.location.pathname.includes('/auth/action') ||
+         window.location.pathname.includes('/dev-vault-gateway'));
 
     if (isAuthPage) return null;
 
@@ -36,7 +37,7 @@ export const SyncIndicator: React.FC = () => {
         >
             <div 
                 onClick={() => setShowExpanded(!showExpanded)}
-                className={`flex items-center gap-2 px-3 py-1.5 border transition-all duration-200 cursor-pointer shadow-sm ${
+                className={`flex items-center gap-2 px-3 py-1.5 border transition-all duration-200 cursor-pointer shadow-none rounded-none ${
                     !state.isOnline
                         ? 'bg-[#07090D] border-[#C68346] text-[#C68346]'
                         : state.isSyncing
@@ -74,7 +75,7 @@ export const SyncIndicator: React.FC = () => {
                     ) : state.isSyncing ? (
                         `SINCRONIZANDO (${state.pendingCount})`
                     ) : isCleanOnline ? (
-                        'TELEMETRÍA AL DÍA'
+                        'SINCRONIZADO'
                     ) : (
                         `${state.pendingCount} EN COLA LOCAL`
                     )}

@@ -8,7 +8,6 @@ import React, { useState, useEffect } from 'react';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
 import { offlineStorage, CashflowEventRecord } from '../../core/offline/OfflineStorage';
 import { syncQueueEngine } from '../../core/offline/SyncQueueEngine';
-import { TrendingUp, ArrowUpRight, ShieldCheck, PlusCircle, X, Check } from 'lucide-react';
 
 interface CashflowRecord {
     id: string;
@@ -133,7 +132,7 @@ export const MiningFlowModule: React.FC = () => {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-black/5 dark:border-white/10 pb-4">
                 <div>
                     <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-[#8A93A6]">
-                        <TrendingUp size={14} className="text-[#00AEEF]" />
+                        <span className="material-symbols-outlined text-[16px] text-[#00AEEF]">trending_up</span>
                         <span>MÓDULO DE PLANIFICACIÓN Y FLUJOS DE CAJA MINERO</span>
                     </div>
                     <h1 className="text-xl sm:text-2xl font-bold tracking-tight uppercase text-[#0F172A] dark:text-[#F3F4F6] mt-1">
@@ -142,15 +141,15 @@ export const MiningFlowModule: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-3">
-                    <span className="text-[10px] font-mono font-bold tracking-wider text-emerald-500 bg-emerald-500/10 px-2.5 py-1 border border-emerald-500/20 flex items-center gap-1.5">
-                        <ShieldCheck size={12} />
-                        LEDGER_INMUTABLE_SYNCED
+                    <span className="text-[10px] font-mono font-bold tracking-wider text-emerald-500 bg-emerald-500/10 px-2 py-0.5 border border-emerald-500/20 flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[14px]">verified</span>
+                        LEDGER INMUTABLE
                     </span>
                     <button 
                         onClick={() => setIsModalOpen(true)}
-                        className="px-4 py-2 bg-[#0F172A] dark:bg-[#FFCD00] text-white dark:text-black text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-opacity rounded-none flex items-center gap-1.5"
+                        className="px-4 py-2 bg-[#C68346] hover:bg-[#b07238] text-white text-xs font-bold uppercase tracking-wider transition-colors rounded-none flex items-center gap-1.5 cursor-pointer border-0 outline-none"
                     >
-                        <PlusCircle size={14} />
+                        <span className="material-symbols-outlined text-[16px]">add</span>
                         <span>Registrar Flujo</span>
                     </button>
                 </div>
@@ -233,8 +232,8 @@ export const MiningFlowModule: React.FC = () => {
                                     {tx.ledgerHash}
                                 </td>
                                 <td className="py-3 px-4 text-center">
-                                    <button className="text-[#00AEEF] hover:underline text-[10px] font-bold uppercase tracking-wider inline-flex items-center gap-1">
-                                        Ver <ArrowUpRight size={12} />
+                                    <button className="text-[#00AEEF] hover:underline text-[10px] font-bold uppercase tracking-wider inline-flex items-center gap-1 bg-transparent border-0 cursor-pointer">
+                                        Ver <span className="material-symbols-outlined text-[14px]">arrow_outward</span>
                                     </button>
                                 </td>
                             </tr>
@@ -246,20 +245,24 @@ export const MiningFlowModule: React.FC = () => {
             {/* Modal para Registrar Movimiento Financiero */}
             {isModalOpen && (
                 <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white dark:bg-[#07090D] border border-black/15 dark:border-white/20 w-full max-w-md p-6 shadow-2xl space-y-4">
+                    <div className="bg-white dark:bg-[#07090D] border border-black/15 dark:border-white/20 w-full max-w-md p-6 shadow-none space-y-4">
                         <div className="flex items-center justify-between border-b border-black/10 dark:border-white/10 pb-3">
                             <div className="flex items-center gap-2">
-                                <PlusCircle size={18} className="text-[#00AEEF]" />
+                                <span className="material-symbols-outlined text-[18px] text-[#00AEEF]">add_circle</span>
                                 <h2 className="text-sm font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
                                     Nuevo Registro de Flujo Minero
                                 </h2>
                             </div>
-                            <button onClick={() => setIsModalOpen(false)} className="text-[#8A93A6] hover:text-black dark:hover:text-white">
-                                <X size={18} />
+                            <button 
+                                onClick={() => setIsModalOpen(false)} 
+                                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center"
+                                title="Cerrar modal"
+                            >
+                                <span className="material-symbols-outlined text-[18px]">close</span>
                             </button>
                         </div>
 
-                        <form onSubmit={handleSaveFlow} className="space-y-4">
+                        <form onSubmit={handleSaveFlow} autoComplete="off" spellCheck={false} className="space-y-4">
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-[#8A93A6] mb-1">
                                     Tipo de Movimiento
@@ -348,9 +351,9 @@ export const MiningFlowModule: React.FC = () => {
                                 </button>
                                 <button
                                     type="submit"
-                                    className="px-5 py-2 bg-[#FFCD00] text-black text-xs font-bold uppercase tracking-wider flex items-center gap-1.5"
+                                    className="px-5 py-2 bg-[#C68346] hover:bg-[#b07238] text-white text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-colors cursor-pointer border-0 outline-none"
                                 >
-                                    <Check size={14} />
+                                    <span className="material-symbols-outlined text-[16px]">check</span>
                                     <span>Registrar y Firmar</span>
                                 </button>
                             </div>

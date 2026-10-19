@@ -8,10 +8,9 @@ export default {
     theme: {
         extend: {
             fontFamily: {
-                sans: ['"Atkinson Hyperlegible"', '"Google Sans"', 'system-ui', '-apple-system', 'sans-serif'],
-                google: ['"Google Sans"', '"Google Sans Text"', 'sans-serif'],
-                mono: ['"Google Sans Text"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
-                atkinson: ['"Atkinson Hyperlegible"', 'sans-serif'],
+                sans: ['"Atkinson Hyperlegible Next"', '"Atkinson Hyperlegible"', 'system-ui', '-apple-system', 'sans-serif'],
+                mono: ['"Atkinson Hyperlegible Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+                atkinson: ['"Atkinson Hyperlegible Next"', '"Atkinson Hyperlegible"', 'sans-serif'],
             },
             spacing: {
                 'fib-8': '8px',
@@ -22,10 +21,9 @@ export default {
                 'fib-89': '89px',
             },
             colors: {
-                // Acentos Funcionales Industriales (Estándar CABISEG)
+                // Acentos Funcionales Industriales Oficiales MINREPORT
                 industrial: {
-                    copper: '#C68346', // Acento Oficial MINREPORT Cobre
-                    yellow: '#FFCD00',
+                    copper: '#C68346', // Acento Primario Oficial MINREPORT Cobre
                     cyan: '#00AEEF',   // Cian Tecnológico
                     darkBase: '#000000',
                     darkElevated: '#030406',

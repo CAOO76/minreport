@@ -4,6 +4,7 @@ import { db } from '../config/firebase';
 import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { deleteTenant, getAccountUsers } from '../services/api';
 import { M3Switch } from '../components/M3Switch';
+import { SYSTEM_MODULES } from '../constants/modules';
 
 interface User {
     uid: string;
@@ -16,11 +17,7 @@ interface User {
     lastLogin?: string;
 }
 
-const AVAILABLE_MODULES = [
-    { key: 'opermaq', label: 'OPERMAQ', scope: 'Telemetría de maquinaria pesada' },
-    { key: 'stockpile', label: 'STOCKPILE', scope: 'Cubicación topográfica de acopios' },
-    { key: 'mining-flow', label: 'MINING FLOW', scope: 'Monitoreo de flujo y transporte' }
-];
+const AVAILABLE_MODULES = SYSTEM_MODULES;
 
 export const EnterpriseDetail = () => {
     const { id } = useParams<{ id: string }>();
@@ -43,6 +40,7 @@ export const EnterpriseDetail = () => {
         if (id) {
             fetchData();
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [id]);
 
     const fetchData = async () => {

@@ -1,12 +1,11 @@
 /**
  * MINREPORT - ACTIVACIÓN DE ACCESO Y CONFIGURACIÓN DE CLAVE (Capa 2 / Capa 3)
- * Cumple con el estándar de Minimalismo Industrial Puro (CABISEG).
- * Tipografía Google Sans. Proporción Áurea (1:1.618). Acentos #FFCD00 y #00AEEF.
+ * Cumple con el estándar de Minimalismo Industrial Puro (MINREPORT).
+ * Tipografía Atkinson Hyperlegible. Proporción Áurea (1:1.618). Acentos #C68346 y #00AEEF.
  */
 
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Loader2, ArrowRight, Shield, Check, Building2 } from 'lucide-react';
 import { formatRut } from '../utils/rut';
 import { useAuth } from '../context/AuthContext';
 import { getApiUrl } from '../utils/network';
@@ -96,7 +95,7 @@ export const SetupAccess: React.FC = () => {
             <div className="min-h-screen bg-[#000000] text-[#F3F4F6] flex items-center justify-center p-4 font-sans select-none">
                 <div className="w-full max-w-md p-8 bg-[#07090D] border border-emerald-500/30 text-center space-y-6 shadow-2xl">
                     <div className="w-16 h-16 mx-auto bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
-                        <Check size={32} className="text-emerald-400" />
+                        <span className="material-symbols-outlined text-[32px] text-emerald-400">check</span>
                     </div>
                     <div>
                         <h2 className="text-xl font-bold uppercase tracking-tight text-[#F3F4F6]">
@@ -107,7 +106,7 @@ export const SetupAccess: React.FC = () => {
                         </p>
                     </div>
                     <div className="flex justify-center pt-2">
-                        <Loader2 className="w-5 h-5 animate-spin text-[#00AEEF]" />
+                        <span className="material-symbols-outlined text-[20px] animate-spin text-[#00AEEF]">progress_activity</span>
                     </div>
                 </div>
             </div>
@@ -119,11 +118,11 @@ export const SetupAccess: React.FC = () => {
             
             {/* PANEL PRINCIPAL: Hero Técnico en Proporción Áurea (61.8%) */}
             <div className="hidden md:flex md:w-[61.8%] flex-col justify-between p-12 lg:p-16 border-r border-[#12151C] bg-[#030406] relative overflow-hidden">
-                <div className="absolute -top-40 -left-40 w-96 h-96 bg-[#FFCD00]/5 rounded-full blur-[140px] pointer-events-none" />
-                <div className="absolute -bottom-40 right-0 w-96 h-96 bg-[#00AEEF]/5 rounded-full blur-[140px] pointer-events-none" />
+                <div className="absolute -top-40 -left-40 w-96 h-96 bg-[#C68346]/5 rounded-none blur-[140px] pointer-events-none" />
+                <div className="absolute -bottom-40 right-0 w-96 h-96 bg-[#00AEEF]/5 rounded-none blur-[140px] pointer-events-none" />
 
                 <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-[#FFCD00] text-black flex items-center justify-center font-bold text-sm tracking-tighter">
+                    <div className="w-8 h-8 bg-[#C68346] text-white flex items-center justify-center font-bold text-sm tracking-tighter rounded-none">
                         MR
                     </div>
                     <div>
@@ -133,8 +132,8 @@ export const SetupAccess: React.FC = () => {
                 </div>
 
                 <div className="space-y-6 max-w-xl z-10">
-                    <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/5 border border-white/10 text-[10px] uppercase font-bold tracking-[0.2em] text-[#00AEEF]">
-                        <Shield size={12} />
+                    <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/5 border border-white/10 text-[10px] uppercase font-bold tracking-[0.2em] text-[#00AEEF] rounded-none">
+                        <span className="material-symbols-outlined text-[14px]">verified_user</span>
                         <span>ACTIVACIÓN DE ENTORNO OPERATIVO</span>
                     </div>
 
@@ -148,8 +147,8 @@ export const SetupAccess: React.FC = () => {
                     </p>
 
                     {accountName && (
-                        <div className="p-4 bg-white/[0.02] border border-white/10 flex items-center gap-3">
-                            <Building2 size={18} className="text-[#FFCD00] shrink-0" />
+                        <div className="p-4 bg-white/[0.02] border border-white/10 flex items-center gap-3 rounded-none">
+                            <span className="material-symbols-outlined text-[20px] text-[#C68346] shrink-0">apartment</span>
                             <div>
                                 <span className="text-[10px] text-[#8A93A6] uppercase tracking-wider block font-bold">Empresa Asignada</span>
                                 <span className="text-sm font-bold text-[#F3F4F6] uppercase">{decodeURIComponent(accountName)}</span>
@@ -168,7 +167,7 @@ export const SetupAccess: React.FC = () => {
             <div className="w-full md:w-[38.2%] flex flex-col justify-between p-8 lg:p-12 bg-[#07090D]">
                 <div className="flex items-center justify-between md:hidden pb-6 border-b border-[#12151C]">
                     <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 bg-[#FFCD00] text-black flex items-center justify-center font-bold text-xs">MR</div>
+                        <div className="w-7 h-7 bg-[#C68346] text-white flex items-center justify-center font-bold text-xs rounded-none">MR</div>
                         <span className="text-xs font-bold tracking-[0.2em] uppercase">MINREPORT</span>
                     </div>
                     <span className="text-[10px] font-mono text-[#8A93A6]">ACTIVACIÓN</span>
@@ -250,15 +249,12 @@ export const SetupAccess: React.FC = () => {
                         <button
                             type="submit"
                             disabled={loading || !token || !accountId}
-                            className="w-full py-3 bg-[#FFCD00] hover:bg-[#FFCD00]/90 text-black text-xs font-bold uppercase tracking-[0.15em] flex items-center justify-center gap-2 transition-opacity disabled:opacity-50 mt-2"
+                            className="w-full py-3 bg-[#C68346] hover:bg-[#C68346]/90 text-white text-xs font-bold uppercase tracking-[0.15em] flex items-center justify-center gap-2 transition-opacity disabled:opacity-50 mt-2 rounded-none cursor-pointer"
                         >
                             {loading ? (
-                                <Loader2 size={16} className="animate-spin text-black" />
+                                <span className="material-symbols-outlined animate-spin text-[16px] text-white">sync</span>
                             ) : (
-                                <>
-                                    <span>Activar y Confirmar Clave</span>
-                                    <ArrowRight size={14} />
-                                </>
+                                <span>Activar y Confirmar Clave</span>
                             )}
                         </button>
                     </form>

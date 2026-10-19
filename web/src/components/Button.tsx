@@ -19,7 +19,7 @@ export const Button = ({ variant = 'primary', icon, children, className, ...prop
             )}
             {...props}
         >
-            {icon && <span className="material-symbols-rounded text-lg">{icon}</span>}
+            {icon && <span className="material-symbols-outlined text-lg">{icon}</span>}
             {children}
         </button>
     );

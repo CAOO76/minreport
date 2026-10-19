@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { getTenants, updateTenantStatus } from '../services/api';
-import clsx from 'clsx';
 import { TenantDetailsModal } from '../components/admin/TenantDetailsModal';
 
 interface Tenant {
