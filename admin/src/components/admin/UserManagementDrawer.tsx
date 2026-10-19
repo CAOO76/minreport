@@ -55,41 +55,10 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
     const [copied, setCopied] = useState(false);
     const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-    // Módulos del Sistema Disponibles
-    const [availableModules, setAvailableModules] = useState<SystemModuleInfo[]>(SYSTEM_MODULES);
+    // Módulos del Sistema — Fuente de verdad nativa (SYSTEM_MODULES)
+    // No se consulta Firestore: los módulos son integrados al código MINREPORT, no plugins externos.
+    const availableModules = SYSTEM_MODULES;
 
-    useEffect(() => {
-        const fetchAvailableModules = async () => {
-            try {
-                const q = query(collection(db, 'plugins'), where('status', 'in', ['OPERATIONAL', 'ACTIVE']));
-                const snapshot = await getDocs(q);
-                if (!snapshot.empty) {
-                    const firestoreMap = new Map(snapshot.docs.map(doc => [doc.id, doc.data()]));
-                    const merged = SYSTEM_MODULES.map(mod => {
-                        const fsData = firestoreMap.get(mod.key);
-                        if (fsData) {
-                            return {
-                                ...mod,
-                                label: fsData.label || mod.label,
-                                scope: fsData.scope || fsData.description || mod.scope
-                            };
-                        }
-                        return mod;
-                    });
-                    setAvailableModules(merged);
-                } else {
-                    setAvailableModules(SYSTEM_MODULES);
-                }
-            } catch (error) {
-                console.error("Error fetching modules:", error);
-                setAvailableModules(SYSTEM_MODULES);
-            }
-        };
-
-        if (isOpen) {
-            fetchAvailableModules();
-        }
-    }, [isOpen]);
 
     // States for Messaging
     const [msgBody, setMsgBody] = useState('');

@@ -1,79 +1,103 @@
 import React, { useEffect, useState } from 'react';
 import { db } from '../config/firebase';
-import { collection, getDocs, doc, setDoc, serverTimestamp, query, orderBy } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { M3Switch } from '../components/M3Switch';
 import { SYSTEM_MODULES } from '../constants/modules';
 
-interface OperationalModule {
+/**
+ * ARQUITECTURA: Módulos Nativos MINREPORT
+ *
+ * Los módulos (OPERMAQ, STOCKPILE, MINING FLOW) son código nativo integrado
+ * al bundle de MINREPORT. NO son plugins externos ni SDK dinámicos.
+ *
+ * Esta página gestiona únicamente el estado ACTIVE/DISABLED de cada módulo,
+ * que se persiste en Firestore (colección 'modules_status') como configuración
+ * de disponibilidad global para el superadmin. La fuente de verdad del catálogo
+ * de módulos es siempre SYSTEM_MODULES (constants/modules.ts).
+ */
+
+const MODULES_STATUS_COLLECTION = 'modules_status';
+
+interface ModuleStatus {
+    status: 'ACTIVE' | 'DISABLED';
+    updatedAt?: any;
+}
+
+interface ModuleWithStatus {
     key: string;
     label: string;
     scope: string;
     status: 'ACTIVE' | 'DISABLED';
 }
 
-const DEFAULT_INTERNAL_MODULES: OperationalModule[] = SYSTEM_MODULES.map(m => ({
-    key: m.key,
-    label: m.label,
-    scope: m.scope,
-    status: 'ACTIVE'
-}));
-
 export const PluginsPage: React.FC = () => {
-    const [modules, setModules] = useState<OperationalModule[]>(DEFAULT_INTERNAL_MODULES);
+    // Estado inicial: todos los módulos nativos activos
+    const [modules, setModules] = useState<ModuleWithStatus[]>(
+        SYSTEM_MODULES.map(m => ({ key: m.key, label: m.label, scope: m.scope, status: 'ACTIVE' }))
+    );
     const [loading, setLoading] = useState(false);
     const [notification, setNotification] = useState<string | null>(null);
 
-    const fetchModules = async () => {
+    /**
+     * fetchModuleStatuses:
+     * Carga el estado ACTIVE/DISABLED de cada módulo nativo desde Firestore.
+     * El catálogo (nombre, alcance, icono) siempre viene de SYSTEM_MODULES.
+     */
+    const fetchModuleStatuses = async () => {
         setLoading(true);
         try {
-            const q = query(collection(db, 'plugins'), orderBy('label'));
-            const snapshot = await getDocs(q);
-            if (!snapshot.empty) {
-                const list = snapshot.docs.map(d => {
-                    const data = d.data();
-                    return {
-                        key: d.id,
-                        label: data.label || d.id.toUpperCase(),
-                        scope: data.scope || data.description || '[Alcance técnico no declarado]',
-                        status: (data.status === 'OPERATIONAL' || data.status === 'ACTIVE') ? 'ACTIVE' : 'DISABLED'
-                    } as OperationalModule;
-                });
-                setModules(list);
-            } else {
-                for (const mod of DEFAULT_INTERNAL_MODULES) {
-                    await setDoc(doc(db, 'plugins', mod.key), {
-                        label: mod.label,
-                        scope: mod.scope,
-                        status: mod.status,
-                        updatedAt: serverTimestamp()
-                    });
-                }
-            }
+            const statusMap = new Map<string, 'ACTIVE' | 'DISABLED'>();
+
+            await Promise.all(
+                SYSTEM_MODULES.map(async (mod) => {
+                    const ref = doc(db, MODULES_STATUS_COLLECTION, mod.key);
+                    const snap = await getDoc(ref);
+                    if (snap.exists()) {
+                        const data = snap.data() as ModuleStatus;
+                        statusMap.set(mod.key, data.status === 'DISABLED' ? 'DISABLED' : 'ACTIVE');
+                    }
+                    // Si no existe en Firestore → módulo activo por defecto
+                })
+            );
+
+            setModules(
+                SYSTEM_MODULES.map(m => ({
+                    key: m.key,
+                    label: m.label,
+                    scope: m.scope,
+                    status: statusMap.get(m.key) ?? 'ACTIVE'
+                }))
+            );
         } catch (error) {
-            console.error("Error al consultar módulos:", error);
+            console.error('[MÓDULOS] Error al consultar estados:', error);
         } finally {
             setLoading(false);
         }
     };
 
     useEffect(() => {
-        fetchModules();
+        fetchModuleStatuses();
     }, []);
 
+    /**
+     * toggleStatus:
+     * Persiste el nuevo estado en Firestore (modules_status/{key}).
+     * Solo altera disponibilidad; el módulo sigue siendo código nativo.
+     */
     const toggleStatus = async (key: string, currentStatus: 'ACTIVE' | 'DISABLED') => {
-        const nextStatus = currentStatus === 'ACTIVE' ? 'DISABLED' : 'ACTIVE';
+        const nextStatus: 'ACTIVE' | 'DISABLED' = currentStatus === 'ACTIVE' ? 'DISABLED' : 'ACTIVE';
         try {
-            await setDoc(doc(db, 'plugins', key), {
-                status: nextStatus,
-                updatedAt: serverTimestamp()
-            }, { merge: true });
-
+            await setDoc(
+                doc(db, MODULES_STATUS_COLLECTION, key),
+                { status: nextStatus, updatedAt: serverTimestamp() },
+                { merge: true }
+            );
             setModules(prev => prev.map(p => p.key === key ? { ...p, status: nextStatus } : p));
             setNotification(`Módulo ${key.toUpperCase()}: ${nextStatus === 'ACTIVE' ? 'Habilitado' : 'Deshabilitado'}`);
             setTimeout(() => setNotification(null), 3000);
         } catch (error) {
-            console.error("Error al actualizar módulo:", error);
-            setNotification(`Error al actualizar estado`);
+            console.error('[MÓDULOS] Error al actualizar estado:', error);
+            setNotification('Error al actualizar estado del módulo');
             setTimeout(() => setNotification(null), 3000);
         }
     };
@@ -87,15 +111,15 @@ export const PluginsPage: React.FC = () => {
                         Módulos del Sistema
                     </h1>
                     <p className="text-xs text-[#475569] dark:text-[#8A93A6] mt-0.5">
-                        Disponibilidad de módulos operativos integrados.
+                        Disponibilidad de módulos operativos nativos MINREPORT.
                     </p>
                 </div>
                 <div className="flex items-center gap-3">
                     <button
-                        onClick={fetchModules}
+                        onClick={fetchModuleStatuses}
                         disabled={loading}
                         className="bg-transparent border-0 outline-none p-1.5 text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors cursor-pointer flex items-center gap-1.5 text-xs"
-                        title="Actualizar lista"
+                        title="Actualizar estados"
                     >
                         <span className={`material-symbols-outlined text-[18px] ${loading ? 'animate-spin' : ''}`}>sync</span>
                         <span>Actualizar</span>
@@ -117,10 +141,10 @@ export const PluginsPage: React.FC = () => {
                     <thead>
                         <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#030406] font-mono text-[#475569] dark:text-[#8A93A6]">
                             <th className="py-2.5 px-4 font-semibold">Código</th>
-                            <th className="py-2.5 px-4 font-semibold">Nombre</th>
+                            <th className="py-2.5 px-4 font-semibold">Módulo Nativo</th>
                             <th className="py-2.5 px-4 font-semibold">Alcance Operativo</th>
                             <th className="py-2.5 px-4 font-semibold">Estado</th>
-                            <th className="py-2.5 px-4 font-semibold text-right">Habilitación</th>
+                            <th className="py-2.5 px-4 font-semibold text-right">Disponibilidad</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
@@ -141,7 +165,7 @@ export const PluginsPage: React.FC = () => {
                                             ? 'text-emerald-600 dark:text-emerald-400'
                                             : 'text-neutral-400 dark:text-neutral-500'
                                     }`}>
-                                        <span className={`w-1.5 h-1.5 rounded-full ${
+                                        <span className={`w-1.5 h-1.5 rounded-none ${
                                             mod.status === 'ACTIVE' ? 'bg-emerald-500' : 'bg-neutral-400'
                                         }`} />
                                         {mod.status === 'ACTIVE' ? 'Habilitado' : 'Inactivo'}

@@ -11,21 +11,6 @@ export interface UserStats {
     storageUsed: number; // in bytes or MB
 }
 
-export interface Plugin {
-    key: string;
-    label: string;
-    description: string;
-    icon: string;
-    status: 'OPERATIONAL' | 'TESTING';
-    createdAt: any;
-    updatedAt: any;
-    observations?: Array<{
-        id: string;
-        text: string;
-        date: any;
-        author: string;
-    }>;
-}
 
 export interface UserProfile {
     uid: string;
