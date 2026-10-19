@@ -60,7 +60,7 @@ class ErrorBoundary extends Component<Props, State> {
 
                         <button
                             onClick={this.handleReset}
-                            className="w-full py-5 bg-white text-black font-black text-[11px] uppercase tracking-[0.3em] rounded-none flex items-center justify-center gap-3 active:scale-95 transition-all shadow-antigravity-accent/5 shadow-2xl"
+                            className="w-full py-5 bg-white text-black font-black text-[11px] uppercase tracking-[0.3em] rounded-none flex items-center justify-center gap-3 active:scale-95 transition-all shadow-none"
                         >
                             <RefreshCcw size={18} />
                             RECOVER_SYSTEM

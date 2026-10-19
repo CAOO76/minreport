@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 
 # Script para generar APK de pruebas para dispositivos reales
 # El APK se conectará a los emuladores de Firebase en tu iMac (192.168.1.87)

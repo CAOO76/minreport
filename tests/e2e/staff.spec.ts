@@ -77,14 +77,14 @@ test.describe('Desktop Access and Dashboards', () => {
         await workerUser.goto('/dashboard');
 
         // Pedro Soto (Worker) has 'Operador CAEX' profile
-        // Profile only allows 'Fleet Tracking'
+        // Profile only allows 'OPERMAQ'
 
         // 1. Verify Plugins
-        await expect(workerUser.locator('text=Fleet Tracking')).toBeVisible();
-        await expect(workerUser.locator('text=Stockpile Control')).not.toBeVisible();
+        await expect(workerUser.locator('text=OPERMAQ')).toBeVisible();
+        await expect(workerUser.locator('text=STOCKPILE')).not.toBeVisible();
 
         // 2. Open Plugin
-        await workerUser.click('text=Fleet Tracking');
+        await workerUser.click('text=OPERMAQ');
 
         // 3. Verify Plugin Loader
         await expect(workerUser.locator('id=plugin-canvas')).toBeVisible();

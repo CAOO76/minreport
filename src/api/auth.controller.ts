@@ -14,7 +14,7 @@ export const register = async (req: Request, res: Response) => {
         const body = req.body;
         console.log('[AUTH-REGISTER] Request received for:', body.email || body.billingEmail);
 
-        // 1. Detección de Registro Legal B2B (Estándar CABISEG / Ley 19.628)
+        // 1. Detección de Registro Legal B2B (Estándar MINREPORT / Ley 19.628)
         const isB2BRegistration = Boolean(body.businessName && body.companyTaxId && body.acceptTermsAndPrivacy);
 
         if (isB2BRegistration) {

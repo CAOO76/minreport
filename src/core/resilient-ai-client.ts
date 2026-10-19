@@ -1,6 +1,6 @@
 /**
  * ENJAMBRE GEMINI AI - CLIENTE RESILIENTE UNIVERSAL (Capa 4)
- * Estándar Global CABISEG Web 3.0 / SouthAmerica-West1
+ * Estándar Global MINREPORT Web 3.0 / SouthAmerica-West1
  * 
  * Jerarquía de Enjambre (Fallback Automático):
  * 1. Pro (Primario): gemini-1.5-pro (Razonamiento crítico)

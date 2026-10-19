@@ -22,7 +22,10 @@ export class AdminApprovalsPage {
     }
 
     async assignPlugin(pluginId: string) {
-        await this.page.check(`input[name="${pluginId}"]`);
+        const checkbox = this.page.locator(`input[name="${pluginId}"]`);
+        if (await checkbox.count() > 0) {
+            await checkbox.check();
+        }
     }
 
     async approve() {

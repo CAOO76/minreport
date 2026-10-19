@@ -93,7 +93,7 @@ export const SetupAccess: React.FC = () => {
     if (success) {
         return (
             <div className="min-h-screen bg-[#000000] text-[#F3F4F6] flex items-center justify-center p-4 font-sans select-none">
-                <div className="w-full max-w-md p-8 bg-[#07090D] border border-emerald-500/30 text-center space-y-6 shadow-2xl">
+                <div className="w-full max-w-md p-8 bg-[#07090D] border border-emerald-500/30 text-center space-y-6 shadow-none">
                     <div className="w-16 h-16 mx-auto bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
                         <span className="material-symbols-outlined text-[32px] text-emerald-400">check</span>
                     </div>

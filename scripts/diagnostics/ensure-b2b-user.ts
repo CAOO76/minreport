@@ -27,7 +27,7 @@ const ensureUser = async (email: string, password: string) => {
     }
 };
 
-ensureUser('info@cabiseg.com', 'caoo1976')
+ensureUser('admin@minreport.com', 'caoo1976')
     .then(() => process.exit(0))
     .catch((err) => {
         console.error(err);

@@ -1,11 +1,11 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 
 # 🚀 MINREPORT - UNIFIED DEVELOPMENT SCRIPT (WEB 3.0 MONOLITH MODE)
 # Inicia todo el ecosistema con limpieza de puertos, sincronización móvil y Android Studio.
 
 echo "🟢 Iniciando entorno de desarrollo MINREPORT..."
 
-# Configurar JDK 21 para Firebase Tools Emulators
+# Configurar JDK para Firebase Tools Emulators si existe ruta personalizada
 if [ -d "/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" ]; then
     export JAVA_HOME="/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"
     export PATH="$JAVA_HOME/bin:$PATH"

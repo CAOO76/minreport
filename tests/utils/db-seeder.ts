@@ -86,31 +86,27 @@ export async function seedPlugins() {
 
     const plugins = [
         {
-            id: 'stockpile-control',
-            name: 'Stockpile Control',
-            description: 'Gestión de acopios mineros',
-            icon: 'inventory_2',
-            version: '1.0.0'
-        },
-        {
-            id: 'inventory-management',
-            name: 'Inventory Management',
-            description: 'Control de inventario',
-            icon: 'warehouse',
-            version: '1.0.0'
-        },
-        {
-            id: 'fleet-tracking',
-            name: 'Fleet Tracking',
-            description: 'Seguimiento de flota',
+            id: 'opermaq',
+            name: 'OPERMAQ',
+            label: 'OPERMAQ',
+            description: 'Telemetría y registro operativo de maquinaria pesada.',
             icon: 'local_shipping',
             version: '1.0.0'
         },
         {
-            id: 'safety-reports',
-            name: 'Safety Reports',
-            description: 'Reportes de seguridad',
-            icon: 'health_and_safety',
+            id: 'stockpile',
+            name: 'STOCKPILE',
+            label: 'STOCKPILE',
+            description: 'Cálculo volumétrico y cubicación topográfica de acopios.',
+            icon: 'layers',
+            version: '1.0.0'
+        },
+        {
+            id: 'mining-flow',
+            name: 'MINING FLOW',
+            label: 'MINING FLOW',
+            description: 'Monitoreo de flujo y transporte de mineral.',
+            icon: 'payments',
             version: '1.0.0'
         }
     ];
@@ -182,7 +178,7 @@ export async function seedEnterpriseAccount() {
         type: 'ENTERPRISE',
         taxId: '76.123.456-7',
         ownerId: ownerUid,
-        enabledPlugins: ['stockpile-control', 'fleet-tracking'],
+        enabledPlugins: ['stockpile', 'opermaq'],
         createdAt: Date.now(),
         updatedAt: Date.now()
     });
@@ -224,7 +220,7 @@ export async function seedEnterpriseAccount() {
         id: 'profile-operador-caex',
         name: 'Operador CAEX',
         description: 'Operador de camiones CAEX',
-        allowedPlugins: ['fleet-tracking'],
+        allowedPlugins: ['opermaq'],
         createdAt: Date.now(),
         updatedAt: Date.now(),
         createdBy: ownerUid
@@ -262,7 +258,7 @@ export async function seedEducationalAccount() {
         type: 'EDUCATIONAL',
         taxId: '18.765.432-1',
         ownerId: userUid,
-        enabledPlugins: ['stockpile-control'],
+        enabledPlugins: ['stockpile'],
         createdAt: Date.now(),
         updatedAt: Date.now()
     });
@@ -331,7 +327,7 @@ export async function seedPersonalAccount() {
         type: 'PERSONAL',
         taxId: '15.234.567-8',
         ownerId: userUid,
-        enabledPlugins: ['stockpile-control', 'inventory-management'],
+        enabledPlugins: ['stockpile', 'opermaq'],
         createdAt: Date.now(),
         updatedAt: Date.now()
     });

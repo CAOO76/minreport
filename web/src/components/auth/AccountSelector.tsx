@@ -85,8 +85,8 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
                         className={clsx(
                             "group relative flex items-center p-6 rounded-none border transition-all duration-500 text-left w-full disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden",
                             selectedId === account.accountId
-                                ? "bg-antigravity-accent/5 border-antigravity-accent shadow-lg"
-                                : "bg-white/5 dark:bg-black/20 border-black/5 dark:border-white/5 hover:bg-white/10 dark:hover:bg-white/5 hover:border-black/20 dark:hover:border-white/20 shadow-sm"
+                                ? "bg-antigravity-accent/5 border-antigravity-accent shadow-none"
+                                : "bg-white/5 dark:bg-black/20 border-black/5 dark:border-white/5 hover:bg-white/10 dark:hover:bg-white/5 hover:border-black/20 dark:hover:border-white/20 shadow-none"
                         )}
                     >
                         {/* Grid de fondo decorativo selectivo */}
@@ -94,7 +94,7 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
 
                         {/* Avatar o Icono */}
                         <div className={clsx(
-                            "w-12 h-12 rounded-none flex items-center justify-center mr-6 transition-all duration-500 overflow-hidden shadow-2xl relative",
+                            "w-12 h-12 rounded-none flex items-center justify-center mr-6 transition-all duration-500 overflow-hidden shadow-none relative",
                             selectedId === account.accountId ? "bg-antigravity-accent text-white" : "bg-black/5 dark:bg-white/10 text-black/40 dark:text-white/40"
                         )}>
                             <div className="absolute inset-0 technical-grid opacity-20"></div>

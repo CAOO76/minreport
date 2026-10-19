@@ -172,7 +172,7 @@ export const Register = () => {
                 </div>
 
                 {/* Formulario Técnico Legal (Área ~ 61.8% en Desktop) */}
-                <div className="lg:col-span-7 bg-white dark:bg-[#07090D] border border-black/5 dark:border-white/10 p-6 sm:p-10 shadow-sm">
+                <div className="lg:col-span-7 bg-white dark:bg-[#07090D] border border-black/5 dark:border-white/10 p-6 sm:p-10 shadow-none">
                     {success ? (
                         <div className="py-16 text-center space-y-4">
                             <div className="w-14 h-14 bg-emerald-500/10 text-emerald-500 border border-emerald-500/30 flex items-center justify-center mx-auto">
@@ -189,7 +189,7 @@ export const Register = () => {
                             </div>
                         </div>
                     ) : (
-                        <form onSubmit={handleSubmit} className="space-y-8" autoComplete="off">
+                        <form onSubmit={handleSubmit} className="space-y-8" autoComplete="off" spellCheck={false}>
                             
                             {error && (
                                 <div className="p-4 bg-red-500/10 border-l-2 border-red-500 text-red-600 dark:text-red-400 text-xs flex items-start gap-3">

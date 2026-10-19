@@ -351,7 +351,7 @@ export const EmpresaPage = () => {
                                     </div>
                                 </div>
                                 {showDropdown && (
-                                    <div className="absolute z-[100] w-full mt-1 bg-white dark:bg-[#1a2233] border border-gray-200 dark:border-gray-800 shadow-xl max-h-60 overflow-y-auto rounded-none">
+                                    <div className="absolute z-[100] w-full mt-1 bg-white dark:bg-[#1a2233] border border-gray-200 dark:border-gray-800 shadow-none max-h-60 overflow-y-auto rounded-none">
                                         {filteredActivities.length > 0 ? (
                                             filteredActivities.map((act: any) => (
                                                 <button key={act.code} type="button"

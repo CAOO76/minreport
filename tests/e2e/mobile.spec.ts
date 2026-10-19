@@ -49,10 +49,10 @@ test.describe('Mobile App Experience', () => {
         await page.click('button[aria-label*="Herramientas"], text=Herramientas');
 
         // 2. Verify Plugins list
-        await expect(page.locator('text=Fleet Tracking')).toBeVisible();
+        await expect(page.locator('text=OPERMAQ')).toBeVisible();
 
         // 3. Open Plugin
-        await page.click('text=Fleet Tracking');
+        await page.click('text=OPERMAQ');
 
         // 4. Verify Plugin Loader
         await expect(page.locator('id=plugin-canvas')).toBeVisible();

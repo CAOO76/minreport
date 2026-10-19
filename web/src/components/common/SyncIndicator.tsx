@@ -98,7 +98,7 @@ export const SyncIndicator: React.FC = () => {
 
             {/* Panel de Diagnóstico */}
             {showExpanded && (
-                <div className="absolute bottom-10 right-0 w-64 p-3 bg-[#07090D] border border-[#12151C] text-xs font-mono shadow-2xl text-[#8A93A6] z-50">
+                <div className="absolute bottom-10 right-0 w-64 p-3 bg-[#07090D] border border-[#12151C] text-xs font-mono shadow-none text-[#8A93A6] z-50">
                     <div className="flex items-center justify-between border-b border-[#12151C] pb-1 mb-2">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-[#F3F4F6]">
                             ESTADO DE SINCRONIZADOR

@@ -37,8 +37,8 @@ test.describe('Full Business Integration', () => {
         const row = adminPage.locator(`tr:has-text("${companyName}")`);
         await expect(row).toBeVisible();
         await row.locator('button[aria-label*="Details"]').click();
-        await adminPage.check('input[name="stockpile-control"]');
-        await adminPage.check('input[name="fleet-tracking"]');
+        await adminPage.check('input[name="stockpile"]');
+        await adminPage.check('input[name="opermaq"]');
         await adminPage.click('button:has-text("Aprobar")');
 
         // 3. ONBOARDING (Mocked Owner Setup -> Invite Staff)

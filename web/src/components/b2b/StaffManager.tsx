@@ -23,7 +23,7 @@ export const StaffManager: React.FC<StaffManagerProps> = ({ userId, userName }) 
     };
 
     return (
-        <div className="border border-gray-200 dark:border-gray-800 rounded-none bg-white dark:bg-[#111827] flex flex-col h-full font-['Atkinson_Hyperlegible'] shadow-sm">
+        <div className="border border-gray-200 dark:border-gray-800 rounded-none bg-white dark:bg-[#111827] flex flex-col h-full font-['Atkinson_Hyperlegible'] shadow-none">
             {/* Header */}
             <div className="p-6 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-[#1F2937]">
                 <h3 className="text-xs font-bold uppercase tracking-widest text-[#C68346] mb-1">Permisos de Módulo</h3>

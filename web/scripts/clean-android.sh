@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 
 # Script para limpiar y reiniciar la app de Android automáticamente
 # Desinstala la app del emulador y la vuelve a instalar con configuración fresca

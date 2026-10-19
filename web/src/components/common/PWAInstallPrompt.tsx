@@ -50,7 +50,7 @@ export const PWAInstallPrompt: React.FC = () => {
     if (!isVisible || isAuthPage) return null;
 
     return (
-        <div className="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-96 bg-white dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] shadow-lg z-[9999] p-4 flex gap-4 font-sans select-none">
+        <div className="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-96 bg-white dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] shadow-none z-[9999] p-4 flex gap-4 font-sans select-none">
             <div className="w-10 h-10 bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center shrink-0">
                 <span className="material-symbols-outlined text-[#C68346] text-[20px]">
                     download

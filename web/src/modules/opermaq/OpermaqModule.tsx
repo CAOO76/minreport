@@ -510,7 +510,7 @@ export const OpermaqModule: React.FC = () => {
             {/* Modal de Ficha Técnica */}
             {selectedAsset && (
                 <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white dark:bg-[#07090D] border border-black/15 dark:border-white/20 w-full max-w-lg p-6 shadow-2xl space-y-4">
+                    <div className="bg-white dark:bg-[#07090D] border border-black/15 dark:border-white/20 w-full max-w-lg p-6 shadow-none space-y-4">
                         <div className="flex items-center justify-between border-b border-black/10 dark:border-white/10 pb-3">
                             <div>
                                 <h3 className="text-sm font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">

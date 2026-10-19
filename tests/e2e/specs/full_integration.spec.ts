@@ -31,7 +31,7 @@ test.describe('E2E-020: Ciclo de Vida Completo (Story Driven)', () => {
         await jobProfilePage.goto();
         await jobProfilePage.openNewProfileModal();
         await jobProfilePage.fillProfileDetails('Super Operador', 'Perfil con acceso total a terreno');
-        await jobProfilePage.togglePlugin('stockpile-control');
+        await jobProfilePage.togglePlugin('stockpile');
         await jobProfilePage.saveProfile();
         await jobProfilePage.expectProfileInList('Super Operador');
 
@@ -80,8 +80,8 @@ test.describe('E2E-020: Ciclo de Vida Completo (Story Driven)', () => {
         await loginPage.expectDashboard();
 
         // CLÍMAX: Verificar visibilidad de plugin heredado
-        await dashboard.expectPluginVisible('Stockpile Control');
-        await dashboard.openPlugin('Stockpile Control');
+        await dashboard.expectPluginVisible('STOCKPILE');
+        await dashboard.openPlugin('STOCKPILE');
 
         await mobileBrowser.close();
     });

@@ -91,7 +91,7 @@ test.describe('Flujos de Registro y Gatekeepers', () => {
 
         const companyName = 'Minera ABC S.A.';
         await adminPage.openDetails(companyName);
-        await adminPage.assignPlugin('stockpile-control');
+        await adminPage.assignPlugin('stockpile');
         await adminPage.approve();
 
         await adminPage.expectApprovalToast();
@@ -100,7 +100,7 @@ test.describe('Flujos de Registro y Gatekeepers', () => {
         // Deep Assert en Firestore
         const accountData = await getFirestoreDoc(superAdmin, 'accounts/minera-abc-id');
         expect(accountData).not.toBeNull();
-        expect(accountData.enabledPlugins).toContain('stockpile-control');
+        expect(accountData.enabledPlugins).toContain('stockpile');
     });
 
     // ========================================

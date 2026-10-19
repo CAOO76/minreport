@@ -31,8 +31,8 @@ test.describe('Admin Dashboard Operations', () => {
         await row.locator('button[aria-label*="Details"], button[aria-label*="Ver"]').click();
 
         // 4. In Modal, check plugins
-        await superAdmin.check('input[name="stockpile-control"]');
-        await superAdmin.check('input[name="inventory-management"]');
+        await superAdmin.check('input[name="stockpile"]');
+        await superAdmin.check('input[name="opermaq"]');
 
         // 5. Approve
         await superAdmin.click('button:has-text("Aprobar")');
@@ -78,8 +78,8 @@ test.describe('Admin Dashboard Operations', () => {
         await row.locator('button[aria-label*="Settings"], button[aria-label*="Administrar"]').click();
 
         // Uncheck one, check another
-        await superAdmin.uncheck('input[name="inventory-management"]');
-        await superAdmin.check('input[name="fleet-tracking"]');
+        await superAdmin.uncheck('input[name="opermaq"]');
+        await superAdmin.check('input[name="mining-flow"]');
 
         await superAdmin.click('button:has-text("Guardar Cambios")');
 
@@ -103,16 +103,16 @@ test.describe('Owner Plugin Management', () => {
         await enterpriseOwner.click('button:has-text("Nuevo Perfil")');
 
         // 3. Check visibility of plugins
-        // Based on E2E-006, should have stockpile-control and fleet-tracking
-        await expect(enterpriseOwner.locator('text=Stockpile Control')).toBeVisible();
-        await expect(enterpriseOwner.locator('text=Fleet Tracking')).toBeVisible();
+        // Based on E2E-006, should have stockpile and mining-flow
+        await expect(enterpriseOwner.locator('text=STOCKPILE')).toBeVisible();
+        await expect(enterpriseOwner.locator('text=MINING FLOW')).toBeVisible();
 
-        // Inventory Management should NOT be visible if disabled by admin
-        await expect(enterpriseOwner.locator('text=Inventory Management')).not.toBeVisible();
+        // OPERMAQ should NOT be visible if disabled by admin
+        await expect(enterpriseOwner.locator('text=OPERMAQ')).not.toBeVisible();
 
         // 4. Fill and Save
         await enterpriseOwner.fill('input[name="name"]', 'Operador Junior');
-        await enterpriseOwner.check('input[value="fleet-tracking"]');
+        await enterpriseOwner.check('input[value="mining-flow"]');
         await enterpriseOwner.click('button:has-text("Guardar")');
 
         await expect(enterpriseOwner.locator('text=Operador Junior')).toBeVisible();

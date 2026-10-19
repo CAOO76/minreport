@@ -1,16 +1,34 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 
-# Script para sincronizar la IP del iMac con el entorno móvil
+# Script para sincronizar la IP del host con el entorno móvil
 # ESTRATEGIA PRINCIPAL: ADB Reverse (USB) → localhost:5173
 # ESTRATEGIA FALLBACK: WiFi IP directa
 
-echo "🔍 Detectando IP local del iMac..."
-# Detección más robusta de IP (intentar varias interfaces comunes)
-IP_ADDRESS=$(ipconfig getifaddr en0 || ipconfig getifaddr en1 || ipconfig getifaddr en3 || ipconfig getifaddr bridge0)
+echo "🔍 Detectando IP local del host..."
 
-if [ -z "$IP_ADDRESS" ]; then
-    # Intento final usando ifconfig
-    IP_ADDRESS=$(ifconfig | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -n 1)
+sedi() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "$@"
+    else
+        sed -i "$@"
+    fi
+}
+
+# Detección robusta de IP (soporte macOS y Linux)
+if command -v ipconfig &>/dev/null; then
+    IP_ADDRESS=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || ipconfig getifaddr en3 2>/dev/null || ipconfig getifaddr bridge0 2>/dev/null)
+fi
+
+if [ -z "$IP_ADDRESS" ] && command -v hostname &>/dev/null; then
+    IP_ADDRESS=$(hostname -I 2>/dev/null | awk '{print $1}')
+fi
+
+if [ -z "$IP_ADDRESS" ] && command -v ip &>/dev/null; then
+    IP_ADDRESS=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7}')
+fi
+
+if [ -z "$IP_ADDRESS" ] && command -v ifconfig &>/dev/null; then
+    IP_ADDRESS=$(ifconfig 2>/dev/null | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -n 1)
 fi
 
 if [ -z "$IP_ADDRESS" ]; then
@@ -23,7 +41,7 @@ fi
 ENV_FILE="web/.env"
 if [ -f "$ENV_FILE" ] && [ ! -z "$IP_ADDRESS" ]; then
     echo "📝 Actualizando IP en $ENV_FILE..."
-    sed -i '' "s|VITE_API_URL=.*|VITE_API_URL=http://$IP_ADDRESS:8080|g" "$ENV_FILE"
+    sedi "s|VITE_API_URL=.*|VITE_API_URL=http://$IP_ADDRESS:8080|g" "$ENV_FILE"
     echo "🚀 VITE_API_URL -> http://$IP_ADDRESS:8080"
 fi
 
@@ -38,32 +56,29 @@ elif command -v adb &> /dev/null; then
 fi
 
 if [ ! -z "$ADB_PATH" ]; then
-    DEVICES=$($ADB_PATH devices | grep -v "List of devices" | grep "device$" | wc -l | tr -d ' ')
+    DEVICES=$($ADB_PATH devices 2>/dev/null | grep -v "List of devices" | grep "device$" | wc -l | tr -d ' ')
     if [ "$DEVICES" -gt "0" ]; then
         echo "📱 Dispositivo USB detectado. Configurando ADB Reverse..."
-        $ADB_PATH reverse tcp:5173 tcp:5173
-        $ADB_PATH reverse tcp:8080 tcp:8080
-        $ADB_PATH reverse tcp:8085 tcp:8085
+        $ADB_PATH reverse tcp:5173 tcp:5173 2>/dev/null || true
+        $ADB_PATH reverse tcp:8080 tcp:8080 2>/dev/null || true
+        $ADB_PATH reverse tcp:8085 tcp:8085 2>/dev/null || true
         echo "✅ ADB Reverse intentado."
 
-        # [MOD] No forzar localhost si queremos usar IP por WiFi aunque esté el cable
-        # Mantendremos la IP detectada para asegurar conectividad universal
         CAP_JSON="web/capacitor.config.json"
         CAP_TS="web/capacitor.config.ts"
         if [ -f "$CAP_JSON" ] && [ ! -z "$IP_ADDRESS" ]; then
-            sed -i '' "s|\"url\": \"http://.*:[0-9]*\"|\"url\": \"http://$IP_ADDRESS:5173\"|g" "$CAP_JSON"
+            sedi "s|\"url\": \"http://.*:[0-9]*\"|\"url\": \"http://$IP_ADDRESS:5173\"|g" "$CAP_JSON"
             echo "📝 capacitor.config.json → url: http://$IP_ADDRESS:5173"
         fi
         if [ -f "$CAP_TS" ] && [ ! -z "$IP_ADDRESS" ]; then
-            sed -i '' "s|url: 'http://.*:[0-9]*'|url: 'http://$IP_ADDRESS:5173'|g" "$CAP_TS"
+            sedi "s|url: 'http://.*:[0-9]*'|url: 'http://$IP_ADDRESS:5173'|g" "$CAP_TS"
             echo "📝 capacitor.config.ts  → url: http://$IP_ADDRESS:5173"
         fi
     else
         echo "⚠️  Sin dispositivo USB. Usando IP local: $IP_ADDRESS"
-        # Fallback manual si no hay detección automática
         CAP_JSON="web/capacitor.config.json"
         if [ -f "$CAP_JSON" ] && [ ! -z "$IP_ADDRESS" ]; then
-            sed -i '' "s|\"url\": \"http://.*:[0-9]*\"|\"url\": \"http://$IP_ADDRESS:5173\"|g" "$CAP_JSON"
+            sedi "s|\"url\": \"http://.*:[0-9]*\"|\"url\": \"http://$IP_ADDRESS:5173\"|g" "$CAP_JSON"
             echo "📝 capacitor.config.json → url: http://$IP_ADDRESS:5173"
         fi
     fi

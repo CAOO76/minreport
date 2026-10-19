@@ -22,18 +22,18 @@ test.describe('Ciclo de Vida B2B y Gestión Interna', () => {
         await jobProfilePage.goto();
         await jobProfilePage.openNewProfileModal();
 
-        // El seeder habilita 'stockpile-control' y 'fleet-tracking' para esta cuenta (Minera ABC)
-        // No habilita 'safety-reports'
+        // El seeder habilita 'stockpile' y 'opermaq' para esta cuenta (Minera ABC)
+        // No habilita 'mining-flow'
 
-        expect(await jobProfilePage.isPluginVisible('Stockpile Control')).toBeTruthy();
-        expect(await jobProfilePage.isPluginVisible('Fleet Tracking')).toBeTruthy();
+        expect(await jobProfilePage.isPluginVisible('STOCKPILE')).toBeTruthy();
+        expect(await jobProfilePage.isPluginVisible('OPERMAQ')).toBeTruthy();
 
         // Assert: Plugin NO habilitado por el Admin Global no debe aparecer
-        expect(await jobProfilePage.isPluginVisible('Safety Reports')).toBeFalsy();
+        expect(await jobProfilePage.isPluginVisible('MINING FLOW')).toBeFalsy();
 
         // Crear un perfil válido
         await jobProfilePage.fillBasicInfo('Operador Terreno', 'Operador de acopios');
-        await jobProfilePage.selectPlugin('Stockpile Control');
+        await jobProfilePage.selectPlugin('STOCKPILE');
         await jobProfilePage.save();
 
         await jobProfilePage.expectProfileInList('Operador Terreno');
@@ -72,19 +72,19 @@ test.describe('Ciclo de Vida B2B y Gestión Interna', () => {
         await dashboard.goto();
 
         // Pedro Soto (workerUser) tiene perfil 'Operador CAEX'
-        // El perfil 'Operador CAEX' solo permite 'Fleet Tracking' (según seeder)
+        // El perfil 'Operador CAEX' solo permite 'OPERMAQ' (según seeder)
 
         // Assert: Ve su plugin asignado
-        await dashboard.expectPluginVisible('Fleet Tracking');
+        await dashboard.expectPluginVisible('OPERMAQ');
 
         // Assert: NO ve un plugin de la cuenta que NO está en su perfil
-        await dashboard.expectPluginNotVisible('Stockpile Control');
+        await dashboard.expectPluginNotVisible('STOCKPILE');
 
         // Assert: NO ve opciones de administración corporativa
         await dashboard.expectAdminSettingsNotVisible();
 
         // Abrir plugin funcionalmente
-        await dashboard.openPlugin('Fleet Tracking');
+        await dashboard.openPlugin('OPERMAQ');
     });
 
 });

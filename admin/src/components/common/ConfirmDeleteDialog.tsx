@@ -38,7 +38,7 @@ export const ConfirmDeleteDialog: React.FC<ConfirmDeleteDialogProps> = ({
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white dark:bg-[#0D0D0D] rounded-none shadow-2xl max-w-md w-full border border-gray-200 dark:border-white/10 animate-in zoom-in-95 duration-200 relative overflow-hidden">
+            <div className="bg-white dark:bg-[#0D0D0D] rounded-none shadow-none max-w-md w-full border border-gray-200 dark:border-white/10 animate-in zoom-in-95 duration-200 relative overflow-hidden">
                 <div className="absolute inset-0 technical-grid opacity-5 pointer-events-none"></div>
                 {/* Header */}
                 <div className="flex items-start justify-between p-6 border-b border-gray-200 dark:border-gray-800">
