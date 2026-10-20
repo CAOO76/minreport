@@ -94,6 +94,9 @@ export default defineConfig({
         host: true,
         fs: {
             allow: ['..']
+        },
+        watch: {
+            ignored: ['**/android/**', '**/dist/**']
         }
     },
     build: {

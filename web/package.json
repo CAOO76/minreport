@@ -4,7 +4,7 @@
   "version": "3.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host",
+    "dev": "BROWSERSLIST_IGNORE_OLD_DATA=true vite --host",
     "dev:mobile": "bash scripts/dev-mobile.sh",
     "clean:android": "bash scripts/clean-android.sh",
     "build:apk": "bash scripts/build-apk.sh",

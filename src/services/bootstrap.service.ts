@@ -37,35 +37,49 @@ export const ensureDevRootAccount = async (): Promise<void> => {
     }
 
     let userRecord;
-    try {
-        userRecord = await auth.getUser(DEV_ROOT_UID);
-        console.log(`[BOOTSTRAP] ✅ Cuenta DEV encontrada por UID: ${DEV_ROOT_UID}`);
-    } catch (err: any) {
-        if (err.code === 'auth/user-not-found') {
-            try {
-                // Verificar si existe por email para migrar/alinear UID
-                const existingByEmail = await auth.getUserByEmail(DEV_ROOT_EMAIL);
-                userRecord = existingByEmail;
-                console.log(`[BOOTSTRAP] ⚠️ Cuenta DEV existía con otro UID (${existingByEmail.uid}).`);
-            } catch (emailErr: any) {
-                if (emailErr.code === 'auth/user-not-found') {
-                    // Crear usuario determinista con UID fijo
-                    userRecord = await auth.createUser({
-                        uid: DEV_ROOT_UID,
-                        email: DEV_ROOT_EMAIL,
-                        password: password,
-                        displayName: 'MINREPORT DEV ROOT',
-                        emailVerified: true,
-                        disabled: false
-                    });
-                    console.log(`[BOOTSTRAP] 👑 Cuenta DEV creada determinísticamente con UID: ${DEV_ROOT_UID}`);
-                } else {
-                    throw emailErr;
+    let retries = 20;
+    while (retries > 0) {
+        try {
+            userRecord = await auth.getUser(DEV_ROOT_UID);
+            console.log(`[BOOTSTRAP] ✅ Cuenta DEV encontrada por UID: ${DEV_ROOT_UID}`);
+            break;
+        } catch (err: any) {
+            if (err.code === 'auth/user-not-found') {
+                try {
+                    // Verificar si existe por email para migrar/alinear UID
+                    const existingByEmail = await auth.getUserByEmail(DEV_ROOT_EMAIL);
+                    userRecord = existingByEmail;
+                    console.log(`[BOOTSTRAP] ⚠️ Cuenta DEV existía con otro UID (${existingByEmail.uid}).`);
+                    break;
+                } catch (emailErr: any) {
+                    if (emailErr.code === 'auth/user-not-found') {
+                        // Crear usuario determinista con UID fijo
+                        userRecord = await auth.createUser({
+                            uid: DEV_ROOT_UID,
+                            email: DEV_ROOT_EMAIL,
+                            password: password,
+                            displayName: 'MINREPORT DEV ROOT',
+                            emailVerified: true,
+                            disabled: false
+                        });
+                        console.log(`[BOOTSTRAP] 👑 Cuenta DEV creada determinísticamente con UID: ${DEV_ROOT_UID}`);
+                        break;
+                    } else {
+                        throw emailErr;
+                    }
                 }
+            } else if (err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED') || err.message?.includes('fetch failed')) {
+                retries--;
+                if (retries === 0) {
+                    console.warn('[BOOTSTRAP] ⚠️ Emulador de Auth aún no disponible tras reintentos.');
+                    return;
+                }
+                console.log(`[BOOTSTRAP] ⏳ Esperando inicio de emuladores (${20 - retries}/20)...`);
+                await new Promise(res => setTimeout(res, 2000));
+            } else {
+                console.error('[BOOTSTRAP] ❌ Error consultando Auth para cuenta DEV:', err);
+                return;
             }
-        } else {
-            console.error('[BOOTSTRAP] ❌ Error consultando Auth para cuenta DEV:', err);
-            return;
         }
     }
 

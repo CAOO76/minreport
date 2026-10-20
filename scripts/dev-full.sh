@@ -5,6 +5,11 @@
 
 echo "🟢 Iniciando entorno de desarrollo MINREPORT..."
 
+# Configurar entorno limpio para Java y Emuladores
+unset _JAVA_OPTIONS
+pkill -f "cloud-firestore-emulator" 2>/dev/null || true
+pkill -f "cloud-storage-rules" 2>/dev/null || true
+
 # Configurar JDK para Firebase Tools Emulators si existe ruta personalizada
 if [ -d "/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" ]; then
     export JAVA_HOME="/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"

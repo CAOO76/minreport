@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import admin, { db, auth } from '../config/firebase';
 import { z } from 'zod';
-import { DEV_ROOT_EMAIL, DEV_ROOT_UID } from '../services/bootstrap.service';
+import { DEV_ROOT_EMAIL, DEV_ROOT_UID, ensureDevRootAccount } from '../services/bootstrap.service';
 
 export interface DevRequest extends Request {
     devUser?: any;
@@ -73,12 +73,17 @@ export const devLogin = async (req: Request, res: Response) => {
             return res.status(401).json({ error: 'Credenciales no autorizadas en Gateway de Desarrollo' });
         }
 
-        // Asegurar que el usuario existe en Firebase Auth
+        // Asegurar que el usuario existe en Firebase Auth (autocorrección bajo demanda)
         let userRecord;
         try {
             userRecord = await auth.getUser(DEV_ROOT_UID);
         } catch {
-            userRecord = await auth.getUserByEmail(DEV_ROOT_EMAIL);
+            try {
+                userRecord = await auth.getUserByEmail(DEV_ROOT_EMAIL);
+            } catch {
+                await ensureDevRootAccount();
+                userRecord = await auth.getUser(DEV_ROOT_UID);
+            }
         }
 
         const uid = userRecord.uid;

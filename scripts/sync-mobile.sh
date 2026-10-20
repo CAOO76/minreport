@@ -49,6 +49,8 @@ fi
 ADB_PATH=""
 if [ -f "$HOME/Library/Android/sdk/platform-tools/adb" ]; then
     ADB_PATH="$HOME/Library/Android/sdk/platform-tools/adb"
+elif [ -f "$HOME/Android/Sdk/platform-tools/adb" ]; then
+    ADB_PATH="$HOME/Android/Sdk/platform-tools/adb"
 elif [ -f "/usr/local/bin/adb" ]; then
     ADB_PATH="/usr/local/bin/adb"
 elif command -v adb &> /dev/null; then
