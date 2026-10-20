@@ -140,7 +140,13 @@ service cloud.firestore {
       allow read, write: if isSuperAdmin() || (request.auth != null && request.auth.uid == userId);
     }
 
-    // Módulos y Plugins
+    // Módulos Nativos y Catálogo de Disponibilidad
+    match /modules_status/{moduleId} {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin();
+    }
+
+    // Módulos y Plugins (Compatibilidad Legacy)
     match /plugins/{pluginId} {
       allow read: if request.auth != null;
       allow write: if isSuperAdmin();

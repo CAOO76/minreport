@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { adminLogin, getUIAssetsSettings } from '../services/api';
-import { LogIn, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ThemeSwitch } from '../components/ThemeSwitch';
@@ -84,7 +83,7 @@ export const Login = () => {
                     {/* Interior Grid Layer */}
                     <div className="absolute inset-0 technical-grid opacity-20 pointer-events-none"></div>
                     <div className="absolute top-0 right-0 p-4 opacity-10">
-                        <ShieldCheck size={40} className="text-antigravity-accent" />
+                        <span className="material-symbols-outlined text-[40px] text-antigravity-accent">verified_user</span>
                     </div>
 
                     <form onSubmit={handleSubmit} className="space-y-10 relative z-10" autoComplete="off">
@@ -127,9 +126,11 @@ export const Login = () => {
                                 <button
                                     type="button"
                                     onClick={() => setShowPassword(!showPassword)}
-                                    className="absolute right-5 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/30 hover:text-black dark:hover:text-white transition-colors"
+                                    className="absolute right-5 top-1/2 -translate-y-1/2 text-black/30 dark:text-white/30 hover:text-black dark:hover:text-white transition-colors cursor-pointer"
                                 >
-                                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                                    <span className="material-symbols-outlined text-[18px]">
+                                        {showPassword ? 'visibility_off' : 'visibility'}
+                                    </span>
                                 </button>
                             </div>
                         </div>
@@ -144,12 +145,12 @@ export const Login = () => {
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full py-6 px-8 rounded-none bg-black dark:bg-white text-white dark:text-black font-black uppercase tracking-[0.3em] text-[12px] transition-all flex items-center justify-center shadow-none active:scale-[0.98] disabled:opacity-30 cursor-pointer"
+                            className="w-full py-5 px-8 rounded-none bg-black dark:bg-white text-white dark:text-black font-black uppercase tracking-[0.3em] text-[12px] transition-all flex items-center justify-center shadow-none active:scale-[0.98] disabled:opacity-30 cursor-pointer"
                         >
                             {loading ? (
-                                <div className="w-6 h-6 border-2 border-black/20 dark:border-white/20 border-t-black dark:border-t-white rounded-full animate-spin" />
+                                <div className="w-5 h-5 border-2 border-black/20 dark:border-white/20 border-t-black dark:border-t-white rounded-none animate-spin" />
                             ) : (
-                                <LogIn size={27} />
+                                <span className="material-symbols-outlined text-[24px]">login</span>
                             )}
                         </button>
                     </form>
@@ -157,7 +158,7 @@ export const Login = () => {
 
                 <footer className="mt-8 text-center space-y-4 opacity-40 hover:opacity-100 transition-opacity duration-500">
                     <div className="flex justify-center">
-                        <ShieldCheck size={14} className="text-emerald-600 dark:text-emerald-400" />
+                        <span className="material-symbols-outlined text-[16px] text-emerald-600 dark:text-emerald-400">verified_user</span>
                     </div>
                     <p className="text-[10px] text-black/60 dark:text-white uppercase tracking-[0.3em] font-black">
                         © {new Date().getFullYear()} MINREPORT. TODOS LOS DERECHOS RESERVADOS.

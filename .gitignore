@@ -27,10 +27,11 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 
-# Firebase logs
+# Firebase logs and exports
 firebase-debug.log*
 firestore-debug.log*
 ui-debug.log*
+firebase-export-*
 /data/
 
 # Editor directories and files

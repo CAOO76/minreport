@@ -1,5 +1,4 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
-import { AlertTriangle, RefreshCcw } from 'lucide-react';
 
 interface Props {
     children: ReactNode;
@@ -38,7 +37,7 @@ class ErrorBoundary extends Component<Props, State> {
                     <div className="absolute inset-0 technical-grid opacity-5 pointer-events-none"></div>
                     <div className="bg-red-500/5 border border-red-500/20 p-8 rounded-none flex flex-col items-center max-w-sm w-full relative z-10">
                         <div className="w-16 h-16 bg-red-600 rounded-none flex items-center justify-center mb-8 border border-red-500/40">
-                            <AlertTriangle size={32} className="text-white" />
+                            <span className="material-symbols-outlined text-[32px] text-white">warning</span>
                         </div>
 
                         <h1 className="hud-label text-red-500 text-lg mb-2">[CRITICAL_FAULT_DETECTION]</h1>
@@ -62,7 +61,7 @@ class ErrorBoundary extends Component<Props, State> {
                             onClick={this.handleReset}
                             className="w-full py-5 bg-white text-black font-black text-[11px] uppercase tracking-[0.3em] rounded-none flex items-center justify-center gap-3 active:scale-95 transition-all shadow-none"
                         >
-                            <RefreshCcw size={18} />
+                            <span className="material-symbols-outlined text-[18px]">restart_alt</span>
                             RECOVER_SYSTEM
                         </button>
                     </div>

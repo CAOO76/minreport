@@ -19,7 +19,7 @@ export interface AIInferenceOptions {
     temperature?: number;
     thinkingLevel?: ThinkingLevel;
     requireHITL?: boolean; // Human-in-the-Loop confirmation required
-    module: 'opermaq' | 'stockpile' | 'mining-flow' | 'core';
+    module: 'opermaq' | 'stockpile' | 'mining-flow' | 'core' | 'b2b-core';
     tenantId: string;
 }
 
@@ -32,7 +32,13 @@ export interface AIInferenceResponse {
     hitlRequired?: boolean;
 }
 
-const MODEL_TIERS = [
+const TIERS_STANDARD = [
+    { tier: 'FLASH' as const, model: 'gemini-1.5-flash' },
+    { tier: 'FLASH_LITE' as const, model: 'gemini-1.5-flash-8b' },
+    { tier: 'PRO' as const, model: 'gemini-1.5-pro' }
+];
+
+const TIERS_HIGH_REASONING = [
     { tier: 'PRO' as const, model: 'gemini-1.5-pro' },
     { tier: 'FLASH' as const, model: 'gemini-1.5-flash' },
     { tier: 'FLASH_LITE' as const, model: 'gemini-1.5-flash-8b' }
@@ -56,14 +62,20 @@ export class ResilientAIClient {
     }
 
     /**
-     * Ejecuta inferencia resiliente a través del enjambre
+     * Ejecuta inferencia resiliente a través del enjambre con optimización de costos
      */
     public static async generate(options: AIInferenceOptions): Promise<AIInferenceResponse> {
         const startTime = Date.now();
         let totalRetries = 0;
         let lastError: any = null;
 
-        for (const tierConfig of MODEL_TIERS) {
+        // Optimización de costos: Tareas de razonamiento profundo o HITL usan PRO primero;
+        // consultas operativas y chats rutinarios inician en FLASH (16x más eficiente)
+        const tiersToUse = (options.thinkingLevel === 'high' || options.requireHITL)
+            ? TIERS_HIGH_REASONING
+            : TIERS_STANDARD;
+
+        for (const tierConfig of tiersToUse) {
             console.log(`[AI-SWARM] Intentando tier: ${tierConfig.tier} (${tierConfig.model})`);
 
             for (let attempt = 0; attempt < 2; attempt++) {
@@ -114,15 +126,23 @@ export class ResilientAIClient {
 
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
         
+        const generationConfig: any = {
+            temperature: options.temperature ?? 0.2
+        };
+
+        if (options.thinkingLevel && options.thinkingLevel !== 'none') {
+            generationConfig.thinkingConfig = {
+                thinkingBudget: options.thinkingLevel === 'high' ? 8192 : options.thinkingLevel === 'medium' ? 2048 : 512
+            };
+        }
+
         const payload: any = {
             contents: [
                 {
                     parts: [{ text: options.prompt }]
                 }
             ],
-            generationConfig: {
-                temperature: options.temperature ?? 0.2
-            }
+            generationConfig
         };
 
         if (options.systemInstruction) {

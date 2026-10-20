@@ -14,17 +14,30 @@ import { setupAccountPassword } from './api/setup.controller';
 import { validateEduRequest, analyzeEduDocument } from './api/edu.controller';
 import staffRoutes from './api/staff.controller';
 import { requireSuperAdmin } from './middleware/admin';
+import { z } from 'zod';
 import { requireAuth } from './middleware/auth';
 
 const app = express();
 
 // Middleware
-app.use(helmet({ contentSecurityPolicy: false })); // Deshabilitar CSP en dev para facilitar emuladores
+const isProd = process.env.NODE_ENV === 'production';
+app.use(helmet({
+    contentSecurityPolicy: isProd ? {
+        directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'"],
+            styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+            fontSrc: ["'self'", "https://fonts.gstatic.com"],
+            imgSrc: ["'self'", "data:", "https:"],
+            connectSrc: ["'self'", "https://*.googleapis.com", "https://*.firebaseio.com"]
+        }
+    } : false
+}));
 app.use(cors({
     origin: true,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-402-token', 'x-payment-proof']
 }));
 app.use(express.json());
 
@@ -82,24 +95,41 @@ app.get('/api/m2m/data-feed', x402Gatekeeper({
         protocol: 'x402 Foundation v1.0',
         timestamp: new Date().toISOString(),
         feed: {
-            activeMines: ['Los Pelambres', 'Andina', 'Centinela'],
+            activeMines: ['Faena Bellavista', 'Mina San Antonio', 'Faena Esperanza'],
             telemetrySync: 'NOMINAL',
             cluster: 'southamerica-west1'
         }
     });
 });
 
+const AIInferencePayloadSchema = z.object({
+    prompt: z.string().min(1, 'El prompt no puede estar vacío'),
+    module: z.enum(['opermaq', 'stockpile', 'mining-flow', 'core', 'mining-swarm']).optional().default('core'),
+    thinkingLevel: z.enum(['none', 'low', 'medium', 'high']).optional().default('medium'),
+    requireHITL: z.boolean().optional().default(false)
+});
+
 // [WEB 3.0 ENJAMBRE GEMINI] Endpoint de Inferencia Resiliente
 app.post('/api/ai/inference', requireAuth, async (req, res) => {
     try {
-        const { prompt, module: targetModule, thinkingLevel } = req.body;
+        const validation = AIInferencePayloadSchema.safeParse(req.body);
+        if (!validation.success) {
+            return res.status(400).json({
+                error: 'Validación de payload fallida',
+                details: validation.error.format()
+            });
+        }
+
+        const { prompt, module: targetModule, thinkingLevel, requireHITL } = validation.data;
         const tenantId = (req as any).user?.activeAccountId || 'default';
+        const mappedModule = targetModule === 'mining-swarm' ? 'core' : targetModule;
         
         const aiResponse = await ResilientAIClient.generate({
             prompt,
-            module: targetModule || 'core',
+            module: mappedModule,
             tenantId,
-            thinkingLevel: thinkingLevel || 'medium'
+            thinkingLevel,
+            requireHITL
         });
 
         // Registrar en Audit Ledger inmutable
@@ -108,9 +138,9 @@ app.post('/api/ai/inference', requireAuth, async (req, res) => {
             actorUid: (req as any).user?.uid || 'system',
             actorEmail: (req as any).user?.email || 'ai-agent@minreport.internal',
             action: 'AI_INFERENCE_REQUEST',
-            module: targetModule || 'core',
+            module: mappedModule,
             targetEntity: 'gemini-swarm',
-            details: { tier: aiResponse.tierUsed, model: aiResponse.model, latencyMs: aiResponse.latencyMs }
+            details: { tier: aiResponse.tierUsed, model: aiResponse.model, latencyMs: aiResponse.latencyMs, requireHITL }
         });
 
         res.status(200).json({ success: true, ...aiResponse });

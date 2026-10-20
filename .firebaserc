@@ -7,6 +7,9 @@
       "hosting": {
         "minreport-web": [
           "minreport-8f2a8"
+        ],
+        "minreport-admin": [
+          "minreport-admin"
         ]
       }
     }

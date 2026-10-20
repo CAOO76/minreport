@@ -3,20 +3,6 @@ import { useMinReportSession } from '../../context/MinReportSessionContext';
 import { offlineStorage, FleetInspectionRecord } from '../../core/offline/OfflineStorage';
 import { syncQueueEngine } from '../../core/offline/SyncQueueEngine';
 import { ImageOptimizer, OptimizedImageResult } from '../../core/offline/imageOptimizer';
-import { 
-    Truck, 
-    ShieldCheck, 
-    AlertTriangle, 
-    CheckCircle2, 
-    ArrowUpRight, 
-    Search,
-    AlertCircle,
-    ClipboardCheck,
-    X,
-    Check,
-    Wrench,
-    Camera
-} from 'lucide-react';
 
 interface FleetItem {
     id: string;
@@ -243,7 +229,7 @@ export const OpermaqModule: React.FC = () => {
             {isEdu && (
                 <div className="p-3 bg-amber-500/10 border-l-2 border-amber-500 text-amber-700 dark:text-amber-400 text-xs flex items-center justify-between font-mono">
                     <div className="flex items-center gap-2">
-                        <AlertCircle size={14} className="shrink-0" />
+                        <span className="material-symbols-outlined text-[14px] shrink-0">error</span>
                         <span>[MODO LABORATORIO DOCENTE]: Datos de telemetría de equipos simulados. Inspecciones sin validez legal de faena.</span>
                     </div>
                     <span className="text-[9px] bg-amber-500/20 px-2 py-0.5 uppercase tracking-widest font-bold">EDU_SANDBOX</span>
@@ -254,7 +240,7 @@ export const OpermaqModule: React.FC = () => {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-black/5 dark:border-white/10 pb-4">
                 <div>
                     <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-[#8A93A6]">
-                        <Truck size={14} className="text-[#C68346]" />
+                        <span className="material-symbols-outlined text-[14px] text-[#C68346]">local_shipping</span>
                         <span>GESTIÓN INTEGRAL DE ACTIVOS PESADOS Y MAQUINARIA</span>
                     </div>
                     <h1 className="text-xl sm:text-2xl font-bold tracking-tight uppercase text-[#0F172A] dark:text-[#F3F4F6] mt-1">
@@ -267,7 +253,7 @@ export const OpermaqModule: React.FC = () => {
                         onClick={() => setIsCheckinOpen(true)}
                         className="px-4 py-2 bg-[#C68346] text-white text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-opacity rounded-none flex items-center gap-2"
                     >
-                        <ClipboardCheck size={14} />
+                        <span className="material-symbols-outlined text-[14px]">assignment_turned_in</span>
                         <span>Registrar Check-in</span>
                     </button>
                 </div>
@@ -302,7 +288,7 @@ export const OpermaqModule: React.FC = () => {
                 <div className="p-4 bg-white dark:bg-[#07090D] border border-black/5 dark:border-white/10">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-[#8A93A6]">Seguridad de Checklists</p>
                     <div className="flex items-center gap-1.5 text-emerald-500 mt-1">
-                        <ShieldCheck size={18} />
+                        <span className="material-symbols-outlined text-[18px]">verified_user</span>
                         <span className="text-sm font-bold uppercase tracking-wider">100% Auditados</span>
                     </div>
                     <p className="text-[10px] text-[#8A93A6] mt-1">Trazabilidad ISO 27001</p>
@@ -312,7 +298,7 @@ export const OpermaqModule: React.FC = () => {
             {/* Controles de Búsqueda y Filtros */}
             <div className="flex flex-col sm:flex-row gap-3 items-center justify-between bg-white dark:bg-[#07090D] p-3 border border-black/5 dark:border-white/10">
                 <div className="relative w-full sm:w-80">
-                    <Search size={14} className="absolute left-3 top-3 text-[#8A93A6]" />
+                    <span className="material-symbols-outlined text-[14px] absolute left-3 top-3 text-[#8A93A6]">search</span>
                     <input
                         type="text"
                         placeholder="Buscar por código, tipo o chofer..."
@@ -345,17 +331,17 @@ export const OpermaqModule: React.FC = () => {
                     <div className="bg-white dark:bg-[#07090D] border border-black/15 dark:border-white/20 w-full max-w-lg p-6 space-y-6 rounded-none">
                         <div className="flex items-center justify-between border-b border-black/10 dark:border-white/10 pb-3">
                             <div className="flex items-center gap-2">
-                                <ClipboardCheck size={18} className="text-[#C68346]" />
+                                <span className="material-symbols-outlined text-[18px] text-[#C68346]">assignment_turned_in</span>
                                 <h2 className="text-sm font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
                                     Pauta Pre-Uso de Maquinaria
                                 </h2>
                             </div>
                             <button onClick={() => setIsCheckinOpen(false)} className="text-[#8A93A6] hover:text-black dark:hover:text-white">
-                                <X size={18} />
+                                <span className="material-symbols-outlined text-[18px]">close</span>
                             </button>
                         </div>
 
-                        <form onSubmit={handleSaveCheckin} className="space-y-4">
+                        <form onSubmit={handleSaveCheckin} className="space-y-4" autoComplete="off" spellCheck={false}>
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-[#8A93A6] mb-1">
@@ -462,7 +448,7 @@ export const OpermaqModule: React.FC = () => {
                             <div className="border border-black/10 dark:border-white/10 p-3 bg-black/[0.01] dark:bg-white/[0.01] space-y-2">
                                 <div className="flex items-center justify-between">
                                     <label className="text-[10px] font-bold uppercase tracking-wider text-[#8A93A6] flex items-center gap-1.5">
-                                        <Camera size={13} className="text-[#00AEEF]" />
+                                        <span className="material-symbols-outlined text-[14px] text-[#00AEEF]">photo_camera</span>
                                         <span>Evidencia de Terreno (WebP Comprimido)</span>
                                     </label>
                                     {evidenceImage && (
@@ -498,7 +484,7 @@ export const OpermaqModule: React.FC = () => {
                                     type="submit"
                                     className="px-5 py-2 bg-[#C68346] text-white text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 rounded-none cursor-pointer"
                                 >
-                                    <Check size={14} />
+                                    <span className="material-symbols-outlined text-[14px]">check</span>
                                     <span>Firmar Pauta de Turno</span>
                                 </button>
                             </div>
@@ -519,7 +505,7 @@ export const OpermaqModule: React.FC = () => {
                                 <p className="text-[10px] text-[#8A93A6] font-mono">{selectedAsset.model}</p>
                             </div>
                             <button onClick={() => setSelectedAsset(null)} className="text-[#8A93A6] hover:text-black dark:hover:text-white">
-                                <X size={18} />
+                                <span className="material-symbols-outlined text-[18px]">close</span>
                             </button>
                         </div>
 
@@ -546,7 +532,7 @@ export const OpermaqModule: React.FC = () => {
 
                         <div className="p-3 bg-black/[0.02] dark:bg-white/[0.02] border border-black/5 dark:border-white/5 text-xs">
                             <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#8A93A6] mb-1">
-                                <Wrench size={12} />
+                                <span className="material-symbols-outlined text-[12px]">build</span>
                                 <span>Diagnóstico de Mantención</span>
                             </div>
                             <p className="text-xs text-[#0F172A] dark:text-[#F3F4F6]">
@@ -594,7 +580,7 @@ export const OpermaqModule: React.FC = () => {
                                             ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
                                             : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
                                     }`}>
-                                        {item.status === 'OPERATIVO' ? <CheckCircle2 size={10} /> : <AlertTriangle size={10} />}
+                                        {item.status === 'OPERATIVO' ? <span className="material-symbols-outlined text-[12px]">check_circle</span> : <span className="material-symbols-outlined text-[12px]">warning</span>}
                                         {item.status}
                                     </span>
                                 </td>
@@ -608,7 +594,7 @@ export const OpermaqModule: React.FC = () => {
                                         onClick={() => setSelectedAsset(item)}
                                         className="text-[#00AEEF] hover:underline text-[10px] font-bold uppercase tracking-wider inline-flex items-center gap-1"
                                     >
-                                        Ficha <ArrowUpRight size={12} />
+                                        Ficha <span className="material-symbols-outlined text-[12px]">north_east</span>
                                     </button>
                                 </td>
                             </tr>

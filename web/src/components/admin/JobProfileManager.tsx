@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { AlertCircle, Info } from 'lucide-react';
 import { ProfileService } from '../../services/ProfileService';
 import { SYSTEM_MODULES } from '../../constants/modules';
 import { useAuth } from '../../context/AuthContext';
@@ -117,7 +116,7 @@ export const JobProfileManager = () => {
         return (
             <div className="flex items-center justify-center p-12 h-64">
                 <div className="text-center animate-pulse">
-                    <AlertCircle className="w-12 h-12 mx-auto mb-3 text-gray-400" />
+                    <span className="material-symbols-outlined text-[48px] mx-auto mb-3 text-gray-400 block">error</span>
                     <p className="text-sm text-gray-500">Cargando perfiles...</p>
                 </div>
             </div>
@@ -170,7 +169,7 @@ export const JobProfileManager = () => {
             <main className="flex-1 flex flex-col gap-4 min-w-0">
                 {!selectedProfile && !isEditing ? (
                     <Card className="flex-1 flex flex-col items-center justify-center !p-12 text-center">
-                        <Info className="w-12 h-12 text-gray-300 mb-4" />
+                        <span className="material-symbols-outlined text-[48px] text-gray-300 mb-4 block">info</span>
                         <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">Selecciona un perfil</h3>
                         <p className="text-sm text-gray-500 max-w-sm">Define las herramientas permitidas para cada cargo administrativo u operativo.</p>
                     </Card>

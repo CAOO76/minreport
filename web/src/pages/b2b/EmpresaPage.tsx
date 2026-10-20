@@ -3,7 +3,6 @@ import { useAuth } from '../../context/AuthContext';
 import { db } from '../../config/firebase';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import siiActivities from '../../data/sii_activities.json';
-import { Search, ChevronDown, Check, Loader2 } from 'lucide-react';
 import { useGooglePlaces } from '../../hooks/useGooglePlaces';
 
 // ─── Estilos base reusables (Minimalismo Industrial) ────────────────────────
@@ -268,7 +267,7 @@ export const EmpresaPage = () => {
                 <div className="flex items-center gap-3">
                     {saveSuccess && (
                         <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-wider flex items-center gap-1.5 animate-in fade-in">
-                            <Check className="w-3 h-3" /> Guardado
+                            <span className="material-symbols-outlined text-[14px]">check</span> Guardado
                         </span>
                     )}
                     {!editing ? (
@@ -346,8 +345,8 @@ export const EmpresaPage = () => {
                                         className={INP + ' pr-10'}
                                     />
                                     <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 text-gray-400 pointer-events-none">
-                                        <Search className="w-3 h-3" />
-                                        <ChevronDown className={`w-3 h-3 transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
+                                        <span className="material-symbols-outlined text-[14px]">search</span>
+                                        <span className={`material-symbols-outlined text-[14px] transition-transform ${showDropdown ? 'rotate-180' : ''}`}>expand_more</span>
                                     </div>
                                 </div>
                                 {showDropdown && (
@@ -362,7 +361,7 @@ export const EmpresaPage = () => {
                                                         <span className="text-[10px] font-mono font-bold text-[#C68346]">{act.code}</span>
                                                         <span className="text-xs text-gray-900 dark:text-white mt-0.5 leading-tight">{act.label}</span>
                                                     </div>
-                                                    {form.giro === act.label && <Check className="w-3 h-3 text-[#C68346] mt-1 shrink-0" />}
+                                                    {form.giro === act.label && <span className="material-symbols-outlined text-[14px] text-[#C68346] mt-1 shrink-0">check</span>}
                                                 </button>
                                             ))
                                         ) : (
@@ -405,7 +404,7 @@ export const EmpresaPage = () => {
                                         className={INP + ' pr-10 truncate'}
                                     />
                                     <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 text-gray-400 pointer-events-none">
-                                        {isGoogleLoaded ? <Search className="w-3 h-3" /> : (
+                                        {isGoogleLoaded ? <span className="material-symbols-outlined text-[14px]">search</span> : (
                                             <div className="w-3 h-3 border border-gray-300 dark:border-gray-700 border-t-[#C68346] animate-spin rounded-full" />
                                         )}
                                     </div>
@@ -545,9 +544,9 @@ export const EmpresaPage = () => {
                         className="w-full sm:w-auto flex items-center justify-center gap-2 bg-[#C68346] hover:bg-[#b0743e] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold uppercase tracking-wider text-xs py-2.5 px-8 rounded-none transition-colors cursor-pointer"
                     >
                         {saving ? (
-                            <><Loader2 className="w-3 h-3 animate-spin" /> Guardando...</>
+                            <><span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span> Guardando...</>
                         ) : (
-                            <><Check className="w-3 h-3" /> Guardar Cambios</>
+                            <><span className="material-symbols-outlined text-[14px]">check</span> Guardar Cambios</>
                         )}
                     </button>
                 </div>

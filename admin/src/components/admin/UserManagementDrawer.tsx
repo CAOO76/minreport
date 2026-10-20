@@ -1,21 +1,5 @@
 
 import React, { useState, useEffect } from 'react';
-import {
-    Copy,
-    Check,
-    AlertTriangle,
-    ShieldAlert,
-    Trash2,
-    RefreshCw,
-    Activity,
-    Mail,
-    History,
-    MessageSquare,
-    Send,
-    Bell,
-    Clock,
-    Settings
-} from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     collection,
@@ -31,7 +15,7 @@ import {
 import { db, auth } from '../../config/firebase';
 import { UserProfile, UserStatus } from '../../types/admin';
 import { SYSTEM_MODULES, SystemModuleInfo } from '../../constants/modules';
-import { M3Switch } from '../ui/M3Switch';
+import { M3Switch } from '../M3Switch';
 import clsx from 'clsx';
 import { ConfirmDeleteDialog } from '../common/ConfirmDeleteDialog';
 import { deleteTenant } from '../../services/api';
@@ -249,15 +233,15 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
                                                 {user.displayName || 'Sin nombre'}
                                             </h3>
                                             <p className="text-xs text-antigravity-light-muted dark:text-antigravity-dark-muted truncate flex items-center gap-1 font-mono">
-                                                <Mail size={12} />
+                                                <span className="material-symbols-outlined text-[13px]">mail</span>
                                                 {user.email.toLowerCase()}
                                             </p>
                                             <div className="flex items-center gap-2 mt-1">
                                                 <code className="bg-slate-200 dark:bg-slate-800 px-1.5 py-0.5 rounded-none text-[9px] text-slate-500 font-mono tracking-tighter">
                                                     ID: {user.uid.substring(0, 8)}...
                                                 </code>
-                                                <button onClick={handleCopyId} className="text-antigravity-accent hover:opacity-70 transition-colors bg-transparent border-0 cursor-pointer">
-                                                    {copied ? <Check size={12} /> : <Copy size={12} />}
+                                                <button onClick={handleCopyId} className="text-antigravity-accent hover:opacity-70 transition-colors bg-transparent border-0 cursor-pointer flex items-center">
+                                                    {copied ? <span className="material-symbols-outlined text-[13px]">check</span> : <span className="material-symbols-outlined text-[13px]">content_copy</span>}
                                                 </button>
                                             </div>
                                         </div>
@@ -267,9 +251,9 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
                                 {/* Tabs Navigation */}
                                 <div className="flex border-b border-antigravity-light-border dark:border-antigravity-dark-border px-4 bg-white dark:bg-antigravity-dark-surface sticky top-0 z-10">
                                     {[
-                                        { id: 'general', label: 'General', icon: Settings },
-                                        { id: 'messages', label: 'Mensajes', icon: MessageSquare },
-                                        { id: 'audit', label: 'Auditoría', icon: History }
+                                        { id: 'general', label: 'General', icon: 'settings' },
+                                        { id: 'messages', label: 'Mensajes', icon: 'chat' },
+                                        { id: 'audit', label: 'Auditoría', icon: 'history' }
                                     ].map((tab) => (
                                         <button
                                             key={tab.id}
@@ -281,7 +265,7 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
                                                     : "text-antigravity-light-muted dark:text-antigravity-dark-muted hover:text-antigravity-light-text dark:hover:text-antigravity-dark-text"
                                             )}
                                         >
-                                            <tab.icon size={14} />
+                                            <span className="material-symbols-outlined text-[16px]">{tab.icon}</span>
                                             {tab.label}
                                             {activeTab === tab.id && (
                                                 <motion.div
@@ -298,9 +282,10 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
                                     {activeTab === 'general' && (
                                         <>
                                             {/* Modules Section */}
+                                            {/* Modules Section */}
                                             <section className="space-y-4">
-                                                <h4 className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-antigravity-light-muted dark:text-antigravity-dark-muted">
-                                                    <Activity size={14} />
+                                                <h4 className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-antigravity-light-muted dark:text-antigravity-dark-muted font-mono">
+                                                    <span className="material-symbols-outlined text-[15px]">monitoring</span>
                                                     Módulos del Sistema
                                                 </h4>
                                                 <div className="grid gap-3">
@@ -331,7 +316,7 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
                                             {/* Danger Zone */}
                                             <section className="space-y-4 pt-4 border-t border-antigravity-light-border dark:border-antigravity-dark-border">
                                                 <h4 className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-rose-500 font-mono">
-                                                    <ShieldAlert size={14} />
+                                                    <span className="material-symbols-outlined text-[15px]">shield</span>
                                                     Zona de Peligro
                                                 </h4>
                                                 <div className="p-4 rounded-none border border-rose-200 dark:border-rose-900/50 bg-rose-50/30 dark:bg-rose-900/5 space-y-4 shadow-none">
@@ -357,7 +342,7 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
                                                             )}
                                                         >
                                                             {actionLoading === 'SUSPENDED' || actionLoading === 'ACTIVE' ? (
-                                                                <RefreshCw size={12} className="animate-spin" />
+                                                                <span className="material-symbols-outlined text-[13px] animate-spin">refresh</span>
                                                             ) : user.status === 'SUSPENDED' ? (
                                                                 'Reactivar'
                                                             ) : (
@@ -381,10 +366,10 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
                                                             className="px-3 py-1.5 rounded-none text-[10px] font-bold uppercase tracking-wider bg-rose-600 text-white hover:bg-rose-700 transition-colors flex items-center gap-1.5 shadow-none disabled:opacity-50 disabled:cursor-not-allowed border-0 cursor-pointer"
                                                         >
                                                             {actionLoading === 'DELETING' ? (
-                                                                <RefreshCw size={12} className="animate-spin" />
+                                                                <span className="material-symbols-outlined text-[13px] animate-spin">refresh</span>
                                                             ) : (
                                                                 <>
-                                                                    <Trash2 size={12} />
+                                                                    <span className="material-symbols-outlined text-[13px]">delete</span>
                                                                     Eliminar
                                                                 </>
                                                             )}
@@ -398,7 +383,7 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
                                     {activeTab === 'messages' && (
                                         <section className="space-y-6">
                                             <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-antigravity-light-muted dark:text-antigravity-dark-muted font-mono">
-                                                <MessageSquare size={14} />
+                                                <span className="material-symbols-outlined text-[15px]">chat</span>
                                                 Comunicación Directa
                                             </div>
 
@@ -421,7 +406,7 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
                                                                         : "bg-transparent border-antigravity-light-border dark:border-antigravity-dark-border text-antigravity-light-muted dark:text-antigravity-dark-muted hover:border-slate-300"
                                                                 )}
                                                             >
-                                                                <Bell size={10} />
+                                                                <span className="material-symbols-outlined text-[12px]">notifications</span>
                                                                 {type}
                                                             </button>
                                                         ))}
@@ -448,10 +433,10 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
                                                     className="w-full py-3 rounded-none bg-antigravity-accent text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-none hover:opacity-90 active:scale-[0.99] disabled:opacity-50 disabled:grayscale transition-opacity cursor-pointer border-0"
                                                 >
                                                     {actionLoading === 'sending_msg' ? (
-                                                        <RefreshCw size={14} className="animate-spin" />
+                                                        <span className="material-symbols-outlined text-[15px] animate-spin">refresh</span>
                                                     ) : (
                                                         <>
-                                                            <Send size={14} />
+                                                            <span className="material-symbols-outlined text-[15px]">send</span>
                                                             Enviar Notificación
                                                         </>
                                                     )}
@@ -464,7 +449,7 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
                                         <section className="space-y-6">
                                             <div className="flex items-center justify-between">
                                                 <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-antigravity-light-muted dark:text-antigravity-dark-muted font-mono">
-                                                    <History size={14} />
+                                                    <span className="material-symbols-outlined text-[15px]">history</span>
                                                     Historial de Auditoría
                                                 </div>
                                                 <button
@@ -472,7 +457,7 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
                                                     className="p-1 hover:bg-slate-100 dark:hover:bg-white/5 rounded-none text-antigravity-accent transition-colors bg-transparent border-0 cursor-pointer"
                                                     title="Refrescar"
                                                 >
-                                                    <RefreshCw size={14} className={auditLoading ? "animate-spin" : ""} />
+                                                    <span className={`material-symbols-outlined text-[15px] ${auditLoading ? "animate-spin" : ""}`}>refresh</span>
                                                 </button>
                                             </div>
 
@@ -489,7 +474,7 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
                                                     ))
                                                 ) : auditLogs.length === 0 ? (
                                                     <div className="flex flex-col items-center justify-center py-12 text-center space-y-2">
-                                                        <AlertTriangle size={28} className="text-slate-300 dark:text-slate-800" />
+                                                        <span className="material-symbols-outlined text-[28px] text-slate-300 dark:text-slate-800">warning</span>
                                                         <p className="text-xs text-antigravity-light-muted dark:text-antigravity-dark-muted font-mono">Sin registros de auditoría.</p>
                                                     </div>
                                                 ) : auditLogs.map((log) => (
@@ -503,7 +488,7 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
                                                                     {log.action.replace(/_/g, ' ')}
                                                                 </p>
                                                                 <span className="text-[9px] font-mono text-antigravity-light-muted dark:text-antigravity-dark-muted flex items-center gap-1 bg-slate-100 dark:bg-white/5 px-1.5 py-0.5 rounded-none">
-                                                                    <Clock size={8} />
+                                                                    <span className="material-symbols-outlined text-[10px]">schedule</span>
                                                                     {log.timestamp instanceof Timestamp ? log.timestamp.toDate().toLocaleDateString() : 'Reciente'}
                                                                 </span>
                                                             </div>
@@ -527,7 +512,7 @@ export const UserManagementDrawer: React.FC<UserManagementDrawerProps> = ({
                             </div>
                         ) : (
                             <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-12 text-center">
-                                <RefreshCw size={28} className="animate-spin mb-4 opacity-20" />
+                                <span className="material-symbols-outlined text-[28px] animate-spin mb-4 opacity-20">refresh</span>
                                 <p className="text-xs font-bold uppercase tracking-widest opacity-40 font-mono">Cargando credenciales...</p>
                             </div>
                         )}

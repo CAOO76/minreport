@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { AlertCircle, CheckCircle2 } from 'lucide-react';
 import { StaffService, type WorkerData } from '../../services/StaffService';
 import { ProfileService } from '../../services/ProfileService';
 import { useAuth } from '../../context/AuthContext';
@@ -146,7 +145,7 @@ export const StaffOnboarding = () => {
             {/* Success Message */}
             {success && (
                 <div className="flex items-center gap-3 p-4 mb-8 border border-emerald-500/30 bg-emerald-500/5 dark:bg-emerald-500/10">
-                    <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+                    <span className="material-symbols-outlined text-[20px] text-emerald-600 dark:text-emerald-400 flex-shrink-0">check_circle</span>
                     <p className="text-sm text-emerald-800 dark:text-emerald-300">
                         Trabajador vinculado exitosamente. Se ha enviado un email con instrucciones de acceso.
                     </p>
@@ -156,7 +155,7 @@ export const StaffOnboarding = () => {
             {/* Error Message */}
             {error && (
                 <div className="flex items-center gap-3 p-4 mb-8 border border-red-500/30 bg-red-500/5 dark:bg-red-500/10">
-                    <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0" />
+                    <span className="material-symbols-outlined text-[20px] text-red-600 dark:text-red-400 flex-shrink-0">error</span>
                     <p className="text-sm text-red-800 dark:text-red-300">{error}</p>
                 </div>
             )}
@@ -192,7 +191,7 @@ export const StaffOnboarding = () => {
                             />
                             {runError && (
                                 <p className="text-sm text-red-600 dark:text-red-400 mt-1 flex items-center gap-1">
-                                    <AlertCircle className="w-3 h-3" />
+                                    <span className="material-symbols-outlined text-[14px]">error</span>
                                     {runError}
                                 </p>
                             )}
@@ -240,7 +239,7 @@ export const StaffOnboarding = () => {
                             />
                             {emailError && (
                                 <p className="text-sm text-red-600 dark:text-red-400 mt-1 flex items-center gap-1">
-                                    <AlertCircle className="w-3 h-3" />
+                                    <span className="material-symbols-outlined text-[14px]">error</span>
                                     {emailError}
                                 </p>
                             )}
@@ -305,7 +304,7 @@ export const StaffOnboarding = () => {
                                                 </div>
                                                 {isSelected && (
                                                     <div className="absolute top-0 right-0 p-2">
-                                                        <CheckCircle2 size={14} className="text-white dark:text-black opacity-40" />
+                                                        <span className="material-symbols-outlined text-[14px] text-white dark:text-black opacity-40">check_circle</span>
                                                     </div>
                                                 )}
                                             </button>

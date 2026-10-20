@@ -14,7 +14,7 @@ export interface LedgerEntry {
     actorUid: string;
     actorEmail: string;
     action: string;
-    module: 'opermaq' | 'stockpile' | 'mining-flow' | 'b2b-core';
+    module: 'opermaq' | 'stockpile' | 'mining-flow' | 'b2b-core' | 'core';
     targetEntity: string;
     details: Record<string, any>;
     ipAddress?: string;

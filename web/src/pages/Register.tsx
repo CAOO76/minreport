@@ -1,6 +1,5 @@
 import { useState, ChangeEvent, FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { ArrowRight, Building2, UserCheck, Scale, FileText, Check, AlertCircle, Loader2 } from 'lucide-react';
 import BrandLogo from '../components/BrandLogo';
 import { ThemeSwitch } from '../components/ThemeSwitch';
 import { LanguageSwitch } from '../components/LanguageSwitch';
@@ -113,7 +112,7 @@ export const Register = () => {
                 <div className="lg:col-span-5 space-y-6 lg:sticky lg:top-24">
                     <div className="p-8 bg-white dark:bg-[#07090D] border border-black/5 dark:border-white/10 space-y-6">
                         <div className="inline-flex items-center gap-2 text-[#C68346] text-[11px] font-bold uppercase tracking-[0.2em]">
-                            <Scale size={16} />
+                            <span className="material-symbols-outlined text-[16px]">balance</span>
                             <span>CONTRATACIÓN B2B LEGAL</span>
                         </div>
 
@@ -176,7 +175,7 @@ export const Register = () => {
                     {success ? (
                         <div className="py-16 text-center space-y-4">
                             <div className="w-14 h-14 bg-emerald-500/10 text-emerald-500 border border-emerald-500/30 flex items-center justify-center mx-auto">
-                                <Check size={28} />
+                                <span className="material-symbols-outlined text-[28px]">check</span>
                             </div>
                             <h2 className="text-xl font-bold tracking-tight uppercase">
                                 Cuenta Titular B2B Registrada y Activada
@@ -185,7 +184,7 @@ export const Register = () => {
                                 Su espacio de trabajo ha sido aprovisionado. Redirigiendo al portal de inicio de sesión para acceder a su consola de administración...
                             </p>
                             <div className="pt-4">
-                                <Loader2 className="animate-spin mx-auto text-[#C68346]" size={20} />
+                                <span className="material-symbols-outlined animate-spin mx-auto text-[#C68346] text-[20px] block">progress_activity</span>
                             </div>
                         </div>
                     ) : (
@@ -193,7 +192,7 @@ export const Register = () => {
                             
                             {error && (
                                 <div className="p-4 bg-red-500/10 border-l-2 border-red-500 text-red-600 dark:text-red-400 text-xs flex items-start gap-3">
-                                    <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                                    <span className="material-symbols-outlined text-[16px] shrink-0 mt-0.5">error</span>
                                     <span>{error}</span>
                                 </div>
                             )}
@@ -201,7 +200,7 @@ export const Register = () => {
                             {/* SECCIÓN 1: IDENTIFICACIÓN DE LA PERSONA JURÍDICA */}
                             <div className="space-y-4">
                                 <div className="flex items-center gap-2 border-b border-black/5 dark:border-white/10 pb-2">
-                                    <Building2 size={16} className="text-[#C68346]" />
+                                    <span className="material-symbols-outlined text-[16px] text-[#C68346]">domain</span>
                                     <h2 className="text-xs font-bold uppercase tracking-[0.15em] text-[#0F172A] dark:text-[#F3F4F6]">
                                         1. Datos de la Persona Jurídica (Empresa)
                                     </h2>
@@ -303,7 +302,7 @@ export const Register = () => {
                             {/* SECCIÓN 2: IDENTIFICACIÓN DEL MANDATARIO TITULAR */}
                             <div className="space-y-4">
                                 <div className="flex items-center gap-2 border-b border-black/5 dark:border-white/10 pb-2">
-                                    <UserCheck size={16} className="text-[#C68346]" />
+                                    <span className="material-symbols-outlined text-[16px] text-[#C68346]">person_check</span>
                                     <h2 className="text-xs font-bold uppercase tracking-[0.15em] text-[#0F172A] dark:text-[#F3F4F6]">
                                         2. Mandatario y Administrador de Cuenta Titular
                                     </h2>
@@ -427,13 +426,13 @@ export const Register = () => {
                                 >
                                     {loading ? (
                                         <>
-                                            <Loader2 size={16} className="animate-spin text-white" />
+                                            <span className="material-symbols-outlined animate-spin text-white text-[16px]">progress_activity</span>
                                             <span>REGISTRANDO CUENTA...</span>
                                         </>
                                     ) : (
                                         <>
                                             <span>CREAR CUENTA TITULAR B2B</span>
-                                            <ArrowRight size={16} />
+                                            <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
                                         </>
                                     )}
                                 </button>
@@ -449,7 +448,7 @@ export const Register = () => {
                     <div className="bg-white dark:bg-[#07090D] border border-black/10 dark:border-white/10 max-w-2xl w-full p-6 sm:p-8 space-y-4 max-h-[85vh] overflow-y-auto rounded-none">
                         <div className="flex justify-between items-center border-b border-black/5 dark:border-white/10 pb-3">
                             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest">
-                                <FileText size={16} className="text-[#C68346]" />
+                                <span className="material-symbols-outlined text-[16px] text-[#C68346]">description</span>
                                 <span>Términos B2B y Política de Privacidad (Ley 19.628)</span>
                             </div>
                             <button

@@ -2,7 +2,6 @@ import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
 import { offlineStorage, StockpileSurveyRecord } from '../../core/offline/OfflineStorage';
 import { syncQueueEngine } from '../../core/offline/SyncQueueEngine';
-import { Layers, Scan, ArrowUpRight, AlertCircle, Calculator, X, Check } from 'lucide-react';
 import { calculationEngine, StockpileCalculationInput } from './calculation-engine';
 
 const Stockpile3DViewer = lazy(() => import('./Stockpile3DViewer'));
@@ -116,7 +115,7 @@ export const StockpileModule: React.FC = () => {
             {isEdu && (
                 <div className="p-3 bg-amber-500/10 border-l-2 border-amber-500 text-amber-700 dark:text-amber-400 text-xs flex items-center justify-between font-mono">
                     <div className="flex items-center gap-2">
-                        <AlertCircle size={14} className="shrink-0" />
+                        <span className="material-symbols-outlined text-[14px] shrink-0">error</span>
                         <span>[MODO LABORATORIO DOCENTE]: Datasets volumétricos simulados. Restringido escaneo LiDAR en tiempo real.</span>
                     </div>
                     <span className="text-[9px] bg-amber-500/20 px-2 py-0.5 uppercase tracking-widest font-bold">EDU_SANDBOX</span>
@@ -127,7 +126,7 @@ export const StockpileModule: React.FC = () => {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-black/5 dark:border-white/10 pb-4">
                 <div>
                     <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-[#8A93A6]">
-                        <Layers size={14} className="text-[#00AEEF]" />
+                        <span className="material-symbols-outlined text-[14px] text-[#00AEEF]">layers</span>
                         <span>MÓDULO DE CUBICACIONES Y VOLUMETRÍA TOPOGRÁFICA</span>
                     </div>
                     <h1 className="text-xl sm:text-2xl font-bold tracking-tight uppercase text-[#0F172A] dark:text-[#F3F4F6] mt-1">
@@ -140,14 +139,14 @@ export const StockpileModule: React.FC = () => {
                         onClick={() => setIsCalcOpen(true)}
                         className="px-4 py-2 bg-[#0F172A] dark:bg-[#00AEEF] text-white dark:text-black text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-opacity rounded-none flex items-center gap-2"
                     >
-                        <Calculator size={14} />
+                        <span className="material-symbols-outlined text-[14px]">calculate</span>
                         <span>Nueva Cubicación</span>
                     </button>
                     <button 
                         disabled={isEdu}
                         className="px-4 py-2 border border-black/10 dark:border-white/15 text-xs font-bold uppercase tracking-wider hover:bg-black/5 dark:hover:bg-white/5 transition-colors rounded-none flex items-center gap-2 disabled:opacity-40"
                     >
-                        <Scan size={14} />
+                        <span className="material-symbols-outlined text-[14px]">document_scanner</span>
                         <span>Captura Sensor LiDAR</span>
                     </button>
                 </div>
@@ -200,17 +199,17 @@ export const StockpileModule: React.FC = () => {
                     <div className="bg-white dark:bg-[#07090D] border border-black/15 dark:border-white/20 w-full max-w-xl p-6 shadow-none space-y-6">
                         <div className="flex items-center justify-between border-b border-black/10 dark:border-white/10 pb-3">
                             <div className="flex items-center gap-2">
-                                <Calculator size={18} className="text-[#00AEEF]" />
+                                <span className="material-symbols-outlined text-[18px] text-[#00AEEF]">calculate</span>
                                 <h2 className="text-sm font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
                                     Cálculo Volumétrico Geométrico
                                 </h2>
                             </div>
                             <button onClick={() => setIsCalcOpen(false)} className="text-[#8A93A6] hover:text-black dark:hover:text-white">
-                                <X size={18} />
+                                <span className="material-symbols-outlined text-[18px]">close</span>
                             </button>
                         </div>
 
-                        <form onSubmit={handleSaveCalculation} className="space-y-4">
+                        <form onSubmit={handleSaveCalculation} className="space-y-4" autoComplete="off" spellCheck={false}>
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-[#8A93A6] mb-1">
@@ -341,7 +340,7 @@ export const StockpileModule: React.FC = () => {
                                     type="submit"
                                     className="px-5 py-2 bg-[#0F172A] dark:bg-[#00AEEF] text-white dark:text-black text-xs font-bold uppercase tracking-wider flex items-center gap-1.5"
                                 >
-                                    <Check size={14} />
+                                    <span className="material-symbols-outlined text-[14px]">check</span>
                                     <span>Registrar Cubicación</span>
                                 </button>
                             </div>
@@ -362,7 +361,7 @@ export const StockpileModule: React.FC = () => {
                                 <p className="text-[10px] text-[#8A93A6] font-mono">{selectedDetail.material}</p>
                             </div>
                             <button onClick={() => setSelectedDetail(null)} className="text-[#8A93A6] hover:text-black dark:hover:text-white">
-                                <X size={18} />
+                                <span className="material-symbols-outlined text-[18px]">close</span>
                             </button>
                         </div>
 
@@ -448,7 +447,7 @@ export const StockpileModule: React.FC = () => {
                                             onClick={() => setSelectedDetail(stk)}
                                             className="text-[#00AEEF] hover:underline text-[10px] font-bold uppercase tracking-wider inline-flex items-center gap-1 cursor-pointer"
                                         >
-                                            Ficha <ArrowUpRight size={12} />
+                                            Ficha <span className="material-symbols-outlined text-[12px]">north_east</span>
                                         </button>
                                     </div>
                                 </td>

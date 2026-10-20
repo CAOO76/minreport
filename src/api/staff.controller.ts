@@ -1,12 +1,20 @@
 import admin, { db, auth } from '../config/firebase';
 import express, { Request, Response, Router } from 'express';
+import { z } from 'zod';
 import { EmailService } from '../services/EmailService';
 import { env } from '../config/env';
 import { generateSetupToken } from '../utils/security';
-import { formatRut } from '../utils/rut';
+import { formatRut, validateRut } from '../utils/rut';
 
 const router = Router();
 
+const StaffMemberPayloadSchema = z.object({
+    email: z.string().email('Formato de correo corporativo inválido'),
+    displayName: z.string().min(2, 'El nombre debe tener al menos 2 caracteres'),
+    run: z.string().min(7, 'RUN inválido'),
+    accountId: z.string().min(1, 'El ID de cuenta es obligatorio'),
+    accountName: z.string().min(1, 'El nombre de cuenta es obligatorio')
+});
 
 /**
  * POST /api/staff/create-worker
@@ -16,11 +24,15 @@ const router = Router();
  */
 router.post('/create-worker', async (req: express.Request, res: express.Response): Promise<any> => {
     try {
-        const { email, displayName, run, accountId, accountName } = req.body as { email: string, displayName: string, run: string, accountId: string, accountName: string };
-
-        if (!email || !displayName || !run || !accountId || !accountName) {
-            return res.status(400).json({ error: 'Email, nombre, RUN, cuenta y nombre de cuenta son requeridos' });
+        const validation = StaffMemberPayloadSchema.safeParse(req.body);
+        if (!validation.success) {
+            return res.status(400).json({
+                error: 'Validación de datos de trabajador fallida',
+                details: validation.error.format()
+            });
         }
+
+        const { email, displayName, run, accountId, accountName } = validation.data;
 
         const normalizedEmail = email.toLowerCase().trim();
         const cleanRun = run.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
@@ -242,11 +254,15 @@ router.post('/create-worker', async (req: express.Request, res: express.Response
  */
 router.post('/designate-admin', async (req: express.Request, res: express.Response): Promise<any> => {
     try {
-        const { email, displayName, run, accountId, accountName } = req.body as { email: string, displayName: string, run: string, accountId: string, accountName: string };
-
-        if (!email || !displayName || !run || !accountId || !accountName) {
-            return res.status(400).json({ error: 'Email, nombre, RUN y cuenta son requeridos' });
+        const validation = StaffMemberPayloadSchema.safeParse(req.body);
+        if (!validation.success) {
+            return res.status(400).json({
+                error: 'Validación de datos de administrador fallida',
+                details: validation.error.format()
+            });
         }
+
+        const { email, displayName, run, accountId, accountName } = validation.data;
 
         const normalizedEmail = email.toLowerCase().trim();
         const cleanRun = run.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();

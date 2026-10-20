@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { AlertTriangle, X } from 'lucide-react';
 
 interface ConfirmDeleteDialogProps {
     isOpen: boolean;
@@ -44,7 +43,7 @@ export const ConfirmDeleteDialog: React.FC<ConfirmDeleteDialogProps> = ({
                 <div className="flex items-start justify-between p-6 border-b border-gray-200 dark:border-gray-800">
                     <div className="flex items-start gap-4">
                         <div className="w-10 h-10 rounded-none bg-red-500/10 dark:bg-red-500/20 flex items-center justify-center flex-shrink-0 border border-red-500/20">
-                            <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-500" />
+                            <span className="material-symbols-outlined text-[20px] text-red-600 dark:text-red-500">warning</span>
                         </div>
                         <div>
                             <h2 className="text-lg font-bold text-gray-900 dark:text-white">
@@ -57,9 +56,9 @@ export const ConfirmDeleteDialog: React.FC<ConfirmDeleteDialogProps> = ({
                     </div>
                     <button
                         onClick={handleClose}
-                        className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                        className="bg-transparent border-0 outline-none p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors cursor-pointer flex items-center"
                     >
-                        <X size={20} />
+                        <span className="material-symbols-outlined text-[20px]">close</span>
                     </button>
                 </div>
 
@@ -104,16 +103,16 @@ export const ConfirmDeleteDialog: React.FC<ConfirmDeleteDialogProps> = ({
                 <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200 dark:border-gray-800">
                     <button
                         onClick={handleClose}
-                        className="px-6 py-3 rounded-none bg-gray-100 dark:bg-white/5 text-gray-700 dark:text-white/60 font-black text-[10px] uppercase tracking-[0.2em] hover:bg-gray-200 dark:hover:bg-white/10 transition-all active:scale-95"
+                        className="px-6 py-3 rounded-none bg-gray-100 dark:bg-white/5 text-gray-700 dark:text-white/60 font-bold text-xs uppercase tracking-wider hover:bg-gray-200 dark:hover:bg-white/10 transition-all cursor-pointer"
                     >
-                        [CANCEL_ACTION]
+                        Cancelar
                     </button>
                     <button
                         onClick={handleConfirm}
                         disabled={!isValid}
-                        className="px-6 py-3 rounded-none bg-red-600 text-white font-black text-[10px] uppercase tracking-[0.2em] hover:bg-red-700 transition-all active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed"
+                        className="px-6 py-3 rounded-none bg-red-600 text-white font-bold text-xs uppercase tracking-wider hover:bg-red-700 transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
                     >
-                        PROCEED_DELETE
+                        Eliminar
                     </button>
                 </div>
             </div>

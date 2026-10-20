@@ -26,9 +26,6 @@ export default defineConfig({
                         if (id.includes('framer-motion')) {
                             return 'vendor-motion';
                         }
-                        if (id.includes('lucide-react')) {
-                            return 'vendor-icons';
-                        }
                         if (id.includes('react-dom') || id.includes('react-router-dom') || id.includes('/react/')) {
                             return 'vendor-react';
                         }
