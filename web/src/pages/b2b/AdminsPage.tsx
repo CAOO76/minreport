@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { formatRut } from '../../utils/rut';
 import { useAuth } from '../../context/AuthContext';
 import { StaffService } from '../../services/StaffService';
 import { db } from '../../config/firebase';
 import { collection, query, where, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'framer-motion';
+import BrandingManager from '../../components/admin/BrandingManager';
 
 // Common CSS fragments to ensure consistency
 const containerClass = "max-w-7xl mx-auto py-12 px-8 space-y-12 animate-in fade-in duration-500";
@@ -26,6 +28,10 @@ interface AdminMember {
 
 export const AdminsPage = () => {
     const { currentAccount, user } = useAuth();
+    const [searchParams, setSearchParams] = useSearchParams();
+    const initialTab = searchParams.get('tab') === 'branding' ? 'BRANDING' : 'ADMINS';
+    const [activeTab, setActiveTab] = useState<'ADMINS' | 'BRANDING'>(initialTab);
+
     const [admins, setAdmins] = useState<AdminMember[]>([]);
     const [loading, setLoading] = useState(false);
     const [initialLoading, setInitialLoading] = useState(true);
@@ -145,8 +151,39 @@ export const AdminsPage = () => {
     return (
         <div className={containerClass}>
 
-            {/* 1. Header Section - Asymmetric and Spacious */}
-            <header className={sectionHeaderClass}>
+            {/* Selector de Pestañas de Administración */}
+            <div className="flex border-b border-antigravity-light-border dark:border-antigravity-dark-border mb-6">
+                <button
+                    type="button"
+                    onClick={() => { setActiveTab('ADMINS'); setSearchParams({}); }}
+                    className={`py-3 px-6 text-xs font-mono font-bold uppercase tracking-wider transition-colors border-b-2 cursor-pointer rounded-none outline-none ${
+                        activeTab === 'ADMINS'
+                            ? 'border-[#C68346] text-[#C68346]'
+                            : 'border-transparent text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                >
+                    Directorio de Administradores
+                </button>
+                <button
+                    type="button"
+                    onClick={() => { setActiveTab('BRANDING'); setSearchParams({ tab: 'branding' }); }}
+                    className={`py-3 px-6 text-xs font-mono font-bold uppercase tracking-wider transition-colors border-b-2 cursor-pointer rounded-none outline-none flex items-center gap-2 ${
+                        activeTab === 'BRANDING'
+                            ? 'border-[#C68346] text-[#C68346]'
+                            : 'border-transparent text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                >
+                    <span className="material-symbols-outlined text-[16px]">palette</span>
+                    Gestor de Logos & Identidad
+                </button>
+            </div>
+
+            {activeTab === 'BRANDING' ? (
+                <BrandingManager />
+            ) : (
+                <>
+                    {/* 1. Header Section - Asymmetric and Spacious */}
+                    <header className={sectionHeaderClass}>
                 <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
                     <div>
                         <div className="flex items-center gap-3 mb-4">
@@ -406,6 +443,8 @@ export const AdminsPage = () => {
                     </div>
                 )}
             </AnimatePresence>
+                </>
+            )}
         </div>
     );
 };

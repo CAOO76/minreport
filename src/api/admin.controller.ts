@@ -256,7 +256,7 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
                 processedAt: new Date().toISOString(),
                 processedBy: adminEmail,
                 observations: observations || null,
-                enabledPlugins: (enabledPlugins && enabledPlugins.length > 0) ? enabledPlugins : ['opermaq', 'stockpile', 'mining-flow'],
+                enabledPlugins: (enabledPlugins && enabledPlugins.length > 0) ? enabledPlugins : ['opermaq', 'stockpile'],
                 updatedAt: new Date().toISOString()
             });
 
@@ -267,7 +267,7 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
                 type: tenantData.type,
                 taxId: taxId,
                 ownerId: userRecord.uid,
-                enabledPlugins: (enabledPlugins && enabledPlugins.length > 0) ? enabledPlugins : ['opermaq', 'stockpile', 'mining-flow'],
+                enabledPlugins: (enabledPlugins && enabledPlugins.length > 0) ? enabledPlugins : ['opermaq', 'stockpile'],
                 giro: tenantData.industry || '',
                 direccionComercial: tenantData.address || '',
                 postal_code: tenantData.postal_code || '',

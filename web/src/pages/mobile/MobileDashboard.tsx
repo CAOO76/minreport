@@ -13,7 +13,7 @@ const MobileDashboard: React.FC = () => {
     const rawKeys = (currentAccount as any)?.enabledPlugins;
     const enabledKeys: string[] = (Array.isArray(rawKeys) && rawKeys.length > 0)
         ? rawKeys
-        : ['opermaq', 'stockpile', 'mining-flow'];
+        : ['opermaq', 'stockpile'];
     const activeModules: SystemModuleInfo[] = SYSTEM_MODULES.filter(mod => enabledKeys.includes(mod.id));
 
     const stats = [

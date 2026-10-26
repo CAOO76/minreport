@@ -96,13 +96,11 @@ export const register = async (req: Request, res: Response) => {
                     billingCycle: 'MENSUAL',
                     activeModules: {
                         opermaq: true,
-                        stockpile: true,
-                        'mining-flow': true,
-                        miningFlow: true
+                        stockpile: true
                     },
                     activatedAt: Date.now()
                 },
-                enabledPlugins: ['opermaq', 'stockpile', 'mining-flow'],
+                enabledPlugins: ['opermaq', 'stockpile'],
                 compliance: {
                     law: 'Ley N° 19.628 (Protección de Datos Personales Chile)',
                     privacyPolicyVersion: '2026.1',

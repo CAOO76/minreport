@@ -17,12 +17,10 @@ import AccountSelector from './components/auth/AccountSelector';
 import LoadingScreen from './components/common/LoadingScreen';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import { PWAInstallPrompt } from './components/common/PWAInstallPrompt';
-import SyncIndicator from './components/common/SyncIndicator';
 
 // Code-split heavy modules & secondary pages (Capa 2 Performance)
 const OpermaqModule = lazy(() => import('./modules/opermaq/OpermaqModule').then(m => ({ default: m.OpermaqModule })));
 const StockpileModule = lazy(() => import('./modules/stockpile/StockpileModule').then(m => ({ default: m.StockpileModule })));
-const MiningFlowModule = lazy(() => import('./modules/mining-flow/MiningFlowModule').then(m => ({ default: m.MiningFlowModule })));
 const CorporateDashboard = lazy(() => import('./pages/CorporateDashboard').then(m => ({ default: m.CorporateDashboard })));
 const Register = lazy(() => import('./pages/Register').then(m => ({ default: m.Register })));
 const SetupAccess = lazy(() => import('./pages/SetupAccess').then(m => ({ default: m.SetupAccess })));
@@ -31,6 +29,7 @@ const JobProfilesPage = lazy(() => import('./pages/JobProfilesPage').then(m => (
 const StaffPage = lazy(() => import('./pages/StaffPage').then(m => ({ default: m.StaffPage })));
 const EmpresaPage = lazy(() => import('./pages/b2b/EmpresaPage').then(m => ({ default: m.EmpresaPage })));
 const AdminsPage = lazy(() => import('./pages/b2b/AdminsPage').then(m => ({ default: m.AdminsPage })));
+const BrandingPage = lazy(() => import('./pages/b2b/BrandingPage').then(m => ({ default: m.BrandingPage })));
 const MetricasPage = lazy(() => import('./pages/b2b/MetricasPage').then(m => ({ default: m.MetricasPage })));
 const SuscripcionPage = lazy(() => import('./pages/b2b/SuscripcionPage').then(m => ({ default: m.SuscripcionPage })));
 const MobileProfile = lazy(() => import('./pages/mobile/MobileProfile'));
@@ -93,7 +92,8 @@ const AppRoutes = () => {
             <Route path="/auth/action" element={<SetPassword />} />
 
             {/* Portal Secreto de Desarrollo (Aislado / noindex) */}
-            <Route path="/dev-vault-gateway" element={<DevVaultGateway />} />
+            <Route path="/dev" element={<DevVaultGateway />} />
+            <Route path="/dev-vault-gateway" element={<Navigate to="/dev" replace />} />
 
             {/* Login Móvil Independiente */}
             <Route path="/mobile/login" element={<MobileLogin />} />
@@ -112,11 +112,12 @@ const AppRoutes = () => {
                 {/* [MONOLITO MODULAR WEB 3.0] Módulos Industriales Centralizados */}
                 <Route path="/opermaq" element={<OpermaqModule />} />
                 <Route path="/stockpile" element={<StockpileModule />} />
-                <Route path="/mining-flow" element={<MiningFlowModule />} />
                 <Route path="/job-profiles" element={<JobProfilesPage />} />
                 <Route path="/staff" element={<StaffPage />} />
                 <Route path="/b2b/empresa" element={<EmpresaPage />} />
                 <Route path="/b2b/admins" element={<AdminsPage />} />
+                <Route path="/b2b/branding" element={<BrandingPage />} />
+                <Route path="/branding" element={<Navigate to="/b2b/branding" replace />} />
                 <Route path="/b2b/metricas" element={<MetricasPage />} />
                 <Route path="/b2b/suscripcion" element={<SuscripcionPage />} />
 
@@ -153,7 +154,6 @@ function App() {
                                         <AppRoutes />
                                     </Suspense>
                                     <PWAInstallPrompt />
-                                    <SyncIndicator />
                                 </div>
                             </BrowserRouter>
                         </MinReportSessionProvider>

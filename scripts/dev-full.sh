@@ -18,7 +18,7 @@ fi
 
 # 1. Limpieza de Puertos (Prevenir errores de "port taken")
 echo "🧹 Deteniendo servicios previos de forma segura..."
-PORTS="8080,5173,5174,8085,9190,9196,9195,5010,5015,5016,4002,4400"
+PORTS="8080,5173,5174,8085,9190,9196,9195,5010,5015,5016,4002,4400,5201,5190,5175"
 PIDS=$(lsof -ti:$PORTS 2>/dev/null)
 if [ ! -z "$PIDS" ]; then
     echo "PIDs encontrados: $PIDS. Enviando SIGTERM..."
@@ -46,8 +46,14 @@ fi
 echo "📡 Sincronizando IP local para acceso móvil..."
 bash scripts/sync-mobile.sh
 
-# 3. Lanzamiento paralelo de servicios esenciales
+# 3. Lanzamiento paralelo de servicios esenciales y satélites originales
 echo "🔥 Iniciando servicios de MINREPORT..."
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "🌐 APP WEB:          http://localhost:5173"
+echo "🔑 PORTAL DEV:       http://localhost:5173/dev"
+echo "🛡️  ADMIN PANEL:      http://localhost:5174"
+echo "⚙️  CORE API:         http://localhost:8080"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 npx concurrently --kill-others \
   --names "EMU,API,WEB,ADM" \
@@ -56,3 +62,5 @@ npx concurrently --kill-others \
   "npm run dev:server" \
   "npm run dev:mobile --prefix web" \
   "npm run dev --prefix admin"
+
+

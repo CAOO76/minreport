@@ -4,7 +4,7 @@ import { auth } from '../../config/firebase';
 
 interface AIProposal {
     id: string;
-    module: 'opermaq' | 'stockpile' | 'mining-flow' | 'compliance';
+    module: 'opermaq' | 'stockpile' | 'compliance';
     title: string;
     currentValue: string;
     suggestedValue: string;
@@ -21,7 +21,7 @@ export const MiningAICopilot: React.FC = () => {
     const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; text: string; tier?: string }>>([
         {
             role: 'assistant',
-            text: 'Enjambre de IA MINREPORT en línea (Capa 4 Gemini). Monitoreando telemetría de flota, balance de acopios y flujos financieros. ¿En qué optimización de faena requieres asistencia?'
+            text: 'Enjambre de IA MINREPORT en línea (Capa 4 Gemini). Monitoreando telemetría de flota, gestión de maquinaria y cubicación de acopios. ¿En qué optimización de faena requieres asistencia?'
         }
     ]);
 
@@ -30,9 +30,9 @@ export const MiningAICopilot: React.FC = () => {
         {
             id: 'PROP-01',
             module: 'opermaq',
-            title: 'Mantenimiento Preventivo Adelantado CAEX-104',
+            title: 'Mantenimiento Preventivo de Flota',
             currentValue: 'Pauta programada a las 14.500 hrs',
-            suggestedValue: 'Adelantar a las 14.280 hrs por vibración anómala en retardador',
+            suggestedValue: 'Adelantar por alerta predictiva de horómetro en faena',
             confidence: 94.2,
             impact: 'HIGH',
             status: 'PENDING'
@@ -40,21 +40,11 @@ export const MiningAICopilot: React.FC = () => {
         {
             id: 'PROP-02',
             module: 'stockpile',
-            title: 'Recalibración de Densidad STOCK-SULF-01',
+            title: 'Recalibración de Densidad en Acopio',
             currentValue: 'Densidad nominal: 2.15 t/m³',
-            suggestedValue: 'Ajustar a 2.18 t/m³ tras correlación con romana de molienda',
+            suggestedValue: 'Ajustar a 2.18 t/m³ tras correlación con cubicación 3D',
             confidence: 97.8,
             impact: 'MEDIUM',
-            status: 'PENDING'
-        },
-        {
-            id: 'PROP-03',
-            module: 'mining-flow',
-            title: 'Divergencia en Rendimiento Diésel Turno Noche',
-            currentValue: 'Consumo proyectado: 4.800 L',
-            suggestedValue: 'Consumo real registrado: 5.420 L (+12.9% desviación en rampa sur)',
-            confidence: 91.5,
-            impact: 'HIGH',
             status: 'PENDING'
         }
     ]);

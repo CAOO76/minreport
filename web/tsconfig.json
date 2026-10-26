@@ -23,7 +23,12 @@
         "noFallthroughCasesInSwitch": true,
         "types": [
             "vite/client"
-        ]
+        ],
+        "baseUrl": ".",
+        "paths": {
+            "@opermaq/*": ["./src/modules/opermaq/*"],
+            "@stockpile/*": ["./src/modules/stockpile/*"]
+        }
     },
     "include": [
         "src"

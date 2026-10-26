@@ -7,6 +7,7 @@ interface LogoSet {
   isotype: string;
   logotype: string;
   imagotype: string;
+  imagotypeVertical?: string;
   pwaIcon?: string;
   appIcon?: string;
 }
@@ -57,7 +58,7 @@ export const BrandingProvider: React.FC<{ children: ReactNode }> = ({ children }
 
         // Fix URLs for all logo types in both themes with safety checks
         const fixLogoSet = (set: any): LogoSet => {
-          const result: any = { isotype: '', logotype: '', imagotype: '', pwaIcon: '', appIcon: '' };
+          const result: any = { isotype: '', logotype: '', imagotype: '', imagotypeVertical: '', pwaIcon: '', appIcon: '' };
           if (!set) return result;
 
           Object.keys(set).forEach(key => {

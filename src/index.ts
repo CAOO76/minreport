@@ -104,7 +104,7 @@ app.get('/api/m2m/data-feed', x402Gatekeeper({
 
 const AIInferencePayloadSchema = z.object({
     prompt: z.string().min(1, 'El prompt no puede estar vacío'),
-    module: z.enum(['opermaq', 'stockpile', 'mining-flow', 'core', 'mining-swarm']).optional().default('core'),
+    module: z.enum(['opermaq', 'stockpile', 'core', 'mining-swarm']).optional().default('core'),
     thinkingLevel: z.enum(['none', 'low', 'medium', 'high']).optional().default('medium'),
     requireHITL: z.boolean().optional().default(false)
 });
@@ -165,9 +165,24 @@ import {
     createTestPilotAccount, 
     listTestPilots, 
     revokeTestPilot, 
-    impersonateClient 
+    impersonateClient,
+    initDevChallenge,
+    confirmDevChallenge,
+    getDevChallengeStatus,
+    verifyDevChallengeOtp,
+    verifyDevChallengeUser,
+    loginDevChallengeFinal
 } from './api/dev.controller';
 
+// Flujo Out-of-Band y Desafío Progresivo DEV
+app.post('/api/dev/auth/challenge/init', initDevChallenge);
+app.get('/api/dev/auth/challenge/confirm', confirmDevChallenge);
+app.get('/api/dev/auth/challenge/status/:id', getDevChallengeStatus);
+app.post('/api/dev/auth/challenge/verify-otp', verifyDevChallengeOtp);
+app.post('/api/dev/auth/challenge/verify-user', verifyDevChallengeUser);
+app.post('/api/dev/auth/challenge/login-final', loginDevChallengeFinal);
+
+// Legacy direct login para scripts
 app.post('/api/dev/auth/login', devLogin);
 app.post('/api/dev/test-pilots', requireDevRoot, createTestPilotAccount);
 app.get('/api/dev/test-pilots', requireDevRoot, listTestPilots);
@@ -197,6 +212,8 @@ app.listen(port, '0.0.0.0', async () => {
     console.log(`🚀 Server running on port ${port}`);
     console.log(`📡 Host: 0.0.0.0 (¡Acceso Móvil Habilitado!)`);
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🔑 DEV Gateway: http://localhost:5173/dev`);
+    console.log(`⚙️  API Endpoint: http://localhost:${port}/api/dev`);
     
     // Inserción y blindaje determinista por código de cuenta DEV
     try {

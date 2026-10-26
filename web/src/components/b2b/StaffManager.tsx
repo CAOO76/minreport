@@ -12,7 +12,6 @@ export const StaffManager: React.FC<StaffManagerProps> = ({ userId, userName }) 
     const [permissions, setPermissions] = useState<Record<string, boolean>>({
         'opermaq': true,
         'stockpile': true,
-        'mining-flow': true,
     });
 
     const togglePermission = (moduleId: string) => {

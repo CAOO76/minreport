@@ -65,6 +65,15 @@ if (useEmulators) {
     console.log("🚀 [FRONTEND] Conectado a Firebase Cloud Services (Southamerica-West1)");
 }
 
+// Exposición de singletons para interoperabilidad modular nativa (Capa 3 / Capa 5)
+if (typeof window !== 'undefined') {
+    (window as any)._firebase_app = app;
+    (window as any)._firebase_auth = auth;
+    (window as any)._firebase_db = db;
+    (window as any)._firebase_storage = storage;
+    (window as any)._firebase_initialized = true;
+}
+
 // 🔥 EXPOSICIÓN PARA E2E (Permite a Playwright verificar el estado) 🔥
 if (isLocal) {
     (window as any).auth = auth;

@@ -1,0 +1,57 @@
+{
+  "common": {
+    "continue_button": "CONTINUAR",
+    "back_button": "VOLVER",
+    "save_button": "GUARDAR",
+    "cancel_button": "CANCELAR",
+    "loading": "CARGANDO..."
+  },
+  "home": {
+    "stock": "Stock",
+    "new_registration": "Nuevo Registro"
+  },
+  "registration": {
+    "title": "REGISTRO DE ACTIVO",
+    "name_label": "ID / NOMBRE DEL ACOPIO",
+    "name_placeholder": "EJ: ACOPIO_NORTE_01",
+    "material_label": "MATERIAL / MINERAL",
+    "material_placeholder": "EJ: COBRE CONCENTRADO",
+    "location_ref_label": "REFERENCIA UBICACIÓN",
+    "location_ref_placeholder": "EJ: NIVEL 2400",
+    "cover_photo_title": "Foto de Portada",
+    "captured_label": "CAPTURADO",
+    "tap_to_capture_label": "TOCA PARA CAPTURAR",
+    "registering_asset_message": "Registrando activo..."
+  },
+  "material_type": {
+    "mineral": "Mineral",
+    "esteril": "Estéril",
+    "baja_ley": "Baja Ley"
+  },
+  "manual_capture": {
+    "title": "CAPTURA TÉCNICA",
+    "measurement_label": "MEDICIÓN",
+    "success_message": "CAPTURA OK",
+    "evidence_title": "EVIDENCIA TÉCNICA",
+    "tap_to_capture": "TOUCH PARA CAPTURAR",
+    "save_measurement": "GUARDAR MEDICIÓN",
+    "estimated_volume": "VOLUMEN ESTIMADO",
+    "required_photo_alert": "Capturar foto de evidencia es obligatorio",
+    "save_error": "Error al guardar",
+    "fields": {
+      "major_axis_base": "EJE MAYOR BASE (m)",
+      "minor_axis_base": "EJE MENOR BASE (m)",
+      "major_axis_top": "EJE MAYOR SUPERIOR (m)",
+      "minor_axis_top": "EJE MENOR SUPERIOR (m)",
+      "perimeter_base": "PERÍMETRO BASE (m)",
+      "perimeter_top": "PERÍMETRO SUPERIOR (m)",
+      "total_height": "ALTURA TOTAL (m)",
+      "density_factor": "FACTOR DENSIDAD (T/m3)"
+    }
+  },
+  "geometries": {
+    "CONO_ELIPTICO": "CONO ELÍPTICO",
+    "CONO_ELIPTICO_TRUNCADO": "CONO ELÍPTICO TRUNCADO",
+    "CONO_TRUNCADO_PERIMETRO": "CONO ELÍPTICO TRUNCADO POR PERÍMETRO"
+  }
+}

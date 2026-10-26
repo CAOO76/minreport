@@ -1,0 +1,57 @@
+{
+  "common": {
+    "continue_button": "CONTINUE",
+    "back_button": "BACK",
+    "save_button": "SAVE",
+    "cancel_button": "CANCEL",
+    "loading": "LOADING..."
+  },
+  "home": {
+    "stock": "Inventory",
+    "new_registration": "New Registration"
+  },
+  "registration": {
+    "title": "ASSET REGISTRATION",
+    "name_label": "ID / STOCKPILE NAME",
+    "name_placeholder": "EG: NORTH_STOCK_01",
+    "material_label": "MATERIAL / MINERAL",
+    "material_placeholder": "EG: COPPER CONCENTRATE",
+    "location_ref_label": "LOCATION REFERENCE",
+    "location_ref_placeholder": "EG: LEVEL 2400",
+    "cover_photo_title": "Cover Photo",
+    "captured_label": "CAPTURED",
+    "tap_to_capture_label": "TAP TO CAPTURE",
+    "registering_asset_message": "Registering asset..."
+  },
+  "material_type": {
+    "mineral": "Mineral",
+    "esteril": "Waste",
+    "baja_ley": "Low Grade"
+  },
+  "manual_capture": {
+    "title": "TECHNICAL CAPTURE",
+    "measurement_label": "MEASUREMENT",
+    "success_message": "CAPTURE OK",
+    "evidence_title": "TECHNICAL EVIDENCE",
+    "tap_to_capture": "TOUCH TO CAPTURE",
+    "save_measurement": "SAVE MEASUREMENT",
+    "estimated_volume": "ESTIMATED VOLUME",
+    "required_photo_alert": "Evidentiary photo is mandatory",
+    "save_error": "Save error",
+    "fields": {
+      "major_axis_base": "MAJOR AXIS BASE (m)",
+      "minor_axis_base": "MINOR AXIS BASE (m)",
+      "major_axis_top": "MAJOR AXIS TOP (m)",
+      "minor_axis_top": "MINOR AXIS TOP (m)",
+      "perimeter_base": "BASE PERIMETER (m)",
+      "perimeter_top": "TOP PERIMETER (m)",
+      "total_height": "TOTAL HEIGHT (m)",
+      "density_factor": "DENSITY FACTOR (T/m3)"
+    }
+  },
+  "geometries": {
+    "CONO_ELIPTICO": "ELLIPTIC CONE",
+    "CONO_ELIPTICO_TRUNCADO": "TRUNCATED ELLIPTIC CONE",
+    "CONO_TRUNCADO_PERIMETRO": "PERIMETER TRUNCATED CONE"
+  }
+}

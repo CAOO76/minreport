@@ -14,6 +14,7 @@
     "export:emulators": "npx firebase-tools emulators:export ./data",
     "backup:data": "npm run export:emulators && git add data && git commit -m \"Data Backup $(date)\"",
     "dev:all": "npx concurrently --kill-others --names \"EMU,API,WEB,ADM\" --prefix-colors \"yellow,blue,green,magenta\" \"npm run serve:emulators\" \"npm run dev:server\" \"npm run dev --prefix web\" \"npm run dev --prefix admin\"",
+    "dev:ecosystem": "npm run dev:all",
     "dev:full": "bash scripts/dev-full.sh",
     "backup": "git add . && (git commit -m \"Auto-save\" || true) && git push",
     "test:e2e": "playwright test",

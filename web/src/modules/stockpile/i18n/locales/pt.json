@@ -1,0 +1,57 @@
+{
+  "common": {
+    "continue_button": "CONTINUAR",
+    "back_button": "VOLTAR",
+    "save_button": "SALVAR",
+    "cancel_button": "CANCELAR",
+    "loading": "CARREGANDO..."
+  },
+  "home": {
+    "stock": "Estoque",
+    "new_registration": "Novo Registro"
+  },
+  "registration": {
+    "title": "REGISTRO DE ATIVO",
+    "name_label": "ID / NOME DA PILHA",
+    "name_placeholder": "EX: PILHA_NORTE_01",
+    "material_label": "MATERIAL / MINERAL",
+    "material_placeholder": "EX: CONCENTRADO DE COBRE",
+    "location_ref_label": "REFERÊNCIA DE LOCALIZAÇÃO",
+    "location_ref_placeholder": "EX: NÍVEL 2400",
+    "cover_photo_title": "Foto de Capa",
+    "captured_label": "CAPTURADO",
+    "tap_to_capture_label": "TOQUE PARA CAPTURAR",
+    "registering_asset_message": "Registrando ativo..."
+  },
+  "material_type": {
+    "mineral": "Mineral",
+    "esteril": "Estéril",
+    "baja_ley": "Baixa Qualidade"
+  },
+  "manual_capture": {
+    "title": "CAPTURA TÉCNICA",
+    "measurement_label": "MEDIÇÃO",
+    "success_message": "CAPTURA OK",
+    "evidence_title": "EVIDÊNCIA TÉCNICA",
+    "tap_to_capture": "TOQUE PARA CAPTURAR",
+    "save_measurement": "SALVAR MEDIÇÃO",
+    "estimated_volume": "VOLUME ESTIMADO",
+    "required_photo_alert": "Capturar foto de evidência é obrigatório",
+    "save_error": "Erro ao salvar",
+    "fields": {
+      "major_axis_base": "EIXO MAIOR BASE (m)",
+      "minor_axis_base": "EIXO MENOR BASE (m)",
+      "major_axis_top": "EIXO MAIOR SUPERIOR (m)",
+      "minor_axis_top": "EIXO MENOR SUPERIOR (m)",
+      "perimeter_base": "PERÍMETRO BASE (m)",
+      "perimeter_top": "PERÍMETRO SUPERIOR (m)",
+      "total_height": "ALTURA TOTAL (m)",
+      "density_factor": "FATOR DE DENSIDADE (T/m3)"
+    }
+  },
+  "geometries": {
+    "CONO_ELIPTICO": "CONE ELÍPTICO",
+    "CONO_ELIPTICO_TRUNCADO": "CONE ELÍPTICO TRUNCADO",
+    "CONO_TRUNCADO_PERIMETRO": "CONE TRUNCADO POR PERÍMETRO"
+  }
+}

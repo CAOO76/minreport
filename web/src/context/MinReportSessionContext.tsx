@@ -19,8 +19,6 @@ export interface MinReportSession {
     activeModules: {
         opermaq: boolean;
         stockpile: boolean;
-        'mining-flow': boolean;
-        miningFlow?: boolean;
     };
     permissions: {
         opermaq: {
@@ -33,23 +31,13 @@ export interface MinReportSession {
             canCalculate: boolean;
             canExportReport: boolean;
         };
-        'mining-flow': {
-            canViewLedger: boolean;
-            canRegisterCashflow: boolean;
-            canAuthorizePayments: boolean;
-        };
-        miningFlow?: {
-            canViewLedger: boolean;
-            canRegisterCashflow: boolean;
-            canAuthorizePayments: boolean;
-        };
     };
 }
 
 interface MinReportSessionContextType {
     session: MinReportSession | null;
     isLoaded: boolean;
-    hasModuleAccess: (moduleKey: 'opermaq' | 'stockpile' | 'mining-flow' | 'miningFlow') => boolean;
+    hasModuleAccess: (moduleKey: 'opermaq' | 'stockpile') => boolean;
 }
 
 const MinReportSessionContext = createContext<MinReportSessionContextType>({
@@ -71,20 +59,12 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
         // Gobernanza modular
         const contract = (currentAccount as any).contract;
         const rawActive = contract?.activeModules || {};
-        const isMiningFlowActive = rawActive['mining-flow'] ?? rawActive.miningFlow ?? true;
         const activeModules = {
             opermaq: rawActive.opermaq ?? true,
-            stockpile: rawActive.stockpile ?? true,
-            'mining-flow': isMiningFlowActive,
-            miningFlow: isMiningFlowActive
+            stockpile: rawActive.stockpile ?? true
         };
 
         const isAdminOrOwner = role === 'OWNER' || role === 'ADMIN';
-        const miningFlowPerms = {
-            canViewLedger: isAdminOrOwner,
-            canRegisterCashflow: isAdminOrOwner,
-            canAuthorizePayments: role === 'OWNER'
-        };
 
         return {
             uid: user.uid,
@@ -106,18 +86,13 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
                     canScan: !isEdu, // Bloqueado escaneo en vivo para sandboxes edu
                     canCalculate: true,
                     canExportReport: isAdminOrOwner || role === 'SUPERVISOR'
-                },
-                'mining-flow': miningFlowPerms,
-                miningFlow: miningFlowPerms
+                }
             }
         };
     }, [user, profile, currentAccount]);
 
-    const hasModuleAccess = (moduleKey: 'opermaq' | 'stockpile' | 'mining-flow' | 'miningFlow'): boolean => {
+    const hasModuleAccess = (moduleKey: 'opermaq' | 'stockpile'): boolean => {
         if (!session) return false;
-        if (moduleKey === 'mining-flow' || moduleKey === 'miningFlow') {
-            return session.activeModules['mining-flow'] ?? session.activeModules.miningFlow ?? true;
-        }
         return session.activeModules[moduleKey] ?? true;
     };
 

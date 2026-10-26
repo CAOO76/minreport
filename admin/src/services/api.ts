@@ -46,6 +46,7 @@ export interface LogoSet {
     isotype: string;
     logotype: string;
     imagotype: string;
+    imagotypeVertical?: string;
     pwaIcon?: string;
     appIcon?: string;
 }

@@ -5,8 +5,8 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { db, storage } from '../config/firebase';
 
 const DEFAULT_SETTINGS: BrandingSettingsType = {
-    light: { isotype: '', logotype: '', imagotype: '', pwaIcon: '', appIcon: '' },
-    dark: { isotype: '', logotype: '', imagotype: '', pwaIcon: '', appIcon: '' },
+    light: { isotype: '', logotype: '', imagotype: '', imagotypeVertical: '', pwaIcon: '', appIcon: '' },
+    dark: { isotype: '', logotype: '', imagotype: '', imagotypeVertical: '', pwaIcon: '', appIcon: '' },
     siteName: 'MINREPORT',
     primaryColor: '#C68346',
 };
@@ -51,10 +51,17 @@ const BRAND_ASSETS: AssetDefinition[] = [
     },
     {
         key: 'imagotype',
-        label: 'Imagotipo Principal',
-        description: 'Identificador compuesto (Isotipo + Logotipo) para barras de navegación e informes técnicos.',
+        label: 'Imagotipo Principal (Horizontal)',
+        description: 'Identificador compuesto horizontal (Isotipo + Logotipo) para barras de navegación e informes técnicos.',
         spec: 'SVG Vectorial o PNG transparente',
         recommendedDim: '1400 × 400 px',
+    },
+    {
+        key: 'imagotypeVertical',
+        label: 'Imagotipo Vertical',
+        description: 'Identificador compuesto vertical (Isotipo sobre Logotipo) para pantallas de inicio (Splash), credenciales y carátulas verticales.',
+        spec: 'SVG Vectorial o PNG transparente',
+        recommendedDim: '800 × 1067 px (Vertical 3:4)',
     },
     {
         key: 'pwaIcon',
@@ -86,6 +93,7 @@ export const BrandingSettings: React.FC = () => {
         isotype: true,
         logotype: true,
         imagotype: true,
+        imagotypeVertical: true,
         pwaIcon: true,
         appIcon: true,
     });

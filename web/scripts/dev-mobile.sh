@@ -27,6 +27,8 @@ fi
 # Iniciar Vite en modo host (foreground)
 echo "🌐 Iniciando Vite en modo host..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "💻 Web App:      http://localhost:5173"
+echo "🔑 Portal DEV:   http://localhost:5173/dev"
 echo "📱 Después de que Vite inicie, presiona Run (▶️) en Android Studio"
 echo "🔥 Hot Reload estará activo - los cambios se reflejarán automáticamente"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

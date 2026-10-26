@@ -5,11 +5,23 @@ import admin from 'firebase-admin';
 
 const resend = new Resend(env.RESEND_API_KEY);
 
-interface EmailOptions {
+export interface EmailAttachment {
+    content?: string | Buffer;
+    filename?: string;
+    path?: string;
+    content_type?: string;
+    contentType?: string;
+    contentId?: string;
+    content_id?: string;
+}
+
+export interface EmailOptions {
     from: string;
     to: string;
     subject: string;
     html: string;
+    reply_to?: string;
+    attachments?: EmailAttachment[];
 }
 
 export class EmailService {
@@ -23,23 +35,36 @@ export class EmailService {
             return this.mockEmail(options);
         }
 
-        // Permitir sobreescribir el remitente mediante variable de entorno o usar el predeterminado
-        const sender = process.env.RESEND_FROM_EMAIL || options.from;
+        // Remitente blindado: Forzar MINREPORT o variable de entorno institucional
+        const sender = process.env.RESEND_FROM_EMAIL || options.from || 'MINREPORT <no-reply@minreport.com>';
+        const replyTo = options.reply_to || process.env.RESEND_REPLY_TO || 'no-reply@minreport.com';
 
         try {
-            const result = await resend.emails.send({
+            const sendPayload: any = {
                 from: sender,
                 to: options.to,
                 subject: options.subject,
-                html: options.html
-            });
-            console.log(`[EmailService] Email enviado exitosamente a ${options.to}: ${options.subject} (ID: ${result.data?.id || 'OK'})`);
+                html: options.html,
+                reply_to: replyTo
+            };
+
+            if (options.attachments && options.attachments.length > 0) {
+                sendPayload.attachments = options.attachments;
+            }
+
+            const result = await resend.emails.send(sendPayload);
+            if (result.error) {
+                console.error(`[EmailService] ❌ Error devuelto por Resend API para ${options.to}:`, result.error);
+                const errObj = result.error as any;
+                if (errObj.statusCode === 403 || errObj.message?.includes('Domain not verified')) {
+                    console.warn(`[EmailService] ⚠️ Remitente (${sender}) o destinatario (${options.to}) restringido por política de Resend.`);
+                    console.warn(`[EmailService] 💡 Para pruebas locales, configure en .env: RESEND_FROM_EMAIL=MINREPORT <onboarding@resend.dev>`);
+                }
+                throw new Error(result.error.message || `Resend Error (${result.error.name})`);
+            }
+            console.log(`[EmailService] ✅ Email despachado vía Resend a ${options.to}: ${options.subject} (ID: ${result.data?.id})`);
         } catch (error: any) {
             console.error(`[EmailService] Fallo al enviar email a ${options.to}:`, error?.message || error);
-            // Si el dominio personalizado no está verificado en Resend y estamos fuera de producción estricta, registrar y no bloquear
-            if (error?.message?.includes('Domain not verified') || error?.statusCode === 403) {
-                console.warn(`[EmailService] ⚠️ Dominio de remitente no verificado en Resend. Verifique DNS DKIM/SPF o configure RESEND_FROM_EMAIL=onboarding@resend.dev`);
-            }
             throw error;
         }
     }

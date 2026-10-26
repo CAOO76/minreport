@@ -26,15 +26,6 @@ export const SYSTEM_MODULES: SystemModuleInfo[] = [
         description: 'Cubicaciones y Volumetría',
         scope: 'Cálculo volumétrico y cubicación topográfica de acopios.',
         version: '1.0.0'
-    },
-    {
-        id: 'mining-flow',
-        name: 'MINING FLOW',
-        path: '/mining-flow',
-        icon: 'payments',
-        description: 'Finanzas y Flujos',
-        scope: 'Monitoreo de flujo y transporte de mineral.',
-        version: '1.0.0'
     }
 ];
 

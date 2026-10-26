@@ -1,0 +1,222 @@
+@import url('https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-25..0&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * Industrial Mining Design System
+ * Flat colors only, sharp edges, high contrast
+ */
+
+/* Industrial Borders - Sharp 0px (Elite Industrial Minimalism) */
+.industrial-border {
+  border-radius: 0px !important;
+}
+
+/* Explicit Copper Enforcement (MINREPORT Branding) */
+.bg-antigravity-accent, .bg-primary {
+  background-color: #C68346 !important;
+}
+
+/* Fix for Tailwind Opacity Modifiers (/5, /10, /20) resolving to old orange */
+.bg-antigravity-accent\/5 {
+  background-color: rgba(198, 131, 70, 0.05) !important;
+}
+.bg-antigravity-accent\/10 {
+  background-color: rgba(198, 131, 70, 0.1) !important;
+}
+.bg-antigravity-accent\/20 {
+  background-color: rgba(198, 131, 70, 0.2) !important;
+}
+
+.text-antigravity-accent, .text-primary {
+  color: #C68346 !important;
+}
+.border-antigravity-accent, .border-primary {
+  border-color: #C68346 !important;
+}
+.border-antigravity-accent\/20 {
+  border-color: rgba(198, 131, 70, 0.2) !important;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   INPUTS — Bordes visibles en modo claro (fix global, CSS puro)
+   Aplica a: M3TextField, ManualCapture Field, y cualquier input futuro.
+   No depende de Tailwind purge ni de tokens de color.
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+:root:not(.dark) input[type="text"],
+:root:not(.dark) input[type="number"],
+:root:not(.dark) input[type="email"],
+:root:not(.dark) input[type="date"],
+:root:not(.dark) input[type="time"] {
+  border-color: #9ca3af !important; /* gray-400 — contraste 3:1 sobre blanco */
+  border-style: solid !important;
+}
+:root:not(.dark) input[type="text"]:focus,
+:root:not(.dark) input[type="number"]:focus,
+:root:not(.dark) input[type="email"]:focus,
+:root:not(.dark) input[type="date"]:focus,
+:root:not(.dark) input[type="time"]:focus {
+  border-color: #C68346 !important; /* Copper al enfocar */
+}
+
+
+/* Camera Overlay - Pure Black Background */
+.camera-overlay {
+  background-color: #000000;
+}
+
+/* iOS Mobile Adjustments */
+@supports (-webkit-touch-callout: none) {
+  .h-screen-ios {
+    height: -webkit-fill-available;
+  }
+}
+
+/**
+ * Grid Overlay for VisionAnalyzer (Technical)
+ */
+.grid-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.2) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.2) 1px, transparent 1px);
+  background-size: 50px 50px;
+  opacity: 0.8;
+}
+
+
+/**
+ * Global Styles
+ * Tipografía: Atkinson Hyperlegible (MANDATORIO)
+ */
+
+/* Eliminada la clase .safe-area-container ya que el padding se aplica a #root */
+
+:root {
+  --antigravity-accent: #C68346;
+  --chart-grid: rgba(0, 0, 0, 0.08);
+  --chart-tick: rgba(0, 0, 0, 0.5);
+  --chart-text: #1d1d1f;
+  --text-muted: rgba(0, 0, 0, 0.45);
+  --surface-technical: rgba(0, 0, 0, 0.03);
+  
+  font-family: 'Atkinson Hyperlegible', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  font-family: 'Atkinson Hyperlegible', sans-serif !important;
+  font-size: 16px;
+  @apply bg-antigravity-light-bg dark:bg-antigravity-dark-bg text-antigravity-light-text dark:text-antigravity-dark-text;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+#root {
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.dark {
+  --chart-grid: rgba(255, 255, 255, 0.05);
+  --chart-tick: rgba(255, 255, 255, 0.3);
+  --chart-text: #f5f5f7;
+  --text-muted: rgba(255, 255, 255, 0.3);
+  --surface-technical: rgba(255, 255, 255, 0.02);
+}
+
+/* Fix para Inputs en modo oscuro de Android */
+input[type="text"],
+input[type="search"],
+input[type="number"],
+input[type="email"],
+textarea {
+  @apply bg-transparent dark:bg-[#1a1a1a] border border-white/20 industrial-border px-3 py-2;
+}
+
+/* Hide Scrollbar Utility */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Material Symbols Helper */
+.material-symbols-outlined,
+.material-symbols-rounded {
+  font-family: inherit;
+  /* Should be set by specific symbol class */
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+}
+
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+}
+
+.material-symbols-rounded {
+  font-family: 'Material Symbols Rounded';
+}
+
+@media print {
+
+  /* Hide everything on the page */
+  body>* {
+    visibility: hidden !important;
+  }
+
+  /* Show only the PDF report component */
+  #stitch-pdf-summary,
+  #stitch-pdf-summary * {
+    visibility: visible !important;
+  }
+
+  #stitch-pdf-summary {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    display: block !important;
+    background-color: white !important;
+    color: black !important;
+  }
+
+  @page {
+    size: A4;
+    margin: 0;
+  }
+}

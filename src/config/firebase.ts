@@ -16,12 +16,6 @@ if (admin.apps.length === 0) {
             projectId: 'minreport-8f2a8', // Sync with .firebaserc and Playwright
         });
 
-        // Explicit Settings to guarantee emulator discovery
-        admin.firestore().settings({
-            host: '127.0.0.1:8085',
-            ssl: false
-        });
-
     } else {
         // Production initialization (Cloud Run / Default Credentials)
         console.log('🚀 [BACKEND] Running in Production Mode - Using Default Credentials');

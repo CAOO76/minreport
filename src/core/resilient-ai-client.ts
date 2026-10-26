@@ -19,7 +19,7 @@ export interface AIInferenceOptions {
     temperature?: number;
     thinkingLevel?: ThinkingLevel;
     requireHITL?: boolean; // Human-in-the-Loop confirmation required
-    module: 'opermaq' | 'stockpile' | 'mining-flow' | 'core' | 'b2b-core';
+    module: 'opermaq' | 'stockpile' | 'core' | 'b2b-core';
     tenantId: string;
 }
 

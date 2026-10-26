@@ -1,3 +1,4 @@
+import path from 'path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
@@ -6,11 +7,26 @@ import { VitePWA } from 'vite-plugin-pwa'
 export default defineConfig({
     envDir: '..',
     resolve: {
+        alias: {
+            '@opermaq': path.resolve(__dirname, './src/modules/opermaq'),
+            '@stockpile': path.resolve(__dirname, './src/modules/stockpile'),
+        },
         preserveSymlinks: true,
-        dedupe: ['react', 'react-dom', 'firebase']
+        dedupe: ['react', 'react-dom', 'firebase', 'framer-motion']
     },
     plugins: [
         react(),
+        {
+            name: 'minreport-dev-url-banner',
+            configureServer(server) {
+                server.httpServer?.once('listening', () => {
+                    setTimeout(() => {
+                        const port = server.config.server.port || 5173;
+                        console.log(`\x1b[38;2;198;131;70m  ➜  DEV Gateway:\x1b[0m http://localhost:${port}/dev`);
+                    }, 100);
+                });
+            }
+        },
         VitePWA({
             registerType: 'autoUpdate',
             devOptions: {
@@ -92,14 +108,24 @@ export default defineConfig({
     ],
     server: {
         host: true,
+        proxy: {
+            '/api': {
+                target: 'http://localhost:8080',
+                changeOrigin: true
+            }
+        },
         fs: {
-            allow: ['..']
+            allow: [
+                '..'
+            ]
         },
         watch: {
             ignored: ['**/android/**', '**/dist/**']
         }
     },
     build: {
+        target: 'esnext',
+        modulePreload: false,
         rollupOptions: {
             external: [],
             output: {

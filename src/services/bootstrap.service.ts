@@ -101,7 +101,7 @@ export const ensureDevRootAccount = async (): Promise<void> => {
         status: 'ACTIVE',
         classification: 'dev-root',
         entitlements: {
-            pluginsEnabled: ['opermaq', 'stockpile', 'mining-flow'],
+            pluginsEnabled: ['opermaq', 'stockpile'],
             allAccess: true,
             canImpersonate: true
         },
@@ -129,7 +129,7 @@ export const ensureDevRootAccount = async (): Promise<void> => {
             isCommercial: false,
             watermarkRequired: false
         },
-        enabledPlugins: ['opermaq', 'stockpile', 'mining-flow'],
+        enabledPlugins: ['opermaq', 'stockpile'],
         createdAt: Date.now(),
         updatedAt: Date.now()
     }, { merge: true });

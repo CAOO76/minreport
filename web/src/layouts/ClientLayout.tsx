@@ -1,5 +1,5 @@
 import { MiningAICopilot } from '../components/ai/MiningAICopilot';
-import { Outlet, NavLink } from 'react-router-dom';
+import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import BrandLogo from '../components/BrandLogo';
 
 import { LanguageSwitch } from '../components/LanguageSwitch';
@@ -8,6 +8,8 @@ import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 
 const ClientLayout = () => {
+    const location = useLocation();
+    const isFullBleedModule = location.pathname.startsWith('/opermaq') || location.pathname.startsWith('/stockpile');
     const { theme, toggleTheme } = useTheme();
     const { signOut: signOutContext, profile, currentAccount } = useAuth();
 
@@ -77,6 +79,10 @@ const ClientLayout = () => {
                                     <span className="material-symbols-outlined text-2xl">manage_accounts</span>
                                     <span className="sr-only">Administradores Generales</span>
                                 </NavLink>
+                                <NavLink to="/b2b/branding" className={navLinkClasses} title="Gestor de Logos & Identidad">
+                                    <span className="material-symbols-outlined text-2xl">palette</span>
+                                    <span className="sr-only">Gestor de Logos</span>
+                                </NavLink>
                                 <NavLink to="/b2b/metricas" className={navLinkClasses} title="Métricas de Uso">
                                     <span className="material-symbols-outlined text-2xl">bar_chart</span>
                                     <span className="sr-only">Métricas de Uso</span>
@@ -101,10 +107,6 @@ const ClientLayout = () => {
                                     <span className="material-symbols-outlined text-2xl">layers</span>
                                     <span className="sr-only">STOCKPILE</span>
                                 </NavLink>
-                                <NavLink to="/mining-flow" className={navLinkClasses} title="MINING FLOW (Finanzas y Flujos)">
-                                    <span className="material-symbols-outlined text-2xl">payments</span>
-                                    <span className="sr-only">MINING FLOW</span>
-                                </NavLink>
                                 <NavLink to="/job-profiles" className={navLinkClasses} title="Perfiles de Cargo">
                                     <span className="material-symbols-outlined text-2xl">demography</span>
                                     <span className="sr-only">Perfiles de Cargo</span>
@@ -127,8 +129,8 @@ const ClientLayout = () => {
                     </button>
                 </aside>
 
-                {/* ESCRITORIO (Contenido Principal) */}
-                <main className="flex-1 overflow-auto p-8 relative">
+                {/* ESCRITORIO (Contenido Principal: Full-Bleed en Módulos, Padded en Paneles) */}
+                <main className={`flex-1 ${isFullBleedModule ? 'p-0 overflow-hidden flex flex-col' : 'p-8 overflow-auto'} relative`}>
                     <Outlet />
                 </main>
 

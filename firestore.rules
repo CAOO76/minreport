@@ -93,7 +93,27 @@ service cloud.firestore {
       allow update, delete: if false; // Inmutable
     }
 
-    // [OPERMAQ] Flota y Pautas de Inspección DS 132
+    // [OPERMAQ] Flota, Catálogo Maestro y Bóvedas de Conocimiento
+    match /global_asset_catalog/{assetId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+    match /tenant_assets/{assetId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+    match /master_symbology_vault/{docId} {
+      allow read: if request.auth != null;
+      allow write: if isSuperAdmin() || isDevRoot();
+    }
+    match /hitl_candidates/{candidateId} {
+      allow read, write: if request.auth != null;
+    }
+    match /event_ledger/{eventId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow update, delete: if false; // Inmutable
+    }
     match /machinery_fleet/{assetId} {
       allow read: if request.auth != null;
       allow write: if request.auth != null && isAccountMember(request.resource.data.tenantId);
