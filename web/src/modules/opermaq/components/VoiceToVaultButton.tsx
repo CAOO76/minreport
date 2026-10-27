@@ -73,7 +73,7 @@ export default function VoiceToVaultButton({ globalAssetId, makeModel }: Props) 
         }
 
         try {
-          const response = await authFetch(`${API_BASE_URL}/api/vault/voice/transcribe-and-extract`, {
+          const response = await authFetch(`${API_BASE_URL}/vault/voice/transcribe-and-extract`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -117,7 +117,7 @@ export default function VoiceToVaultButton({ globalAssetId, makeModel }: Props) 
         style={{
           width: '100%',
           padding: '14px',
-          borderRadius: '8px',
+          borderRadius: 0,
           border: '1px solid var(--color-outline)',
           background: isRecording ? 'var(--color-error)' : 'var(--color-surface)',
           color: isRecording ? 'white' : 'var(--color-primary)',
@@ -131,7 +131,7 @@ export default function VoiceToVaultButton({ globalAssetId, makeModel }: Props) 
           justifyContent: 'center',
           gap: '8px',
           transition: 'all 0.3s ease',
-          boxShadow: isRecording ? '0 0 15px var(--color-error)' : 'none',
+          boxShadow: 'none',
           animation: isRecording ? 'pulse 1.5s infinite' : 'none',
         }}
       >
@@ -161,14 +161,14 @@ export default function VoiceToVaultButton({ globalAssetId, makeModel }: Props) 
             alignItems: 'center',
             justifyContent: 'center',
             zIndex: 2000,
-            fontFamily: "'Atkinson Hyperlegible', sans-serif",
+            fontFamily: "'Atkinson Hyperlegible Next', 'Atkinson Hyperlegible', sans-serif",
           }}
         >
           <div
             style={{
               background: 'var(--color-surface)',
               padding: '24px',
-              borderRadius: '16px',
+              borderRadius: 0,
               width: '100%',
               maxWidth: '400px',
               textAlign: 'center',
@@ -197,7 +197,7 @@ export default function VoiceToVaultButton({ globalAssetId, makeModel }: Props) 
                   onClick={stopRecording}
                   style={{
                     padding: '12px',
-                    borderRadius: '8px',
+                    borderRadius: 0,
                     border: 'none',
                     background: 'var(--color-error)',
                     color: 'white',
@@ -241,7 +241,7 @@ export default function VoiceToVaultButton({ globalAssetId, makeModel }: Props) 
                 <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>
                   Dictado Procesado Exitosamente
                 </h3>
-                <div style={{ textAlign: 'left', background: 'var(--color-surface-container-low)', padding: '12px', borderRadius: '8px', fontSize: '0.8rem' }}>
+                <div style={{ textAlign: 'left', background: 'var(--color-surface-container-low)', padding: '12px', borderRadius: 0, fontSize: '0.8rem' }}>
                   <p style={{ margin: '0 0 8px 0' }}><strong>Transcripción:</strong> "{result.transcripcion}"</p>
                   <p style={{ margin: 0 }}><strong>Resumen:</strong> {result.resumen}</p>
                 </div>
@@ -252,7 +252,7 @@ export default function VoiceToVaultButton({ globalAssetId, makeModel }: Props) 
                   onClick={() => setShowModal(false)}
                   style={{
                     padding: '12px',
-                    borderRadius: '8px',
+                    borderRadius: 0,
                     border: 'none',
                     background: 'var(--color-primary)',
                     color: 'white',

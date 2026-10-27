@@ -2,18 +2,22 @@
   "project": {
     "id": "minreport-core",
     "name": "MINREPORT",
-    "type": "APP",
-    "description": "Plataforma Core Institucional y B2B para minería y contratistas.",
-    "version": "1.0.0"
+    "type": "MONOLITH_FEDERATED_SUITE",
+    "description": "Plataforma Web 3.0 de reportería, telemetría de flota (OPERMAQ) y cubicación volumétrica (STOCKPILE CONTROL) sobre base de datos única en southamerica-west1.",
+    "version": "3.0.0"
   },
   "architecture": {
     "frameworks": ["react", "vite", "capacitor"],
-    "design_system": "STITCH-UI-Governance",
+    "modules": ["opermaq", "stockpile"],
+    "execution_modes": ["integrated-host", "standalone-app"],
+    "account_tiers": ["DEV", "ADMIN", "TEST_PILOT", "B2B", "EDU"],
+    "design_system": "Minimalismo Industrial Puro (GEMINI.md)",
     "offline_first": true,
     "i18n": ["es", "en", "pt"]
   },
-  "bridge": {
-    "sync": true,
-    "notebook_mcp_enabled": true
+  "cloud": {
+    "region": "southamerica-west1",
+    "database": "Cloud Firestore (Single Source of Truth)",
+    "ai_swarm": "ResilientAIClient (Gemini 2.5 Pro / Flash / Flash-Lite)"
   }
 }

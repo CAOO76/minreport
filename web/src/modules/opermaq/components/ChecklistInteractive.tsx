@@ -65,12 +65,12 @@ function VoiceInputButton({ onResult }: { onResult: (text: string) => void }) {
     <button
       onClick={startVoice}
       style={{
-        width: 44, height: 44, borderRadius: 22, border: 'none',
+        width: 44, height: 44, borderRadius: 0, border: 'none',
         background: isRecording ? 'var(--color-error)' : 'var(--color-primary-container)',
         color: isRecording ? 'white' : 'var(--color-primary)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
         transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-        boxShadow: isRecording ? '0 0 15px var(--color-error)' : 'none',
+        boxShadow: 'none',
         animation: isRecording ? 'pulse 1.5s infinite' : 'none'
       }}
       title="Dictar observación"
@@ -191,7 +191,7 @@ export default function ChecklistInteractive({ checklist, onClose, onSuccess }: 
         console.warn('[EDGE-OPTIMIZER] Sin conexión. Encolando inspección localmente.');
         await EdgeSyncQueue.pushTransaction(
           'API',
-          '/api/checklist/submit',
+          '/checklist/submit',
           payload,
           'INSPECTION_SUBMITTED'
         );
@@ -201,7 +201,7 @@ export default function ChecklistInteractive({ checklist, onClose, onSuccess }: 
         return;
       }
 
-      const response = await authFetch(`${API_BASE}/api/checklist/submit`, {
+      const response = await authFetch(`${API_BASE}/checklist/submit`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -279,8 +279,8 @@ export default function ChecklistInteractive({ checklist, onClose, onSuccess }: 
           <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-primary)' }}>
             {completedItems} / {totalItems}
           </div>
-          <div style={{ width: 60, height: 4, background: 'var(--color-outline-variant)', borderRadius: 2, marginTop: 4 }}>
-            <div style={{ width: `${progress}%`, height: '100%', background: 'var(--color-primary)', borderRadius: 2, transition: 'width 0.3s' }} />
+          <div style={{ width: 60, height: 4, background: 'var(--color-outline-variant)', borderRadius: 0, marginTop: 4 }}>
+            <div style={{ width: `${progress}%`, height: '100%', background: 'var(--color-primary)', borderRadius: 0, transition: 'width 0.3s' }} />
           </div>
         </div>
       </div>
@@ -303,7 +303,7 @@ export default function ChecklistInteractive({ checklist, onClose, onSuccess }: 
                 const result = results[key];
                 return (
                   <div key={ii} style={{
-                    padding: '16px', borderRadius: 16,
+                    padding: '16px', borderRadius: 0,
                     border: '1px solid var(--color-outline-variant)',
                     background: result ? 'var(--color-surface-container-low)' : 'var(--color-surface)',
                     transition: 'all 0.2s'
@@ -331,7 +331,7 @@ export default function ChecklistInteractive({ checklist, onClose, onSuccess }: 
                           key={btn.id}
                           onClick={() => handleStatusChange(gi, ii, btn.id as 'PASS' | 'FAIL' | 'NA')}
                           style={{
-                            flex: 1, padding: '10px', borderRadius: 12, border: 'none',
+                            flex: 1, padding: '10px', borderRadius: 0, border: 'none',
                             cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
                             background: result?.status === btn.id ? btn.color : 'var(--color-surface-container-high)',
                             color: result?.status === btn.id ? 'white' : 'var(--color-on-surface-variant)',
@@ -354,12 +354,13 @@ export default function ChecklistInteractive({ checklist, onClose, onSuccess }: 
                             value={result.observation}
                             onChange={(e) => handleObservationChange(gi, ii, e.target.value)}
                             style={{
-                              width: '100%', padding: '10px 12px', borderRadius: 12,
+                              width: '100%', padding: '10px 12px', borderRadius: 0,
                               border: '1px solid var(--color-outline)',
                               background: 'var(--color-surface)', fontSize: '0.85rem',
                               transition: 'all 0.2s'
                             }}
                             autoComplete="off"
+                            spellCheck={false}
                           />
                         </div>
                         <VisualInspectionButton 
@@ -400,7 +401,7 @@ export default function ChecklistInteractive({ checklist, onClose, onSuccess }: 
           onClick={handleSubmit}
           disabled={submitting || completedItems < totalItems * 0.5} // Exigir al menos 50% para demo
           style={{
-            padding: '16px', borderRadius: 12, border: 'none',
+            padding: '16px', borderRadius: 0, border: 'none',
             background: 'var(--color-primary)', color: 'white',
             fontWeight: 700, fontSize: '1rem', cursor: 'pointer',
             opacity: (submitting || completedItems < totalItems * 0.5) ? 0.6 : 1,

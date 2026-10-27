@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { calculationEngine } from '../services/calculation-engine';
 import { dataService } from '../services/DataService';
@@ -13,8 +13,8 @@ interface ManualCaptureProps {
     initialGeometry: GeometryType;
     onSuccess: (measurementId: string) => void;
     onBack: () => void;
-    hidePhoto?: boolean; // true cuando viene del wizard (usa foto del activo)
-    initialPhotoUrl?: string; // Url de la foto capturada en el primer paso del wizard
+    hidePhoto?: boolean;
+    initialPhotoUrl?: string;
 }
 
 export const ManualCapture: React.FC<ManualCaptureProps> = ({ assetId, initialGeometry, onSuccess, onBack, hidePhoto = false, initialPhotoUrl }) => {
@@ -25,8 +25,8 @@ export const ManualCapture: React.FC<ManualCaptureProps> = ({ assetId, initialGe
     const [photo, setPhoto] = useState<string | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [gps, setGps] = useState<{ lat: number; lng: number; acc: number } | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
-    // Init GPS for trace
     useEffect(() => {
         const initGps = async () => {
             try {
@@ -51,10 +51,24 @@ export const ManualCapture: React.FC<ManualCaptureProps> = ({ assetId, initialGe
                 const optimized = await compressImage(image.dataUrl, { profile: 'evidence' });
                 setPhoto(optimized);
             }
-        } catch (err) { console.warn('[ManualCapture] Camera Canceled'); }
+        } catch {
+            fileInputRef.current?.click();
+        }
     };
 
-    // Cálculo de Estimación en Vivo
+    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async () => {
+            if (typeof reader.result === 'string') {
+                const optimized = await compressImage(reader.result, { profile: 'evidence' });
+                setPhoto(optimized);
+            }
+        };
+        reader.readAsDataURL(file);
+    };
+
     const liveEstimation = useMemo(() => {
         const a = parseFloat(dimensions.a) || 0;
         const b = parseFloat(dimensions.b) || 0;
@@ -82,7 +96,6 @@ export const ManualCapture: React.FC<ManualCaptureProps> = ({ assetId, initialGe
         }
         setIsSaving(true);
         try {
-            // 1. Subir foto de evidencia (solo si se capturó)
             let photoUrl = initialPhotoUrl || '';
             if (photo && !hidePhoto) {
                 const response = await fetch(photo);
@@ -131,16 +144,20 @@ export const ManualCapture: React.FC<ManualCaptureProps> = ({ assetId, initialGe
     };
 
     return (
-        <div className="h-screen w-screen bg-antigravity-light-bg dark:bg-antigravity-dark-bg flex flex-col font-atkinson text-antigravity-light-text dark:text-antigravity-dark-text overflow-hidden relative transition-colors duration-200">
+        <div className="h-full w-full flex-1 min-h-[600px] bg-antigravity-light-bg dark:bg-antigravity-dark-bg flex flex-col font-atkinson text-antigravity-light-text dark:text-antigravity-dark-text overflow-hidden relative transition-colors duration-200 rounded-none shadow-none">
 
-            {/* Header Técnico (Fijo) */}
-            <header className="flex-none pt-14 pb-4 px-6 flex items-center justify-between bg-antigravity-light-surface dark:bg-antigravity-dark-surface border-b border-antigravity-light-border dark:border-antigravity-dark-border z-50">
+            <header className="flex-none pt-8 pb-4 px-6 flex items-center justify-between bg-antigravity-light-surface dark:bg-antigravity-dark-surface border-b border-antigravity-light-border dark:border-antigravity-dark-border z-50">
                 <div className="flex items-center gap-4">
-                    <button onClick={onBack} className="w-12 h-12 rounded-none bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-antigravity-light-border dark:border-antigravity-dark-border flex items-center justify-center active:scale-95 transition-transform">
-                        <span className="material-symbols-outlined text-3xl text-antigravity-accent font-bold">arrow_back</span>
+                    <button
+                        type="button"
+                        onClick={onBack}
+                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none shadow-none"
+                        title="Volver"
+                    >
+                        <span className="material-symbols-outlined text-2xl text-antigravity-accent">arrow_back</span>
                     </button>
                     <div className="flex flex-col">
-                        <span className="text-[10px] font-black tracking-[0.4em] uppercase text-antigravity-light-text/40 dark:text-antigravity-dark-text/20">{t('manual_capture.measurement_label')}</span>
+                        <span className="text-[10px] font-black tracking-[0.4em] uppercase text-antigravity-light-text/40 dark:text-antigravity-dark-text/40">{t('manual_capture.measurement_label')}</span>
                         <span className="text-xl font-black tracking-tight text-antigravity-light-text dark:text-antigravity-dark-text/90 uppercase">
                             {t(`geometries.${geometria}`)}
                         </span>
@@ -149,51 +166,54 @@ export const ManualCapture: React.FC<ManualCaptureProps> = ({ assetId, initialGe
                 <span className="material-symbols-outlined text-3xl opacity-20">landscape</span>
             </header>
 
-            {/* Area de Trabajo (Scrollable) */}
             <main className="flex-1 overflow-y-auto px-6 py-8 relative">
-                {/* Background Grid sutil */}
-                <div className="absolute inset-0 opacity-[0.05] dark:opacity-[0.02] pointer-events-none"
-                    style={{ backgroundImage: 'radial-gradient(circle, currentColor 1px, transparent 1px)', backgroundSize: '30px 30px' }}>
-                </div>
+                <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept="image/*"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                />
 
-                <div className="max-w-sm mx-auto space-y-12 relative z-10">
+                <div className="max-w-sm mx-auto space-y-10 relative z-10">
 
-                    {/* Captura de Evidencia Fotográfica — solo si no viene del wizard */}
                     {!hidePhoto && (
-                    <div className="space-y-4">
-                        <span className="text-[10px] font-black tracking-[0.4em] text-antigravity-light-text/40 dark:text-antigravity-dark-text/20 uppercase">{t('manual_capture.evidence_title')}</span>
-                        <div
-                            onClick={takePhoto}
-                            className={`relative w-full aspect-video rounded-none border-2 border-dashed transition-all overflow-hidden flex flex-col items-center justify-center
-                                ${photo ? 'border-antigravity-accent/40 bg-black' : 'border-antigravity-light-border dark:border-antigravity-dark-border bg-antigravity-light-surface dark:bg-antigravity-dark-surface active:bg-antigravity-accent/5'}`}
-                        >
-                            {photo ? (
-                                <>
-                                    <img src={photo} className="w-full h-full object-cover" alt="Evidencia" />
-                                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                                    <div className="absolute bottom-4 left-4 flex items-center gap-2">
-                                        <span className="material-symbols-outlined text-antigravity-accent text-xl">check_circle</span>
-                                        <span className="text-[10px] font-black uppercase tracking-widest text-white">{t('manual_capture.success_message')}</span>
-                                    </div>
-                                    <button
-                                        onClick={(e) => { e.stopPropagation(); setPhoto(null); }}
-                                        className="absolute top-4 right-4 w-10 h-10 rounded-none bg-black/60 backdrop-blur-md flex items-center justify-center border border-white/10"
-                                    >
-                                        <span className="material-symbols-outlined text-white/60">delete</span>
-                                    </button>
-                                </>
-                            ) : (
-                                <>
-                                    <span className="material-symbols-outlined text-5xl text-white/10 mb-2 font-light">add_a_photo</span>
-                                    <span className="text-[10px] font-black text-white/20 uppercase tracking-[0.2em]">{t('manual_capture.tap_to_capture')}</span>
-                                </>
-                            )}
+                        <div className="space-y-4">
+                            <span className="text-[10px] font-black tracking-[0.4em] text-antigravity-light-text/40 dark:text-antigravity-dark-text/40 uppercase">{t('manual_capture.evidence_title')}</span>
+                            <div
+                                onClick={takePhoto}
+                                className={`relative w-full aspect-video rounded-none border-2 border-dashed transition-all overflow-hidden flex flex-col items-center justify-center cursor-pointer
+                                    ${photo ? 'border-antigravity-accent/40 bg-black' : 'border-antigravity-light-border dark:border-antigravity-dark-border bg-antigravity-light-surface dark:bg-antigravity-dark-surface'}`}
+                            >
+                                {photo ? (
+                                    <>
+                                        <img src={photo} draggable={false} className="w-full h-full object-cover select-none pointer-events-none" alt="Evidencia" />
+                                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+                                        <div className="absolute bottom-4 left-4 flex items-center gap-2">
+                                            <span className="material-symbols-outlined text-antigravity-accent text-xl">check_circle</span>
+                                            <span className="text-[10px] font-black uppercase tracking-widest text-white">{t('manual_capture.success_message')}</span>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); setPhoto(null); }}
+                                            className="absolute top-4 right-4 bg-transparent border-0 outline-none p-1 text-white/80 hover:text-white transition-colors cursor-pointer"
+                                            title="Eliminar foto"
+                                        >
+                                            <span className="material-symbols-outlined">delete</span>
+                                        </button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <span className="material-symbols-outlined text-5xl text-antigravity-light-text/20 dark:text-white/20 mb-2 font-light">add_a_photo</span>
+                                        <span className="text-[10px] font-black text-antigravity-light-text/40 dark:text-white/30 uppercase tracking-[0.2em]">{t('manual_capture.tap_to_capture')}</span>
+                                    </>
+                                )}
+                            </div>
                         </div>
-                    </div>
                     )}
 
                     {/* Formulario de Medidas */}
-                    <div className="grid grid-cols-1 gap-10">
+                    <div className="grid grid-cols-1 gap-8">
                         {geometria === 'CONO_ELIPTICO' && (
                             <>
                                 <Field label={t('manual_capture.fields.major_axis_base')} value={dimensions.a} onChange={(v) => setDimensions({ ...dimensions, a: v })} />
@@ -219,33 +239,34 @@ export const ManualCapture: React.FC<ManualCaptureProps> = ({ assetId, initialGe
                     </div>
 
                     {/* Dashboard de Resultados en Vivo */}
-                    <div className="bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-antigravity-light-border dark:border-antigravity-dark-border rounded-none p-8 flex flex-col items-center gap-2 transition-colors">
-                        <span className="text-[11px] font-black text-antigravity-light-text/30 dark:text-antigravity-dark-text/30 tracking-[0.4em] uppercase">{t('manual_capture.estimated_volume')}</span>
-                        <div className="flex items-baseline gap-3">
-                            <span className="text-6xl font-black text-antigravity-accent tracking-tighter">
+                    <div className="bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-antigravity-light-border dark:border-antigravity-dark-border rounded-none shadow-none p-8 flex flex-col items-center gap-2 transition-colors">
+                        <span className="text-[11px] font-black text-antigravity-light-text/40 dark:text-antigravity-dark-text/40 tracking-[0.4em] uppercase">{t('manual_capture.estimated_volume')}</span>
+                        <div className="flex items-baseline gap-3 font-mono tabular-nums">
+                            <span className="text-5xl font-black text-antigravity-accent tracking-tighter">
                                 {liveEstimation.toFixed(1)}
                             </span>
-                            <span className="text-lg font-black text-antigravity-accent/40 uppercase">m³</span>
+                            <span className="text-lg font-black text-antigravity-accent/60 uppercase">m³</span>
                         </div>
                     </div>
 
-                    {/* Botón de Guardado (Dentro del flujo de scroll) */}
-                    <div className="pt-8 pb-12 flex justify-center">
+                    {/* Botón de Guardado */}
+                    <div className="pt-4 pb-12 flex justify-center">
                         <button
+                            type="button"
                             onClick={handleSave}
                             disabled={isSaving || liveEstimation <= 0}
-                            className={`w-full max-w-xs h-20 rounded-none flex items-center justify-center gap-4 transition-all
+                            className={`w-full h-16 rounded-none shadow-none flex items-center justify-center gap-4 transition-all cursor-pointer
                                 ${isSaving || liveEstimation <= 0
-                                    ? 'bg-antigravity-light-border/20 dark:bg-antigravity-dark-border/20 text-antigravity-light-text/20 dark:text-antigravity-dark-text/20'
-                                    : 'bg-antigravity-accent text-white dark:text-black font-black shadow-[0_0_30px_rgba(198,131,70,0.1)] active:scale-95'
+                                    ? 'bg-antigravity-light-border/20 dark:bg-antigravity-dark-border/20 text-antigravity-light-text/20 dark:text-antigravity-dark-text/20 cursor-not-allowed'
+                                    : 'bg-antigravity-accent text-white font-black'
                                 }`}
                         >
                             {isSaving ? (
-                                <span className="material-symbols-outlined text-4xl animate-spin">sync</span>
+                                <span className="material-symbols-outlined text-3xl animate-spin">sync</span>
                             ) : (
                                 <>
-                                    <span className="material-symbols-outlined text-4xl">measuring_tape</span>
-                                    <span className="text-xl tracking-tight">{t('manual_capture.save_measurement')}</span>
+                                    <span className="material-symbols-outlined text-2xl">measuring_tape</span>
+                                    <span className="text-sm tracking-widest uppercase">{t('manual_capture.save_measurement')}</span>
                                 </>
                             )}
                         </button>
@@ -257,10 +278,9 @@ export const ManualCapture: React.FC<ManualCaptureProps> = ({ assetId, initialGe
     );
 };
 
-/* Sub-componente de Campo Industrial */
 const Field: React.FC<{ label: string, value: string, onChange: (v: string) => void }> = ({ label, value, onChange }) => (
     <div className="flex flex-col gap-3 group">
-        <label className="text-[10px] font-black text-antigravity-light-text/30 dark:text-antigravity-dark-text/30 tracking-widest pl-1 uppercase group-focus-within:text-antigravity-accent transition-colors">
+        <label className="text-[10px] font-black text-antigravity-light-text/50 dark:text-antigravity-dark-text/40 tracking-widest pl-1 uppercase group-focus-within:text-antigravity-accent transition-colors">
             {label}
         </label>
         <div className="relative">
@@ -272,10 +292,10 @@ const Field: React.FC<{ label: string, value: string, onChange: (v: string) => v
                     const val = e.target.value.replace(/,/g, '.').replace(/[^0-9.]/g, '');
                     onChange(val);
                 }}
-                className="w-full bg-antigravity-light-surface dark:bg-antigravity-dark-surface border-2 border-[#9ca3af] dark:border-antigravity-dark-border rounded-none h-16 px-6 text-3xl font-black text-antigravity-light-text dark:text-antigravity-dark-text outline-none focus:border-antigravity-accent transition-all text-center tracking-tight"
-                placeholder=" "
+                className="w-full bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-[#9ca3af] dark:border-antigravity-dark-border rounded-none shadow-none h-14 px-6 text-2xl font-black font-mono tabular-nums text-antigravity-light-text dark:text-antigravity-dark-text outline-none focus:border-antigravity-accent transition-all text-center tracking-tight"
+                placeholder="0.0"
                 autoComplete="off"
-                spellCheck="false"
+                spellCheck={false}
             />
         </div>
     </div>

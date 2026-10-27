@@ -1,19 +1,9 @@
-import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
 import { formatRut } from '../../utils/rut';
 import { useAuth } from '../../context/AuthContext';
 import { StaffService } from '../../services/StaffService';
 import { db } from '../../config/firebase';
 import { collection, query, where, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
-import { motion, AnimatePresence } from 'framer-motion';
-import BrandingManager from '../../components/admin/BrandingManager';
-
-// Common CSS fragments to ensure consistency
-const containerClass = "max-w-7xl mx-auto py-12 px-8 space-y-12 animate-in fade-in duration-500";
-const sectionHeaderClass = "border-b border-antigravity-light-border dark:border-antigravity-dark-border pb-8 mb-10";
-const cardClass = "bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-antigravity-light-border dark:border-antigravity-dark-border p-8 transition-all hover:border-antigravity-accent/30";
-const labelClass = "block text-[10px] font-bold uppercase tracking-[0.15em] text-antigravity-light-muted dark:text-antigravity-dark-muted mb-2";
-const inputClass = "w-full bg-transparent border border-antigravity-light-border dark:border-antigravity-dark-border px-4 py-3 text-sm text-antigravity-light-text dark:text-antigravity-dark-text placeholder-antigravity-light-muted/30 focus:outline-none focus:border-antigravity-accent rounded-none transition-all duration-300 disabled:opacity-30 selection:bg-antigravity-accent/30";
 
 interface AdminMember {
     id: string;
@@ -26,11 +16,11 @@ interface AdminMember {
     invitedAt: number;
 }
 
-export const AdminsPage = () => {
+const labelClass = "block text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] mb-[8px]";
+const inputClass = "w-full bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] px-[13px] py-[8px] text-[13px] text-[#0F172A] dark:text-[#F3F4F6] focus:outline-none focus:border-[#C68346] rounded-none shadow-none transition-colors disabled:opacity-40";
+
+export const AdminsPage: React.FC = () => {
     const { currentAccount, user } = useAuth();
-    const [searchParams, setSearchParams] = useSearchParams();
-    const initialTab = searchParams.get('tab') === 'branding' ? 'BRANDING' : 'ADMINS';
-    const [activeTab, setActiveTab] = useState<'ADMINS' | 'BRANDING'>(initialTab);
 
     const [admins, setAdmins] = useState<AdminMember[]>([]);
     const [loading, setLoading] = useState(false);
@@ -38,7 +28,6 @@ export const AdminsPage = () => {
     const [error, setError] = useState<string | null>(null);
     const [form, setForm] = useState({ name: '', lastName: '', run: '', email: '' });
 
-    // Modals
     const [showConfirmModal, setShowConfirmModal] = useState(false);
     const [confirmText, setConfirmText] = useState('');
     const [showRevokeModal, setShowRevokeModal] = useState(false);
@@ -46,11 +35,14 @@ export const AdminsPage = () => {
     const [selectedAdminToRevoke, setSelectedAdminToRevoke] = useState<AdminMember | null>(null);
 
     useEffect(() => {
-        if (!currentAccount?.id) return;
+        if (!currentAccount?.id) {
+            setInitialLoading(false);
+            return;
+        }
         const membersRef = collection(db, 'accounts', currentAccount.id, 'members');
         const q = query(membersRef, where('role', '==', 'ADMIN'));
         const unsubscribe = onSnapshot(q, (snapshot) => {
-            const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AdminMember));
+            const list = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as AdminMember));
             setAdmins(list);
             setInitialLoading(false);
         }, (err) => {
@@ -64,15 +56,16 @@ export const AdminsPage = () => {
     const handlePreSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (admins.length >= 2) {
-            setError('Límite de 2 Administradores Generales alcanzado.');
+            setError('Cupo máximo alcanzado (2/2).');
             return;
         }
         setError(null);
+        setConfirmText('');
         setShowConfirmModal(true);
     };
 
     const handleDesignate = async () => {
-        if (confirmText !== 'DESIGNAR') return;
+        if (confirmText !== 'ACTUALIZAR' && confirmText !== 'DESIGNAR') return;
         if (!currentAccount || !user) return;
         setLoading(true);
         setError(null);
@@ -83,7 +76,7 @@ export const AdminsPage = () => {
                 setForm({ name: '', lastName: '', run: '', email: '' });
                 setConfirmText('');
             } else {
-                setError(result.error || 'No se pudo designar al administrador.');
+                setError(result.error || 'Error al registrar designación.');
             }
         } catch (err: any) {
             setError(err.message || 'Error en la operación.');
@@ -99,7 +92,7 @@ export const AdminsPage = () => {
     };
 
     const handleConfirmRevoke = async () => {
-        if (!currentAccount?.id || !selectedAdminToRevoke || revokeConfirmText !== 'REVOCAR') return;
+        if (!currentAccount?.id || !selectedAdminToRevoke || (revokeConfirmText !== 'REVOCAR' && revokeConfirmText !== 'ACTUALIZAR')) return;
         setLoading(true);
         try {
             const docRef = doc(db, 'accounts', currentAccount.id, 'members', selectedAdminToRevoke.id);
@@ -108,7 +101,7 @@ export const AdminsPage = () => {
             setSelectedAdminToRevoke(null);
         } catch (err) {
             console.error("Error revoking admin:", err);
-            setError("No se pudo revocar el acceso.");
+            setError("Error al revocar acceso.");
         } finally {
             setLoading(false);
         }
@@ -127,13 +120,11 @@ export const AdminsPage = () => {
                 { name, lastName, run: adm.run, email: adm.email },
                 currentAccount.name
             );
-            if (result.success) {
-                // Success feedback can be handled via better UI notifications if needed
-            } else {
-                setError(result.error || 'No se pudo reenviar la invitación.');
+            if (!result.success) {
+                setError(result.error || 'Error al reenviar invitación.');
             }
         } catch (err: any) {
-            setError(err.message || 'Error al reenviar.');
+            setError(err.message || 'Error al reenviar invitación.');
         } finally {
             setLoading(false);
         }
@@ -141,309 +132,278 @@ export const AdminsPage = () => {
 
     if (initialLoading) {
         return (
-            <div className="flex flex-col items-center justify-center h-[70vh] space-y-6">
-                <span className="material-symbols-outlined text-4xl animate-spin text-antigravity-accent">sync</span>
-                <p className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-antigravity-light-muted dark:text-antigravity-dark-muted">Sincronizando Directorio de Confianza</p>
+            <div className="p-[21px] font-mono text-[13px] text-[#94A3B8] dark:text-[#5A6072]">
+                [Cargando registros...]
             </div>
         );
     }
 
     return (
-        <div className={containerClass}>
+        <div className="w-full space-y-[21px] select-none font-sans">
+            {/* Macro-Layout Proporción Áurea: 38.2% Alta / 61.8% Tabla Técnica */}
+            <div className="grid grid-cols-1 lg:grid-cols-[38.2fr_61.8fr] gap-[21px] items-start">
 
-            {/* Selector de Pestañas de Administración */}
-            <div className="flex border-b border-antigravity-light-border dark:border-antigravity-dark-border mb-6">
-                <button
-                    type="button"
-                    onClick={() => { setActiveTab('ADMINS'); setSearchParams({}); }}
-                    className={`py-3 px-6 text-xs font-mono font-bold uppercase tracking-wider transition-colors border-b-2 cursor-pointer rounded-none outline-none ${
-                        activeTab === 'ADMINS'
-                            ? 'border-[#C68346] text-[#C68346]'
-                            : 'border-transparent text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                    }`}
-                >
-                    Directorio de Administradores
-                </button>
-                <button
-                    type="button"
-                    onClick={() => { setActiveTab('BRANDING'); setSearchParams({ tab: 'branding' }); }}
-                    className={`py-3 px-6 text-xs font-mono font-bold uppercase tracking-wider transition-colors border-b-2 cursor-pointer rounded-none outline-none flex items-center gap-2 ${
-                        activeTab === 'BRANDING'
-                            ? 'border-[#C68346] text-[#C68346]'
-                            : 'border-transparent text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                    }`}
-                >
-                    <span className="material-symbols-outlined text-[16px]">palette</span>
-                    Gestor de Logos & Identidad
-                </button>
-            </div>
-
-            {activeTab === 'BRANDING' ? (
-                <BrandingManager />
-            ) : (
-                <>
-                    {/* 1. Header Section - Asymmetric and Spacious */}
-                    <header className={sectionHeaderClass}>
-                <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
-                    <div>
-                        <div className="flex items-center gap-3 mb-4">
-                            <span className="material-symbols-outlined text-antigravity-accent text-3xl">verified_user</span>
-                            <span className="h-[1px] w-12 bg-antigravity-accent/20 md:block hidden" />
-                        </div>
-                        <h1 className="text-3xl font-black uppercase tracking-tight text-antigravity-light-text dark:text-antigravity-dark-text">
-                            Administradores <br className="hidden md:block" />
-                            <span className="text-antigravity-accent">Generales</span>
-                        </h1>
-                        <p className="max-w-md text-sm text-antigravity-light-muted dark:text-antigravity-dark-muted mt-4 leading-relaxed">
-                            Cargos de máxima confianza técnica y operativa. Tienen autonomía total sobre el personal y perfiles del ecosistema corporativo.
-                        </p>
+                {/* ÁREA MENOR (38.2%): ALTA DE ADMINISTRADOR */}
+                <section className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-[21px] rounded-none shadow-none space-y-[21px]">
+                    <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-[13px]">
+                        <h2 className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#C68346]">
+                            DESIGNACIÓN DE ADMINISTRADOR
+                        </h2>
+                        <span className="text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                            {admins.length} / 2
+                        </span>
                     </div>
-                    <div className="flex flex-col items-end">
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-antigravity-accent/60 mb-1">Capacidad de Gestión</span>
-                        <div className="flex items-center gap-1">
-                            {[0, 1].map((idx) => (
-                                <div key={idx} className={`w-10 h-1.5 rounded-none ${idx < admins.length ? 'bg-antigravity-accent' : 'bg-antigravity-light-border dark:bg-antigravity-dark-border'}`} />
-                            ))}
-                        </div>
-                        <span className="text-[11px] font-mono mt-2 text-antigravity-light-muted dark:text-antigravity-dark-muted">{admins.length} / 2 utilizados</span>
-                    </div>
-                </div>
-            </header>
 
-            <div className="grid grid-cols-1 xl:grid-cols-12 gap-16 items-start">
-
-                {/* 2. Form Section - Professional and Clean */}
-                <section className="xl:col-span-4 space-y-6">
-                    <div className={cardClass}>
-                        <div className="flex items-center gap-2 mb-8">
-                            <span className="material-symbols-outlined text-antigravity-accent">person_add</span>
-                            <h2 className="text-xs font-black uppercase tracking-widest">Nueva Designación</h2>
-                        </div>
-
-                        <form onSubmit={handlePreSubmit} autoComplete="off" className="space-y-8">
-                            <div className="space-y-6">
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className={labelClass}>Nombres</label>
-                                        <input required type="text" autoComplete="off" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className={inputClass} placeholder="Ej. Roberto" />
-                                    </div>
-                                    <div>
-                                        <label className={labelClass}>Apellidos</label>
-                                        <input required type="text" autoComplete="off" value={form.lastName} onChange={e => setForm({ ...form, lastName: e.target.value })} className={inputClass} placeholder="Ej. Lagos" />
-                                    </div>
-                                </div>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className={labelClass}>Identificador (RUN)</label>
-                                        <input required type="text" autoComplete="off" value={form.run}
-                                            onChange={e => setForm({ ...form, run: formatRut(e.target.value) })}
-                                            className={`${inputClass} font-mono`} placeholder="12.345.678-9" />
-                                    </div>
-                                    <div>
-                                        <label className={labelClass}>Email Corporativo</label>
-                                        <input required type="email" autoComplete="off" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} className={inputClass} placeholder="r.lagos@empresa.cl" />
-                                    </div>
-                                </div>
+                    <form onSubmit={handlePreSubmit} autoComplete="off" spellCheck={false} className="space-y-[13px]">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-[13px]">
+                            <div>
+                                <label className={labelClass}>NOMBRES</label>
+                                <input
+                                    required
+                                    type="text"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    value={form.name}
+                                    onChange={e => setForm({ ...form, name: e.target.value })}
+                                    className={inputClass}
+                                />
                             </div>
+                            <div>
+                                <label className={labelClass}>APELLIDOS</label>
+                                <input
+                                    required
+                                    type="text"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    value={form.lastName}
+                                    onChange={e => setForm({ ...form, lastName: e.target.value })}
+                                    className={inputClass}
+                                />
+                            </div>
+                        </div>
 
-                            {error && (
-                                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                                    className="p-4 bg-red-500/5 border-l-2 border-red-500 text-[11px] text-red-500 font-bold flex items-start gap-3">
-                                    <span className="material-symbols-outlined text-sm">warning</span>
-                                    <span className="uppercase tracking-wide">{error}</span>
-                                </motion.div>
-                            )}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-[13px]">
+                            <div>
+                                <label className={labelClass}>RUN</label>
+                                <input
+                                    required
+                                    type="text"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    value={form.run}
+                                    onChange={e => setForm({ ...form, run: formatRut(e.target.value) })}
+                                    className={`${inputClass} font-mono tabular-nums select-text`}
+                                />
+                            </div>
+                            <div>
+                                <label className={labelClass}>EMAIL CORPORATIVO</label>
+                                <input
+                                    required
+                                    type="email"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    value={form.email}
+                                    onChange={e => setForm({ ...form, email: e.target.value })}
+                                    className={`${inputClass} font-mono select-text`}
+                                />
+                            </div>
+                        </div>
 
-                            <button
-                                type="submit"
-                                disabled={admins.length >= 2 || loading}
-                                className="group w-full bg-antigravity-light-text dark:bg-antigravity-dark-text text-antigravity-light-surface dark:text-antigravity-dark-surface py-4 px-6 text-[10px] font-black uppercase tracking-[0.2em] transition-all hover:bg-antigravity-accent hover:text-white disabled:opacity-10 disabled:grayscale flex items-center justify-center gap-2 cursor-pointer"
-                            >
-                                {loading ? (
-                                    <span className="material-symbols-outlined animate-spin">refresh</span>
-                                ) : (
-                                    <>
-                                        <span>Iniciar Designación</span>
-                                        <span className="material-symbols-outlined text-sm transition-transform group-hover:translate-x-1">arrow_forward</span>
-                                    </>
-                                )}
-                            </button>
-                        </form>
-                    </div>
+                        {error && (
+                            <div className="p-[13px] bg-red-500/5 border border-red-500/30 text-[13px] font-mono text-red-600 dark:text-red-400 rounded-none">
+                                {error}
+                            </div>
+                        )}
 
-                    <div className="p-6 border border-antigravity-light-border dark:border-antigravity-dark-border border-dashed">
-                        <p className="text-[10px] text-antigravity-light-muted dark:text-antigravity-dark-muted leading-loose uppercase tracking-widest">
-                            <span className="text-antigravity-accent font-black">Nota:</span> Las designaciones son responsabilidad exclusiva de la empresa y no requieren validación de mesa de ayuda.
-                        </p>
-                    </div>
+                        <button
+                            type="submit"
+                            disabled={admins.length >= 2 || loading}
+                            className="w-full bg-[#C68346] hover:bg-[#b0743e] text-white py-[8px] px-[21px] text-[11px] font-mono font-bold uppercase tracking-[0.05em] transition-colors disabled:opacity-40 cursor-pointer rounded-none shadow-none outline-none"
+                        >
+                            {loading ? 'PROCESANDO...' : 'DESIGNAR'}
+                        </button>
+                    </form>
                 </section>
 
-                {/* 3. Table Section - Spacious and Readable */}
-                <section className="xl:col-span-8">
-                    <div className="border border-antigravity-light-border dark:border-antigravity-dark-border bg-antigravity-light-surface dark:bg-antigravity-dark-surface">
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-left border-collapse">
-                                <thead>
-                                    <tr className="border-b border-antigravity-light-border dark:border-antigravity-dark-border">
-                                        {['Identidad', 'Nombre', 'Contacto', 'Estado', ''].map((h, i) => (
-                                            <th key={i} className="px-8 py-6 text-[9px] font-black uppercase tracking-[0.2em] text-antigravity-light-muted dark:text-antigravity-dark-muted">
-                                                {h}
-                                            </th>
-                                        ))}
+                {/* ÁREA MAYOR (61.8%): TABLA TÉCNICA DE ADMINISTRADORES */}
+                <section className="bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none">
+                    <div className="px-[21px] py-[13px] border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between">
+                        <h2 className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6]">
+                            REGISTRO DE ADMINISTRADORES
+                        </h2>
+                        <span className="text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                            ACTIVOS: {admins.filter(a => a.status === 'ACTIVE').length}
+                        </span>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse font-mono text-[13px] tabular-nums">
+                            <thead>
+                                <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-[11px] uppercase text-[#475569] dark:text-[#8A93A6]">
+                                    <th className="py-[13px] px-[21px]">RUN</th>
+                                    <th className="py-[13px] px-[21px]">NOMBRE</th>
+                                    <th className="py-[13px] px-[21px]">EMAIL</th>
+                                    <th className="py-[13px] px-[21px]">ESTADO</th>
+                                    <th className="py-[13px] px-[21px] text-right">ACCIÓN</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
+                                {admins.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={5} className="py-[34px] px-[21px] text-center text-[13px] font-mono text-[#94A3B8] dark:text-[#5A6072]">
+                                            [Información técnica no declarada en ficha]
+                                        </td>
                                     </tr>
-                                </thead>
-                                <tbody className="divide-y divide-antigravity-light-border/50 dark:divide-antigravity-dark-border/50">
-                                    {admins.length === 0 ? (
-                                        <tr>
-                                            <td colSpan={5} className="px-8 py-24 text-center">
-                                                <div className="flex flex-col items-center gap-4 opacity-30">
-                                                    <span className="material-symbols-outlined text-5xl">person_off</span>
-                                                    <p className="text-xs font-bold uppercase tracking-[0.2em]">Sin Cargos Designados</p>
+                                ) : (
+                                    admins.map(admin => (
+                                        <tr key={admin.id} className="hover:bg-[#F8FAFC] dark:hover:bg-[#000000]/40 transition-colors">
+                                            <td className="py-[13px] px-[21px] text-[#0F172A] dark:text-[#F3F4F6] select-text">
+                                                {formatRut(admin.run)}
+                                            </td>
+                                            <td className="py-[13px] px-[21px] font-sans font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                {admin.fullName}
+                                            </td>
+                                            <td className="py-[13px] px-[21px] text-[#475569] dark:text-[#8A93A6] select-text">
+                                                {admin.email}
+                                            </td>
+                                            <td className="py-[13px] px-[21px]">
+                                                <span className={`px-[8px] py-0.5 text-[11px] font-mono uppercase border rounded-none ${
+                                                    admin.status === 'ACTIVE'
+                                                        ? 'border-[#00AEEF]/40 text-[#00AEEF]'
+                                                        : 'border-[#C68346]/40 text-[#C68346]'
+                                                }`}>
+                                                    {admin.status === 'ACTIVE' ? 'ACTIVO' : 'PENDIENTE'}
+                                                </span>
+                                            </td>
+                                            <td className="py-[13px] px-[21px] text-right">
+                                                <div className="inline-flex items-center justify-end gap-[8px]">
+                                                    {admin.status === 'PENDING' && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleResendInvitation(admin)}
+                                                            disabled={loading}
+                                                            title="Reenviar invitación"
+                                                            aria-label="Reenviar invitación"
+                                                            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                                                        >
+                                                            <span className="material-symbols-outlined text-[18px]">forward_to_inbox</span>
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleRevokePreConfirm(admin)}
+                                                        disabled={loading}
+                                                        title="Revocar administrador"
+                                                        aria-label="Revocar administrador"
+                                                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
+                                                    >
+                                                        <span className="material-symbols-outlined text-[18px]">person_remove</span>
+                                                    </button>
                                                 </div>
                                             </td>
                                         </tr>
-                                    ) : (
-                                        admins.map(admin => (
-                                            <tr key={admin.id} className="group hover:bg-antigravity-accent/[0.02] transition-colors">
-                                                <td className="px-8 py-8">
-                                                    <span className="font-mono text-xs text-antigravity-light-text/60 dark:text-antigravity-dark-text/60">
-                                                        {formatRut(admin.run)}
-                                                    </span>
-                                                </td>
-                                                <td className="px-8 py-8">
-                                                    <div className="text-[12px] font-black uppercase tracking-wider text-antigravity-light-text dark:text-antigravity-dark-text">
-                                                        {admin.fullName}
-                                                    </div>
-                                                </td>
-                                                <td className="px-8 py-8">
-                                                    <div className="text-[11px] text-antigravity-light-muted dark:text-antigravity-dark-muted break-all">
-                                                        {admin.email}
-                                                    </div>
-                                                </td>
-                                                <td className="px-8 py-8">
-                                                    <div className={`inline-flex items-center gap-2 px-3 py-1 text-[9px] font-bold uppercase tracking-wider border ${admin.status === 'ACTIVE'
-                                                        ? 'border-emerald-500/30 text-emerald-500 bg-emerald-500/5'
-                                                        : 'border-antigravity-accent/30 text-antigravity-accent bg-antigravity-accent/5'
-                                                        }`}>
-                                                        <span className={`w-1 h-1 ${admin.status === 'ACTIVE' ? 'bg-emerald-500' : 'bg-antigravity-accent animate-pulse'}`} />
-                                                        {admin.status === 'ACTIVE' ? 'Activo' : 'Pendiente'}
-                                                    </div>
-                                                </td>
-                                                <td className="px-8 py-8 text-right">
-                                                    <div className="flex items-center justify-end gap-6 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                        {admin.status === 'PENDING' && (
-                                                            <button
-                                                                onClick={() => handleResendInvitation(admin)}
-                                                                disabled={loading}
-                                                                className="text-[9px] font-black uppercase tracking-widest text-antigravity-accent hover:underline flex items-center gap-1 cursor-pointer"
-                                                            >
-                                                                <span className="material-symbols-outlined text-sm">mail</span>
-                                                                Reenviar
-                                                            </button>
-                                                        )}
-                                                        <button
-                                                            onClick={() => handleRevokePreConfirm(admin)}
-                                                            className="text-[9px] font-black uppercase tracking-widest text-red-500/60 hover:text-red-500 transition-colors cursor-pointer"
-                                                        >
-                                                            Revocar
-                                                        </button>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
                     </div>
                 </section>
             </div>
 
-            {/* Designate Modal */}
-            <AnimatePresence>
-                {showConfirmModal && (
-                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-8">
-                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                            onClick={() => setShowConfirmModal(false)} className="absolute inset-0 bg-black/60 backdrop-blur-md" />
-                        <motion.div initial={{ scale: 0.98, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.98, opacity: 0 }}
-                            className="relative w-full max-w-lg bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-antigravity-light-border dark:border-antigravity-dark-border p-12 shadow-none rounded-none">
-                            <header className="mb-10">
-                                <span className="material-symbols-outlined text-antigravity-accent text-4xl mb-6">gavel</span>
-                                <h3 className="text-xl font-black uppercase tracking-tight mb-2">Confirmar <span className="text-antigravity-accent">Designación</span></h3>
-                                <p className="text-sm text-antigravity-light-muted dark:text-antigravity-dark-muted leading-relaxed">
-                                    Estás delegando autoridad administrativa a <span className="font-bold text-antigravity-light-text dark:text-antigravity-dark-text italic">{form.name} {form.lastName}</span>.
-                                </p>
-                            </header>
+            {/* MODAL CONFIRMACIÓN DESIGNACIÓN (HITL) */}
+            {showConfirmModal && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-[21px] bg-black/70">
+                    <div className="w-full max-w-md bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-[21px] rounded-none shadow-none space-y-[21px]">
+                        <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-[13px]">
+                            <h3 className="text-[13px] font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
+                                CONFIRMAR DESIGNACIÓN
+                            </h3>
+                            <button
+                                type="button"
+                                onClick={() => setShowConfirmModal(false)}
+                                title="Cerrar"
+                                aria-label="Cerrar"
+                                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                            >
+                                <span className="material-symbols-outlined text-[18px]">close</span>
+                            </button>
+                        </div>
 
-                            <div className="space-y-8">
-                                <div className="space-y-4">
-                                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-antigravity-accent">Validación de seguridad</p>
-                                    <input
-                                        type="text"
-                                        autoComplete="off"
-                                        spellCheck="false"
-                                        value={confirmText}
-                                        onChange={(e) => setConfirmText(e.target.value.toUpperCase())}
-                                        className={`${inputClass} text-center font-black tracking-[0.5em] text-lg py-4`}
-                                        placeholder="DESIGNAR"
-                                    />
-                                    <p className="text-[9px] uppercase tracking-widest text-antigravity-light-muted dark:text-antigravity-dark-muted text-center">Escriba "DESIGNAR" para proceder</p>
-                                </div>
-                                <button
-                                    onClick={handleDesignate}
-                                    disabled={confirmText !== 'DESIGNAR'}
-                                    className="w-full bg-antigravity-accent hover:bg-antigravity-accent/80 disabled:opacity-20 text-white py-5 text-xs font-black uppercase tracking-[0.3em] transition-all cursor-pointer rounded-none"
-                                >
-                                    Confirmar Poder Delegado
-                                </button>
+                        <div className="space-y-[13px]">
+                            <p className="text-[13px] text-[#475569] dark:text-[#8A93A6]">
+                                Administrador: <span className="font-mono font-bold text-[#0F172A] dark:text-[#F3F4F6]">{form.name} {form.lastName}</span> ({form.run})
+                            </p>
+                            <div>
+                                <label className={labelClass}>ESCRIBA "ACTUALIZAR" PARA CONFIRMAR</label>
+                                <input
+                                    type="text"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    value={confirmText}
+                                    onChange={(e) => setConfirmText(e.target.value.toUpperCase())}
+                                    className={`${inputClass} font-mono text-center font-bold tracking-widest`}
+                                    placeholder="ACTUALIZAR"
+                                />
                             </div>
-                        </motion.div>
+                            <button
+                                type="button"
+                                onClick={handleDesignate}
+                                disabled={confirmText !== 'ACTUALIZAR' && confirmText !== 'DESIGNAR'}
+                                className="w-full bg-[#C68346] hover:bg-[#b0743e] disabled:opacity-40 text-white py-[8px] px-[21px] text-[11px] font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer rounded-none shadow-none"
+                            >
+                                CONFIRMAR
+                            </button>
+                        </div>
                     </div>
-                )}
-            </AnimatePresence>
+                </div>
+            )}
 
-            {/* Revoke Modal */}
-            <AnimatePresence>
-                {showRevokeModal && selectedAdminToRevoke && (
-                    <div className="fixed inset-0 z-[101] flex items-center justify-center p-8">
-                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                            onClick={() => setShowRevokeModal(false)} className="absolute inset-0 bg-black/80 backdrop-blur-md" />
-                        <motion.div initial={{ scale: 0.98, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.98, opacity: 0 }}
-                            className="relative w-full max-w-lg bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-red-500/30 p-12 shadow-none rounded-none">
-                            <header className="mb-10">
-                                <span className="material-symbols-outlined text-red-500 text-4xl mb-6">warning</span>
-                                <h3 className="text-xl font-black uppercase tracking-tight mb-2 text-red-500">Revocar <span className="text-antigravity-light-text dark:text-antigravity-dark-text">Acceso</span></h3>
-                                <p className="text-sm text-antigravity-light-muted dark:text-antigravity-dark-muted leading-relaxed">
-                                    Esta acción eliminará de forma inmediata todos los privilegios de <span className="font-bold text-red-500">{selectedAdminToRevoke.fullName}</span>.
-                                </p>
-                            </header>
+            {/* MODAL CONFIRMACIÓN REVOCACIÓN (HITL) */}
+            {showRevokeModal && selectedAdminToRevoke && (
+                <div className="fixed inset-0 z-[101] flex items-center justify-center p-[21px] bg-black/70">
+                    <div className="w-full max-w-md bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-[21px] rounded-none shadow-none space-y-[21px]">
+                        <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-[13px]">
+                            <h3 className="text-[13px] font-mono font-bold uppercase text-red-500">
+                                REVOCAR ADMINISTRADOR
+                            </h3>
+                            <button
+                                type="button"
+                                onClick={() => setShowRevokeModal(false)}
+                                title="Cerrar"
+                                aria-label="Cerrar"
+                                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                            >
+                                <span className="material-symbols-outlined text-[18px]">close</span>
+                            </button>
+                        </div>
 
-                            <div className="space-y-8">
-                                <div className="space-y-4">
-                                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-red-500">Validación Crítica</p>
-                                    <input
-                                        type="text"
-                                        autoComplete="off"
-                                        spellCheck="false"
-                                        value={revokeConfirmText}
-                                        onChange={(e) => setRevokeConfirmText(e.target.value.toUpperCase())}
-                                        className={`${inputClass} text-center font-black tracking-[0.5em] text-lg py-4 border-red-500/50 focus:border-red-500`}
-                                        placeholder="REVOCAR"
-                                    />
-                                </div>
-                                <button
-                                    onClick={handleConfirmRevoke}
-                                    disabled={revokeConfirmText !== 'REVOCAR' || loading}
-                                    className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-20 text-white py-5 text-xs font-black uppercase tracking-[0.3em] transition-all cursor-pointer rounded-none"
-                                >
-                                    {loading ? 'Procesando...' : 'Ejecutar Revocación'}
-                                </button>
+                        <div className="space-y-[13px]">
+                            <p className="text-[13px] text-[#475569] dark:text-[#8A93A6]">
+                                Se revocará el acceso de <span className="font-mono font-bold text-[#0F172A] dark:text-[#F3F4F6]">{selectedAdminToRevoke.fullName}</span>.
+                            </p>
+                            <div>
+                                <label className={labelClass}>ESCRIBA "ACTUALIZAR" O "REVOCAR" PARA CONFIRMAR</label>
+                                <input
+                                    type="text"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    value={revokeConfirmText}
+                                    onChange={(e) => setRevokeConfirmText(e.target.value.toUpperCase())}
+                                    className={`${inputClass} font-mono text-center font-bold tracking-widest`}
+                                    placeholder="ACTUALIZAR"
+                                />
                             </div>
-                        </motion.div>
+                            <button
+                                type="button"
+                                onClick={handleConfirmRevoke}
+                                disabled={(revokeConfirmText !== 'REVOCAR' && revokeConfirmText !== 'ACTUALIZAR') || loading}
+                                className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white py-[8px] px-[21px] text-[11px] font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer rounded-none shadow-none"
+                            >
+                                {loading ? 'PROCESANDO...' : 'EJECUTAR REVOCACIÓN'}
+                            </button>
+                        </div>
                     </div>
-                )}
-            </AnimatePresence>
-                </>
+                </div>
             )}
         </div>
     );

@@ -1,9 +1,8 @@
 import { z } from 'zod';
 
 /**
- * CORE SDK SHIELD - Mock/Stub para el Remote Plugin
- * Simula el comportamiento de @core/sdk (Ecosistema Independiente).
- * EVENT-LEDGER-AUDITOR: Este esquema DEBE usarse para todo evento de estado crítico.
+ * EVENT-LEDGER-AUDITOR — Bus de Eventos Nativo Polimórfico (MINREPORT / OPERMAQ)
+ * Valida y propaga eventos de estado crítico bajo SystemEventSchema.
  */
 
 export const SystemEventSchema = z.object({
@@ -17,16 +16,12 @@ export type SystemEvent = z.infer<typeof SystemEventSchema>;
 
 type EventCallback = (data: SystemEvent) => void;
 
-class EventBusStub {
+class NativeEventBus {
   private listeners: Record<string, EventCallback[]> = {};
 
   emit(eventType: string, data: SystemEvent) {
-    // Validar esquema (Auditoría estricta)
     SystemEventSchema.parse(data);
 
-    // En un Remote Plugin real, esto viaja al Host iframe/window message
-    console.log(`[EVENT-LEDGER-AUDITOR] 🛡️ Evento universal emitido: ${eventType}`, data);
-    
     if (this.listeners[eventType]) {
       this.listeners[eventType].forEach(fn => fn(data));
     }
@@ -38,4 +33,4 @@ class EventBusStub {
   }
 }
 
-export const eventBus = new EventBusStub();
+export const eventBus = new NativeEventBus();

@@ -221,7 +221,7 @@ export const PremiumAIPanel: React.FC<PremiumAIPanelProps> = ({
   };
 
   return (
-    <div className="fixed inset-y-0 right-0 w-[450px] bg-white dark:bg-[#0d0d0d] border-l border-black/10 dark:border-white/10 shadow-2xl z-[100] flex flex-col font-atkinson animate-in slide-in-from-right duration-300">
+    <div className="fixed inset-y-0 right-0 w-[450px] bg-white dark:bg-[#0d0d0d] border-l border-black/10 dark:border-white/10 shadow-none z-[100] flex flex-col font-atkinson animate-in slide-in-from-right duration-300">
       {/* Header Drawer */}
       <div className="p-6 border-b border-black/5 dark:border-white/5 flex items-center justify-between bg-black/[0.02] dark:bg-white/[0.01]">
         <div>

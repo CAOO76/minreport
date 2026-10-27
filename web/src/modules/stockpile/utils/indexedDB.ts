@@ -13,7 +13,7 @@
 
 const DB_NAME = 'MinReportPluginDB';
 const STORE_NAME = 'secure_storage';
-const DB_VERSION = 1; // ⚠️ Incrementar SOLO si hay cambios en el schema del store
+const DB_VERSION = 1; // Incrementar SOLO si hay cambios en el schema del store
 
 // Clave de backup de emergencia en localStorage
 const BACKUP_IDS_KEY = 'sc_backup_asset_ids';
@@ -92,7 +92,7 @@ class IndexedDBStorage {
 
             if (!exists) {
                 console.error(
-                    `[IndexedDB] ⚠️ PÉRDIDA DE DATOS DETECTADA: El activo "${firstId}" existe en el índice de backup ` +
+                    `[IndexedDB] PÉRDIDA DE DATOS DETECTADA: El activo "${firstId}" existe en el índice de backup ` +
                     `pero NO en IndexedDB. El WebView puede haber limpiado el almacenamiento.`
                 );
             }

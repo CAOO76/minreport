@@ -17,6 +17,8 @@ interface AdminStats {
     reuse_ratio: string;
     active_deployments: number;
     discarded_deployments: number;
+    sealedCount?: number;
+    globalAssetsCount?: number;
 }
 
 interface GlobalAsset extends Record<string, unknown> {
@@ -78,9 +80,9 @@ export const AdminAssetList: React.FC<AdminAssetListProps> = ({ onSelectAsset, o
     }, [assets, searchQuery]);
 
     return (
-        <main className="h-screen w-screen bg-background text-foreground flex flex-col font-sans overflow-hidden select-none transition-colors duration-300">
+        <main className="h-full w-full flex-1 bg-background text-foreground flex flex-col font-sans overflow-hidden select-none transition-colors duration-300">
             {/* Cabecera Técnica — Web Mode */}
-            <header className="pt-14 pb-4 px-8 border-b border-border-base bg-background flex items-center justify-between z-50">
+            <header className="py-4 px-8 border-b border-border-base bg-background flex items-center justify-between z-20">
                 <div className="flex flex-col">
                     <div className="flex items-center gap-2 mb-1">
                         <span className="w-1 h-3 bg-copper"></span>
@@ -115,15 +117,15 @@ export const AdminAssetList: React.FC<AdminAssetListProps> = ({ onSelectAsset, o
                 {[
                     { label: t('admin_catalog.stats_total'), value: assets.length, icon: 'inventory_2' },
                     { label: t('admin_catalog.stats_active'), value: stats?.active_deployments || 0, icon: 'hub' },
-                    { label: t('admin_catalog.stats_reuse'), value: `${stats?.reuse_ratio || '1.00'}x`, icon: 'repeat' },
-                    { label: t('admin_catalog.stats_health'), value: '94%', icon: 'monitoring' }
+                    { label: t('admin_catalog.stats_reuse'), value: `${stats?.reuse_ratio || '0.00'}x`, icon: 'repeat' },
+                    { label: t('admin_catalog.stats_health'), value: `${stats?.sealedCount ?? 0}/${assets.length}`, icon: 'verified' }
                 ].map((stat, i) => (
                     <div key={i} className="flex flex-col">
                         <div className="flex items-center gap-2 mb-1">
                             <span className="material-symbols-outlined text-foreground/40 !text-[14px]">{stat.icon}</span>
                             <span className="text-[9px] font-black uppercase tracking-[0.2em] text-muted">{stat.label}</span>
                         </div>
-                        <span className="text-xl font-black text-foreground tabular-nums">{stat.value}</span>
+                        <span className="text-xl font-black text-foreground tabular-nums font-mono">{stat.value}</span>
                     </div>
                 ))}
             </div>

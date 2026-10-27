@@ -5,8 +5,9 @@
 
 echo "🟢 Iniciando entorno de desarrollo MINREPORT..."
 
-# Configurar entorno limpio para Java y Emuladores
+# Configurar entorno limpio para Java y Emuladores (aislado de credenciales ADC de producción)
 unset _JAVA_OPTIONS
+unset GOOGLE_APPLICATION_CREDENTIALS
 pkill -f "cloud-firestore-emulator" 2>/dev/null || true
 pkill -f "cloud-storage-rules" 2>/dev/null || true
 

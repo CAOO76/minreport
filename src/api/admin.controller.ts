@@ -742,8 +742,42 @@ export const updateBrandingSettings = async (req: express.Request, res: express.
             try {
                 const rootDir = process.cwd();
                 const webPublicDir = path.join(rootDir, 'web/public');
+                const adminPublicDir = path.join(rootDir, 'admin/public');
                 const androidResDir = path.join(rootDir, 'web/android/app/src/main/res');
                 console.log(`[DevOps] Sync starting. rootDir: ${rootDir}`);
+
+                // 0. Sync ALL Branding Variants (isotype, logotype, imagotype, imagotypeVertical, pwaIcon, appIcon) to web/public/branding & admin/public/branding
+                const assetKeys = ['isotype', 'logotype', 'imagotype', 'imagotypeVertical', 'pwaIcon', 'appIcon'];
+                for (const key of assetKeys) {
+                    const assetUrl = settings.light?.[key] || settings.dark?.[key];
+                    if (assetUrl && (assetUrl.startsWith('http://') || assetUrl.startsWith('https://'))) {
+                        try {
+                            const fileKey = key === 'imagotypeVertical' ? 'imagotype_vertical' : key;
+                            const ext = assetUrl.toLowerCase().includes('.png') ? '.png' : '.svg';
+                            const tempVariantFile = path.join(rootDir, `temp_brand_${fileKey}${ext}`);
+                            await downloadFile(assetUrl, tempVariantFile);
+
+                            if (fs.existsSync(tempVariantFile)) {
+                                for (const pubDir of [webPublicDir, adminPublicDir]) {
+                                    if (fs.existsSync(pubDir)) {
+                                        const brandingDir = path.join(pubDir, 'branding');
+                                        if (!fs.existsSync(brandingDir)) {
+                                            fs.mkdirSync(brandingDir, { recursive: true });
+                                        }
+                                        fs.copyFileSync(tempVariantFile, path.join(brandingDir, `master_${fileKey}${ext}`));
+                                        // Si se subió como .svg, asegurar que master_${fileKey}.svg esté actualizado
+                                        if (ext === '.svg') {
+                                            fs.copyFileSync(tempVariantFile, path.join(brandingDir, `master_${fileKey}.svg`));
+                                        }
+                                    }
+                                }
+                                fs.unlinkSync(tempVariantFile);
+                            }
+                        } catch (variantErr: any) {
+                            console.warn(`[DevOps] No se pudo sincronizar variante ${key} a filesystem:`, variantErr?.message);
+                        }
+                    }
+                }
 
                 // 1. Sync PWA Icons (Web Browser)
                 const pwaIconUrl = settings.light?.pwaIcon || settings.dark?.pwaIcon || settings.light?.isotype;

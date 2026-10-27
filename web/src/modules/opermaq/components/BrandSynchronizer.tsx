@@ -1,15 +1,18 @@
 import { useEffect } from 'react';
 import { useBrandConfig } from '../hooks/useBrandConfig';
 
+export interface BrandSynchronizerProps {
+  embedded?: boolean;
+}
+
 /**
- * BrandSynchronizer: Inyecta dinámicamente la identidad visual en el DOM
- * Actualiza Favicon, Título de pestaña y variables de entorno si es necesario.
+ * BrandSynchronizer: Sincroniza el favicon únicamente en modo standalone sin pisar el Host MINREPORT.
  */
-export function BrandSynchronizer() {
+export function BrandSynchronizer({ embedded = false }: BrandSynchronizerProps = {}) {
   const { brand } = useBrandConfig();
 
   useEffect(() => {
-    // 1. Favicon Dinámico
+    if (embedded) return;
     if (brand.favicon) {
       let link: HTMLLinkElement | null = document.querySelector("link[rel~='icon']");
       if (!link) {
@@ -19,10 +22,7 @@ export function BrandSynchronizer() {
       }
       link.href = brand.favicon;
     }
+  }, [brand.favicon, embedded]);
 
-    // 2. Título Dinámico (Opcional, pero refuerza la marca)
-    // document.title = 'OPERMAQ | Intelligence Vault';
-  }, [brand.favicon]);
-
-  return null; // Componente lógico, no renderiza nada
+  return null;
 }

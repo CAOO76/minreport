@@ -65,7 +65,7 @@ const TargetedUploadModal: React.FC<TargetedUploadModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-white dark:bg-neutral-900 w-full max-w-md border border-neutral-200 dark:border-neutral-800 rounded-none shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+      <div className="bg-white dark:bg-neutral-900 w-full max-w-md border border-neutral-200 dark:border-neutral-800 rounded-none shadow-none overflow-hidden animate-in fade-in zoom-in duration-200">
         
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-neutral-100 dark:border-neutral-800">

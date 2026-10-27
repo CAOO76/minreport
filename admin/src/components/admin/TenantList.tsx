@@ -170,7 +170,7 @@ export const TenantList: React.FC<TenantListProps> = ({ type, title, subtitle })
                                                 ? 'text-amber-600 dark:text-amber-400'
                                                 : 'text-neutral-500'
                                         }`}>
-                                            <span className={`w-1.5 h-1.5 rounded-full ${
+                                            <span className={`w-1.5 h-1.5 rounded-none ${
                                                 (tenant.status === 'ACTIVE' || tenant.status === 'APPROVED') ? 'bg-emerald-500' :
                                                 tenant.status === 'SUSPENDED' ? 'bg-amber-500' : 'bg-neutral-400'
                                             }`} />

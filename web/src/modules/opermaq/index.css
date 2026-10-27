@@ -6,8 +6,9 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: "Atkinson Hyperlegible", ui-sans-serif, system-ui, sans-serif;
-  --font-atkinson: "Atkinson Hyperlegible", sans-serif;
+  --font-sans: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", ui-sans-serif, system-ui, sans-serif;
+  --font-atkinson: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", sans-serif;
+  --font-mono: "Atkinson Hyperlegible Mono", ui-monospace, SFMono-Regular, monospace;
   --color-background: #FFFFFF;
   --color-foreground: #11100F;
   --color-surface: #F9FAFB;

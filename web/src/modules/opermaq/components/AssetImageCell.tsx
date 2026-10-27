@@ -33,7 +33,7 @@ export const AssetImageCell: React.FC<AssetImageCellProps> = ({
 
     const isLarge = size === 320;
     const containerClasses = isLarge 
-        ? "aspect-[4/3] w-full max-w-[320px] shadow-2xl" 
+        ? "aspect-[4/3] w-full max-w-[320px] shadow-none rounded-none" 
         : "";
     
     const inlineStyle = !isLarge ? { width: `${size}px`, height: `${size}px` } : {};

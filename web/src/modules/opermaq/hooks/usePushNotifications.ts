@@ -64,7 +64,7 @@ async function registerDevice(PushNotifications: PushNotificationsPlugin, userId
         { merge: true }
       );
       
-      console.log('[F-FIELD.4] ✅ FCM Token guardado en Firestore para usuario:', userId);
+      console.log('[F-FIELD.4] FCM Token guardado en Firestore para usuario:', userId);
     });
 
     // Log de errores de registro

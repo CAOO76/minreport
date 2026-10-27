@@ -1,17 +1,19 @@
 rules_version = '2';
+
+// ===============================================================
+// MINREPORT Web 3.0 — Seguridad Bancaria Multi-Tenant
+// Jerarquía Soberana de 5 Tipos de Cuenta:
+//   1º DEV          (isDevRoot)
+//   2º ADMIN        (isSuperAdmin)
+//   3º TEST-PILOT   (isTestPilot)
+//   4º CLIENTES B2B (isAccountMember - Comercial / Industrial)
+//   5º EDU          (isAccountMember - Académico)
+// ===============================================================
+
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Helper: Verify if user is a Super Admin
-    function isSuperAdmin() {
-      return request.auth != null && 
-        (
-          request.auth.token.role == 'SUPER_ADMIN' ||
-          request.auth.token.email == 'admin@minreport.com'
-        );
-    }
-
-    // Helper: Verify if user is DEV_ROOT
+    // Helper: 1º Jerarquía Soberana — Verify if user is DEV_ROOT
     function isDevRoot() {
       return request.auth != null && 
         (
@@ -22,13 +24,34 @@ service cloud.firestore {
         );
     }
 
-    // Helper: Check if user belongs to an account
+    // Helper: 2º Jerarquía Soberana — Verify if user is Super Admin
+    function isSuperAdmin() {
+      return request.auth != null && 
+        (
+          request.auth.token.role == 'SUPER_ADMIN' ||
+          request.auth.token.email == 'admin@minreport.com'
+        );
+    }
+
+    // Helper: 3º Jerarquía Soberana — Verify if user is TEST-PILOT
+    function isTestPilot() {
+      return request.auth != null && (
+        request.auth.token.role == 'TEST_PILOT' ||
+        request.auth.token.role == 'PILOT_LEAD' ||
+        request.auth.token.classification == 'test-pilot'
+      );
+    }
+
+    // Helper: 4º y 5º Jerarquía Soberana — Check if user belongs to an account (B2B / EDU)
     function isAccountMember(accountId) {
       return request.auth != null && (
         isSuperAdmin() ||
         isDevRoot() ||
+        isTestPilot() ||
+        accountId == 'faena-minreport' ||
         request.auth.token.activeAccountId == accountId ||
-        get(/databases/$(database)/documents/accounts/$(accountId)).data.ownerId == request.auth.uid
+        (accountId != null && exists(/databases/$(database)/documents/accounts/$(accountId)/members/$(request.auth.uid))) ||
+        (accountId != null && get(/databases/$(database)/documents/accounts/$(accountId)).data.ownerId == request.auth.uid)
       );
     }
 
@@ -56,6 +79,7 @@ service cloud.firestore {
       allow list: if request.auth != null && (
         isSuperAdmin() || 
         isDevRoot() ||
+        isTestPilot() ||
         resource.data.ownerId == request.auth.uid ||
         (resource.data.primaryOperator != null && resource.data.primaryOperator.email == request.auth.token.email)
       );
@@ -83,7 +107,16 @@ service cloud.firestore {
 
     // [DEV_ROOT] REGISTRO SEGREGADO DE CUENTAS TEST-PILOT (Colaboradores)
     match /test_pilots/{pilotId} {
-      allow read, write: if isDevRoot() || isSuperAdmin();
+      allow read: if isDevRoot() || isSuperAdmin() || (request.auth != null && (resource.data.userId == request.auth.uid || resource.data.collaboratorEmail == request.auth.token.email));
+      allow write: if isDevRoot() || isSuperAdmin();
+      allow update: if request.auth != null && resource.data.userId == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['telemetry', 'lastActivity']);
+    }
+
+    // [TEST-PILOT] RETROALIMENTACIÓN, SOLICITUDES DE CAMBIO Y ENTRENAMIENTO IA
+    match /pilot_feedback/{feedbackId} {
+      allow read: if isDevRoot() || isSuperAdmin() || isTestPilot() || (request.auth != null && resource.data.authorUid == request.auth.uid);
+      allow create: if isDevRoot() || isSuperAdmin() || isTestPilot() || request.auth != null;
+      allow update, delete: if isDevRoot() || isSuperAdmin();
     }
 
     // [CAPA 3] AUDIT LEDGER INMUTABLE (Append-Only)
@@ -93,47 +126,67 @@ service cloud.firestore {
       allow update, delete: if false; // Inmutable
     }
 
+    // [CAPA 4] CACHÉ SHA-256 DE INFERENCIA ENJAMBRE GEMINI IA
+    match /ai_inference_cache/{cacheKey} {
+      allow read: if request.auth != null;
+      allow write: if isDevRoot() || isSuperAdmin();
+    }
+
     // [OPERMAQ] Flota, Catálogo Maestro y Bóvedas de Conocimiento
     match /global_asset_catalog/{assetId} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow write: if isDevRoot() || isSuperAdmin() || isTestPilot();
     }
+
     match /tenant_assets/{assetId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read: if request.auth != null && (resource.data.tenantId == null || resource.data.tenantId == 'faena-minreport' || isTestPilot() || isAccountMember(resource.data.tenantId));
+      allow create: if request.auth != null && (request.resource.data.tenantId == null || request.resource.data.tenantId == 'faena-minreport' || isTestPilot() || isAccountMember(request.resource.data.tenantId));
+      allow update, delete: if request.auth != null && (resource.data.tenantId == null || resource.data.tenantId == 'faena-minreport' || isTestPilot() || isAccountMember(resource.data.tenantId));
     }
+
     match /master_symbology_vault/{docId} {
       allow read: if request.auth != null;
-      allow write: if isSuperAdmin() || isDevRoot();
+      allow write: if isSuperAdmin() || isDevRoot() || isTestPilot();
     }
+
     match /hitl_candidates/{candidateId} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if isDevRoot() || isSuperAdmin() || isTestPilot() || (request.auth != null && (request.resource.data.tenantId == null || isAccountMember(request.resource.data.tenantId)));
     }
+
     match /event_ledger/{eventId} {
       allow read: if request.auth != null;
       allow create: if request.auth != null;
       allow update, delete: if false; // Inmutable
     }
+
     match /machinery_fleet/{assetId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && isAccountMember(request.resource.data.tenantId);
+      allow read, delete: if request.auth != null && (resource.data.tenantId == null || resource.data.tenantId == 'faena-minreport' || isTestPilot() || isAccountMember(resource.data.tenantId));
+      allow create, update: if request.auth != null && (request.resource.data.tenantId == null || request.resource.data.tenantId == 'faena-minreport' || isTestPilot() || isAccountMember(request.resource.data.tenantId));
     }
+
     match /inspections/{inspectionId} {
-      allow read, write: if request.auth != null;
+      allow read, delete: if request.auth != null && (resource.data.tenantId == null || resource.data.tenantId == 'faena-minreport' || isTestPilot() || isAccountMember(resource.data.tenantId));
+      allow create, update: if request.auth != null && (request.resource.data.tenantId == null || request.resource.data.tenantId == 'faena-minreport' || isTestPilot() || isAccountMember(request.resource.data.tenantId));
     }
+
     match /fleet_inspections/{inspectionId} {
-      allow read, write: if request.auth != null;
+      allow read, delete: if request.auth != null && (resource.data.tenantId == null || resource.data.tenantId == 'faena-minreport' || isTestPilot() || isAccountMember(resource.data.tenantId));
+      allow create, update: if request.auth != null && (request.resource.data.tenantId == null || request.resource.data.tenantId == 'faena-minreport' || isTestPilot() || isAccountMember(request.resource.data.tenantId));
     }
 
     // [STOCKPILE] Acopios Topográficos y Volumetría
     match /stockpiles/{stkId} {
-      allow read, write: if request.auth != null;
+      allow read, delete: if request.auth != null && (resource.data.tenantId == null || resource.data.tenantId == 'faena-minreport' || isTestPilot() || isAccountMember(resource.data.tenantId));
+      allow create, update: if request.auth != null && (request.resource.data.tenantId == null || request.resource.data.tenantId == 'faena-minreport' || isTestPilot() || isAccountMember(request.resource.data.tenantId));
     }
 
     // [MINING FLOW] Eventos Financieros y Flujo de Caja
     match /financial_events/{eventId} {
-      allow read, write: if request.auth != null;
+      allow read, delete: if request.auth != null && (resource.data.tenantId == null || resource.data.tenantId == 'faena-minreport' || isTestPilot() || isAccountMember(resource.data.tenantId));
+      allow create, update: if request.auth != null && (request.resource.data.tenantId == null || request.resource.data.tenantId == 'faena-minreport' || isTestPilot() || isAccountMember(request.resource.data.tenantId));
     }
+
     match /financial_ledger/{eventId} {
       allow read: if request.auth != null;
       allow create: if request.auth != null;
@@ -143,7 +196,12 @@ service cloud.firestore {
     // Configuración Global y Branding
     match /settings/branding {
       allow read: if true;
-      allow write: if isSuperAdmin();
+      allow write: if isSuperAdmin() || isDevRoot();
+    }
+
+    match /system/brand_config {
+      allow read: if true;
+      allow write: if isSuperAdmin() || isDevRoot();
     }
 
     // Solicitudes y Tenants
@@ -151,25 +209,20 @@ service cloud.firestore {
       allow read, write: if isSuperAdmin() || isDevRoot();
       allow create: if request.auth != null;
     }
+
     match /edu_whitelists/{docId} {
       allow read, write: if isSuperAdmin() || isDevRoot();
     }
 
     // Mensajería y Notificaciones
     match /users/{userId}/inbox/{messageId} {
-      allow read, write: if isSuperAdmin() || (request.auth != null && request.auth.uid == userId);
+      allow read, write: if isSuperAdmin() || isDevRoot() || (request.auth != null && request.auth.uid == userId);
     }
 
     // Módulos Nativos y Catálogo de Disponibilidad
     match /modules_status/{moduleId} {
-      allow read: if request.auth != null;
-      allow write: if isSuperAdmin();
-    }
-
-    // Módulos y Plugins (Compatibilidad Legacy)
-    match /plugins/{pluginId} {
-      allow read: if request.auth != null;
-      allow write: if isSuperAdmin();
+      allow read: if true;
+      allow write: if isSuperAdmin() || isDevRoot();
     }
   }
 }

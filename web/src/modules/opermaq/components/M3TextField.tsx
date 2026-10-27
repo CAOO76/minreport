@@ -54,6 +54,7 @@ export const M3TextField: React.FC<M3TextFieldProps> = ({
                         disabled={disabled}
                         rows={rows}
                         autoComplete={autoComplete}
+                        spellCheck={false}
                         aria-label={label}
                         aria-invalid={hasError}
                     />
@@ -67,6 +68,7 @@ export const M3TextField: React.FC<M3TextFieldProps> = ({
                         required={required}
                         disabled={disabled}
                         autoComplete={autoComplete}
+                        spellCheck={false}
                         aria-label={label}
                         aria-invalid={hasError}
                     />

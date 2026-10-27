@@ -1,88 +1,82 @@
 /**
  * useStockpileData Hook
- * Hook de interoperabilidad que permite a otros plugins consultar datos de volumetría.
+ * Hook de interoperabilidad nativa que consulta datos reales de volumetría desde DataService (IndexedDB + Cloud Firestore).
  */
 
-import { useState, useEffect } from 'react';
-import { MinReport } from '../services/sdk-mock';
-import type { StockpileAsset } from '../types/StockpileAsset';
+import { useState, useEffect, useCallback } from 'react';
+import { dataService } from '../services/DataService';
+import type { StockpileAsset, StockpileMeasurement } from '../types/StockpileAsset';
 
 export interface StockpileDataQuery {
     stockpileId?: string;
     limit?: number;
 }
 
+export interface StockpileWithLatestVolume extends StockpileAsset {
+    volume_m3?: number;
+    tonnage_t?: number;
+    latestMeasurement?: StockpileMeasurement;
+}
+
 /**
- * Hook para consumo de datos de Stockpile Control
- * Cumple con el requisito de interoperabilidad (Punto 5 del motor).
+ * Hook para consumo de datos de Stockpile Control sobre la base de datos única de MINREPORT.
  */
 export function useStockpileData(query: StockpileDataQuery = {}) {
-    const [data, setData] = useState<StockpileAsset[]>([]);
+    const [data, setData] = useState<StockpileWithLatestVolume[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<Error | null>(null);
 
-    const EXTENSION_NAME = 'stockpile-control';
+    const fetchData = useCallback(async () => {
+        try {
+            setLoading(true);
+            setError(null);
+
+            const allAssets = await dataService.getAllAssets();
+            const filteredAssets = query.stockpileId
+                ? allAssets.filter(a => a.id === query.stockpileId)
+                : allAssets.slice(0, query.limit || 50);
+
+            const enriched: StockpileWithLatestVolume[] = await Promise.all(
+                filteredAssets.map(async (asset) => {
+                    const measurements = await dataService.getMeasurements(asset.id);
+                    const latest = measurements[0];
+                    return {
+                        ...asset,
+                        volume_m3: latest?.volumen_m3 ?? asset.last_volume_m3 ?? 0,
+                        tonnage_t: latest?.peso_t ?? asset.last_weight_t ?? 0,
+                        latestMeasurement: latest
+                    };
+                })
+            );
+
+            setData(enriched);
+        } catch (err) {
+            setError(err instanceof Error ? err : new Error('Error consultando activos de Stockpile Control'));
+        } finally {
+            setLoading(false);
+        }
+    }, [query.stockpileId, query.limit]);
 
     useEffect(() => {
-        const fetchData = async () => {
-            try {
-                setLoading(true);
-
-                // Usamos el EntityManager del SDK para consultar datos de nuestra extensión
-                const results = await MinReport.EntityManager.queryEntities({
-                    extension: EXTENSION_NAME,
-                    filters: query.stockpileId ? { id: query.stockpileId } : {},
-                    limit: query.limit || 10
-                });
-
-                setData(results as StockpileAsset[]);
-            } catch (err) {
-                setError(err instanceof Error ? err : new Error('Error desconocido'));
-            } finally {
-                setLoading(false);
-            }
-        };
-
         fetchData();
-
-        // Si hay un ID específico, nos suscribimos a los cambios
-        let unsubscribe: (() => void) | undefined;
-        if (query.stockpileId) {
-            unsubscribe = MinReport.EntityManager.subscribeToEntity(
-                EXTENSION_NAME,
-                query.stockpileId,
-                (newData: any) => {
-                    setData([newData as StockpileAsset]);
-                }
-            );
-        }
-
-        return () => {
-            if (unsubscribe) unsubscribe();
-        };
-    }, [query.stockpileId, query.limit]);
+    }, [fetchData]);
 
     /**
      * Consulta directa del último volumen registrado de un activo específico
      */
-    const getLatestVolume = async (stockpileId: string): Promise<number> => {
-        const results = await MinReport.EntityManager.queryEntities({
-            extension: EXTENSION_NAME,
-            filters: { id: stockpileId },
-            limit: 1
-        });
-
-        if (results.length > 0) {
-            return (results[0] as StockpileAsset).volume_m3 || 0;
+    const getLatestVolume = useCallback(async (stockpileId: string): Promise<number> => {
+        const measurements = await dataService.getMeasurements(stockpileId);
+        if (measurements.length > 0) {
+            return measurements[0].volumen_m3 || 0;
         }
         return 0;
-    };
+    }, []);
 
     return {
         data,
         loading,
         error,
         getLatestVolume,
-        refresh: () => setLoading(true), // Simplemente dispara el useEffect
+        refresh: fetchData,
     };
 }

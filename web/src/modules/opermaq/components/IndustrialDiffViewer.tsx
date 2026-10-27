@@ -25,7 +25,7 @@ export const IndustrialDiffViewer: React.FC<IndustrialDiffViewerProps> = ({ orig
                 {diffGroups.map((part, index) => {
                     if (part.added) {
                         return (
-                            <span key={index} className="bg-foreground/10 text-foreground font-black px-1 rounded-sm border-b border-foreground/30 ml-1">
+                            <span key={index} className="bg-foreground/10 text-foreground font-black px-1 rounded-none border-b border-foreground/30 ml-1">
                                 {part.value}
                             </span>
                         );

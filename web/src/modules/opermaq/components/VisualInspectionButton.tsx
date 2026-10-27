@@ -69,7 +69,7 @@ export default function VisualInspectionButton({ expectedComponent, makeModel, g
         let text = `[IA] Diagnóstico: ${res.diagnostico}.`;
         if (res.detalles_detectados?.length > 0) text += ` Hallazgos: ${res.detalles_detectados.join(', ')}.`;
         if (res.accion_inmediata) text += ` Acción: ${res.accion_inmediata}`;
-        if (!res.coincide_componente) text += ` (⚠️ La foto no coincide plenamente con ${expectedComponent})`;
+        if (!res.coincide_componente) text += ` (Advertencia: La foto no coincide plenamente con ${expectedComponent})`;
         onResult(text, res.diagnostico);
       } else {
         throw new Error('Respuesta inválida del servidor.');
@@ -103,7 +103,7 @@ export default function VisualInspectionButton({ expectedComponent, makeModel, g
         style={{
           width: 44,
           height: 44,
-          borderRadius: 22,
+          borderRadius: 0,
           border: 'none',
           background: loading ? 'var(--color-outline)' : 'var(--color-primary-container)',
           color: loading ? 'var(--color-on-surface-variant)' : 'var(--color-primary)',

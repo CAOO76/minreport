@@ -13,6 +13,8 @@ import { challengeAccountAccess } from './api/auth_tunnel.controller';
 import { setupAccountPassword } from './api/setup.controller';
 import { validateEduRequest, analyzeEduDocument } from './api/edu.controller';
 import staffRoutes from './api/staff.controller';
+import pilotRoutes from './api/pilot.controller';
+import opermaqRoutes from './api/opermaq.controller';
 import { requireSuperAdmin } from './middleware/admin';
 import { z } from 'zod';
 import { requireAuth } from './middleware/auth';
@@ -37,7 +39,15 @@ app.use(cors({
     origin: true,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-402-token', 'x-payment-proof']
+    allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'X-Requested-With',
+        'X-Firebase-AppCheck',
+        'x-firebase-appcheck',
+        'x-402-token',
+        'x-payment-proof'
+    ]
 }));
 app.use(express.json());
 
@@ -104,9 +114,14 @@ app.get('/api/m2m/data-feed', x402Gatekeeper({
 
 const AIInferencePayloadSchema = z.object({
     prompt: z.string().min(1, 'El prompt no puede estar vacío'),
-    module: z.enum(['opermaq', 'stockpile', 'core', 'mining-swarm']).optional().default('core'),
+    systemInstruction: z.string().optional(),
+    module: z.enum(['opermaq', 'stockpile', 'core', 'test-pilot', 'mining-swarm']).optional().default('core'),
     thinkingLevel: z.enum(['none', 'low', 'medium', 'high']).optional().default('medium'),
-    requireHITL: z.boolean().optional().default(false)
+    requireHITL: z.boolean().optional().default(false),
+    media: z.array(z.object({
+        mimeType: z.string(),
+        dataBase64: z.string()
+    })).optional()
 });
 
 // [WEB 3.0 ENJAMBRE GEMINI] Endpoint de Inferencia Resiliente
@@ -120,16 +135,18 @@ app.post('/api/ai/inference', requireAuth, async (req, res) => {
             });
         }
 
-        const { prompt, module: targetModule, thinkingLevel, requireHITL } = validation.data;
+        const { prompt, systemInstruction, module: targetModule, thinkingLevel, requireHITL, media } = validation.data;
         const tenantId = (req as any).user?.activeAccountId || 'default';
         const mappedModule = targetModule === 'mining-swarm' ? 'core' : targetModule;
         
         const aiResponse = await ResilientAIClient.generate({
             prompt,
+            systemInstruction,
             module: mappedModule,
             tenantId,
             thinkingLevel,
-            requireHITL
+            requireHITL,
+            media
         });
 
         // Registrar en Audit Ledger inmutable
@@ -157,6 +174,9 @@ app.post('/api/auth/invite', requireAuth, inviteUser); // [NEW] B2B Invitation
 
 // Staff Routes (Onboarding)
 app.use('/api/staff', staffRoutes); // [NEW] Staff Management
+
+// Test-Pilot Feedback & AI Training Routes (3º TEST-PILOT)
+app.use('/api/pilot', pilotRoutes);
 
 // DEV Root & Test-Pilot Governance Routes (Isolated Secret Gateway)
 import { 
@@ -203,6 +223,10 @@ app.get('/api/admin/metrics', requireSuperAdmin, getSystemMetrics); // requireSu
 app.get('/api/admin/audit-logs', requireSuperAdmin, getAuditLogs);
 app.get('/api/admin/settings/ui-assets', requireSuperAdmin, getUIAssetsSettings); // Keep protected for admin panel
 app.put('/api/admin/settings/ui-assets', requireSuperAdmin, updateUIAssetsSettings);
+
+// Unified Opermaq Vault, Assets, Checklist & Telemetry Routes
+app.use('/api', opermaqRoutes);
+app.use('/', opermaqRoutes);
 
 import { ensureDevRootAccount } from './services/bootstrap.service';
 

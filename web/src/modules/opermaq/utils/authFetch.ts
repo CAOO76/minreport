@@ -1,5 +1,5 @@
 import { getAuth } from 'firebase/auth';
-import { getAppCheckToken } from '../firebase/config';
+import { getAppCheckToken, API_BASE_URL } from '../firebase/config';
 
 
 /**
@@ -14,6 +14,13 @@ export async function authFetch(url: string, options: RequestInit = {}) {
     if (!user) {
         throw new Error('Usuario no autenticado');
     }
+
+    // Normalizar rutas relativas (/api/...) hacia el API_BASE_URL unificado
+    const resolvedUrl = url.startsWith('/api/')
+        ? `${API_BASE_URL}${url.slice(4)}`
+        : url.startsWith('/')
+            ? `${API_BASE_URL}${url}`
+            : url;
 
     // Obtener tokens
     const [idToken, appCheckToken] = await Promise.all([
@@ -33,10 +40,10 @@ export async function authFetch(url: string, options: RequestInit = {}) {
         headers['X-Firebase-AppCheck'] = appCheckToken;
     }
 
-    const response = await fetch(url, { ...options, headers });
+    const response = await fetch(resolvedUrl, { ...options, headers });
 
     if (response.status === 401 || response.status === 403) {
-        console.warn(`[AUTH-WARN] ${response.status} en ${url}`);
+        console.warn(`[AUTH-WARN] ${response.status} en ${resolvedUrl}`);
     }
 
     return response;

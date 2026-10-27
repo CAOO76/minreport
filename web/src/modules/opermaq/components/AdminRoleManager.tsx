@@ -22,16 +22,16 @@ export const AdminRoleManager: React.FC = () => {
         body: JSON.stringify({ secret, email, role })
       });
       const data = await res.json();
-      if (res.ok) setStatus(`✅ ${t('roles.status_success')}`);
-      else setStatus(`❌ Error: ${data.error}`);
+      if (res.ok) setStatus(`[OK] ${t('roles.status_success')}`);
+      else setStatus(`[ERROR] ${data.error}`);
     } catch { 
-      setStatus(`❌ ${t('roles.status_conn_error')}`); 
+      setStatus(`[ERROR] ${t('roles.status_conn_error')}`); 
     }
   };
 
   return (
     <div className="p-12 min-h-full flex items-center justify-center bg-[#fcfcfc] dark:bg-[#080808] font-atkinson transition-colors duration-500">
-      <div className="w-full max-w-lg bg-white dark:bg-white/[0.02] border border-black/5 dark:border-white/5 p-10 shadow-sm hover:shadow-xl hover:border-copper/20 transition-all duration-700 animate-in fade-in zoom-in-95 duration-1000 relative overflow-hidden group">
+      <div className="w-full max-w-lg bg-white dark:bg-white/[0.02] border border-black/5 dark:border-white/5 p-10 shadow-none hover:border-copper/20 transition-all duration-700 animate-in fade-in zoom-in-95 duration-1000 relative overflow-hidden group rounded-none">
         <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-copper/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-1000"></div>
         
         <header className="mb-10 flex flex-col items-center text-center">
@@ -81,7 +81,7 @@ export const AdminRoleManager: React.FC = () => {
             <M3Button 
               variant="primary" 
               onClick={handleUpdate} 
-              className="w-full !py-8 !rounded-none shadow-lg hover:shadow-copper/20 transition-all duration-500 text-[10px] font-black tracking-widest"
+              className="w-full !py-8 !rounded-none shadow-none transition-all duration-500 text-[10px] font-black tracking-widest"
               icon="security"
             >
               {t('roles.btn_assign')}
@@ -89,17 +89,13 @@ export const AdminRoleManager: React.FC = () => {
           </div>
 
           {status && (
-            <div className="mt-8 p-4 bg-black/[0.02] dark:bg-white/[0.01] border border-black/5 dark:border-white/5 animate-in slide-in-from-top-4 duration-500">
+            <div className="mt-8 p-4 bg-black/[0.02] dark:bg-white/[0.01] border border-black/5 dark:border-white/5 animate-in slide-in-from-top-4 duration-500 rounded-none">
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-center text-copper">
                 {status}
               </p>
             </div>
           )}
         </div>
-
-        <footer className="mt-12 pt-8 border-t border-black/5 dark:border-white/5 flex justify-center opacity-20">
-          <span className="text-[9px] font-black uppercase tracking-[0.5em]">{t('common.secure_node', 'SECURE NODE')}</span>
-        </footer>
       </div>
     </div>
   );

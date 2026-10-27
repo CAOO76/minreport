@@ -37,7 +37,7 @@ export default function ChecklistHistory({ globalAssetId }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const response = await authFetch(`${API_BASE}/api/checklist/history?globalAssetId=${globalAssetId}`);
+      const response = await authFetch(`${API_BASE}/checklist/history?globalAssetId=${globalAssetId}`);
       
       if (!response.ok) throw new Error('Error al cargar historial.');
       
@@ -75,7 +75,7 @@ export default function ChecklistHistory({ globalAssetId }: Props) {
       <span className="material-symbols-outlined" style={{ fontSize: 32 }}>error</span>
       <p style={{ fontSize: '0.9rem', marginTop: 12 }}>{error}</p>
       <button onClick={fetchHistory} style={{ 
-        marginTop: 16, padding: '8px 16px', borderRadius: 8, border: 'none',
+        marginTop: 16, padding: '8px 16px', borderRadius: 0, border: 'none',
         background: 'var(--color-primary)', color: 'white', cursor: 'pointer'
       }}>REINTENTAR</button>
     </div>
@@ -94,7 +94,7 @@ export default function ChecklistHistory({ globalAssetId }: Props) {
   };
 
   return (
-    <div className="checklist-history" style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: 16, fontFamily: 'Atkinson Hyperlegible' }}>
+    <div className="checklist-history" style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: 16, fontFamily: 'Atkinson Hyperlegible Next, Atkinson Hyperlegible, sans-serif' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <h3 style={{ fontSize: '0.9rem', fontWeight: 800, margin: 0 }}>Historial Reciente</h3>
         <button onClick={fetchHistory} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-primary)' }}>
@@ -106,13 +106,13 @@ export default function ChecklistHistory({ globalAssetId }: Props) {
         const isExpanded = expandedId === ins.id;
         return (
           <div key={ins.id} style={{
-            padding: '16px', borderRadius: 16, border: '1px solid var(--color-outline-variant)',
+            padding: '16px', borderRadius: 0, border: '1px solid var(--color-outline-variant)',
             background: 'var(--color-surface-container-low)', display: 'flex', flexDirection: 'column', gap: 12,
             transition: 'all 0.2s ease'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
               <div style={{ 
-                width: 48, height: 48, borderRadius: 12, background: 'var(--color-primary-container)',
+                width: 48, height: 48, borderRadius: 0, background: 'var(--color-primary-container)',
                 color: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center'
               }}>
                 <span className="material-symbols-outlined">
@@ -156,7 +156,7 @@ export default function ChecklistHistory({ globalAssetId }: Props) {
                 {ins.items?.map((item: { componente: string; estado: string; status: string; observacion?: string; photoUrl?: string }, idx: number) => (
                   <div key={idx} style={{ 
                     padding: 12, 
-                    borderRadius: 12, 
+                    borderRadius: 0, 
                     background: 'var(--color-surface-container)',
                     display: 'flex',
                     flexDirection: 'column',
@@ -168,7 +168,7 @@ export default function ChecklistHistory({ globalAssetId }: Props) {
                         fontSize: '0.75rem', 
                         fontWeight: 700,
                         padding: '2px 8px',
-                        borderRadius: 6,
+                        borderRadius: 0,
                         background: item.status === 'PASS' ? 'var(--color-success-container)' : 'var(--color-error-container)',
                         color: item.status === 'PASS' ? 'var(--color-on-success-container)' : 'var(--color-on-error-container)'
                       }}>
@@ -181,7 +181,7 @@ export default function ChecklistHistory({ globalAssetId }: Props) {
                     )}
                     
                     {item.photoUrl && (
-                      <div style={{ marginTop: 4, borderRadius: 8, overflow: 'hidden', border: '1px solid var(--color-outline-variant)' }}>
+                      <div style={{ marginTop: 4, borderRadius: 0, overflow: 'hidden', border: '1px solid var(--color-outline-variant)' }}>
                         <img 
                           src={item.photoUrl} 
                           alt={`Foto de ${item.componente}`} 

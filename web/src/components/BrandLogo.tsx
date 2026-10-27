@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useTheme } from '../context/ThemeContext';
-import { useBranding } from '../context/BrandingContext';
+import { useBranding, getCanonicalBrandingPath } from '../context/BrandingContext';
 
-type LogoVariant = 'isotype' | 'logotype' | 'imagotype' | 'imagotypeVertical';
+export type LogoVariant = 'isotype' | 'logotype' | 'imagotype' | 'imagotypeVertical';
 
 interface BrandLogoProps {
     variant?: LogoVariant;
@@ -15,20 +15,13 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({ variant = 'imagotype', cla
     const { branding } = useBranding();
     const theme = forcedTheme || contextTheme;
 
-    const officialLocalUrl = `/branding/master_${variant}.svg`;
+    const officialLocalUrl = getCanonicalBrandingPath(variant);
     const [imgSrc, setImgSrc] = useState<string>(officialLocalUrl);
     const [hasError, setHasError] = useState<boolean>(false);
 
     useEffect(() => {
-        const firestoreUrl = branding?.[theme]?.[variant];
-        const isOfflineEmulator = firestoreUrl && (
-            firestoreUrl.includes('localhost:9195') ||
-            firestoreUrl.includes('localhost:9196') ||
-            firestoreUrl.includes('127.0.0.1:9195') ||
-            firestoreUrl.includes('127.0.0.1:9196')
-        );
-
-        if (firestoreUrl && firestoreUrl.trim() !== '' && !isOfflineEmulator) {
+        const firestoreUrl = branding?.[theme]?.[variant] || branding?.svgDataUris?.[variant];
+        if (firestoreUrl && firestoreUrl.trim() !== '') {
             setImgSrc(firestoreUrl);
             setHasError(false);
         } else {
@@ -37,7 +30,9 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({ variant = 'imagotype', cla
         }
     }, [branding, theme, variant, officialLocalUrl]);
 
-    // Fallback vectorial industrial puro si el activo falla en red o almacenamiento
+    const shouldInvertInDark = (branding?.invertDarkMap?.[variant] ?? true) && theme === 'dark';
+
+    // Fallback vectorial industrial puro si tanto Storage como el activo local fallan
     if (hasError) {
         if (variant === 'isotype') {
             return (
@@ -96,13 +91,16 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({ variant = 'imagotype', cla
             alt={`MINREPORT ${variant}`}
             loading="eager"
             onError={() => {
-                if (imgSrc !== officialLocalUrl) {
+                const svgFallback = branding?.svgDataUris?.[variant];
+                if (svgFallback && imgSrc !== svgFallback) {
+                    setImgSrc(svgFallback);
+                } else if (imgSrc !== officialLocalUrl) {
                     setImgSrc(officialLocalUrl);
                 } else {
                     setHasError(true);
                 }
             }}
-            className={`object-contain select-none pointer-events-none dark:invert dark:brightness-200 dark:contrast-125 ${className}`}
+            className={`object-contain select-none pointer-events-none ${shouldInvertInDark ? 'invert brightness-200 contrast-125' : ''} ${className}`}
             draggable={false}
             onContextMenu={(e) => e.preventDefault()}
             style={{ WebkitUserDrag: 'none' } as React.CSSProperties}

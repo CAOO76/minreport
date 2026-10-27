@@ -17,6 +17,7 @@ import AccountSelector from './components/auth/AccountSelector';
 import LoadingScreen from './components/common/LoadingScreen';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import { PWAInstallPrompt } from './components/common/PWAInstallPrompt';
+import DevImpersonationHUD from './components/dev/DevImpersonationHUD';
 
 // Code-split heavy modules & secondary pages (Capa 2 Performance)
 const OpermaqModule = lazy(() => import('./modules/opermaq/OpermaqModule').then(m => ({ default: m.OpermaqModule })));
@@ -34,7 +35,6 @@ const MetricasPage = lazy(() => import('./pages/b2b/MetricasPage').then(m => ({ 
 const SuscripcionPage = lazy(() => import('./pages/b2b/SuscripcionPage').then(m => ({ default: m.SuscripcionPage })));
 const MobileProfile = lazy(() => import('./pages/mobile/MobileProfile'));
 const DevVaultGateway = lazy(() => import('./pages/dev/DevVaultGateway').then(m => ({ default: m.DevVaultGateway })));
-import DevImpersonationHUD from './components/dev/DevImpersonationHUD';
 
 const RequireAuthLayout = () => {
     const { user, profile, currentAccount, loading, switchAccount, signOut } = useAuth();
@@ -66,12 +66,10 @@ const DashboardRouter = () => {
     const membership = profile?.memberships.find((m: any) => m.accountId === currentAccount?.id);
     const userRole = membership?.role;
 
-    // Detectar clasificación de cuenta (Web 3.0 Identity System)
     const classification = currentAccount?.classification;
     const type = currentAccount?.type?.toUpperCase();
     const isEnterpriseAccount = classification === 'b2b-corporate' || type === 'ENTERPRISE' || type === 'BUSINESS';
 
-    // Corporate Logic: Owner of B2B account or BILLING_ONLY role
     const isCorporateView = isEnterpriseAccount && (
         userRole === 'BILLING_ONLY' ||
         user?.uid === currentAccount?.ownerId
@@ -91,14 +89,14 @@ const AppRoutes = () => {
             <Route path="/setup-access" element={<SetupAccess />} />
             <Route path="/auth/action" element={<SetPassword />} />
 
-            {/* Portal Secreto de Desarrollo (Aislado / noindex) */}
+            {/* Portal Secreto de Desarrollo (1º DEV) */}
             <Route path="/dev" element={<DevVaultGateway />} />
             <Route path="/dev-vault-gateway" element={<Navigate to="/dev" replace />} />
 
             {/* Login Móvil Independiente */}
             <Route path="/mobile/login" element={<MobileLogin />} />
 
-            {/* 📱 Rutas Móviles (Protegidas) */}
+            {/* Rutas Móviles (Protegidas) */}
             <Route path="/mobile" element={<RequireAuthLayout />}>
                 <Route path="dashboard" element={<MobileDashboard />} />
                 <Route path="tools" element={<MobileTools />} />
@@ -109,7 +107,7 @@ const AppRoutes = () => {
             {/* Protected Routes with Client Layout */}
             <Route element={<RequireAuthLayout />}>
                 <Route path="/dashboard" element={<DashboardRouter />} />
-                {/* [MONOLITO MODULAR WEB 3.0] Módulos Industriales Centralizados */}
+                {/* Módulos Industriales Integrados en MINREPORT */}
                 <Route path="/opermaq" element={<OpermaqModule />} />
                 <Route path="/stockpile" element={<StockpileModule />} />
                 <Route path="/job-profiles" element={<JobProfilesPage />} />

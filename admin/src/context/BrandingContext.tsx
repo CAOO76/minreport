@@ -3,31 +3,53 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { useTheme } from './ThemeContext';
 
-interface LogoSet {
+export interface LogoSet {
     isotype: string;
     logotype: string;
     imagotype: string;
+    imagotypeVertical?: string;
     pwaIcon?: string;
     appIcon?: string;
 }
 
-interface BrandingConfig {
+export interface BrandingConfig {
     light: LogoSet;
     dark: LogoSet;
     siteName?: string;
     primaryColor?: string;
+    invertDarkMap?: { [key: string]: boolean };
+    svgDataUris?: { [key: string]: string };
 }
 
-/**
- * Utility to fix branding URLs for local network testing.
- */
-const fixBrandingUrl = (url: string): string => {
-    if (!url) return '';
-    const currentHost = location.hostname;
+export const getCanonicalBrandingPath = (key: string): string => {
+    const fileKey = key === 'imagotypeVertical' ? 'imagotype_vertical' : key;
+    return `/branding/master_${fileKey}.svg`;
+};
 
-    if (currentHost !== 'localhost' && currentHost !== '127.0.0.1') {
-        return url.replace(/localhost|127\.0\.0\.1/g, currentHost);
+export const fixBrandingUrl = (url?: string, key?: string): string => {
+    if (!url || url.trim() === '') {
+        return key ? getCanonicalBrandingPath(key) : '';
     }
+
+    if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('/branding/')) {
+        return url;
+    }
+
+    const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+    const isLocalEnv = currentHost === 'localhost' || currentHost === '127.0.0.1';
+    const isEmulatorUrl =
+        url.includes('localhost:9195') ||
+        url.includes('127.0.0.1:9195') ||
+        url.includes('localhost:9196') ||
+        url.includes('127.0.0.1:9196');
+
+    if (isEmulatorUrl) {
+        if (isLocalEnv) {
+            return url.replace(/localhost|127\.0\.0\.1/g, currentHost);
+        }
+        return key ? getCanonicalBrandingPath(key) : url;
+    }
+
     return url;
 };
 
@@ -46,19 +68,32 @@ export const BrandingProvider: React.FC<{ children: ReactNode }> = ({ children }
     const { theme } = useTheme();
 
     useEffect(() => {
-        // Escuchar cambios en tiempo real desde Firestore
         const docRef = doc(db, 'settings', 'branding');
 
         const unsubscribe = onSnapshot(docRef, (docSnap) => {
             if (docSnap.exists()) {
                 const rawData = docSnap.data() as BrandingConfig;
+                const svgUris = rawData.svgDataUris || {};
 
                 const fixLogoSet = (set: any): LogoSet => {
-                    const result: any = { isotype: '', logotype: '', imagotype: '', pwaIcon: '', appIcon: '' };
-                    if (!set) return result;
+                    const keys: (keyof LogoSet)[] = ['isotype', 'logotype', 'imagotype', 'imagotypeVertical', 'pwaIcon', 'appIcon'];
+                    const result: any = {};
 
-                    Object.keys(set).forEach(key => {
-                        result[key] = fixBrandingUrl(set[key]);
+                    keys.forEach((key) => {
+                        const rawUrl = set?.[key];
+                        const resolved = fixBrandingUrl(rawUrl, key);
+                        if (
+                            svgUris[key] &&
+                            rawUrl &&
+                            (rawUrl.includes('localhost:9195') || rawUrl.includes('127.0.0.1:9195')) &&
+                            typeof window !== 'undefined' &&
+                            window.location.hostname !== 'localhost' &&
+                            window.location.hostname !== '127.0.0.1'
+                        ) {
+                            result[key] = svgUris[key];
+                        } else {
+                            result[key] = resolved || svgUris[key] || getCanonicalBrandingPath(key);
+                        }
                     });
                     return result;
                 };
@@ -67,37 +102,43 @@ export const BrandingProvider: React.FC<{ children: ReactNode }> = ({ children }
                     ...rawData,
                     light: fixLogoSet(rawData.light),
                     dark: fixLogoSet(rawData.dark),
+                    invertDarkMap: rawData.invertDarkMap || {
+                        isotype: true,
+                        logotype: true,
+                        imagotype: true,
+                        imagotypeVertical: true,
+                        pwaIcon: true,
+                        appIcon: true,
+                    },
+                    svgDataUris: svgUris,
                 };
 
                 setBranding(data);
 
-                // 🖼️ Dynamic Page Title Support
                 if (rawData.siteName) {
                     document.title = `${rawData.siteName} | Admin Ops`;
                 }
-            } else {
-                console.warn("Branding settings not found in Firestore.");
             }
             setLoading(false);
         }, (error) => {
-            console.error("Error listening to branding changes:", error);
+            console.error('Error listening to branding changes:', error);
             setLoading(false);
         });
 
         return () => unsubscribe();
     }, []);
 
-    // Favicon se gobierna de forma nativa mediante /favicon.svg (con soporte @media prefers-color-scheme en el SVG)
-  // evitando canvas tainted, latencia o sobreescritura con imágenes de baja resolución.
-  useEffect(() => {
-    if (!branding) return;
+    useEffect(() => {
+        if (!branding) return;
 
-    const customIcon = theme === 'dark' ? branding.dark?.pwaIcon : branding.light?.pwaIcon;
-    if (customIcon && !customIcon.includes('master_')) {
-      const link = document.querySelector<HTMLLinkElement>("link[rel~='icon']");
-      if (link) link.href = customIcon;
-    }
-  }, [branding, theme]);
+        const customIcon =
+            (theme === 'dark' ? branding.dark?.pwaIcon : branding.light?.pwaIcon) ||
+            (theme === 'dark' ? branding.dark?.isotype : branding.light?.isotype);
+        if (customIcon) {
+            const link = document.querySelector<HTMLLinkElement>("link[rel~='icon']");
+            if (link) link.href = customIcon;
+        }
+    }, [branding, theme]);
 
     return (
         <BrandingContext.Provider value={{ branding, loading }}>

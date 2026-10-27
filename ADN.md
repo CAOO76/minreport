@@ -1,32 +1,26 @@
-# ADN MINREPORT: Manifiesto de Visión y Estrategia
+# ADN MINREPORT: Manifiesto de Visión y Arquitectura Web 3.0
 
 ## 1. Misión Principal
-Transformar la pequeña minería mediante tecnología de bajo costo, democratizando el acceso a información crítica y capas profesionales externas.
+Transformar la minería mediante ingeniería de control, telemetría de maquinaria y cubicación volumétrica de alta precisión, democratizando el acceso a inteligencia operativa, trazabilidad bancaria e inferencia resiliente en faena.
 
 ## 2. Visión Estratégica
-Convertirse en el estándar de control y reportabilidad para la pequeña minería inicialmente en Chile, para luego expandirse a LATAM y mercados globales con segmentos similares.
+Consolidarse como el estándar operativo y de reportabilidad minera desde Chile (`southamerica-west1`) hacia LATAM y mercados globales bajo el paradigma de **Minimalismo Industrial Puro** (*Coffee-Tech Engineering & Bauhaus Funcional*).
 
-## 3. Pilares Tecnológicos
-- **Integración Móvil y Sensado de Bajo Costo**:
-  - Utilización exhaustiva del hardware de dispositivos móviles (cámaras para escaneo volumétrico, GPS, sensores inerciales).
-  - Integración de **sensores multipropósito de bajo costo** para el control operativo en tiempo real.
-- **Arquitectura de Plugins Extensible**:
-  - Sistema modular que permite inyectar lógica especializada (costos, leyes, flotas, RRHH).
-  - Capacidad de integrar **plugins de terceros** para potenciar los alcances y funcionalidades integrales del sistema.
-- **Ecosistema Colaborativo y de Mercado**:
-  - **Marketplace Especializado**: Un espacio 100% dedicado a la pequeña minería donde fabricantes y proveedores de servicios tienen contacto directo con el segmento.
-  - **Puente con la Academia**: Integración activa de universidades y centros de estudio para investigación aplicada y transferencia tecnológica.
-  - **Conexión Profesional**: Trabajo a distancia para geólogos e ingenieros.
+## 3. Jerarquía Soberana de 5 Tipos de Cuenta
+1. **1º DEV (`DEV_ROOT` / `dev@minreport.com`):** Gobierno de ingeniería, arquitectura núcleo, bóvedas maestras ISO y creación/gestión exclusiva de colaboradores `TEST-PILOT`.
+2. **2º ADMIN (`SUPER_ADMIN` / `admin@minreport.com`):** Operación comercial y administrativa del negocio MINREPORT, contratos B2B, aprobaciones EDU, disponibilidad de módulos y auditoría del ledger.
+3. **3º TEST-PILOT (`TEST_PILOT` / `PILOT_LEAD`):** Expertos humanos de dominio minero acreditados por `DEV`. Operan con interfaz y HUD transversal dedicado sobre todos los módulos (integrados e independientes) para simular proyectos mineros, comentar en contexto, solicitar correcciones y entrenar/curar la IA interna de MINREPORT (`hitl_candidates`, `pilot_feedback`).
+4. **4º CLIENTES B2B (`B2B`):** Empresas y faenas mineras con aislamiento multi-tenant estricto por `accountId` (`tenantId`).
+5. **5º EDU (`EDUCATIONAL`):** Universidades y centros académicos en entorno sandbox controlado (`isEduSandbox: true`).
 
-## 4. Estado de Desarrollo Actual (V2.0.1)
-- **Núcleo Backend**: Totalmente operativo sobre Google Cloud Run y Firebase Gen 2 (Región: southamerica-west1). Incluye capas de seguridad, orquestación de plugins y gestión de identidades corporativas.
-- **Ecosistema Web/PWA**: Interfaz de usuario de alta fidelidad basada en el estándar "Industrial Minimalism". Módulos de registro corporativo, DASHBOARD operativo y gestión de personal activos.
-- **Capacidad Mobile**: Aplicación móvil integrada mediante Capacitor 6, con sincronización en tiempo real para desarrollo y preparación para despliegue en tiendas (Android/iOS).
-- **SDK Propio**: Biblioteca de componentes y utilidades (`sdk/ui.tsx`) que garantiza la consistencia visual y técnica en todas las plataformas y para futuros plugins de terceros.
-- **Arquitectura de Plugins**: Infraestructura de carga dinámica (Module Federation) implementada y funcional tanto en cliente como en servidor.
-
-## 5. Diferenciación
-A diferencia de los sistemas mineros tradicionales diseñados para la gran minería, MINREPORT se enfoca en la **viabilidad económica**, la **usabilidad táctica** y la creación de un **ecosistema integral** en condiciones de pequeña explotación.
+## 4. Arquitectura Polimórfica Dual-Mode (Versión 3.0.0)
+- **Módulos Nativos Federados (`OPERMAQ` y `STOCKPILE CONTROL`):** Operan 100% integrados en el núcleo de MINREPORT (`/opermaq`, `/stockpile`) y, simultáneamente, pueden ejecutarse y desplegarse como aplicaciones independientes (Standalone PWA / Capacitor App / Dominios dedicados) compartiendo **una única base de datos Cloud Firestore y Cloud Storage**, la misma identidad Firebase Auth, los mismos contratos Zod (`web/src/contracts/index.ts`) y el mismo motor Offline-First (`SyncQueueEngine`).
+- **Cinco Capas Web 3.0:**
+  1. **Capa 1:** Perímetro Cloudflare Edge + Zaraz (0 KB de scripts de terceros en cliente).
+  2. **Capa 2:** React / Vite / Capacitor 6 PWA con ergonomía ISO 9241-300 (`Atkinson Hyperlegible Next` / `Mono`, Cobre `#C68346`, Cian `#00AEEF`, `rounded-none`, `shadow-none`, Proporción Áurea $\Phi$ y secuencia Fibonacci) e higiene GPU (`dispose()`).
+  3. **Capa 3:** Identidad FIDO2 / Passkeys + Monetización M2M bajo protocolo `x402Gatekeeper.ts` (`HTTP 402 Payment Required`) y trazabilidad SHA-256 en `audit-ledger.ts`.
+  4. **Capa 4:** Enjambre Gemini AI centralizado en `resilient-ai-client.ts` (`gemini-2.5-pro` ➔ `gemini-2.5-flash` ➔ `gemini-2.5-flash-lite`) con caché determinista SHA-256 y aprobación humana HITL (`"ACTUALIZAR"`).
+  5. **Capa 5:** Persistencia y cómputo exclusivos en Google Cloud `southamerica-west1` (Santiago, Chile). Prohibición absoluta de Google App Engine.
 
 ---
-*Este documento constituye la fuente de verdad para la dirección del desarrollo de software de MINREPORT.*
+*Este documento constituye la fuente de verdad estratégica de MINREPORT Web 3.0.*

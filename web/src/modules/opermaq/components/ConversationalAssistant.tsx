@@ -61,7 +61,7 @@ export const ConversationalAssistant: React.FC<ConversationalAssistantProps> = (
       };
       setMessages([...newHistory, modelMessage]);
     } catch {
-      setMessages([...newHistory, { role: 'model', text: '❌ Error de conexión con el núcleo de conocimiento.' }]);
+      setMessages([...newHistory, { role: 'model', text: '[ERROR] Error de conexión con el núcleo de conocimiento.' }]);
     } finally {
       setIsLoading(false);
     }
@@ -114,14 +114,14 @@ export const ConversationalAssistant: React.FC<ConversationalAssistantProps> = (
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div
-              className={`max-w-[80%] px-4 py-3 text-xs leading-relaxed ${
+              className={`max-w-[80%] px-4 py-3 text-xs leading-relaxed rounded-none ${
                 msg.role === 'user'
-                  ? 'bg-[#b08d57] text-white'
-                  : 'bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-black dark:text-white shadow-sm'
+                  ? 'bg-[#C68346] text-white'
+                  : 'bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-black dark:text-white shadow-none'
               }`}
             >
               {msg.role === 'model' && (
-                <p className="text-[8px] font-black uppercase tracking-widest text-[#b08d57] mb-1">SISTEMA</p>
+                <p className="text-[8px] font-black uppercase tracking-widest text-[#C68346] mb-1">SISTEMA</p>
               )}
               <p className="whitespace-pre-wrap">{msg.text}</p>
             </div>
@@ -130,12 +130,12 @@ export const ConversationalAssistant: React.FC<ConversationalAssistantProps> = (
 
         {isLoading && (
           <div className="flex justify-start">
-            <div className="bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 px-4 py-3 shadow-sm">
-              <p className="text-[8px] font-black uppercase tracking-widest text-[#b08d57] mb-1">SISTEMA</p>
+            <div className="bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 px-4 py-3 shadow-none rounded-none">
+              <p className="text-[8px] font-black uppercase tracking-widest text-[#C68346] mb-1">SISTEMA</p>
               <div className="flex gap-1 items-center h-4">
-                <div className="w-1.5 h-1.5 rounded-none bg-[#b08d57] animate-bounce" style={{ animationDelay: '0ms' }} />
-                <div className="w-1.5 h-1.5 rounded-none bg-[#b08d57] animate-bounce" style={{ animationDelay: '150ms' }} />
-                <div className="w-1.5 h-1.5 rounded-none bg-[#b08d57] animate-bounce" style={{ animationDelay: '300ms' }} />
+                <div className="w-1.5 h-1.5 rounded-none bg-[#C68346] animate-bounce" style={{ animationDelay: '0ms' }} />
+                <div className="w-1.5 h-1.5 rounded-none bg-[#C68346] animate-bounce" style={{ animationDelay: '150ms' }} />
+                <div className="w-1.5 h-1.5 rounded-none bg-[#C68346] animate-bounce" style={{ animationDelay: '300ms' }} />
               </div>
             </div>
           </div>
@@ -156,8 +156,9 @@ export const ConversationalAssistant: React.FC<ConversationalAssistantProps> = (
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && sendMessage(input)}
           placeholder="Consulta técnica..."
-          className="flex-1 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 px-4 py-2.5 text-xs outline-none focus:border-[#b08d57] transition-colors text-black dark:text-white placeholder:text-black/30 dark:placeholder:text-white/20"
+          className="flex-1 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 px-4 py-2.5 text-xs outline-none focus:border-[#C68346] transition-colors text-black dark:text-white placeholder:text-black/30 dark:placeholder:text-white/20 rounded-none"
           autoComplete="off"
+          spellCheck={false}
           disabled={isLoading}
         />
         <M3IconButton

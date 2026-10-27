@@ -38,7 +38,7 @@ export const M3TextField: React.FC<M3TextFieldProps> = ({
                     className={`m3-text-field-input w-full h-14 pt-5 pb-1 px-4 text-base 
                         bg-antigravity-light-surface dark:bg-antigravity-dark-surface 
                         text-antigravity-light-text dark:text-antigravity-dark-text 
-                        rounded-none border transition-all duration-200 outline-none
+                        rounded-none shadow-none border transition-all duration-200 outline-none
                         ${hasError
                             ? 'border-red-500'
                             : 'border-antigravity-light-input dark:border-antigravity-dark-border focus:border-antigravity-accent dark:focus:border-antigravity-accent'
@@ -62,7 +62,7 @@ export const M3TextField: React.FC<M3TextFieldProps> = ({
 
             {error && (
                 <div className="m3-text-field-error mt-1 text-xs text-red-500 px-4 flex items-center gap-1">
-                    <span className="material-symbols-rounded text-sm">error</span> {error}
+                    <span className="material-symbols-outlined text-sm">error</span> {error}
                 </div>
             )}
 

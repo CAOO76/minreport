@@ -156,7 +156,7 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
                             selectedId === account.accountId ? "text-antigravity-accent translate-x-1" : "text-black/10 dark:text-white/10 group-hover:text-black/40 dark:group-hover:text-white/40 group-hover:translate-x-1"
                         )}>
                             {selectedId === account.accountId && loading ? (
-                                <div className="w-5 h-5 border-2 border-antigravity-accent border-t-transparent rounded-full animate-spin" />
+                                <div className="w-5 h-5 border-2 border-antigravity-accent border-t-transparent rounded-none animate-spin" />
                             ) : (
                                 <span className="material-symbols-outlined text-[24px]">
                                     {selectedId === account.accountId ? 'check_circle' : 'chevron_right'}

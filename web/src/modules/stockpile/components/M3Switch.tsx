@@ -27,13 +27,13 @@ export const M3Switch: React.FC<M3SwitchProps> = ({
                     role="switch"
                     aria-checked={checked}
                     aria-label={label}
-                    className={`relative w-12 h-6 rounded-none transition-colors duration-200 outline-none focus:ring-2 focus:ring-antigravity-accent focus:ring-offset-2
+                    className={`relative w-12 h-6 rounded-none shadow-none transition-colors duration-200 outline-none focus:ring-2 focus:ring-antigravity-accent focus:ring-offset-2
                         ${checked ? 'bg-antigravity-accent' : 'bg-antigravity-light-border dark:bg-antigravity-dark-border'}`}
                     onClick={handleChange}
                     disabled={disabled}
                     type="button"
                 >
-                    <span className={`absolute top-1 left-1 w-4 h-4 rounded-none bg-white transition-transform duration-200 shadow-sm
+                    <span className={`absolute top-1 left-1 w-4 h-4 rounded-none bg-white transition-transform duration-200 shadow-none
                         ${checked ? 'transform translate-x-6' : ''}`}
                     />
                 </button>

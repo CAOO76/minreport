@@ -405,7 +405,7 @@ export const EmpresaPage = () => {
                                     />
                                     <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 text-gray-400 pointer-events-none">
                                         {isGoogleLoaded ? <span className="material-symbols-outlined text-[14px]">search</span> : (
-                                            <div className="w-3 h-3 border border-gray-300 dark:border-gray-700 border-t-[#C68346] animate-spin rounded-full" />
+                                            <div className="w-3 h-3 border border-gray-300 dark:border-gray-700 border-t-[#C68346] animate-spin rounded-none" />
                                         )}
                                     </div>
                                 </div>

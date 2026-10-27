@@ -17,21 +17,20 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children, embedded
   const isEmbedded = embedded || (typeof window !== "undefined" && !!(window as any)._firebase_initialized);
 
   const [isDark, setIsDark] = useState(() => {
-    if (typeof document !== "undefined") {
-      if (document.documentElement.classList.contains("dark")) return true;
+    if (typeof document !== "undefined" && document.documentElement.classList.contains("dark")) {
+      return true;
     }
-    if (!isEmbedded) {
-      const saved = typeof localStorage !== "undefined" ? localStorage.getItem("opermaq_theme") : null;
-      if (saved) return saved === "dark";
-      if (typeof window !== "undefined" && window.matchMedia) {
-        return window.matchMedia("(prefers-color-scheme: dark)").matches;
-      }
+    const saved = typeof localStorage !== "undefined"
+      ? (localStorage.getItem("theme") || localStorage.getItem("opermaq_theme"))
+      : null;
+    if (saved) return saved === "dark";
+    if (!isEmbedded && typeof window !== "undefined" && window.matchMedia) {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches;
     }
     return false;
   });
 
   useEffect(() => {
-    // Si corre embebido en MINREPORT, observamos pasivamente document.documentElement sin pisar las clases
     if (isEmbedded) {
       const checkDark = () => {
         const hasDark = document.documentElement.classList.contains("dark");
@@ -47,21 +46,20 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children, embedded
       return () => observer.disconnect();
     }
 
-    // Modo independiente (standalone DEV)
     const html = document.documentElement;
     if (isDark) {
       html.classList.add("dark");
       document.body.classList.add("dark");
-      localStorage.setItem("opermaq_theme", "dark");
+      localStorage.setItem("theme", "dark");
     } else {
       html.classList.remove("dark");
       document.body.classList.remove("dark");
-      localStorage.setItem("opermaq_theme", "light");
+      localStorage.setItem("theme", "light");
     }
   }, [isDark, isEmbedded]);
 
   const toggleTheme = () => {
-    if (isEmbedded) return; // Gobernanza centralizada en MINREPORT
+    if (isEmbedded) return;
     setIsDark(prev => !prev);
   };
 

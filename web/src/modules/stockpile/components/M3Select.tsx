@@ -29,7 +29,7 @@ export const M3Select: React.FC<M3SelectProps> = ({
                     className="m3-select-input w-full h-14 pt-5 pb-1 px-4 text-base 
                         bg-antigravity-light-surface dark:bg-antigravity-dark-surface 
                         text-antigravity-light-text dark:text-antigravity-dark-text 
-                        rounded-none border-b border-antigravity-light-border dark:border-antigravity-dark-border 
+                        rounded-none shadow-none border-b border-antigravity-light-border dark:border-antigravity-dark-border 
                         transition-all duration-200 outline-none focus:border-antigravity-accent appearance-none"
                     value={value}
                     onChange={(e) => onChange(e.target.value)}
@@ -48,7 +48,7 @@ export const M3Select: React.FC<M3SelectProps> = ({
                 </label>
 
                 <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-antigravity-light-muted dark:text-antigravity-dark-muted">
-                    <span className="material-symbols-rounded">arrow_drop_down</span>
+                    <span className="material-symbols-outlined">arrow_drop_down</span>
                 </div>
             </div>
 

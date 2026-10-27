@@ -107,7 +107,7 @@ export const AdminAssetRegistration: React.FC<AdminAssetRegistrationProps> = ({ 
     };
 
     return (
-        <div className="bg-background max-w-lg w-full border border-border-base flex flex-col font-atkinson overflow-hidden shadow-2xl relative rounded-none">
+        <div className="bg-background max-w-lg w-full border border-border-base flex flex-col font-atkinson overflow-hidden shadow-none relative rounded-none">
             <header className="p-4 flex items-center justify-between bg-surface border-b border-border-base">
                 <div className="flex items-center gap-2">
                     <span className="w-1 h-3 bg-foreground"></span>

@@ -1,55 +1,91 @@
 {
     "projectInfo": {
-        "name": "MINREPORT B2B",
-        "theme": "Elite Industrial Minimalism"
+        "name": "MINREPORT Web 3.0",
+        "theme": "Minimalismo Industrial Puro (Coffee-Tech & Bauhaus Funcional)",
+        "architecture": "Polimórfica Federada Dual-Mode (Host Integrado + Standalone App sobre Base de Datos Única)"
     },
+    "accountHierarchy": [
+        "1_DEV (DEV_ROOT / dev@minreport.com)",
+        "2_ADMIN (SUPER_ADMIN / admin@minreport.com)",
+        "3_TEST_PILOT (Expertos Co-Dev & Curación IA)",
+        "4_B2B (Clientes Corporativos Mineros)",
+        "5_EDU (Academia & Sandboxes)"
+    ],
     "typography": {
         "primaryFont": "Atkinson Hyperlegible Next",
         "monoFont": "Atkinson Hyperlegible Mono",
-        "headingWeights": [
-            600,
-            700
-        ],
-        "bodyWeights": [
-            400,
-            500
-        ]
+        "prohibitedFonts": ["Google Sans", "Roboto", "Inter"],
+        "numericAlignment": "tabular-nums font-mono",
+        "tokens": {
+            "text-hero-display": "clamp(2.5rem, 6vw, 5rem)",
+            "text-kpi-display": "2.25rem",
+            "text-h1-header": "1.375rem",
+            "text-h2-section": "1.0625rem",
+            "text-body-main": "0.9375rem",
+            "text-data-dense": "0.8125rem",
+            "text-microcopy": "0.6875rem"
+        }
     },
     "colors": {
         "accent": "#C68346",
         "accentCyan": "#00AEEF",
+        "prohibitedColors": ["#FFCD00"],
         "backgrounds": {
             "light": "#FFFFFF",
-            "dark": "#111827",
-            "surfaceLight": "#F9FAFB",
-            "surfaceDark": "#1F2937"
+            "dark": "#000000",
+            "surfaceLight": "#F8FAFC",
+            "surfaceDark": "#07090D",
+            "borderLight": "#E2E8F0",
+            "borderDark": "#12151C"
         },
         "text": {
-            "primaryLight": "#111827",
-            "secondaryLight": "#4B5563",
-            "primaryDark": "#F9FAFB",
-            "secondaryDark": "#9CA3AF"
+            "primaryLight": "#0F172A",
+            "secondaryLight": "#475569",
+            "disabledLight": "#94A3B8",
+            "primaryDark": "#F3F4F6",
+            "secondaryDark": "#8A93A6",
+            "disabledDark": "#5A6072"
         }
     },
     "geometry": {
         "borderRadius": "0px",
-        "tailwindClass": "rounded-none"
+        "tailwindClass": "rounded-none",
+        "boxShadow": "none",
+        "shadowClass": "shadow-none",
+        "goldenRatio": {
+            "major": "61.8%",
+            "minor": "38.2%"
+        },
+        "fibonacciSpacing": {
+            "fib-8": "8px",
+            "fib-13": "13px",
+            "fib-21": "21px",
+            "fib-34": "34px",
+            "fib-55": "55px",
+            "fib-89": "89px"
+        }
     },
     "components": {
         "switch": "M3Switch",
+        "iconFont": "material-symbols-outlined",
+        "iconButtonClass": "bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer",
         "inputs": {
             "autocomplete": "off",
-            "borderConfig": "border-gray-200 dark:border-gray-700"
-        }
+            "spellCheck": false,
+            "borderConfig": "border-[#E2E8F0] dark:border-[#12151C]"
+        },
+        "hitlConfirmationKeyword": "ACTUALIZAR"
     },
     "accessibility": {
+        "standard": "ISO 9241-300 / WCAG 2.2 AAA",
         "minimumContrastRatioNormal": 4.5,
         "minimumContrastRatioCritical": 7.0
     },
     "region": "southamerica-west1",
     "restrictions": [
         "No App Engine dependencies",
-        "No global ID collisions with Host",
+        "No external plugin SDK or MockSecureContext",
+        "Single Firestore & Storage source of truth across Integrated and Standalone modes",
         "No destructive emulator database resets during dev"
     ]
 }

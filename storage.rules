@@ -1,8 +1,48 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    match /{allPaths=**} {
-      allow read, write: if true;
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isSystemPrivileged() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'SUPER_ADMIN' ||
+        request.auth.token.role == 'DEV_ROOT' ||
+        request.auth.token.role == 'TEST_PILOT' ||
+        request.auth.token.role == 'PILOT_LEAD' ||
+        request.auth.token.isMasterDev == true ||
+        request.auth.token.email == 'admin@minreport.com' ||
+        request.auth.token.email == 'dev@minreport.com'
+      );
+    }
+
+    // Activos públicos de marca (solo lectura pública, escritura exclusiva Admin/Dev)
+    match /branding/{allPaths=**} {
+      allow read: if true;
+      allow write: if isSystemPrivileged();
+    }
+
+    // Manuales técnicos globales y corpus IA (lectura habilitada para visor técnico, escritura exclusiva Admin/Dev/Test-Pilot)
+    match /manuals/{allPaths=**} {
+      allow read: if true;
+      allow write: if isSystemPrivileged();
+    }
+
+    // Evidencia fotogramétrica, mallas 3D (.glb) e imágenes WebP por Tenant
+    match /tenants/{tenantId}/{allPaths=**} {
+      allow read, write: if isSystemPrivileged() || (
+        isAuthenticated() && (
+          request.auth.token.activeAccountId == tenantId ||
+          tenantId == 'faena-minreport'
+        )
+      );
+    }
+
+    // Archivos operativos de módulos (stockpiles, opermaq, edu, etc.)
+    match /{moduleFolder}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && request.resource.size < 25 * 1024 * 1024;
     }
   }
 }

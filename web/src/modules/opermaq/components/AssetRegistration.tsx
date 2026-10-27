@@ -179,7 +179,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 dark:bg-black/75 backdrop-blur-xs p-4">
-            <div className="bg-surface border border-border-base w-full max-w-md flex flex-col font-atkinson overflow-hidden shadow-2xl relative rounded-none animate-in zoom-in-95 duration-200">
+            <div className="bg-surface border border-border-base w-full max-w-md flex flex-col font-atkinson overflow-hidden shadow-none relative rounded-none animate-in zoom-in-95 duration-200">
                 
                 {/* Header */}
                 <header className="px-6 py-4 flex items-center justify-between border-b border-border-base bg-surface/80 relative">

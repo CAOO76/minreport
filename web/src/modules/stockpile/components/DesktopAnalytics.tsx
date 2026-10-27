@@ -809,7 +809,7 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                 </button>
                             </div>
 
-                            <form onSubmit={handleCreateAssetSubmit} className="space-y-4">
+                            <form onSubmit={handleCreateAssetSubmit} autoComplete="off" spellCheck={false} className="space-y-4">
                                 <div>
                                     <label className="text-[10px] font-mono font-bold uppercase text-slate-500 block mb-1">
                                         NOMBRE / CÓDIGO DEL ACOPIO *
@@ -974,7 +974,7 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                 </button>
                             </div>
 
-                            <form onSubmit={handleCreateMeasurementSubmit} className="space-y-4">
+                            <form onSubmit={handleCreateMeasurementSubmit} autoComplete="off" spellCheck={false} className="space-y-4">
                                 <div>
                                     <label className="text-[10px] font-mono font-bold uppercase text-slate-500 block mb-1">
                                         MÉTODO DE INGRESO
@@ -1036,6 +1036,7 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                                     onChange={(e) => setConeD1(e.target.value)}
                                                     placeholder="45.0"
                                                     autoComplete="off"
+                                                    spellCheck={false}
                                                     className="w-full h-9 px-2 bg-slate-50 dark:bg-black border border-slate-200 dark:border-[#12151C] text-xs font-mono tabular-nums focus:border-[#C68346] outline-none rounded-none"
                                                 />
                                             </div>
@@ -1050,6 +1051,7 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                                     onChange={(e) => setConeD2(e.target.value)}
                                                     placeholder="30.0"
                                                     autoComplete="off"
+                                                    spellCheck={false}
                                                     className="w-full h-9 px-2 bg-slate-50 dark:bg-black border border-slate-200 dark:border-[#12151C] text-xs font-mono tabular-nums focus:border-[#C68346] outline-none rounded-none"
                                                 />
                                             </div>
@@ -1064,6 +1066,7 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                                     onChange={(e) => setConeH(e.target.value)}
                                                     placeholder="12.5"
                                                     autoComplete="off"
+                                                    spellCheck={false}
                                                     className="w-full h-9 px-2 bg-slate-50 dark:bg-black border border-slate-200 dark:border-[#12151C] text-xs font-mono tabular-nums focus:border-[#C68346] outline-none rounded-none"
                                                 />
                                             </div>
@@ -1082,6 +1085,7 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                         onChange={(e) => setMeasDensity(e.target.value)}
                                         placeholder="2.20"
                                         autoComplete="off"
+                                        spellCheck={false}
                                         className="w-full h-10 px-3 bg-slate-50 dark:bg-black border border-slate-200 dark:border-[#12151C] text-xs font-mono font-bold tabular-nums focus:border-[#C68346] outline-none rounded-none"
                                     />
                                 </div>

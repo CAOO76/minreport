@@ -18,15 +18,15 @@ export const M3IconButton: React.FC<M3IconButtonProps> = ({
   ...props
 }) => {
   const variants = {
-    primary: 'bg-copper text-white hover:bg-copper/90',
-    secondary: 'bg-surface text-foreground hover:opacity-80 border border-border-base',
-    ghost: 'text-muted hover:text-copper transition-colors'
+    primary: 'bg-transparent border-0 outline-none p-1 text-[#C68346] hover:text-[#C68346]/80 transition-colors cursor-pointer',
+    secondary: 'bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer',
+    ghost: 'bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer'
   };
 
   return (
     <button
       className={cn(
-        "flex items-center justify-center transition-all duration-200 rounded-none w-10 h-10 shrink-0",
+        "flex items-center justify-center rounded-none shadow-none w-9 h-9 shrink-0",
         variants[variant],
         className
       )}

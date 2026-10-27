@@ -195,7 +195,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
     const selectedIdx = selectedCandidateIdx[c.concept_id];
 
     return (
-      <div key={c.concept_id} className="border border-black/10 dark:border-white/10 p-5 bg-white dark:bg-zinc-950 space-y-4 rounded-none shadow-sm">
+      <div key={c.concept_id} className="border border-black/10 dark:border-white/10 p-5 bg-white dark:bg-zinc-950 space-y-4 rounded-none shadow-none">
         {/* Fila superior: Info básica + Botón Buscar */}
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1 min-w-0 flex-1">
@@ -343,7 +343,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
   // Renderizado de tarjetas de consolidados
   const renderConsolidatedCard = (c: MasterSymbologyItem) => {
     return (
-      <div key={c.concept_id} className="border border-black/10 dark:border-white/10 p-3 bg-white dark:bg-zinc-950 flex items-center gap-4 rounded-none shadow-sm">
+      <div key={c.concept_id} className="border border-black/10 dark:border-white/10 p-3 bg-white dark:bg-zinc-950 flex items-center gap-4 rounded-none shadow-none">
         <div className="w-12 h-12 border border-black/5 flex items-center justify-center bg-white shrink-0 overflow-hidden p-1">
           {c.standard_icon_url ? (
             <img src={c.standard_icon_url} alt={c.technical_name_es} className="max-w-full max-h-full object-contain" />

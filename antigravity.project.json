@@ -1,6 +1,12 @@
 {
-  "type": "APP",
+  "type": "MONOLITH_FEDERATED_SUITE",
+  "region": "southamerica-west1",
+  "architecture": "Web 3.0 5-Layer Hybrid (Dual-Mode Integrated + Standalone)",
+  "modules": ["opermaq", "stockpile"],
+  "accountTiers": ["DEV", "ADMIN", "TEST_PILOT", "B2B", "EDU"],
   "firebase": {
+    "projectId": "minreport-8f2a8",
+    "location": "southamerica-west1",
     "mode": "production"
   }
 }

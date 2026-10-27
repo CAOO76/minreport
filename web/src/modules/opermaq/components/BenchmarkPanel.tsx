@@ -49,9 +49,9 @@ function tendenciaColor(t: Tendencia) {
   return '#6b7280';
 }
 function tendenciaIcon(t: Tendencia) {
-  if (t === 'REDUCIR_INTERVALO')  return '⬇️';
-  if (t === 'EXTENDER_INTERVALO') return '⬆️';
-  return '➡️';
+  if (t === 'REDUCIR_INTERVALO')  return 'south';
+  if (t === 'EXTENDER_INTERVALO') return 'north';
+  return 'east';
 }
 function confianzaBadgeColor(c: Confianza) {
   const map: Record<Confianza, string> = { ALTA: '#22c55e', MEDIA: '#f59e0b', BAJA: '#ef4444' };
@@ -145,14 +145,14 @@ export default function BenchmarkPanel({ globalAssetId, makeModel }: Props) {
         }),
       });
       const data = await res.json();
-      setSubmitMsg(data.message ?? (data.success ? `✅ ${t('benchmark.form.success')}` : `❌ ${t('benchmark.form.error')}`));
+      setSubmitMsg(data.message ?? (data.success ? `[OK] ${t('benchmark.form.success')}` : `[ERROR] ${t('benchmark.form.error')}`));
       if (data.success) {
         setForm(f => ({ ...f, horasReales: '', notas: '' }));
         if (data.triggeredInsight) await handleGenerateReport();
         else await fetchInsights();
       }
       void email; // suppress unused
-    } catch { setSubmitMsg(`❌ ${t('benchmark.form.conn_error')}`); } finally { setSubmitting(false); }
+    } catch { setSubmitMsg(`[ERROR] ${t('benchmark.form.conn_error')}`); } finally { setSubmitting(false); }
   };
 
   const handleReview = async (insightId: string, decision: 'APROBADO' | 'RECHAZADO') => {
@@ -177,8 +177,9 @@ export default function BenchmarkPanel({ globalAssetId, makeModel }: Props) {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <div>
-          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, letterSpacing: '-0.01em' }}>
-            📊 {t('benchmark.title')}
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, letterSpacing: '-0.01em', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>bar_chart</span>
+            {t('benchmark.title')}
           </h3>
           <p style={{ margin: '2px 0 0', fontSize: 12, opacity: 0.55 }}>
             {t('benchmark.subtitle')}
@@ -187,15 +188,19 @@ export default function BenchmarkPanel({ globalAssetId, makeModel }: Props) {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           {pendingCount > 0 && (
             <span style={{ background: '#f59e0b', color: '#fff', fontSize: 11, fontWeight: 700,
-              padding: '2px 8px', borderRadius: 99 }}>
+              padding: '2px 8px', borderRadius: 0 }}>
               {pendingCount} {pendingCount > 1 ? t('benchmark.pendings') : t('benchmark.pending')}
             </span>
           )}
           <button onClick={handleGenerateReport} disabled={generating}
-            style={{ fontSize: 12, padding: '6px 12px', borderRadius: 8,
+            style={{ fontSize: 12, padding: '6px 12px', borderRadius: 0,
               border: '1px solid rgba(128,128,128,0.3)', background: 'transparent',
-              cursor: generating ? 'default' : 'pointer', opacity: generating ? 0.5 : 1 }}>
-            {generating ? `⚙️ ${t('benchmark.analyzing')}` : `🔄 ${t('benchmark.regenerate')}`}
+              cursor: generating ? 'default' : 'pointer', opacity: generating ? 0.5 : 1,
+              display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
+              {generating ? 'settings' : 'sync'}
+            </span>
+            {generating ? t('benchmark.analyzing') : t('benchmark.regenerate')}
           </button>
         </div>
       </div>
@@ -208,8 +213,12 @@ export default function BenchmarkPanel({ globalAssetId, makeModel }: Props) {
             style={{ fontSize: 13, fontWeight: tab === tabKey ? 600 : 400, padding: '6px 14px',
               border: 'none', background: 'none', cursor: 'pointer',
               borderBottom: tab === tabKey ? '2px solid currentColor' : '2px solid transparent',
-              opacity: tab === tabKey ? 1 : 0.5, transition: 'all .15s' }}>
-            {tabKey === 'insights' ? `📈 ${t('benchmark.tabs.insights')} (${insights.length})` : `➕ ${t('benchmark.tabs.register')}`}
+              opacity: tab === tabKey ? 1 : 0.5, transition: 'all .15s',
+              display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>
+              {tabKey === 'insights' ? 'trending_up' : 'add'}
+            </span>
+            {tabKey === 'insights' ? `${t('benchmark.tabs.insights')} (${insights.length})` : t('benchmark.tabs.register')}
           </button>
         ))}
       </div>
@@ -220,7 +229,7 @@ export default function BenchmarkPanel({ globalAssetId, makeModel }: Props) {
           {loading && <p style={{ opacity: 0.5, fontSize: 13 }}>{t('benchmark.loading')}</p>}
           {!loading && insights.length === 0 && (
             <div style={{ textAlign: 'center', padding: '32px 0', opacity: 0.4 }}>
-              <div style={{ fontSize: 36, marginBottom: 8 }}>📭</div>
+              <span className="material-symbols-outlined" style={{ fontSize: 36, marginBottom: 8 }}>inbox</span>
               <p style={{ fontSize: 13 }}>{t('benchmark.no_insights')}<br />{t('benchmark.no_insights_desc')}</p>
             </div>
           )}
@@ -230,7 +239,7 @@ export default function BenchmarkPanel({ globalAssetId, makeModel }: Props) {
               const desvioAbs  = Math.abs(ins.desvioPromedioPercent);
               return (
                 <div key={ins.id}
-                  style={{ border: '1px solid rgba(128,128,128,0.18)', borderRadius: 10, overflow: 'hidden' }}>
+                  style={{ border: '1px solid rgba(128,128,128,0.18)', borderRadius: 0, overflow: 'hidden' }}>
 
                   {/* Card header */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -238,16 +247,17 @@ export default function BenchmarkPanel({ globalAssetId, makeModel }: Props) {
                     onClick={() => setExpandedId(isExpanded ? null : ins.id)}>
                     <div style={{ flex: 1 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: 13, fontWeight: 600 }}>
-                          {tendenciaIcon(ins.tendencia)} {TIPO_LABELS[ins.tipoIntervencion]}
+                        <span style={{ fontSize: 13, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>{tendenciaIcon(ins.tendencia)}</span>
+                          {TIPO_LABELS[ins.tipoIntervencion]}
                         </span>
                         <span style={{ fontSize: 11, opacity: 0.55 }}>· {ins.operationalProfileLabel}</span>
-                        <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 99,
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 0,
                           background: ins.status === 'APROBADO' ? '#22c55e22' : ins.status === 'RECHAZADO' ? '#ef444422' : '#f59e0b22',
                           color: ins.status === 'APROBADO' ? '#16a34a' : ins.status === 'RECHAZADO' ? '#dc2626' : '#d97706' }}>
                           {ins.status === 'PENDIENTE_HITL' ? t('benchmark.labels.pending_review') : ins.status}
                         </span>
-                        <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 99,
+                        <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 0,
                           background: confianzaBadgeColor(ins.confianza) + '22',
                           color: confianzaBadgeColor(ins.confianza) }}>
                           {t('benchmark.labels.confidence')} {ins.confianza}
@@ -284,7 +294,7 @@ export default function BenchmarkPanel({ globalAssetId, makeModel }: Props) {
                           { label: t('benchmark.stats.deviation_vs_oem'), value: `${desvioAbs.toFixed(1)}%`, color: tendenciaColor(ins.tendencia) },
                           { label: t('benchmark.stats.base_events'),  value: `${ins.n}` },
                         ].map(s => (
-                          <div key={s.label} style={{ background: 'rgba(128,128,128,0.06)', borderRadius: 8, padding: '10px 12px' }}>
+                          <div key={s.label} style={{ background: 'rgba(128,128,128,0.06)', borderRadius: 0, padding: '10px 12px' }}>
                             <div style={{ fontSize: 10, opacity: 0.5, marginBottom: 2 }}>{s.label}</div>
                             <div style={{ fontSize: 16, fontWeight: 700, color: s.color }}>{s.value}</div>
                           </div>
@@ -297,7 +307,7 @@ export default function BenchmarkPanel({ globalAssetId, makeModel }: Props) {
                           <div style={{ fontSize: 10, opacity: 0.5, marginBottom: 6 }}>{t('benchmark.stats.condition_found')}</div>
                           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                             {Object.entries(ins.condicionDistribucion).map(([k, v]) => (
-                              <span key={k} style={{ fontSize: 11, padding: '3px 10px', borderRadius: 99,
+                              <span key={k} style={{ fontSize: 11, padding: '3px 10px', borderRadius: 0,
                                 background: 'rgba(128,128,128,0.1)', fontWeight: 500 }}>
                                 {t(`benchmark.conditions.${k}`, { defaultValue: k.replace(/_/g, ' ') })} ({v})
                               </span>
@@ -310,19 +320,20 @@ export default function BenchmarkPanel({ globalAssetId, makeModel }: Props) {
                       {ins.status === 'PENDIENTE_HITL' && (
                         <div style={{ display: 'flex', gap: 8, paddingTop: 12,
                           borderTop: '1px solid rgba(128,128,128,0.12)' }}>
-                          <span style={{ fontSize: 12, opacity: 0.6, flex: 1, alignSelf: 'center' }}>
-                            🔍 {t('benchmark.review_required')}
+                          <span style={{ fontSize: 12, opacity: 0.6, flex: 1, alignSelf: 'center', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <span className="material-symbols-outlined" style={{ fontSize: 15 }}>fact_check</span>
+                            {t('benchmark.review_required')}
                           </span>
                           <button onClick={() => handleReview(ins.id, 'RECHAZADO')}
                             disabled={reviewingId === ins.id}
-                            style={{ fontSize: 12, padding: '6px 14px', borderRadius: 8,
+                            style={{ fontSize: 12, padding: '6px 14px', borderRadius: 0,
                               border: '1px solid #ef4444', color: '#ef4444', background: 'transparent',
                               cursor: 'pointer', opacity: reviewingId === ins.id ? 0.5 : 1 }}>
                             ✗ {t('benchmark.reject')}
                           </button>
                           <button onClick={() => handleReview(ins.id, 'APROBADO')}
                             disabled={reviewingId === ins.id}
-                            style={{ fontSize: 12, padding: '6px 14px', borderRadius: 8,
+                            style={{ fontSize: 12, padding: '6px 14px', borderRadius: 0,
                               border: 'none', background: '#22c55e', color: '#fff',
                               cursor: 'pointer', opacity: reviewingId === ins.id ? 0.5 : 1, fontWeight: 600 }}>
                             ✓ {t('benchmark.approve')}
@@ -337,7 +348,7 @@ export default function BenchmarkPanel({ globalAssetId, makeModel }: Props) {
           </div>
 
           {insights.length > 0 && (
-            <div style={{ marginTop: 16, padding: '10px 16px', borderRadius: 8,
+            <div style={{ marginTop: 16, padding: '10px 16px', borderRadius: 0,
               background: 'rgba(128,128,128,0.05)', fontSize: 12, opacity: 0.7 }}>
               {approvedCount} aprobado(s) · {pendingCount} pendiente(s)
             </div>
@@ -347,14 +358,14 @@ export default function BenchmarkPanel({ globalAssetId, makeModel }: Props) {
 
       {/* Tab: Registro de evento */}
       {tab === 'register' && (
-        <form onSubmit={handleSubmitEvent} autoComplete="off">
+        <form onSubmit={handleSubmitEvent} autoComplete="off" spellCheck={false}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
 
             <div style={{ gridColumn: '1 / -1' }}>
               <label style={{ fontSize: 11, opacity: 0.55, display: 'block', marginBottom: 4 }}>{t('benchmark.form.type')}</label>
               <select value={form.tipoIntervencion}
                 onChange={e => setForm(f => ({ ...f, tipoIntervencion: e.target.value as TipoIntervencion }))}
-                style={{ width: '100%', padding: '8px 10px', borderRadius: 8,
+                style={{ width: '100%', padding: '8px 10px', borderRadius: 0,
                   border: '1px solid rgba(128,128,128,0.25)', background: 'transparent', fontSize: 13 }}>
                 {Object.entries(TIPO_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </select>
@@ -365,7 +376,9 @@ export default function BenchmarkPanel({ globalAssetId, makeModel }: Props) {
               <input type="number" min="1" required value={form.horasOem}
                 onChange={e => setForm(f => ({ ...f, horasOem: e.target.value }))}
                 placeholder="ej: 500"
-                style={{ width: '100%', padding: '8px 10px', borderRadius: 8,
+                autoComplete="off"
+                spellCheck={false}
+                style={{ width: '100%', padding: '8px 10px', borderRadius: 0,
                   border: '1px solid rgba(128,128,128,0.25)', background: 'transparent', fontSize: 13 }} />
             </div>
 
@@ -374,7 +387,9 @@ export default function BenchmarkPanel({ globalAssetId, makeModel }: Props) {
               <input type="number" min="1" required value={form.horasReales}
                 onChange={e => setForm(f => ({ ...f, horasReales: e.target.value }))}
                 placeholder="ej: 448"
-                style={{ width: '100%', padding: '8px 10px', borderRadius: 8,
+                autoComplete="off"
+                spellCheck={false}
+                style={{ width: '100%', padding: '8px 10px', borderRadius: 0,
                   border: '1px solid rgba(128,128,128,0.25)', background: 'transparent', fontSize: 13 }} />
             </div>
 
@@ -382,7 +397,7 @@ export default function BenchmarkPanel({ globalAssetId, makeModel }: Props) {
               <label style={{ fontSize: 11, opacity: 0.55, display: 'block', marginBottom: 4 }}>{t('benchmark.form.condition')}</label>
               <select value={form.condicionEncontrada}
                 onChange={e => setForm(f => ({ ...f, condicionEncontrada: e.target.value }))}
-                style={{ width: '100%', padding: '8px 10px', borderRadius: 8,
+                style={{ width: '100%', padding: '8px 10px', borderRadius: 0,
                   border: '1px solid rgba(128,128,128,0.25)', background: 'transparent', fontSize: 13 }}>
                 {CONDICION_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
@@ -393,38 +408,45 @@ export default function BenchmarkPanel({ globalAssetId, makeModel }: Props) {
               <input value={form.operationalProfileId}
                 onChange={e => setForm(f => ({ ...f, operationalProfileId: e.target.value }))}
                 placeholder="ej: cordillera_alta"
-                style={{ width: '100%', padding: '8px 10px', borderRadius: 8,
+                autoComplete="off"
+                spellCheck={false}
+                style={{ width: '100%', padding: '8px 10px', borderRadius: 0,
                   border: '1px solid rgba(128,128,128,0.25)', background: 'transparent', fontSize: 13 }} />
             </div>
 
             <div style={{ gridColumn: '1 / -1' }}>
               <label style={{ fontSize: 11, opacity: 0.55, display: 'block', marginBottom: 4 }}>{t('benchmark.form.notes')}</label>
               <textarea rows={2} value={form.notas}
-                onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                onChange={e => setForm(f => ({ ...f, notas: e.target.value }))}
                 placeholder={t('benchmark.form.notes_placeholder')}
-                style={{ width: '100%', padding: '8px 10px', borderRadius: 8, resize: 'vertical',
+                autoComplete="off"
+                spellCheck={false}
+                style={{ width: '100%', padding: '8px 10px', borderRadius: 0, resize: 'vertical',
                   border: '1px solid rgba(128,128,128,0.25)', background: 'transparent', fontSize: 13 }} />
             </div>
           </div>
 
-          <p style={{ fontSize: 11, opacity: 0.4, marginTop: 10, lineHeight: 1.5 }}>
-            🔒 {t('benchmark.form.anonymous_alert')}
+          <p style={{ fontSize: 11, opacity: 0.4, marginTop: 10, lineHeight: 1.5, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 14 }}>lock</span>
+            {t('benchmark.form.anonymous_alert')}
           </p>
 
           {submitMsg && (
-            <div style={{ marginTop: 8, fontSize: 13, padding: '8px 12px', borderRadius: 8,
-              background: submitMsg.includes('✅') ? '#22c55e18' : '#ef444418',
-              color: submitMsg.includes('✅') ? '#16a34a' : '#dc2626' }}>
+            <div style={{ marginTop: 8, fontSize: 13, padding: '8px 12px', borderRadius: 0,
+              background: submitMsg.includes('[OK]') ? '#22c55e18' : '#ef444418',
+              color: submitMsg.includes('[OK]') ? '#16a34a' : '#dc2626' }}>
               {submitMsg}
             </div>
           )}
 
           <button type="submit" disabled={submitting}
-            style={{ marginTop: 14, width: '100%', padding: '10px', borderRadius: 8,
-              border: 'none', background: '#1a1a2e', color: '#fff',
+            style={{ marginTop: 14, width: '100%', padding: '10px', borderRadius: 0,
+              border: 'none', background: '#C68346', color: '#fff',
               fontSize: 14, fontWeight: 600,
-              cursor: submitting ? 'default' : 'pointer', opacity: submitting ? 0.6 : 1 }}>
-            {submitting ? t('benchmark.form.registering') : `📥 ${t('benchmark.form.register_btn')}`}
+              cursor: submitting ? 'default' : 'pointer', opacity: submitting ? 0.6 : 1,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 16 }}>save</span>
+            {submitting ? t('benchmark.form.registering') : t('benchmark.form.register_btn')}
           </button>
         </form>
       )}

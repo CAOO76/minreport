@@ -57,7 +57,7 @@ export const M3SourceAuditModal: React.FC<M3SourceAuditModalProps> = ({
 
             {/* Modal Container */}
             <div 
-                className="relative w-full max-w-4xl bg-background shadow-2xl flex flex-col max-h-[90vh] overflow-hidden border border-border-base animate-in zoom-in-95 slide-in-from-bottom-4 duration-300"
+                className="relative w-full max-w-4xl bg-background shadow-none rounded-none flex flex-col max-h-[90vh] overflow-hidden border border-border-base animate-in zoom-in-95 slide-in-from-bottom-4 duration-300"
             >
                 {/* Header */}
                 <header className="p-6 border-b border-black/5 dark:border-white/5 flex items-center justify-between">

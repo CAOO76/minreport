@@ -229,7 +229,7 @@ export function VaultManagerPanel({ globalAssetId, isSealed, onClose }: VaultMan
       {/* Modal de Confirmación */}
       {confirmModal.show && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-surface rounded-2xl shadow-xl max-w-sm w-full p-6 text-foreground font-atkinson border border-border-base">
+          <div className="bg-surface rounded-none shadow-none max-w-sm w-full p-6 text-foreground font-atkinson border border-border-base">
             <h3 className="text-xl font-bold mb-2 text-foreground">{confirmModal.title}</h3>
             <p className="text-sm opacity-70 mb-6 text-foreground">{confirmModal.message}</p>
             <div className="flex justify-end gap-2">

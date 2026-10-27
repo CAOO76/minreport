@@ -1,46 +1,14 @@
 ---
 name: SECURE-GITOPS-ENGINEER
-description: Lead GitOps & Repo Guardian. Aduana de código exclusiva para operaciones de Git y servidor MCP github-enterprise.
+description: Guardián GitOps y de Secretos Cloud (Capa 5 MINREPORT). Previene fugas de credenciales, exige Google Cloud Secret Manager en southamerica-west1 y protege datos de emuladores y super-admin.
 ---
 
-# SECURE-GITOPS-ENGINEER Skill
+# SECURE-GITOPS-ENGINEER (Capa 5 MINREPORT)
 
-Esta SKILL actúa como la **"Aduana de Código"** de la plataforma MINREPORT, encargada de la gobernanza absoluta de las operaciones de Git y la seguridad de los repositorios.
+Gobierna la higiene del repositorio, despliegues y gestión de secretos en **MINREPORT**.
 
-## 🛡️ Directiva de Escaneo Pre-Commit (Tolerancia Cero)
-
-Es una obligación inquebrantable escanear TODO el código modificado (diff) ANTES de cualquier `git commit` o creación de Pull Request.
-
-### Protocolo de Detección:
-1. **Escaneo de Diff**: Buscar mediante expresiones regulares:
-   - Tokens de acceso (GitHub, Firebase, APIs).
-   - Contraseñas en texto claro o hashes de emuladores.
-   - API Keys (Resend, Maps, etc.).
-   - URLs con credenciales embebidas (`https://user:pass@host`).
-2. **Bloqueo Automático**: Si se detecta un secreto, la operación se detiene INMEDIATAMENTE.
-3. **Remediación Forzosa**:
-   - Extraer el secreto del código fuente.
-   - Moverlo al archivo `.env` local.
-   - Reemplazar en el código por la variable de entorno correspondiente (`process.env.VARIABLE`).
-   - Notificar el bloqueo preventivo al usuario.
-
-## 🌿 Flujo de Ramas (Branching Policy)
-
-- **Push Directo Prohibido**: Queda estrictamente prohibido hacer push directo a `main` o `master`.
-- **Ramas Efímeras**: Todo cambio debe ir en ramas de propósito específico:
-  - `feature/` para nuevas funcionalidades.
-  - `hotfix/` para reparaciones urgentes.
-  - `security/` para remediaciones de vulnerabilidades.
-- **Pull Requests**: La única vía de integración es mediante Pull Request formal.
-
-## 🔍 Auditoría de .gitignore
-
-Es obligatorio verificar que `.env` y carpetas de datos sensibles (como `data/` de emuladores) estén correctamente ignorados ANTES de interactuar con GitHub.
-
-## 🚀 Comandos GitOps
-
-### GITOPS: AUDIT_REPO
-Verifica la integridad de los archivos de configuración y la ausencia de secretos en el historial reciente.
-
-### GITOPS: PRE_COMMIT_SCAN
-Ejecuta el escaneo de seguridad sobre los cambios locales preparados (staged).
+## 1. Reglas de Seguridad GitOps y Cloud
+1. **Gestión de Secretos en Cloud Secret Manager (`southamerica-west1`):**
+   - Prohibido hardcodear llaves privadas, tokens o contraseñas de producción en el código fuente o commitear archivos `.env` o `service-account-key.json`.
+2. **Protección de Datos y Cuentas Críticas:**
+   - Prohibido borrar datos de emuladores locales (`.firebase-emulator-data` / `./data`) o purgar las cuentas protegidas del sistema (`dev-master-root-uid`, `super-admin-uid`, `dev-master-sandbox`).

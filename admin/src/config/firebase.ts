@@ -1,10 +1,15 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, connectAuthEmulator } from "firebase/auth";
-import { initializeFirestore, connectFirestoreEmulator } from "firebase/firestore";
+import {
+    initializeFirestore,
+    connectFirestoreEmulator,
+    persistentLocalCache,
+    persistentMultipleTabManager
+} from "firebase/firestore";
 import { getStorage, connectStorageEmulator } from "firebase/storage";
 
 /**
- * MINREPORT - Firebase Admin Config (BRUTAL E2E PATCH)
+ * MINREPORT - Firebase Admin Config (Southamerica-West1 / Web 3.0)
  */
 
 const firebaseConfig = {
@@ -16,28 +21,30 @@ const firebaseConfig = {
     appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:123456789:web:abcdef"
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
-// 🔥 FORZAR LONG POLLING PARA EVITAR FREEZE EN ADMIN (Global Setup Fix) 🔥
+const isLocal = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+const useEmulators = isLocal && import.meta.env.VITE_USE_FIREBASE_EMULATOR !== "false";
+
 const db = initializeFirestore(app, {
-    experimentalForceLongPolling: true, // 👈 Clave para estabilidad en tests automatizados
+    localCache: useEmulators ? undefined : persistentLocalCache({
+        tabManager: persistentMultipleTabManager()
+    }),
+    experimentalForceLongPolling: useEmulators,
 });
 
 const storage = getStorage(app);
 
-// 🔥🔥🔥 PARCHE DE EMERGENCIA E2E (ADMIN / POLLING) 🔥🔥🔥
-console.warn("%c🚨 ADMIN: EMULADORES ACTIVOS (LONG-POLLING) 🚨", "color: orange; font-weight: bold;");
-
-try {
-    // Sincronizado a puerto 9190 (Auth real del proyecto) y 8085 (Firestore)
-    connectAuthEmulator(auth, "http://127.0.0.1:9190", { disableWarnings: true });
-    connectFirestoreEmulator(db, "127.0.0.1", 8085);
-    connectStorageEmulator(storage, "127.0.0.1", 9195);
-    console.log("✅ ADMIN: Emuladores vinculados con Polling.");
-} catch (e) {
-    console.error("❌ ADMIN: Error de vinculación:", e);
+if (useEmulators) {
+    try {
+        const host = window.location.hostname;
+        connectAuthEmulator(auth, `http://${host}:9190`, { disableWarnings: true });
+        connectFirestoreEmulator(db, host, 8085);
+        connectStorageEmulator(storage, host, 9195);
+    } catch (e) {
+        console.error("[ADMIN] Error conectando emuladores:", e);
+    }
 }
 
 export { app, auth, db, storage };

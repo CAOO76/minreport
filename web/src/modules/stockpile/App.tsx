@@ -7,8 +7,7 @@ import { CaptureSelection } from './components/CaptureSelection';
 import { DesktopAnalytics } from './components/DesktopAnalytics';
 import VisionAnalyzer from './components/VisionAnalyzer';
 import { usePlatform } from './hooks/usePlatform';
-import { MainLayout } from './layouts/MainLayout';
-import { MockSecureContext } from './services/sdk-mock';
+import { MainLayout, type ViewState } from './layouts/MainLayout';
 import { dataService } from './services/DataService';
 import { ManualCapture } from './components/ManualCapture';
 import { StockpileRegistration } from './components/StockpileRegistration';
@@ -20,39 +19,46 @@ import type { GeometryType } from './components/GeometrySelection';
 import { ThemeToggle } from './components/ThemeToggle';
 import { SyncIndicator } from './components/SyncIndicator';
 
-export type ViewState =
-  | 'home'
-  | 'registration'
-  | 'stock_list'
-  | 'asset_portada'
-  | 'selection'
-  | 'geometry_selection'
-  | 'capture'
-  | 'manual_capture'
-  | 'vision'
-  | 'results'
-  | 'measurement_detail'
-  | 'management';
+export type { ViewState };
 
 export interface StockpileAppProps {
-  tenantContext?: any;
+  tenantContext?: {
+    tenantId?: string;
+    userId?: string;
+  };
   embedded?: boolean;
   onTelemetryEvent?: (event: any) => void;
 }
 
-function App({ tenantContext, embedded, onTelemetryEvent }: StockpileAppProps = {}) {
+function App({ tenantContext, embedded = false, onTelemetryEvent }: StockpileAppProps = {}) {
   const { isNative } = usePlatform();
-  const [view, setView] = useState<ViewState>('home');
+  const [view, setView] = useState<ViewState>(isNative ? 'home' : 'management');
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [selectedMeasurementId, setSelectedMeasurementId] = useState<string | null>(null);
   const [selectedGeometry, setSelectedGeometry] = useState<GeometryType>('CONO_ELIPTICO');
 
-  // Efecto para establecer la vista inicial
+  // Sincronización de contexto multi-tenant con DataService (Firestore + IndexedDB + SyncQueueEngine)
   useEffect(() => {
-    if (!dataService.hasContext()) {
-      dataService.setSecureContext(MockSecureContext);
+    dataService.setTenantContext({
+      tenantId: tenantContext?.tenantId || 'faena-minreport',
+      userId: tenantContext?.userId || 'operador'
+    });
+  }, [tenantContext?.tenantId, tenantContext?.userId]);
+
+  // Pre-seleccionar primer activo disponible si existe para habilitar cubicación directa
+  useEffect(() => {
+    let active = true;
+    if (!selectedAssetId) {
+      dataService.getAllAssets().then((assets) => {
+        if (active && assets.length > 0 && !selectedAssetId) {
+          setSelectedAssetId(assets[0].id);
+        }
+      }).catch(() => {});
     }
-  }, []);
+    return () => {
+      active = false;
+    };
+  }, [selectedAssetId, view]);
 
   useEffect(() => {
     if (isNative) {
@@ -81,16 +87,13 @@ function App({ tenantContext, embedded, onTelemetryEvent }: StockpileAppProps = 
 
   const handleAddMeasurement = () => {
     if (!selectedAssetId) {
-      // Guard: nunca navegar a capture sin un activo seleccionado
-      console.warn('[App] handleAddMeasurement llamado sin selectedAssetId — redirigiendo al home');
-      setView('home');
+      setView('stock_list');
       return;
     }
     setView('selection');
   };
 
   const handleCaptureSuccess = async (measurementId: string) => {
-    console.log('[App] Capture Success:', measurementId);
     if (onTelemetryEvent) {
       onTelemetryEvent({
         type: 'CUBICATION_COMPLETED',
@@ -102,10 +105,12 @@ function App({ tenantContext, embedded, onTelemetryEvent }: StockpileAppProps = 
     setView('asset_portada');
   };
 
-  const handleAnalysisComplete = (result: { type: string; image: string }) => {
-    console.log('[App] Vision analysis complete:', result);
-    // Aquí podrías navegar a resultados o guardar directamente
-    setView('asset_portada');
+  const handleAnalysisComplete = (_result: { type: string; image: string }) => {
+    if (selectedAssetId) {
+      setView('asset_portada');
+    } else {
+      setView(isNative ? 'home' : 'management');
+    }
   };
 
   const pageVariants = {
@@ -114,154 +119,196 @@ function App({ tenantContext, embedded, onTelemetryEvent }: StockpileAppProps = 
     exit: { opacity: 0, x: -20 },
   };
 
-  // VERSIÓN MÓVIL
+  const renderOperationalView = () => {
+    switch (view) {
+      case 'management':
+        return <DesktopAnalytics embedded={embedded} />;
+
+      case 'home':
+        return (
+          <MobileHome
+            onStartNewScan={handleStartRegistration}
+            onViewRecords={() => setView('stock_list')}
+          />
+        );
+
+      case 'registration':
+        return (
+          <StockpileRegistration
+            onSuccess={handleRegistrationSuccess}
+            onCancel={() => setView(isNative ? 'home' : 'management')}
+          />
+        );
+
+      case 'stock_list':
+        return (
+          <StockList
+            onSelectAsset={(id) => {
+              setSelectedAssetId(id);
+              setView('asset_portada');
+            }}
+            onBack={() => setView(isNative ? 'home' : 'management')}
+          />
+        );
+
+      case 'asset_portada':
+      case 'dashboard':
+        if (!selectedAssetId) {
+          return (
+            <StockList
+              onSelectAsset={(id) => {
+                setSelectedAssetId(id);
+                setView('asset_portada');
+              }}
+              onBack={() => setView(isNative ? 'home' : 'management')}
+            />
+          );
+        }
+        return (
+          <StockpileDashboard
+            assetId={selectedAssetId}
+            onAddMeasurement={handleAddMeasurement}
+            onSelectMeasurement={(mid) => {
+              setSelectedMeasurementId(mid);
+              setView('measurement_detail');
+            }}
+            onBack={() => setView(isNative ? 'home' : 'stock_list')}
+          />
+        );
+
+      case 'selection':
+        return (
+          <CaptureSelection
+            onSelection={(type) => {
+              if (type === 'digital') setView('capture');
+              else setView('geometry_selection');
+            }}
+            onBack={() => setView(selectedAssetId ? 'asset_portada' : (isNative ? 'home' : 'management'))}
+          />
+        );
+
+      case 'geometry_selection':
+        return (
+          <GeometrySelection
+            onSelection={(type) => {
+              setSelectedGeometry(type);
+              setView('manual_capture');
+            }}
+            onBack={() => setView('selection')}
+          />
+        );
+
+      case 'capture':
+        return selectedAssetId ? (
+          <MobileScanner
+            assetId={selectedAssetId}
+            onSuccess={handleCaptureSuccess}
+            onBack={() => setView('selection')}
+          />
+        ) : (
+          <div className="h-full w-full flex flex-col items-center justify-center gap-[21px] bg-white dark:bg-[#000000] p-[34px]">
+            <span className="material-symbols-outlined text-5xl text-[#C68346]">inventory_2</span>
+            <p className="text-[#475569] dark:text-[#8A93A6] text-xs font-bold uppercase tracking-widest text-center">
+              Seleccione o registre un acopio antes de iniciar la captura fotogramétrica
+            </p>
+            <div className="flex items-center gap-[13px]">
+              <button
+                type="button"
+                onClick={() => setView('stock_list')}
+                className="px-[21px] py-[13px] bg-[#C68346] text-white font-bold text-xs uppercase tracking-widest rounded-none shadow-none"
+              >
+                Seleccionar Acopio
+              </button>
+              <button
+                type="button"
+                onClick={() => setView('registration')}
+                className="px-[21px] py-[13px] border border-[#E2E8F0] dark:border-[#12151C] text-[#0F172A] dark:text-[#F3F4F6] font-bold text-xs uppercase tracking-widest rounded-none shadow-none"
+              >
+                Registrar Nuevo
+              </button>
+            </div>
+          </div>
+        );
+
+      case 'manual_capture':
+        return selectedAssetId ? (
+          <ManualCapture
+            assetId={selectedAssetId}
+            initialGeometry={selectedGeometry}
+            onSuccess={handleCaptureSuccess}
+            onBack={() => setView('geometry_selection')}
+          />
+        ) : (
+          <div className="h-full w-full flex flex-col items-center justify-center gap-[21px] bg-white dark:bg-[#000000] p-[34px]">
+            <span className="material-symbols-outlined text-5xl text-[#C68346]">straighten</span>
+            <p className="text-[#475569] dark:text-[#8A93A6] text-xs font-bold uppercase tracking-widest text-center">
+              Seleccione o registre un acopio antes de ingresar mediciones geométricas
+            </p>
+            <button
+              type="button"
+              onClick={() => setView('stock_list')}
+              className="px-[21px] py-[13px] bg-[#C68346] text-white font-bold text-xs uppercase tracking-widest rounded-none shadow-none"
+            >
+              Seleccionar Acopio
+            </button>
+          </div>
+        );
+
+      case 'measurement_detail':
+        return selectedMeasurementId ? (
+          <MeasurementDetail
+            measurementId={selectedMeasurementId}
+            onBack={() => setView('asset_portada')}
+          />
+        ) : (
+          <DesktopAnalytics embedded={embedded} />
+        );
+
+      case 'vision':
+        return (
+          <div className="w-full h-[calc(100vh-120px)] min-h-[520px]">
+            <VisionAnalyzer onAnalysisComplete={handleAnalysisComplete} />
+          </div>
+        );
+
+      default:
+        return <DesktopAnalytics embedded={embedded} />;
+    }
+  };
+
+  // VERSIÓN MÓVIL NATIVA
   if (isNative) {
     return (
-      <div className="relative h-screen w-screen overflow-hidden bg-black">
-        <ThemeToggle />
+      <div className={`relative ${embedded ? 'h-full w-full flex-1' : 'h-screen w-screen'} overflow-hidden bg-white dark:bg-[#000000]`}>
         <AnimatePresence mode="wait">
-          {view === 'home' && (
-              <motion.div key="home" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="h-full w-full">
-                <MobileHome
-                  onStartNewScan={handleStartRegistration}
-                  onViewRecords={() => setView('stock_list')}
-                />
-              </motion.div>
-            )}
-
-            {view === 'registration' && (
-              <motion.div key="reg" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="h-full w-full">
-                <StockpileRegistration
-                  onSuccess={handleRegistrationSuccess}
-                  onCancel={() => setView('home')}
-                />
-              </motion.div>
-            )}
-
-            {view === 'stock_list' && (
-              <motion.div key="list" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="h-full w-full">
-                <StockList
-                  onSelectAsset={(id) => {
-                    setSelectedAssetId(id);
-                    setView('asset_portada');
-                  }}
-                  onBack={() => setView('home')}
-                />
-              </motion.div>
-            )}
-
-            {view === 'asset_portada' && selectedAssetId && (
-              <motion.div key="portada" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="h-full w-full">
-                <StockpileDashboard
-                  assetId={selectedAssetId}
-                  onAddMeasurement={handleAddMeasurement}
-                  onSelectMeasurement={(mid) => {
-                    setSelectedMeasurementId(mid);
-                    setView('measurement_detail');
-                  }}
-                  onBack={() => setView('home')}
-                />
-              </motion.div>
-            )}
-
-            {view === 'selection' && (
-              <motion.div key="selection" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="h-full w-full">
-                <CaptureSelection
-                  onSelection={(type) => {
-                    if (type === 'digital') setView('capture');
-                    else setView('geometry_selection');
-                  }}
-                  onBack={() => setView('asset_portada')}
-                />
-              </motion.div>
-            )}
-
-            {view === 'geometry_selection' && (
-              <motion.div key="geometry" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="h-full w-full">
-                <GeometrySelection
-                  onSelection={(type) => {
-                    setSelectedGeometry(type);
-                    setView('manual_capture');
-                  }}
-                  onBack={() => setView('selection')}
-                />
-              </motion.div>
-            )}
-
-            {view === 'capture' && (
-              <motion.div key="capture" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="h-full w-full">
-                {selectedAssetId ? (
-                  <MobileScanner
-                    assetId={selectedAssetId}
-                    onSuccess={handleCaptureSuccess}
-                    onBack={() => setView('selection')}
-                  />
-                ) : (
-                  // Guard: pantalla de error recuperable si no hay assetId (nunca debería ocurrir)
-                  <div className="h-full w-full flex flex-col items-center justify-center gap-6 bg-antigravity-dark-bg p-8">
-                    <span className="material-symbols-outlined text-6xl text-red-500">error</span>
-                    <p className="text-white/60 text-xs font-bold uppercase tracking-widest text-center">Sin activo seleccionado</p>
-                    <button onClick={() => setView('home')} className="px-6 py-3 bg-antigravity-accent text-white font-black text-xs uppercase tracking-widest">
-                      ← Volver al inicio
-                    </button>
-                  </div>
-                )}
-              </motion.div>
-            )}
-
-            {view === 'manual_capture' && (
-              <motion.div key="manual" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="h-full w-full">
-                {selectedAssetId ? (
-                  <ManualCapture
-                    assetId={selectedAssetId}
-                    initialGeometry={selectedGeometry}
-                    onSuccess={handleCaptureSuccess}
-                    onBack={() => setView('geometry_selection')}
-                  />
-                ) : (
-                  // Guard: pantalla de error recuperable
-                  <div className="h-full w-full flex flex-col items-center justify-center gap-6 bg-antigravity-dark-bg p-8">
-                    <span className="material-symbols-outlined text-6xl text-red-500">error</span>
-                    <p className="text-white/60 text-xs font-bold uppercase tracking-widest text-center">Activo no disponible</p>
-                    <button onClick={() => setView('home')} className="px-6 py-3 bg-antigravity-accent text-white font-black text-xs uppercase tracking-widest">
-                      ← Volver al inicio
-                    </button>
-                  </div>
-                )}
-              </motion.div>
-            )}
-
-            {view === 'measurement_detail' && selectedMeasurementId && (
-              <motion.div key="detail" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="h-full w-full">
-                <MeasurementDetail
-                  measurementId={selectedMeasurementId}
-                  onBack={() => setView('asset_portada')}
-                />
-              </motion.div>
-            )}
-
-          {view === 'vision' && (
-            <motion.div key="vision" variants={pageVariants} initial="initial" animate="animate" exit="exit" className="h-full w-full">
-              <VisionAnalyzer context={MockSecureContext} onAnalysisComplete={handleAnalysisComplete} />
-            </motion.div>
-          )}
+          <motion.div
+            key={view}
+            variants={pageVariants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            className="h-full w-full"
+          >
+            {renderOperationalView()}
+          </motion.div>
         </AnimatePresence>
-        <ThemeToggle />
-        <SyncIndicator />
+        {!embedded && <ThemeToggle />}
+        {!embedded && <SyncIndicator />}
       </div>
     );
   }
 
-  // VERSIÓN WEB: CON MainLayout (plugin embebido)
+  // VERSIÓN WEB / DUAL-MODE (Integrado en Host o Standalone)
   return (
     <MainLayout
-      view={view as any}
-      setView={setView as any}
+      view={view}
+      setView={setView}
       hasActiveStockpile={!!selectedAssetId}
+      embedded={embedded}
     >
       {!embedded && <ThemeToggle />}
       {!embedded && <SyncIndicator />}
-      <DesktopAnalytics embedded={embedded} />
+      {renderOperationalView()}
     </MainLayout>
   );
 }

@@ -187,7 +187,7 @@ function highlightInNode(node: React.ReactNode, activeHighlightText?: string): R
       parts.push(
         <mark 
           key={`mark-${idxKey++}-${Math.random()}`} 
-          className="bg-amber-200 dark:bg-amber-900/60 text-black dark:text-white px-1 py-0.5 rounded border border-amber-400/30 font-bold animate-pulse inline-block shadow-sm shadow-amber-500/10"
+          className="bg-amber-200 dark:bg-amber-900/60 text-black dark:text-white px-1 py-0.5 rounded-none border border-amber-400/30 font-bold animate-pulse inline-block shadow-none"
         >
           {matchText}
         </mark>
@@ -227,7 +227,7 @@ function parseInlineStyles(
     if (m[1]) {
       result.push(<strong key={m.index} className="font-black text-black/90 dark:text-white/90">{m[2]}</strong>);
     } else if (m[3]) {
-      result.push(<code key={m.index} className="bg-black/5 dark:bg-white/5 px-1 py-0.5 rounded text-[11px] font-mono text-copper">{m[4]}</code>);
+      result.push(<code key={m.index} className="bg-black/5 dark:bg-white/5 px-1 py-0.5 rounded-none text-[11px] font-mono text-copper">{m[4]}</code>);
     } else if (m[5]) {
       result.push(<em key={m.index} className="italic text-black/80 dark:text-white/80">{m[6]}</em>);
     } else if (m[7]) {
@@ -238,7 +238,7 @@ function parseInlineStyles(
         result.push(
           <span 
             key={m.index} 
-            className="inline-flex items-center gap-1 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 px-1 py-0.5 rounded-sm align-middle mx-0.5 group relative select-none cursor-help"
+            className="inline-flex items-center gap-1 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 px-1 py-0.5 rounded-none align-middle mx-0.5 group relative select-none cursor-help"
             title={sym.technical_name_es}
           >
             <img src={sym.url} alt={sym.technical_name_es} className="w-4 h-4 object-contain inline-block bg-white" />
@@ -249,7 +249,7 @@ function parseInlineStyles(
         result.push(
           <span 
             key={m.index} 
-            className="inline-flex items-center gap-1 bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded-sm align-middle mx-0.5 select-none cursor-help"
+            className="inline-flex items-center gap-1 bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded-none align-middle mx-0.5 select-none cursor-help"
             title="Símbolo pendiente de dibujo o confirmación en el catálogo global"
           >
             <span className="material-symbols-outlined !text-[11px] animate-pulse">warning</span>
@@ -1113,7 +1113,7 @@ function ItemContentBlock({
                     )}
 
                     {msg.draftContent && (
-                      <div className="mt-2 w-full bg-white dark:bg-zinc-900 border border-emerald-500/20 p-2.5 flex flex-col gap-2 shadow-sm animate-in zoom-in-95 duration-200 shrink-0">
+                      <div className="mt-2 w-full bg-white dark:bg-zinc-900 border border-emerald-500/20 p-2.5 flex flex-col gap-2 shadow-none animate-in zoom-in-95 duration-200 shrink-0">
                         <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-500">
                           <span className="material-symbols-outlined !text-[14px]">edit_document</span>
                           Propuesta de Borrador
@@ -1196,7 +1196,7 @@ function ItemContentBlock({
 
           {!item.is_human_locked && (
             <div className="flex flex-col gap-2 pb-3">
-              <div className="bg-black/5 dark:bg-white/5 rounded-[1.25rem] flex flex-col p-2 border border-black/10 dark:border-white/10">
+              <div className="bg-black/5 dark:bg-white/5 rounded-none flex flex-col p-2 border border-black/10 dark:border-white/10">
                 <textarea
                   value={correctionText}
                   onChange={(e) => setCorrectionText(e.target.value)}
@@ -1210,12 +1210,13 @@ function ItemContentBlock({
                   rows={2}
                   placeholder={latestDraftContent ? "Escribe 'aprobar' para aplicar el borrador..." : "Ingrese instrucciones a OPERMAQ"}
                   autoComplete="off"
+                  spellCheck={false}
                   className="w-full bg-transparent resize-none focus:outline-none text-[12px] text-black dark:text-white placeholder-black/30 dark:placeholder-white/30 custom-scrollbar px-1"
                 />
                 <div className="flex justify-end items-center mt-1 gap-2">
                   <button
                     onClick={() => toast.info('Función de audio estará disponible próximamente.')}
-                    className="text-black/40 hover:text-black/60 dark:text-white/40 dark:hover:text-white/60 p-1 rounded-full transition-colors flex items-center justify-center"
+                    className="text-black/40 hover:text-black/60 dark:text-white/40 dark:hover:text-white/60 p-1 rounded-none transition-colors flex items-center justify-center"
                     disabled={isSending || isGenerating || isSealed}
                   >
                     <span className="material-symbols-outlined !text-[20px]">mic</span>
@@ -1223,9 +1224,9 @@ function ItemContentBlock({
                   <button
                     disabled={!correctionText.trim() || isSending || isSealed || isGenerating}
                     onClick={handleSendMessage}
-                    className={`flex items-center justify-center w-7 h-7 rounded-full transition-colors ${
+                    className={`flex items-center justify-center w-7 h-7 rounded-none transition-colors ${
                       correctionText.trim() && !isSending && !isSealed && !isGenerating
-                        ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'
+                        ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-none'
                         : 'bg-black/10 text-black/30 dark:bg-white/10 dark:text-white/30 cursor-not-allowed'
                     }`}
                   >
@@ -1242,7 +1243,7 @@ function ItemContentBlock({
             <div className="flex justify-start py-2 px-2 border-t border-black/10 dark:border-white/10">
               <button
                 onClick={() => toast.info('Función de adjuntar foto estará disponible próximamente.')}
-                className="text-black/40 hover:text-black/60 dark:text-white/40 dark:hover:text-white/60 p-1 rounded-full transition-colors flex items-center justify-center"
+                className="text-black/40 hover:text-black/60 dark:text-white/40 dark:hover:text-white/60 p-1 rounded-none transition-colors flex items-center justify-center"
                 disabled={isSending || isGenerating || isSealed}
               >
                 <span className="material-symbols-outlined !text-[20px]">add_photo_alternate</span>
@@ -1636,7 +1637,7 @@ function ItemizedItemsList({
                       isError     ? 'border-red-500/20 bg-red-50/30 dark:bg-red-900/10' :
                       isGenerating? 'border-copper/20 bg-amber-50/20 dark:bg-amber-900/10' :
                       'border-black/10 dark:border-white/10 bg-black/[0.01] dark:bg-white/[0.01]'
-                    } ${isExpanded ? 'flex-1 h-full min-h-0 ring-1 ring-copper/10 shadow-sm' : ''}`}
+                    } ${isExpanded ? 'flex-1 h-full min-h-0 ring-1 ring-copper/10 shadow-none' : ''}`}
                   >
                     {/* Cabecera del ítem */}
                     <div className="flex items-start gap-3">
@@ -2072,7 +2073,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
               disabled={isSealed || isComplementarySearching}
               onClick={handleTriggerComplementarySearch}
               title={t('vault_dashboard.actions.search_complementary_items', 'Buscar ítems complementarios con IA')}
-              className={`flex items-center justify-center w-8 h-8 rounded-full transition-all duration-200 bg-transparent border-0 cursor-pointer ${
+              className={`flex items-center justify-center w-8 h-8 rounded-none transition-all duration-200 bg-transparent border-0 cursor-pointer ${
                 isComplementarySearching
                   ? 'animate-spin text-copper'
                   : 'text-black/40 dark:text-white/40 hover:text-copper'
@@ -2431,7 +2432,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
             <button
               disabled={isSealed}
               onClick={() => onItemize(pillarMeta.id)}
-              className="w-14 h-14 bg-red-600 text-white hover:bg-red-700 active:scale-95 flex items-center justify-center transition-all duration-200 rounded-none shadow-md disabled:opacity-50 disabled:pointer-events-none"
+              className="w-14 h-14 bg-red-600 text-white hover:bg-red-700 active:scale-95 flex items-center justify-center transition-all duration-200 rounded-none shadow-none disabled:opacity-50 disabled:pointer-events-none"
               title={
                 isStuck
                   ? 'Proceso interrumpido — Reiniciar itemización'
@@ -3182,7 +3183,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
               onDrop={handleDrop}
               className={`relative aspect-[4/3] w-full border rounded-none overflow-hidden transition-all duration-200 group ${
                 isDraggingPhoto
-                  ? 'border-copper bg-copper/5 shadow-[0_0_12px_rgba(184,115,51,0.25)]'
+                  ? 'border-copper bg-copper/5 shadow-none'
                   : 'border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.02]'
               }`}
             >

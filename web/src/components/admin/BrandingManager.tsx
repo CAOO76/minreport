@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { db, storage } from '../../config/firebase';
+import { auth, db, storage } from '../../config/firebase';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
@@ -17,6 +17,8 @@ export interface BrandingSettings {
     dark: LogoSet;
     siteName: string;
     primaryColor: string;
+    invertDarkMap?: { [key: string]: boolean };
+    svgDataUris?: { [key: string]: string };
 }
 
 const DEFAULT_SETTINGS: BrandingSettings = {
@@ -136,11 +138,21 @@ export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = ''
         pwaIcon: true,
         appIcon: true,
     });
+    const [dirtyMetadataCount, setDirtyMetadataCount] = useState<number>(0);
 
     const previewUrlsRef = useRef<{ [key: string]: string }>({});
 
+    const readFileAsDataUrl = (file: File): Promise<string> =>
+        new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = (err) => reject(err);
+            reader.readAsDataURL(file);
+        });
+
     const toggleInvert = (key: string) => {
         setInvertDarkMap(prev => ({ ...prev, [key]: !(prev[key] ?? true) }));
+        setDirtyMetadataCount(c => c + 1);
     };
 
     // Sincronización en tiempo real desde Firestore settings/branding
@@ -154,10 +166,22 @@ export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = ''
                     dark: { ...DEFAULT_SETTINGS.dark, ...(data.dark || {}) },
                     siteName: data.siteName || 'MINREPORT',
                     primaryColor: data.primaryColor || '#C68346',
+                    invertDarkMap: data.invertDarkMap || {
+                        isotype: true,
+                        logotype: true,
+                        imagotype: true,
+                        imagotypeVertical: true,
+                        pwaIcon: true,
+                        appIcon: true,
+                    },
+                    svgDataUris: data.svgDataUris || {},
                 };
                 setSettings(merged);
                 setSiteNameInput(merged.siteName);
                 setPrimaryColorInput(merged.primaryColor);
+                if (merged.invertDarkMap) {
+                    setInvertDarkMap(merged.invertDarkMap);
+                }
             } else {
                 setSettings(DEFAULT_SETTINGS);
             }
@@ -228,11 +252,17 @@ export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = ''
             delete copy[key];
             return copy;
         });
-        setSettings(prev => ({
-            ...prev,
-            light: { ...prev.light, [key]: DEFAULT_SETTINGS.light[key] },
-            dark: { ...prev.dark, [key]: DEFAULT_SETTINGS.dark[key] },
-        }));
+        setSettings(prev => {
+            const nextSvgUris = { ...(prev.svgDataUris || {}) };
+            delete nextSvgUris[key];
+            return {
+                ...prev,
+                light: { ...prev.light, [key]: DEFAULT_SETTINGS.light[key] },
+                dark: { ...prev.dark, [key]: DEFAULT_SETTINGS.dark[key] },
+                svgDataUris: nextSvgUris,
+            };
+        });
+        setDirtyMetadataCount(c => c + 1);
     };
 
     const handleOpenConfirm = () => {
@@ -252,33 +282,52 @@ export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = ''
                 dark: { ...settings.dark },
                 siteName: siteNameInput.trim() || 'MINREPORT',
                 primaryColor: primaryColorInput.trim() || '#C68346',
+                invertDarkMap: { ...invertDarkMap },
+                svgDataUris: { ...(settings.svgDataUris || {}) },
             };
 
-            // Subir archivos a Cloud Storage
+            // Subir archivos a Cloud Storage y almacenar copia vectorial portátil para SVG
             const filesToUpload = Object.entries(files);
             for (const [key, file] of filesToUpload) {
                 if (file) {
-                    const ext = file.name.split('.').pop() || 'png';
-                    const path = `branding/master_${key}.${ext}`;
+                    const ext = (file.name.split('.').pop() || 'svg').toLowerCase();
+                    const fileKey = key === 'imagotypeVertical' ? 'imagotype_vertical' : key;
+                    const path = `branding/master_${fileKey}.${ext}`;
                     const storageRef = ref(storage, path);
                     const snapshot = await uploadBytes(storageRef, file);
                     const downloadUrl = await getDownloadURL(snapshot.ref);
 
                     (updatedSettings.light as any)[key] = downloadUrl;
                     (updatedSettings.dark as any)[key] = downloadUrl;
+
+                    if ((ext === 'svg' || file.type === 'image/svg+xml') && file.size <= 150 * 1024) {
+                        const dataUri = await readFileAsDataUrl(file);
+                        if (dataUri) {
+                            updatedSettings.svgDataUris![key] = dataUri;
+                        }
+                    } else if (updatedSettings.svgDataUris?.[key]) {
+                        delete updatedSettings.svgDataUris[key];
+                    }
                 }
             }
 
             // 1. Guardar en Firestore directamente
             await setDoc(doc(db, 'settings', 'branding'), updatedSettings, { merge: true });
 
-            // 2. Notificar al backend para sincronización de filesystem si está disponible
+            // 2. Notificar al backend para sincronización automática de filesystem (Web, Admin, Mobile y ./data)
             try {
                 const apiBase = (import.meta as any).env?.VITE_API_URL 
                     ? (import.meta as any).env.VITE_API_URL 
                     : `http://${window.location.hostname}:8080`;
                 
-                const token = localStorage.getItem('dev_token') || localStorage.getItem('admin_token') || '';
+                const firebaseIdToken = await auth.currentUser?.getIdToken().catch(() => '');
+                const token =
+                    firebaseIdToken ||
+                    localStorage.getItem('dev_auth_token') ||
+                    localStorage.getItem('dev_vault_token') ||
+                    localStorage.getItem('dev_token') ||
+                    localStorage.getItem('admin_token') ||
+                    '';
                 if (token) {
                     await fetch(`${apiBase}/api/admin/settings/branding`, {
                         method: 'PUT',
@@ -298,6 +347,7 @@ export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = ''
             previewUrlsRef.current = {};
             setFiles({});
             setPreviewUrls({});
+            setDirtyMetadataCount(0);
             setSettings(updatedSettings);
 
             setNotification({
@@ -318,6 +368,7 @@ export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = ''
     };
 
     const pendingCount = Object.keys(files).length +
+        dirtyMetadataCount +
         (siteNameInput !== (settings.siteName || 'MINREPORT') ? 1 : 0) +
         (primaryColorInput !== (settings.primaryColor || '#C68346') ? 1 : 0);
 

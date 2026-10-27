@@ -129,7 +129,7 @@ export const AdminKnowledgeDashboard: React.FC<AdminKnowledgeDashboardProps> = (
             {showVaultManager && (
                 <>
                     <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setShowVaultManager(false)}></div>
-                    <aside className="fixed right-0 top-0 h-full w-full max-w-lg bg-surface z-50 shadow-lg animate-in slide-in-from-right duration-300">
+                    <aside className="fixed right-0 top-0 h-full w-full max-w-lg bg-surface z-50 shadow-none border-l border-border-base animate-in slide-in-from-right duration-300">
                         <VaultManagerPanel 
                             globalAssetId={globalAssetId} 
                             isSealed={catalogInfo?.isSealed || false} 

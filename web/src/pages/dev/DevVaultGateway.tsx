@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { auth } from '../../config/firebase';
 import { signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { ThemeSwitch } from '../../components/ThemeSwitch';
@@ -7,9 +6,14 @@ import { LanguageSwitch } from '../../components/LanguageSwitch';
 import BrandLogo from '../../components/BrandLogo';
 import BrandingManager from '../../components/admin/BrandingManager';
 
-// Carga asíncrona de módulos industriales para navegación en cabina DEV
+// Carga asíncrona de módulos y vistas integradas para navegación 100% contenida en cabina DEV
 const StockpileModule = lazy(() => import('../../modules/stockpile/StockpileModule').then(m => ({ default: m.StockpileModule })));
 const OpermaqModule = lazy(() => import('../../modules/opermaq/OpermaqModule').then(m => ({ default: m.OpermaqModule })));
+const EmpresaPage = lazy(() => import('../b2b/EmpresaPage').then(m => ({ default: m.EmpresaPage })));
+const StaffPage = lazy(() => import('../StaffPage').then(m => ({ default: m.StaffPage })));
+const JobProfilesPage = lazy(() => import('../JobProfilesPage').then(m => ({ default: m.JobProfilesPage })));
+const AdminsPage = lazy(() => import('../b2b/AdminsPage').then(m => ({ default: m.AdminsPage })));
+const MetricasPage = lazy(() => import('../b2b/MetricasPage').then(m => ({ default: m.MetricasPage })));
 
 interface TestPilot {
     id: string;
@@ -28,20 +32,17 @@ type DevAuthState = 'IDLE' | 'WAITING_CONFIRMATION' | 'OTP' | 'USER' | 'PASSWORD
 export type DevSection =
     // Configuración MINREPORT
     | 'PILOTS'
-    | 'IMPERSONATE'
     | 'B2B_EMPRESA'
     | 'STAFF'
     | 'JOB_PROFILES'
     | 'B2B_ADMINS'
     | 'BRANDING'
     | 'B2B_METRICAS'
-    | 'B2B_SUSCRIPCION'
     // Módulos Industriales
     | 'MODULE_STOCKPILE'
     | 'MODULE_OPERMAQ';
 
 export const DevVaultGateway: React.FC = () => {
-    const navigate = useNavigate();
     const [activeSection, setActiveSection] = useState<DevSection>('PILOTS');
     const isModuleSection = activeSection.startsWith('MODULE_');
 
@@ -66,6 +67,7 @@ export const DevVaultGateway: React.FC = () => {
     const [oldPassword, setOldPassword] = useState<string>('');
     const [newPassword, setNewPassword] = useState<string>('');
     const [confirmPassword, setConfirmPassword] = useState<string>('');
+    const [showPassword, setShowPassword] = useState<boolean>(false);
     const [daysRemaining, setDaysRemaining] = useState<number>(30);
 
     const [loginLoading, setLoginLoading] = useState<boolean>(false);
@@ -82,10 +84,6 @@ export const DevVaultGateway: React.FC = () => {
     const [pilotPurpose, setPilotPurpose] = useState<string>('');
     const [pilotDays, setPilotDays] = useState<number>(90);
     const [pilotSubmitting, setPilotSubmitting] = useState<boolean>(false);
-
-    // Simulación View-as Client
-    const [selectedTargetAccount, setSelectedTargetAccount] = useState<string>('dev-master-sandbox');
-    const [impersonateLoading, setImpersonateLoading] = useState<boolean>(false);
 
     const apiBase = (import.meta as any).env?.VITE_API_URL 
         ? `${(import.meta as any).env.VITE_API_URL}/api/dev`
@@ -617,37 +615,6 @@ export const DevVaultGateway: React.FC = () => {
         }
     };
 
-    const handleLaunchImpersonation = async () => {
-        setImpersonateLoading(true);
-        try {
-            const resp = await fetchWithDevAuth('/impersonate-client', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ targetAccountId: selectedTargetAccount })
-            });
-
-            const data = await resp.json();
-            if (!resp.ok) {
-                throw new Error(data.error || 'Error al iniciar simulación');
-            }
-
-            localStorage.setItem('dev_is_impersonating', 'true');
-            localStorage.setItem('dev_impersonated_account', JSON.stringify(data.simulatedAccount));
-
-            if (data.impersonationToken) {
-                await signInWithCustomToken(auth, data.impersonationToken);
-            }
-
-            navigate('/dashboard');
-        } catch (err: any) {
-            alert(err.message || 'Error al iniciar simulación');
-        } finally {
-            setImpersonateLoading(false);
-        }
-    };
-
     // =========================================================================
     // VISTA 1: ACCESO DEV SILENCIOSO & DESAFÍO PROGRESSIVO (MINIMALISMO ABSOLUTO)
     // =========================================================================
@@ -661,7 +628,7 @@ export const DevVaultGateway: React.FC = () => {
                     <ThemeSwitch />
                 </div>
 
-                {/* ESTADO 0: SILENCIO ABSOLUTO (ÚNICAMENTE EL LOGO COMO BOTÓN INTERACTIVO) */}
+                {/* ESTADO 0: SILENCIO ABSOLUTO (ÚNICAMENTE EL IMAGOTIPO VERTICAL COMO BOTÓN INTERACTIVO) */}
                 {authState === 'IDLE' && (
                     <div className="flex flex-col items-center justify-center">
                         <button
@@ -671,7 +638,7 @@ export const DevVaultGateway: React.FC = () => {
                             aria-label="MINREPORT"
                             className="bg-transparent border-0 outline-none p-4 cursor-pointer transition-transform duration-300 hover:scale-105 active:scale-95 disabled:opacity-50"
                         >
-                            <BrandLogo variant="isotype" className="h-20 w-auto object-contain pointer-events-none" />
+                            <BrandLogo variant="imagotypeVertical" className="h-36 w-auto object-contain pointer-events-none" />
                         </button>
 
                         {loginError && (
@@ -686,7 +653,7 @@ export const DevVaultGateway: React.FC = () => {
                 {authState === 'WAITING_CONFIRMATION' && (
                     <div className="flex flex-col items-center justify-center space-y-6">
                         <div className="p-4 animate-pulse">
-                            <BrandLogo variant="isotype" className="h-20 w-auto object-contain pointer-events-none opacity-80" />
+                            <BrandLogo variant="imagotypeVertical" className="h-36 w-auto object-contain pointer-events-none opacity-80" />
                         </div>
 
                         <div className="flex items-center gap-4 text-xs font-mono text-slate-400 dark:text-[#5A6072]">
@@ -817,16 +784,26 @@ export const DevVaultGateway: React.FC = () => {
                                             key
                                         </span>
                                         <input
-                                            type="password"
+                                            type={showPassword ? 'text' : 'password'}
                                             value={loginPassword}
                                             onChange={e => setLoginPassword(e.target.value)}
                                             required
                                             autoFocus
-                                            autoComplete="new-password"
+                                            autoComplete="off"
                                             spellCheck={false}
                                             placeholder=""
-                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] pl-10 pr-3 py-2.5 text-xs font-mono outline-none rounded-none transition-colors"
+                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] pl-10 pr-10 py-2.5 text-xs font-mono outline-none rounded-none transition-colors"
                                         />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPassword(prev => !prev)}
+                                            aria-label={showPassword ? 'Ocultar clave' : 'Mostrar clave'}
+                                            className="absolute right-2 bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center justify-center"
+                                        >
+                                            <span className="material-symbols-outlined text-[18px] select-none">
+                                                {showPassword ? 'visibility_off' : 'visibility'}
+                                            </span>
+                                        </button>
                                     </div>
 
                                     <button
@@ -862,7 +839,7 @@ export const DevVaultGateway: React.FC = () => {
                                             key
                                         </span>
                                         <input
-                                            type="password"
+                                            type={showPassword ? 'text' : 'password'}
                                             value={oldPassword}
                                             onChange={e => setOldPassword(e.target.value)}
                                             required
@@ -870,8 +847,18 @@ export const DevVaultGateway: React.FC = () => {
                                             autoComplete="off"
                                             spellCheck={false}
                                             placeholder=""
-                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] pl-10 pr-3 py-2.5 text-xs font-mono outline-none rounded-none transition-colors"
+                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] pl-10 pr-10 py-2.5 text-xs font-mono outline-none rounded-none transition-colors"
                                         />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPassword(prev => !prev)}
+                                            aria-label={showPassword ? 'Ocultar clave' : 'Mostrar clave'}
+                                            className="absolute right-2 bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center justify-center"
+                                        >
+                                            <span className="material-symbols-outlined text-[18px] select-none">
+                                                {showPassword ? 'visibility_off' : 'visibility'}
+                                            </span>
+                                        </button>
                                     </div>
 
                                     <div className="relative flex items-center">
@@ -879,15 +866,15 @@ export const DevVaultGateway: React.FC = () => {
                                             lock
                                         </span>
                                         <input
-                                            type="password"
+                                            type={showPassword ? 'text' : 'password'}
                                             value={newPassword}
                                             onChange={e => setNewPassword(e.target.value)}
                                             required
                                             minLength={8}
-                                            autoComplete="new-password"
+                                            autoComplete="off"
                                             spellCheck={false}
                                             placeholder=""
-                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] pl-10 pr-3 py-2.5 text-xs font-mono outline-none rounded-none transition-colors"
+                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] pl-10 pr-10 py-2.5 text-xs font-mono outline-none rounded-none transition-colors"
                                         />
                                     </div>
 
@@ -896,15 +883,15 @@ export const DevVaultGateway: React.FC = () => {
                                             verified_user
                                         </span>
                                         <input
-                                            type="password"
+                                            type={showPassword ? 'text' : 'password'}
                                             value={confirmPassword}
                                             onChange={e => setConfirmPassword(e.target.value)}
                                             required
                                             minLength={8}
-                                            autoComplete="new-password"
+                                            autoComplete="off"
                                             spellCheck={false}
                                             placeholder=""
-                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] pl-10 pr-3 py-2.5 text-xs font-mono outline-none rounded-none transition-colors"
+                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] pl-10 pr-10 py-2.5 text-xs font-mono outline-none rounded-none transition-colors"
                                         />
                                     </div>
 
@@ -935,270 +922,240 @@ export const DevVaultGateway: React.FC = () => {
     // VISTA 2: PANEL DE CONTROL DEV (MINIMALISMO INDUSTRIAL PURO)
     // =========================================================================
     return (
-        <div className="min-h-screen bg-white dark:bg-[#000000] text-slate-900 dark:text-[#F3F4F6] flex font-sans select-none antialiased">
-            
+        <div className="h-screen bg-white dark:bg-[#000000] text-slate-900 dark:text-[#F3F4F6] flex flex-col font-sans select-none antialiased overflow-hidden">
+
             {/* =========================================================================
-                COLUMNA LATERAL IZQUIERDA: MENÚ MINIMALISTA ABSOLUTO DE CONFIGURACIÓN & MÓDULOS
+                BARRA DE NAVEGACIÓN SUPERIOR (LOGOTIPO CORPORATIVO + MODO, IDIOMA Y SALIR)
                 ========================================================================= */}
-            <aside className="w-14 sm:w-16 h-screen sticky top-0 flex flex-col items-center py-4 border-r border-slate-200 dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] z-40 select-none shrink-0">
-                
-                {/* Isotipo Superior Interactivo */}
+            <header className="h-14 px-[21px] border-b border-slate-200 dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] flex items-center justify-between shrink-0 z-50">
                 <button
                     type="button"
                     onClick={() => setActiveSection('PILOTS')}
-                    title="MINREPORT DEV"
-                    aria-label="MINREPORT"
-                    className="bg-transparent border-0 outline-none p-2 mb-3 cursor-pointer transition-transform hover:scale-105 active:scale-95"
+                    title="Volver a vista principal"
+                    aria-label="Volver a vista principal"
+                    className="bg-transparent border-0 outline-none p-0 cursor-pointer flex items-center"
                 >
-                    <BrandLogo variant="isotype" className="h-6 w-auto object-contain pointer-events-none" />
+                    <BrandLogo variant="logotype" className="h-6 w-auto object-contain pointer-events-none" />
                 </button>
 
-                {/* GRUPO 1: CONFIGURAR MINREPORT (BOTONES PLANOS TRANSPARENTES) */}
-                <div className="flex flex-col items-center gap-1 w-full">
-                    <button
-                        type="button"
-                        onClick={() => setActiveSection('PILOTS')}
-                        title="Pilotos & Accesos DEV"
-                        aria-label="Pilotos"
-                        className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                            activeSection === 'PILOTS'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                        }`}
-                    >
-                        {activeSection === 'PILOTS' && (
-                            <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
-                        )}
-                        <span className="material-symbols-outlined text-[20px]">group_add</span>
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={() => setActiveSection('IMPERSONATE')}
-                        title="Simulación Cliente"
-                        aria-label="Simulación"
-                        className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                            activeSection === 'IMPERSONATE'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                        }`}
-                    >
-                        {activeSection === 'IMPERSONATE' && (
-                            <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
-                        )}
-                        <span className="material-symbols-outlined text-[20px]">switch_account</span>
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={() => setActiveSection('B2B_EMPRESA')}
-                        title="Empresa B2B"
-                        aria-label="Empresa"
-                        className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                            activeSection === 'B2B_EMPRESA'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                        }`}
-                    >
-                        {activeSection === 'B2B_EMPRESA' && (
-                            <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
-                        )}
-                        <span className="material-symbols-outlined text-[20px]">domain</span>
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={() => setActiveSection('STAFF')}
-                        title="Staff Operativo"
-                        aria-label="Staff"
-                        className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                            activeSection === 'STAFF'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                        }`}
-                    >
-                        {activeSection === 'STAFF' && (
-                            <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
-                        )}
-                        <span className="material-symbols-outlined text-[20px]">groups</span>
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={() => setActiveSection('JOB_PROFILES')}
-                        title="Perfiles de Cargo"
-                        aria-label="Perfiles"
-                        className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                            activeSection === 'JOB_PROFILES'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                        }`}
-                    >
-                        {activeSection === 'JOB_PROFILES' && (
-                            <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
-                        )}
-                        <span className="material-symbols-outlined text-[20px]">assignment_ind</span>
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={() => setActiveSection('B2B_ADMINS')}
-                        title="Gobernanza Administradores"
-                        aria-label="Administradores"
-                        className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                            activeSection === 'B2B_ADMINS'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                        }`}
-                    >
-                        {activeSection === 'B2B_ADMINS' && (
-                            <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
-                        )}
-                        <span className="material-symbols-outlined text-[20px]">admin_panel_settings</span>
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={() => setActiveSection('BRANDING')}
-                        title="Gestor de Logos & Identidad"
-                        aria-label="Gestor de Logos"
-                        className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                            activeSection === 'BRANDING'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                        }`}
-                    >
-                        {activeSection === 'BRANDING' && (
-                            <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
-                        )}
-                        <span className="material-symbols-outlined text-[20px]">palette</span>
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={() => setActiveSection('B2B_METRICAS')}
-                        title="Métricas & Auditoría"
-                        aria-label="Métricas"
-                        className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                            activeSection === 'B2B_METRICAS'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                        }`}
-                    >
-                        {activeSection === 'B2B_METRICAS' && (
-                            <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
-                        )}
-                        <span className="material-symbols-outlined text-[20px]">monitoring</span>
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={() => setActiveSection('B2B_SUSCRIPCION')}
-                        title="Suscripción & Licenciamiento"
-                        aria-label="Suscripción"
-                        className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                            activeSection === 'B2B_SUSCRIPCION'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                        }`}
-                    >
-                        {activeSection === 'B2B_SUSCRIPCION' && (
-                            <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
-                        )}
-                        <span className="material-symbols-outlined text-[20px]">verified</span>
-                    </button>
-                </div>
-
-                {/* SEPARADOR DE PRECISIÓN FIBONACCI */}
-                <div className="w-6 h-[1px] bg-slate-200 dark:bg-[#12151C] my-3 shrink-0" />
-
-                {/* GRUPO 2: MÓDULOS INDUSTRIALES (STOCKPILE, OPERMAQ, MINING FLOW) */}
-                <div className="flex flex-col items-center gap-1 w-full">
-                    <button
-                        type="button"
-                        onClick={() => setActiveSection('MODULE_STOCKPILE')}
-                        title="Módulo Stockpile (Cubicaciones & 3D)"
-                        aria-label="Stockpile"
-                        className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                            activeSection === 'MODULE_STOCKPILE'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                        }`}
-                    >
-                        {activeSection === 'MODULE_STOCKPILE' && (
-                            <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
-                        )}
-                        <span className="material-symbols-outlined text-[20px]">layers</span>
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={() => setActiveSection('MODULE_OPERMAQ')}
-                        title="Módulo Opermaq (Flota & Maquinaria)"
-                        aria-label="Opermaq"
-                        className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                            activeSection === 'MODULE_OPERMAQ'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                        }`}
-                    >
-                        {activeSection === 'MODULE_OPERMAQ' && (
-                            <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
-                        )}
-                        <span className="material-symbols-outlined text-[20px]">local_shipping</span>
-                    </button>
-                </div>
-
-                {/* PIE DE BARRA LATERAL: TEMA, IDIOMA Y SALIR */}
-                <div className="mt-auto flex flex-col items-center gap-2 pt-3 border-t border-slate-200 dark:border-[#12151C] w-full shrink-0">
+                <div className="flex items-center gap-[13px]">
                     <ThemeSwitch />
                     <LanguageSwitch />
                     <button
                         type="button"
                         onClick={handleLogout}
                         title="Cerrar sesión DEV"
-                        aria-label="Salir"
-                        className="w-full py-2 bg-transparent border-0 outline-none text-slate-400 hover:text-red-500 transition-colors cursor-pointer flex items-center justify-center rounded-none"
+                        aria-label="Cerrar sesión"
+                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-red-500 transition-colors cursor-pointer flex items-center justify-center rounded-none"
                     >
                         <span className="material-symbols-outlined text-[20px]">logout</span>
                     </button>
                 </div>
-            </aside>
+            </header>
 
             {/* =========================================================================
-                ÁREA DE TRABAJO PRINCIPAL (CAMBIA SEGÚN EL BOTÓN ACTIVO)
+                CONTENEDOR INFERIOR: COLUMNA DE MENÚ + ÁREA DE TRABAJO PRINCIPAL
                 ========================================================================= */}
-            <main className={`flex-1 min-h-screen ${isModuleSection ? 'p-0 overflow-hidden flex flex-col' : 'p-8 overflow-y-auto'}`}>
-                
-                {/* Header Técnico Aséptico Superior (Oculto en módulos para visualización integrada a pantalla completa) */}
-                {!isModuleSection && (
-                    <div className="mb-8 border-b border-slate-200 dark:border-[#12151C] pb-6 flex justify-between items-end">
-                        <div>
-                            <span className="text-[10px] uppercase tracking-widest text-[#C68346] font-bold font-mono">
-                                CONFIGURACIÓN MINREPORT
-                            </span>
-                            <h1 className="text-xl font-bold tracking-tight uppercase font-sans text-slate-900 dark:text-[#F3F4F6] mt-0.5">
-                                {activeSection === 'PILOTS' && 'PILOTOS ACTIVOS'}
-                                {activeSection === 'IMPERSONATE' && 'SIMULACIÓN DE CLIENTE'}
-                                {activeSection === 'B2B_EMPRESA' && 'DATOS DE EMPRESA'}
-                                {activeSection === 'STAFF' && 'PERSONAL OPERATIVO'}
-                                {activeSection === 'JOB_PROFILES' && 'MATRIZ DE CARGOS'}
-                                {activeSection === 'B2B_ADMINS' && 'ADMINISTRADORES'}
-                                {activeSection === 'B2B_METRICAS' && 'MÉTRICAS OPERACIONALES'}
-                                {activeSection === 'B2B_SUSCRIPCION' && 'ESTADO DE LICENCIA'}
-                            </h1>
-                        </div>
+            <div className="flex flex-1 overflow-hidden">
+                <aside className="w-14 sm:w-16 h-full flex flex-col items-center py-4 border-r border-slate-200 dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] z-40 select-none shrink-0">
 
-                        <div className="flex items-center gap-6">
-                            <div className="text-right">
-                                <span className="text-[10px] uppercase tracking-widest text-slate-400 dark:text-[#5A6072] font-mono">PILOTOS ACTIVOS</span>
-                                <p className="text-xl font-mono tabular-nums text-slate-900 dark:text-[#F3F4F6] font-bold">
-                                    {pilots.filter(p => p.status === 'ACTIVE').length}
-                                </p>
+                    {/* CABECERA COLUMNA MENÚ: ISOTIPO OFICIAL */}
+                    <button
+                        type="button"
+                        onClick={() => setActiveSection('PILOTS')}
+                        title="MINREPORT DEV"
+                        aria-label="MINREPORT DEV"
+                        className="mb-3 bg-transparent border-0 outline-none p-1 cursor-pointer flex items-center justify-center"
+                    >
+                        <BrandLogo variant="isotype" className="h-6 w-6 object-contain pointer-events-none" />
+                    </button>
+
+                    <div className="w-6 h-[1px] bg-slate-200 dark:bg-[#12151C] mb-2" />
+
+                    {/* GRUPO 1: CONFIGURAR MINREPORT (BOTONES PLANOS TRANSPARENTES) */}
+                    <div className="flex flex-col items-center gap-1 w-full">
+                        <button
+                            type="button"
+                            onClick={() => setActiveSection('PILOTS')}
+                            title="Pilotos & Accesos DEV"
+                            aria-label="Pilotos"
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
+                                activeSection === 'PILOTS'
+                                    ? 'text-[#C68346]'
+                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                            }`}
+                        >
+                            {activeSection === 'PILOTS' && (
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
+                            )}
+                            <span className="material-symbols-outlined text-[20px]">group_add</span>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => setActiveSection('B2B_EMPRESA')}
+                            title="Empresa B2B"
+                            aria-label="Empresa"
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
+                                activeSection === 'B2B_EMPRESA'
+                                    ? 'text-[#C68346]'
+                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                            }`}
+                        >
+                            {activeSection === 'B2B_EMPRESA' && (
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
+                            )}
+                            <span className="material-symbols-outlined text-[20px]">domain</span>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => setActiveSection('STAFF')}
+                            title="Staff Operativo"
+                            aria-label="Staff"
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
+                                activeSection === 'STAFF'
+                                    ? 'text-[#C68346]'
+                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                            }`}
+                        >
+                            {activeSection === 'STAFF' && (
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
+                            )}
+                            <span className="material-symbols-outlined text-[20px]">groups</span>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => setActiveSection('JOB_PROFILES')}
+                            title="Perfiles de Cargo"
+                            aria-label="Perfiles"
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
+                                activeSection === 'JOB_PROFILES'
+                                    ? 'text-[#C68346]'
+                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                            }`}
+                        >
+                            {activeSection === 'JOB_PROFILES' && (
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
+                            )}
+                            <span className="material-symbols-outlined text-[20px]">assignment_ind</span>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => setActiveSection('B2B_ADMINS')}
+                            title="Gobernanza Administradores"
+                            aria-label="Administradores"
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
+                                activeSection === 'B2B_ADMINS'
+                                    ? 'text-[#C68346]'
+                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                            }`}
+                        >
+                            {activeSection === 'B2B_ADMINS' && (
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
+                            )}
+                            <span className="material-symbols-outlined text-[20px]">admin_panel_settings</span>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => setActiveSection('BRANDING')}
+                            title="Gestor de Logos & Identidad"
+                            aria-label="Gestor de Logos"
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
+                                activeSection === 'BRANDING'
+                                    ? 'text-[#C68346]'
+                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                            }`}
+                        >
+                            {activeSection === 'BRANDING' && (
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
+                            )}
+                            <span className="material-symbols-outlined text-[20px]">palette</span>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => setActiveSection('B2B_METRICAS')}
+                            title="Métricas & Auditoría"
+                            aria-label="Métricas"
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
+                                activeSection === 'B2B_METRICAS'
+                                    ? 'text-[#C68346]'
+                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                            }`}
+                        >
+                            {activeSection === 'B2B_METRICAS' && (
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
+                            )}
+                            <span className="material-symbols-outlined text-[20px]">monitoring</span>
+                        </button>
+                    </div>
+
+                    {/* SEPARADOR DE PRECISIÓN FIBONACCI */}
+                    <div className="w-6 h-[1px] bg-slate-200 dark:bg-[#12151C] my-3 shrink-0" />
+
+                    {/* GRUPO 2: MÓDULOS INDUSTRIALES (STOCKPILE, OPERMAQ) */}
+                    <div className="flex flex-col items-center gap-1 w-full">
+                        <button
+                            type="button"
+                            onClick={() => setActiveSection('MODULE_STOCKPILE')}
+                            title="Módulo Stockpile (Cubicaciones & 3D)"
+                            aria-label="Stockpile"
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
+                                activeSection === 'MODULE_STOCKPILE'
+                                    ? 'text-[#C68346]'
+                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                            }`}
+                        >
+                            {activeSection === 'MODULE_STOCKPILE' && (
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
+                            )}
+                            <span className="material-symbols-outlined text-[20px]">layers</span>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => setActiveSection('MODULE_OPERMAQ')}
+                            title="Módulo Opermaq (Flota & Maquinaria)"
+                            aria-label="Opermaq"
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
+                                activeSection === 'MODULE_OPERMAQ'
+                                    ? 'text-[#C68346]'
+                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                            }`}
+                        >
+                            {activeSection === 'MODULE_OPERMAQ' && (
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
+                            )}
+                            <span className="material-symbols-outlined text-[20px]">local_shipping</span>
+                        </button>
+                    </div>
+                </aside>
+
+                {/* =========================================================================
+                    ÁREA DE TRABAJO PRINCIPAL (CAMBIA SEGÚN EL BOTÓN ACTIVO)
+                    ========================================================================= */}
+                <main className={`flex-1 h-full ${isModuleSection ? 'p-0 overflow-hidden flex flex-col' : 'p-8 overflow-y-auto'}`}>
+                    
+                    {/* Header Técnico Aséptico Superior (Oculto en módulos para visualización integrada a pantalla completa) */}
+                    {!isModuleSection && (
+                        <div className="mb-[21px] border-b border-slate-200 dark:border-[#12151C] pb-[13px] flex justify-between items-end">
+                            <div>
+                                <h1 className="text-lg font-bold tracking-tight uppercase font-sans text-slate-900 dark:text-[#F3F4F6]">
+                                    {activeSection === 'PILOTS' && 'PILOTOS'}
+                                    {activeSection === 'B2B_EMPRESA' && 'DATOS DE EMPRESA'}
+                                    {activeSection === 'STAFF' && 'PERSONAL OPERATIVO'}
+                                    {activeSection === 'JOB_PROFILES' && 'MATRIZ DE CARGOS'}
+                                    {activeSection === 'B2B_ADMINS' && 'ADMINISTRADORES GENERALES'}
+                                    {activeSection === 'BRANDING' && 'IDENTIDAD CORPORATIVA'}
+                                    {activeSection === 'B2B_METRICAS' && 'MÉTRICAS OPERACIONALES'}
+                                </h1>
                             </div>
                         </div>
-                    </div>
-                )}
+                    )}
 
                 {/* CONTENIDO 1: GESTIÓN DE PILOTOS */}
                 {activeSection === 'PILOTS' && (
@@ -1353,224 +1310,46 @@ export const DevVaultGateway: React.FC = () => {
                     </div>
                 )}
 
-                {/* CONTENIDO 2: SIMULACIÓN DE CLIENTE */}
-                {activeSection === 'IMPERSONATE' && (
-                    <div className="border border-slate-200 dark:border-[#12151C] p-6 rounded-none bg-[#F8FAFC] dark:bg-[#07090D] max-w-2xl">
-                        <h2 className="text-xs font-mono font-bold uppercase tracking-wider mb-4 text-[#C68346]">
-                            CONSOLA DE SIMULACIÓN DE CLIENTE (IMPERSONATION)
-                        </h2>
-                        <p className="text-xs text-slate-500 dark:text-[#8A93A6] font-mono mb-6">
-                            Permite autenticar de forma efímera como tenant objetivo para auditar vistas operativas y permisos B2B.
-                        </p>
-
-                        <div className="flex flex-col sm:flex-row gap-4 items-end">
-                            <div className="flex-1 w-full">
-                                <label className="block text-xs uppercase tracking-wider text-slate-500 dark:text-[#8A93A6] mb-1 font-mono">
-                                    CUENTA OBJETIVO
-                                </label>
-                                <select
-                                    value={selectedTargetAccount}
-                                    onChange={(e) => setSelectedTargetAccount(e.target.value)}
-                                    className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#C68346] rounded-none"
-                                >
-                                    <option value="dev-master-sandbox">dev-master-sandbox (Workspace DEV)</option>
-                                    {pilots.filter(p => p.status === 'ACTIVE').map(p => (
-                                        <option key={p.id} value={p.accountId}>{p.collaboratorName} ({p.organization || p.id})</option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <button
-                                type="button"
-                                onClick={handleLaunchImpersonation}
-                                disabled={impersonateLoading}
-                                className="bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold uppercase tracking-wider text-xs py-2.5 px-6 transition-colors rounded-none disabled:opacity-50 cursor-pointer"
-                            >
-                                {impersonateLoading ? 'INICIANDO...' : 'SIMULAR'}
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {/* CONTENIDO 3: CONFIGURACIÓN B2B EMPRESA */}
+                {/* CONTENIDO 2: CONFIGURACIÓN B2B EMPRESA (100% INTEGRADO EN DEV) */}
                 {activeSection === 'B2B_EMPRESA' && (
-                    <div className="border border-slate-200 dark:border-[#12151C] p-6 rounded-none bg-[#F8FAFC] dark:bg-[#07090D] max-w-3xl space-y-4 font-mono text-xs">
-                        <div className="flex justify-between items-center border-b border-slate-200 dark:border-[#12151C] pb-3">
-                            <span className="text-[#C68346] font-bold uppercase">FICHA INSTITUCIONAL B2B</span>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-slate-600 dark:text-slate-300">
-                            <div><span className="text-slate-400">RUT / TAX ID:</span> 76.543.210-K</div>
-                            <div><span className="text-slate-400">GIRO:</span> Extracción y beneficio de minerales</div>
-                            <div><span className="text-slate-400">FAENA PRINCIPAL:</span> Planta Concentradora Cordillera</div>
-                            <div><span className="text-slate-400">REGIÓN:</span> southamerica-west1 (Santiago)</div>
-                        </div>
-                        <div className="pt-4 flex gap-3">
-                            <button
-                                type="button"
-                                onClick={() => navigate('/b2b/empresa')}
-                                className="bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold uppercase text-xs py-2 px-4 rounded-none cursor-pointer"
-                            >
-                                ABRIR CONFIGURACIÓN DE EMPRESA
-                            </button>
-                        </div>
-                    </div>
+                    <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Ficha de Empresa...]</div>}>
+                        <EmpresaPage />
+                    </Suspense>
                 )}
 
-                {/* CONTENIDO 4: STAFF */}
+                {/* CONTENIDO 3: STAFF (100% INTEGRADO EN DEV) */}
                 {activeSection === 'STAFF' && (
-                    <div className="border border-slate-200 dark:border-[#12151C] p-6 rounded-none bg-[#F8FAFC] dark:bg-[#07090D] max-w-3xl space-y-4 font-mono text-xs">
-                        <div className="flex justify-between items-center border-b border-slate-200 dark:border-[#12151C] pb-3">
-                            <span className="text-[#C68346] font-bold uppercase">PERSONAL OPERATIVO</span>
-                        </div>
-                        <p className="text-slate-500 dark:text-[#8A93A6]">
-                            Gobernanza de personal de terreno, roles biométricos Passkeys y credenciales de acceso operativo.
-                        </p>
-                        <div className="pt-2">
-                            <button
-                                type="button"
-                                onClick={() => navigate('/staff')}
-                                className="bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold uppercase text-xs py-2 px-4 rounded-none cursor-pointer"
-                            >
-                                GESTIONAR STAFF EN TERRENO
-                            </button>
-                        </div>
-                    </div>
+                    <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Personal Operativo...]</div>}>
+                        <StaffPage />
+                    </Suspense>
                 )}
 
-                {/* CONTENIDO 5: PERFILES DE CARGO */}
+                {/* CONTENIDO 4: PERFILES DE CARGO (100% INTEGRADO EN DEV) */}
                 {activeSection === 'JOB_PROFILES' && (
-                    <div className="border border-slate-200 dark:border-[#12151C] p-6 rounded-none bg-[#F8FAFC] dark:bg-[#07090D] max-w-3xl space-y-4 font-mono text-xs">
-                        <div className="flex justify-between items-center border-b border-slate-200 dark:border-[#12151C] pb-3">
-                            <span className="text-[#C68346] font-bold uppercase">MATRIZ DE CARGOS Y COMPETENCIAS</span>
-                        </div>
-                        <p className="text-slate-500 dark:text-[#8A93A6]">
-                            Definición técnica de perfiles de faena, exigencias normativas ISO 9001/45001 y matriz de competencias.
-                        </p>
-                        <div className="pt-2">
-                            <button
-                                type="button"
-                                onClick={() => navigate('/job-profiles')}
-                                className="bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold uppercase text-xs py-2 px-4 rounded-none cursor-pointer"
-                            >
-                                ABRIR MATRIZ DE CARGOS
-                            </button>
-                        </div>
-                    </div>
+                    <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Matriz de Cargos...]</div>}>
+                        <JobProfilesPage />
+                    </Suspense>
                 )}
 
-                {/* CONTENIDO 6: ADMINISTRADORES */}
+                {/* CONTENIDO 5: ADMINISTRADORES (100% INTEGRADO EN DEV) */}
                 {activeSection === 'B2B_ADMINS' && (
-                    <div className="space-y-6 max-w-3xl font-mono text-xs">
-                        <div className="border border-slate-200 dark:border-[#12151C] p-6 rounded-none bg-[#F8FAFC] dark:bg-[#07090D] space-y-4">
-                            <div className="flex justify-between items-center border-b border-slate-200 dark:border-[#12151C] pb-3">
-                                <span className="text-[#C68346] font-bold uppercase">GOBERNANZA DE ADMINISTRADORES</span>
-                            </div>
-                            <p className="text-slate-500 dark:text-[#8A93A6]">
-                                Control de cuentas con privilegios elevados, autenticación por doble factor y rotación obligatoria de credenciales.
-                            </p>
-                            <div className="pt-2 flex flex-wrap gap-3">
-                                <button
-                                    type="button"
-                                    onClick={() => navigate('/b2b/admins')}
-                                    className="bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold uppercase text-xs py-2 px-4 rounded-none cursor-pointer"
-                                >
-                                    ADMINISTRAR PRIVILEGIOS
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setActiveSection('BRANDING')}
-                                    className="border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-white font-mono font-bold uppercase text-xs py-2 px-4 rounded-none cursor-pointer transition-colors flex items-center gap-1.5"
-                                >
-                                    <span className="material-symbols-outlined text-[16px]">palette</span>
-                                    GESTOR DE LOGOS
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Acceso Rápido Integrado a Gestor de Logos */}
-                        <div className="border border-slate-200 dark:border-[#12151C] p-6 rounded-none bg-[#FFFFFF] dark:bg-[#07090D] space-y-4">
-                            <div className="flex justify-between items-center border-b border-slate-200 dark:border-[#12151C] pb-3">
-                                <div className="flex items-center gap-2">
-                                    <span className="material-symbols-outlined text-[#C68346] text-[18px]">palette</span>
-                                    <span className="text-slate-900 dark:text-[#F3F4F6] font-bold uppercase">IDENTIDAD CORPORATIVA</span>
-                                </div>
-                            </div>
-                            <p className="text-slate-500 dark:text-[#8A93A6]">
-                                Administración oficial de isotipos, logotipos, imagotipos y empaquetado móvil PWA/Android.
-                            </p>
-                            <div className="pt-2">
-                                <button
-                                    type="button"
-                                    onClick={() => setActiveSection('BRANDING')}
-                                    className="bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold uppercase text-xs py-2 px-4 rounded-none cursor-pointer flex items-center gap-2"
-                                >
-                                    <span className="material-symbols-outlined text-[16px]">tune</span>
-                                    CONFIGURAR LOGOS DEL SISTEMA
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+                    <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Administradores...]</div>}>
+                        <AdminsPage />
+                    </Suspense>
                 )}
 
-                {/* CONTENIDO 7: GESTOR DE LOGOS & IDENTIDAD */}
+                {/* CONTENIDO 6: GESTOR DE LOGOS & IDENTIDAD (100% INTEGRADO EN DEV) */}
                 {activeSection === 'BRANDING' && (
                     <div className="max-w-5xl">
                         <BrandingManager />
                     </div>
                 )}
 
-                {/* CONTENIDO 7: MÉTRICAS */}
+                {/* CONTENIDO 7: MÉTRICAS (100% INTEGRADO EN DEV) */}
                 {activeSection === 'B2B_METRICAS' && (
-                    <div className="border border-slate-200 dark:border-[#12151C] p-6 rounded-none bg-[#F8FAFC] dark:bg-[#07090D] max-w-3xl space-y-4 font-mono text-xs">
-                        <div className="flex justify-between items-center border-b border-slate-200 dark:border-[#12151C] pb-3">
-                            <span className="text-[#C68346] font-bold uppercase">TELEMETRÍA & AUDITORÍA</span>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
-                            <div className="border border-slate-200 dark:border-[#12151C] p-3">
-                                <span className="text-slate-400 block text-[10px]">CORE WEB VITALS</span>
-                                <span className="text-emerald-500 font-bold">LCP &lt; 1.0s</span>
-                            </div>
-                            <div className="border border-slate-200 dark:border-[#12151C] p-3">
-                                <span className="text-slate-400 block text-[10px]">INP</span>
-                                <span className="text-emerald-500 font-bold">&lt; 50ms</span>
-                            </div>
-                            <div className="border border-slate-200 dark:border-[#12151C] p-3">
-                                <span className="text-slate-400 block text-[10px]">OFFLINE QUEUE</span>
-                                <span className="text-[#00AEEF] font-bold">ACTIVO (IndexedDB)</span>
-                            </div>
-                        </div>
-                        <div className="pt-2">
-                            <button
-                                type="button"
-                                onClick={() => navigate('/b2b/metricas')}
-                                className="bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold uppercase text-xs py-2 px-4 rounded-none cursor-pointer"
-                            >
-                                VER CONSOLA DE MÉTRICAS
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {/* CONTENIDO 8: SUSCRIPCIÓN */}
-                {activeSection === 'B2B_SUSCRIPCION' && (
-                    <div className="border border-slate-200 dark:border-[#12151C] p-6 rounded-none bg-[#F8FAFC] dark:bg-[#07090D] max-w-3xl space-y-4 font-mono text-xs">
-                        <div className="flex justify-between items-center border-b border-slate-200 dark:border-[#12151C] pb-3">
-                            <span className="text-[#C68346] font-bold uppercase">ESTADO DE LICENCIAMIENTO INDUSTRIAL</span>
-                        </div>
-                        <div className="space-y-2 text-slate-600 dark:text-slate-300">
-                            <div>• STOCKPILE (Cubicaciones & Gemelo 3D): <span className="text-emerald-500 font-bold">HABILITADO</span></div>
-                            <div>• OPERMAQ (Telemetría & Flota Pesada): <span className="text-emerald-500 font-bold">HABILITADO</span></div>
-                        </div>
-                        <div className="pt-2">
-                            <button
-                                type="button"
-                                onClick={() => navigate('/b2b/suscripcion')}
-                                className="bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold uppercase text-xs py-2 px-4 rounded-none cursor-pointer"
-                            >
-                                GESTIONAR SUSCRIPCIÓN
-                            </button>
-                        </div>
-                    </div>
+                    <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Métricas Operacionales...]</div>}>
+                        <MetricasPage />
+                    </Suspense>
                 )}
 
                 {/* MÓDULO INDUSTRIAL 1: STOCKPILE (NATIVO EN VIVO) */}
@@ -1601,7 +1380,8 @@ export const DevVaultGateway: React.FC = () => {
                     </div>
                 )}
 
-            </main>
+                </main>
+            </div>
 
         </div>
     );

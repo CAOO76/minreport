@@ -118,11 +118,11 @@ export const PluginsPage: React.FC = () => {
                     <button
                         onClick={fetchModuleStatuses}
                         disabled={loading}
-                        className="bg-transparent border-0 outline-none p-1.5 text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors cursor-pointer flex items-center gap-1.5 text-xs"
+                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                         title="Actualizar estados"
+                        aria-label="Actualizar estados"
                     >
                         <span className={`material-symbols-outlined text-[18px] ${loading ? 'animate-spin' : ''}`}>sync</span>
-                        <span>Actualizar</span>
                     </button>
                 </div>
             </div>

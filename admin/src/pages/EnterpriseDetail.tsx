@@ -233,7 +233,7 @@ export const EnterpriseDetail = () => {
                                     ? 'text-emerald-600 dark:text-emerald-400'
                                     : 'text-amber-600 dark:text-amber-400'
                             }`}>
-                                <span className={`w-1.5 h-1.5 rounded-full ${
+                                <span className={`w-1.5 h-1.5 rounded-none ${
                                     account?.status === 'ACTIVE' || account?.status === 'APPROVED' ? 'bg-emerald-500' : 'bg-amber-500'
                                 }`} />
                                 {account?.status === 'ACTIVE' || account?.status === 'APPROVED' ? 'Activa' : 'Suspendida'}

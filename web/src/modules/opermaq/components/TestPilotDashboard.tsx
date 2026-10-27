@@ -62,14 +62,6 @@ export const TestPilotDashboard: React.FC<TestPilotDashboardProps> = ({
     globalAssetId,
     pdfUrl 
 }) => {
-    // Resolver la URL del PDF según el entorno (producción vs emulador local)
-    const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-    const defaultPdfUrl = isLocal 
-        ? "http://localhost:9195/v0/b/minreport-8f2a8.firebasestorage.app/o/manuals%2F994K_v2.pdf?alt=media"
-        : "https://firebasestorage.googleapis.com/v0/b/minreport-8f2a8.firebasestorage.app/o/manuals%2F994K_v2.pdf?alt=media";
-    
-    const finalPdfUrl = pdfUrl || defaultPdfUrl;
-
     const { t, i18n } = useTranslation();
     const [approvalText, setApprovalText] = useState('');
     const [activeListeningId, setActiveListeningId] = useState<string | null>(null);
@@ -79,7 +71,10 @@ export const TestPilotDashboard: React.FC<TestPilotDashboardProps> = ({
     const [isSealed, setIsSealed] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [unsealText, setUnsealText] = useState('');
+    const [assetPdfUrl, setAssetPdfUrl] = useState<string | null>(pdfUrl || null);
     const { isSystemAdmin } = useCurrentUser();
+
+    const finalPdfUrl = pdfUrl || assetPdfUrl;
 
     const fetchConflicts = useCallback(async () => {
         setLoading(true);
@@ -94,6 +89,14 @@ export const TestPilotDashboard: React.FC<TestPilotDashboardProps> = ({
             if (!response.ok) throw new Error('Error al obtener datos del activo');
             
             const assetData = await response.json();
+            if (assetData?.exists === false) {
+                setConflicts([]);
+                setIsSealed(false);
+                return;
+            }
+            if (assetData?.manual_url || assetData?.pdfUrl) {
+                setAssetPdfUrl(String(assetData.manual_url || assetData.pdfUrl));
+            }
             const vault = assetData?.knowledge_vault || {};
             setIsSealed(assetData?.isSealed || false);
             const allConflicts: VaultConflict[] = [];
@@ -367,12 +370,12 @@ export const TestPilotDashboard: React.FC<TestPilotDashboardProps> = ({
     };
 
     return (
-        <div className="flex flex-col h-screen bg-background text-foreground font-atkinson overflow-hidden transition-colors duration-500">
-            {/* HEADER LOCALIZADO - GLASSMORPHISM */}
+        <div className="flex flex-col h-full min-h-[calc(100vh-64px)] bg-background text-foreground font-atkinson overflow-hidden transition-colors duration-500">
+            {/* HEADER LOCALIZADO */}
             <header className="h-14 border-b border-border-base flex items-center justify-between px-6 bg-background/80 backdrop-blur-md z-50">
                 <div className="flex items-center gap-4">
                     <span className="material-symbols-outlined text-foreground animate-pulse">terminal</span>
-                    <h1 className="text-[10px] font-black uppercase tracking-[0.4em]">{t('testPilot.hud_title')} <span className="text-foreground/20">// 4.3</span></h1>
+                    <h1 className="text-[10px] font-black uppercase tracking-[0.4em]">{t('testPilot.hud_title')}</h1>
                 </div>
                 <div className="flex items-center gap-6">
                     <AgentBadge pillarId="orchestrator" />
@@ -382,33 +385,44 @@ export const TestPilotDashboard: React.FC<TestPilotDashboardProps> = ({
                 </div>
             </header>
 
-            {/* PANEL PRINCIPAL */}
-            <main className="flex-1 flex overflow-hidden">
-                {/* PANEL IZQUIERDO: VISOR PDF - REFINADO */}
-                <section className="w-1/2 p-4 bg-foreground/[0.03] border-r border-border-base/30">
-                    <div className="w-full h-full border border-border-base bg-surface overflow-hidden shadow-inner relative group">
-                        <iframe 
-                            src={finalPdfUrl} 
-                            className="w-full h-full industrial-viewer opacity-90 group-hover:opacity-100 transition-opacity duration-500 grayscale-[0.5] group-hover:grayscale-0"
-                            title={t('testPilot.tech_viewer')}
-                        />
-                        <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity duration-500">
-                             <div className="bg-black/80 text-white text-[9px] px-2 py-1 font-black uppercase tracking-widest backdrop-blur-sm border border-white/10">
-                                {t('testPilot.source_validated')}
-                             </div>
-                        </div>
+            {/* PANEL PRINCIPAL — PROPORCIÓN ÁUREA (61.8% / 38.2%) */}
+            <main className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+                {/* PANEL IZQUIERDO (Φ ≈ 61.8%): VISOR PDF TÉCNICO */}
+                <section className="w-full lg:w-[61.8%] p-4 bg-foreground/[0.03] border-b lg:border-b-0 lg:border-r border-border-base/30">
+                    <div className="w-full h-full border border-border-base bg-surface overflow-hidden shadow-none relative group flex items-center justify-center">
+                        {finalPdfUrl ? (
+                            <>
+                                <iframe 
+                                    src={finalPdfUrl} 
+                                    className="w-full h-full industrial-viewer opacity-90 group-hover:opacity-100 transition-opacity duration-500 grayscale-[0.5] group-hover:grayscale-0"
+                                    title={t('testPilot.tech_viewer')}
+                                />
+                                <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity duration-500">
+                                    <div className="bg-black/80 text-white text-[9px] px-2 py-1 font-black uppercase tracking-widest backdrop-blur-sm border border-white/10">
+                                        {t('testPilot.source_validated')}
+                                    </div>
+                                </div>
+                            </>
+                        ) : (
+                            <div className="flex flex-col items-center justify-center p-12 text-center select-none">
+                                <span className="material-symbols-outlined !text-[36px] text-foreground/20 mb-4">description</span>
+                                <p className="text-[11px] font-mono uppercase tracking-widest text-foreground/40">
+                                    [Información técnica no declarada en ficha — Sin documento PDF vinculado para {globalAssetId}]
+                                </p>
+                            </div>
+                        )}
                         
-                        {/* Overlay decorativo industrial */}
+                        {/* Overlay industrial */}
                         <div className="absolute inset-0 pointer-events-none border-[20px] border-transparent group-hover:border-foreground/[0.02] transition-all duration-700"></div>
                     </div>
                 </section>
 
-                {/* PANEL DERECHO: EDITOR DE BÓVEDA - GLASSMORPHISM */}
-                <section className="w-1/2 overflow-y-auto custom-scrollbar bg-background relative">
+                {/* PANEL DERECHO (1 - Φ ≈ 38.2%): EDITOR DE BÓVEDA */}
+                <section className="w-full lg:w-[38.2%] overflow-y-auto custom-scrollbar bg-background relative">
                     
                     {loading ? (
                         <div className="absolute inset-0 flex flex-col items-center justify-center p-12 space-y-6">
-                            <div className="w-12 h-12 border-2 border-foreground/10 border-t-foreground animate-spin rounded-full"></div>
+                            <div className="w-12 h-12 border-2 border-foreground/10 border-t-foreground animate-spin rounded-none"></div>
                             <p className="text-[10px] font-black uppercase tracking-[0.4em] text-foreground/40 animate-pulse">
                                 {t('vault.loading') || 'Sincronizando...'}
                             </p>
@@ -479,7 +493,7 @@ export const TestPilotDashboard: React.FC<TestPilotDashboardProps> = ({
                                 ) : (
                                     <div className="space-y-6">
                                         {conflicts.map((conflict) => (
-                                            <div key={conflict.id} className="bg-surface border border-border-base p-8 rounded-none space-y-6 shadow-sm hover:border-foreground/20 transition-all duration-500 relative overflow-hidden group">
+                                            <div key={conflict.id} className="bg-surface border border-border-base p-8 rounded-none space-y-6 shadow-none hover:border-foreground/20 transition-all duration-500 relative overflow-hidden group">
                                                 <div className="absolute top-0 left-0 w-[2px] h-0 bg-foreground group-hover:h-full transition-all duration-700"></div>
                                                 
                                                 <div className="flex justify-between items-start">
@@ -529,7 +543,7 @@ export const TestPilotDashboard: React.FC<TestPilotDashboardProps> = ({
                                                             <M3IconButton 
                                                                 icon={activeListeningId === conflict.id ? 'graphic_eq' : 'mic'}
                                                                 onClick={() => startSpeechRecognition(conflict.id)}
-                                                                className={activeListeningId === conflict.id ? 'bg-foreground !text-background animate-pulse shadow-[0_0_20px_rgba(255,255,255,0.4)]' : 'bg-foreground/5'}
+                                                                className={activeListeningId === conflict.id ? 'bg-foreground !text-background animate-pulse shadow-none' : 'bg-foreground/5'}
                                                             />
                                                             <M3IconButton 
                                                                 icon="auto_fix"
@@ -607,7 +621,7 @@ export const TestPilotDashboard: React.FC<TestPilotDashboardProps> = ({
                                                     loading={isSaving}
                                                     variant={isHardConfirmed ? "primary" : "secondary"}
                                                     icon={isHardConfirmed ? "verified" : "shield_lock"}
-                                                    className={`w-full !py-8 transition-all duration-700 ${isHardConfirmed && !isSaving ? 'shadow-[0_10px_30px_rgba(176,141,87,0.2)] scale-[1.02]' : 'opacity-50'}`}
+                                                    className={`w-full !py-8 transition-all duration-700 ${isHardConfirmed && !isSaving ? 'shadow-none' : 'opacity-50'}`}
                                                     onClick={handleSealVault}
                                                 >{t('testPilot.seal_authority')}</M3Button>
                                             </div>

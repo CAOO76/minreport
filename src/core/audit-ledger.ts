@@ -6,7 +6,7 @@ import { createHash } from 'crypto';
  * 
  * Colección Firestore 'audit_ledger' append-only inmutable.
  * Registra cada mutación crítica de contratos, licencias de módulos,
- * transacciones de flujos de caja y accesos de usuarios titulares.
+ * curación de bóvedas por TEST-PILOTS, transacciones y accesos titulares.
  */
 
 export interface LedgerEntry {
@@ -14,7 +14,7 @@ export interface LedgerEntry {
     actorUid: string;
     actorEmail: string;
     action: string;
-    module: 'opermaq' | 'stockpile' | 'b2b-core' | 'core';
+    module: 'opermaq' | 'stockpile' | 'b2b-core' | 'core' | 'test-pilot';
     targetEntity: string;
     details: Record<string, any>;
     ipAddress?: string;
@@ -56,15 +56,13 @@ export class AuditLedger {
                 entryHash,
                 timestamp,
                 createdAt: admin.firestore.FieldValue.serverTimestamp(),
-                // Regla de inmutabilidad: el documento no debe ser editado jamás
                 immutable: true
             });
 
-            console.log(`[AUDIT-LEDGER] 🛡️ Evento registrado: ${entry.action} [${entry.module}] (Hash: ${entryHash.substring(0, 12)}...)`);
+            console.log(`[AUDIT-LEDGER] Evento registrado: ${entry.action} [${entry.module}] (Hash: ${entryHash.substring(0, 12)}...)`);
             return docRef.id;
         } catch (error) {
-            console.error('[AUDIT-LEDGER] ❌ Error al escribir en el ledger inmutable:', error);
-            // En trazabilidad bancaria, los fallos de auditoría deben notificarse de forma crítica
+            console.error('[AUDIT-LEDGER] Error al escribir en el ledger inmutable:', error);
             throw new Error('Fallo crítico al asentar transacción en el ledger inmutable.');
         }
     }

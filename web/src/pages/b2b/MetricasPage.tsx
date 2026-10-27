@@ -7,7 +7,7 @@ export const MetricasPage = () => {
     ];
 
     return (
-        <div className="max-w-5xl mx-auto py-8 px-6 space-y-8" style={{ fontFamily: "'Atkinson Hyperlegible', sans-serif" }}>
+        <div className="max-w-5xl mx-auto py-8 px-6 space-y-8 font-sans">
 
             <div className="border-b border-gray-200 dark:border-gray-800 pb-6">
                 <h1 className="text-xl font-bold uppercase tracking-wider text-gray-900 dark:text-white">Métricas de Uso</h1>

@@ -132,7 +132,7 @@ export const MiningAICopilot: React.FC = () => {
                     IA MINERA
                 </span>
                 {proposals.filter(p => p.status === 'PENDING').length > 0 && (
-                    <span className="w-2 h-2 rounded-full bg-[#00AEEF] animate-pulse" />
+                    <span className="w-2 h-2 rounded-none bg-[#00AEEF] animate-pulse" />
                 )}
             </button>
 

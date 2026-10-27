@@ -143,7 +143,7 @@ export default function ChecklistGeneratorPanel({ globalAssetId, makeModel, cate
           </label>
           <select
             value={selType} onChange={e => setSelType(e.target.value)}
-            style={{ width: '100%', marginTop: 8, padding: '12px 14px', borderRadius: 12,
+            style={{ width: '100%', marginTop: 8, padding: '12px 14px', borderRadius: 0,
               border: '1.5px solid var(--color-outline-variant)', background: 'var(--color-surface)',
               color: 'var(--color-on-surface)', fontSize: '0.9rem', fontWeight: 500, outline: 'none' }}
             autoComplete="off"
@@ -163,7 +163,8 @@ export default function ChecklistGeneratorPanel({ globalAssetId, makeModel, cate
             type="number" min={1} max={24} value={regimen}
             onChange={e => setRegimen(Number(e.target.value))}
             autoComplete="off"
-            style={{ width: '100%', marginTop: 8, padding: '12px 14px', borderRadius: 12,
+            spellCheck={false}
+            style={{ width: '100%', marginTop: 8, padding: '12px 14px', borderRadius: 0,
               border: '1.5px solid var(--color-outline-variant)', background: 'var(--color-surface)',
               color: 'var(--color-on-surface)', fontSize: '0.9rem', fontWeight: 500, boxSizing: 'border-box', outline: 'none' }}
           />
@@ -180,7 +181,7 @@ export default function ChecklistGeneratorPanel({ globalAssetId, makeModel, cate
             <button
               key={p.id} onClick={() => setSelProf(p.id)}
               style={{
-                padding: '8px 18px', borderRadius: 24, fontSize: '0.85rem', cursor: 'pointer',
+                padding: '8px 18px', borderRadius: 0, fontSize: '0.85rem', cursor: 'pointer',
                 border: selProf === p.id ? '2px solid var(--color-primary)' : '1.5px solid var(--color-outline-variant)',
                 background: selProf === p.id ? 'var(--color-primary-container)' : 'transparent',
                 color: selProf === p.id ? 'var(--color-primary)' : 'var(--color-on-surface)',
@@ -193,7 +194,7 @@ export default function ChecklistGeneratorPanel({ globalAssetId, makeModel, cate
           ))}
         </div>
         {selProfile && (
-          <div style={{ marginTop: 12, padding: '12px 16px', borderRadius: 12, background: 'var(--color-surface-variant)', fontSize: '0.85rem', opacity: 0.9, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ marginTop: 12, padding: '12px 16px', borderRadius: 0, background: 'var(--color-surface-variant)', fontSize: '0.85rem', opacity: 0.9, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8 }}>
             <span className="material-symbols-outlined" style={{ fontSize: 18, color: 'var(--color-primary)' }}>location_on</span>
             {selProfile.altitud} · {selProfile.clima}
           </div>
@@ -205,10 +206,10 @@ export default function ChecklistGeneratorPanel({ globalAssetId, makeModel, cate
         onClick={handleGenerate} disabled={loading}
         style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '14px 28px',
-          borderRadius: 14, border: 'none', cursor: loading ? 'not-allowed' : 'pointer',
+          borderRadius: 0, border: 'none', cursor: loading ? 'not-allowed' : 'pointer',
           background: loading ? 'var(--color-outline)' : 'var(--color-primary)',
           color: 'white', fontWeight: 700, fontSize: '0.95rem', transition: 'all 0.2s', marginBottom: 32,
-          width: '100%', boxShadow: loading ? 'none' : '0 4px 12px rgba(var(--color-primary-rgb), 0.2)'
+          width: '100%', boxShadow: 'none'
         }}
       >
         <span className="material-symbols-outlined" style={{ fontSize: 20 }}>
@@ -219,7 +220,7 @@ export default function ChecklistGeneratorPanel({ globalAssetId, makeModel, cate
 
       {/* Error */}
       {error && (
-        <div style={{ padding: '14px 18px', borderRadius: 12, background: 'var(--color-error-container)',
+        <div style={{ padding: '14px 18px', borderRadius: 0, background: 'var(--color-error-container)',
           color: 'var(--color-error)', fontSize: '0.9rem', marginBottom: 20, display: 'flex', gap: 10, alignItems: 'center', fontWeight: 500 }}>
           <span className="material-symbols-outlined" style={{ fontSize: 20 }}>error_outline</span>
           {error}
@@ -228,7 +229,7 @@ export default function ChecklistGeneratorPanel({ globalAssetId, makeModel, cate
 
       {/* Advertencia IA sin base documental */}
       {checklist?.metadata.advertencia_ia && (
-        <div style={{ padding: '14px 18px', borderRadius: 12, background: 'var(--color-warn-container)',
+        <div style={{ padding: '14px 18px', borderRadius: 0, background: 'var(--color-warn-container)',
           color: 'var(--color-warn)', fontSize: '0.85rem', marginBottom: 20, display: 'flex', gap: 10, alignItems: 'center', fontWeight: 500, lineHeight: 1.4 }}>
           <span className="material-symbols-outlined" style={{ fontSize: 20 }}>warning_amber</span>
           {checklist.metadata.advertencia_ia}
@@ -246,7 +247,7 @@ export default function ChecklistGeneratorPanel({ globalAssetId, makeModel, cate
               { label: t('checklist.generator.stats.oem'),     value: checklist.metadata.items_oem,      icon: 'verified',      color: 'var(--color-success)' },
               { label: t('checklist.generator.stats.ia'),  value: checklist.metadata.items_ia,       icon: 'auto_fix_high', color: 'var(--color-warn)' },
             ].map(s => (
-              <div key={s.label} style={{ padding: '18px 12px', borderRadius: 16,
+              <div key={s.label} style={{ padding: '18px 12px', borderRadius: 0,
                 background: 'var(--color-surface-container-low)', textAlign: 'center', border: '1px solid var(--color-outline-variant)' }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 24, color: s.color || 'var(--color-primary)', marginBottom: 8 }}>{s.icon}</span>
                 <div style={{ fontSize: '1.6rem', fontWeight: 800, color: s.color || 'var(--color-on-surface)', lineHeight: 1.2 }}>{s.value}</div>
@@ -258,7 +259,7 @@ export default function ChecklistGeneratorPanel({ globalAssetId, makeModel, cate
           {/* Acciones */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 24, alignItems: 'center' }}>
             <button onClick={handleExportJSON} style={{
-              display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px', borderRadius: 10,
+              display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px', borderRadius: 0,
               border: '1.5px solid var(--color-outline)', background: 'transparent',
               color: 'var(--color-on-surface)', fontSize: '0.85rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.2s'
             }}>
@@ -267,29 +268,29 @@ export default function ChecklistGeneratorPanel({ globalAssetId, makeModel, cate
             </button>
             
             <button onClick={() => setShowInteractive(true)} style={{
-              display: 'flex', alignItems: 'center', gap: 8, padding: '10px 24px', borderRadius: 10,
+              display: 'flex', alignItems: 'center', gap: 8, padding: '10px 24px', borderRadius: 0,
               border: 'none', background: 'var(--color-primary)',
               color: 'white', fontSize: '0.85rem', cursor: 'pointer', fontWeight: 700, transition: 'all 0.2s',
-              boxShadow: '0 4px 12px rgba(var(--color-primary-rgb), 0.15)'
+              boxShadow: 'none'
             }}>
               <span className="material-symbols-outlined" style={{ fontSize: 18 }}>engineering</span>
               {t('checklist.generator.actions.inspect')}
             </button>
 
-            <span style={{ fontSize: '0.8rem', opacity: 0.6, fontWeight: 500, marginLeft: 'auto', background: 'var(--color-surface-variant)', padding: '6px 12px', borderRadius: 8 }}>
+            <span style={{ fontSize: '0.8rem', opacity: 0.6, fontWeight: 500, marginLeft: 'auto', background: 'var(--color-surface-variant)', padding: '6px 12px', borderRadius: 0 }}>
               {t('checklist.generator.actions.norm', { norma: checklist.metadata.norma_hsec })}
             </span>
           </div>
 
           {/* Modal de éxito tras inspección */}
           {successId && (
-            <div style={{ padding: '18px', borderRadius: 16, background: 'var(--color-success-container)', color: 'var(--color-success)', marginBottom: 24, display: 'flex', alignItems: 'center', gap: 14, border: '1px solid var(--color-success)' }}>
+            <div style={{ padding: '18px', borderRadius: 0, background: 'var(--color-success-container)', color: 'var(--color-success)', marginBottom: 24, display: 'flex', alignItems: 'center', gap: 14, border: '1px solid var(--color-success)' }}>
               <span className="material-symbols-outlined" style={{ fontSize: 28 }}>check_circle</span>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 800, fontSize: '1rem' }}>{t('checklist.generator.success.title')}</div>
                 <div style={{ fontSize: '0.85rem', opacity: 0.8, fontWeight: 500 }}>ID: {successId}</div>
               </div>
-              <button onClick={() => setSuccessId(null)} style={{ background: 'var(--color-surface)', border: 'none', color: 'var(--color-success)', cursor: 'pointer', width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <button onClick={() => setSuccessId(null)} style={{ background: 'var(--color-surface)', border: 'none', color: 'var(--color-success)', cursor: 'pointer', width: 32, height: 32, borderRadius: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 18 }}>close</span>
               </button>
             </div>
@@ -297,14 +298,14 @@ export default function ChecklistGeneratorPanel({ globalAssetId, makeModel, cate
 
           {/* Grupos de ítems */}
           {checklist.groups.map((group, gi) => (
-            <div key={gi} style={{ marginBottom: 24, borderRadius: 16, overflow: 'hidden',
+            <div key={gi} style={{ marginBottom: 24, borderRadius: 0, overflow: 'hidden',
               border: '1.5px solid var(--color-outline-variant)', background: 'var(--color-surface)' }}>
               {/* Zona header */}
               <div style={{ padding: '14px 20px', background: 'var(--color-surface-container-high)',
                 display: 'flex', alignItems: 'center', gap: 10, borderBottom: '1.5px solid var(--color-outline-variant)' }}>
                 <span className="material-symbols-outlined" style={{ fontSize: 20, color: 'var(--color-primary)' }}>location_searching</span>
                 <span style={{ fontWeight: 800, fontSize: '0.95rem', letterSpacing: '-0.01em' }}>{group.zona}</span>
-                <span style={{ marginLeft: 'auto', fontSize: '0.75rem', opacity: 0.7, fontWeight: 700, background: 'var(--color-outline-variant)', padding: '2px 8px', borderRadius: 6 }}>
+                <span style={{ marginLeft: 'auto', fontSize: '0.75rem', opacity: 0.7, fontWeight: 700, background: 'var(--color-outline-variant)', padding: '2px 8px', borderRadius: 0 }}>
                   {group.items.length} {group.items.length !== 1 ? 'ÍTEMS' : 'ÍTEM'}
                 </span>
               </div>
@@ -330,12 +331,12 @@ export default function ChecklistGeneratorPanel({ globalAssetId, makeModel, cate
                           {item.accion} — {item.componente}
                         </span>
                         {item.es_critico && (
-                          <span style={{ fontSize: '0.65rem', padding: '3px 10px', borderRadius: 8,
+                          <span style={{ fontSize: '0.65rem', padding: '3px 10px', borderRadius: 0,
                             background: 'var(--color-error)', color: 'white', fontWeight: 800, letterSpacing: '0.04em' }}>
                             {t('checklist.generator.items.critical')}
                           </span>
                         )}
-                        <span style={{ marginLeft: 'auto', fontSize: '0.65rem', padding: '3px 10px', borderRadius: 8,
+                        <span style={{ marginLeft: 'auto', fontSize: '0.65rem', padding: '3px 10px', borderRadius: 0,
                           background: origen.bg, color: origen.color, fontWeight: 800, letterSpacing: '0.04em' }}>
                           {origen.label}
                         </span>
@@ -351,12 +352,12 @@ export default function ChecklistGeneratorPanel({ globalAssetId, makeModel, cate
                           <span style={{ color: 'var(--color-error)', fontWeight: 700 }}>✗</span>
                           <span><strong>{t('checklist.generator.items.fail')}:</strong> {item.criterio_no_pasa}</span>
                         </div>
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          <span style={{ fontWeight: 700 }}>⚡</span>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: 15, color: 'var(--color-primary)' }}>bolt</span>
                           <span><strong>{t('checklist.generator.items.action')}:</strong> {item.accion_inmediata}</span>
                         </div>
                         {item.referencia_oem && (
-                          <div style={{ marginTop: 8, padding: '6px 12px', borderRadius: 8, background: 'var(--color-surface-container-low)', fontSize: '0.75rem', opacity: 0.8, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                          <div style={{ marginTop: 8, padding: '6px 12px', borderRadius: 0, background: 'var(--color-surface-container-low)', fontSize: '0.75rem', opacity: 0.8, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                             <span className="material-symbols-outlined" style={{ fontSize: 14 }}>description</span>
                             {item.referencia_oem}
                           </div>

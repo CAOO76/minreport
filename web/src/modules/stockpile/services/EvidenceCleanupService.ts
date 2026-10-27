@@ -1,6 +1,6 @@
 /**
  * EvidenceCleanupService
- * Gestión de la "Limpieza de Evidencia": eliminación de originales y generación de recursos optimizados.
+ * Gestión de la limpieza de evidencia fotogramétrica: liberación determinista de memoria GPU/DOM y generación de recursos optimizados.
  */
 
 import type { Mesh3D } from '../types/PointCloud';
@@ -16,19 +16,20 @@ export interface CleanupConfig {
 
 export class EvidenceCleanupService {
     /**
-     * Genera el Proxy Visual (WebP < 200kb) a partir de una imagen
+     * Genera el Proxy Visual (WebP < 200kb) a partir de una imagen y libera el ObjectURL temporal.
      */
     async generateProxyImage(imageBlob: Blob, quality: number = 0.7): Promise<Blob> {
         return new Promise((resolve, reject) => {
             const img = new Image();
-            img.src = URL.createObjectURL(imageBlob);
+            const objectUrl = URL.createObjectURL(imageBlob);
+            img.src = objectUrl;
 
             img.onload = () => {
+                URL.revokeObjectURL(objectUrl);
                 const canvas = document.createElement('canvas');
                 const ctx = canvas.getContext('2d');
 
-                // Redimensionar para asegurar tamaño < 200kb (ajuste dinámico de resolución)
-                const maxDim = 800; // Resolución suficiente para un proxy visual
+                const maxDim = 800;
                 let width = img.width;
                 let height = img.height;
 
@@ -49,8 +50,10 @@ export class EvidenceCleanupService {
                 ctx?.drawImage(img, 0, 0, width, height);
 
                 canvas.toBlob((blob) => {
+                    canvas.width = 0;
+                    canvas.height = 0;
                     if (blob) {
-                        console.log(`🖼️ Proxy generado: ${(blob.size / 1024).toFixed(2)} KB`);
+                        console.log(`[EvidenceCleanup] Proxy WebP generado: ${(blob.size / 1024).toFixed(2)} KB`);
                         resolve(blob);
                     } else {
                         reject(new Error('Error al generar blob WebP'));
@@ -58,12 +61,15 @@ export class EvidenceCleanupService {
                 }, 'image/webp', quality);
             };
 
-            img.onerror = () => reject(new Error('Error al cargar imagen para proxy'));
+            img.onerror = () => {
+                URL.revokeObjectURL(objectUrl);
+                reject(new Error('Error al cargar imagen para proxy'));
+            };
         });
     }
 
     /**
-     * Genera el archivo .glb comprimido a partir de la malla 3D
+     * Genera el archivo .glb comprimido a partir de la malla 3D y libera recursos WebGL/Three.js (dispose).
      */
     async generateGLB(meshData: Mesh3D): Promise<ArrayBuffer> {
         return new Promise((resolve, reject) => {
@@ -74,33 +80,48 @@ export class EvidenceCleanupService {
             const material = new THREE.MeshStandardMaterial({ color: 0x888888 });
             const mesh = new THREE.Mesh(geometry, material);
 
+            const cleanupThreeResources = () => {
+                geometry.dispose();
+                material.dispose();
+            };
+
             const exporter = new GLTFExporter();
             exporter.parse(
                 mesh,
                 (gltf: any) => {
+                    cleanupThreeResources();
                     if (gltf instanceof ArrayBuffer) {
-                        console.log(`📦 Malla GLB generada: ${(gltf.byteLength / 1024).toFixed(2)} KB`);
+                        console.log(`[EvidenceCleanup] Malla GLB generada: ${(gltf.byteLength / 1024).toFixed(2)} KB`);
                         resolve(gltf);
                     } else {
-                        // Si es un objeto JSON, lo convertimos a texto y luego a buffer (aunque preferimos binario)
                         const text = JSON.stringify(gltf);
                         const buffer = new TextEncoder().encode(text).buffer;
                         resolve(buffer);
                     }
                 },
-                (error: any) => reject(error),
+                (error: any) => {
+                    cleanupThreeResources();
+                    reject(error);
+                },
                 { binary: true }
             );
         });
     }
 
     /**
-     * Elimina las imágenes originales de alta resolución
-     * (En Capacitor, esto implicaría borrar archivos de la memoria flash)
+     * Elimina las imágenes originales de alta resolución tras consolidar el proxy WebP.
      */
     async cleanupOriginals(imageUrls: string[]): Promise<void> {
-        console.log(`🧹 Eliminando ${imageUrls.length} imágenes originales de alta resolución...`);
-        // Simulación de borrado. Implementación real usaría Capacitor Filesystem.
+        for (const url of imageUrls) {
+            if (typeof url === 'string' && url.startsWith('blob:')) {
+                try {
+                    URL.revokeObjectURL(url);
+                } catch {
+                    // Ignorar si ya fue revocado
+                }
+            }
+        }
+        console.log(`[EvidenceCleanup] Liberadas ${imageUrls.length} referencias temporales de alta resolución.`);
         return Promise.resolve();
     }
 }

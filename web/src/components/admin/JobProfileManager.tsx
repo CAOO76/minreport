@@ -124,7 +124,7 @@ export const JobProfileManager = () => {
     }
 
     return (
-        <div className="h-full flex flex-col md:flex-row gap-6 p-6" style={{ fontFamily: "'Atkinson Hyperlegible', sans-serif" }}>
+        <div className="h-full flex flex-col md:flex-row gap-6 p-6 font-sans">
             {/* LISTA DE PERFILES */}
             <aside className="w-full md:w-80 flex flex-col gap-4">
                 <div className="flex items-center justify-between mb-6">

@@ -126,7 +126,7 @@ export const ReportManagementPanel: React.FC = () => {
           <div className="bg-white/5 dark:bg-black/10 backdrop-blur-md border border-white/10 p-6 flex flex-col gap-4">
             <span className="text-[10px] font-black text-muted uppercase tracking-widest">{t('reports.service_status', 'Estado del Servicio')}</span>
             <div className="flex items-center gap-3">
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              <div className="w-2 h-2 bg-green-500 rounded-none animate-pulse"></div>
               <span className="text-sm font-bold">{t('reports.scheduler_active', 'Cloud Scheduler: ACTIVE')}</span>
             </div>
             <p className="text-[11px] text-muted leading-relaxed">

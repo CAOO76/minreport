@@ -133,8 +133,7 @@ export const StaffOnboarding = () => {
 
     return (
         <div
-            className="max-w-4xl mx-auto p-6"
-            style={{ fontFamily: "'Atkinson Hyperlegible', sans-serif" }}
+            className="max-w-4xl mx-auto p-6 font-sans"
         >
             {/* Header */}
             <div className="mb-10 border-b border-gray-200 dark:border-gray-800 pb-6">
@@ -161,7 +160,7 @@ export const StaffOnboarding = () => {
             )}
 
             {/* Form */}
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={handleSubmit} autoComplete="off" spellCheck={false}>
                 <Card className="!p-8">
                     <div className="space-y-6">
                         {/* RUN */}

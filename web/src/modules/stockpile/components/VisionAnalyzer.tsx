@@ -1,18 +1,16 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import clsx from 'clsx';
 import { M3Chip } from './M3Chip';
-import type { SecureContext } from '@minreport/sdk';
 
 // --- Props del Componente ---
 interface VisionAnalyzerProps {
-  context: SecureContext;
+  context?: any;
   onAnalysisComplete: (result: { type: string; image: string }) => void;
 }
 
 /**
  * VisionAnalyzer: Componente de Visión Computacional
- * Refactorizado para usar M3Chip y estilos Tailwind unificados.
- * Eliminada la predicción numérica de densidad por requerimiento industrial.
+ * Refactorizado bajo estándar Minimalismo Industrial Puro (GEMINI.md).
  */
 const VisionAnalyzer: React.FC<VisionAnalyzerProps> = ({ onAnalysisComplete }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -86,10 +84,12 @@ const VisionAnalyzer: React.FC<VisionAnalyzerProps> = ({ onAnalysisComplete }) =
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const data = imageData.data;
-      const sampleSize = 5000;
+      const totalPixels = Math.max(1, Math.floor(data.length / 4));
+      const sampleSize = Math.min(5000, totalPixels);
+      const step = Math.max(1, Math.floor(totalPixels / sampleSize));
       const luminances: number[] = [];
       for (let i = 0; i < sampleSize; i++) {
-        const index = Math.floor(Math.random() * (data.length / 4)) * 4;
+        const index = ((i * step) % totalPixels) * 4;
         const luminance = 0.2126 * data[index] + 0.7152 * data[index + 1] + 0.0722 * data[index + 2];
         luminances.push(luminance);
       }
@@ -113,7 +113,6 @@ const VisionAnalyzer: React.FC<VisionAnalyzerProps> = ({ onAnalysisComplete }) =
       features: analysisResult
     };
     try {
-      // We don't save to SDK storage here anymore, we pass it up to MobileScanner
       onAnalysisComplete(payload as any);
     } catch (err) {
       console.error("Error Analysis Completion:", err);
@@ -122,7 +121,7 @@ const VisionAnalyzer: React.FC<VisionAnalyzerProps> = ({ onAnalysisComplete }) =
   };
 
   return (
-    <div className="font-atkinson w-full h-full bg-black relative overflow-hidden rounded-none shadow-2xl ring-1 ring-white/10">
+    <div className="font-atkinson w-full h-full bg-black relative overflow-hidden rounded-none shadow-none border border-[#E2E8F0] dark:border-[#12151C]">
       <canvas ref={canvasRef} className="hidden" />
 
       {isCameraActive ? (
@@ -157,14 +156,14 @@ const VisionAnalyzer: React.FC<VisionAnalyzerProps> = ({ onAnalysisComplete }) =
                   onClick={analyzeGranulometry}
                   disabled={analysisState === 'analyzing'}
                   className={clsx(
-                    "w-24 h-24 rounded-none flex items-center justify-center shadow-2xl transition-all duration-300 overflow-hidden",
+                    "w-24 h-24 rounded-none flex items-center justify-center shadow-none transition-all duration-300 overflow-hidden",
                     "bg-white/90 text-black hover:bg-white hover:scale-105 active:scale-95",
                     "border-4 border-transparent hover:border-primary/50",
                     { "opacity-50 cursor-not-allowed": analysisState === 'analyzing' }
                   )}
                   aria-label="Analizar"
                 >
-                  <span className={`material-symbols-rounded text-[48px] ${analysisState === 'analyzing' ? 'animate-spin' : ''}`}>
+                  <span className={`material-symbols-outlined text-[48px] ${analysisState === 'analyzing' ? 'animate-spin' : ''}`}>
                     {analysisState === 'analyzing' ? 'autorenew' : 'shutter_speed'}
                   </span>
                 </button>
@@ -175,14 +174,14 @@ const VisionAnalyzer: React.FC<VisionAnalyzerProps> = ({ onAnalysisComplete }) =
                     className="w-16 h-16 rounded-none font-medium text-white/90 hover:bg-white/10 transition-colors flex items-center justify-center overflow-hidden"
                     title="Reintentar"
                   >
-                    <span className="material-symbols-rounded text-[32px]">refresh</span>
+                    <span className="material-symbols-outlined text-[32px]">refresh</span>
                   </button>
                   <button
                     onClick={handleAcceptAnalysis}
-                    className="w-20 h-20 rounded-none font-bold bg-primary text-black shadow-lg hover:shadow-primary/40 transition-all flex items-center justify-center overflow-hidden"
+                    className="w-20 h-20 rounded-none font-bold bg-primary text-black shadow-none transition-all flex items-center justify-center overflow-hidden"
                     title="Usar Resultado"
                   >
-                    <span className="material-symbols-rounded text-[40px]">check</span>
+                    <span className="material-symbols-outlined text-[40px]">check</span>
                   </button>
                 </div>
               )}
@@ -190,22 +189,22 @@ const VisionAnalyzer: React.FC<VisionAnalyzerProps> = ({ onAnalysisComplete }) =
           </div>
         </>
       ) : (
-        <div className="flex items-center justify-center h-full relative z-[999] bg-antigravity-dark-bg">
+        <div className="flex items-center justify-center h-full relative z-[999] bg-white dark:bg-[#000000]">
           {error ? (
             <div className="flex flex-col items-center gap-4 p-8 text-center max-w-sm">
-              <span className="material-symbols-rounded text-5xl text-red-500 mb-2">videocam_off</span>
-              <p className="text-antigravity-dark-text text-lg font-medium">{error}</p>
+              <span className="material-symbols-outlined text-5xl text-red-500 mb-2">videocam_off</span>
+              <p className="text-[#0F172A] dark:text-[#F3F4F6] text-lg font-medium">{error}</p>
               <button
                 onClick={enableCamera}
-                className="mt-4 px-6 py-3 bg-antigravity-accent text-white rounded-none font-bold shadow-lg hover:bg-antigravity-accent/90 transition-colors"
+                className="mt-4 px-6 py-3 bg-[#C68346] text-white rounded-none font-bold shadow-none hover:bg-[#C68346]/90 transition-colors"
               >
                 Reintentar
               </button>
             </div>
           ) : (
             <div className="flex flex-col items-center gap-4">
-              <div className="w-12 h-12 border-4 border-antigravity-accent border-t-transparent rounded-none animate-spin"></div>
-              <p className="text-antigravity-dark-muted font-medium animate-pulse">Iniciando cámara...</p>
+              <div className="w-12 h-12 border-4 border-[#C68346] border-t-transparent rounded-none animate-spin"></div>
+              <p className="text-[#475569] dark:text-[#8A93A6] font-medium animate-pulse">Iniciando cámara...</p>
             </div>
           )}
         </div>

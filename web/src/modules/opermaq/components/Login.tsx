@@ -40,7 +40,9 @@ export const Login: React.FC = () => {
                         <img 
                           src={brand.imagotype || brand.logotype} 
                           alt="Brand Logo" 
-                          className="h-20 mb-6 object-contain drop-shadow-md animate-in fade-in zoom-in duration-700" 
+                          draggable={false}
+                          onContextMenu={(e) => e.preventDefault()}
+                          className="h-20 mb-6 object-contain shadow-none animate-in fade-in zoom-in duration-700 select-none pointer-events-none" 
                         />
                     ) : (
                         <h1 className="text-4xl font-black tracking-tighter text-foreground uppercase">

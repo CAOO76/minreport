@@ -63,8 +63,12 @@ export const getAppCheckToken = async (): Promise<string | null> => {
 
 // 4. Configuración de API (Motor OPERMAQ)
 // Centralizado en el proyecto MINREPORT (minreport-8f2a8) y su backend unificado en southamerica-west1.
-export const API_BASE_URL: string = (import.meta as any).env?.VITE_OPERMAQ_API_URL ||
+const rawApiBase: string = (import.meta as any).env?.VITE_OPERMAQ_API_URL ||
   (import.meta as any).env?.VITE_API_URL ||
   (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
     ? 'http://localhost:8080/api'
     : '/api');
+
+export const API_BASE_URL: string = rawApiBase.endsWith('/api')
+  ? rawApiBase
+  : `${rawApiBase.replace(/\/+$/, '')}/api`;

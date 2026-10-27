@@ -1,7 +1,7 @@
 /**
  * SensorFusionService
  * Sincroniza la captura de imágenes con los datos del giroscopio, acelerómetro y GPS.
- * Estima la escala del acopio utilizando el sensor de movimiento del smartphone.
+ * Estima la escala del acopio utilizando el sensor de movimiento del dispositivo.
  */
 
 import { Motion } from '@capacitor/motion';
@@ -37,18 +37,16 @@ export class SensorFusionService {
         if (this.isCapturing) return;
 
         try {
-            // Solicitar permisos de Geolocalización
             await Geolocation.requestPermissions();
 
-            // Suscribirse a cambios de movimiento
             await Motion.addListener('accel', (event) => {
                 this.currentMotion = event;
             });
 
             this.isCapturing = true;
-            console.log('📡 Captura de sensores iniciada');
+            console.log('[SensorFusion] Captura de sensores iniciada');
         } catch (error) {
-            console.error('❌ Error al iniciar captura de sensores:', error);
+            console.error('[SensorFusion] Error al iniciar captura de sensores:', error);
             throw error;
         }
     }
@@ -61,19 +59,15 @@ export class SensorFusionService {
 
         await Motion.removeAllListeners();
         this.isCapturing = false;
-        console.log('📡 Captura de sensores detenida');
+        console.log('[SensorFusion] Captura de sensores detenida');
     }
 
     /**
      * Sincroniza una imagen con los datos de los sensores en el momento de la captura
-     * 
-     * @param imageBlob - El blob de la imagen capturada
-     * @returns CalibratedImage - Imagen con datos de sensores asociados
      */
     async syncImageWithSensors(imageBlob: Blob): Promise<CalibratedImage> {
         const timestamp = Date.now();
 
-        // Obtenemos la última posición conocida (o la actualizamos si es necesario)
         const position = await Geolocation.getCurrentPosition({
             enableHighAccuracy: true,
         });
@@ -98,23 +92,16 @@ export class SensorFusionService {
     }
 
     /**
-     * Estima la escala del acopio utilizando el sensor de movimiento (AR para pobres)
-     * Utiliza la integración de la aceleración para estimar la distancia recorrida
-     * 
-     * @param motionSamples - Muestras de movimiento capturadas durante la trayectoria
-     * @returns number - Factor de escala estimado (metros por unidad de píxel/SFM)
+     * Estima la escala del acopio utilizando la integración cinemática de la aceleración.
      */
     estimateScale(motionSamples: AccelListenerEvent[]): number {
         if (motionSamples.length < 2) return 1.0;
 
         let totalDisplacement = 0;
-        let velocity = { x: 0, y: 0, z: 0 };
+        const velocity = { x: 0, y: 0, z: 0 };
 
         for (let i = 1; i < motionSamples.length; i++) {
-            const dt = 0.016; // Asumimos 60fps constante para simplificación
-            // Nota: En una implementación real usaríamos un filtro de Kalman o similar
-            // y timestamps precisos suministrados por los sensores.
-
+            const dt = 0.016;
             const accel = motionSamples[i].acceleration;
 
             velocity.x += accel.x * dt;
@@ -130,7 +117,7 @@ export class SensorFusionService {
             totalDisplacement += disp;
         }
 
-        console.log(`📏 Desplazamiento total estimado: ${totalDisplacement.toFixed(2)}m`);
+        console.log(`[SensorFusion] Desplazamiento total estimado: ${totalDisplacement.toFixed(2)}m`);
         return totalDisplacement > 0 ? totalDisplacement : 1.0;
     }
 }

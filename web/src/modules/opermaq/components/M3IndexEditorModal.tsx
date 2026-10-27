@@ -71,7 +71,7 @@ export const M3IndexEditorModal: React.FC<M3IndexEditorModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-background border border-border-base w-full max-w-3xl max-h-[90vh] flex flex-col font-sans shadow-2xl">
+      <div className="bg-background border border-border-base w-full max-w-3xl max-h-[90vh] flex flex-col font-sans shadow-none rounded-none">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-black/5 dark:border-white/5">
           <div>
@@ -113,10 +113,11 @@ export const M3IndexEditorModal: React.FC<M3IndexEditorModalProps> = ({
                     {allKeys.map(k => (
                       <td key={k} className="pr-3 py-1.5">
                         <input
-                          className="w-full bg-transparent border-b border-border-base focus:border-copper outline-none text-foreground py-0.5 text-[11px] font-medium transition-colors"
+                          className="w-full bg-transparent border-b border-border-base focus:border-copper outline-none text-foreground py-0.5 text-[11px] font-medium transition-colors rounded-none"
                           value={String(row[k] ?? '')}
                           onChange={e => handleCellChange(rIdx, k, e.target.value)}
                           autoComplete="off"
+                          spellCheck={false}
                         />
                       </td>
                     ))}

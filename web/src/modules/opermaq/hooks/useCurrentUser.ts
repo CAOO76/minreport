@@ -1,7 +1,32 @@
 import { useState, useEffect } from 'react';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
 
-export type UserRole = 'DEVELOPER' | 'TEST_PILOT' | 'ADMIN' | 'OPERMAQ' | 'USER' | null;
+export type UserRole =
+  | 'DEV_ROOT'
+  | 'SUPER_ADMIN'
+  | 'DEVELOPER'
+  | 'TEST_PILOT'
+  | 'PILOT_LEAD'
+  | 'OWNER'
+  | 'ADMIN'
+  | 'SUPERVISOR'
+  | 'OPERATOR'
+  | 'VIEWER'
+  | 'STUDENT'
+  | 'OPERMAQ'
+  | 'USER'
+  | null;
+
+const SYSTEM_ADMIN_ROLES: UserRole[] = [
+  'DEV_ROOT',
+  'SUPER_ADMIN',
+  'DEVELOPER',
+  'ADMIN',
+  'OWNER',
+  'TEST_PILOT',
+  'PILOT_LEAD',
+  'OPERMAQ',
+];
 
 interface UserState {
   userId: string | null;
@@ -41,7 +66,7 @@ export function useCurrentUser(): UserState {
             userId: firebaseUser.uid,
             userEmail: firebaseUser.email,
             role: role,
-            isSystemAdmin: role === 'DEVELOPER' || role === 'ADMIN' || role === 'OPERMAQ',
+            isSystemAdmin: SYSTEM_ADMIN_ROLES.includes(role),
             isLoading: false,
           });
         } catch (error) {

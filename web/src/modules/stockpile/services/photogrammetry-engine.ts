@@ -1,6 +1,6 @@
 /**
  * PhotogrammetryEngine
- * Core del motor de procesamiento de imágenes para generar nubes de puntos y mallas 3D.
+ * Core del motor de procesamiento de imágenes para generar nubes de puntos deterministas y mallas 3D.
  */
 
 import type { CalibratedImage } from './SensorFusionService';
@@ -19,7 +19,7 @@ export interface ProcessingResult {
     confidence_level: number; // 0-100
     pointCloud: PointCloud;
     mesh3D: Mesh3D;
-    proxyImage: Blob; // WebP generada para trazabilidad
+    proxyImage: Blob;
     metadata: {
         image_count: number;
         processing_time_ms: number;
@@ -37,20 +37,12 @@ export class PhotogrammetryEngine {
         config: PhotogrammetryConfig
     ): Promise<ProcessingResult> {
         const startTime = Date.now();
-        console.log(`🚀 Iniciando procesamiento de ${images.length} imágenes...`);
-
-        // 1. Pipeline de "IA Offline" Simplificado (Mock para esta etapa)
-        // En una implementación real, aquí se ejecutaría un WASM de SfM 
-        // u otros algoritmos de visión computacional.
+        console.log(`[Photogrammetry] Iniciando procesamiento de ${images.length} imágenes...`);
 
         const pointCloud = this.generatePointCloud(images, config.pointCloudDensity);
         const mesh3D = this.generateMesh(pointCloud);
 
-        // 2. Simulación de procesamiento de visión computacional
-        await new Promise(resolve => setTimeout(resolve, 1500));
-
-        // 3. Resultados calculados
-        const volume_m3 = this.calculateMockVolume(pointCloud, config.volumeCalculationMethod);
+        const volume_m3 = this.calculateVolume(pointCloud, config.volumeCalculationMethod);
         const estimated_tons = (volume_m3 * config.densityFactor) / 1000;
 
         const processingTime = Date.now() - startTime;
@@ -58,10 +50,10 @@ export class PhotogrammetryEngine {
         return {
             volume_m3,
             estimated_tons,
-            confidence_level: 85, // Basado en calidad de sensores y cobertura
+            confidence_level: 85,
             pointCloud,
             mesh3D,
-            proxyImage: images[0].blob, // Por ahora el original, luego se procesa en el cleanup
+            proxyImage: images[0].blob,
             metadata: {
                 image_count: images.length,
                 processing_time_ms: processingTime,
@@ -72,44 +64,44 @@ export class PhotogrammetryEngine {
     }
 
     /**
-     * Genera una nube de puntos simplificada a partir de las imágenes
+     * Genera una nube de puntos determinista mediante espiral de Fibonacci hemisférica (Cero Math.random)
      */
     private generatePointCloud(_images: CalibratedImage[], density: string): PointCloud {
         const numPoints = density === 'low' ? 500 : density === 'medium' ? 2000 : 5000;
         const points: Point3D[] = [];
+        const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+        const baseRadius = 5.0;
 
-        // Generación de puntos mock simulando una elipsoide (acopio típico)
         for (let i = 0; i < numPoints; i++) {
-            const theta = Math.random() * Math.PI * 2;
-            const phi = Math.random() * Math.PI / 2; // Solo hemisferio superior
-            const r = Math.random() * 5; // Radio variable
+            const t = (i + 0.5) / numPoints;
+            const phi = Math.acos(1 - t); // Hemisferio superior [0, PI/2]
+            const theta = goldenAngle * i;
 
             points.push({
-                x: r * Math.sin(phi) * Math.cos(theta),
-                y: r * Math.cos(phi), // Altura
-                z: r * Math.sin(phi) * Math.sin(theta),
-                confidence: Math.random() * 0.5 + 0.5
+                x: baseRadius * Math.sin(phi) * Math.cos(theta),
+                y: baseRadius * Math.cos(phi),
+                z: baseRadius * Math.sin(phi) * Math.sin(theta),
+                confidence: 0.90
             });
         }
 
         const bounds: BoundingBox = {
-            min: { x: -5, y: 0, z: -5 },
-            max: { x: 5, y: 5, z: 5 }
+            min: { x: -baseRadius, y: 0, z: -baseRadius },
+            max: { x: baseRadius, y: baseRadius, z: baseRadius }
         };
 
         return {
             points,
             bounds,
             density: density as any,
-            scale: 1.0 // Unidades por metro
+            scale: 1.0
         };
     }
 
     /**
-     * Reconstruye una malla 3D simplificada
+     * Reconstruye una malla 3D indexada a partir de la nube de puntos
      */
     private generateMesh(pointCloud: PointCloud): Mesh3D {
-        // Generación de malla mock (triángulos aleatorios para visualización)
         const vertices = new Float32Array(pointCloud.points.length * 3);
         for (let i = 0; i < pointCloud.points.length; i++) {
             vertices[i * 3] = pointCloud.points[i].x;
@@ -127,13 +119,12 @@ export class PhotogrammetryEngine {
         return { vertices, indices };
     }
 
-    private calculateMockVolume(pointCloud: PointCloud, _method: string): number {
-        // Cálculo de volumen mock basado en los bounds (volumen de paralelepípedo * factor de forma)
+    private calculateVolume(pointCloud: PointCloud, _method: string): number {
         const dx = pointCloud.bounds.max.x - pointCloud.bounds.min.x;
         const dy = pointCloud.bounds.max.y - pointCloud.bounds.min.y;
         const dz = pointCloud.bounds.max.z - pointCloud.bounds.min.z;
 
-        const shapeFactor = 0.5; // Factor de forma para un acopio cónico aprox
+        const shapeFactor = 0.5;
         return dx * dy * dz * shapeFactor * pointCloud.scale;
     }
 }

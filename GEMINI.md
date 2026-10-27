@@ -15,6 +15,17 @@
 - **Integridad de Datos:** Prohibido reiniciar o eliminar colecciones de bases de datos, datos de emuladores locales (`.firebase-emulator-data`) o el usuario super-admin durante el ciclo de desarrollo.
 - **Servicios Permitidos:** Cloud Firestore, Cloud Storage, Cloud Functions Gen 2, Cloud Run, Firebase Hosting / Firebase App Hosting, Cloud Secret Manager.
 
+### 1.1 Jerarquía Soberana de 5 Tipos de Cuenta
+1. **1º DEV (`DEV_ROOT` / `dev@minreport.com`):** Gobierno de ingeniería, arquitectura núcleo, bóvedas maestras ISO y creación/gestión exclusiva de colaboradores `TEST-PILOT`.
+2. **2º ADMIN (`SUPER_ADMIN` / `admin@minreport.com`):** Operación comercial y administrativa del negocio MINREPORT, clientes B2B, aprobaciones EDU, disponibilidad de módulos (`modules_status`) y auditoría del ledger.
+3. **3º TEST-PILOT (`TEST_PILOT` / `PILOT_LEAD`):** Expertos humanos acreditados por `DEV`. Operan mediante una interfaz y HUD transversal dedicado con acceso total a todos los módulos (integrados en MINREPORT e independientes en `OPERMAQ` y `STOCKPILE CONTROL`) para simular proyectos mineros, registrar comentarios/solicitudes de cambio (`pilot_feedback`) y entrenar/curar la IA interna (`hitl_candidates`).
+4. **4º CLIENTES B2B (`B2B`):** Empresas y faenas mineras con aislamiento multi-tenant estricto por `accountId` (`tenantId`).
+5. **5º EDU (`EDUCATIONAL`):** Universidades y centros académicos en entorno sandbox controlado (`isEduSandbox: true`).
+
+### 1.2 Arquitectura de Módulos Nativos Integrados sobre Base de Datos Única
+- **Módulos Nativos Integrados (`OPERMAQ` y `STOCKPILE CONTROL`):** Operan 100% integrados en MINREPORT (dentro del espacio de trabajo `/dev` para `DEV` sin saltos de ruta, y en `/opermaq` y `/stockpile` para clientes), compartiendo siempre la **misma base de datos Cloud Firestore y Cloud Storage**, la misma autenticación/sesión, los mismos contratos Zod (`web/src/contracts/index.ts`), el mismo motor Offline-First (`SyncQueueEngine`) y el mismo diseño UI/UX. El desarrollo como aplicaciones independientes está pendiente para una fase posterior y no debe insertarse dentro de MINREPORT.
+- **Prohibición de Plugins/SDK Legacy:** Queda estrictamente prohibido el uso de `@minreport/sdk`, `MockSecureContext`, `core-sdk-shield` o bases de datos aisladas por módulo.
+
 ---
 
 ## 2. Arquitectura Web 3.0 Híbrida (5 Capas MINREPORT)

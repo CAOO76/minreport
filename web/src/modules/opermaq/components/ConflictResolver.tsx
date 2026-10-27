@@ -130,7 +130,7 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({
                         {conflicts.map((proposal, idx) => {
                             const style = proposalStyle[proposal.estado_fusion] || proposalStyle.CONFLICTO;
                             return (
-                                <div key={idx} className={`border ${style.border} ${style.bg} p-3 space-y-3 shadow-sm`}>
+                                <div key={idx} className={`border ${style.border} ${style.bg} p-3 space-y-3 shadow-none rounded-none`}>
                                     <div className="flex justify-between items-start">
                                         <div className="flex flex-col gap-1">
                                             <div className="flex items-center gap-2">
@@ -169,7 +169,7 @@ const ConflictResolver: React.FC<ConflictResolverProps> = ({
                                             </span>
                                             <div className="text-[10px] font-bold leading-relaxed text-black dark:text-white break-words line-clamp-3">
                                                 {proposal.estado_fusion === 'ELIMINAR' 
-                                                    ? '⚠️ Propuesta de eliminación por incoherencia técnica' 
+                                                    ? 'Propuesta de eliminación por incoherencia técnica' 
                                                     : safeStr(proposal.valor_nuevo)}
                                             </div>
                                         </div>
