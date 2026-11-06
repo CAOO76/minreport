@@ -1,9 +1,21 @@
 import { Resend } from 'resend';
 import { db } from '../config/firebase';
 import { env } from '../config/env';
+import { resolveResendApiKey } from '../config/secrets';
 import admin from 'firebase-admin';
 
-const resend = new Resend(env.RESEND_API_KEY);
+let cachedResend: { key: string; client: Resend } | null = null;
+
+async function getResendClient(): Promise<Resend> {
+    const apiKey = (await resolveResendApiKey()) || env.RESEND_API_KEY || '';
+    if (!cachedResend || cachedResend.key !== apiKey) {
+        cachedResend = {
+            key: apiKey,
+            client: new Resend(apiKey),
+        };
+    }
+    return cachedResend.client;
+}
 
 export interface EmailAttachment {
     content?: string | Buffer;
@@ -22,6 +34,7 @@ export interface EmailOptions {
     html: string;
     reply_to?: string;
     attachments?: EmailAttachment[];
+    redactSensitiveOtp?: boolean;
 }
 
 export class EmailService {
@@ -40,6 +53,7 @@ export class EmailService {
         const replyTo = options.reply_to || process.env.RESEND_REPLY_TO || 'no-reply@minreport.com';
 
         try {
+            const resend = await getResendClient();
             const sendPayload: any = {
                 from: sender,
                 to: options.to,
@@ -54,15 +68,14 @@ export class EmailService {
 
             const result = await resend.emails.send(sendPayload);
             if (result.error) {
-                console.error(`[EmailService] ❌ Error devuelto por Resend API para ${options.to}:`, result.error);
+                console.error(`[EmailService] Error devuelto por Resend API para ${options.to}:`, result.error);
                 const errObj = result.error as any;
                 if (errObj.statusCode === 403 || errObj.message?.includes('Domain not verified')) {
-                    console.warn(`[EmailService] ⚠️ Remitente (${sender}) o destinatario (${options.to}) restringido por política de Resend.`);
-                    console.warn(`[EmailService] 💡 Para pruebas locales, configure en .env: RESEND_FROM_EMAIL=MINREPORT <onboarding@resend.dev>`);
+                    console.warn(`[EmailService] Remitente (${sender}) o destinatario (${options.to}) restringido por política de Resend.`);
                 }
                 throw new Error(result.error.message || `Resend Error (${result.error.name})`);
             }
-            console.log(`[EmailService] ✅ Email despachado vía Resend a ${options.to}: ${options.subject} (ID: ${result.data?.id})`);
+            console.log(`[EmailService] Email despachado vía Resend a ${options.to} (ID: ${result.data?.id})`);
         } catch (error: any) {
             console.error(`[EmailService] Fallo al enviar email a ${options.to}:`, error?.message || error);
             throw error;
@@ -71,25 +84,26 @@ export class EmailService {
 
     /**
      * Guarda el email en la colección system_emails para ser leído por los tests E2E.
+     * Nunca persiste OTPs de acceso DEV en texto plano.
      */
     private static async mockEmail(options: EmailOptions): Promise<void> {
-        console.log(`[EmailService][MOCK] Capturing email to ${options.to}: ${options.subject}`);
+        const safeSubject = options.redactSensitiveOtp
+            ? options.subject.replace(/\b\d{6}\b/g, '[OTP_REDACTED]')
+            : options.subject;
+        const safeHtml = options.redactSensitiveOtp
+            ? options.html.replace(/\b\d{6}\b/g, '[OTP_REDACTED]')
+            : options.html;
 
-        // Extraer oobCode y otros params del link si existe
-        // Links suelen tener formato: /setup-access?accountId=...&oobCode=...
-        const oobCodeMatch = options.html.match(/[?&]oobCode=([^&"'\s]+)/);
-        const accountIdMatch = options.html.match(/[?&]accountId=([^&"'\s]+)/);
-        const taxIdMatch = options.html.match(/[?&]taxId=([^&"'\s]+)/);
+        console.log(`[EmailService][MOCK] Capturing email to ${options.to}: ${safeSubject}`);
 
-        console.log(`[EmailService][MOCK] Extracted params:`, {
-            accountId: accountIdMatch ? accountIdMatch[1] : 'MISSING',
-            taxId: taxIdMatch ? taxIdMatch[1] : 'MISSING',
-            oobCode: oobCodeMatch ? oobCodeMatch[1] : 'MISSING'
-        });
+        const oobCodeMatch = safeHtml.match(/[?&]oobCode=([^&"'\s]+)/);
+        const accountIdMatch = safeHtml.match(/[?&]accountId=([^&"'\s]+)/);
+        const taxIdMatch = safeHtml.match(/[?&]taxId=([^&"'\s]+)/);
+
         const emailDoc = {
             to: options.to,
-            subject: options.subject,
-            body: options.html,
+            subject: safeSubject,
+            body: safeHtml,
             oobCode: oobCodeMatch ? oobCodeMatch[1] : null,
             params: {
                 accountId: accountIdMatch ? accountIdMatch[1] : null,
@@ -102,7 +116,6 @@ export class EmailService {
 
         try {
             await db.collection('system_emails').add(emailDoc);
-            console.log(`[EmailService][MOCK] Email stored in Firestore for ${options.to}`);
         } catch (error) {
             console.error('[EmailService][MOCK] Failed to store mock email:', error);
         }

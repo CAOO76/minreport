@@ -15,12 +15,23 @@ const DB_NAME = 'MinReportPluginDB';
 const STORE_NAME = 'secure_storage';
 const DB_VERSION = 1; // Incrementar SOLO si hay cambios en el schema del store
 
-// Clave de backup de emergencia en localStorage
-const BACKUP_IDS_KEY = 'sc_backup_asset_ids';
+export function sanitizeStockpileTenantPrefix(tenantId?: string): string {
+    const cleaned = (tenantId || 'unassigned').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+    return cleaned.length > 0 ? cleaned : 'unassigned';
+}
+
+function getTenantBackupKey(safeTenant: string): string {
+    return `sc:${safeTenant}:backup_asset_ids`;
+}
 
 class IndexedDBStorage {
     private db: IDBDatabase | null = null;
     private initPromise: Promise<IDBDatabase> | null = null;
+    private activeSafeTenant: string = 'unassigned';
+
+    public setActiveTenant(tenantId: string): void {
+        this.activeSafeTenant = sanitizeStockpileTenantPrefix(tenantId);
+    }
 
     private openDB(): Promise<IDBDatabase> {
         if (this.initPromise) return this.initPromise;
@@ -28,38 +39,36 @@ class IndexedDBStorage {
         this.initPromise = new Promise((resolve, reject) => {
             const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-            request.onupgradeneeded = (event: any) => {
-                const db = event.target.result;
+            request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
+                const db = (event.target as IDBOpenDBRequest).result;
                 // Solo crear el store si no existe — nunca borrar datos existentes
                 if (!db.objectStoreNames.contains(STORE_NAME)) {
                     db.createObjectStore(STORE_NAME);
-                    console.log('[IndexedDB] Store creado por primera vez.');
                 }
             };
 
-            request.onsuccess = (event: any) => {
-                this.db = event.target.result;
+            request.onsuccess = (event: Event) => {
+                this.db = (event.target as IDBOpenDBRequest).result;
 
-                // Detectar si la BD fue limpiada accidentalmente
+                // Detectar si la BD fue limpiada accidentalmente para el tenant activo
                 this.detectDataLoss();
 
-                // Handler de cierre inesperado (e.g. actualización de BD en otra pestaña)
-                this.db!.onclose = () => {
+                this.db.onclose = () => {
                     console.warn('[IndexedDB] Conexión cerrada inesperadamente. Reconectando...');
                     this.db = null;
                     this.initPromise = null;
                 };
 
-                this.db!.onerror = (e: any) => {
-                    console.error('[IndexedDB] Error en transacción:', e.target?.error);
+                this.db.onerror = (e: Event) => {
+                    console.error('[IndexedDB] Error en transacción:', (e.target as IDBRequest | null)?.error);
                 };
 
-                resolve(this.db!);
+                resolve(this.db);
             };
 
-            request.onerror = (event: any) => {
+            request.onerror = (event: Event) => {
                 this.initPromise = null;
-                reject(new Error(`[IndexedDB] Error al abrir BD: ${event.target?.error}`));
+                reject(new Error(`[IndexedDB] Error al abrir BD: ${(event.target as IDBOpenDBRequest | null)?.error}`));
             };
 
             request.onblocked = () => {
@@ -72,28 +81,28 @@ class IndexedDBStorage {
 
     private async getDB(): Promise<IDBDatabase> {
         if (this.db?.objectStoreNames.contains(STORE_NAME)) return this.db;
-        // Resetear si la conexión fue cerrada
         this.db = null;
         this.initPromise = null;
         return this.openDB();
     }
 
-    /** Detecta si IndexedDB fue limpiado (e.g. al reinstalar APK) */
+    /** Detecta si IndexedDB fue limpiado accidentalmente usando prefijos particionados por tenant */
     private async detectDataLoss(): Promise<void> {
         try {
-            const backupIds = localStorage.getItem(BACKUP_IDS_KEY);
+            const safeTenant = this.activeSafeTenant;
+            const backupIds = localStorage.getItem(getTenantBackupKey(safeTenant));
             if (!backupIds) return;
 
             const ids: string[] = JSON.parse(backupIds);
-            if (ids.length === 0) return;
+            if (!Array.isArray(ids) || ids.length === 0) return;
 
             const firstId = ids[0];
-            const exists = await this.get(`sc_asset_${firstId}`);
+            const exists = await this.get(`sc:${safeTenant}:asset:${firstId}`);
 
             if (!exists) {
                 console.error(
-                    `[IndexedDB] PÉRDIDA DE DATOS DETECTADA: El activo "${firstId}" existe en el índice de backup ` +
-                    `pero NO en IndexedDB. El WebView puede haber limpiado el almacenamiento.`
+                    `[IndexedDB] PÉRDIDA DE DATOS DETECTADA (${safeTenant}): El activo "${firstId}" existe en el índice de backup ` +
+                    `pero NO en IndexedDB.`
                 );
             }
         } catch {
@@ -108,7 +117,7 @@ class IndexedDBStorage {
             const store = transaction.objectStore(STORE_NAME);
             const request = store.get(key);
 
-            request.onsuccess = () => resolve(request.result ?? null);
+            request.onsuccess = () => resolve((request.result as T) ?? null);
             request.onerror = () => reject(request.error);
         });
     }
@@ -121,11 +130,14 @@ class IndexedDBStorage {
             const request = store.put(value, key);
 
             request.onsuccess = () => {
-                // Backup de emergencia: si es el índice de IDs, replicar en localStorage
-                if (key === 'sc_all_asset_ids' && Array.isArray(value)) {
+                // Backup particionado por tenant si corresponde al índice `sc:${safeTenant}:asset_ids`
+                const match = /^sc:([^:]+):asset_ids$/.exec(key);
+                if (match && Array.isArray(value)) {
                     try {
-                        localStorage.setItem(BACKUP_IDS_KEY, JSON.stringify(value));
-                    } catch { /* localStorage puede estar lleno */ }
+                        localStorage.setItem(getTenantBackupKey(match[1]), JSON.stringify(value));
+                    } catch {
+                        // localStorage puede estar lleno
+                    }
                 }
                 resolve();
             };
@@ -145,23 +157,23 @@ class IndexedDBStorage {
         });
     }
 
-    async clear(): Promise<void> {
-        const db = await this.getDB();
-        return new Promise((resolve, reject) => {
-            const transaction = db.transaction(STORE_NAME, 'readwrite');
-            const store = transaction.objectStore(STORE_NAME);
-            const request = store.clear();
-
-            request.onsuccess = () => {
-                // Limpiar también el backup al hacer un clear explícito
-                localStorage.removeItem(BACKUP_IDS_KEY);
-                resolve();
-            };
-            request.onerror = () => reject(request.error);
-        });
+    async clearTenant(tenantId?: string): Promise<void> {
+        const safeTenant = sanitizeStockpileTenantPrefix(tenantId || this.activeSafeTenant);
+        const prefix = `sc:${safeTenant}:`;
+        const keys = await this.getAllKeys();
+        for (const k of keys) {
+            if (typeof k === 'string' && k.startsWith(prefix)) {
+                await this.delete(k);
+            }
+        }
+        try {
+            localStorage.removeItem(getTenantBackupKey(safeTenant));
+        } catch {
+            // No crítico
+        }
     }
 
-    /** Retorna todas las claves del store (útil para diagnóstico) */
+    /** Retorna todas las claves del store */
     async getAllKeys(): Promise<string[]> {
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
@@ -174,14 +186,17 @@ class IndexedDBStorage {
         });
     }
 
-    /** Backup del índice de activos actual (llamar al iniciar la app) */
-    async refreshBackupIndex(): Promise<void> {
+    /** Backup del índice de activos del tenant activo */
+    async refreshBackupIndex(tenantId?: string): Promise<void> {
         try {
-            const ids = await this.get<string[]>('sc_all_asset_ids');
+            const safeTenant = sanitizeStockpileTenantPrefix(tenantId || this.activeSafeTenant);
+            const ids = await this.get<string[]>(`sc:${safeTenant}:asset_ids`);
             if (Array.isArray(ids) && ids.length > 0) {
-                localStorage.setItem(BACKUP_IDS_KEY, JSON.stringify(ids));
+                localStorage.setItem(getTenantBackupKey(safeTenant), JSON.stringify(ids));
             }
-        } catch { /* No crítico */ }
+        } catch {
+            // No crítico
+        }
     }
 }
 

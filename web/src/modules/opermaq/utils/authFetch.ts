@@ -1,32 +1,51 @@
-import { getAuth } from 'firebase/auth';
-import { getAppCheckToken, API_BASE_URL } from '../firebase/config';
-
+import { auth, API_BASE_URL, getOpermaqActiveAccountId } from '../firebase/config';
 
 /**
- * AUTH-FETCH: Wrapper autenticado sobre fetch.
- * Inyecta el token Firebase en el header estándar Authorization: Bearer.
- * También inyecta el token de App Check para securizar el endpoint.
+ * AUTH-FETCH (Subordinado a MINREPORT Core)
+ * Inyecta el Firebase ID Token de la sesión centralizada y el encabezado X-Active-Account-Id
+ * para que `resolveMinReportSessionScope` resuelva el alcance multi-tenant exacto.
+ * En cabina `/dev`, prioriza la identidad `DEV_ROOT` verificada sobre sesiones cliente de otras pestañas.
  */
-export async function authFetch(url: string, options: RequestInit = {}) {
-    const auth = getAuth();
+export async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
     const user = auth.currentUser;
 
-    if (!user) {
-        throw new Error('Usuario no autenticado');
+    const isInDevGateway =
+        typeof window !== 'undefined' && window.location.pathname.startsWith('/dev');
+
+    // Soportar token de sesión DEV en cabina /dev cuando el usuario opera bajo gateway criptográfico
+    const devFallbackToken =
+        typeof window !== 'undefined'
+            ? localStorage.getItem('dev_auth_token') || localStorage.getItem('dev_vault_token')
+            : null;
+
+    if (!user && !devFallbackToken) {
+        throw new Error('Sesión no iniciada en MINREPORT');
     }
 
-    // Normalizar rutas relativas (/api/...) hacia el API_BASE_URL unificado
     const resolvedUrl = url.startsWith('/api/')
         ? `${API_BASE_URL}${url.slice(4)}`
         : url.startsWith('/')
-            ? `${API_BASE_URL}${url}`
-            : url;
+        ? `${API_BASE_URL}${url}`
+        : url;
 
-    // Obtener tokens
-    const [idToken, appCheckToken] = await Promise.all([
-        user.getIdToken(),
-        getAppCheckToken().catch(() => null)
-    ]);
+    const isFirebaseUserDevRoot =
+        Boolean(user) &&
+        (user!.uid === 'dev-master-root-uid' ||
+            user!.email?.toLowerCase() === 'dev@minreport.com');
+
+    let idToken: string | null = null;
+    if (isInDevGateway && devFallbackToken && !isFirebaseUserDevRoot) {
+        idToken = devFallbackToken;
+    } else if (user) {
+        idToken = await user.getIdToken();
+        if (isInDevGateway && isFirebaseUserDevRoot && idToken) {
+            localStorage.setItem('dev_auth_token', idToken);
+        }
+    } else {
+        idToken = devFallbackToken;
+    }
+
+    const activeAccountId = getOpermaqActiveAccountId();
 
     const headers: Record<string, string> = {
         ...((options.headers as Record<string, string>) || {}),
@@ -36,14 +55,14 @@ export async function authFetch(url: string, options: RequestInit = {}) {
         headers['Authorization'] = `Bearer ${idToken}`;
     }
 
-    if (appCheckToken) {
-        headers['X-Firebase-AppCheck'] = appCheckToken;
+    if (activeAccountId && !headers['X-Active-Account-Id']) {
+        headers['X-Active-Account-Id'] = activeAccountId;
     }
 
     const response = await fetch(resolvedUrl, { ...options, headers });
 
     if (response.status === 401 || response.status === 403) {
-        console.warn(`[AUTH-WARN] ${response.status} en ${resolvedUrl}`);
+        console.warn(`[OPERMAQ-AUTH] HTTP ${response.status} en ${resolvedUrl}`);
     }
 
     return response;

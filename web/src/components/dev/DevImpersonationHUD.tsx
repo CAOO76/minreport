@@ -8,9 +8,9 @@ interface DevImpersonationHUDProps {
     accountId?: string;
 }
 
-export const DevImpersonationHUD: React.FC<DevImpersonationHUDProps> = ({ 
+export const DevImpersonationHUD: React.FC<DevImpersonationHUDProps> = ({
     accountName = 'Cliente Simulado',
-    accountId = 'sandbox'
+    accountId = 'sandbox',
 }) => {
     const navigate = useNavigate();
     const isImpersonating = localStorage.getItem('dev_is_impersonating') === 'true';
@@ -24,37 +24,35 @@ export const DevImpersonationHUD: React.FC<DevImpersonationHUDProps> = ({
             localStorage.removeItem('dev_impersonated_account');
 
             if (originalDevToken) {
-                // Restaurar token maestro DEV si es posible
                 try {
                     await signInWithCustomToken(auth, originalDevToken);
                 } catch {
-                    // Fallback a sign out limpio
                     await auth.signOut();
                 }
             } else {
                 await auth.signOut();
             }
 
-            navigate('/dev-vault-gateway');
+            navigate('/dev');
         } catch (err) {
             console.error('[DEV-HUD] Error al salir de simulación:', err);
-            navigate('/dev-vault-gateway');
+            navigate('/dev');
         }
     };
 
     return (
-        <aside 
+        <aside
             aria-label="Barra de herramientas de simulación DEV"
-            className="fixed top-0 left-0 right-0 z-[9999] bg-[#07090D] border-b-2 border-[#C68346] px-4 py-2 flex items-center justify-between shadow-none select-none"
+            className="fixed top-0 left-0 right-0 z-[9999] bg-[#F8FAFC] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border-b-2 border-[#C68346] px-fib-21 py-fib-8 flex items-center justify-between rounded-none shadow-none select-none"
         >
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-fib-13">
                 <span className="material-symbols-outlined text-[#C68346] text-[18px]">
                     terminal
                 </span>
-                <span className="font-mono text-xs uppercase tracking-wider text-[#F3F4F6]">
+                <span className="font-mono text-microcopy uppercase text-[#0F172A] dark:text-[#F3F4F6]">
                     MODO SIMULACIÓN CLIENTE ACTIVO:
                 </span>
-                <span className="font-mono text-xs text-[#00AEEF] px-1.5 py-0.5 border border-[#00AEEF]/30 bg-[#00AEEF]/5">
+                <span className="font-mono text-microcopy text-[#00AEEF] px-fib-8 py-0.5 border border-[#00AEEF]/40 bg-[#00AEEF]/5 rounded-none">
                     {accountName} ({accountId})
                 </span>
             </div>
@@ -62,12 +60,9 @@ export const DevImpersonationHUD: React.FC<DevImpersonationHUDProps> = ({
             <button
                 type="button"
                 onClick={handleExitSimulation}
-                className="bg-transparent border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-black transition-colors px-3 py-1 text-xs font-mono font-bold tracking-wider uppercase cursor-pointer rounded-none outline-none flex items-center gap-1.5"
+                className="bg-transparent border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-white transition-colors px-fib-13 py-fib-8 text-microcopy font-mono font-bold uppercase cursor-pointer rounded-none shadow-none outline-none"
             >
-                <span className="material-symbols-outlined text-[16px]">
-                    logout
-                </span>
-                Finalizar Simulación
+                FINALIZAR SIMULACIÓN
             </button>
         </aside>
     );

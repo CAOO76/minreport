@@ -20,7 +20,8 @@ import {
 } from 'firebase/firestore';
 import { getDb, auth } from '../config/firebase.config';
 import { syncQueueEngine } from '../../../core/offline/SyncQueueEngine';
-import { idbStorage } from '../utils/indexedDB';
+import { StockpileSurveyTelemetrySchema } from '../../../contracts';
+import { idbStorage, sanitizeStockpileTenantPrefix } from '../utils/indexedDB';
 import { storageService } from './StorageService';
 import type { StockpileAsset, StockpileMeasurement } from '../types/StockpileAsset';
 
@@ -33,15 +34,33 @@ export interface TenantContextInput {
 }
 
 // ─────────────────────────────────────────────
-// Keys de almacenamiento local (IndexedDB)
+// Keys de almacenamiento local particionadas por tenantId (IndexedDB)
 // ─────────────────────────────────────────────
 const K = {
-    assetIds:         'sc:asset_ids',
-    asset:    (id: string) => `sc:asset:${id}`,
-    measIds:  (aId: string) => `sc:meas_ids:${aId}`,
-    meas:     (id: string) => `sc:meas:${id}`,
-    profiles:         'sc:material_profiles',
+    assetIds: (safeTenant: string) => `sc:${safeTenant}:asset_ids`,
+    asset: (safeTenant: string, id: string) => `sc:${safeTenant}:asset:${id}`,
+    measIds: (safeTenant: string, aId: string) => `sc:${safeTenant}:meas_ids:${aId}`,
+    meas: (safeTenant: string, id: string) => `sc:${safeTenant}:meas:${id}`,
+    profiles: (safeTenant: string) => `sc:${safeTenant}:material_profiles`,
 } as const;
+
+type CanonicalSurveyShape = 'elliptic-cone' | 'truncated-elliptic-cone' | 'perimeter-cone';
+
+function mapDeclaredGeometryToShape(rawGeometry?: string): CanonicalSurveyShape | undefined {
+    switch (rawGeometry) {
+        case 'elliptic-cone':
+        case 'CONO_ELIPTICO':
+            return 'elliptic-cone';
+        case 'truncated-elliptic-cone':
+        case 'CONO_ELIPTICO_TRUNCADO':
+            return 'truncated-elliptic-cone';
+        case 'perimeter-cone':
+        case 'CONO_TRUNCADO_PERIMETRO':
+            return 'perimeter-cone';
+        default:
+            return undefined;
+    }
+}
 
 function sanitizeForFirestore<T>(obj: T): T {
     return JSON.parse(JSON.stringify(obj));
@@ -72,11 +91,12 @@ const bus = new EventBus();
 // DataService
 // ─────────────────────────────────────────────
 export class DataService {
-    private tenantId: string = 'faena-minreport';
-    private userId: string = 'field-operator';
+    private tenantId: string = '';
+    private userId: string = '';
     private isHydratingFromCloud: boolean = false;
 
     constructor() {
+        idbStorage.setActiveTenant(this.tenantId);
         if (typeof window !== 'undefined') {
             window.addEventListener('online', () => {
                 this.syncWithMinReport().catch(err =>
@@ -86,21 +106,38 @@ export class DataService {
         }
     }
 
+    private get safeTenant(): string {
+        return sanitizeStockpileTenantPrefix(this.tenantId);
+    }
+
+    private matchesActiveTenant(docData?: Record<string, any> | null): boolean {
+        if (!docData) return false;
+        const docTenant = docData.tenantId || docData.accountId || docData.tenant_id;
+        return Boolean(docTenant && docTenant === this.tenantId);
+    }
+
     hasContext(): boolean {
         return Boolean(this.tenantId);
     }
 
     setTenantContext(context: TenantContextInput): void {
+        const prevTenant = this.tenantId;
         if (context?.tenantId) {
             this.tenantId = context.tenantId;
             storageService.setTenantId(context.tenantId);
+            idbStorage.setActiveTenant(context.tenantId);
         }
         if (context?.userId) {
             this.userId = context.userId;
         } else if (auth?.currentUser?.uid) {
             this.userId = auth.currentUser.uid;
         }
-        // Sincronizar en segundo plano desde Firestore al establecer el tenant
+
+        if (prevTenant !== this.tenantId) {
+            this.getAllAssetsLocal().then((assets) => bus.emit('assets', assets)).catch(() => {});
+            this.getAllMeasurements().then((meas) => bus.emit('meas_any', meas)).catch(() => {});
+        }
+
         this.syncWithMinReport().catch(err =>
             console.warn('[DataService] Sincronización inicial diferida (modo offline):', err)
         );
@@ -111,7 +148,7 @@ export class DataService {
     }
 
     getUserId(): string {
-        return auth?.currentUser?.uid || this.userId;
+        return auth?.currentUser?.uid || this.userId || '';
     }
 
     private async read<T>(key: string): Promise<T | null> {
@@ -123,8 +160,8 @@ export class DataService {
     }
 
     private async readList(key: string): Promise<string[]> {
-        const val = await this.read<any>(key);
-        return Array.isArray(val) ? val : [];
+        const val = await this.read<unknown>(key);
+        return Array.isArray(val) ? (val as string[]) : [];
     }
 
     private async addToList(key: string, id: string): Promise<void> {
@@ -136,14 +173,54 @@ export class DataService {
 
     /**
      * Sincroniza un activo y sus mediciones hacia Cloud Firestore (`stockpiles`)
-     * y encola la tarea en `SyncQueueEngine` para resiliencia Offline-First.
+     * y encola la tarea en `SyncQueueEngine` respetando la geometría real declarada
+     * y validando con `StockpileSurveyTelemetrySchema` sin inventar `shape` ni `confidence`.
      */
     private async persistAssetToCloudAndQueue(asset: StockpileAsset, measurements?: StockpileMeasurement[]): Promise<void> {
         const measList = measurements ?? await this.getMeasurementsLocal(asset.id);
         const latestMeas = measList.find(m => !m.ignored) || measList[0];
         const volumeM3 = latestMeas?.volumen_m3 ?? asset.last_volume_m3 ?? asset.volumen ?? 0;
-        const density = latestMeas?.density_factor ?? asset.density_factor ?? 1.8;
-        const tonnage = latestMeas?.peso_t ?? asset.last_weight_t ?? asset.peso_final_toneladas ?? (volumeM3 * density);
+        const declaredDensity = latestMeas?.density_factor ?? asset.density_factor;
+        const tonnage =
+            latestMeas?.peso_t ??
+            asset.last_weight_t ??
+            asset.peso_final_toneladas ??
+            (typeof declaredDensity === 'number' && declaredDensity > 0 ? volumeM3 * declaredDensity : 0);
+
+        const declaredShape = mapDeclaredGeometryToShape(latestMeas?.geometry?.type || asset.geometria);
+        const rawConfidence = (latestMeas as (StockpileMeasurement & { ai_confidence?: number }) | undefined)?.ai_confidence;
+        const verifiedConfidence =
+            typeof rawConfidence === 'number' && Number.isFinite(rawConfidence)
+                ? Math.min(100, Math.max(0, rawConfidence <= 1 ? Math.round(rawConfidence * 100) : Math.round(rawConfidence)))
+                : undefined;
+
+        const surveyDateIso = new Date(asset.last_measured_at || asset.createdAt || Date.now()).toISOString();
+
+        // Validar telemetría canónica con `StockpileSurveyTelemetrySchema` cuando la medición incluye los parámetros completos
+        if (
+            latestMeas &&
+            declaredShape &&
+            volumeM3 > 0 &&
+            typeof declaredDensity === 'number' &&
+            declaredDensity > 0 &&
+            tonnage > 0 &&
+            typeof verifiedConfidence === 'number'
+        ) {
+            const validation = StockpileSurveyTelemetrySchema.safeParse({
+                surveyId: latestMeas.id,
+                tag: asset.name,
+                material: asset.clase || 'mineral',
+                shape: declaredShape,
+                volumeM3,
+                density: declaredDensity,
+                tonnage,
+                confidence: verifiedConfidence,
+                surveyDate: surveyDateIso,
+            });
+            if (!validation.success) {
+                console.warn('[DataService] Advertencia de validación StockpileSurveyTelemetrySchema:', validation.error.issues);
+            }
+        }
 
         const cloudPayload = sanitizeForFirestore({
             ...asset,
@@ -152,19 +229,19 @@ export class DataService {
             accountId: this.tenantId,
             tag: asset.name,
             material: asset.clase || 'mineral',
-            shape: 'elliptic-cone' as const,
+            ...(declaredShape ? { shape: declaredShape } : {}),
             volumeM3,
-            density,
+            ...(typeof declaredDensity === 'number' && declaredDensity > 0 ? { density: declaredDensity } : {}),
             tonnage,
-            confidence: 95,
-            lastSurvey: new Date(asset.last_measured_at || asset.createdAt || Date.now()).toISOString(),
+            ...(typeof verifiedConfidence === 'number' ? { confidence: verifiedConfidence } : {}),
+            lastSurvey: surveyDateIso,
             timestamp: asset.last_measured_at || asset.createdAt || Date.now(),
             measurements: measList,
             updatedAt: Date.now()
         });
 
         try {
-            await syncQueueEngine.enqueueTask('STOCKPILE_SURVEY', cloudPayload, `sync_stk_${asset.id}`);
+            await syncQueueEngine.enqueueTask('STOCKPILE_SURVEY', cloudPayload, `sync_stk_${this.safeTenant}_${asset.id}`);
         } catch (err) {
             console.warn('[DataService] No se pudo encolar en SyncQueueEngine:', err);
         }
@@ -181,49 +258,71 @@ export class DataService {
     }
 
     /**
-     * Hidrata un documento remoto de Firestore hacia el caché local IndexedDB
+     * Hidrata un documento remoto de Firestore hacia el caché local IndexedDB particionado por tenant
      */
     private async hydrateRemoteDocToLocal(rawDoc: Record<string, any>): Promise<StockpileAsset | null> {
         if (!rawDoc || !rawDoc.id) return null;
+        if (!this.matchesActiveTenant(rawDoc)) {
+            return null;
+        }
 
         const remoteMeasurements: StockpileMeasurement[] = Array.isArray(rawDoc.measurements)
             ? rawDoc.measurements
             : [];
 
+        const rawLat = rawDoc.geo_point?.latitude ?? rawDoc.location?.lat;
+        const rawLng = rawDoc.geo_point?.longitude ?? rawDoc.location?.lng;
+        const hasValidCoords =
+            typeof rawLat === 'number' &&
+            typeof rawLng === 'number' &&
+            Number.isFinite(rawLat) &&
+            Number.isFinite(rawLng) &&
+            (rawLat !== 0 || rawLng !== 0);
+
         const asset: StockpileAsset = {
             id: rawDoc.id,
+            tenantId: rawDoc.tenantId || rawDoc.accountId || this.tenantId,
+            accountId: rawDoc.accountId || rawDoc.tenantId || this.tenantId,
             name: rawDoc.name || rawDoc.tag || `ACOPIO-${rawDoc.id}`,
             clase: rawDoc.clase || (rawDoc.material === 'esteril' || rawDoc.material === 'baja_ley' ? rawDoc.material : 'mineral'),
             createdAt: typeof rawDoc.createdAt === 'number' ? rawDoc.createdAt : (typeof rawDoc.timestamp === 'number' ? rawDoc.timestamp : Date.now()),
-            createdBy: rawDoc.createdBy || 'field-operator',
-            geo_point: rawDoc.geo_point || {
-                latitude: rawDoc.location?.lat || 0,
-                longitude: rawDoc.location?.lng || 0,
-                altitude: null,
-                accuracy: 5
-            },
+            createdBy: rawDoc.createdBy || '',
+            geo_point: hasValidCoords
+                ? {
+                    latitude: rawLat,
+                    longitude: rawLng,
+                    altitude: rawDoc.geo_point?.altitude ?? null,
+                    accuracy: typeof rawDoc.geo_point?.accuracy === 'number' ? rawDoc.geo_point.accuracy : undefined,
+                }
+                : undefined,
             location_ref: rawDoc.location_ref,
-            initial_photo_url: rawDoc.initial_photo_url,
-            thumbnail_url: rawDoc.thumbnail_url,
+            initial_photo_url: rawDoc.initial_photo_url && !String(rawDoc.initial_photo_url).startsWith('data:') ? rawDoc.initial_photo_url : undefined,
+            thumbnail_url: rawDoc.thumbnail_url && !String(rawDoc.thumbnail_url).startsWith('data:') ? rawDoc.thumbnail_url : undefined,
             last_volume_m3: rawDoc.last_volume_m3 ?? rawDoc.volumeM3 ?? rawDoc.volumen ?? 0,
             last_weight_t: rawDoc.last_weight_t ?? rawDoc.tonnage ?? rawDoc.peso_final_toneladas ?? 0,
-            last_photo_url: rawDoc.last_photo_url,
+            last_photo_url: rawDoc.last_photo_url && !String(rawDoc.last_photo_url).startsWith('data:') ? rawDoc.last_photo_url : undefined,
             last_measured_at: rawDoc.last_measured_at ?? rawDoc.timestamp,
             volumen: rawDoc.volumen ?? rawDoc.volumeM3 ?? rawDoc.last_volume_m3 ?? 0,
             volume_m3: rawDoc.volume_m3 ?? rawDoc.volumeM3 ?? rawDoc.last_volume_m3 ?? 0,
             weight_t: rawDoc.weight_t ?? rawDoc.tonnage ?? rawDoc.last_weight_t ?? 0,
             peso_final_toneladas: rawDoc.peso_final_toneladas ?? rawDoc.tonnage ?? rawDoc.last_weight_t ?? 0,
             density_factor: rawDoc.density_factor ?? rawDoc.density,
+            geometria: rawDoc.geometria || rawDoc.shape,
         };
 
-        await this.write(K.asset(asset.id), asset);
-        await this.addToList(K.assetIds, asset.id);
+        const st = this.safeTenant;
+        await this.write(K.asset(st, asset.id), asset);
+        await this.addToList(K.assetIds(st), asset.id);
 
         if (remoteMeasurements.length > 0) {
             for (const m of remoteMeasurements) {
                 if (m && m.id) {
-                    await this.write(K.meas(m.id), m);
-                    await this.addToList(K.measIds(asset.id), m.id);
+                    const cleanMeas: StockpileMeasurement = {
+                        ...m,
+                        photo_url: m.photo_url && !String(m.photo_url).startsWith('data:') ? m.photo_url : '',
+                    };
+                    await this.write(K.meas(st, cleanMeas.id), cleanMeas);
+                    await this.addToList(K.measIds(st, asset.id), cleanMeas.id);
                 }
             }
         }
@@ -233,30 +332,39 @@ export class DataService {
 
     // ─── ACTIVOS ───────────────────────────────
 
-    async createAsset(asset: Omit<StockpileAsset, 'id' | 'createdAt' | 'createdBy'>): Promise<string> {
-        const id = `asset_${Date.now()}`;
+    async createAsset(asset: Omit<StockpileAsset, 'id' | 'createdAt' | 'createdBy'> & { id?: string }): Promise<string> {
+        const id = asset.id || `asset_${Date.now()}`;
+        const st = this.safeTenant;
         const newAsset: StockpileAsset = {
             ...asset,
             id,
+            tenantId: this.tenantId,
+            accountId: this.tenantId,
             createdAt: Date.now(),
             createdBy: this.getUserId(),
         };
 
-        await this.write(K.asset(id), newAsset);
-        await this.addToList(K.assetIds, id);
+        await this.write(K.asset(st, id), newAsset);
+        await this.addToList(K.assetIds(st), id);
 
         await this.persistAssetToCloudAndQueue(newAsset, []);
 
         bus.emit(`asset:${id}`, newAsset);
         this.getAllAssetsLocal().then(all => bus.emit('assets', all));
 
-        console.log('[DataService] Activo creado:', id);
         return id;
     }
 
     async getAsset(id: string): Promise<StockpileAsset | null> {
-        const localAsset = await this.read<StockpileAsset>(K.asset(id));
-        if (localAsset) return localAsset;
+        const st = this.safeTenant;
+        const localAsset = await this.read<StockpileAsset>(K.asset(st, id));
+        if (localAsset) {
+            if (localAsset.tenantId && localAsset.tenantId !== this.tenantId) {
+                console.warn(`[DataService] Bloqueo multi-tenant en getAsset(${id})`);
+                return null;
+            }
+            return localAsset;
+        }
 
         const db = getDb();
         const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
@@ -264,7 +372,12 @@ export class DataService {
             try {
                 const snap = await getDoc(doc(db, 'stockpiles', id));
                 if (snap.exists()) {
-                    const hydrated = await this.hydrateRemoteDocToLocal({ id: snap.id, ...snap.data() });
+                    const rawData = snap.data();
+                    if (!this.matchesActiveTenant(rawData)) {
+                        console.warn(`[DataService] Acceso bloqueado a acopio ${id} de otro tenant.`);
+                        return null;
+                    }
+                    const hydrated = await this.hydrateRemoteDocToLocal({ id: snap.id, ...rawData });
                     if (hydrated) {
                         bus.emit(`asset:${id}`, hydrated);
                         return hydrated;
@@ -278,27 +391,47 @@ export class DataService {
     }
 
     async deleteAsset(id: string): Promise<void> {
-        // 1. Remove from assetIds list
-        const ids = await this.readList(K.assetIds);
-        if (Array.isArray(ids)) {
-            await this.write(K.assetIds, ids.filter(i => i !== id));
+        const st = this.safeTenant;
+        const localAsset = await this.read<StockpileAsset>(K.asset(st, id));
+        if (localAsset && localAsset.tenantId && localAsset.tenantId !== this.tenantId) {
+            throw new Error('Operación denegada: el activo no pertenece a la cuenta activa.');
         }
 
-        // 2. Remove actual asset record
-        await idbStorage.delete(K.asset(id));
-
-        // 3. Remove all associated measurements
-        const measIds = await this.readList(K.measIds(id));
-        if (Array.isArray(measIds)) {
-            for (const mid of measIds) {
-                await idbStorage.delete(K.meas(mid));
-            }
-        }
-        await idbStorage.delete(K.measIds(id));
-
-        // 4. Delete from Firestore if online
         const db = getDb();
         const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+        if (db && isOnline) {
+            try {
+                const remoteSnap = await getDoc(doc(db, 'stockpiles', id));
+                if (remoteSnap.exists() && !this.matchesActiveTenant(remoteSnap.data())) {
+                    throw new Error('Operación denegada: el documento remoto pertenece a otro tenant.');
+                }
+            } catch (err) {
+                if (err instanceof Error && err.message.startsWith('Operación denegada')) {
+                    throw err;
+                }
+                console.warn(`[DataService] No se pudo pre-verificar ${id} en Firestore:`, err);
+            }
+        }
+
+        // 1. Remover de lista local particionada
+        const ids = await this.readList(K.assetIds(st));
+        if (Array.isArray(ids)) {
+            await this.write(K.assetIds(st), ids.filter(i => i !== id));
+        }
+
+        // 2. Remover activo local
+        await idbStorage.delete(K.asset(st, id));
+
+        // 3. Remover mediciones asociadas
+        const measIds = await this.readList(K.measIds(st, id));
+        if (Array.isArray(measIds)) {
+            for (const mid of measIds) {
+                await idbStorage.delete(K.meas(st, mid));
+            }
+        }
+        await idbStorage.delete(K.measIds(st, id));
+
+        // 4. Eliminar en Firestore si está online
         if (db && isOnline) {
             try {
                 await deleteDoc(doc(db, 'stockpiles', id));
@@ -307,13 +440,12 @@ export class DataService {
             }
         }
 
-        // 5. Notify UI to refresh
+        // 5. Notificar refresco UI
         this.getAllAssetsLocal().then(all => bus.emit('assets', all));
-        console.log(`[DataService] Activo ${id} y sus mediciones eliminados`);
     }
 
     async getMeasurement(id: string): Promise<StockpileMeasurement | null> {
-        return await this.read<StockpileMeasurement>(K.meas(id));
+        return await this.read<StockpileMeasurement>(K.meas(this.safeTenant, id));
     }
 
     async getStockpileData(id: string): Promise<StockpileAsset | null> {
@@ -322,10 +454,17 @@ export class DataService {
 
     private async getAllAssetsLocal(): Promise<StockpileAsset[]> {
         try {
-            const ids = await this.readList(K.assetIds);
+            const st = this.safeTenant;
+            const ids = await this.readList(K.assetIds(st));
             if (!Array.isArray(ids)) return [];
-            const items = await Promise.all(ids.map(id => this.read<StockpileAsset>(K.asset(id))));
-            return items.filter((a): a is StockpileAsset => a !== null && typeof a === 'object' && Boolean(a.id));
+            const items = await Promise.all(ids.map(id => this.read<StockpileAsset>(K.asset(st, id))));
+            return items.filter(
+                (a): a is StockpileAsset =>
+                    a !== null &&
+                    typeof a === 'object' &&
+                    Boolean(a.id) &&
+                    (!a.tenantId || a.tenantId === this.tenantId)
+            );
         } catch (e) {
             console.error('[DataService] Error al obtener activos locales:', e);
             return [];
@@ -345,8 +484,10 @@ export class DataService {
                 let updated = false;
                 for (const docSnap of snap.docs) {
                     const data = docSnap.data();
-                    await this.hydrateRemoteDocToLocal({ id: docSnap.id, ...data });
-                    updated = true;
+                    if (this.matchesActiveTenant(data)) {
+                        await this.hydrateRemoteDocToLocal({ id: docSnap.id, ...data });
+                        updated = true;
+                    }
                 }
                 if (updated) {
                     const merged = await this.getAllAssetsLocal();
@@ -366,11 +507,18 @@ export class DataService {
     async saveStockpileData(data: Partial<StockpileAsset>, id?: string): Promise<string> {
         const targetId = id ?? data.id;
         if (!targetId) throw new Error('ID requerido en saveStockpileData');
-        const current = await this.getAsset(targetId) ?? {} as StockpileAsset;
-        const updated = { ...current, ...data, id: targetId } as StockpileAsset;
+        const st = this.safeTenant;
+        const current = await this.getAsset(targetId) ?? ({} as StockpileAsset);
+        const updated: StockpileAsset = {
+            ...current,
+            ...data,
+            id: targetId,
+            tenantId: this.tenantId,
+            accountId: this.tenantId,
+        };
 
-        await this.write(K.asset(targetId), updated);
-        await this.addToList(K.assetIds, targetId);
+        await this.write(K.asset(st, targetId), updated);
+        await this.addToList(K.assetIds(st), targetId);
         await this.persistAssetToCloudAndQueue(updated);
 
         bus.emit(`asset:${targetId}`, updated);
@@ -380,35 +528,45 @@ export class DataService {
 
     // ─── MEDICIONES ────────────────────────────
 
-    async addMeasurement(measurement: Omit<StockpileMeasurement, 'id'>): Promise<string> {
+    async addMeasurement(measurement: Omit<StockpileMeasurement, 'id'> & { ai_confidence?: number }): Promise<string> {
+        if (!measurement.assetId || measurement.assetId === 'NEW_ASSET') {
+            throw new Error('assetId válido requerido para registrar una medición.');
+        }
+        if (measurement.photo_url && measurement.photo_url.startsWith('data:')) {
+            throw new Error('Prohibido persistir cadenas Base64 crudas en photo_url; utilice CAS Multimedia.');
+        }
+
+        const st = this.safeTenant;
         const id = `meas_${Date.now()}`;
         const newM: StockpileMeasurement = {
             ...measurement,
             id,
-            user_id: measurement.user_id || this.getUserId()
+            user_id: measurement.user_id || this.getUserId() || undefined,
         };
 
-        await this.write(K.meas(id), newM);
-        await this.addToList(K.measIds(measurement.assetId), id);
+        await this.write(K.meas(st, id), newM);
+        await this.addToList(K.measIds(st, measurement.assetId), id);
 
         const allAssetMeasurements = await this.getMeasurementsLocal(measurement.assetId);
 
-        // Actualizar estado del activo
         const asset = await this.getAsset(measurement.assetId);
         if (asset) {
             const updated: StockpileAsset = {
                 ...asset,
-                last_volume_m3:       measurement.volumen_m3,
-                last_weight_t:        measurement.peso_t,
-                last_photo_url:       measurement.photo_url,
-                last_measured_at:     measurement.timestamp,
-                volumen:              measurement.volumen_m3,
-                volume_m3:            measurement.volumen_m3,
-                weight_t:             measurement.peso_t,
+                tenantId: this.tenantId,
+                accountId: this.tenantId,
+                last_volume_m3: measurement.volumen_m3,
+                last_weight_t: measurement.peso_t,
+                last_photo_url: measurement.photo_url || asset.last_photo_url,
+                last_measured_at: measurement.timestamp,
+                volumen: measurement.volumen_m3,
+                volume_m3: measurement.volumen_m3,
+                weight_t: measurement.peso_t,
                 peso_final_toneladas: measurement.peso_t,
-                density_factor:       measurement.density_factor ?? asset.density_factor,
+                density_factor: measurement.density_factor ?? asset.density_factor,
+                geometria: measurement.geometry?.type ?? asset.geometria,
             };
-            await this.write(K.asset(measurement.assetId), updated);
+            await this.write(K.asset(st, measurement.assetId), updated);
             await this.persistAssetToCloudAndQueue(updated, allAssetMeasurements);
             bus.emit(`asset:${measurement.assetId}`, updated);
             this.getAllAssetsLocal().then(all => bus.emit('assets', all));
@@ -418,13 +576,13 @@ export class DataService {
         bus.emit('meas_any', await this.getAllMeasurements());
         bus.emit(`meas_item:${id}`, newM);
 
-        console.log('[DataService] Medición guardada:', id);
         return id;
     }
 
     async getAllMeasurements(): Promise<StockpileMeasurement[]> {
         try {
-            const assets = await this.readList(K.assetIds);
+            const st = this.safeTenant;
+            const assets = await this.readList(K.assetIds(st));
             if (!Array.isArray(assets)) return [];
             const all = await Promise.all(assets.map(id => this.getMeasurementsLocal(id)));
             return all.flat().filter(m => m && m.timestamp).sort((a, b) => b.timestamp - a.timestamp);
@@ -436,9 +594,10 @@ export class DataService {
 
     private async getMeasurementsLocal(assetId: string): Promise<StockpileMeasurement[]> {
         try {
-            const ids = await this.readList(K.measIds(assetId));
+            const st = this.safeTenant;
+            const ids = await this.readList(K.measIds(st, assetId));
             if (!Array.isArray(ids)) return [];
-            const items = await Promise.all(ids.map(id => this.read<StockpileMeasurement>(K.meas(id))));
+            const items = await Promise.all(ids.map(id => this.read<StockpileMeasurement>(K.meas(st, id))));
             return items
                 .filter((m): m is StockpileMeasurement => m !== null && typeof m === 'object' && Boolean(m.timestamp))
                 .sort((a, b) => b.timestamp - a.timestamp);
@@ -453,9 +612,10 @@ export class DataService {
     }
 
     async toggleIgnoreMeasurement(measurementId: string, assetId: string, currentIgnoredStatus: boolean): Promise<void> {
+        const st = this.safeTenant;
         const newStatus = !currentIgnoredStatus;
         const m = await this.getMeasurement(measurementId);
-        if (m) await this.write(K.meas(measurementId), { ...m, ignored: newStatus });
+        if (m) await this.write(K.meas(st, measurementId), { ...m, ignored: newStatus });
 
         const measurements = await this.getMeasurementsLocal(assetId);
         const valid = measurements.find(item => !item.ignored);
@@ -468,6 +628,7 @@ export class DataService {
             volume_m3: valid.volumen_m3,
             weight_t: valid.peso_t,
             peso_final_toneladas: valid.peso_t,
+            density_factor: valid.density_factor,
         } : {
             last_volume_m3: 0,
             last_weight_t: 0,
@@ -483,12 +644,12 @@ export class DataService {
     // ─── PERFILES DE MATERIAL ─────────────────
 
     async getMaterialProfiles(): Promise<Record<string, number>> {
-        return (await this.read<Record<string, number>>(K.profiles))
+        return (await this.read<Record<string, number>>(K.profiles(this.safeTenant)))
             ?? { 'COLPAS': 1.6, 'GRANSA': 1.8, 'MIXTO': 1.7, 'FINOS': 1.5 };
     }
 
     async saveMaterialProfiles(profiles: Record<string, number>): Promise<void> {
-        await this.write(K.profiles, profiles);
+        await this.write(K.profiles(this.safeTenant), profiles);
     }
 
     // ─── SUBSCRIPCIONES REACTIVAS ─────────────

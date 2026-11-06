@@ -3,37 +3,121 @@
 @tailwind utilities;
 
 @layer base {
+    :root {
+        --rgb-background: 255 255 255;
+        --rgb-foreground: 15 23 42;
+        --rgb-surface: 248 250 252;
+        --rgb-border-base: 226 232 240;
+        --rgb-muted: 71 85 105;
+        --color-background: #FFFFFF;
+        --color-foreground: #0F172A;
+        --color-surface: #F8FAFC;
+        --color-border-base: #E2E8F0;
+        --color-muted: #475569;
+        --color-copper: #C68346;
+        --color-cyan: #00AEEF;
+        color-scheme: light;
+    }
+
+    :root.dark, .dark {
+        --rgb-background: 0 0 0;
+        --rgb-foreground: 243 244 246;
+        --rgb-surface: 7 9 13;
+        --rgb-border-base: 18 21 28;
+        --rgb-muted: 138 147 166;
+        --color-background: #000000;
+        --color-foreground: #F3F4F6;
+        --color-surface: #07090D;
+        --color-border-base: #12151C;
+        --color-muted: #8A93A6;
+        --color-copper: #C68346;
+        --color-cyan: #00AEEF;
+        color-scheme: dark;
+    }
+
     body {
-        @apply font-sans;
+        @apply font-sans bg-background text-foreground;
+    }
+
+    input, textarea, select {
+        color: inherit;
+    }
+
+    table, .tabular-nums, .font-mono {
+        font-variant-numeric: tabular-nums;
+        font-feature-settings: 'tnum' 1, 'cv05' 1;
+    }
+
+    .material-symbols-outlined {
+        font-family: 'Material Symbols Outlined';
+        font-weight: normal;
+        font-style: normal;
+        font-size: 20px;
+        line-height: 1;
+        letter-spacing: normal;
+        text-transform: none;
+        display: inline-block;
+        white-space: nowrap;
+        word-wrap: normal;
+        direction: ltr;
+        font-feature-settings: 'liga';
+        -webkit-font-smoothing: antialiased;
+        user-select: none;
+    }
+}
+
+@keyframes minreport-scroll-reveal {
+    from {
+        opacity: 0.75;
+        transform: translate3d(0, 8px, 0);
+    }
+    to {
+        opacity: 1;
+        transform: translate3d(0, 0, 0);
     }
 }
 
 @layer utilities {
+    .tabular-nums-strict {
+        font-variant-numeric: tabular-nums;
+        font-feature-settings: 'tnum' 1, 'cv05' 1;
+    }
+
+    /* CSS Scroll-Driven Animation en GPU (0 KB JS) */
+    @supports (animation-timeline: view()) {
+        .scroll-reveal-gpu {
+            animation: minreport-scroll-reveal linear both;
+            animation-timeline: view();
+            animation-range: entry 0% cover 22%;
+            will-change: transform, opacity;
+        }
+    }
+
     .elite-tech-surface {
-        @apply bg-white dark:bg-[#0A0A0A] border border-black/10 dark:border-white/5 relative overflow-hidden;
+        @apply bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] relative overflow-hidden rounded-none shadow-none;
     }
 
     .technical-grid {
         background-image: linear-gradient(to right, currentColor 1px, transparent 1px),
             linear-gradient(to bottom, currentColor 1px, transparent 1px);
-        background-size: 20px 20px;
-        @apply text-black/[0.05] dark:opacity-0;
+        background-size: 21px 21px;
+        @apply text-[#0F172A]/[0.04] dark:text-[#F3F4F6]/[0.03];
     }
 
     .hud-label {
-        @apply text-[9px] font-mono font-bold uppercase tracking-[0.25em] text-black/40 dark:text-white/40;
+        @apply text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6];
     }
 
     .industrial-mineral-gradient {
-        background: linear-gradient(180deg, #FAFAFA 0%, #E5E5E5 100%);
+        background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
     }
 
     .dark .industrial-mineral-gradient {
-        background: #000000;
+        background: linear-gradient(180deg, #000000 0%, #07090D 100%);
     }
 
     .premium-input {
-        @apply w-full px-5 py-4 rounded-none bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 focus:border-black dark:focus:border-white outline-none text-black dark:text-white transition-all duration-300 placeholder:text-black/30 dark:placeholder:text-white/20 font-bold tracking-tight text-sm;
+        @apply w-full px-[13px] py-[13px] rounded-none shadow-none bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] dark:focus:border-[#C68346] outline-none text-[#0F172A] dark:text-[#F3F4F6] transition-colors placeholder:text-[#94A3B8] dark:placeholder:text-[#5A6072] font-sans text-sm;
     }
 }
 

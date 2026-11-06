@@ -1,10 +1,15 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { auth } from '../../config/firebase';
+import { Navigate } from 'react-router-dom';
+import { auth, db } from '../../config/firebase';
 import { signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { ThemeSwitch } from '../../components/ThemeSwitch';
 import { LanguageSwitch } from '../../components/LanguageSwitch';
 import BrandLogo from '../../components/BrandLogo';
 import BrandingManager from '../../components/admin/BrandingManager';
+import CopyButton from '../../components/common/CopyButton';
+import { useMinReportSession } from '../../context/MinReportSessionContext';
+import { getApiUrl } from '../../utils/network';
 
 // Carga asíncrona de módulos y vistas integradas para navegación 100% contenida en cabina DEV
 const StockpileModule = lazy(() => import('../../modules/stockpile/StockpileModule').then(m => ({ default: m.StockpileModule })));
@@ -38,11 +43,14 @@ export type DevSection =
     | 'B2B_ADMINS'
     | 'BRANDING'
     | 'B2B_METRICAS'
-    // Módulos Industriales
+    // Módulos Industriales (CATÁLOGO, FLOTA y SIMBOLOGÍA separados bajo Minimalismo Industrial Puro)
     | 'MODULE_STOCKPILE'
-    | 'MODULE_OPERMAQ';
+    | 'MODULE_OPERMAQ_CATALOG'
+    | 'MODULE_OPERMAQ_FLEET'
+    | 'MODULE_OPERMAQ_SYMBOLOGY';
 
 export const DevVaultGateway: React.FC = () => {
+    const { session, isLoaded } = useMinReportSession();
     const [activeSection, setActiveSection] = useState<DevSection>('PILOTS');
     const isModuleSection = activeSection.startsWith('MODULE_');
 
@@ -84,10 +92,11 @@ export const DevVaultGateway: React.FC = () => {
     const [pilotPurpose, setPilotPurpose] = useState<string>('');
     const [pilotDays, setPilotDays] = useState<number>(90);
     const [pilotSubmitting, setPilotSubmitting] = useState<boolean>(false);
+    const [pilotError, setPilotError] = useState<string | null>(null);
+    const [pilotHitlModal, setPilotHitlModal] = useState<{ mode: 'CREATE' | 'REVOKE'; pilotId?: string } | null>(null);
+    const [pilotHitlKeyword, setPilotHitlKeyword] = useState<string>('');
 
-    const apiBase = (import.meta as any).env?.VITE_API_URL 
-        ? `${(import.meta as any).env.VITE_API_URL}/api/dev`
-        : `http://${window.location.hostname}:8080/api/dev`;
+    const apiBase = getApiUrl('/api/dev');
 
     useEffect(() => {
         window.name = 'minreport_dev_terminal';
@@ -169,7 +178,12 @@ export const DevVaultGateway: React.FC = () => {
     // Renovación y sincronización reactiva de credenciales DEV con Firebase Auth
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
-            if (user && (user.email?.toLowerCase() === 'dev@minreport.com' || user.uid === 'minreport-dev-root-superadmin-2026')) {
+            if (
+                user &&
+                (user.email?.toLowerCase() === 'dev@minreport.com' ||
+                    user.uid === 'dev-master-root-uid' ||
+                    user.uid === 'minreport-dev-root-superadmin-2026')
+            ) {
                 try {
                     const freshToken = await user.getIdToken();
                     setDevToken(freshToken);
@@ -182,6 +196,55 @@ export const DevVaultGateway: React.FC = () => {
         });
         return () => unsubscribe();
     }, []);
+
+    // Sincronización automática de sesión Firebase Auth en cabina /dev tras recarga con dev_auth_token
+    useEffect(() => {
+        if (!isAuthenticated) return;
+        const activeToken = devToken || localStorage.getItem('dev_auth_token') || '';
+        if (!activeToken) return;
+
+        let cancelled = false;
+        (async () => {
+            try {
+                if (typeof auth.authStateReady === 'function') {
+                    await auth.authStateReady();
+                }
+                if (cancelled) return;
+
+                const restoredCurrent = auth.currentUser;
+                const alreadyDevRoot =
+                    Boolean(restoredCurrent) &&
+                    (restoredCurrent!.uid === 'dev-master-root-uid' ||
+                        restoredCurrent!.email?.toLowerCase() === 'dev@minreport.com');
+
+                if (alreadyDevRoot) return;
+
+                const resp = await fetch(`${apiBase}/auth/session-sync`, {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${activeToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                });
+                if (!resp.ok || cancelled) return;
+                const data = await resp.json().catch(() => ({}));
+                if (data?.firebaseToken && !cancelled) {
+                    const cred = await signInWithCustomToken(auth, String(data.firebaseToken));
+                    const freshIdToken = await cred.user.getIdToken(true);
+                    if (!cancelled) {
+                        localStorage.setItem('dev_auth_token', freshIdToken);
+                        setDevToken(freshIdToken);
+                    }
+                }
+            } catch {
+                // Silencioso: authFetch mantiene respaldo Bearer dev_auth_token
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [isAuthenticated, devToken, apiBase]);
 
     useEffect(() => {
         if (isAuthenticated && devToken) {
@@ -554,66 +617,106 @@ export const DevVaultGateway: React.FC = () => {
             const resp = await fetchWithDevAuth('/test-pilots');
             if (resp.ok) {
                 const data = await resp.json();
-                setPilots(data);
+                setPilots(Array.isArray(data) ? data : []);
+                return;
             }
-        } catch (err) {
-            console.error('[DEV] Error fetching pilots:', err);
+        } catch {
+            // Respaldo resiliente directo a Cloud Firestore si el proceso Core API está reiniciando
+        }
+
+        try {
+            if (typeof auth.authStateReady === 'function') {
+                await auth.authStateReady();
+            }
+            if (auth.currentUser) {
+                const q = query(collection(db, 'test_pilots'), orderBy('createdAt', 'desc'));
+                const snap = await getDocs(q);
+                const list: TestPilot[] = snap.docs.map((d) => ({
+                    id: d.id,
+                    ...(d.data() as Omit<TestPilot, 'id'>),
+                }));
+                setPilots(list);
+            }
+        } catch {
+            // Silencioso si aún no completa autenticación Firebase
         } finally {
             setPilotsLoading(false);
         }
     };
 
-    const handleCreatePilot = async (e: React.FormEvent) => {
+    const handleCreatePilot = (e: React.FormEvent) => {
         e.preventDefault();
+        setPilotError(null);
+        setPilotHitlKeyword('');
+        setPilotHitlModal({ mode: 'CREATE' });
+    };
+
+    const handleRevokePilot = (id: string) => {
+        setPilotError(null);
+        setPilotHitlKeyword('');
+        setPilotHitlModal({ mode: 'REVOKE', pilotId: id });
+    };
+
+    const executeConfirmedPilotAction = async () => {
+        if (!pilotHitlModal || pilotHitlKeyword.trim() !== 'ACTUALIZAR') return;
         setPilotSubmitting(true);
+        setPilotError(null);
 
         try {
-            const resp = await fetchWithDevAuth('/test-pilots', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    collaboratorName: pilotName.trim(),
-                    collaboratorEmail: pilotEmail.trim().toLowerCase(),
-                    organization: pilotOrg.trim() || undefined,
-                    purpose: pilotPurpose.trim(),
-                    expiresDays: Number(pilotDays)
-                })
-            });
+            if (pilotHitlModal.mode === 'CREATE') {
+                const resp = await fetchWithDevAuth('/test-pilots', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        collaboratorName: pilotName.trim(),
+                        collaboratorEmail: pilotEmail.trim().toLowerCase(),
+                        organization: pilotOrg.trim() || undefined,
+                        purpose: pilotPurpose.trim(),
+                        expiresDays: Number(pilotDays)
+                    })
+                });
 
-            if (!resp.ok) {
-                const data = await resp.json();
-                throw new Error(data.error || 'Error al acreditar piloto');
+                if (!resp.ok) {
+                    const data = await resp.json().catch(() => ({}));
+                    throw new Error(data.error || 'Error al acreditar piloto');
+                }
+
+                setPilotName('');
+                setPilotEmail('');
+                setPilotOrg('');
+                setPilotPurpose('');
+                await fetchPilots();
+            } else if (pilotHitlModal.mode === 'REVOKE' && pilotHitlModal.pilotId) {
+                const resp = await fetchWithDevAuth(`/test-pilots/${encodeURIComponent(pilotHitlModal.pilotId)}`, {
+                    method: 'DELETE'
+                });
+                if (!resp.ok) {
+                    const data = await resp.json().catch(() => ({}));
+                    throw new Error(data.error || 'Error revocando cuenta piloto');
+                }
+                await fetchPilots();
             }
-
-            setPilotName('');
-            setPilotEmail('');
-            setPilotOrg('');
-            setPilotPurpose('');
-            fetchPilots();
+            setPilotHitlModal(null);
+            setPilotHitlKeyword('');
         } catch (err: any) {
-            alert(err.message || 'Error al crear piloto');
+            setPilotError(err?.message || 'Error ejecutando operacion sobre cuenta TEST-PILOT');
         } finally {
             setPilotSubmitting(false);
         }
     };
 
-    const handleRevokePilot = async (id: string) => {
-        const confirmText = prompt(`Escriba "REVOCAR" para confirmar la baja del piloto ${id}:`);
-        if (confirmText !== 'REVOCAR') return;
-
-        try {
-            const resp = await fetchWithDevAuth(`/test-pilots/${id}`, {
-                method: 'DELETE'
-            });
-            if (resp.ok) {
-                fetchPilots();
-            }
-        } catch (err) {
-            console.error('[DEV] Error revocando piloto:', err);
+    // Restriccion Soberana: /dev es exclusivo para 1º DEV (isDevRoot)
+    if (isLoaded && session && !session.isDevRoot) {
+        if (session.isSuperAdmin) {
+            return <Navigate to="/admin" replace />;
         }
-    };
+        if (session.isTestPilot) {
+            return <Navigate to="/pilot" replace />;
+        }
+        return <Navigate to="/dashboard" replace />;
+    }
 
     // =========================================================================
     // VISTA 1: ACCESO DEV SILENCIOSO & DESAFÍO PROGRESSIVO (MINIMALISMO ABSOLUTO)
@@ -970,7 +1073,7 @@ export const DevVaultGateway: React.FC = () => {
                         <BrandLogo variant="isotype" className="h-6 w-6 object-contain pointer-events-none" />
                     </button>
 
-                    <div className="w-6 h-[1px] bg-slate-200 dark:bg-[#12151C] mb-2" />
+                    <div className="w-7 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 mb-[8px] shrink-0" />
 
                     {/* GRUPO 1: CONFIGURAR MINREPORT (BOTONES PLANOS TRANSPARENTES) */}
                     <div className="flex flex-col items-center gap-1 w-full">
@@ -1095,14 +1198,14 @@ export const DevVaultGateway: React.FC = () => {
                     </div>
 
                     {/* SEPARADOR DE PRECISIÓN FIBONACCI */}
-                    <div className="w-6 h-[1px] bg-slate-200 dark:bg-[#12151C] my-3 shrink-0" />
+                    <div className="w-7 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[13px] shrink-0" />
 
-                    {/* GRUPO 2: MÓDULOS INDUSTRIALES (STOCKPILE, OPERMAQ) */}
+                    {/* GRUPO 2: MÓDULO STOCKPILE CONTROL */}
                     <div className="flex flex-col items-center gap-1 w-full">
                         <button
                             type="button"
                             onClick={() => setActiveSection('MODULE_STOCKPILE')}
-                            title="Módulo Stockpile (Cubicaciones & 3D)"
+                            title="STOCKPILE"
                             aria-label="Stockpile"
                             className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
                                 activeSection === 'MODULE_STOCKPILE'
@@ -1115,22 +1218,62 @@ export const DevVaultGateway: React.FC = () => {
                             )}
                             <span className="material-symbols-outlined text-[20px]">layers</span>
                         </button>
+                    </div>
 
+                    {/* SEPARADOR DE PRECISIÓN FIBONACCI — MÓDULO OPERMAQ */}
+                    <div className="w-7 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[13px] shrink-0" />
+
+                    {/* GRUPO 3: MÓDULO OPERMAQ (CATÁLOGO, FLOTA & SIMBOLOGÍA TRANSVERSAL) */}
+                    <div className="flex flex-col items-center gap-1 w-full">
                         <button
                             type="button"
-                            onClick={() => setActiveSection('MODULE_OPERMAQ')}
-                            title="Módulo Opermaq (Flota & Maquinaria)"
-                            aria-label="Opermaq"
+                            onClick={() => setActiveSection('MODULE_OPERMAQ_CATALOG')}
+                            title="CATÁLOGO"
+                            aria-label="Catálogo"
                             className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                                activeSection === 'MODULE_OPERMAQ'
+                                activeSection === 'MODULE_OPERMAQ_CATALOG'
                                     ? 'text-[#C68346]'
                                     : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
                             }`}
                         >
-                            {activeSection === 'MODULE_OPERMAQ' && (
+                            {activeSection === 'MODULE_OPERMAQ_CATALOG' && (
                                 <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
                             )}
-                            <span className="material-symbols-outlined text-[20px]">local_shipping</span>
+                            <span className="material-symbols-outlined text-[20px]">front_loader</span>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => setActiveSection('MODULE_OPERMAQ_FLEET')}
+                            title="FLOTA"
+                            aria-label="Flota"
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
+                                activeSection === 'MODULE_OPERMAQ_FLEET'
+                                    ? 'text-[#C68346]'
+                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                            }`}
+                        >
+                            {activeSection === 'MODULE_OPERMAQ_FLEET' && (
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
+                            )}
+                            <span className="material-symbols-outlined text-[20px]">lists</span>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => setActiveSection('MODULE_OPERMAQ_SYMBOLOGY')}
+                            title="SIMBOLOGÍA"
+                            aria-label="Simbología"
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
+                                activeSection === 'MODULE_OPERMAQ_SYMBOLOGY'
+                                    ? 'text-[#C68346]'
+                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                            }`}
+                        >
+                            {activeSection === 'MODULE_OPERMAQ_SYMBOLOGY' && (
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
+                            )}
+                            <span className="material-symbols-outlined text-[20px]">shapes</span>
                         </button>
                     </div>
                 </aside>
@@ -1160,6 +1303,12 @@ export const DevVaultGateway: React.FC = () => {
                 {/* CONTENIDO 1: GESTIÓN DE PILOTOS */}
                 {activeSection === 'PILOTS' && (
                     <div className="space-y-8">
+                        {pilotError && (
+                            <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs font-mono rounded-none">
+                                {pilotError}
+                            </div>
+                        )}
+
                         {/* Módulo Alta TEST-PILOT */}
                         <div className="border border-slate-200 dark:border-[#12151C] p-6 rounded-none bg-[#F8FAFC] dark:bg-[#07090D]">
                             <h2 className="text-xs font-mono font-bold uppercase tracking-wider mb-4 text-[#C68346]">
@@ -1172,6 +1321,8 @@ export const DevVaultGateway: React.FC = () => {
                                     <input
                                         required
                                         type="text"
+                                        autoComplete="off"
+                                        spellCheck={false}
                                         value={pilotName}
                                         onChange={e => setPilotName(e.target.value)}
                                         className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#C68346] rounded-none"
@@ -1183,6 +1334,8 @@ export const DevVaultGateway: React.FC = () => {
                                     <input
                                         required
                                         type="email"
+                                        autoComplete="off"
+                                        spellCheck={false}
                                         value={pilotEmail}
                                         onChange={e => setPilotEmail(e.target.value)}
                                         className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#C68346] rounded-none select-text"
@@ -1193,6 +1346,8 @@ export const DevVaultGateway: React.FC = () => {
                                     <label className="block text-xs uppercase tracking-wider text-slate-500 dark:text-[#8A93A6] mb-1 font-mono">ORGANIZACIÓN</label>
                                     <input
                                         type="text"
+                                        autoComplete="off"
+                                        spellCheck={false}
                                         value={pilotOrg}
                                         onChange={e => setPilotOrg(e.target.value)}
                                         placeholder="Minera / Partner"
@@ -1206,6 +1361,8 @@ export const DevVaultGateway: React.FC = () => {
                                         type="number"
                                         min={7}
                                         max={365}
+                                        autoComplete="off"
+                                        spellCheck={false}
                                         value={pilotDays}
                                         onChange={e => setPilotDays(Number(e.target.value))}
                                         className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono tabular-nums focus:outline-none focus:border-[#C68346] rounded-none"
@@ -1217,6 +1374,8 @@ export const DevVaultGateway: React.FC = () => {
                                     <input
                                         required
                                         type="text"
+                                        autoComplete="off"
+                                        spellCheck={false}
                                         value={pilotPurpose}
                                         onChange={e => setPilotPurpose(e.target.value)}
                                         placeholder="Pruebas de módulo"
@@ -1243,9 +1402,10 @@ export const DevVaultGateway: React.FC = () => {
                                 <button
                                     type="button"
                                     onClick={fetchPilots}
-                                    className="text-xs text-slate-400 hover:text-slate-900 dark:hover:text-white font-mono bg-transparent border-0 cursor-pointer uppercase"
+                                    title="Recargar pilotos"
+                                    className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
                                 >
-                                    ACTUALIZAR
+                                    <span className="material-symbols-outlined text-[18px]">refresh</span>
                                 </button>
                             </div>
 
@@ -1273,12 +1433,20 @@ export const DevVaultGateway: React.FC = () => {
                                         ) : (
                                             pilots.map((p) => (
                                                 <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.02]">
-                                                    <td className="py-3 px-4 text-[#00AEEF] select-text">{p.id}</td>
+                                                    <td className="py-3 px-4 text-[#00AEEF]">
+                                                        <span className="inline-flex items-center gap-1 select-text">
+                                                            <span>{p.id}</span>
+                                                            <CopyButton value={p.id} title="Copiar ID cuenta piloto" />
+                                                        </span>
+                                                    </td>
                                                     <td className="py-3 px-4">
                                                         <span className="block font-bold text-slate-900 dark:text-white">{p.collaboratorName}</span>
-                                                        <span className="text-[11px] text-slate-500 dark:text-[#8A93A6] select-text">{p.collaboratorEmail}</span>
+                                                        <span className="inline-flex items-center gap-1 text-[11px] text-slate-500 dark:text-[#8A93A6] select-text">
+                                                            <span>{p.collaboratorEmail}</span>
+                                                            <CopyButton value={p.collaboratorEmail} title="Copiar correo colaborador" />
+                                                        </span>
                                                     </td>
-                                                    <td className="py-3 px-4 text-slate-600 dark:text-slate-300">{p.organization || '-'}</td>
+                                                    <td className="py-3 px-4 text-slate-600 dark:text-slate-300">{p.organization || '[Información técnica no declarada en ficha]'}</td>
                                                     <td className="py-3 px-4 text-slate-500 dark:text-[#8A93A6] max-w-xs truncate">{p.purpose}</td>
                                                     <td className="py-3 px-4">
                                                         <span className={`px-1.5 py-0.5 text-[10px] font-mono ${
@@ -1307,6 +1475,70 @@ export const DevVaultGateway: React.FC = () => {
                                 </table>
                             </div>
                         </div>
+
+                        {/* Modal Industrial de Confirmacion HITL ("ACTUALIZAR") */}
+                        {pilotHitlModal && (
+                            <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+                                <div className="w-full max-w-md bg-[#FFFFFF] dark:bg-[#07090D] border border-[#C68346] p-6 space-y-4 rounded-none shadow-none">
+                                    <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-3">
+                                        <span className="text-xs font-mono font-bold uppercase tracking-wider text-[#C68346]">
+                                            {pilotHitlModal.mode === 'CREATE'
+                                                ? 'CONFIRMACION HITL · ACREDITAR TEST-PILOT'
+                                                : 'CONFIRMACION HITL · REVOCAR TEST-PILOT'}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setPilotHitlModal(null);
+                                                setPilotHitlKeyword('');
+                                            }}
+                                            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                                        >
+                                            <span className="material-symbols-outlined text-[18px]">close</span>
+                                        </button>
+                                    </div>
+
+                                    <p className="text-xs font-mono text-slate-600 dark:text-[#8A93A6] leading-relaxed">
+                                        {pilotHitlModal.mode === 'CREATE'
+                                            ? `Se acreditara acceso 3º TEST-PILOT para ${pilotName} (${pilotEmail}).`
+                                            : `Se revocara el acceso de la cuenta piloto ${pilotHitlModal.pilotId}.`}
+                                        {' '}Escriba obligatoriamente <strong className="text-[#C68346]">ACTUALIZAR</strong> para ejecutar:
+                                    </p>
+
+                                    <input
+                                        type="text"
+                                        autoFocus
+                                        autoComplete="off"
+                                        spellCheck={false}
+                                        value={pilotHitlKeyword}
+                                        onChange={(e) => setPilotHitlKeyword(e.target.value.toUpperCase())}
+                                        placeholder="ACTUALIZAR"
+                                        className="w-full bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] px-3 py-2 text-xs font-mono tracking-widest text-center text-[#0F172A] dark:text-[#F3F4F6] rounded-none outline-none"
+                                    />
+
+                                    <div className="flex justify-end gap-3 pt-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setPilotHitlModal(null);
+                                                setPilotHitlKeyword('');
+                                            }}
+                                            className="px-4 py-2 text-xs font-mono uppercase bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-slate-500 hover:text-slate-900 dark:hover:text-white rounded-none cursor-pointer"
+                                        >
+                                            Cancelar
+                                        </button>
+                                        <button
+                                            type="button"
+                                            disabled={pilotHitlKeyword.trim() !== 'ACTUALIZAR' || pilotSubmitting}
+                                            onClick={executeConfirmedPilotAction}
+                                            className="px-5 py-2 text-xs font-mono font-bold uppercase bg-[#C68346] hover:bg-[#B0743E] text-white rounded-none border-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                        >
+                                            {pilotSubmitting ? 'EJECUTANDO...' : 'CONFIRMAR'}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -1366,16 +1598,44 @@ export const DevVaultGateway: React.FC = () => {
                     </div>
                 )}
 
-                {/* MÓDULO INDUSTRIAL 2: OPERMAQ (NATIVO EN VIVO) */}
-                {activeSection === 'MODULE_OPERMAQ' && (
+                {/* MÓDULO INDUSTRIAL 2A: CATÁLOGO MAESTRO ÚNICO (OPERMAQ CATALOG) */}
+                {activeSection === 'MODULE_OPERMAQ_CATALOG' && (
                     <div className="w-full h-full flex-1 flex flex-col">
                         <Suspense fallback={
                             <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
                                 <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
-                                <span className="text-[10px] uppercase text-slate-400">Cargando Módulo Opermaq (Capa 2)...</span>
+                                <span className="text-[10px] uppercase text-slate-400">CATÁLOGO</span>
                             </div>
                         }>
-                            <OpermaqModule />
+                            <OpermaqModule key="dev-opermaq-catalog" domainMode="CATALOG" hostScope="DEV_GATEWAY" />
+                        </Suspense>
+                    </div>
+                )}
+
+                {/* MÓDULO INDUSTRIAL 2B: CONTROL DE FLOTA (OPERMAQ FLEET) */}
+                {activeSection === 'MODULE_OPERMAQ_FLEET' && (
+                    <div className="w-full h-full flex-1 flex flex-col">
+                        <Suspense fallback={
+                            <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
+                                <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
+                                <span className="text-[10px] uppercase text-slate-400">FLOTA</span>
+                            </div>
+                        }>
+                            <OpermaqModule key="dev-opermaq-fleet" domainMode="FLEET" hostScope="DEV_GATEWAY" />
+                        </Suspense>
+                    </div>
+                )}
+
+                {/* MÓDULO INDUSTRIAL 2C: SIMBOLOGÍA TRANSVERSAL ISO 7000 (OPERMAQ SYMBOLOGY) */}
+                {activeSection === 'MODULE_OPERMAQ_SYMBOLOGY' && (
+                    <div className="w-full h-full flex-1 flex flex-col">
+                        <Suspense fallback={
+                            <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
+                                <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
+                                <span className="text-[10px] uppercase text-slate-400">SIMBOLOGÍA</span>
+                            </div>
+                        }>
+                            <OpermaqModule key="dev-opermaq-symbology" domainMode="SYMBOLOGY" hostScope="DEV_GATEWAY" />
                         </Suspense>
                     </div>
                 )}

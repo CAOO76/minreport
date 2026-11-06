@@ -6,17 +6,24 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { doc, onSnapshot, updateDoc, collection } from 'firebase/firestore';
 import { db, auth, API_BASE_URL, storage } from '../firebase/config';
-import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { authFetch } from '../utils/authFetch';
 import { toast } from 'react-toastify';
 import { M3IconButton } from './M3IconButton';
 import { M3Button } from './M3Button';
-import { PremiumAIPanel } from './PremiumAIPanel';
 import { useTranslation } from 'react-i18next';
-import type { PillarId, PillarDocument, PillarItem, ItemizedSource, ProposedUpdate, EstadoAprobacion, HistorialAuditoria, ChatMessage } from '../backend/types/schema';
+import { mediaDigestorClient } from '../../../core/media/MediaDigestorClient';
+import { useOpermaqContext } from '../hooks/useOpermaqContext';
+import { ItemFiguresAndAdvisoriesBlock } from './ItemFiguresAndAdvisoriesBlock';
+import { OpermaqEngineeringStudioDrawer, type StudioTabId } from './OpermaqEngineeringStudioDrawer';
+import type { PillarId, PillarDocument, PillarItem, ItemizedSource, ProposedUpdate, EstadoAprobacion, HistorialAuditoria, ChatMessage } from '../types/vault';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
-interface VaultDashboardProps { assetId: string; onBack: () => void; }
+interface VaultDashboardProps {
+  assetId: string;
+  onBack: () => void;
+  onOpenContributions?: (assetId: string) => void;
+}
 interface CatalogSnapshot {
   id: string; makeModel: string; make?: string; categoria_equipo?: string;
   tipo_equipo?: string;
@@ -43,65 +50,15 @@ interface AiAssistResponse {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const PILLARS: Array<{ id: PillarId; icon: string; romanNumeral: string; label: string; color: string; accent: string }> = [
-  { id: 'ficha_tecnica',      icon: 'fact_check',  romanNumeral: '0',   label: 'Ficha Técnica',             color: 'text-violet-500', accent: '#8b5cf6' },
-  { id: 'manual_operaciones', icon: 'settings',    romanNumeral: 'I',   label: 'Manual de Operaciones',     color: 'text-blue-500',   accent: '#3b82f6' },
-  { id: 'pauta_mantencion',   icon: 'build',       romanNumeral: 'II',  label: 'Pauta de Mantención',       color: 'text-emerald-500',accent: '#10b981' },
-  { id: 'matriz_riesgos',     icon: 'security',    romanNumeral: 'III', label: 'Matriz de Riesgos',         color: 'text-amber-500',  accent: '#f59e0b' },
-  { id: 'checklist_pre_op',   icon: 'rule',        romanNumeral: 'IV',  label: 'Checklist Pre-Op',          color: 'text-rose-500',   accent: '#f43f5e' },
+  { id: 'ficha_tecnica',      icon: 'fact_check',  romanNumeral: '0',   label: 'Ficha Técnica',             color: 'text-[#C68346]', accent: '#C68346' },
+  { id: 'manual_operaciones', icon: 'settings',    romanNumeral: 'I',   label: 'Manual de Operaciones',     color: 'text-[#C68346]', accent: '#C68346' },
+  { id: 'pauta_mantencion',   icon: 'build',       romanNumeral: 'II',  label: 'Pauta de Mantención',       color: 'text-[#C68346]', accent: '#C68346' },
+  { id: 'matriz_riesgos',     icon: 'security',    romanNumeral: 'III', label: 'Matriz de Riesgos',         color: 'text-[#C68346]', accent: '#C68346' },
+  { id: 'checklist_pre_op',   icon: 'rule',        romanNumeral: 'IV',  label: 'Checklist Pre-Op',          color: 'text-[#C68346]', accent: '#C68346' },
 ];
 
-function compressImage(file: File): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = (event) => {
-      const img = new Image();
-      img.src = event.target?.result as string;
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
-        const maxDim = 800;
-
-        if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          } else {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('Failed to get canvas context'));
-          return;
-        }
-
-        ctx.drawImage(img, 0, 0, width, height);
-        canvas.toBlob(
-          (blob) => {
-            if (blob) {
-              resolve(blob);
-            } else {
-              reject(new Error('Canvas to blob failed'));
-            }
-          },
-          'image/jpeg',
-          0.85
-        );
-      };
-      img.onerror = (err) => reject(err);
-    };
-    reader.onerror = (err) => reject(err);
-  });
-}
-
 const SOURCE_ICONS: Record<string, string> = { OEM: 'precision_manufacturing', EXTERNO: 'school', YOUTUBE: 'smart_display', MANUAL: 'person' };
-const SOURCE_COLORS: Record<string, string> = { OEM: 'text-blue-500', EXTERNO: 'text-emerald-500', YOUTUBE: 'text-red-500', MANUAL: 'text-violet-500' };
+const SOURCE_COLORS: Record<string, string> = { OEM: 'text-[#00AEEF]', EXTERNO: 'text-[#C68346]', YOUTUBE: 'text-[#C68346]', MANUAL: 'text-[#475569] dark:text-[#8A93A6]' };
 
 
 /**
@@ -187,7 +144,7 @@ function highlightInNode(node: React.ReactNode, activeHighlightText?: string): R
       parts.push(
         <mark 
           key={`mark-${idxKey++}-${Math.random()}`} 
-          className="bg-amber-200 dark:bg-amber-900/60 text-black dark:text-white px-1 py-0.5 rounded-none border border-amber-400/30 font-bold animate-pulse inline-block shadow-none"
+          className="bg-[#C68346]/20 text-[#0F172A] dark:text-[#F3F4F6] px-1 py-0.5 rounded-none border border-[#C68346]/40 font-bold inline-block shadow-none"
         >
           {matchText}
         </mark>
@@ -238,21 +195,28 @@ function parseInlineStyles(
         result.push(
           <span 
             key={m.index} 
-            className="inline-flex items-center gap-1 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 px-1 py-0.5 rounded-none align-middle mx-0.5 group relative select-none cursor-help"
+            className="inline-flex items-center gap-1 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] px-1 py-0.5 rounded-none align-middle mx-0.5 group relative select-none cursor-help"
             title={sym.technical_name_es}
           >
-            <img src={sym.url} alt={sym.technical_name_es} className="w-4 h-4 object-contain inline-block bg-white" />
-            <span className="text-[9px] font-bold text-foreground font-mono">{conceptId}</span>
+            <img
+              src={sym.url}
+              alt={sym.technical_name_es}
+              draggable={false}
+              onContextMenu={(e) => e.preventDefault()}
+              style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
+              className="w-4 h-4 object-contain inline-block bg-[#FFFFFF] select-none pointer-events-none"
+            />
+            <span className="text-[9px] font-bold text-[#0F172A] dark:text-[#F3F4F6] font-mono">{conceptId}</span>
           </span>
         );
       } else {
         result.push(
           <span 
             key={m.index} 
-            className="inline-flex items-center gap-1 bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 rounded-none align-middle mx-0.5 select-none cursor-help"
+            className="inline-flex items-center gap-1 bg-[#C68346]/10 border border-[#C68346]/30 text-[#C68346] px-1.5 py-0.5 rounded-none align-middle mx-0.5 select-none cursor-help"
             title="Símbolo pendiente de dibujo o confirmación en el catálogo global"
           >
-            <span className="material-symbols-outlined !text-[11px] animate-pulse">warning</span>
+            <span className="material-symbols-outlined !text-[11px]">warning</span>
             <span className="text-[9px] font-bold font-mono">{conceptId}</span>
           </span>
         );
@@ -306,31 +270,32 @@ function MarkdownRenderer({
   const nodes: React.ReactNode[] = [];
   const lines = cleanContent.split('\n');
 
+  const interactiveCls = onFragmentClick ? 'hover:bg-[#C68346]/10 cursor-pointer' : '';
   let i = 0;
   while (i < lines.length) {
     const raw = lines[i]; const line = raw.trim();
     if (!line) { i++; continue; }
     if (line.startsWith('#### ')) { 
       const currentRaw = raw;
-      nodes.push(<h4 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className="text-[12px] font-black uppercase tracking-wider text-black/60 dark:text-white/60 mt-5 mb-2 hover:bg-amber-500/5 cursor-pointer rounded px-1 -mx-1 transition-all duration-150">{parseInlineStyles(line.replace('#### ', ''), activeHighlightText, resolvedSymbology)}</h4>); 
+      nodes.push(<h4 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[12px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mt-5 mb-2 ${interactiveCls} rounded-none px-1 -mx-1 transition-colors duration-150`}>{parseInlineStyles(line.replace('#### ', ''), activeHighlightText, resolvedSymbology)}</h4>); 
       i++; 
       continue; 
     }
     if (line.startsWith('### ')) { 
       const currentRaw = raw;
-      nodes.push(<h3 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className="text-[13px] font-black uppercase tracking-wider text-black/70 dark:text-white/70 mt-6 mb-2 border-b border-black/10 dark:border-white/10 pb-1 hover:bg-amber-500/5 cursor-pointer rounded px-1 -mx-1 transition-all duration-150">{parseInlineStyles(line.replace('### ', ''), activeHighlightText, resolvedSymbology)}</h3>); 
+      nodes.push(<h3 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[13px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6] mt-6 mb-2 border-b border-[#E2E8F0] dark:border-[#12151C] pb-1 ${interactiveCls} rounded-none px-1 -mx-1 transition-colors duration-150`}>{parseInlineStyles(line.replace('### ', ''), activeHighlightText, resolvedSymbology)}</h3>); 
       i++; 
       continue; 
     }
     if (line.startsWith('## ')) { 
       const currentRaw = raw;
-      nodes.push(<h2 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className="text-[15px] font-black uppercase tracking-tight text-black/80 dark:text-white/80 mt-8 mb-3 hover:bg-amber-500/5 cursor-pointer rounded px-1 -mx-1 transition-all duration-150">{parseInlineStyles(line.replace('## ', ''), activeHighlightText, resolvedSymbology)}</h2>); 
+      nodes.push(<h2 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[15px] font-bold uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6] mt-8 mb-3 ${interactiveCls} rounded-none px-1 -mx-1 transition-colors duration-150`}>{parseInlineStyles(line.replace('## ', ''), activeHighlightText, resolvedSymbology)}</h2>); 
       i++; 
       continue; 
     }
     if (line.startsWith('# ')) { 
       const currentRaw = raw;
-      nodes.push(<h1 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className="text-[17px] font-black uppercase tracking-tight text-black dark:text-white mt-8 mb-4 hover:bg-amber-500/5 cursor-pointer rounded px-1 -mx-1 transition-all duration-150">{parseInlineStyles(line.replace('# ', ''), activeHighlightText, resolvedSymbology)}</h1>); 
+      nodes.push(<h1 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[17px] font-bold uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6] mt-8 mb-4 ${interactiveCls} rounded-none px-1 -mx-1 transition-colors duration-150`}>{parseInlineStyles(line.replace('# ', ''), activeHighlightText, resolvedSymbology)}</h1>); 
       i++; 
       continue; 
     }
@@ -339,7 +304,7 @@ function MarkdownRenderer({
       while (i < lines.length && (lines[i].trim().startsWith('- ') || lines[i].trim().startsWith('* '))) {
         items.push({ rawText: lines[i], cleanText: lines[i].trim().replace(/^[-*] /, '') }); i++;
       }
-      nodes.push(<ul key={`ul-${i}`} className="list-none space-y-1.5 my-3 ml-0">{items.map((it, idx) => <li key={idx} onClick={(e) => onFragmentClick?.(it.rawText, e)} className="flex items-start gap-2 text-[12px] text-black/70 dark:text-white/70 hover:bg-amber-500/5 cursor-pointer rounded px-1 -mx-1 transition-all duration-150"><span className="text-copper mt-0.5 shrink-0">›</span><span>{parseInlineStyles(it.cleanText, activeHighlightText, resolvedSymbology)}</span></li>)}</ul>);
+      nodes.push(<ul key={`ul-${i}`} className="list-none space-y-1.5 my-3 ml-0">{items.map((it, idx) => <li key={idx} onClick={(e) => onFragmentClick?.(it.rawText, e)} className={`flex items-start gap-2 text-[13px] text-[#0F172A] dark:text-[#F3F4F6] ${interactiveCls} rounded-none px-1 -mx-1 transition-colors duration-150`}><span className="text-[#C68346] mt-0.5 shrink-0">›</span><span>{parseInlineStyles(it.cleanText, activeHighlightText, resolvedSymbology)}</span></li>)}</ul>);
       continue;
     }
     if (/^\|/.test(line)) {
@@ -351,12 +316,12 @@ function MarkdownRenderer({
       }
       if (rows.length > 0) {
         const [header, ...body] = rows;
-        nodes.push(<div key={`tbl-${i}`} className="overflow-x-auto my-4"><table className="w-full text-[11px] border-collapse"><thead><tr>{header.map((h, ci) => <th key={ci} className="text-left px-3 py-2 bg-black/5 dark:bg-white/5 font-black uppercase tracking-wider text-black/60 dark:text-white/60 border border-black/10 dark:border-white/10">{parseInlineStyles(h, activeHighlightText, resolvedSymbology)}</th>)}</tr></thead><tbody>{body.map((row, ri) => <tr key={ri} className="border-b border-black/10 dark:border-white/10 hover:bg-black/[0.02] dark:hover:bg-white/[0.02]">{row.map((cell, ci) => <td key={ci} onClick={(e) => onFragmentClick?.(cell, e)} className="px-3 py-2 text-black/70 dark:text-white/70 border border-black/10 dark:border-white/10 hover:bg-amber-500/5 cursor-pointer transition-colors duration-150">{parseInlineStyles(cell, activeHighlightText, resolvedSymbology)}</td>)}</tr>)}</tbody></table></div>);
+        nodes.push(<div key={`tbl-${i}`} className="overflow-x-auto my-4"><table className="w-full text-[12px] border-collapse tabular-nums font-mono"><thead><tr>{header.map((h, ci) => <th key={ci} className="text-left px-3 py-2 bg-[#F8FAFC] dark:bg-[#07090D] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] border border-[#E2E8F0] dark:border-[#12151C]">{parseInlineStyles(h, activeHighlightText, resolvedSymbology)}</th>)}</tr></thead><tbody>{body.map((row, ri) => <tr key={ri} className="border-b border-[#E2E8F0] dark:border-[#12151C]">{row.map((cell, ci) => <td key={ci} onClick={(e) => onFragmentClick?.(cell, e)} className={`px-3 py-2 text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] ${interactiveCls} transition-colors duration-150`}>{parseInlineStyles(cell, activeHighlightText, resolvedSymbology)}</td>)}</tr>)}</tbody></table></div>);
       }
       continue;
     }
     const currentRaw = raw;
-    nodes.push(<p key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className="text-[12px] text-black/70 dark:text-white/70 leading-relaxed mb-2 hover:bg-amber-500/5 cursor-pointer rounded px-1 -mx-1 transition-all duration-150">{parseInlineStyles(raw, activeHighlightText, resolvedSymbology)}</p>);
+    nodes.push(<p key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[13px] text-[#0F172A] dark:text-[#F3F4F6] leading-relaxed mb-2 ${interactiveCls} rounded-none px-1 -mx-1 transition-colors duration-150`}>{parseInlineStyles(raw, activeHighlightText, resolvedSymbology)}</p>);
     i++;
   }
   return <div className="font-atkinson">{nodes}</div>;
@@ -405,6 +370,7 @@ function ItemizedSourcesBlock({ sources }: { sources: ItemizedSource[] }) {
 // ─── Item Content Block (CAZA POR ÍTEM) ─────────────────────────────────────
 interface ItemContentBlockProps {
   item: PillarItem; 
+  canCurateAI: boolean;
   isHunting: boolean;
   huntStatusMessage?: string;
   assistingItemId: string | null;
@@ -425,6 +391,7 @@ interface ItemContentBlockProps {
   onDecideProposal: (proposalId: string, decision: 'APROBADO' | 'ELIMINADO') => Promise<void>;
   onEvolveItemByType: (filterType: 'NUEVO' | 'CONFLICTO') => Promise<void>;
   resolvedSymbology?: Array<{ concept_id: string; url: string; technical_name_es: string }>;
+  onOpenStudio?: (tab: StudioTabId) => void;
 }
 
 // ─── Subcomponentes para la refactorización de Actualización por IA ─────────
@@ -447,7 +414,7 @@ function ProposalCard({ proposal, onDecide, isSealed, fallbackUrl, children }: P
   };
 
   const handleConfirm = async () => {
-    if (!proposal.proposal_id || !confirmingDecision) return;
+    if (!proposal.proposal_id || !confirmingDecision || confirmText.trim() !== 'ACTUALIZAR') return;
     setIsSubmitting(true);
     try {
       await onDecide(proposal.proposal_id, confirmingDecision);
@@ -463,19 +430,19 @@ function ProposalCard({ proposal, onDecide, isSealed, fallbackUrl, children }: P
 
   return (
     <div
-      className={`border p-4 transition-all duration-300 font-atkinson ${
+      className={`border p-4 transition-colors duration-300 font-atkinson rounded-none shadow-none ${
         isApproved
-          ? 'border-emerald-500 bg-emerald-500/5 dark:bg-emerald-950/10'
-          : 'border-black/10 dark:border-white/10 bg-white dark:bg-zinc-900/40'
+          ? 'border-[#00AEEF] bg-[#00AEEF]/5'
+          : 'border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D]'
       }`}
     >
       <div className="flex justify-between items-start gap-4">
         <div className="flex flex-col gap-0.5">
-          <span className="text-[9px] font-black uppercase tracking-wider text-black/40 dark:text-white/40">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
             {proposal.zona} — {proposal.componente}
           </span>
           {proposal.detected_at && (
-            <span className="text-[8px] font-mono text-black/30 dark:text-white/30">
+            <span className="text-[10px] font-mono tabular-nums text-[#5A6072]">
               Detectado: {new Date(proposal.detected_at).toLocaleDateString()}
             </span>
           )}
@@ -483,16 +450,15 @@ function ProposalCard({ proposal, onDecide, isSealed, fallbackUrl, children }: P
 
         <div className="flex items-center gap-2">
           {isApproved ? (
-            <span className="flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-emerald-600 bg-emerald-500/10 px-2 py-0.5">
-              <span className="material-symbols-outlined !text-[12px]">check_circle</span>
+            <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[#00AEEF] border border-[#00AEEF]/30 px-2 py-0.5 rounded-none">
               Aprobado
             </span>
           ) : confirmingDecision ? (
-            <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 bg-amber-500/10 text-amber-600 animate-pulse">
+            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 border border-[#C68346]/40 text-[#C68346] rounded-none">
               Confirmando...
             </span>
           ) : (
-            <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/40">
+            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-[#F8FAFC] dark:bg-[#000000] text-[#5A6072] border border-[#E2E8F0] dark:border-[#12151C] rounded-none">
               Pendiente
             </span>
           )}
@@ -504,7 +470,7 @@ function ProposalCard({ proposal, onDecide, isSealed, fallbackUrl, children }: P
                 onClick={() => setConfirmingDecision('APROBADO')}
                 variant="ghost"
                 title="Aprobar hallazgo"
-                className="text-emerald-600 hover:bg-emerald-500/10 !p-1 shrink-0"
+                className="text-[#00AEEF] !p-1 shrink-0"
                 disabled={isSealed || isSubmitting}
               />
               <M3IconButton
@@ -512,7 +478,7 @@ function ProposalCard({ proposal, onDecide, isSealed, fallbackUrl, children }: P
                 onClick={() => setConfirmingDecision('ELIMINADO')}
                 variant="ghost"
                 title="Eliminar propuesta"
-                className="text-rose-500 hover:bg-rose-500/10 !p-1 shrink-0"
+                className="text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] !p-1 shrink-0"
                 disabled={isSealed || isSubmitting}
               />
             </div>
@@ -524,8 +490,41 @@ function ProposalCard({ proposal, onDecide, isSealed, fallbackUrl, children }: P
         {children}
       </div>
 
+      {proposal.figures && proposal.figures.length > 0 && (
+        <div className="mt-[13px] pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C]">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mb-[8px] font-mono tabular-nums">
+            FIGURAS ASOCIADAS AL HALLAZGO ({proposal.figures.length})
+          </p>
+          <div className="grid grid-cols-2 gap-[8px]">
+            {proposal.figures.map((fig) => (
+              <div
+                key={fig.figure_id}
+                className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-[8px] rounded-none shadow-none flex items-center gap-[8px]"
+              >
+                <img
+                  src={fig.storage_url}
+                  alt={fig.title_es}
+                  draggable={false}
+                  onContextMenu={(e) => e.preventDefault()}
+                  style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
+                  className="w-[44px] h-[44px] object-contain shrink-0 select-none pointer-events-none bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] rounded-none"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                    {fig.title_es}
+                  </p>
+                  <p className="text-[10px] font-mono tabular-nums text-[#5A6072] dark:text-[#8A93A6] truncate">
+                    {fig.figure_type} {fig.source_page ? `· P.${fig.source_page}` : ''}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {(proposal.source_url || fallbackUrl) && (proposal.source_url || fallbackUrl) !== '#' && (
-        <div className="mt-2.5 flex items-center gap-1.5 text-[10px] text-copper">
+        <div className="mt-2.5 flex items-center gap-1.5 text-[10px] text-[#00AEEF]">
           <span className="material-symbols-outlined !text-[12px]">link</span>
           <a
             href={proposal.source_url || fallbackUrl}
@@ -540,32 +539,33 @@ function ProposalCard({ proposal, onDecide, isSealed, fallbackUrl, children }: P
       )}
 
       {confirmingDecision && (
-        <div className="mt-3 pt-3 border-t border-black/5 dark:border-white/5 space-y-2">
-          <p className="text-[10px] font-bold text-black/75 dark:text-white/75">
-            Escribe <span className="font-mono text-copper font-bold">"{confirmingDecision.toLowerCase()}"</span> para confirmar esta acción:
+        <div className="mt-3 pt-3 border-t border-[#E2E8F0] dark:border-[#12151C] space-y-2">
+          <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+            Escribe <span className="font-mono text-[#C68346] font-bold">"ACTUALIZAR"</span> para confirmar ({confirmingDecision}):
           </p>
           <div className="flex gap-2">
             <input
               type="text"
               value={confirmText}
               onChange={(e) => setConfirmText(e.target.value)}
-              placeholder={confirmingDecision.toLowerCase()}
+              placeholder="ACTUALIZAR"
               autoComplete="off"
-              className="px-2 py-1 text-[11px] bg-white dark:bg-zinc-950 border border-black/15 dark:border-white/15 outline-none flex-1 text-black dark:text-white"
+              spellCheck={false}
+              className="px-2 py-1 text-[11px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none flex-1 text-[#0F172A] dark:text-[#F3F4F6] font-mono rounded-none shadow-none"
             />
             <button
-              disabled={confirmText.toLowerCase().trim() !== confirmingDecision.toLowerCase() || isSubmitting}
+              type="button"
+              disabled={confirmText.trim() !== 'ACTUALIZAR' || isSubmitting}
               onClick={handleConfirm}
-              className={`px-3 py-1 font-bold text-[10px] text-white disabled:opacity-40 rounded-none transition-colors ${
-                confirmingDecision === 'APROBADO' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'
-              }`}
+              className="px-3 py-1 font-bold text-[10px] text-[#FFFFFF] bg-[#C68346] hover:bg-[#b07239] disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer"
             >
               {isSubmitting ? 'Procesando...' : 'Confirmar'}
             </button>
             <button
+              type="button"
               onClick={handleReset}
               disabled={isSubmitting}
-              className="px-3 py-1 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/15 text-[10px] text-black/70 dark:text-white/70"
+              className="px-3 py-1 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none shadow-none cursor-pointer"
             >
               Cancelar
             </button>
@@ -597,7 +597,7 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
   const pendingCount = proposals.filter(p => p.human_decision === null).length;
 
   const handleEvolve = async () => {
-    if (evolveInput.toLowerCase().trim() !== 'actualizar') return;
+    if (evolveInput.trim() !== 'ACTUALIZAR') return;
     setIsSubmitting(true);
     try {
       await onEvolveItemByType('NUEVO');
@@ -612,28 +612,30 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
 
   return (
     <div className="flex-1 flex flex-col min-h-0 w-full font-atkinson">
-      <div className="flex items-center justify-between pb-3 border-b border-black/10 dark:border-white/10 shrink-0">
+      <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0] dark:border-[#12151C] shrink-0">
         <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={onClose}
-            className="text-black/50 hover:text-black dark:hover:text-white flex items-center justify-center p-1"
+            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
             title="Volver al contenido"
           >
             <span className="material-symbols-outlined !text-[18px]">arrow_back</span>
           </button>
           <div>
-            <h3 className="text-xs font-black uppercase tracking-widest text-black/85 dark:text-white/85">
+            <h3 className="text-xs font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6]">
               Nuevo Contenido
             </h3>
-            <p className="text-[10px] text-black/50 dark:text-white/50">
+            <p className="text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
               {pendingCount} pendiente(s) · {approvedCount} aprobado(s)
             </p>
           </div>
         </div>
 
         <button
+          type="button"
           onClick={onClose}
-          className="text-black/40 hover:text-black dark:hover:text-white flex items-center justify-center p-1"
+          className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
           title="Cancelar y volver"
         >
           <span className="material-symbols-outlined !text-[18px]">close</span>
@@ -641,23 +643,25 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
       </div>
 
       {approvedCount > 0 && (
-        <div className="mt-3 p-3 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-300 dark:border-emerald-700 flex flex-col gap-2 shrink-0">
-          <p className="text-[10px] font-bold text-emerald-800 dark:text-emerald-400">
-            Tienes {approvedCount} propuesta(s) aprobada(s). Escribe "actualizar" para regenerar el ítem integrando estos cambios:
+        <div className="mt-3 p-3 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#00AEEF] flex flex-col gap-2 shrink-0 rounded-none shadow-none">
+          <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+            Propuestas aprobadas (<span className="font-mono tabular-nums">{approvedCount}</span>). Escribe <span className="font-mono text-[#C68346]">"ACTUALIZAR"</span> para integrar estos cambios:
           </p>
           <div className="flex gap-2">
             <input
               type="text"
               value={evolveInput}
               onChange={(e) => setEvolveInput(e.target.value)}
-              placeholder="actualizar"
+              placeholder="ACTUALIZAR"
               autoComplete="off"
-              className="px-2 py-1 bg-white dark:bg-zinc-950 border border-emerald-300 dark:border-emerald-700 outline-none text-[11px] flex-1 text-black dark:text-white"
+              spellCheck={false}
+              className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[11px] font-mono flex-1 text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
             />
             <button
-              disabled={evolveInput.toLowerCase().trim() !== 'actualizar' || isSealed || isSubmitting}
+              type="button"
+              disabled={evolveInput.trim() !== 'ACTUALIZAR' || isSealed || isSubmitting}
               onClick={handleEvolve}
-              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] disabled:opacity-40 rounded-none transition-colors"
+              className="px-3 py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer"
             >
               {isSubmitting ? 'Actualizando...' : 'Actualizar Ítem'}
             </button>
@@ -667,7 +671,7 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
 
       <div className="flex-1 overflow-y-auto mt-4 space-y-4 pr-1 custom-scrollbar">
         {proposals.length === 0 ? (
-          <div className="py-12 text-center text-[11px] text-black/45 dark:text-white/45 italic border border-dashed border-black/10 dark:border-white/10">
+          <div className="py-12 text-center text-[12px] text-[#5A6072] border border-[#E2E8F0] dark:border-[#12151C]">
             No hay propuestas de nuevo contenido pendientes de revisión.
           </div>
         ) : (
@@ -681,13 +685,13 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
             >
               <div className="space-y-2 text-[11px] leading-relaxed">
                 {prop.synthesis && (
-                  <p className="text-black/85 dark:text-white/85 font-medium bg-black/[0.02] dark:bg-white/[0.02] p-2 border-l-2 border-copper">
+                  <p className="text-[#0F172A] dark:text-[#F3F4F6] font-medium bg-[#F8FAFC] dark:bg-[#000000] p-2 border-l-2 border-[#C68346]">
                     {prop.synthesis}
                   </p>
                 )}
-                <div className="mt-2 text-black/60 dark:text-white/60">
-                  <span className="font-bold text-black/75 dark:text-white/75 block mb-0.5">Dato Propuesto:</span>
-                  <div className="font-mono bg-black/[0.01] dark:bg-white/[0.01] p-2 border border-black/5 dark:border-white/5 break-all max-h-32 overflow-y-auto custom-scrollbar">
+                <div className="mt-2 text-[#475569] dark:text-[#8A93A6]">
+                  <span className="font-bold text-[#0F172A] dark:text-[#F3F4F6] block mb-0.5">Dato Propuesto:</span>
+                  <div className="font-mono bg-[#F8FAFC] dark:bg-[#000000] p-2 border border-[#E2E8F0] dark:border-[#12151C] break-all max-h-32 overflow-y-auto custom-scrollbar">
                     {prop.valor_nuevo || prop.condicion_esperada}
                   </div>
                 </div>
@@ -721,7 +725,7 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
   const pendingCount = proposals.filter(p => p.human_decision === null).length;
 
   const handleEvolve = async () => {
-    if (evolveInput.toLowerCase().trim() !== 'actualizar') return;
+    if (evolveInput.trim() !== 'ACTUALIZAR') return;
     setIsSubmitting(true);
     try {
       await onEvolveItemByType('CONFLICTO');
@@ -736,28 +740,30 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
 
   return (
     <div className="flex-1 flex flex-col min-h-0 w-full font-atkinson">
-      <div className="flex items-center justify-between pb-3 border-b border-black/10 dark:border-white/10 shrink-0">
+      <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0] dark:border-[#12151C] shrink-0">
         <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={onClose}
-            className="text-black/50 hover:text-black dark:hover:text-white flex items-center justify-center p-1"
+            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
             title="Volver al contenido"
           >
             <span className="material-symbols-outlined !text-[18px]">arrow_back</span>
           </button>
           <div>
-            <h3 className="text-xs font-black uppercase tracking-widest text-black/85 dark:text-white/85">
+            <h3 className="text-xs font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6]">
               Contenido en Conflicto
             </h3>
-            <p className="text-[10px] text-black/50 dark:text-white/50">
+            <p className="text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
               {pendingCount} pendiente(s) · {approvedCount} aprobado(s)
             </p>
           </div>
         </div>
 
         <button
+          type="button"
           onClick={onClose}
-          className="text-black/40 hover:text-black dark:hover:text-white flex items-center justify-center p-1"
+          className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
           title="Cancelar y volver"
         >
           <span className="material-symbols-outlined !text-[18px]">close</span>
@@ -765,23 +771,25 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
       </div>
 
       {approvedCount > 0 && (
-        <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-300 dark:border-amber-700 flex flex-col gap-2 shrink-0">
-          <p className="text-[10px] font-bold text-amber-800 dark:text-amber-400">
-            Tienes {approvedCount} propuesta(s) aprobada(s). Escribe "actualizar" para regenerar el ítem resolviendo los conflictos:
+        <div className="mt-3 p-3 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#C68346] flex flex-col gap-2 shrink-0 rounded-none shadow-none">
+          <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+            Propuestas aprobadas (<span className="font-mono tabular-nums">{approvedCount}</span>). Escribe <span className="font-mono text-[#C68346]">"ACTUALIZAR"</span> para resolver los conflictos:
           </p>
           <div className="flex gap-2">
             <input
               type="text"
               value={evolveInput}
               onChange={(e) => setEvolveInput(e.target.value)}
-              placeholder="actualizar"
+              placeholder="ACTUALIZAR"
               autoComplete="off"
-              className="px-2 py-1 bg-white dark:bg-zinc-950 border border-amber-300 dark:border-amber-700 outline-none text-[11px] flex-1 text-black dark:text-white"
+              spellCheck={false}
+              className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[11px] font-mono flex-1 text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
             />
             <button
-              disabled={evolveInput.toLowerCase().trim() !== 'actualizar' || isSealed || isSubmitting}
+              type="button"
+              disabled={evolveInput.trim() !== 'ACTUALIZAR' || isSealed || isSubmitting}
               onClick={handleEvolve}
-              className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] disabled:opacity-40 rounded-none transition-colors"
+              className="px-3 py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer"
             >
               {isSubmitting ? 'Actualizando...' : 'Actualizar Ítem'}
             </button>
@@ -791,7 +799,7 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
 
       <div className="flex-1 overflow-y-auto mt-4 space-y-4 pr-1 custom-scrollbar">
         {proposals.length === 0 ? (
-          <div className="py-12 text-center text-[11px] text-black/45 dark:text-white/45 italic border border-dashed border-black/10 dark:border-white/10">
+          <div className="py-12 text-center text-[12px] text-[#5A6072] border border-[#E2E8F0] dark:border-[#12151C]">
             No hay propuestas de conflicto pendientes de revisión.
           </div>
         ) : (
@@ -804,23 +812,23 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
               fallbackUrl={firstValidUrl}
             >
               <div className="space-y-2 text-[11px] leading-relaxed">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pb-2 border-b border-black/5 dark:border-white/5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pb-2 border-b border-[#E2E8F0] dark:border-[#12151C]">
                   <div className="space-y-1">
-                    <span className="text-[9px] font-bold text-black/30 dark:text-white/30 uppercase tracking-wide">Contenido Actual</span>
-                    <div className="p-2 border border-black/5 dark:border-white/5 bg-black/[0.01] dark:bg-white/[0.01] italic text-black/60 dark:text-white/60 leading-relaxed font-mono break-all max-h-32 overflow-y-auto custom-scrollbar">
-                      {prop.valor_actual || "---"}
+                    <span className="text-[9px] font-bold text-[#5A6072] uppercase tracking-wide">Contenido Actual</span>
+                    <div className="p-2 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-[#475569] dark:text-[#8A93A6] leading-relaxed font-mono break-all max-h-32 overflow-y-auto custom-scrollbar">
+                      {prop.valor_actual || '[Información técnica no declarada en ficha]'}
                     </div>
                   </div>
-                  <div className="space-y-1 md:border-l md:border-black/5 md:dark:border-white/5 md:pl-3">
-                    <span className="text-[9px] font-bold text-amber-600 dark:text-amber-500 uppercase tracking-wide">Hallazgo</span>
-                    <div className="p-2 border border-amber-500/10 bg-amber-500/5 dark:bg-amber-950/10 text-black dark:text-white leading-relaxed font-mono break-all max-h-32 overflow-y-auto custom-scrollbar">
+                  <div className="space-y-1 md:border-l md:border-[#E2E8F0] md:dark:border-[#12151C] md:pl-3">
+                    <span className="text-[9px] font-bold text-[#C68346] uppercase tracking-wide">Hallazgo Propuesto</span>
+                    <div className="p-2 border border-[#C68346]/30 bg-[#C68346]/5 text-[#0F172A] dark:text-[#F3F4F6] leading-relaxed font-mono break-all max-h-32 overflow-y-auto custom-scrollbar">
                       {prop.valor_nuevo}
                     </div>
                   </div>
                 </div>
 
                 {prop.synthesis && (
-                  <p className="text-black/85 dark:text-white/85 font-medium bg-black/[0.02] dark:bg-white/[0.02] p-2 border-l-2 border-amber-500">
+                  <p className="text-[#0F172A] dark:text-[#F3F4F6] font-medium bg-[#F8FAFC] dark:bg-[#000000] p-2 border-l-2 border-[#C68346]">
                     {prop.synthesis}
                   </p>
                 )}
@@ -835,6 +843,7 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
 
 function ItemContentBlock({ 
   item, 
+  canCurateAI,
   isHunting,
   isSealed,
   onHunt,
@@ -849,6 +858,7 @@ function ItemContentBlock({
   onEvolveItemByType,
   catalogId,
   resolvedSymbology,
+  onOpenStudio,
 }: ItemContentBlockProps) {
   const { t } = useTranslation();
   const [correctionText, setCorrectionText] = useState('');
@@ -861,6 +871,9 @@ function ItemContentBlock({
   const [confirmUnlockInput, setConfirmUnlockInput] = useState('');
   const [confirmApprovalInput, setConfirmApprovalInput] = useState('');
   const [huntConfirmText, setHuntConfirmText] = useState('');
+  const [draftConfirmInput, setDraftConfirmInput] = useState('');
+  const [rollbackConfirmTimestamp, setRollbackConfirmTimestamp] = useState<string | null>(null);
+  const [rollbackConfirmInput, setRollbackConfirmInput] = useState('');
   const [showHuntConfirm, setShowHuntConfirm] = useState(false);
   const [showUnlockConfirm, setShowUnlockConfirm] = useState(false);
   const [showApprovalConfirm, setShowApprovalConfirm] = useState(false);
@@ -871,7 +884,8 @@ function ItemContentBlock({
   const isGenerating = item.content_status === 'GENERANDO' || isHunting || isSearching;
 
   useEffect(() => {
-    const newSessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    if (!canCurateAI) return;
+    const newSessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     setSessionId(newSessionId);
 
     return () => {
@@ -883,10 +897,10 @@ function ItemContentBlock({
         }).catch(err => console.warn('[VaultChat] Error al cerrar sesión:', err));
       }
     };
-  }, [catalogId, item.item_id]);
+  }, [canCurateAI, catalogId, item.item_id]);
 
   useEffect(() => {
-    if (!catalogId || !item.item_id || !sessionId) return;
+    if (!canCurateAI || !catalogId || !item.item_id || !sessionId) return;
 
     const sessionRef = doc(db, 'global_asset_catalog', catalogId, 'vault_chats', item.item_id, 'sessions', sessionId);
     const unsub = onSnapshot(sessionRef, (snap) => {
@@ -900,7 +914,7 @@ function ItemContentBlock({
     });
 
     return () => unsub();
-  }, [catalogId, item.item_id, sessionId]);
+  }, [canCurateAI, catalogId, item.item_id, sessionId]);
 
   useEffect(() => {
     if (chatFeedRef.current) {
@@ -909,6 +923,7 @@ function ItemContentBlock({
   }, [messages, isSending]);
 
   const handleFragmentClick = (text: string, e: React.MouseEvent) => {
+    if (!canCurateAI) return;
     e.preventDefault();
     e.stopPropagation();
     setSelectedFragment(text);
@@ -922,11 +937,9 @@ function ItemContentBlock({
   const activeHighlightText = latestModelMessage?.highlightText || undefined;
 
   const handleSendMessage = async () => {
-    if (!correctionText.trim()) return;
+    if (!canCurateAI || !correctionText.trim()) return;
 
-    const textInput = correctionText.trim().toLowerCase();
-    
-    if (['aprobar', 'aprobado', 'confirmar', 'confirmo'].includes(textInput)) {
+    if (correctionText.trim() === 'ACTUALIZAR') {
       if (!latestDraftContent) {
         toast.warning('No hay ningún borrador de cambios pendiente para aprobar.');
         return;
@@ -950,8 +963,9 @@ function ItemContentBlock({
           }),
         });
         if (res.ok) {
-          toast.update(toastId, { render: '✓ Cambios aplicados exitosamente.', type: 'success', isLoading: false, autoClose: 3000 });
+          toast.update(toastId, { render: 'Cambios aplicados exitosamente.', type: 'success', isLoading: false, autoClose: 3000 });
           setCorrectionText('');
+          setDraftConfirmInput('');
           setSelectedFragment(null);
         } else {
           const json = await res.json();
@@ -1000,7 +1014,7 @@ function ItemContentBlock({
   return (
     <div className="flex-1 flex flex-row min-h-0 w-full gap-4 font-atkinson relative">
       <div className="flex-1 flex flex-col min-h-0 overflow-y-auto hide-scrollbar pr-4 select-text">
-        {activeProposalView?.itemId === item.item_id ? (
+        {canCurateAI && activeProposalView?.itemId === item.item_id ? (
           activeProposalView.view === 'nuevos' ? (
             <NuevosHallazgosView
               item={item}
@@ -1024,9 +1038,19 @@ function ItemContentBlock({
               <>
                 <MarkdownRenderer 
                   content={item.content} 
-                  activeHighlightText={activeHighlightText}
-                  onFragmentClick={handleFragmentClick}
+                  activeHighlightText={canCurateAI ? activeHighlightText : undefined}
+                  onFragmentClick={canCurateAI ? handleFragmentClick : undefined}
                   resolvedSymbology={resolvedSymbology}
+                />
+                <ItemFiguresAndAdvisoriesBlock
+                  catalogId={catalogId}
+                  pillarId={pillarId}
+                  itemId={item.item_id}
+                  canCurateAI={canCurateAI}
+                  isHumanLocked={item.is_human_locked}
+                  isSealed={isSealed}
+                  figures={item.figures}
+                  advisories={item.locked_item_advisories}
                 />
                 {item.item_sources?.length ? (
                   <ItemizedSourcesBlock sources={item.item_sources} />
@@ -1036,7 +1060,7 @@ function ItemContentBlock({
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex flex-col gap-1">
                   {item.approved_by && (
-                    <span className="text-[8px] text-black/30 dark:text-white/30 font-mono">
+                    <span className="text-[10px] text-[#5A6072] font-mono tabular-nums">
                       {t('vault_dashboard.labels.by')} {item.approved_by} · {item.approved_at ? new Date(item.approved_at).toLocaleDateString() : ''}
                     </span>
                   )}
@@ -1047,12 +1071,13 @@ function ItemContentBlock({
         )}
       </div>
 
-      <div className="w-[260px] shrink-0 flex flex-col justify-between border-l border-black/10 dark:border-white/10 pl-4 pb-2 h-full min-h-0 overflow-hidden">
+      {canCurateAI && (
+      <div className="w-[260px] shrink-0 flex flex-col justify-between border-l border-[#E2E8F0] dark:border-[#12151C] pl-4 pb-2 h-full min-h-0 overflow-hidden select-none">
         <div className="flex-1 flex flex-col min-h-0 pb-4 gap-4 overflow-hidden">
           <div className="flex items-center justify-between mb-1 shrink-0">
-            <span className="text-[9px] font-black uppercase tracking-widest text-black/40 dark:text-white/40">OPERMAQ IA</span>
+            <span className="text-[10px] font-bold uppercase tracking-widest text-[#475569] dark:text-[#8A93A6]">OPERMAQ IA</span>
             {isGenerating && (
-              <span className="material-symbols-outlined !text-[12px] text-copper animate-spin">progress_activity</span>
+              <span className="material-symbols-outlined !text-[12px] text-[#C68346] animate-spin">progress_activity</span>
             )}
           </div>
 
@@ -1061,14 +1086,14 @@ function ItemContentBlock({
             className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 scroll-smooth custom-scrollbar"
             style={{
               scrollbarWidth: 'thin',
-              scrollbarColor: 'var(--color-scrollbar, rgba(184,115,51,0.25)) transparent',
+              scrollbarColor: 'var(--color-scrollbar, rgba(198,131,70,0.25)) transparent',
             }}
           >
             {messages.length === 0 ? (
               <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
-                <span className="material-symbols-outlined !text-[28px] text-black/20 dark:text-white/20 mb-2">forum</span>
-                <p className="text-[11px] text-black/45 dark:text-white/45 italic leading-relaxed">
-                  Inicia una conversación para consultar o editar este ítem con asistencia de OPERMAQ IA.
+                <span className="material-symbols-outlined !text-[28px] text-[#5A6072] mb-2">forum</span>
+                <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] leading-relaxed">
+                  Ingrese instrucciones técnicas para consultar o curar este ítem con OPERMAQ IA.
                 </p>
               </div>
             ) : (
@@ -1078,8 +1103,8 @@ function ItemContentBlock({
                 
                 if (isSystem) {
                   return (
-                    <div key={msg.id || index} className="p-2 bg-black/[0.02] dark:bg-white/5 border border-black/5 dark:border-white/10 text-center animate-in fade-in duration-200 shrink-0">
-                      <p className="text-[10px] text-black/55 dark:text-white/55 font-medium leading-relaxed">
+                    <div key={msg.id || index} className="p-2 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] text-center shrink-0">
+                      <p className="text-[10px] text-[#475569] dark:text-[#8A93A6] font-medium leading-relaxed">
                         {msg.content}
                       </p>
                     </div>
@@ -1091,41 +1116,51 @@ function ItemContentBlock({
                     key={msg.id || index} 
                     className={`flex flex-col gap-1 max-w-[90%] shrink-0 ${isUser ? 'self-end items-end' : 'self-start items-start'}`}
                   >
-                    <span className="text-[8px] font-black uppercase tracking-wider text-black/30 dark:text-white/30">
-                      {isUser ? 'Tú' : 'OPERMAQ IA'}
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-[#5A6072]">
+                      {isUser ? 'Operador' : 'OPERMAQ IA'}
                     </span>
                     
                     <div 
-                      className={`p-2.5 text-[11px] leading-relaxed font-sans rounded-none ${
+                      className={`p-2.5 text-[11px] leading-relaxed font-atkinson rounded-none shadow-none ${
                         isUser 
-                          ? 'bg-black/[0.04] dark:bg-white/[0.06] text-black/90 dark:text-white/90 border border-black/5 dark:border-white/10' 
-                          : 'bg-copper/[0.03] dark:bg-copper/[0.06] text-black/95 dark:text-white/95 border border-copper/15 dark:border-copper/25'
+                          ? 'bg-[#F8FAFC] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C]' 
+                          : 'bg-[#C68346]/5 text-[#0F172A] dark:text-[#F3F4F6] border border-[#C68346]/30'
                       }`}
                     >
                       <MarkdownRenderer content={msg.content} resolvedSymbology={resolvedSymbology} />
                     </div>
 
                     {msg.highlightText && (
-                      <div className="flex items-center gap-1 mt-0.5 text-[9px] text-amber-600 dark:text-amber-500 font-bold shrink-0">
-                        <span className="material-symbols-outlined !text-[12px] animate-pulse">local_library</span>
+                      <div className="flex items-center gap-1 mt-0.5 text-[9px] text-[#C68346] font-bold shrink-0">
+                        <span className="material-symbols-outlined !text-[12px]">local_library</span>
                         Destaque activo en pantalla
                       </div>
                     )}
 
                     {msg.draftContent && (
-                      <div className="mt-2 w-full bg-white dark:bg-zinc-900 border border-emerald-500/20 p-2.5 flex flex-col gap-2 shadow-none animate-in zoom-in-95 duration-200 shrink-0">
-                        <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-500">
+                      <div className="mt-2 w-full bg-[#FFFFFF] dark:bg-[#07090D] border border-[#00AEEF]/40 p-2.5 flex flex-col gap-2 rounded-none shadow-none shrink-0">
+                        <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-[#00AEEF]">
                           <span className="material-symbols-outlined !text-[14px]">edit_document</span>
                           Propuesta de Borrador
                         </div>
-                        <p className="text-[10px] text-black/50 dark:text-white/50 leading-snug">
-                          Escribe <span className="font-bold text-copper">"aprobar"</span> en el chat o pulsa abajo para aplicar estos cambios en el catálogo.
+                        <p className="text-[10px] text-[#475569] dark:text-[#8A93A6] leading-snug">
+                          Escribe <span className="font-mono font-bold text-[#C68346]">"ACTUALIZAR"</span> para aplicar estos cambios en el catálogo:
                         </p>
-                        <div className="max-h-24 overflow-y-auto border border-black/5 dark:border-white/5 bg-black/[0.01] dark:bg-white/[0.01] p-1.5 text-[9px] font-mono text-black/60 dark:text-white/60 custom-scrollbar">
+                        <div className="max-h-24 overflow-y-auto border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] p-1.5 text-[9px] font-mono text-[#0F172A] dark:text-[#F3F4F6] custom-scrollbar">
                           <pre className="whitespace-pre-wrap">{msg.draftContent}</pre>
                         </div>
+                        <input
+                          type="text"
+                          value={draftConfirmInput}
+                          onChange={(e) => setDraftConfirmInput(e.target.value)}
+                          placeholder="ACTUALIZAR"
+                          autoComplete="off"
+                          spellCheck={false}
+                          className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                        />
                         <button
-                          disabled={isSealed || isSending}
+                          type="button"
+                          disabled={isSealed || isSending || draftConfirmInput.trim() !== 'ACTUALIZAR'}
                           onClick={async () => {
                             setIsSending(true);
                             const toastId = toast.loading('Aplicando propuesta de cambios...');
@@ -1145,7 +1180,8 @@ function ItemContentBlock({
                                 }),
                               });
                               if (res.ok) {
-                                toast.update(toastId, { render: '✓ Cambios aplicados exitosamente.', type: 'success', isLoading: false, autoClose: 3000 });
+                                toast.update(toastId, { render: 'Cambios aplicados exitosamente.', type: 'success', isLoading: false, autoClose: 3000 });
+                                setDraftConfirmInput('');
                               } else {
                                 const json = await res.json();
                                 toast.update(toastId, { render: `Error: ${json.error || 'No se pudieron aplicar los cambios.'}`, type: 'error', isLoading: false, autoClose: 5000 });
@@ -1156,7 +1192,7 @@ function ItemContentBlock({
                               setIsSending(false);
                             }
                           }}
-                          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] py-1 font-bold transition-colors disabled:opacity-40"
+                          className="w-full bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[10px] py-1.5 font-bold uppercase tracking-wider transition-colors disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
                         >
                           Aprobar y Guardar
                         </button>
@@ -1168,7 +1204,7 @@ function ItemContentBlock({
             )}
 
             {isSending && (
-              <div className="flex items-center gap-1.5 py-1 justify-start text-[10px] text-copper animate-pulse shrink-0">
+              <div className="flex items-center gap-1.5 py-1 justify-start text-[10px] text-[#C68346] shrink-0">
                 <span className="material-symbols-outlined !text-[14px] animate-spin">progress_activity</span>
                 <span>Procesando consulta...</span>
               </div>
@@ -1178,16 +1214,17 @@ function ItemContentBlock({
 
         <div className="flex flex-col shrink-0">
           {selectedFragment && (
-            <div className="mb-2 bg-copper/5 border border-copper/20 p-2 text-[10px] flex items-start gap-2 animate-in slide-in-from-bottom-2 shrink-0">
+            <div className="mb-2 bg-[#C68346]/5 border border-[#C68346]/30 p-2 text-[10px] flex items-start gap-2 shrink-0 rounded-none">
               <div className="flex-1 min-w-0">
-                <span className="font-bold text-copper uppercase block text-[8px] tracking-wider mb-0.5">Fragmento Seleccionado</span>
-                <p className="text-black/60 dark:text-white/60 italic truncate max-w-full">
+                <span className="font-bold text-[#C68346] uppercase block text-[8px] tracking-wider mb-0.5">Fragmento Seleccionado</span>
+                <p className="text-[#475569] dark:text-[#8A93A6] truncate max-w-full">
                   "{selectedFragment}"
                 </p>
               </div>
               <button 
+                type="button"
                 onClick={() => setSelectedFragment(null)}
-                className="text-black/45 hover:text-red-500 flex items-center justify-center p-0.5"
+                className="bg-transparent border-0 outline-none p-0.5 text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
               >
                 <span className="material-symbols-outlined !text-[14px]">close</span>
               </button>
@@ -1196,7 +1233,7 @@ function ItemContentBlock({
 
           {!item.is_human_locked && (
             <div className="flex flex-col gap-2 pb-3">
-              <div className="bg-black/5 dark:bg-white/5 rounded-none flex flex-col p-2 border border-black/10 dark:border-white/10">
+              <div className="bg-[#F8FAFC] dark:bg-[#07090D] rounded-none flex flex-col p-2 border border-[#E2E8F0] dark:border-[#12151C]">
                 <textarea
                   value={correctionText}
                   onChange={(e) => setCorrectionText(e.target.value)}
@@ -1208,29 +1245,33 @@ function ItemContentBlock({
                   }}
                   disabled={isSending || isGenerating || isSealed}
                   rows={2}
-                  placeholder={latestDraftContent ? "Escribe 'aprobar' para aplicar el borrador..." : "Ingrese instrucciones a OPERMAQ"}
+                  placeholder={latestDraftContent ? 'Escribe ACTUALIZAR para aplicar el borrador...' : 'Ingrese instrucciones técnicas a OPERMAQ'}
                   autoComplete="off"
                   spellCheck={false}
-                  className="w-full bg-transparent resize-none focus:outline-none text-[12px] text-black dark:text-white placeholder-black/30 dark:placeholder-white/30 custom-scrollbar px-1"
+                  className="w-full bg-transparent resize-none focus:outline-none text-[12px] text-[#0F172A] dark:text-[#F3F4F6] placeholder-[#5A6072] custom-scrollbar px-1"
                 />
                 <div className="flex justify-end items-center mt-1 gap-2">
                   <button
-                    onClick={() => toast.info('Función de audio estará disponible próximamente.')}
-                    className="text-black/40 hover:text-black/60 dark:text-white/40 dark:hover:text-white/60 p-1 rounded-none transition-colors flex items-center justify-center"
+                    type="button"
+                    onClick={() => toast.info('Función de dictado disponible próximamente.')}
+                    title="Dictado por voz"
+                    className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                     disabled={isSending || isGenerating || isSealed}
                   >
                     <span className="material-symbols-outlined !text-[20px]">mic</span>
                   </button>
                   <button
+                    type="button"
                     disabled={!correctionText.trim() || isSending || isSealed || isGenerating}
                     onClick={handleSendMessage}
-                    className={`flex items-center justify-center w-7 h-7 rounded-none transition-colors ${
+                    title="Enviar instrucción"
+                    className={`bg-transparent border-0 outline-none p-1 transition-colors cursor-pointer ${
                       correctionText.trim() && !isSending && !isSealed && !isGenerating
-                        ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-none'
-                        : 'bg-black/10 text-black/30 dark:bg-white/10 dark:text-white/30 cursor-not-allowed'
+                        ? 'text-[#C68346] hover:text-[#b07239]'
+                        : 'text-[#5A6072] opacity-40 cursor-not-allowed'
                     }`}
                   >
-                    <span className="material-symbols-outlined !text-[16px]">
+                    <span className="material-symbols-outlined !text-[18px]">
                       arrow_upward
                     </span>
                   </button>
@@ -1240,10 +1281,12 @@ function ItemContentBlock({
           )}
 
           {!item.is_human_locked && (
-            <div className="flex justify-start py-2 px-2 border-t border-black/10 dark:border-white/10">
+            <div className="flex justify-start py-2 px-2 border-t border-[#E2E8F0] dark:border-[#12151C]">
               <button
-                onClick={() => toast.info('Función de adjuntar foto estará disponible próximamente.')}
-                className="text-black/40 hover:text-black/60 dark:text-white/40 dark:hover:text-white/60 p-1 rounded-none transition-colors flex items-center justify-center"
+                type="button"
+                onClick={() => onOpenStudio ? onOpenStudio('INGESTION') : toast.info('Ingesta documental no disponible.')}
+                title="Ingesta documental / multimedia (PDF, ETT, esquemas, fotos)"
+                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none"
                 disabled={isSending || isGenerating || isSealed}
               >
                 <span className="material-symbols-outlined !text-[20px]">add_photo_alternate</span>
@@ -1251,43 +1294,46 @@ function ItemContentBlock({
             </div>
           )}
 
-          <div className="flex flex-col gap-3 pt-3 border-t border-black/10 dark:border-white/10">
+          <div className="flex flex-col gap-2 pt-3 border-t border-[#E2E8F0] dark:border-[#12151C]">
             <div className="flex flex-col gap-2">
               <button
+                type="button"
                 disabled={isSealed || isGenerating || item.is_human_locked}
                 onClick={() => setShowHuntConfirm(!showHuntConfirm)}
-                className="w-full flex items-center gap-3 px-3 py-2 bg-transparent transition-all text-black/50 dark:text-white/50 hover:text-black dark:hover:text-white disabled:opacity-40 disabled:pointer-events-none"
+                className="w-full text-left px-3 py-2 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none cursor-pointer"
               >
-                <span className={`material-symbols-outlined !text-[20px] ${isGenerating && !isSending ? 'animate-spin text-copper' : ''}`}>sync</span>
-                <span className="text-[10px] font-black uppercase tracking-wider">Actualizar</span>
+                Regenerar con IA
               </button>
 
               {showHuntConfirm && (
-                <div className="p-2 border border-copper/20 bg-copper/5 flex flex-col gap-2">
-                  <p className="text-[9px] text-copper font-bold">Escribe "actualizar" para confirmar la regeneración por IA:</p>
+                <div className="p-2 border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-2 rounded-none">
+                  <p className="text-[10px] text-[#C68346] font-bold">Escribe "ACTUALIZAR" para confirmar la regeneración por IA:</p>
                   <input
                     type="text"
                     value={huntConfirmText}
                     onChange={(e) => setHuntConfirmText(e.target.value)}
-                    placeholder="actualizar"
+                    placeholder="ACTUALIZAR"
                     autoComplete="off"
-                    className="px-2 py-1 bg-white dark:bg-zinc-900 border border-copper/30 outline-none text-[10px] text-black dark:text-white"
+                    spellCheck={false}
+                    className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
                   />
                   <div className="flex gap-2">
                     <button
-                      disabled={huntConfirmText.toLowerCase().trim() !== 'actualizar' || isGenerating || isSealed}
+                      type="button"
+                      disabled={huntConfirmText.trim() !== 'ACTUALIZAR' || isGenerating || isSealed}
                       onClick={() => {
                         onHunt();
                         setHuntConfirmText('');
                         setShowHuntConfirm(false);
                       }}
-                      className="px-2 py-0.5 bg-copper text-white font-bold text-[9px] disabled:opacity-40"
+                      className="px-2 py-1 bg-[#C68346] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none border-0 cursor-pointer"
                     >
                       Confirmar
                     </button>
                     <button
+                      type="button"
                       onClick={() => setShowHuntConfirm(false)}
-                      className="px-2 py-0.5 text-black/40 hover:text-black dark:text-white/40 dark:hover:text-white text-[9px]"
+                      className="px-2 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[10px] rounded-none cursor-pointer"
                     >
                       Cancelar
                     </button>
@@ -1297,6 +1343,7 @@ function ItemContentBlock({
             </div>
 
             <button
+              type="button"
               onClick={() => {
                 if (activeProposalView?.itemId === item.item_id && activeProposalView.view === 'nuevos') {
                   onSetProposalView(null);
@@ -1304,27 +1351,21 @@ function ItemContentBlock({
                   onSetProposalView({ itemId: item.item_id, pillarId, view: 'nuevos' });
                 }
               }}
-              className={`w-full flex items-center justify-between px-3 py-2 bg-transparent transition-all border border-transparent hover:border-black/5 dark:hover:border-white/5 ${
+              className={`w-full flex items-center justify-between px-3 py-2 bg-transparent transition-colors border rounded-none cursor-pointer ${
                 activeProposalView?.itemId === item.item_id && activeProposalView.view === 'nuevos'
-                  ? 'text-emerald-600 dark:text-emerald-500 font-bold bg-emerald-500/5'
-                  : 'text-black/50 dark:text-white/50 hover:text-black dark:hover:text-white'
+                  ? 'text-[#00AEEF] font-bold border-[#00AEEF]'
+                  : 'text-[#475569] dark:text-[#8A93A6] border-[#E2E8F0] dark:border-[#12151C] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
               }`}
               title="Nuevo Contenido"
             >
-              <div className="flex items-center gap-3">
-                <span className="material-symbols-outlined !text-[20px]">docs_add_on</span>
-                <span className="text-[10px] font-black uppercase tracking-wider">Nuevo Contenido</span>
-              </div>
-              <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-none font-mono ${
-                (item.pending_conflicts ?? []).filter(p => p.estado_fusion === 'NUEVO' && p.human_decision !== 'ELIMINADO').length > 0
-                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                  : 'bg-black/5 dark:bg-white/5 text-black/30 dark:text-white/30'
-              }`}>
+              <span className="text-[10px] font-bold uppercase tracking-wider">Nuevo Contenido</span>
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-none font-mono tabular-nums text-[#00AEEF]">
                 {(item.pending_conflicts ?? []).filter(p => p.estado_fusion === 'NUEVO' && p.human_decision !== 'ELIMINADO').length}
               </span>
             </button>
 
             <button
+              type="button"
               onClick={() => {
                 if (activeProposalView?.itemId === item.item_id && activeProposalView.view === 'conflictos') {
                   onSetProposalView(null);
@@ -1332,83 +1373,79 @@ function ItemContentBlock({
                   onSetProposalView({ itemId: item.item_id, pillarId, view: 'conflictos' });
                 }
               }}
-              className={`w-full flex items-center justify-between px-3 py-2 bg-transparent transition-all border border-transparent hover:border-black/5 dark:hover:border-white/5 ${
+              className={`w-full flex items-center justify-between px-3 py-2 bg-transparent transition-colors border rounded-none cursor-pointer ${
                 activeProposalView?.itemId === item.item_id && activeProposalView.view === 'conflictos'
-                  ? 'text-amber-600 dark:text-amber-500 font-bold bg-amber-500/5'
-                  : 'text-black/50 dark:text-white/50 hover:text-black dark:hover:text-white'
+                  ? 'text-[#C68346] font-bold border-[#C68346]'
+                  : 'text-[#475569] dark:text-[#8A93A6] border-[#E2E8F0] dark:border-[#12151C] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
               }`}
               title="Contenido en Conflicto"
             >
-              <div className="flex items-center gap-3">
-                <span className="material-symbols-outlined !text-[20px]">swap_horiz</span>
-                <span className="text-[10px] font-black uppercase tracking-wider">Contenido en Conflicto</span>
-              </div>
-              <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-none font-mono ${
-                (item.pending_conflicts ?? []).filter(p => p.estado_fusion === 'CONFLICTO' && p.human_decision !== 'ELIMINADO').length > 0
-                  ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                  : 'bg-black/5 dark:bg-white/5 text-black/30 dark:text-white/30'
-              }`}>
+              <span className="text-[10px] font-bold uppercase tracking-wider">Contenido en Conflicto</span>
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-none font-mono tabular-nums text-[#C68346]">
                 {(item.pending_conflicts ?? []).filter(p => p.estado_fusion === 'CONFLICTO' && p.human_decision !== 'ELIMINADO').length}
               </span>
             </button>
           </div>
 
-          <div className="flex flex-col gap-3 pt-4 mt-1 border-t border-black/10 dark:border-white/10">
+          <div className="flex flex-col gap-2 pt-3 mt-2 border-t border-[#E2E8F0] dark:border-[#12151C]">
             <button
-              onClick={() => toast.info('Exportación PDF estará disponible próximamente.')}
-              className="w-full flex items-center gap-3 px-3 py-2 bg-transparent transition-all text-black/50 dark:text-white/50 hover:text-black dark:hover:text-white"
+              type="button"
+              onClick={() => onOpenStudio ? onOpenStudio('MANUAL_PUBLISHER') : toast.info('Exportación PDF no disponible.')}
+              className="w-full text-left px-3 py-2 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] text-[10px] font-bold uppercase tracking-wider rounded-none cursor-pointer"
             >
-              <span className="material-symbols-outlined !text-[20px]">picture_as_pdf</span>
-              <span className="text-[10px] font-black uppercase tracking-wider">Exportar PDF</span>
+              Manuales Ilustrados PDF
             </button>
 
             <button
+              type="button"
               onClick={() => setShowHistoryModal(true)}
-              className="w-full flex items-center gap-3 px-3 py-2 bg-transparent transition-all text-black/50 dark:text-white/50 hover:text-black dark:hover:text-white"
+              className="w-full text-left px-3 py-2 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] text-[10px] font-bold uppercase tracking-wider rounded-none cursor-pointer"
             >
-              <span className="material-symbols-outlined !text-[20px]">history</span>
-              <span className="text-[10px] font-black uppercase tracking-wider">Historial</span>
+              Historial de Cambios
             </button>
 
           {item.is_human_locked ? (
             <div className="flex flex-col gap-2">
               <button
+                type="button"
                 disabled={isSealed || isGenerating}
                 onClick={() => setShowUnlockConfirm(!showUnlockConfirm)}
-                className="w-full flex items-center gap-3 px-3 py-2 bg-transparent transition-all text-amber-600 hover:text-amber-700 disabled:opacity-40 disabled:pointer-events-none"
+                className="w-full text-left px-3 py-2 bg-transparent border border-[#C68346] transition-colors text-[#C68346] hover:bg-[#C68346] hover:text-[#FFFFFF] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none cursor-pointer"
               >
-                <span className="material-symbols-outlined !text-[20px] text-amber-500">edit_document</span>
-                <span className="text-[10px] font-black uppercase tracking-wider">EDITAR ÍTEM</span>
+                EDITAR ÍTEM
               </button>
               {showUnlockConfirm && (
-                <div className="p-2 border border-amber-500/20 bg-amber-500/5 flex flex-col gap-2">
-                  <p className="text-[9px] text-amber-800 dark:text-amber-400 font-bold">Escribe "editar" para confirmar el desbloqueo:</p>
+                <div className="p-2 border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-2 rounded-none">
+                  <p className="text-[10px] text-[#C68346] font-bold">Escribe "ACTUALIZAR" para confirmar el desbloqueo:</p>
                   <input
                     type="text"
                     value={confirmUnlockInput}
                     onChange={(e) => setConfirmUnlockInput(e.target.value)}
-                    placeholder="editar"
+                    placeholder="ACTUALIZAR"
                     autoComplete="off"
-                    className="px-2 py-1 bg-white dark:bg-zinc-900 border border-amber-300 dark:border-amber-700 outline-none text-[10px] text-black dark:text-white"
+                    spellCheck={false}
+                    className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
                   />
                   <div className="flex gap-2">
                     <button
-                      disabled={confirmUnlockInput.toLowerCase().trim() !== 'editar'}
+                      type="button"
+                      disabled={confirmUnlockInput.trim() !== 'ACTUALIZAR'}
                       onClick={async () => {
                         await onUnlockItem();
                         setConfirmUnlockInput('');
                         setShowUnlockConfirm(false);
                       }}
-                      className="px-2 py-0.5 bg-amber-600 text-white font-bold text-[9px] disabled:opacity-40"
+                      className="px-2 py-1 bg-[#C68346] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none border-0 cursor-pointer"
                     >
                       Confirmar
                     </button>
                     <button
+                      type="button"
                       onClick={() => {
                         setConfirmUnlockInput('');
                         setShowUnlockConfirm(false);
                       }}
-                      className="px-2 py-0.5 border border-black/10 text-[9px]"
+                      className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none cursor-pointer"
                     >
                       Cancelar
                     </button>
@@ -1419,42 +1456,45 @@ function ItemContentBlock({
           ) : (
             <div className="flex flex-col gap-2">
               <button
+                type="button"
                 disabled={isSealed || isGenerating}
                 onClick={() => setShowApprovalConfirm(!showApprovalConfirm)}
-                className="w-full flex items-center gap-3 px-3 py-2 bg-transparent transition-all text-emerald-600/70 hover:text-emerald-600 disabled:opacity-40 disabled:pointer-events-none"
+                className="w-full text-left px-3 py-2 bg-transparent border border-[#00AEEF] transition-colors text-[#00AEEF] hover:bg-[#00AEEF] hover:text-[#FFFFFF] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none cursor-pointer"
               >
-                <span className="material-symbols-outlined !text-[20px] text-emerald-500/60">verified</span>
-                <span className="text-[10px] font-black uppercase tracking-wider">Aprobar Ítem</span>
+                Aprobar Ítem
               </button>
               {showApprovalConfirm && (
-                <div className="p-2 border border-emerald-500/20 bg-emerald-500/5 flex flex-col gap-2">
-                  <p className="text-[9px] text-emerald-800 dark:text-emerald-400 font-bold">Escribe "aprobar" para confirmar la aprobación:</p>
+                <div className="p-2 border border-[#00AEEF]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-2 rounded-none">
+                  <p className="text-[10px] text-[#00AEEF] font-bold">Escribe "ACTUALIZAR" para confirmar la aprobación:</p>
                   <input
                     type="text"
                     value={confirmApprovalInput}
                     onChange={(e) => setConfirmApprovalInput(e.target.value)}
-                    placeholder="aprobar"
+                    placeholder="ACTUALIZAR"
                     autoComplete="off"
-                    className="px-2 py-1 bg-white dark:bg-zinc-900 border border-emerald-300 dark:border-emerald-700 outline-none text-[10px] text-black dark:text-white"
+                    spellCheck={false}
+                    className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
                   />
                   <div className="flex gap-2">
                     <button
-                      disabled={confirmApprovalInput.toLowerCase().trim() !== 'aprobar'}
+                      type="button"
+                      disabled={confirmApprovalInput.trim() !== 'ACTUALIZAR'}
                       onClick={async () => {
                         await onUpdateApprovalState('APROBADO_HUMANO');
                         setConfirmApprovalInput('');
                         setShowApprovalConfirm(false);
                       }}
-                      className="px-2 py-0.5 bg-emerald-600 text-white font-bold text-[9px] disabled:opacity-40"
+                      className="px-2 py-1 bg-[#00AEEF] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none border-0 cursor-pointer"
                     >
                       Confirmar
                     </button>
                     <button
+                      type="button"
                       onClick={() => {
                         setConfirmApprovalInput('');
                         setShowApprovalConfirm(false);
                       }}
-                      className="px-2 py-0.5 border border-black/10 text-[9px]"
+                      className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none cursor-pointer"
                     >
                       Cancelar
                     </button>
@@ -1465,79 +1505,121 @@ function ItemContentBlock({
           )}
 
           <button
+            type="button"
             disabled={isSealed || isGenerating || item.is_human_locked}
             onClick={onDiscard}
-            className="w-full flex items-center gap-3 px-3 py-2 bg-transparent transition-all text-red-600/65 hover:text-red-500 disabled:opacity-40 disabled:pointer-events-none"
+            className="w-full text-left px-3 py-2 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#0F172A] dark:hover:border-[#F3F4F6] transition-colors text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none cursor-pointer"
           >
-            <span className="material-symbols-outlined !text-[20px] text-red-500/50">text_ad_off</span>
-            <span className="text-[10px] font-black uppercase tracking-wider">Descartar Ítem</span>
+            Descartar Ítem
           </button>
           </div>
 
         </div>
 
       </div>
+      )}
 
-      {showHistoryModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200">
-          <div className="bg-white dark:bg-zinc-950 border border-black/10 dark:border-white/10 w-full max-w-2xl h-[80vh] flex flex-col font-atkinson p-6 justify-between">
+      {canCurateAI && showHistoryModal && (
+        <div className="fixed inset-0 bg-[#000000]/75 flex items-center justify-center z-[100] p-4">
+          <div className="bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] w-full max-w-2xl h-[80vh] flex flex-col font-atkinson p-6 justify-between rounded-none shadow-none">
             
-            <div className="flex items-center justify-between pb-4 border-b border-black/10 dark:border-white/10">
+            <div className="flex items-center justify-between pb-4 border-b border-[#E2E8F0] dark:border-[#12151C]">
               <div>
-                <h3 className="text-sm font-black uppercase tracking-widest text-black/80 dark:text-white/80">Historial de Cambios</h3>
-                <p className="text-[11px] text-black/50 dark:text-white/50">{item.title}</p>
+                <h3 className="text-sm font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6]">Historial de Cambios</h3>
+                <p className="text-[11px] text-[#475569] dark:text-[#8A93A6]">{item.title}</p>
               </div>
               <M3IconButton
                 icon="close"
-                onClick={() => setShowHistoryModal(false)}
-                className="text-black/50 hover:text-black dark:hover:text-white"
+                onClick={() => {
+                  setShowHistoryModal(false);
+                  setRollbackConfirmTimestamp(null);
+                  setRollbackConfirmInput('');
+                }}
               />
             </div>
 
             <div className="flex-1 overflow-y-auto py-4 space-y-4 custom-scrollbar">
               {!item.historial_cambios || item.historial_cambios.length === 0 ? (
-                <p className="text-[12px] text-black/40 dark:text-white/40 italic text-center py-8">No hay registros en el historial de este ítem.</p>
+                <p className="text-[12px] text-[#5A6072] text-center py-8">[Sin registros de auditoría en el historial de este ítem]</p>
               ) : (
                 [...item.historial_cambios].reverse().map((log: HistorialAuditoria, index) => (
-                  <div key={index} className="p-3 border border-black/5 dark:border-white/5 bg-black/[0.01] dark:bg-white/[0.01] space-y-2">
-                    <div className="flex items-start justify-between">
+                  <div key={index} className="p-3 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] space-y-2 rounded-none">
+                    <div className="flex items-start justify-between gap-3">
                       <div className="space-y-0.5">
-                        <span className="text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 bg-black/5 dark:bg-white/5 text-black/60 dark:text-white/60">
+                        <span className="text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6]">
                           {log.accion.replace(/_/g, ' ')}
                         </span>
-                        <div className="text-[10px] font-bold text-black/80 dark:text-white/80">
-                          {log.actor} · <span className="font-mono text-[9px] text-black/40">{new Date(log.fecha).toLocaleString()}</span>
+                        <div className="text-[10px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                          {log.actor} · <span className="font-mono tabular-nums text-[9px] text-[#5A6072]">{new Date(log.fecha).toLocaleString()}</span>
                         </div>
                       </div>
                       {log.snapshot_anterior !== undefined && (
                         <M3Button
                           variant="ghost"
-                          icon="history"
                           disabled={item.is_human_locked || isSealed}
-                          onClick={async () => {
-                            if (window.confirm('¿Confirmas que deseas restaurar esta versión anterior?')) {
-                              await onRollbackVersion(log.fecha);
-                              setShowHistoryModal(false);
-                            }
+                          onClick={() => {
+                            setRollbackConfirmTimestamp(log.fecha);
+                            setRollbackConfirmInput('');
                           }}
-                          className="text-copper text-[10px]"
+                          className="text-[#C68346] text-[10px]"
                         >
                           Restaurar Versión
                         </M3Button>
                       )}
                     </div>
+                    {rollbackConfirmTimestamp === log.fecha && (
+                      <div className="p-2 border border-[#C68346] bg-[#FFFFFF] dark:bg-[#07090D] space-y-2">
+                        <p className="text-[10px] font-bold text-[#C68346]">
+                          Escribe "ACTUALIZAR" para restaurar esta versión histórica:
+                        </p>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={rollbackConfirmInput}
+                            onChange={(e) => setRollbackConfirmInput(e.target.value)}
+                            placeholder="ACTUALIZAR"
+                            autoComplete="off"
+                            spellCheck={false}
+                            className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono flex-1 text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
+                          />
+                          <button
+                            type="button"
+                            disabled={rollbackConfirmInput.trim() !== 'ACTUALIZAR'}
+                            onClick={async () => {
+                              await onRollbackVersion(log.fecha);
+                              setRollbackConfirmTimestamp(null);
+                              setRollbackConfirmInput('');
+                              setShowHistoryModal(false);
+                            }}
+                            className="px-3 py-1 bg-[#C68346] text-[#FFFFFF] text-[10px] font-bold disabled:opacity-40 rounded-none border-0 cursor-pointer"
+                          >
+                            Confirmar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRollbackConfirmTimestamp(null);
+                              setRollbackConfirmInput('');
+                            }}
+                            className="px-3 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none cursor-pointer"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     {log.detalle && (
-                      <p className="text-[11px] text-black/70 dark:text-white/70 italic">
+                      <p className="text-[11px] text-[#475569] dark:text-[#8A93A6]">
                         "{log.detalle}"
                       </p>
                     )}
                     {log.snapshot_anterior !== undefined && (
-                      <details className="group border-t border-black/5 dark:border-white/5 pt-2">
-                        <summary className="text-[9px] font-black text-black/40 dark:text-white/40 uppercase tracking-widest cursor-pointer hover:text-black/60 list-none flex items-center gap-1">
+                      <details className="group border-t border-[#E2E8F0] dark:border-[#12151C] pt-2">
+                        <summary className="text-[9px] font-bold text-[#5A6072] uppercase tracking-widest cursor-pointer hover:text-[#0F172A] dark:hover:text-[#F3F4F6] list-none flex items-center gap-1">
                           <span className="material-symbols-outlined !text-[12px] transition-transform group-open:rotate-90">chevron_right</span>
                           Ver contenido de esta versión
                         </summary>
-                        <div className="mt-2 p-3 bg-black/[0.02] dark:bg-zinc-900/40 max-h-60 overflow-y-auto border border-black/5 custom-scrollbar text-[11px] text-black/80 dark:text-white/80">
+                        <div className="mt-2 p-3 bg-[#FFFFFF] dark:bg-[#07090D] max-h-60 overflow-y-auto border border-[#E2E8F0] dark:border-[#12151C] custom-scrollbar text-[11px] text-[#0F172A] dark:text-[#F3F4F6]">
                           <MarkdownRenderer content={log.snapshot_anterior} resolvedSymbology={resolvedSymbology} />
                         </div>
                       </details>
@@ -1547,7 +1629,7 @@ function ItemContentBlock({
               )}
             </div>
 
-            <div className="pt-4 border-t border-black/10 dark:border-white/10 flex justify-end">
+            <div className="pt-4 border-t border-[#E2E8F0] dark:border-[#12151C] flex justify-end">
               <M3Button onClick={() => setShowHistoryModal(false)} className="text-[10px]">
                 Cerrar
               </M3Button>
@@ -1564,6 +1646,7 @@ function ItemContentBlock({
 
 interface ItemizedItemsListProps {
   items: PillarItem[];
+  canCurateAI: boolean;
   onHunt: (itemId: string, correction?: string) => void;
   onAiAssist: (itemId: string, userRequest: string) => Promise<AiAssistResponse | null>;
   onApplyAssist: (itemId: string, finalContent: string, intent: string) => Promise<void>;
@@ -1588,15 +1671,16 @@ interface ItemizedItemsListProps {
   onDecideProposal: (itemId: string, proposalId: string, decision: 'APROBADO' | 'ELIMINADO') => Promise<void>;
   onEvolveItemByType: (itemId: string, filterType: 'NUEVO' | 'CONFLICTO') => Promise<void>;
   resolveItemSymbology: (symbologyRefs?: string[]) => Array<{ concept_id: string; url: string; technical_name_es: string }>;
+  onOpenStudio?: (tab: StudioTabId) => void;
 }
 
 
 function ItemizedItemsList({ 
-  items, onHunt, onAiAssist, onApplyAssist, isAssistingItemId: assistingItemId, huntingItemId, huntStatusMessage,
+  items, canCurateAI, onHunt, onAiAssist, onApplyAssist, isAssistingItemId: assistingItemId, huntingItemId, huntStatusMessage,
   expandedItems, onToggleExpand, onDiscard: _onDiscard, onReactivate, isArchive, isSealed,
   onUnlockItem, onUpdateApprovalState, onRollbackVersion, catalogId,
   pillarId, activeProposalView, onSetProposalView, onDecideProposal, onEvolveItemByType,
-  resolveItemSymbology
+  resolveItemSymbology, onOpenStudio
 }: ItemizedItemsListProps) {
   const { t } = useTranslation();
   
@@ -1611,13 +1695,13 @@ function ItemizedItemsList({
   const hasExpanded = expandedItems.size > 0;
 
   return (
-    <div className={`mt-4 ${isArchive ? 'opacity-60 grayscale-[0.5]' : ''} ${hasExpanded ? 'flex-1 flex flex-col h-full min-h-0' : 'space-y-5'}`}>
+    <div className={`mt-4 ${isArchive ? 'opacity-60' : ''} ${hasExpanded ? 'flex-1 flex flex-col h-full min-h-0' : 'space-y-5'}`}>
       {sections.map(sec => {
         const secItems = items.filter(it => it.section === sec);
         if (hasExpanded && !secItems.some(it => expandedItems.has(it.item_id))) return null;
         return (
           <div key={sec} className={hasExpanded ? 'flex-1 flex flex-col h-full min-h-0' : ''}>
-            {!hasExpanded && <p className="text-[9px] font-black uppercase tracking-[0.2em] text-black/40 dark:text-white/40 mb-2">{sec}</p>}
+            {!hasExpanded && <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#475569] dark:text-[#8A93A6] mb-2">{sec}</p>}
             <div className={hasExpanded ? 'flex-1 flex flex-col h-full min-h-0' : 'space-y-3'}>
               {secItems.map(item => {
                 const isCompleted = item.content_status === 'COMPLETADO';
@@ -1632,55 +1716,55 @@ function ItemizedItemsList({
                   <div
                     key={item.item_id}
                     id={`item-card-${item.item_id}`}
-                    className={`p-3 border transition-all duration-300 flex flex-col ${
-                      isCompleted ? 'border-emerald-500/20 bg-emerald-50/30 dark:bg-emerald-900/10' :
-                      isError     ? 'border-red-500/20 bg-red-50/30 dark:bg-red-900/10' :
-                      isGenerating? 'border-copper/20 bg-amber-50/20 dark:bg-amber-900/10' :
-                      'border-black/10 dark:border-white/10 bg-black/[0.01] dark:bg-white/[0.01]'
-                    } ${isExpanded ? 'flex-1 h-full min-h-0 ring-1 ring-copper/10 shadow-none' : ''}`}
+                    className={`p-3 border transition-colors duration-200 flex flex-col rounded-none shadow-none ${
+                      isCompleted ? 'border-[#00AEEF]/30 bg-[#FFFFFF] dark:bg-[#07090D]' :
+                      isError     ? 'border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D]' :
+                      isGenerating? 'border-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D]' :
+                      'border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D]'
+                    } ${isExpanded ? 'flex-1 h-full min-h-0 border-[#C68346]' : ''}`}
                   >
                     {/* Cabecera del ítem */}
                     <div className="flex items-start gap-3">
                       <div className="flex flex-col items-center gap-1 shrink-0 mt-0.5">
-                        <span className="text-[10px] font-mono text-black/25">{String(item.order).padStart(2,'0')}</span>
-                        <div className="w-9 h-9 shrink-0" />
+                        <span className="text-[11px] font-mono tabular-nums text-[#5A6072]">{String(item.order).padStart(2,'0')}</span>
                       </div>
 
                       <div className="flex-1 min-w-0">
                         <div className={hasContent && !isArchive ? 'cursor-pointer' : ''} onClick={() => hasContent && !isArchive ? onToggleExpand(item.item_id) : undefined}>
-                          <p className="text-[12px] font-black text-black/80 dark:text-white/80">{item.title}</p>
-                          <p className="text-[10px] text-black/50 dark:text-white/50 mt-0.5">{item.rationale}</p>
+                          <p className="text-[13px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">{item.title}</p>
+                          <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] mt-0.5">{item.rationale}</p>
+                          {!hasContent && !canCurateAI && (
+                            <p className="text-[11px] text-[#5A6072] mt-1">[Información técnica no declarada en ficha]</p>
+                          )}
                         </div>
                         {item.created_by ? (
-                          <p className="text-[9px] font-mono text-copper mt-1">{item.created_by}</p>
+                          <p className="text-[10px] font-mono text-[#C68346] mt-1">{item.created_by}</p>
                         ) : item.standard ? (
-                          <p className="text-[9px] font-mono text-copper mt-1">{item.standard}</p>
+                          <p className="text-[10px] font-mono text-[#C68346] mt-1">{item.standard}</p>
                         ) : null}
                       </div>
 
                       <div className="flex flex-col items-end gap-1.5 shrink-0">
-                        {/* Ícono de estado: siempre visible */}
                         {!isArchive && (
                           <div className="flex items-center gap-1">
-                            {item.pending_conflicts && item.pending_conflicts.length > 0 && (
-                              <span className="flex items-center justify-center w-10 h-10 shrink-0">
-                                <span className="material-symbols-outlined !text-[24px] text-blue-500 animate-pulse" title="Nuevos hallazgos o conflictos pendientes">release_alert</span>
+                            {canCurateAI && item.pending_conflicts && item.pending_conflicts.length > 0 && (
+                              <span className="flex items-center justify-center w-8 h-8 shrink-0">
+                                <span className="material-symbols-outlined !text-[20px] text-[#00AEEF]" title="Nuevos hallazgos o conflictos pendientes">release_alert</span>
                               </span>
                             )}
                             {item.is_human_locked ? (
-                              <span className="flex items-center justify-center w-10 h-10 shrink-0">
-                                <span className="material-symbols-outlined !text-[24px] text-emerald-500" title="Aprobado Humano">verified</span>
+                              <span className="flex items-center justify-center w-8 h-8 shrink-0">
+                                <span className="material-symbols-outlined !text-[20px] text-[#00AEEF]" title="Verificado">verified</span>
                               </span>
-                            ) : hasContent ? (
-                              <span className="flex items-center justify-center w-10 h-10 shrink-0">
-                                <span className="material-symbols-outlined !text-[24px] text-amber-500" title="Editable">edit_document</span>
+                            ) : canCurateAI && hasContent ? (
+                              <span className="flex items-center justify-center w-8 h-8 shrink-0">
+                                <span className="material-symbols-outlined !text-[20px] text-[#C68346]" title="Editable">edit_document</span>
                               </span>
                             ) : null}
                           </div>
                         )}
 
-                        {/* Descartar / Reactivar: solo en listado colapsado */}
-                        {!isExpanded && (
+                        {canCurateAI && !isExpanded && (
                           <div className="flex items-center gap-1">
                             {!isArchive ? (
                               !hasContent && (
@@ -1690,14 +1774,15 @@ function ItemizedItemsList({
                                     onClick={(e) => { e.stopPropagation(); onHunt(item.item_id); }}
                                     variant="ghost"
                                     title="Cazar contenido"
-                                    className={`text-copper/70 hover:text-copper ${isSealed || isGenerating ? 'opacity-20 cursor-not-allowed' : ''}`}
+                                    className={`text-[#C68346] ${isSealed || isGenerating ? 'opacity-20 cursor-not-allowed' : ''}`}
                                     disabled={isSealed || isGenerating || item.is_human_locked}
                                   />
                                   <M3IconButton
                                     icon="text_ad_off"
                                     onClick={(e) => { e.stopPropagation(); if (!isSealed) setConfirmDiscardId(item.item_id); }}
                                     variant="ghost"
-                                    className={`text-red-400/50 hover:text-red-500 ${isSealed ? 'opacity-20 cursor-not-allowed' : ''}`}
+                                    title="Descartar ítem"
+                                    className={`text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] ${isSealed ? 'opacity-20 cursor-not-allowed' : ''}`}
                                     disabled={isSealed || isGenerating || item.is_human_locked}
                                   />
                                 </>
@@ -1705,9 +1790,8 @@ function ItemizedItemsList({
                             ) : (
                               <M3Button
                                 variant="ghost"
-                                icon={isSealed ? 'lock' : 'lightbulb'}
                                 onClick={() => { if (!isSealed) setConfirmReactivateId(item.item_id); }}
-                                className={`text-[9px] text-emerald-500 ${isSealed ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                className={`text-[10px] text-[#00AEEF] ${isSealed ? 'opacity-40 cursor-not-allowed' : ''}`}
                                 disabled={isSealed}
                               >
                                 {isSealed ? (t('vault_dashboard.bloqueado') || 'BLOQUEADO').toUpperCase() : (t('vault_dashboard.reactivate') || 'REACTIVAR').toUpperCase()}
@@ -1716,43 +1800,46 @@ function ItemizedItemsList({
                           </div>
                         )}
 
-                        {!isArchive && item.content_status === 'ERROR' && item.hunt_error && (
-                          <p className="text-[8px] text-red-500 font-bold uppercase tracking-tighter">ERROR: {item.hunt_error}</p>
+                        {canCurateAI && !isArchive && item.content_status === 'ERROR' && item.hunt_error && (
+                          <p className="text-[9px] text-[#C68346] font-bold uppercase tracking-tight">ERROR: {item.hunt_error}</p>
                         )}
 
                       </div>
                     </div>
 
                     {/* Confirmación Descarte Inline */}
-                    {confirmDiscardId === item.item_id && (
-                      <div className="mt-3 p-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 space-y-2 w-full text-left">
-                        <p className="text-[11px] font-bold text-red-800 dark:text-red-400">¿Descartar este ítem? No se borrará del sistema pero ya no se mostrará a los clientes. Escribe "descartar" para confirmar:</p>
+                    {canCurateAI && confirmDiscardId === item.item_id && (
+                      <div className="mt-3 p-3 bg-[#F8FAFC] dark:bg-[#000000] border border-[#C68346] space-y-2 w-full text-left rounded-none">
+                        <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">¿Descartar este ítem del catálogo visible? Escribe <span className="font-mono text-[#C68346]">"ACTUALIZAR"</span> para confirmar:</p>
                         <div className="flex gap-2">
                           <input
                             type="text"
                             value={discardConfirmInput}
                             onChange={(e) => setDiscardConfirmInput(e.target.value)}
-                            placeholder="descartar"
+                            placeholder="ACTUALIZAR"
                             autoComplete="off"
-                            className="px-2 py-1 bg-white dark:bg-zinc-900 border border-red-300 dark:border-red-700 outline-none text-[11px] flex-1 text-black dark:text-white"
+                            spellCheck={false}
+                            className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[11px] font-mono flex-1 text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
                           />
                           <button
-                            disabled={discardConfirmInput.toLowerCase().trim() !== 'descartar'}
+                            type="button"
+                            disabled={discardConfirmInput.trim() !== 'ACTUALIZAR'}
                             onClick={() => {
                               _onDiscard(item.item_id);
                               setConfirmDiscardId(null);
                               setDiscardConfirmInput('');
                             }}
-                            className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white font-bold disabled:opacity-40 text-[11px]"
+                            className="px-3 py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold disabled:opacity-40 text-[11px] rounded-none border-0 cursor-pointer"
                           >
                             Confirmar
                           </button>
                           <button
+                            type="button"
                             onClick={() => {
                               setConfirmDiscardId(null);
                               setDiscardConfirmInput('');
                             }}
-                            className="px-3 py-1 bg-black/10 dark:bg-white/10 hover:bg-black/20 text-black/70 dark:text-white/70 text-[11px]"
+                            className="px-3 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[11px] rounded-none cursor-pointer"
                           >
                             Cancelar
                           </button>
@@ -1761,35 +1848,38 @@ function ItemizedItemsList({
                     )}
 
                     {/* Confirmación Reactivación Inline */}
-                    {confirmReactivateId === item.item_id && (
-                      <div className="mt-3 p-3 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 space-y-2 w-full text-left">
-                        <p className="text-[11px] font-bold text-emerald-800 dark:text-emerald-400">¿Reactivar este ítem? Volverá a aparecer en el listado activo y será visible para los clientes. Escribe "restaurar" para confirmar:</p>
+                    {canCurateAI && confirmReactivateId === item.item_id && (
+                      <div className="mt-3 p-3 bg-[#F8FAFC] dark:bg-[#000000] border border-[#00AEEF] space-y-2 w-full text-left rounded-none">
+                        <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">¿Reactivar este ítem en el listado activo? Escribe <span className="font-mono text-[#C68346]">"ACTUALIZAR"</span> para confirmar:</p>
                         <div className="flex gap-2">
                           <input
                             type="text"
                             value={reactivateConfirmInput}
                             onChange={(e) => setReactivateConfirmInput(e.target.value)}
-                            placeholder="restaurar"
+                            placeholder="ACTUALIZAR"
                             autoComplete="off"
-                            className="px-2 py-1 bg-white dark:bg-zinc-900 border border-emerald-300 dark:border-emerald-700 outline-none text-[11px] flex-1 text-black dark:text-white"
+                            spellCheck={false}
+                            className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-[11px] font-mono flex-1 text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
                           />
                           <button
-                            disabled={reactivateConfirmInput.toLowerCase().trim() !== 'restaurar'}
+                            type="button"
+                            disabled={reactivateConfirmInput.trim() !== 'ACTUALIZAR'}
                             onClick={() => {
                               onReactivate?.(item.item_id);
                               setConfirmReactivateId(null);
                               setReactivateConfirmInput('');
                             }}
-                            className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold disabled:opacity-40 text-[11px]"
+                            className="px-3 py-1 bg-[#00AEEF] text-[#FFFFFF] font-bold disabled:opacity-40 text-[11px] rounded-none border-0 cursor-pointer"
                           >
                             Confirmar
                           </button>
                           <button
+                            type="button"
                             onClick={() => {
                               setConfirmReactivateId(null);
                               setReactivateConfirmInput('');
                             }}
-                            className="px-3 py-1 bg-black/10 dark:bg-white/10 hover:bg-black/20 text-black/70 dark:text-white/70 text-[11px]"
+                            className="px-3 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[11px] rounded-none cursor-pointer"
                           >
                             Cancelar
                           </button>
@@ -1797,11 +1887,12 @@ function ItemizedItemsList({
                       </div>
                     )}
 
-                    {/* Contenido de caza (Colapsable y 2 columnas) */}
+                    {/* Contenido del ítem */}
                     {isExpanded && (
-                      <div className="mt-4 flex-1 flex flex-row min-h-0 animate-in fade-in slide-in-from-top-2 duration-300 border-t border-black/10 dark:border-white/10 pt-4 h-full">
+                      <div className="mt-4 flex-1 flex flex-row min-h-0 border-t border-[#E2E8F0] dark:border-[#12151C] pt-4 h-full">
                         <ItemContentBlock
                           item={item}
+                          canCurateAI={canCurateAI}
                           isHunting={huntingItemId === item.item_id}
                           onAiAssist={(req) => onAiAssist(item.item_id, req)}
                           onApplyAssist={(final, intent) => onApplyAssist(item.item_id, final, intent)}
@@ -1820,6 +1911,7 @@ function ItemizedItemsList({
                           onEvolveItemByType={(filterType) => onEvolveItemByType(item.item_id, filterType)}
                           catalogId={catalogId}
                           resolvedSymbology={resolveItemSymbology(item.symbology_refs)}
+                          onOpenStudio={onOpenStudio}
                         />
                       </div>
                     )}
@@ -1850,31 +1942,32 @@ const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = 
   const source = suggestion.source as ItemizedSource | undefined;
 
   return (
-    <div className="p-3 bg-white dark:bg-black border border-violet-500/20 hover:border-violet-500/40 transition-colors space-y-3 flex flex-col justify-between">
+    <div className="p-3 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#00AEEF]/30 hover:border-[#00AEEF] transition-colors space-y-3 flex flex-col justify-between rounded-none shadow-none">
       <div className="space-y-2">
         <div className="flex justify-between items-start gap-4">
           <div className="min-w-0 flex-1">
-            <p className="text-[12px] font-black text-black/90 dark:text-white/90">{suggestion.title}</p>
-            <p className="text-[10px] text-black/50 dark:text-white/50 mt-0.5 leading-relaxed">{suggestion.rationale}</p>
-            <p className="text-[8px] font-mono text-violet-500 uppercase tracking-widest mt-1">Sugerido por IA • Sección: {suggestion.section}</p>
+            <p className="text-[12px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">{suggestion.title}</p>
+            <p className="text-[10px] text-[#475569] dark:text-[#8A93A6] mt-0.5 leading-relaxed">{suggestion.rationale}</p>
+            <p className="text-[9px] font-mono text-[#00AEEF] uppercase tracking-widest mt-1">Sugerencia IA · Sección: {suggestion.section}</p>
           </div>
           <button
+            type="button"
             onClick={onIgnore}
             title="Ignorar sugerencia"
-            className="text-black/30 hover:text-red-500 transition-colors material-symbols-outlined !text-[16px] shrink-0"
+            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer shrink-0"
           >
-            close
+            <span className="material-symbols-outlined !text-[16px]">close</span>
           </button>
         </div>
 
         {/* Bloque de Fuente real asociada */}
         {source && (source.author || source.url) && (
-          <div className="p-2 bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 text-[9px] font-sans text-black/60 dark:text-white/60 space-y-1">
+          <div className="p-2 bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] text-[10px] font-atkinson text-[#475569] dark:text-[#8A93A6] space-y-1">
             <div className="flex items-center justify-between gap-2">
               <span className="font-bold flex items-center gap-1">
-                <span className="material-symbols-outlined !text-[10px] text-copper">verified</span>
+                <span className="material-symbols-outlined !text-[11px] text-[#C68346]">verified</span>
                 {source.author || 'Fuente'} 
-                <span className="px-1.5 py-0.5 text-[7px] bg-copper/10 text-copper font-mono uppercase rounded-none ml-1">
+                <span className="px-1.5 py-0.5 text-[8px] bg-[#C68346]/10 text-[#C68346] font-mono uppercase rounded-none ml-1">
                   {source.type || 'EXTERNO'}
                 </span>
               </span>
@@ -1883,15 +1976,14 @@ const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = 
                   href={source.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-copper hover:underline font-bold flex items-center gap-0.5"
+                  className="text-[#00AEEF] hover:underline font-bold"
                 >
                   Ver enlace
-                  <span className="material-symbols-outlined !text-[8px]">open_in_new</span>
                 </a>
               )}
             </div>
             {source.description && (
-              <p className="text-black/45 dark:text-white/45 italic leading-tight">
+              <p className="text-[#5A6072] leading-tight">
                 "{source.description}"
               </p>
             )}
@@ -1899,22 +1991,24 @@ const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = 
         )}
       </div>
 
-      <div className="flex flex-col sm:flex-row sm:items-center gap-2 pt-2 border-t border-black/5 dark:border-white/5 justify-between">
-        <p className="text-[9px] text-black/70 dark:text-white/70">
-          Escriba <span className="font-mono text-copper font-bold">"registrar"</span> para confirmar:
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2 pt-2 border-t border-[#E2E8F0] dark:border-[#12151C] justify-between">
+        <p className="text-[10px] text-[#475569] dark:text-[#8A93A6]">
+          Escriba <span className="font-mono text-[#C68346] font-bold">"ACTUALIZAR"</span> para confirmar:
         </p>
         <div className="flex gap-1.5 flex-1 max-w-full sm:max-w-[220px]">
           <input
             type="text"
             value={confirmInput}
             onChange={(e) => setConfirmInput(e.target.value)}
-            placeholder="registrar"
+            placeholder="ACTUALIZAR"
             autoComplete="off"
+            spellCheck={false}
             disabled={isSubmitting}
-            className="px-2 h-7 text-[11px] bg-transparent border border-black/10 dark:border-white/15 focus:border-copper outline-none text-black dark:text-white font-sans flex-1 min-w-[60px]"
+            className="px-2 h-7 text-[11px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[#0F172A] dark:text-[#F3F4F6] font-mono flex-1 min-w-[60px] rounded-none"
           />
           <button
-            disabled={confirmInput.toLowerCase().trim() !== 'registrar' || isSubmitting}
+            type="button"
+            disabled={confirmInput.trim() !== 'ACTUALIZAR' || isSubmitting}
             onClick={async () => {
               setIsSubmitting(true);
               try {
@@ -1923,9 +2017,9 @@ const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = 
                 setIsSubmitting(false);
               }
             }}
-            className="px-3 h-7 bg-violet-600 hover:bg-violet-700 text-white font-bold text-[10px] disabled:opacity-40 transition-colors shrink-0"
+            className="px-3 h-7 bg-[#C68346] hover:bg-[#b0743e] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 transition-colors shrink-0 rounded-none border-0 cursor-pointer"
           >
-            {isSubmitting ? 'Registrando...' : 'Confirmar'}
+            {isSubmitting ? 'Actualizando...' : 'Confirmar'}
           </button>
         </div>
       </div>
@@ -1940,6 +2034,7 @@ interface PillarTabContentProps {
   pillarMeta: typeof PILLARS[number];
   pillar?:      PillarDocument;
   catalogId:   string;
+  canCurateAI: boolean;
   onItemize:   (pillarId: PillarId) => void;
   onHuntItem:  (pillarId: PillarId, itemId: string, correction?: string) => void;
   onAiAssistItem: (pillarId: PillarId, itemId: string, userRequest: string) => Promise<AiAssistResponse | null>;
@@ -1964,13 +2059,14 @@ interface PillarTabContentProps {
   onDecideProposal: (pillarId: PillarId, itemId: string, proposalId: string, decision: 'APROBADO' | 'ELIMINADO') => Promise<void>;
   onEvolveItemByType: (pillarId: PillarId, itemId: string, filterType: 'NUEVO' | 'CONFLICTO') => Promise<void>;
   resolveItemSymbology: (symbologyRefs?: string[]) => Array<{ concept_id: string; url: string; technical_name_es: string }>;
+  onOpenStudio?: (tab: StudioTabId) => void;
 }
 
 const PillarTabContent: React.FC<PillarTabContentProps> = ({
-  pillarMeta, pillar, catalogId, onItemize, onHuntItem, onAiAssistItem, onApplyAssistItem, onCreateItem, itemizing, huntingItemId, huntStatusMessage, assistingItemId, expandedItems, onToggleExpand, onDiscardItem, onReactivateItem,
+  pillarMeta, pillar, catalogId, canCurateAI, onItemize, onHuntItem, onAiAssistItem, onApplyAssistItem, onCreateItem, itemizing, huntingItemId, huntStatusMessage, assistingItemId, expandedItems, onToggleExpand, onDiscardItem, onReactivateItem,
   isSealed, onUnlockItem, onUpdateApprovalState, onRollbackVersion,
   activeProposalView, onSetProposalView, onDecideProposal, onEvolveItemByType,
-  resolveItemSymbology
+  resolveItemSymbology, onOpenStudio
 }) => {
   const { t } = useTranslation();
   const [showArchive, setShowArchive] = useState(false);
@@ -1989,6 +2085,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
   const [suggestionsCollapsed, setSuggestionsCollapsed] = useState(false);
 
   const handleTriggerComplementarySearch = async () => {
+    if (!canCurateAI) return;
     setIsComplementarySearching(true);
     const toastId = toast.loading(t('vault_dashboard.status.searching_complementary_items', 'Buscando ítems complementarios…'));
     try {
@@ -2001,7 +2098,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
         const data = await response.json();
         const hasNew = data.suggestions && data.suggestions.length > 0;
         if (hasNew) {
-          toast.update(toastId, { render: `✓ ${t('vault_dashboard.status.complementary_items_found', 'Sugerencias encontradas.')}`, type: 'success', isLoading: false, autoClose: 3000 });
+          toast.update(toastId, { render: t('vault_dashboard.status.complementary_items_found', 'Sugerencias encontradas.'), type: 'success', isLoading: false, autoClose: 3000 });
         } else {
           toast.update(toastId, { render: t('vault_dashboard.status.no_new_suggestions', 'No se encontraron nuevos ítems complementarios para sugerir.'), type: 'info', isLoading: false, autoClose: 5000 });
         }
@@ -2017,6 +2114,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
   };
 
   const handleDiscardSuggestion = async (title: string, section: string, rationale: string, source?: Record<string, unknown>) => {
+    if (!canCurateAI) return;
     const toastId = toast.loading(t('vault_dashboard.status.discarding_suggestion', 'Descartando sugerencia…'));
     try {
       const response = await authFetch(`${API_BASE_URL}/vault/discard-suggested-item`, {
@@ -2032,7 +2130,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
         })
       });
       if (response.ok) {
-        toast.update(toastId, { render: `✓ ${t('vault_dashboard.status.suggestion_discarded', 'Sugerencia descartada y archivada.')}`, type: 'success', isLoading: false, autoClose: 3000 });
+        toast.update(toastId, { render: t('vault_dashboard.status.suggestion_discarded', 'Sugerencia descartada y archivada.'), type: 'success', isLoading: false, autoClose: 3000 });
       } else {
         const json = await response.json();
         toast.update(toastId, { render: `Error: ${json.error || t('vault_dashboard.status.failed_to_discard_suggestion', 'Error al descartar sugerencia.')}`, type: 'error', isLoading: false, autoClose: 5000 });
@@ -2059,32 +2157,31 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Toolbar */}
-      <div className="shrink-0 flex flex-wrap items-center justify-between gap-4 px-5 py-3 border-b border-black/10 dark:border-white/10 bg-white dark:bg-black">
-        {/* Izquierda: Nombre del pilar + Campo de creación */}
+      <div className="shrink-0 flex flex-wrap items-center justify-between gap-4 px-5 py-3 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+        {/* Izquierda: Nombre del pilar + Controles exclusivos de curación */}
         <div className="flex flex-wrap items-center gap-4 flex-1 min-w-0">
-          <h1 className="text-[13px] font-black uppercase tracking-widest text-black dark:text-white leading-none whitespace-nowrap">
+          <h1 className="text-[13px] font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6] leading-none whitespace-nowrap">
             {t(`vault_dashboard.pillars.${pillarMeta.id}`, pillarMeta.label)}
           </h1>
 
-
-
-          {itemizeStatus === 'COMPLETED' && expandedItems.size === 0 && (
+          {canCurateAI && itemizeStatus === 'COMPLETED' && expandedItems.size === 0 && (
             <button
+              type="button"
               disabled={isSealed || isComplementarySearching}
               onClick={handleTriggerComplementarySearch}
               title={t('vault_dashboard.actions.search_complementary_items', 'Buscar ítems complementarios con IA')}
-              className={`flex items-center justify-center w-8 h-8 rounded-none transition-all duration-200 bg-transparent border-0 cursor-pointer ${
+              className={`bg-transparent border-0 outline-none p-1 transition-colors cursor-pointer ${
                 isComplementarySearching
-                  ? 'animate-spin text-copper'
-                  : 'text-black/40 dark:text-white/40 hover:text-copper'
+                  ? 'animate-spin text-[#C68346]'
+                  : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
               <span className="material-symbols-outlined !text-[18px]">autorenew</span>
             </button>
           )}
 
-          {/* Campo de creación manual de ítem */}
-          {itemizeStatus === 'COMPLETED' && expandedItems.size === 0 && (
+          {/* Campo de creación manual de ítem (exclusivo curación) */}
+          {canCurateAI && itemizeStatus === 'COMPLETED' && expandedItems.size === 0 && (
             <div className="flex items-center gap-1.5 flex-1 max-w-lg min-w-[200px]">
               <input
                 type="text"
@@ -2092,10 +2189,12 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                 onChange={(e) => setNewManualItemTitle(e.target.value)}
                 placeholder={t('vault_dashboard.labels.new_item_placeholder', 'Nombre del nuevo ítem...')}
                 autoComplete="off"
+                spellCheck={false}
                 disabled={isSealed}
-                className="w-full h-9 px-3 text-[13px] bg-transparent border border-black/10 dark:border-white/15 focus:border-copper dark:focus:border-copper outline-none transition-all duration-200 font-sans"
+                className="w-full h-9 px-3 text-[13px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none transition-colors font-atkinson rounded-none text-[#0F172A] dark:text-[#F3F4F6]"
               />
               <button
+                type="button"
                 disabled={!newManualItemTitle.trim() || isSealed}
                 onClick={() => {
                   setCreateFormTitle(newManualItemTitle);
@@ -2106,10 +2205,10 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                   setNewManualItemTitle('');
                 }}
                 title={t('vault_dashboard.actions.create_item', 'Crear ítem')}
-                className={`flex items-center justify-center w-9 h-9 shrink-0 transition-colors border border-black/5 dark:border-white/5 bg-transparent ${
+                className={`bg-transparent border-0 outline-none p-1 shrink-0 transition-colors cursor-pointer ${
                   newManualItemTitle.trim() && !isSealed
-                    ? 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 hover:border-emerald-200 dark:hover:border-emerald-800'
-                    : 'text-black/20 dark:text-white/20 cursor-not-allowed'
+                    ? 'text-[#C68346] hover:text-[#b07239]'
+                    : 'text-[#5A6072] opacity-40 cursor-not-allowed'
                 }`}
               >
                 <span className="material-symbols-outlined !text-[20px]">add_circle</span>
@@ -2122,14 +2221,14 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
         <div className="flex items-center gap-3 shrink-0 ml-auto">
           {hasItems && totalItems > 0 && (
             <div className="flex items-center gap-2" title={t('vault_dashboard.labels.items_progress', { completed: completedItems, total: totalItems })}>
-              <div className="w-12 h-1 bg-black/5 dark:bg-white/10 overflow-hidden">
-                <div className="h-full bg-emerald-500 transition-all duration-700" style={{ width: `${Math.round((completedItems / totalItems) * 100)}%` }} />
+              <div className="w-12 h-1 bg-[#E2E8F0] dark:bg-[#12151C] overflow-hidden">
+                <div className="h-full bg-[#00AEEF] transition-all duration-700" style={{ width: `${Math.round((completedItems / totalItems) * 100)}%` }} />
               </div>
-              <span className="text-[9px] font-black tabular-nums text-emerald-600 dark:text-emerald-400">{completedItems}/{totalItems}</span>
+              <span className="text-[10px] font-bold font-mono tabular-nums text-[#00AEEF]">{completedItems}/{totalItems}</span>
             </div>
           )}
           {pillar?.itemized_at && (
-            <span className="text-[9px] text-black/25 dark:text-white/25 font-mono">
+            <span className="text-[10px] text-[#5A6072] font-mono tabular-nums">
               {new Date(pillar.itemized_at).toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' })}
             </span>
           )}
@@ -2139,22 +2238,19 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
       {/* Body scrollable */}
       <div className={`flex-1 min-h-0 px-5 py-5 ${expandedItems.size > 0 ? 'overflow-hidden flex flex-col' : 'overflow-y-auto hide-scrollbar'}`}>
         <>
-          {/* Sugerencias de ítems complementarios para otros pilares */}
-          {(pillar?.suggested_items_pending || []).length > 0 && (
-            <div className="mb-6 p-4 border border-violet-500/30 bg-violet-500/5 dark:bg-violet-500/10 space-y-4 animate-in fade-in duration-200">
+          {/* Sugerencias de ítems complementarios (exclusivo curación) */}
+          {canCurateAI && (pillar?.suggested_items_pending || []).length > 0 && (
+            <div className="mb-6 p-4 border border-[#00AEEF]/30 bg-[#F8FAFC] dark:bg-[#07090D] space-y-4 rounded-none shadow-none">
               <div className="flex items-center justify-between">
-                <h3 className="text-[12px] font-black uppercase tracking-wider text-violet-600 dark:text-violet-400 flex items-center gap-1.5 font-sans">
-                  <span className="material-symbols-outlined !text-[16px] animate-pulse">autorenew</span>
-                  {t('vault_dashboard.suggestions.title', 'Ítems Complementarios Sugeridos por IA')} ({(pillar?.suggested_items_pending || []).length} {t('vault_dashboard.suggestions.pending', 'pendientes')})
+                <h3 className="text-[12px] font-bold uppercase tracking-wider text-[#00AEEF] flex items-center gap-1.5 font-atkinson">
+                  {t('vault_dashboard.suggestions.title', 'Ítems Complementarios Sugeridos por IA')} (<span className="font-mono tabular-nums">{(pillar?.suggested_items_pending || []).length}</span> {t('vault_dashboard.suggestions.pending', 'pendientes')})
                 </h3>
                 <button
+                  type="button"
                   onClick={() => setSuggestionsCollapsed(!suggestionsCollapsed)}
-                  className="text-[9px] uppercase font-black tracking-wider text-black/40 hover:text-black/70 dark:text-white/40 dark:hover:text-white/70 flex items-center gap-0.5 transition-colors bg-transparent border-0 cursor-pointer"
+                  className="text-[10px] uppercase font-bold tracking-wider text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] transition-colors bg-transparent border-0 cursor-pointer"
                 >
                   {suggestionsCollapsed ? t('vault_dashboard.actions.expand', 'Expandir') : t('vault_dashboard.actions.collapse', 'Contraer')}
-                  <span className="material-symbols-outlined !text-[14px]">
-                    {suggestionsCollapsed ? 'expand_more' : 'expand_less'}
-                  </span>
                 </button>
               </div>
               
@@ -2177,18 +2273,17 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
             </div>
           )}
 
-          {/* Formulario de creación manual con validación de IA */}
-          {showCreateForm && (
-            <div className="mb-6 p-4 border border-copper/30 bg-copper/5 dark:bg-copper/10 animate-in fade-in duration-200">
-              <h3 className="text-[12px] font-black uppercase tracking-wider text-copper mb-3 font-sans">
+          {/* Formulario de creación manual con validación de IA (exclusivo curación) */}
+          {canCurateAI && showCreateForm && (
+            <div className="mb-6 p-4 border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] rounded-none shadow-none">
+              <h3 className="text-[12px] font-bold uppercase tracking-wider text-[#C68346] mb-3 font-atkinson">
                 Crear Nuevo Ítem Manualmente
               </h3>
               
               {!correctionResult ? (
-                // Paso 1: Ingreso de datos
                 <div className="space-y-3">
                   <div>
-                    <label className="block text-[10px] font-black text-black/50 dark:text-white/50 uppercase tracking-widest mb-1">
+                    <label className="block text-[10px] font-bold text-[#475569] dark:text-[#8A93A6] uppercase tracking-widest mb-1">
                       Título del ítem
                     </label>
                     <input
@@ -2197,12 +2292,13 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                       onChange={(e) => setCreateFormTitle(e.target.value)}
                       placeholder="Escriba el nombre del ítem..."
                       autoComplete="off"
-                      className="w-full h-9 px-3 text-[12px] bg-white dark:bg-black border border-black/10 dark:border-white/15 focus:border-copper dark:focus:border-copper outline-none text-black dark:text-white font-sans"
+                      spellCheck={false}
+                      className="w-full h-9 px-3 text-[12px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[#0F172A] dark:text-[#F3F4F6] font-atkinson rounded-none"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-black text-black/50 dark:text-white/50 uppercase tracking-widest mb-1">
+                    <label className="block text-[10px] font-bold text-[#475569] dark:text-[#8A93A6] uppercase tracking-widest mb-1">
                       Breve descripción de contenidos (Rationale)
                     </label>
                     <textarea
@@ -2210,23 +2306,26 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                       onChange={(e) => setCreateFormRationale(e.target.value)}
                       placeholder="Escriba una breve descripción..."
                       autoComplete="off"
+                      spellCheck={false}
                       rows={3}
-                      className="w-full p-3 text-[12px] bg-white dark:bg-black border border-black/10 dark:border-white/15 focus:border-copper dark:focus:border-copper outline-none text-black dark:text-white font-sans resize-none"
+                      className="w-full p-3 text-[12px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[#0F172A] dark:text-[#F3F4F6] font-atkinson resize-none rounded-none"
                     />
                   </div>
 
                   <div className="flex gap-2 justify-end pt-1">
                     <button
+                      type="button"
                       onClick={() => {
                         setShowCreateForm(false);
                         setCreateFormTitle('');
                         setCreateFormRationale('');
                       }}
-                      className="px-3 py-1.5 text-[11px] font-bold bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-black/70 dark:text-white/70 border-0 cursor-pointer"
+                      className="px-3 py-1.5 text-[11px] font-bold bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] cursor-pointer rounded-none"
                     >
                       Cancelar
                     </button>
                     <button
+                      type="button"
                       disabled={isCorrecting || !createFormTitle.trim() || !createFormRationale.trim()}
                       onClick={async () => {
                         setIsCorrecting(true);
@@ -2252,50 +2351,51 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                           setIsCorrecting(false);
                         }
                       }}
-                      className="px-3 py-1.5 text-[11px] font-bold bg-copper hover:bg-copper/80 text-white disabled:opacity-50 border-0 cursor-pointer"
+                      className="px-3 py-1.5 text-[11px] font-bold bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] disabled:opacity-50 border-0 cursor-pointer rounded-none"
                     >
                       {isCorrecting ? 'Validando con IA...' : 'Validar con IA'}
                     </button>
                   </div>
                 </div>
               ) : (
-                // Paso 2: Revisión y Confirmación
                 <div className="space-y-4">
-                  <div className="p-3 bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 space-y-3">
-                    <p className="text-[11px] font-bold text-copper uppercase tracking-wider mb-2">Revisión de IA (Original vs Sugerido)</p>
+                  <div className="p-3 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] space-y-3 rounded-none">
+                    <p className="text-[11px] font-bold text-[#C68346] uppercase tracking-wider mb-2">Revisión de IA (Original vs Sugerido)</p>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-1">
-                        <p className="text-[9px] font-black text-black/40 dark:text-white/40 uppercase">Título Original</p>
-                        <p className="text-[11px] line-through text-black/60 dark:text-white/60">{createFormTitle}</p>
-                        <p className="text-[9px] font-black text-emerald-600 uppercase mt-2">Título Sugerido</p>
-                        <p className="text-[12px] font-bold text-black dark:text-white">{correctionResult.title}</p>
+                        <p className="text-[9px] font-bold text-[#5A6072] uppercase">Título Original</p>
+                        <p className="text-[11px] line-through text-[#475569] dark:text-[#8A93A6]">{createFormTitle}</p>
+                        <p className="text-[9px] font-bold text-[#00AEEF] uppercase mt-2">Título Sugerido</p>
+                        <p className="text-[12px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">{correctionResult.title}</p>
                       </div>
                       
                       <div className="space-y-1">
-                        <p className="text-[9px] font-black text-black/40 dark:text-white/40 uppercase">Descripción Original</p>
-                        <p className="text-[11px] line-through text-black/60 dark:text-white/60">{createFormRationale}</p>
-                        <p className="text-[9px] font-black text-emerald-600 uppercase mt-2">Descripción Sugerida</p>
-                        <p className="text-[11px] text-black/70 dark:text-white/70">{correctionResult.rationale}</p>
+                        <p className="text-[9px] font-bold text-[#5A6072] uppercase">Descripción Original</p>
+                        <p className="text-[11px] line-through text-[#475569] dark:text-[#8A93A6]">{createFormRationale}</p>
+                        <p className="text-[9px] font-bold text-[#00AEEF] uppercase mt-2">Descripción Sugerida</p>
+                        <p className="text-[11px] text-[#0F172A] dark:text-[#F3F4F6]">{correctionResult.rationale}</p>
                       </div>
                     </div>
                   </div>
 
                   <div className="space-y-2">
-                    <p className="text-[11px] font-bold text-black/80 dark:text-white/80">
-                      Escriba <span className="font-mono text-copper">"registrar"</span> para autorizar el ingreso del nuevo ítem:
+                    <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                      Escriba <span className="font-mono text-[#C68346]">"ACTUALIZAR"</span> para autorizar el ingreso del nuevo ítem:
                     </p>
                     <div className="flex gap-2">
                       <input
                         type="text"
                         value={registerConfirmation}
                         onChange={(e) => setRegisterConfirmation(e.target.value)}
-                        placeholder="registrar"
+                        placeholder="ACTUALIZAR"
                         autoComplete="off"
-                        className="px-3 h-9 bg-white dark:bg-black border border-black/10 dark:border-white/15 focus:border-copper dark:focus:border-copper outline-none text-[12px] flex-1 text-black dark:text-white font-sans"
+                        spellCheck={false}
+                        className="px-3 h-9 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[12px] flex-1 text-[#0F172A] dark:text-[#F3F4F6] font-mono rounded-none"
                       />
                       <button
-                        disabled={registerConfirmation.toLowerCase().trim() !== 'registrar'}
+                        type="button"
+                        disabled={registerConfirmation.trim() !== 'ACTUALIZAR'}
                         onClick={async () => {
                           await onCreateItem(pillarMeta.id, correctionResult.title, 'GENERAL', correctionResult.rationale);
                           setShowCreateForm(false);
@@ -2304,16 +2404,17 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                           setCorrectionResult(null);
                           setRegisterConfirmation('');
                         }}
-                        className="px-4 h-9 bg-emerald-600 hover:bg-emerald-700 text-white font-bold disabled:opacity-40 text-[11px] transition-colors border-0 cursor-pointer"
+                        className="px-4 h-9 bg-[#C68346] hover:bg-[#b0743e] text-[#FFFFFF] font-bold disabled:opacity-40 text-[11px] transition-colors border-0 cursor-pointer rounded-none"
                       >
-                        Confirmar y Registrar
+                        Confirmar y Actualizar
                       </button>
                       <button
+                        type="button"
                         onClick={() => {
                           setCorrectionResult(null);
                           setRegisterConfirmation('');
                         }}
-                        className="px-4 h-9 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-black/70 dark:text-white/70 text-[11px] transition-colors border-0 cursor-pointer"
+                        className="px-4 h-9 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[11px] transition-colors cursor-pointer rounded-none"
                       >
                         Volver
                       </button>
@@ -2329,6 +2430,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
             <div className={expandedItems.size > 0 ? "flex-1 flex flex-col min-h-0" : "mb-6"}>
               <ItemizedItemsList
                 items={activeItems}
+                canCurateAI={canCurateAI}
                 catalogId={catalogId}
                 onHunt={(itemId, correction) => onHuntItem(pillarMeta.id, itemId, correction)}
                 onAiAssist={(itemId, req) => onAiAssistItem(pillarMeta.id, itemId, req)}
@@ -2349,6 +2451,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                 onDecideProposal={(itemId, proposalId, decision) => onDecideProposal(pillarMeta.id, itemId, proposalId, decision)}
                 onEvolveItemByType={(itemId, filterType) => onEvolveItemByType(pillarMeta.id, itemId, filterType)}
                 resolveItemSymbology={resolveItemSymbology}
+                onOpenStudio={onOpenStudio}
               />
               {(pillar?.classified_sources_itemized?.length ?? 0) > 0 && expandedItems.size === 0 && (
                 <ItemizedSourcesBlock sources={pillar!.classified_sources_itemized!} />
@@ -2357,22 +2460,22 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
           )}
         </>
 
-        {/* ARCHIVO DE ÍTEMS DESCARTADOS */}
-        {discardedItems.length > 0 && !isItemizing && expandedItems.size === 0 && (
-          <div className="mt-12 pt-8 border-t border-dashed border-black/10 dark:border-white/10">
+        {/* ARCHIVO DE ÍTEMS DESCARTADOS (Exclusivo curación) */}
+        {canCurateAI && discardedItems.length > 0 && !isItemizing && expandedItems.size === 0 && (
+          <div className="mt-12 pt-8 border-t border-[#E2E8F0] dark:border-[#12151C]">
             <M3Button 
             variant="ghost"
             onClick={() => setShowArchive(!showArchive)}
-            icon={showArchive ? 'visibility_off' : 'visibility'}
-            className="text-black/30 hover:text-black/60"
+            className="text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]"
           >
-            {t('vault_dashboard.discarded_items_archive')} ({discardedItems.length})
+            {t('vault_dashboard.discarded_items_archive')} (<span className="font-mono tabular-nums">{discardedItems.length}</span>)
           </M3Button>
             
             {showArchive && (
               <div className="mt-4">
                 <ItemizedItemsList
                   items={discardedItems}
+                  canCurateAI={canCurateAI}
                   catalogId={catalogId}
                   onHunt={() => {}}
                   onAiAssist={async () => null}
@@ -2403,48 +2506,53 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
         {/* Empty state — IDLE, ERROR, o proceso ATASCADO */}
         {(!hasItems && !isItemizing) && (
           <div className="flex-1 flex flex-col items-center justify-center py-16 gap-6">
-            {/* Error message */}
-            {pillar?.itemize_status === 'ERROR' && pillar?.itemize_error && (
-              <div className="flex flex-col items-center max-w-md px-6 text-center animate-fade-in">
-                <span className="material-symbols-outlined !text-xl text-red-500 mb-1 animate-pulse">error</span>
-                <p className="text-[10px] font-black text-red-500 uppercase tracking-widest mb-1">
-                  {t('vault_dashboard.labels.itemize_error')}
-                </p>
-                <p className="text-[11px] text-black/50 dark:text-white/50 leading-relaxed font-medium">
-                  {pillar.itemize_error}
-                </p>
-              </div>
-            )}
+            {canCurateAI ? (
+              <>
+                {pillar?.itemize_status === 'ERROR' && pillar?.itemize_error && (
+                  <div className="flex flex-col items-center max-w-md px-6 text-center">
+                    <span className="material-symbols-outlined !text-xl text-[#C68346] mb-1">error</span>
+                    <p className="text-[10px] font-bold text-[#C68346] uppercase tracking-widest mb-1">
+                      {t('vault_dashboard.labels.itemize_error')}
+                    </p>
+                    <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] leading-relaxed font-medium">
+                      {pillar.itemize_error}
+                    </p>
+                  </div>
+                )}
 
-            {/* Aviso de proceso atascado */}
-            {isStuck && (
-              <div className="flex flex-col items-center max-w-md px-6 text-center animate-fade-in">
-                <span className="material-symbols-outlined !text-xl text-amber-500 mb-1">warning</span>
-                <p className="text-[10px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-widest mb-1">
-                  Proceso interrumpido
-                </p>
-                <p className="text-[11px] text-black/50 dark:text-white/50 leading-relaxed font-medium">
-                  El proceso de itemización anterior falló o se interrumpió. Puedes reiniciarlo.
-                </p>
-              </div>
-            )}
+                {isStuck && (
+                  <div className="flex flex-col items-center max-w-md px-6 text-center">
+                    <span className="material-symbols-outlined !text-xl text-[#C68346] mb-1">warning</span>
+                    <p className="text-[10px] font-bold text-[#C68346] uppercase tracking-widest mb-1">
+                      Proceso interrumpido
+                    </p>
+                    <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] leading-relaxed font-medium">
+                      El proceso de itemización anterior falló o se interrumpió. Puedes reiniciarlo.
+                    </p>
+                  </div>
+                )}
 
-            <button
-              disabled={isSealed}
-              onClick={() => onItemize(pillarMeta.id)}
-              className="w-14 h-14 bg-red-600 text-white hover:bg-red-700 active:scale-95 flex items-center justify-center transition-all duration-200 rounded-none shadow-none disabled:opacity-50 disabled:pointer-events-none"
-              title={
-                isStuck
-                  ? 'Proceso interrumpido — Reiniciar itemización'
-                  : pillar?.itemize_status === 'ERROR'
-                  ? 'Reintentar itemización'
-                  : 'Iniciar itemización del pilar'
-              }
-            >
-              <span className="material-symbols-outlined !text-[28px]">
-                {isStuck ? 'restart_alt' : 'format_list_bulleted'}
-              </span>
-            </button>
+                <button
+                  type="button"
+                  disabled={isSealed}
+                  onClick={() => onItemize(pillarMeta.id)}
+                  className="bg-transparent border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-[#FFFFFF] px-[21px] py-[13px] text-[11px] font-bold uppercase tracking-wider transition-colors rounded-none shadow-none cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
+                  title={
+                    isStuck
+                      ? 'Proceso interrumpido — Reiniciar itemización'
+                      : pillar?.itemize_status === 'ERROR'
+                      ? 'Reintentar itemización'
+                      : 'Iniciar itemización del pilar'
+                  }
+                >
+                  {isStuck ? 'Reiniciar Itemización del Pilar' : 'Itemizar Estructura del Pilar'}
+                </button>
+              </>
+            ) : (
+              <p className="text-[13px] text-[#5A6072]">
+                [Información técnica no declarada en ficha]
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -2453,8 +2561,14 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
 };
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
-export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId, onBack }) => {
+export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
+  assetId,
+  onBack,
+  onOpenContributions,
+}) => {
   const { t } = useTranslation();
+  const { tenantId, capabilities } = useOpermaqContext();
+  const canCurateAI = capabilities.canCurateAI;
   const [catalog, setCatalog] = useState<CatalogSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<PillarId>('ficha_tecnica');
@@ -2464,9 +2578,17 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
   const [huntStatusMessage, setHuntStatusMessage] = useState<string>('');
   const [assistingItemId, setAssistingItemId] = useState<string | null>(null);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
-  const [isPremiumAIOpen, setIsPremiumAIOpen] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [isDraggingPhoto, setIsDraggingPhoto] = useState(false);
+  const [showPhotoDeleteConfirm, setShowPhotoDeleteConfirm] = useState(false);
+  const [photoDeleteConfirmText, setPhotoDeleteConfirmText] = useState('');
+  const [studioOpen, setStudioOpen] = useState(false);
+  const [studioTab, setStudioTab] = useState<StudioTabId>(canCurateAI ? 'INGESTION' : 'SYMBOLOGY_PACK');
+  const openStudio = useCallback((tab: StudioTabId) => {
+    const safeTab: StudioTabId = !canCurateAI && tab === 'INGESTION' ? 'SYMBOLOGY_PACK' : tab;
+    setStudioTab(safeTab);
+    setStudioOpen(true);
+  }, [canCurateAI]);
   const [activeProposalView, setActiveProposalView] = useState<{
     itemId: string;
     pillarId: PillarId;
@@ -2478,16 +2600,36 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
   }, [activeTab]);
 
   useEffect(() => {
+    let cancelled = false;
     const unsub = onSnapshot(collection(db, 'master_symbology_vault'), (snap) => {
       const symbolsMap: Record<string, any> = {};
-      snap.forEach(doc => {
-        symbolsMap[doc.id] = doc.data();
+      snap.forEach(docSnap => {
+        symbolsMap[docSnap.id] = docSnap.data();
       });
       setMasterSymbols(symbolsMap);
-    }, (err) => {
+    }, async (err) => {
       console.warn('[VaultDashboard] Error listening to master_symbology_vault:', err);
+      try {
+        const res = await authFetch(`${API_BASE_URL}/vault/symbology/concepts`);
+        if (res.ok && !cancelled) {
+          const list = await res.json().catch(() => []);
+          if (Array.isArray(list)) {
+            const symbolsMap: Record<string, any> = {};
+            list.forEach((item: any) => {
+              const cid = item?.concept_id || item?.id;
+              if (cid) symbolsMap[String(cid)] = item;
+            });
+            setMasterSymbols(symbolsMap);
+          }
+        }
+      } catch {
+        // Silencioso en respaldo HTTP
+      }
     });
-    return () => unsub();
+    return () => {
+      cancelled = true;
+      unsub();
+    };
   }, []);
 
   const resolveItemSymbology = useCallback((symbologyRefs?: string[]) => {
@@ -2528,169 +2670,231 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
   }, []);
 
   const ensureVaultInitialized = useCallback(async (globalAssetId: string) => {
+    if (!canCurateAI) return;
     try {
       await authFetch(`${API_BASE_URL}/vault/initialize-vault`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ globalAssetId }),
       });
     } catch (e) { console.warn('[Vault] Initialize silently failed:', e); }
-  }, []);
+  }, [canCurateAI]);
 
   useEffect(() => {
     if (!assetId) return;
-    let unsubGlobal: (() => void) | null = null;
-    const unsubTenant = onSnapshot(doc(db, 'tenant_catalogs', assetId), async (tenantSnap) => {
-      if (!tenantSnap.exists()) {
-        // Fallback: if tenant doc does not exist, assetId is likely a global catalog ID
-        if (unsubGlobal) unsubGlobal();
-        unsubGlobal = onSnapshot(doc(db, 'global_asset_catalog', assetId), async (globalSnap) => {
-          if (!globalSnap.exists()) { setLoading(false); return; }
-          const data = globalSnap.data();
-          const make = data?.make === 'GENÉRICO' ? '' : (data?.make ?? '');
-          const makeModel = [make, data?.model].filter(Boolean).join(' ') || t('vault_dashboard.labels.equipment_default');
-          setCatalog({ 
-            id: globalSnap.id, 
-            makeModel, 
-            make: data?.make_oficial || data?.make || '',
-            categoria_equipo: data?.categoria_equipo, 
-            tipo_equipo: data?.tipo_equipo || '',
-            ambiente_operativo: data?.ambiente_operativo || [],
-            contexto_operativo: data?.contexto_operativo || [],
-            caracteristicas_principales: data?.caracteristicas_principales || [],
-            version: data?.version || 'ESTÁNDAR',
-            official_url: data?.official_url || '',
-            foto_url: data?.foto_url || '',
-            is_sealed: data?.is_sealed,
-            knowledge_vault: data?.knowledge_vault 
-          });
-          setLoading(false);
-          const hasPillars = PILLARS.some(p => !!(data?.knowledge_vault)?.[p.id]);
-          if (!hasPillars) await ensureVaultInitialized(globalSnap.id);
-        });
-        return;
-      }
-      
-      const tenantData = tenantSnap.data();
-      const globalId: string = tenantData.global_asset_id;
-      if (!globalId) { setLoading(false); return; }
-      if (unsubGlobal) unsubGlobal();
-      unsubGlobal = onSnapshot(doc(db, 'global_asset_catalog', globalId), async (globalSnap) => {
-        if (!globalSnap.exists()) { setLoading(false); return; }
-        const data = globalSnap.data();
-        const make = data?.make === 'GENÉRICO' ? '' : (data?.make ?? '');
-        const makeModel = [make, data?.model].filter(Boolean).join(' ') || t('vault_dashboard.labels.equipment_default');
-        setCatalog({ 
-          id: globalSnap.id, 
-          makeModel, 
-          make: data?.make_oficial || data?.make || '',
-          categoria_equipo: data?.categoria_equipo, 
-          tipo_equipo: data?.tipo_equipo || '',
-          ambiente_operativo: tenantData.ambiente_operativo || data?.ambiente_operativo || [],
-          contexto_operativo: tenantData.contexto_operativo || data?.contexto_operativo || [],
-          caracteristicas_principales: data?.caracteristicas_principales || [],
-          version: tenantData.version || data?.version || 'ESTÁNDAR',
-          official_url: tenantData.official_url || data?.official_url || '',
-          foto_url: tenantData.foto_url || data?.foto_url || '',
-          is_sealed: data?.is_sealed,
-          knowledge_vault: data?.knowledge_vault 
-        });
-        setLoading(false);
-        const hasPillars = PILLARS.some(p => !!(data?.knowledge_vault)?.[p.id]);
-        if (!hasPillars) await ensureVaultInitialized(globalSnap.id);
+    let unsubTenant: (() => void) | null = null;
+    let unsubLinkedGlobal: (() => void) | null = null;
+
+    const applyCatalogSnapshot = async (
+      globalId: string,
+      data: Record<string, any> | undefined,
+      tenantOverrides?: Record<string, any>
+    ) => {
+      const rawMake = data?.make_oficial || data?.make || '';
+      const rawModel = data?.model_oficial || data?.model || '';
+      const displayMake = rawMake === 'GENÉRICO' ? '' : rawMake;
+      const makeModel =
+        [displayMake, rawModel].filter(Boolean).join(' ') || t('vault_dashboard.labels.equipment_default');
+
+      setCatalog({
+        id: globalId,
+        makeModel,
+        make: rawMake,
+        categoria_equipo: data?.categoria_equipo,
+        tipo_equipo: data?.tipo_equipo || '',
+        ambiente_operativo: tenantOverrides?.ambiente_operativo || data?.ambiente_operativo || [],
+        contexto_operativo: tenantOverrides?.contexto_operativo || data?.contexto_operativo || [],
+        caracteristicas_principales: data?.caracteristicas_principales || [],
+        version: tenantOverrides?.version || data?.version || 'ESTÁNDAR',
+        official_url: tenantOverrides?.official_url || data?.official_url || '',
+        foto_url: tenantOverrides?.foto_url || data?.foto_url || '',
+        is_sealed: data?.is_sealed,
+        knowledge_vault: data?.knowledge_vault,
       });
-    });
-    return () => { unsubTenant(); if (unsubGlobal) unsubGlobal(); };
-  }, [assetId, ensureVaultInitialized, t]); // Added t to dependencies
+      setLoading(false);
+      const hasPillars = PILLARS.some((p) => !!(data?.knowledge_vault)?.[p.id]);
+      if (!hasPillars && canCurateAI) await ensureVaultInitialized(globalId);
+    };
+
+    const unsubDirectGlobal = onSnapshot(
+      doc(db, 'global_asset_catalog', assetId),
+      async (globalSnap) => {
+        if (globalSnap.exists()) {
+          if (unsubTenant) {
+            unsubTenant();
+            unsubTenant = null;
+          }
+          if (unsubLinkedGlobal) {
+            unsubLinkedGlobal();
+            unsubLinkedGlobal = null;
+          }
+          await applyCatalogSnapshot(globalSnap.id, globalSnap.data());
+          return;
+        }
+
+        // Fallback: si assetId corresponde a una unidad física en tenant_assets, resolver su global_asset_id
+        if (!unsubTenant) {
+          unsubTenant = onSnapshot(
+            doc(db, 'tenant_assets', assetId),
+            (tenantSnap) => {
+              if (!tenantSnap.exists()) {
+                setLoading(false);
+                return;
+              }
+              const tenantData = tenantSnap.data();
+              const docTenant = tenantData?.tenant_id || tenantData?.tenantId || tenantData?.accountId;
+              if (!canCurateAI && tenantId && docTenant && docTenant !== tenantId) {
+                setLoading(false);
+                return;
+              }
+              const globalId: string | undefined = tenantData?.global_asset_id || tenantData?.globalAssetId;
+              if (!globalId) {
+                setLoading(false);
+                return;
+              }
+              if (unsubLinkedGlobal) unsubLinkedGlobal();
+              unsubLinkedGlobal = onSnapshot(
+                doc(db, 'global_asset_catalog', globalId),
+                async (linkedSnap) => {
+                  if (!linkedSnap.exists()) {
+                    setLoading(false);
+                    return;
+                  }
+                  await applyCatalogSnapshot(linkedSnap.id, linkedSnap.data(), tenantData);
+                },
+                (err) => {
+                  console.warn('[VaultDashboard] Error escuchando global_asset_catalog vinculado:', err);
+                  setLoading(false);
+                }
+              );
+            },
+            (err) => {
+              console.warn('[VaultDashboard] Error escuchando tenant_assets fallback:', err);
+              setLoading(false);
+            }
+          );
+        }
+      },
+      async (err) => {
+        console.warn('[VaultDashboard] Error escuchando global_asset_catalog:', err);
+        try {
+          const res = await authFetch(`${API_BASE_URL}/vault/asset/${encodeURIComponent(assetId)}`);
+          if (res.ok) {
+            const data = await res.json().catch(() => null);
+            if (data && data.exists !== false) {
+              await applyCatalogSnapshot(String(data.id || assetId), data);
+              return;
+            }
+          }
+        } catch {
+          // Respaldo silencioso
+        }
+        setLoading(false);
+      }
+    );
+
+    return () => {
+      unsubDirectGlobal();
+      if (unsubTenant) unsubTenant();
+      if (unsubLinkedGlobal) unsubLinkedGlobal();
+    };
+  }, [assetId, canCurateAI, ensureVaultInitialized, t, tenantId]);
 
   // ID estable derivado del catálogo — evita que los callbacks se recreen en cada snapshot de Firestore
   const catalogId = catalog?.id;
 
-  const handlePhotoUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !catalogId) return;
-
+  const uploadCatalogHeroPhotoCas = useCallback(async (file: File) => {
+    if (!canCurateAI || !catalogId) return;
     setIsUploadingPhoto(true);
-    const toastId = toast.loading('Optimizando y subiendo foto...');
+    const toastId = toast.loading('Digiriendo en WebP HD y registrando en bóveda CAS...');
 
     try {
-      // 1. Compress image client side
-      const compressedBlob = await compressImage(file);
-      
-      // 2. Upload to Firebase Storage
-      const storagePath = `catalogs/${catalogId}/photo.jpg`;
-      const storageRef = ref(storage, storagePath);
-      await uploadBytes(storageRef, compressedBlob);
-      const downloadUrl = await getDownloadURL(storageRef);
+      let downloadUrl = '';
+      let savingsPct = 0;
 
-      // 3. Update Firestore global catalog
+      try {
+        const { descriptor, digested } = await mediaDigestorClient.digestAndUploadCas(file, {
+          profile: 'IMAGE_TECHNICAL_HD',
+          scope: 'GLOBAL_OEM',
+          filename: file.name,
+        });
+        downloadUrl = descriptor.downloadUrl;
+        savingsPct = Math.round(digested.savingsRatio * 100);
+      } catch (_casErr) {
+        // Fallback Storage directo en ruta CAS autorizada cas_blobs/global_oem/
+        const digested = await mediaDigestorClient.digestFile(file, 'IMAGE_TECHNICAL_HD');
+        savingsPct = Math.round(digested.savingsRatio * 100);
+        const storagePath = `cas_blobs/global_oem/${digested.sha256}.${digested.extension}`;
+        const storageRef = ref(storage, storagePath);
+        await uploadBytes(storageRef, digested.blob, { contentType: digested.mimeType });
+        downloadUrl = await getDownloadURL(storageRef);
+      }
+
       await updateDoc(doc(db, 'global_asset_catalog', catalogId), {
         foto_url: downloadUrl,
-        updatedAt: new Date()
+        updatedAt: new Date(),
       });
 
-        try {
-          await updateDoc(doc(db, 'tenant_assets', assetId), {
-            foto_url: downloadUrl,
-            updatedAt: new Date()
-          });
-        } catch (_err) {
-          // Safe to ignore if assetId is the global asset ID
-        }
+      try {
+        await updateDoc(doc(db, 'tenant_assets', assetId), {
+          foto_url: downloadUrl,
+          updatedAt: new Date(),
+        });
+      } catch (_err) {
+        // Seguro de ignorar cuando assetId es el ID global
+      }
 
       toast.update(toastId, {
-        render: 'Foto cargada con éxito',
+        render: `Foto optimizada registrada en CAS (-${savingsPct}% peso)`,
         type: 'success',
         isLoading: false,
-        autoClose: 3000
+        autoClose: 3000,
       });
     } catch (error: unknown) {
       console.error('Error uploading photo:', error);
       toast.update(toastId, {
-        render: 'Error al subir foto',
+        render: 'Error al optimizar o subir fotografía',
         type: 'error',
         isLoading: false,
-        autoClose: 3000
+        autoClose: 3000,
       });
     } finally {
       setIsUploadingPhoto(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
-  }, [catalogId, assetId]);
+  }, [canCurateAI, catalogId, assetId]);
+
+  const handlePhotoUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!canCurateAI || !file || !catalogId) return;
+    await uploadCatalogHeroPhotoCas(file);
+  }, [canCurateAI, catalogId, uploadCatalogHeroPhotoCas]);
 
   const handlePhotoDelete = useCallback(async () => {
-    if (!catalogId) return;
-    if (!window.confirm('¿Estás seguro de que deseas eliminar la foto del equipo?')) return;
+    if (!canCurateAI || !catalogId || photoDeleteConfirmText.trim() !== 'ACTUALIZAR') return;
 
     setIsUploadingPhoto(true);
-    const toastId = toast.loading('Eliminando foto...');
+    const toastId = toast.loading('Limpiando referencia fotográfica...');
 
     try {
-      // 1. Update Firestore global catalog
       await updateDoc(doc(db, 'global_asset_catalog', catalogId), {
         foto_url: '',
         updatedAt: new Date()
       });
-      // 2. Update tenant asset if applicable
+
       try {
         await updateDoc(doc(db, 'tenant_assets', assetId), {
           foto_url: '',
           updatedAt: new Date()
         });
       } catch (_err) {
-        // Ignore
+        // Seguro de ignorar cuando assetId corresponde al ID global
       }
 
-      // 3. Delete from Firebase Storage if exists
-      try {
-        const storagePath = `catalogs/${catalogId}/photo.jpg`;
-        const storageRef = ref(storage, storagePath);
-        await deleteObject(storageRef);
-      } catch (_e) {
-        // Safe to ignore if storage file didn't exist
-      }
+      setShowPhotoDeleteConfirm(false);
+      setPhotoDeleteConfirmText('');
 
       toast.update(toastId, {
-        render: 'Foto eliminada con éxito',
+        render: 'Referencia fotográfica eliminada',
         type: 'success',
         isLoading: false,
         autoClose: 3000
@@ -2698,7 +2902,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
     } catch (error: unknown) {
       console.error('Error deleting photo:', error);
       toast.update(toastId, {
-        render: 'Error al eliminar la foto',
+        render: 'Error al eliminar la referencia fotográfica',
         type: 'error',
         isLoading: false,
         autoClose: 3000
@@ -2706,21 +2910,24 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
     } finally {
       setIsUploadingPhoto(false);
     }
-  }, [catalogId, assetId]);
+  }, [canCurateAI, catalogId, assetId, photoDeleteConfirmText]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (!canCurateAI) return;
     e.preventDefault();
     e.stopPropagation();
     setIsDraggingPhoto(true);
-  }, []);
+  }, [canCurateAI]);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
+    if (!canCurateAI) return;
     e.preventDefault();
     e.stopPropagation();
     setIsDraggingPhoto(false);
-  }, []);
+  }, [canCurateAI]);
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
+    if (!canCurateAI) return;
     e.preventDefault();
     e.stopPropagation();
     setIsDraggingPhoto(false);
@@ -2729,52 +2936,15 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
     if (!file || !catalogId) return;
 
     if (!file.type.startsWith('image/')) {
-      toast.error('Por favor, selecciona un archivo de imagen válido.');
+      toast.error('Selecciona un archivo de imagen válido.');
       return;
     }
 
-    setIsUploadingPhoto(true);
-    const toastId = toast.loading('Optimizando y subiendo foto...');
-
-    try {
-      const compressedBlob = await compressImage(file);
-      const storagePath = `catalogs/${catalogId}/photo.jpg`;
-      const storageRef = ref(storage, storagePath);
-      await uploadBytes(storageRef, compressedBlob);
-      const downloadUrl = await getDownloadURL(storageRef);
-
-      await updateDoc(doc(db, 'global_asset_catalog', catalogId), {
-        foto_url: downloadUrl,
-        updatedAt: new Date()
-      });
-      try {
-        await updateDoc(doc(db, 'tenant_assets', assetId), {
-          foto_url: downloadUrl,
-          updatedAt: new Date()
-        });
-      } catch (_err) { /* empty body */ }
-
-      toast.update(toastId, {
-        render: 'Foto cargada con éxito',
-        type: 'success',
-        isLoading: false,
-        autoClose: 3000
-      });
-    } catch (error: unknown) {
-      console.error('Error uploading photo:', error);
-      toast.update(toastId, {
-        render: 'Error al subir foto',
-        type: 'error',
-        isLoading: false,
-        autoClose: 3000
-      });
-    } finally {
-      setIsUploadingPhoto(false);
-    }
-  }, [catalogId, assetId]);
+    await uploadCatalogHeroPhotoCas(file);
+  }, [canCurateAI, catalogId, uploadCatalogHeroPhotoCas]);
 
   const handleItemizePillar = useCallback(async (pillarId: PillarId) => {
-    if (!catalogId || itemizingPillar) return;
+    if (!canCurateAI || !catalogId || itemizingPillar) return;
     setItemizingPillar(pillarId);
     const toastId = toast.loading(t('vault_dashboard.status.itemizing_pillar', { pillar: t(`vault_dashboard.pillars.${pillarId}`) }));
     try {
@@ -2784,7 +2954,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
       });
       const json = await res.json();
       if (res.ok && json.success) {
-        toast.update(toastId, { render: `✓ ${t('vault_dashboard.status.items_generated', { count: json.items?.length ?? 0 })}`, type: 'success', isLoading: false, autoClose: 3000 });
+        toast.update(toastId, { render: t('vault_dashboard.status.items_generated', { count: json.items?.length ?? 0 }), type: 'success', isLoading: false, autoClose: 3000 });
       } else if (res.status === 422 && json.error === 'PERFIL_INCOMPLETO') {
         toast.update(toastId, { render: `${t('vault_dashboard.status.incomplete_profile')}: ${(json.missingFields ?? []).join(', ')}`, type: 'warning', isLoading: false, autoClose: 6000 });
       } else if (res.status === 429) {
@@ -2797,10 +2967,10 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
     } finally {
       setItemizingPillar(null);
     }
-  }, [catalogId, itemizingPillar, t]); // Added t to dependencies
+  }, [canCurateAI, catalogId, itemizingPillar, t]);
 
   const handleHuntItem = useCallback(async (pillarId: PillarId, itemId: string, correction?: string) => {
-    if (!catalogId || huntingItem) return;
+    if (!canCurateAI || !catalogId || huntingItem) return;
     setHuntingItem({ pillarId, itemId });
     const toastId = toast.loading(t('vault_dashboard.status.starting_async_research').concat('…'));
     
@@ -2808,7 +2978,6 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
     let unsub: (() => void) | null = null;
 
     try {
-      // 1. Solicitar tarea asíncrona
       const res = await authFetch(`${API_BASE_URL}/vault/hunt-item-async`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2823,7 +2992,6 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
       toast.update(toastId, { render: t('vault_dashboard.status.task_enqueued') });
       setHuntStatusMessage(t('vault_dashboard.status.pending_in_queue').concat('…'));
 
-      // 2. Suscribirse directamente a Firestore para progreso en tiempo real DESPUÉS de disparar la petición exitosamente
       unsub = onSnapshot(doc(db, 'task_status', taskId), (snap) => {
         if (!snap.exists()) return;
         const data = snap.data();
@@ -2837,12 +3005,11 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
           toast.update(toastId, { render: `${t('vault_dashboard.labels.progress')}: ${fullMsg}` });
         } 
         else if (data.status === 'COMPLETED') {
-          toast.update(toastId, { render: `✓ ${t('vault_dashboard.status.investigation_success')}`, type: 'success', isLoading: false, autoClose: 3000 });
+          toast.update(toastId, { render: t('vault_dashboard.status.investigation_success'), type: 'success', isLoading: false, autoClose: 3000 });
           setHuntingItem(null);
           setHuntStatusMessage('');
           if (unsub) unsub();
           
-          // Marcar como expandido para ver resultados
           setExpandedItems(prev => {
             const next = new Set(prev);
             next.add(itemId);
@@ -2870,10 +3037,10 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
       setHuntingItem(null);
       if (unsub) unsub();
     }
-  }, [catalogId, huntingItem, t]); // Added t to dependencies
+  }, [canCurateAI, catalogId, huntingItem, t]);
 
   const handleAiAssistItem = useCallback(async (pillarId: PillarId, itemId: string, userRequest: string): Promise<AiAssistResponse | null> => {
-    if (!catalogId || assistingItemId) return null;
+    if (!canCurateAI || !catalogId || assistingItemId) return null;
     setAssistingItemId(itemId);
     const toastId = toast.loading(t('vault_dashboard.status.ia_assistant_analyzing').concat('…'));
     try {
@@ -2883,7 +3050,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
       });
       const json = await res.json();
       if (res.ok && json.success) {
-        toast.update(toastId, { render: `✓ ${t('vault_dashboard.status.proposal_generated')}`, type: 'success', isLoading: false, autoClose: 2000 });
+        toast.update(toastId, { render: t('vault_dashboard.status.proposal_generated'), type: 'success', isLoading: false, autoClose: 2000 });
         return json as AiAssistResponse;
       } else {
         toast.update(toastId, { render: `Error: ${json.error || t('vault_dashboard.status.assistant_failed')}`, type: 'error', isLoading: false, autoClose: 5000 });
@@ -2893,10 +3060,10 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
       toast.update(toastId, { render: t('vault_dashboard.status.network_error'), type: 'error', isLoading: false, autoClose: 5000 });
       return null;
     } finally { setAssistingItemId(null); }
-  }, [catalogId, assistingItemId, t]); // Added t to dependencies
+  }, [canCurateAI, catalogId, assistingItemId, t]);
 
   const handleApplyAssistProposal = useCallback(async (pillarId: PillarId, itemId: string, finalContent: string, intent: string) => {
-    if (!catalogId) return;
+    if (!canCurateAI || !catalogId) return;
     const toastId = toast.loading(t('vault_dashboard.status.applying_changes').concat('…'));
     try {
       const userEmail = auth.currentUser?.email || 'revisor.humano@opermaq.cl';
@@ -2905,7 +3072,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
         body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, finalContent, userEmail, intent }),
       });
       if (res.ok) {
-        toast.update(toastId, { render: `✓ ${t('vault_dashboard.status.changes_persisted_success')}`, type: 'success', isLoading: false, autoClose: 3000 });
+        toast.update(toastId, { render: t('vault_dashboard.status.changes_persisted_success'), type: 'success', isLoading: false, autoClose: 3000 });
       } else {
         const json = await res.json();
         toast.update(toastId, { render: `Error: ${json.error || t('vault_dashboard.status.could_not_apply')}`, type: 'error', isLoading: false, autoClose: 5000 });
@@ -2913,12 +3080,11 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
     } catch (_err) {
       toast.update(toastId, { render: t('vault_dashboard.status.network_error'), type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [catalogId, t]); // Added t to dependencies
+  }, [canCurateAI, catalogId, t]);
 
   const handleCreateManualItem = useCallback(async (pillarId: PillarId, title: string, section: string, rationale?: string, itemSource?: Record<string, unknown>) => {
-    if (!catalogId) return;
+    if (!canCurateAI || !catalogId) return;
 
-    // 1. Bloqueo de duplicados
     const pillar = catalog?.knowledge_vault?.[pillarId];
     const existingTitles = (pillar?.items ?? []).map(it => it.title.toLowerCase().trim());
     if (existingTitles.includes(title.toLowerCase().trim())) {
@@ -2934,7 +3100,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
         body: JSON.stringify({ globalAssetId: catalogId, pillarId, title, section, rationale, itemSource }),
       });
       if (res.ok) {
-        toast.update(toastId, { render: `✓ ${t('vault_dashboard.status.item_created_success')}`, type: 'success', isLoading: false, autoClose: 3000 });
+        toast.update(toastId, { render: t('vault_dashboard.status.item_created_success'), type: 'success', isLoading: false, autoClose: 3000 });
       } else {
         const json = await res.json();
         toast.update(toastId, { render: `Error: ${json.error || t('vault_dashboard.status.failed_to_create')}`, type: 'error', isLoading: false, autoClose: 5000 });
@@ -2942,12 +3108,11 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
     } catch (_err) {
       toast.update(toastId, { render: t('vault_dashboard.status.network_error'), type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [catalogId, catalog?.knowledge_vault, t]); // Added t to dependencies
+  }, [canCurateAI, catalogId, catalog?.knowledge_vault, t]);
 
   const handleDiscardItem = useCallback(async (itemId: string) => {
-    if (!catalogId) return;
+    if (!canCurateAI || !catalogId) return;
 
-    // Colapsar el ítem antes de descartar para evitar pantalla en blanco
     setExpandedItems(prev => {
       const next = new Set(prev);
       next.delete(itemId);
@@ -2963,7 +3128,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
         body: JSON.stringify({ globalAssetId: catalogId, pillarId: activeTab, itemId, userEmail }),
       });
       if (res.ok) {
-        toast.update(toastId, { render: `✓ ${t('vault_dashboard.status.item_discarded_success')}`, type: 'success', isLoading: false, autoClose: 3000 });
+        toast.update(toastId, { render: t('vault_dashboard.status.item_discarded_success'), type: 'success', isLoading: false, autoClose: 3000 });
       } else {
         const json = await res.json();
         toast.update(toastId, { render: `Error: ${json.error ?? t('vault_dashboard.status.unknown_failure')}`, type: 'error', isLoading: false, autoClose: 5000 });
@@ -2971,10 +3136,10 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
     } catch (_e) {
       toast.update(toastId, { render: t('vault_dashboard.status.network_error_discard_item'), type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [catalogId, activeTab, t, setExpandedItems]);
+  }, [canCurateAI, catalogId, activeTab, t, setExpandedItems]);
 
   const handleReactivateItem = useCallback(async (itemId: string) => {
-    if (!catalogId) return;
+    if (!canCurateAI || !catalogId) return;
 
     const toastId = toast.loading(t('vault_dashboard.status.reactivating_item').concat('…'));
     try {
@@ -2984,7 +3149,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
         body: JSON.stringify({ globalAssetId: catalogId, pillarId: activeTab, itemId }),
       });
       if (res.ok) {
-        toast.update(toastId, { render: `✓ ${t('vault_dashboard.status.item_reactivated_success')}`, type: 'success', isLoading: false, autoClose: 3000 });
+        toast.update(toastId, { render: t('vault_dashboard.status.item_reactivated_success'), type: 'success', isLoading: false, autoClose: 3000 });
       } else {
         const json = await res.json();
         toast.update(toastId, { render: `Error: ${json.error ?? t('vault_dashboard.status.unknown_failure')}`, type: 'error', isLoading: false, autoClose: 5000 });
@@ -2992,7 +3157,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
     } catch (_e) {
       toast.update(toastId, { render: t('vault_dashboard.status.network_error_reactivate_item'), type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [catalogId, activeTab, t]); // Added t to dependencies
+  }, [canCurateAI, catalogId, activeTab, t]);
 
   const handleDecideProposal = useCallback(async (
     pillarId: PillarId,
@@ -3000,7 +3165,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
     proposalId: string,
     decision: 'APROBADO' | 'ELIMINADO'
   ) => {
-    if (!catalogId) return;
+    if (!canCurateAI || !catalogId) return;
     const toastId = toast.loading(
       decision === 'APROBADO'
         ? 'Aprobando propuesta…'
@@ -3014,7 +3179,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
       });
       if (res.ok) {
         toast.update(toastId, {
-          render: decision === 'APROBADO' ? '✓ Propuesta aprobada.' : '✓ Propuesta eliminada.',
+          render: decision === 'APROBADO' ? 'Propuesta aprobada.' : 'Propuesta eliminada.',
           type: 'success',
           isLoading: false,
           autoClose: 3000
@@ -3031,14 +3196,14 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
     } catch (_e) {
       toast.update(toastId, { render: 'Error de red al registrar decisión.', type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [catalogId]);
+  }, [canCurateAI, catalogId]);
 
   const handleEvolveItemByType = useCallback(async (
     pillarId: PillarId,
     itemId: string,
     filterType: 'NUEVO' | 'CONFLICTO'
   ) => {
-    if (!catalogId) return;
+    if (!canCurateAI || !catalogId) return;
     const toastId = toast.loading(`Actualizando ítem con propuestas de tipo ${filterType}…`);
     try {
       const res = await authFetch(`${API_BASE_URL}/vault/evolve-item`, {
@@ -3047,7 +3212,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
         body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, filterType }),
       });
       if (res.ok) {
-        toast.update(toastId, { render: '✓ Ítem actualizado y redactado por IA.', type: 'success', isLoading: false, autoClose: 3000 });
+        toast.update(toastId, { render: 'Ítem actualizado y redactado por IA.', type: 'success', isLoading: false, autoClose: 3000 });
       } else {
         const json = await res.json();
         toast.update(toastId, { render: `Error: ${json.error || 'No se pudo evolucionar la redacción.'}`, type: 'error', isLoading: false, autoClose: 5000 });
@@ -3055,14 +3220,10 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
     } catch (_e) {
       toast.update(toastId, { render: 'Error de red al evolucionar ítem.', type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [catalogId]);
-
-
-
-
+  }, [canCurateAI, catalogId]);
 
   const handleUnlockItem = useCallback(async (pillarId: PillarId, itemId: string) => {
-    if (!catalogId) return;
+    if (!canCurateAI || !catalogId) return;
     const toastId = toast.loading('Desbloqueando ítem…');
     try {
       const res = await authFetch(`${API_BASE_URL}/vault/unlock-item`, {
@@ -3071,7 +3232,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
         body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId }),
       });
       if (res.ok) {
-        toast.update(toastId, { render: '✓ Ítem desbloqueado exitosamente.', type: 'success', isLoading: false, autoClose: 3000 });
+        toast.update(toastId, { render: 'Ítem desbloqueado.', type: 'success', isLoading: false, autoClose: 3000 });
       } else {
         const json = await res.json();
         toast.update(toastId, { render: `Error: ${json.error || 'No se pudo desbloquear el ítem.'}`, type: 'error', isLoading: false, autoClose: 5000 });
@@ -3079,10 +3240,10 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
     } catch (_e) {
       toast.update(toastId, { render: 'Error de red al desbloquear.', type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [catalogId]);
+  }, [canCurateAI, catalogId]);
 
   const handleUpdateItemApprovalState = useCallback(async (pillarId: PillarId, itemId: string, nuevo_estado: EstadoAprobacion, review_notes?: string) => {
-    if (!catalogId) return;
+    if (!canCurateAI || !catalogId) return;
     const toastId = toast.loading('Actualizando estado de aprobación…');
     try {
       const res = await authFetch(`${API_BASE_URL}/vault/update-item-approval-state`, {
@@ -3091,7 +3252,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
         body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, nuevo_estado, review_notes }),
       });
       if (res.ok) {
-        toast.update(toastId, { render: '✓ Estado de aprobación actualizado.', type: 'success', isLoading: false, autoClose: 3000 });
+        toast.update(toastId, { render: 'Estado de aprobación actualizado.', type: 'success', isLoading: false, autoClose: 3000 });
       } else {
         const json = await res.json();
         toast.update(toastId, { render: `Error: ${json.error || 'No se pudo actualizar el estado de aprobación.'}`, type: 'error', isLoading: false, autoClose: 5000 });
@@ -3099,12 +3260,10 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
     } catch (_e) {
       toast.update(toastId, { render: 'Error de red al actualizar estado de aprobación.', type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [catalogId]);
-
-
+  }, [canCurateAI, catalogId]);
 
   const handleRollbackItemVersion = useCallback(async (pillarId: PillarId, itemId: string, timestamp: string) => {
-    if (!catalogId) return;
+    if (!canCurateAI || !catalogId) return;
     const toastId = toast.loading('Restaurando versión histórica del ítem…');
     try {
       const res = await authFetch(`${API_BASE_URL}/vault/rollback-item-version`, {
@@ -3113,7 +3272,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
         body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, timestamp }),
       });
       if (res.ok) {
-        toast.update(toastId, { render: '✓ Versión restaurada exitosamente.', type: 'success', isLoading: false, autoClose: 3000 });
+        toast.update(toastId, { render: 'Versión restaurada.', type: 'success', isLoading: false, autoClose: 3000 });
       } else {
         const json = await res.json();
         toast.update(toastId, { render: `Error: ${json.error || 'No se pudo restaurar la versión.'}`, type: 'error', isLoading: false, autoClose: 5000 });
@@ -3121,51 +3280,88 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
     } catch (_e) {
       toast.update(toastId, { render: 'Error de red al restaurar versión.', type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [catalogId]);
+  }, [canCurateAI, catalogId]);
 
   const activePillarMeta = PILLARS.find(p => p.id === activeTab)!;
 
-
   if (loading) return (
-    <div className="h-full w-full bg-white dark:bg-black flex items-center justify-center">
-      <span className="material-symbols-outlined animate-spin text-copper !text-4xl">progress_activity</span>
+    <div className="h-full w-full bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-center">
+      <span className="material-symbols-outlined animate-spin text-[#C68346] !text-4xl">progress_activity</span>
     </div>
   );
   if (!catalog) return (
-    <div className="h-full w-full bg-white dark:bg-black flex flex-col items-center justify-center gap-4">
-      <span className="material-symbols-outlined !text-5xl text-black/20">error</span>
-      <p className="text-[13px] text-black/40">{t('vault_dashboard.labels.could_not_load_asset')}</p>
+    <div className="h-full w-full bg-[#FFFFFF] dark:bg-[#000000] flex flex-col items-center justify-center gap-[21px]">
+      <span className="material-symbols-outlined !text-5xl text-[#94A3B8] dark:text-[#5A6072]">error</span>
+      <p className="text-[13px] text-[#475569] dark:text-[#8A93A6]">{t('vault_dashboard.labels.could_not_load_asset')}</p>
       <M3IconButton icon="arrow_back" onClick={onBack} variant="secondary" />
     </div>
   );
 
   return (
-    <main className="h-full w-full bg-[#fcfcfc] dark:bg-black flex flex-col font-atkinson overflow-hidden">
+    <main className="h-full w-full bg-[#FFFFFF] dark:bg-[#000000] flex flex-col font-atkinson overflow-hidden select-none">
 
       {/* ── TOP BAR: Breadcrumb + Título + Acciones ─────────────────────────── */}
-      <div className="no-print shrink-0 flex items-center justify-between gap-3 px-4 py-2 border-b border-black/10 dark:border-white/10 bg-white dark:bg-black z-50">
-        <div className="flex items-center gap-2 min-w-0">
+      <div className="no-print shrink-0 flex items-center justify-between gap-[13px] px-[21px] py-[8px] border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] z-50">
+        <div className="flex items-center gap-[8px] min-w-0">
           <M3IconButton
             icon="arrow_back"
             onClick={onBack}
             variant="ghost"
-            className="!w-7 !h-7 !min-w-0 shrink-0 text-black/45 dark:text-white/45 hover:text-copper"
+            className="!w-7 !h-7 !min-w-0 shrink-0 text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346]"
           />
-          <div className="flex items-baseline gap-1.5 leading-none flex-wrap min-w-0">
-            <span className="text-[14px] font-black uppercase text-black dark:text-white truncate">{catalog.makeModel}</span>
+          <div className="flex items-baseline gap-[8px] leading-none flex-wrap min-w-0">
+            <span className="text-[14px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] truncate">{catalog.makeModel}</span>
             {catalog.tipo_equipo && (
-              <span className="text-[12px] text-black/45 dark:text-white/45 uppercase tracking-wider">/ {catalog.tipo_equipo}</span>
+              <span className="text-[12px] text-[#475569] dark:text-[#8A93A6] uppercase tracking-wider">/ {catalog.tipo_equipo}</span>
             )}
-            <span className="text-[12px] text-black/45 dark:text-white/45 uppercase tracking-wider">
+            <span className="text-[12px] text-[#475569] dark:text-[#8A93A6] uppercase tracking-wider">
               / {catalog.categoria_equipo || 'MAQUINARIA'}
             </span>
           </div>
           {catalog.is_sealed && (
-            <div className="shrink-0 px-1.5 py-0.5 bg-black dark:bg-white text-white dark:text-black flex items-center gap-1 ml-1">
+            <div className="shrink-0 px-[8px] py-0.5 bg-[#0F172A] dark:bg-[#F3F4F6] text-[#FFFFFF] dark:text-[#000000] flex items-center gap-1 ml-1">
               <span className="material-symbols-outlined !text-[9px]">lock</span>
-              <span className="text-[7px] font-black uppercase tracking-[0.2em]">{t('vault_dashboard.labels.sealed')}</span>
+              <span className="text-[7px] font-bold uppercase tracking-[0.2em]">{t('vault_dashboard.labels.sealed')}</span>
             </div>
           )}
+        </div>
+
+        {/* Acciones de Estudio de Ingeniería (Ingesta PDF/ETT solo curadores · Simbología Ad-Hoc · Manuales Ilustrados) */}
+        <div className="flex items-center gap-[8px] shrink-0">
+          {canCurateAI && onOpenContributions && catalogId && (
+            <button
+              type="button"
+              onClick={() => onOpenContributions(catalogId)}
+              title={t('opermaq_domains.hitl_queue_title')}
+              aria-label={t('opermaq_domains.hitl_queue_title')}
+              className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none shadow-none"
+            >
+              <span className="material-symbols-outlined text-[20px]">fact_check</span>
+            </button>
+          )}
+          {canCurateAI && (
+            <button
+              type="button"
+              onClick={() => openStudio('INGESTION')}
+              className="px-[13px] py-[8px] border border-[#C68346] bg-transparent hover:bg-[#C68346]/10 text-[#C68346] text-[11px] font-bold uppercase tracking-wider font-mono tabular-nums rounded-none shadow-none transition-colors cursor-pointer"
+            >
+              INGESTA PDF / ETT
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => openStudio('SYMBOLOGY_PACK')}
+            className="px-[13px] py-[8px] border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] bg-[#F8FAFC] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] hover:text-[#00AEEF] text-[11px] font-bold uppercase tracking-wider font-mono tabular-nums rounded-none shadow-none transition-colors cursor-pointer"
+          >
+            SIMBOLOGÍA AD-HOC
+          </button>
+          <button
+            type="button"
+            onClick={() => openStudio('MANUAL_PUBLISHER')}
+            className="px-[13px] py-[8px] border border-[#00AEEF] bg-[#00AEEF]/10 hover:bg-[#00AEEF]/20 text-[#00AEEF] text-[11px] font-bold uppercase tracking-wider font-mono tabular-nums rounded-none shadow-none transition-colors cursor-pointer"
+          >
+            MANUALES ILUSTRADOS
+          </button>
         </div>
       </div>
 
@@ -3173,136 +3369,207 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
       <div className="flex-1 flex min-h-0 overflow-hidden">
 
         {/* ── COLUMNA IZQUIERDA: Datos del catálogo (ancho = foto) ──────────── */}
-        <aside className="no-print shrink-0 w-[260px] flex flex-col border-r border-black/10 dark:border-white/10 bg-white dark:bg-black overflow-y-auto hide-scrollbar">
+        <aside className="no-print shrink-0 w-[260px] flex flex-col border-r border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] overflow-y-auto hide-scrollbar">
 
           {/* FOTO */}
-          <div className="shrink-0 p-3">
+          <div className="shrink-0 p-[13px]">
             <div
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              className={`relative aspect-[4/3] w-full border rounded-none overflow-hidden transition-all duration-200 group ${
-                isDraggingPhoto
-                  ? 'border-copper bg-copper/5 shadow-none'
-                  : 'border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.02]'
+              onDragOver={canCurateAI ? handleDragOver : undefined}
+              onDragLeave={canCurateAI ? handleDragLeave : undefined}
+              onDrop={canCurateAI ? handleDrop : undefined}
+              className={`relative aspect-[4/3] w-full border rounded-none shadow-none overflow-hidden transition-all duration-200 group ${
+                canCurateAI && isDraggingPhoto
+                  ? 'border-[#C68346] bg-[#C68346]/5'
+                  : 'border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000]'
               }`}
             >
               {catalog.foto_url ? (
                 <>
-                  <img src={catalog.foto_url} alt={catalog.makeModel} className="w-full h-full object-cover" />
-                  <div
-                    onClick={() => fileInputRef.current?.click()}
-                    className={`absolute inset-0 bg-black/60 flex flex-col items-center justify-center gap-1 text-white text-[9px] font-black uppercase tracking-widest cursor-pointer transition-all duration-200 ${
-                      isDraggingPhoto ? 'opacity-100 bg-copper/80' : 'opacity-0 group-hover:opacity-100'
-                    }`}
-                  >
-                    <span className="material-symbols-outlined !text-lg">
-                      {isDraggingPhoto ? 'download' : 'photo_camera'}
-                    </span>
-                    {isDraggingPhoto ? 'SOLTAR' : 'REEMPLAZAR'}
-                  </div>
+                  <img
+                    src={catalog.foto_url}
+                    alt={catalog.makeModel}
+                    draggable={false}
+                    onContextMenu={(e) => e.preventDefault()}
+                    className="w-full h-full object-cover select-none pointer-events-none"
+                  />
+                  {canCurateAI && (
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      className={`absolute inset-0 bg-[#000000]/70 flex flex-col items-center justify-center gap-1 text-[#FFFFFF] text-[9px] font-bold uppercase tracking-widest cursor-pointer transition-all duration-200 ${
+                        isDraggingPhoto ? 'opacity-100 bg-[#C68346]/85' : 'opacity-0 group-hover:opacity-100'
+                      }`}
+                    >
+                      <span className="material-symbols-outlined !text-lg">
+                        {isDraggingPhoto ? 'download' : 'photo_camera'}
+                      </span>
+                      {isDraggingPhoto ? 'SOLTAR' : 'REEMPLAZAR'}
+                    </div>
+                  )}
                 </>
-              ) : (
+              ) : canCurateAI ? (
                 <div
                   onClick={() => fileInputRef.current?.click()}
-                  className={`w-full h-full flex flex-col items-center justify-center gap-1.5 cursor-pointer transition-all border border-dashed ${
+                  className={`w-full h-full flex flex-col items-center justify-center gap-[8px] cursor-pointer transition-all border border-dashed rounded-none ${
                     isDraggingPhoto
-                      ? 'border-copper text-copper'
-                      : 'border-black/20 dark:border-white/20 text-black/35 dark:text-white/35 hover:text-copper hover:border-copper'
+                      ? 'border-[#C68346] text-[#C68346]'
+                      : 'border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] hover:border-[#C68346]'
                   }`}
                 >
                   {isUploadingPhoto ? (
-                    <span className="material-symbols-outlined animate-spin text-copper !text-xl">progress_activity</span>
+                    <span className="material-symbols-outlined animate-spin text-[#C68346] !text-xl">progress_activity</span>
                   ) : (
                     <>
                       <span className="material-symbols-outlined !text-xl">
                         {isDraggingPhoto ? 'download' : 'photo_camera'}
                       </span>
-                      <span className="text-[8px] font-black uppercase tracking-widest text-center px-2">
+                      <span className="text-[9px] font-bold uppercase tracking-widest text-center px-2">
                         {isDraggingPhoto ? 'SOLTAR FOTO' : 'CARGAR FOTO'}
                       </span>
                     </>
                   )}
                 </div>
+              ) : (
+                <div className="w-full h-full flex items-center justify-center p-[13px] text-center">
+                  <span className="text-[11px] text-[#94A3B8] dark:text-[#5A6072]">
+                    [Información técnica no declarada en ficha]
+                  </span>
+                </div>
               )}
             </div>
-            {catalog.foto_url && (
-              <div className="flex gap-1.5 w-full mt-1.5">
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex-1 py-1 border border-black/10 dark:border-white/10 hover:border-copper text-black/60 dark:text-white/60 hover:text-copper text-[9px] font-black uppercase tracking-wider transition-all"
-                  disabled={isUploadingPhoto}
-                >
-                  ACTUALIZAR
-                </button>
-                <button
-                  onClick={handlePhotoDelete}
-                  className="flex-1 py-1 border border-black/10 dark:border-white/10 hover:border-red-500 text-black/60 dark:text-white/60 hover:text-red-500 text-[9px] font-black uppercase tracking-wider transition-all"
-                  disabled={isUploadingPhoto}
-                >
-                  ELIMINAR
-                </button>
+
+            {canCurateAI && catalog.foto_url && (
+              <div className="flex flex-col gap-[8px] w-full mt-[8px]">
+                <div className="flex gap-[8px] w-full">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer"
+                    disabled={isUploadingPhoto}
+                  >
+                    REEMPLAZAR
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowPhotoDeleteConfirm((prev) => !prev);
+                      setPhotoDeleteConfirmText('');
+                    }}
+                    className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer"
+                    disabled={isUploadingPhoto}
+                  >
+                    ELIMINAR
+                  </button>
+                </div>
+
+                {showPhotoDeleteConfirm && (
+                  <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] rounded-none">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
+                      Escriba ACTUALIZAR para confirmar baja fotográfica:
+                    </span>
+                    <input
+                      type="text"
+                      value={photoDeleteConfirmText}
+                      onChange={(e) => setPhotoDeleteConfirmText(e.target.value)}
+                      placeholder="ACTUALIZAR"
+                      autoComplete="off"
+                      spellCheck={false}
+                      className="w-full px-[8px] py-1 text-[11px] font-mono bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                    />
+                    <div className="flex gap-[8px]">
+                      <button
+                        type="button"
+                        onClick={handlePhotoDelete}
+                        disabled={isUploadingPhoto || photoDeleteConfirmText.trim() !== 'ACTUALIZAR'}
+                        className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        CONFIRMAR
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowPhotoDeleteConfirm(false);
+                          setPhotoDeleteConfirmText('');
+                        }}
+                        className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                      >
+                        CANCELAR
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
-            <input type="file" ref={fileInputRef} onChange={handlePhotoUpload} accept="image/*" className="hidden" disabled={isUploadingPhoto} />
+
+            {canCurateAI && (
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handlePhotoUpload}
+                accept="image/*"
+                autoComplete="off"
+                spellCheck={false}
+                className="hidden"
+                disabled={isUploadingPhoto}
+              />
+            )}
           </div>
 
           {/* CONTENEDOR FLEXIBLE PARA DISTRIBUIR VERTICALMENTE CP/CD/CT */}
-          <div className="flex flex-col px-3 py-4 gap-6">
+          <div className="flex flex-col px-[13px] py-[21px] gap-[21px]">
 
             {/* CARACTERÍSTICAS PRINCIPALES */}
             <div className="flex flex-col">
-              <h3 className="text-[11px] font-black uppercase text-black dark:text-white tracking-wider mb-2">
+              <h3 className="text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider mb-[8px]">
                 CARACTERÍSTICAS PRINCIPALES
               </h3>
-              <ul className="space-y-1.5 text-[12px] font-normal text-black/65 dark:text-white/65">
+              <ul className="space-y-1.5 text-[12px] font-normal text-[#475569] dark:text-[#8A93A6]">
                 {catalog.caracteristicas_principales?.length ? (
                   catalog.caracteristicas_principales.map((item, idx) => (
                     <li key={idx} className="flex items-start gap-1.5 leading-tight">
-                      <span className="text-copper shrink-0 mt-px text-[10px]">•</span>
+                      <span className="text-[#C68346] shrink-0 mt-px text-[10px]">•</span>
                       <span>{item}</span>
                     </li>
                   ))
                 ) : (
-                  <li className="text-black/30 dark:text-white/30 italic text-[10px]">Sin especificaciones</li>
+                  <li className="text-[#94A3B8] dark:text-[#5A6072] text-[11px]">[Información técnica no declarada en ficha]</li>
                 )}
               </ul>
             </div>
 
             {/* CONDICIONES DE DISEÑO */}
             <div className="flex flex-col">
-              <h3 className="text-[11px] font-black uppercase text-black dark:text-white tracking-wider mb-2">
+              <h3 className="text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider mb-[8px]">
                 CONDICIONES DE DISEÑO
               </h3>
-              <ul className="space-y-1.5 text-[12px] font-normal text-black/65 dark:text-white/65">
+              <ul className="space-y-1.5 text-[12px] font-normal text-[#475569] dark:text-[#8A93A6]">
                 {catalog.ambiente_operativo?.length ? (
                   catalog.ambiente_operativo.map((item, idx) => (
                     <li key={idx} className="flex items-start gap-1.5 leading-tight">
-                      <span className="text-copper shrink-0 mt-px text-[10px]">•</span>
+                      <span className="text-[#C68346] shrink-0 mt-px text-[10px]">•</span>
                       <span>{item}</span>
                     </li>
                   ))
                 ) : (
-                  <li className="text-black/30 dark:text-white/30 italic text-[10px]">Diseño estándar</li>
+                  <li className="text-[#94A3B8] dark:text-[#5A6072] text-[11px]">[Información técnica no declarada en ficha]</li>
                 )}
               </ul>
             </div>
 
             {/* CONTEXTO Y TRABAJO */}
             <div className="flex flex-col">
-              <h3 className="text-[11px] font-black uppercase text-black dark:text-white tracking-wider mb-2">
+              <h3 className="text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider mb-[8px]">
                 CONTEXTO Y TRABAJO
               </h3>
-              <ul className="space-y-1.5 text-[12px] font-normal text-black/65 dark:text-white/65">
+              <ul className="space-y-1.5 text-[12px] font-normal text-[#475569] dark:text-[#8A93A6]">
                 {catalog.contexto_operativo?.length ? (
                   catalog.contexto_operativo.map((item, idx) => (
                     <li key={idx} className="flex items-start gap-1.5 leading-tight">
-                      <span className="text-copper shrink-0 mt-px text-[10px]">•</span>
+                      <span className="text-[#C68346] shrink-0 mt-px text-[10px]">•</span>
                       <span>{item}</span>
                     </li>
                   ))
                 ) : (
-                  <li className="text-black/30 dark:text-white/30 italic text-[10px]">Uso industrial general</li>
+                  <li className="text-[#94A3B8] dark:text-[#5A6072] text-[11px]">[Información técnica no declarada en ficha]</li>
                 )}
               </ul>
             </div>
@@ -3315,7 +3582,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
 
           {/* Tabs de pilares */}
           {expandedItems.size === 0 && (
-            <nav className="shrink-0 flex border-b border-black/10 dark:border-white/10 bg-white dark:bg-black overflow-x-auto hide-scrollbar">
+            <nav className="shrink-0 flex border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] overflow-x-auto hide-scrollbar">
               {PILLARS.map(p => {
                 const pillar = catalog.knowledge_vault?.[p.id];
                 const isActive = activeTab === p.id;
@@ -3332,14 +3599,14 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
                       expandedItems.size > 0 && !isActive ? 'opacity-30 pointer-events-none ' : ''
                     }${
                       isActive
-                        ? `!border-current ${p.color} bg-black/[0.02] dark:bg-white/[0.02]`
-                        : '!border-transparent text-black/35 dark:text-white/35 hover:text-black/60 dark:hover:text-white/60 hover:bg-black/[0.01]'
+                        ? `!border-current ${p.color} bg-[#F8FAFC] dark:bg-[#07090D]`
+                        : '!border-transparent text-[#94A3B8] dark:text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                     }`}
                     title={t(`vault_dashboard.pillars.${p.id}`, p.label)}
                   >
                     <span className={`material-symbols-outlined !text-[20px] ${isActive ? p.color : ''}`}>{p.icon}</span>
-                    {isCompleted && <span className="w-1.5 h-1.5 rounded-none bg-emerald-500 shrink-0 ml-1.5" />}
-                    {hasItems && !isCompleted && <span className="w-1.5 h-1.5 rounded-none bg-violet-400 shrink-0 ml-1.5" />}
+                    {isCompleted && <span className="w-1.5 h-1.5 rounded-none bg-[#00AEEF] shrink-0 ml-1.5" />}
+                    {hasItems && !isCompleted && <span className="w-1.5 h-1.5 rounded-none bg-[#C68346] shrink-0 ml-1.5" />}
                   </M3Button>
                 );
               })}
@@ -3353,6 +3620,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
               pillarMeta={activePillarMeta}
               pillar={catalog.knowledge_vault?.[activeTab]}
               catalogId={catalog.id}
+              canCurateAI={canCurateAI}
               onItemize={handleItemizePillar}
               onHuntItem={handleHuntItem}
               onAiAssistItem={handleAiAssistItem}
@@ -3375,18 +3643,20 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({ assetId
               onDecideProposal={handleDecideProposal}
               onEvolveItemByType={handleEvolveItemByType}
               resolveItemSymbology={resolveItemSymbology}
+              onOpenStudio={openStudio}
             />
           </section>
         </div>
       </div>
 
-      {/* ── Modal: Premium AI ─────────────────────────────────────────────── */}
-      <PremiumAIPanel
-        globalAssetId={catalog.id}
+      <OpermaqEngineeringStudioDrawer
+        isOpen={studioOpen}
+        initialTab={studioTab}
+        catalogId={catalog.id}
+        tenantAssetId={assetId !== catalog.id ? assetId : undefined}
         makeModel={catalog.makeModel}
-        category={catalog.categoria_equipo || ''}
-        isOpen={isPremiumAIOpen}
-        onClose={() => setIsPremiumAIOpen(false)}
+        isSealed={catalog.is_sealed}
+        onClose={() => setStudioOpen(false)}
       />
     </main>
   );

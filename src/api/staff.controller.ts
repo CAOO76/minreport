@@ -1,28 +1,203 @@
 import admin, { db, auth } from '../config/firebase';
-import express, { Request, Response, Router } from 'express';
+import { Response, Router } from 'express';
 import { z } from 'zod';
 import { EmailService } from '../services/EmailService';
-import { env } from '../config/env';
+import { env, getCanonicalWebUrl } from '../config/env';
 import { generateSetupToken } from '../utils/security';
-import { formatRut, validateRut } from '../utils/rut';
+import { formatRut, cleanRut, validateRut, getRutVariants } from '../utils/rut';
+import { requireAuth, AuthRequest } from '../middleware/auth';
+import { extractClientIp } from '../middleware/rateLimiter';
+import { AuditLedger } from '../core/audit-ledger';
 
 const router = Router();
 
+// Todas las rutas de gestión de personal interno exigen sesión verificada
+router.use(requireAuth);
+
 const StaffMemberPayloadSchema = z.object({
     email: z.string().email('Formato de correo corporativo inválido'),
-    displayName: z.string().min(2, 'El nombre debe tener al menos 2 caracteres'),
-    run: z.string().min(7, 'RUN inválido'),
-    accountId: z.string().min(1, 'El ID de cuenta es obligatorio'),
-    accountName: z.string().min(1, 'El nombre de cuenta es obligatorio')
+    displayName: z.string().min(2, 'El nombre debe tener al menos 2 caracteres').max(140),
+    run: z.string().min(7, 'RUN inválido').max(20).refine((val) => validateRut(val), {
+        message: 'RUN chileno inválido (dígito verificador no coincide)',
+    }),
+    accountId: z.string().min(1, 'El ID de cuenta es obligatorio').max(128),
+    accountName: z.string().min(1, 'El nombre de cuenta es obligatorio').max(160),
 });
 
 /**
- * POST /api/staff/create-worker
- * Crea un trabajador en Firebase Auth y envía email de configuración de contraseña
- * 
- * Este endpoint es llamado por StaffService.recruitWorker() durante el onboarding
+ * Verifica que el solicitante sea OWNER/ADMIN de `accountId` (o DEV_ROOT / SUPER_ADMIN)
+ * y valida que la licencia de la cuenta permita crear usuarios internos (`allowInternalUsers !== false`).
  */
-router.post('/create-worker', async (req: express.Request, res: express.Response): Promise<any> => {
+async function authorizeStaffMutation(
+    req: AuthRequest,
+    accountId: string
+): Promise<{ ok: true; accountData: Record<string, any> } | { ok: false; status: number; error: string }> {
+    const caller = req.user;
+    if (!caller?.uid) {
+        return { ok: false, status: 401, error: 'No autorizado: sesión ausente.' };
+    }
+
+    const callerUid = String(caller.uid);
+    const callerEmail = String(caller.email || '').toLowerCase();
+    const emailVerifiedOk = caller.email_verified !== false;
+    const tokenRole = String(caller.role || '').toUpperCase();
+
+    const isGlobalSovereign =
+        caller.isMasterDev === true ||
+        caller.admin === true ||
+        tokenRole === 'DEV_ROOT' ||
+        tokenRole === 'SUPER_ADMIN' ||
+        callerUid === 'dev-master-root-uid' ||
+        callerUid === 'super-admin-uid' ||
+        (emailVerifiedOk &&
+            (callerEmail === 'dev@minreport.com' ||
+                callerEmail === 'admin@minreport.com' ||
+                callerEmail === env.SUPER_ADMIN_EMAIL.toLowerCase()));
+
+    const accountSnap = await db.collection('accounts').doc(accountId).get();
+    if (!accountSnap.exists) {
+        return { ok: false, status: 404, error: 'Cuenta corporativa no encontrada.' };
+    }
+
+    const accountData = accountSnap.data() || {};
+    const accountType = String(accountData.type || '').toUpperCase();
+    const licensing = accountData.licensing || {};
+
+    if (licensing.allowInternalUsers === false || accountType === 'EDUCATIONAL') {
+        return {
+            ok: false,
+            status: 403,
+            error: 'LICENCIA_RESTRINGIDA: Esta cuenta no permite dar de alta usuarios internos (entorno EDU / monousuario).',
+        };
+    }
+
+    if (typeof licensing.maxUsers === 'number' && licensing.maxUsers > 0) {
+        const membersCountSnap = await db
+            .collection('accounts')
+            .doc(accountId)
+            .collection('members')
+            .count()
+            .get();
+        if (membersCountSnap.data().count >= licensing.maxUsers) {
+            return {
+                ok: false,
+                status: 403,
+                error: `LIMITE_USUARIOS_ALCANZADO: La cuenta alcanzó el máximo permitido de ${licensing.maxUsers} usuarios.`,
+            };
+        }
+    }
+
+    if (isGlobalSovereign) {
+        return { ok: true, accountData };
+    }
+
+    if (accountData.ownerId === callerUid) {
+        return { ok: true, accountData };
+    }
+
+    const allowedRoles = new Set(['OWNER', 'ADMIN', 'ADMINISTRADOR OPERATIVO']);
+
+    const userSnap = await db.collection('users').doc(callerUid).get();
+    if (userSnap.exists) {
+        const memberships = userSnap.data()?.memberships;
+        if (Array.isArray(memberships)) {
+            const mem = memberships.find((m: any) => m?.accountId === accountId);
+            const memRole = String(mem?.role || '').toUpperCase();
+            const memStatus = String(mem?.status || 'ACTIVE').toUpperCase();
+            if (
+                allowedRoles.has(memRole) &&
+                memStatus !== 'SUSPENDED' &&
+                memStatus !== 'REVOKED' &&
+                memStatus !== 'INACTIVE'
+            ) {
+                return { ok: true, accountData };
+            }
+        }
+    }
+
+    const memberSnap = await db
+        .collection('accounts')
+        .doc(accountId)
+        .collection('members')
+        .doc(callerUid)
+        .get();
+
+    if (memberSnap.exists) {
+        const memberData = memberSnap.data() || {};
+        const memberRole = String(memberData.role || '').toUpperCase();
+        const memberStatus = String(memberData.status || 'ACTIVE').toUpperCase();
+        if (
+            allowedRoles.has(memberRole) &&
+            memberStatus !== 'SUSPENDED' &&
+            memberStatus !== 'REVOKED' &&
+            memberStatus !== 'INACTIVE'
+        ) {
+            return { ok: true, accountData };
+        }
+    }
+
+    return {
+        ok: false,
+        status: 403,
+        error: 'Prohibido: Se requiere rol OWNER o ADMIN sobre la cuenta objetivo.',
+    };
+}
+
+async function upsertUserDirectoryEntry(params: {
+    rawRun: string;
+    fullName: string;
+    uid: string;
+    accountId: string;
+    authEmail: string;
+    role: string;
+    accountName: string;
+}): Promise<void> {
+    const variants = getRutVariants(params.rawRun);
+    const formattedRun = formatRut(cleanRut(params.rawRun));
+
+    const entry = {
+        accountId: params.accountId,
+        uid: params.uid,
+        authEmail: params.authEmail,
+        role: params.role,
+        type: 'BUSINESS',
+        accountName: params.accountName,
+        status: 'PENDING',
+    };
+
+    for (const variant of variants) {
+        const ref = db.collection('user_directory').doc(variant);
+        const snap = await ref.get();
+        if (snap.exists) {
+            const current = snap.data() || {};
+            const filtered = (Array.isArray(current.accounts) ? current.accounts : []).filter(
+                (a: any) => a?.accountId !== params.accountId
+            );
+            filtered.push(entry);
+            await ref.update({
+                uid: params.uid,
+                run: formattedRun,
+                fullName: params.fullName,
+                accounts: filtered,
+                updatedAt: new Date().toISOString(),
+            });
+        } else {
+            await ref.set({
+                uid: params.uid,
+                run: formattedRun,
+                fullName: params.fullName,
+                accounts: [entry],
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+            });
+        }
+    }
+}
+
+/**
+ * POST /api/staff/create-worker
+ */
+router.post('/create-worker', async (req: AuthRequest, res: Response): Promise<any> => {
     try {
         const validation = StaffMemberPayloadSchema.safeParse(req.body);
         if (!validation.success) {
@@ -34,211 +209,155 @@ router.post('/create-worker', async (req: express.Request, res: express.Response
 
         const { email, displayName, run, accountId, accountName } = validation.data;
 
+        const authz = await authorizeStaffMutation(req, accountId);
+        if (!authz.ok) {
+            return res.status(authz.status).json({ error: authz.error });
+        }
+
         const normalizedEmail = email.toLowerCase().trim();
-        const cleanRun = run.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
+        const cleanRun = cleanRut(run);
+        const formattedRun = formatRut(cleanRun);
 
-        console.log('[Staff API] Creando trabajador (Email real):', { emailReal: normalizedEmail, displayName, accountName, cleanRun });
-
-        // 1. Forzar Creación/Búsqueda usando el email real del usuario
         let userRecord;
         let isNewUser = false;
         try {
             userRecord = await auth.getUserByEmail(normalizedEmail);
-            console.log('[Staff API] Usuario ya existe con email:', normalizedEmail, 'UID:', userRecord.uid);
         } catch (error: any) {
             if (error.code !== 'auth/user-not-found') {
                 throw error;
             }
-            // 2. Intentar buscar por RUN/UID previo por compatibilidad
             try {
                 userRecord = await auth.getUser(cleanRun);
                 await auth.updateUser(cleanRun, { email: normalizedEmail });
             } catch (runErr: any) {
                 if (runErr.code === 'auth/user-not-found') {
-                    // Crear usuario interno en Firebase Auth con su email real
                     userRecord = await auth.createUser({
                         email: normalizedEmail,
                         emailVerified: false,
-                        displayName: displayName,
+                        displayName,
                         disabled: false
                     });
                     isNewUser = true;
-                    console.log('[Staff API] Usuario interno creado con UID:', userRecord.uid, normalizedEmail);
                 } else {
                     throw runErr;
                 }
             }
         }
 
-        // 3. Generar token criptográfico para Custom Setup Link
         const { rawToken, hashedToken, expiresAt } = generateSetupToken();
+        const baseUrl = getCanonicalWebUrl();
+        const setupLink = `${baseUrl}/setup-access?accountId=${encodeURIComponent(accountId)}&taxId=${encodeURIComponent(cleanRun)}&name=${encodeURIComponent(displayName)}&accountName=${encodeURIComponent(accountName)}&type=BUSINESS&token=${encodeURIComponent(rawToken)}`;
 
-        // 4. Construir link personalizado para setup-access
-        const baseUrl = process.env.NODE_ENV === 'production'
-            ? 'https://minreport-access.web.app'
-            : 'http://localhost:5173';
-
-        const encodedName = encodeURIComponent(displayName || 'Miembro del Equipo');
-        const encodedAccountName = encodeURIComponent(accountName);
-        const setupLink = `${baseUrl}/setup-access?accountId=${accountId}&taxId=${cleanRun}&name=${encodedName}&accountName=${encodedAccountName}&type=BUSINESS&token=${rawToken}`;
-
-        // 5. Enviar email de bienvenida con RESEND
         try {
             await EmailService.sendEmail({
-                from: 'MinReport Onboarding <no-reply@minreport.com>',
+                from: 'MINREPORT Onboarding <no-reply@minreport.com>',
                 to: normalizedEmail,
                 subject: 'Configuración de Acceso Operativo',
                 html: `
-                    <div style="font-family: 'Arial', sans-serif; max-width: 600px; color: #334155; padding: 40px 20px;">
-                        <div style="text-align: center; margin-bottom: 32px;">
-                            <img src="https://minreport-access.web.app/pwa-192x192.png" alt="MINREPORT" style="height: 48px; width: auto; opacity: 0.9;" />
-                        </div>
-                        
-                        <div style="background: #F8FAFC; border-left: 4px solid #0F172A; padding: 24px; border-radius: 0px; margin-bottom: 24px;">
-                            <p style="margin: 0; font-size: 16px; line-height: 1.6; font-weight: bold; color: #0F172A; text-transform: uppercase;">
-                                ONBOARDING: ${displayName}
+                    <div style="font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; max-width: 600px; color: #334155; padding: 34px 21px;">
+                        <div style="background: #F8FAFC; border-left: 4px solid #0F172A; padding: 21px; margin-bottom: 21px;">
+                            <p style="margin: 0; font-size: 15px; font-weight: 700; color: #0F172A; text-transform: uppercase;">
+                                ALTA OPERATIVA: ${displayName}
                             </p>
-                            <p style="margin: 12px 0 0 0; font-size: 15px; line-height: 1.6;">
-                                Has sido añadido como operador activo al sistema para la entidad <strong>${accountName}</strong>. Para habilitar tu ingreso, necesitas configurar tu contraseña de cuenta.
-                            </p>
-
-                            <div style="margin-top: 24px; background: white; border: 1px solid #E2E8F0; padding: 16px; border-radius: 4px;">
-                                <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Entidad Vinculada</p>
-                                <p style="margin: 0 0 16px 0; font-size: 16px; color: #0F172A; font-weight: bold;">${accountName}</p>
-                                
-                                <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Correo Asociado</p>
-                                <p style="margin: 0 0 16px 0; font-size: 14px; color: #0F172A;">${normalizedEmail}</p>
-                                
-                                <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Tipo de Entorno</p>
-                                <p style="margin: 0; font-size: 14px; color: #0F172A;">Operación Corporativa (BUSINESS)</p>
-                            </div>
-                            
-                            <p style="margin: 24px 0 0 0; font-size: 15px; line-height: 1.6;">
-                                Por seguridad, deberás verificar tu identidad ingresando tu documento principal antes de establecer tu contraseña exclusiva de acceso.
+                            <p style="margin: 13px 0 0 0; font-size: 14px; line-height: 1.5;">
+                                Has sido registrado como operador activo en <strong>${accountName}</strong>. Configura tu clave exclusiva en las próximas 24 horas.
                             </p>
                         </div>
-
-                        <div style="text-align: center; margin: 32px 0;">
-                            <a href="${setupLink}" 
-                               style="background: #0F172A; 
-                                      color: white; 
-                                      padding: 16px 32px; 
-                                      text-decoration: none; 
-                                      font-weight: bold; 
-                                      display: inline-block;
-                                      font-size: 14px;
-                                      text-transform: uppercase;
-                                      letter-spacing: 0.1em;
-                                      border-radius: 2px;">
+                        <div style="text-align: center; margin: 34px 0;">
+                            <a href="${setupLink}" style="background: #0F172A; color: #FFFFFF; padding: 13px 34px; text-decoration: none; font-weight: 700; display: inline-block; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;">
                                 Configurar Credenciales
                             </a>
                         </div>
-
-                        <div style="background: #FFFBEB; border-left: 4px solid #F59E0B; padding: 16px; border-radius: 0px; margin-top: 24px;">
-                            <p style="margin: 0; font-size: 14px; color: #92400E;">
-                                <strong>IMPORTANTE:</strong> Este enlace de seguridad expira en 24 horas por políticas de acceso.
-                            </p>
-                        </div>
-
-                        <hr style="border: 0; border-top: 1px solid #E2E8F0; margin: 32px 0;" />
-
-                        <p style="font-size: 10px; color: #94A3B8; text-align: center; margin: 0; text-transform: uppercase; letter-spacing: 0.1em;">
-                            MINREPORT SECURITY INFRASTRUCTURE
-                        </p>
                     </div>
                 `
             });
-
-            console.log('[Staff API] Email de bienvenida enviado a:', normalizedEmail);
         } catch (emailError) {
             console.error('[Staff API] Error al enviar email:', emailError);
         }
 
-        // [ACTO F] BACKEND PERSISTENCE: Coordinated Writes
-        try {
-            console.log('[Staff API] Executing structural writes for:', run);
-            const batch = db.batch();
+        const userProfileRef = db.collection('users').doc(userRecord.uid);
+        const userProfileSnap = await userProfileRef.get();
+        const existingData = userProfileSnap.exists ? userProfileSnap.data() || {} : {};
+        const existingMemberships = (Array.isArray(existingData.memberships) ? existingData.memberships : [])
+            .filter((m: any) => m?.accountId !== accountId)
+            .map(({ passwordHash: _ph, ...rest }: any) => rest);
 
-            // 1. user_directory (Pasillo de Puertas)
-            const userDirRef = db.collection('user_directory').doc(run);
-            batch.set(userDirRef, {
-                run: run,
-                fullName: displayName,
-                accounts: admin.firestore.FieldValue.arrayUnion({
-                    accountId: accountId,
-                    authEmail: normalizedEmail,
-                    role: 'OPERATOR',
-                    type: 'BUSINESS',
-                    accountName: accountName,
-                    status: 'PENDING'
-                }),
-                updatedAt: new Date().toISOString()
-            }, { merge: true });
+        existingMemberships.push({
+            accountId,
+            role: 'OPERATOR',
+            companyName: accountName,
+            status: 'PENDING',
+            joinedAt: Date.now()
+        });
 
-            // 2. user profile (/users) - Atomic but careful with taxId
-            const userProfileRef = db.collection('users').doc(userRecord.uid);
-            const userProfileSnap = await userProfileRef.get();
-            const existingTaxId = userProfileSnap.exists ? userProfileSnap.data()?.taxId : null;
-
-            const membership = {
-                accountId: accountId,
-                role: 'OPERATOR',
-                companyName: accountName,
-                joinedAt: Date.now()
-            };
-
-            const userUpdate: any = {
+        const batch = db.batch();
+        batch.set(
+            userProfileRef,
+            {
                 uid: userRecord.uid,
                 email: normalizedEmail,
                 fullName: displayName,
-                role: 'USER',
-                memberships: admin.firestore.FieldValue.arrayUnion(membership),
-                status: 'PENDING',
+                role: existingData.role || 'USER',
+                taxId: existingData.taxId || formattedRun,
+                memberships: existingMemberships,
+                status: existingData.status === 'ACTIVE' ? 'ACTIVE' : 'PENDING',
                 updatedAt: Date.now()
-            };
+            },
+            { merge: true }
+        );
 
-            // Solo setear taxId si no existe (y formateado consistentemente)
-            if (!existingTaxId) {
-                userUpdate.taxId = formatRut(cleanRun);
-            }
+        const memberRef = db.collection('accounts').doc(accountId).collection('members').doc(userRecord.uid);
+        batch.set(memberRef, {
+            userId: userRecord.uid,
+            email: normalizedEmail,
+            fullName: displayName,
+            run: formattedRun,
+            role: 'OPERATOR',
+            status: 'PENDING',
+            invitedAt: Date.now()
+        });
 
-            batch.set(userProfileRef, userUpdate, { merge: true });
+        const tokenRef = db.collection('setup_tokens').doc(rawToken);
+        batch.set(tokenRef, {
+            accountId,
+            uid: userRecord.uid,
+            taxId: cleanRun,
+            hashedToken,
+            expiresAt,
+            used: false,
+            createdAt: Date.now()
+        });
 
-            // 3. account members (/accounts/{id}/members)
-            const memberRef = db.collection('accounts').doc(accountId).collection('members').doc(userRecord.uid);
-            batch.set(memberRef, {
-                userId: userRecord.uid,
-                email: normalizedEmail,
-                fullName: displayName,
-                run: formatRut(cleanRun),
-                role: 'OPERATOR',
-                status: 'PENDING',
-                invitedAt: Date.now()
-            });
+        await batch.commit();
 
-            // 4. Guardar Setup Token
-            const tokenRef = db.collection('setup_tokens').doc(rawToken);
-            batch.set(tokenRef, {
-                accountId,
-                taxId: cleanRun,
-                hashedToken,
-                expiresAt,
-                used: false,
-                createdAt: Date.now()
-            });
+        await upsertUserDirectoryEntry({
+            rawRun: run,
+            fullName: displayName,
+            uid: userRecord.uid,
+            accountId,
+            authEmail: normalizedEmail,
+            role: 'OPERATOR',
+            accountName,
+        });
 
-            await batch.commit();
-            console.log('[Staff API] ✅ Structural integrity writes completed for operator');
-        } catch (dirErr) {
-            console.error('[Staff API] ⚠️ Failed to force background persistence:', dirErr);
-        }
+        await AuditLedger.record({
+            tenantId: accountId,
+            actorUid: String(req.user?.uid || ''),
+            actorEmail: String(req.user?.email || ''),
+            action: 'STAFF_CREATE_WORKER',
+            module: 'b2b-core',
+            targetEntity: userRecord.uid,
+            details: { workerEmail: normalizedEmail, run: formattedRun, isNewUser },
+            ipAddress: extractClientIp(req),
+        });
 
         return res.status(201).json({
             uid: userRecord.uid,
-            isNewUser: isNewUser,
-            message: isNewUser ? 'Usuario creado y email de configuración enviado' : 'Vínculo actualizado y email de acceso enviado'
+            isNewUser,
+            message: isNewUser
+                ? 'Usuario creado y email de configuración enviado'
+                : 'Vínculo actualizado y email de acceso enviado'
         });
-
     } catch (error: any) {
         console.error('[Staff API] Error al crear trabajador:', error);
         return res.status(500).json({
@@ -249,10 +368,8 @@ router.post('/create-worker', async (req: express.Request, res: express.Response
 
 /**
  * POST /api/staff/designate-admin
- * Designa un Administrador General para una cuenta B2B.
- * Envía invitación y vincula con rol ADMIN.
  */
-router.post('/designate-admin', async (req: express.Request, res: express.Response): Promise<any> => {
+router.post('/designate-admin', async (req: AuthRequest, res: Response): Promise<any> => {
     try {
         const validation = StaffMemberPayloadSchema.safeParse(req.body);
         if (!validation.success) {
@@ -264,23 +381,22 @@ router.post('/designate-admin', async (req: express.Request, res: express.Respon
 
         const { email, displayName, run, accountId, accountName } = validation.data;
 
-        const normalizedEmail = email.toLowerCase().trim();
-        const cleanRun = run.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
+        const authz = await authorizeStaffMutation(req, accountId);
+        if (!authz.ok) {
+            return res.status(authz.status).json({ error: authz.error });
+        }
 
-        // Generar Email Sintético para Bypassar Firebase Auth "Email already in use" restricción
+        const normalizedEmail = email.toLowerCase().trim();
+        const cleanRun = cleanRut(run);
+        const formattedRun = formatRut(cleanRun);
         const syntheticAuthEmail = `${cleanRun.toLowerCase()}@auth.minreport.internal`;
 
-        console.log('[Staff API] Designando Administrador General (RUT Islado):', { emailReal: normalizedEmail, emailSintetico: syntheticAuthEmail, accountName, cleanRun });
-
-        // 1. Forzar Creación/Busqueda usando el RUN como UID
         let userRecord;
         let isNewUser = false;
         try {
             userRecord = await auth.getUser(cleanRun);
-            console.log('[Staff API] Usuario(Admin) ya existe con UID(RUN):', userRecord.uid);
-
             if (userRecord.email !== syntheticAuthEmail) {
-                await auth.updateUser(cleanRun, { email: syntheticAuthEmail });
+                await auth.updateUser(cleanRun, { email: syntheticAuthEmail }).catch(() => {});
             }
         } catch (error: any) {
             if (error.code !== 'auth/user-not-found') throw error;
@@ -289,64 +405,36 @@ router.post('/designate-admin', async (req: express.Request, res: express.Respon
                 uid: cleanRun,
                 email: syntheticAuthEmail,
                 emailVerified: false,
-                displayName: displayName,
+                displayName,
                 disabled: false
             });
             isNewUser = true;
-            console.log('[Staff API] Usuario(Admin) interno creado con UID:', userRecord.uid, syntheticAuthEmail);
         }
 
-        // 2. Generar Custom Setup Token
         const { rawToken, hashedToken, expiresAt } = generateSetupToken();
+        const baseUrl = getCanonicalWebUrl();
+        const setupLink = `${baseUrl}/setup-access?accountId=${encodeURIComponent(accountId)}&taxId=${encodeURIComponent(cleanRun)}&name=${encodeURIComponent(displayName)}&accountName=${encodeURIComponent(accountName)}&type=BUSINESS&token=${encodeURIComponent(rawToken)}`;
 
-        const baseUrl = process.env.NODE_ENV === 'production'
-            ? 'https://minreport-access.web.app'
-            : 'http://localhost:5173';
-
-        const encodedName = encodeURIComponent(displayName);
-        const encodedAccountName = encodeURIComponent(accountName);
-        const setupLink = `${baseUrl}/setup-access?accountId=${accountId}&taxId=${cleanRun}&name=${encodedName}&accountName=${encodedAccountName}&type=BUSINESS&token=${rawToken}`;
-
-        // 3. Enviar Invitación (Email)
         try {
             await EmailService.sendEmail({
-                from: 'MinReport <no-reply@minreport.com>',
+                from: 'MINREPORT <no-reply@minreport.com>',
                 to: normalizedEmail,
-                subject: `Designación: Administrador General - ${accountName}`,
+                subject: `Designación: Administrador General — ${accountName}`,
                 html: `
-                    <div style="font-family: 'Arial', sans-serif; max-width: 600px; color: #334155; padding: 40px 20px;">
-                        <div style="text-align: center; margin-bottom: 32px;">
-                            <img src="https://minreport-access.web.app/pwa-192x192.png" alt="MINREPORT" style="height: 48px; width: auto;" />
-                        </div>
-                        
-                        <div style="background: #F8FAFC; border-left: 4px solid #C68346; padding: 24px; margin-bottom: 24px;">
-                            <p style="margin: 0; font-size: 16px; font-weight: bold; color: #0F172A; text-transform: uppercase; letter-spacing: 0.05em;">
+                    <div style="font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; max-width: 600px; color: #334155; padding: 34px 21px;">
+                        <div style="background: #F8FAFC; border-left: 4px solid #C68346; padding: 21px; margin-bottom: 21px;">
+                            <p style="margin: 0; font-size: 15px; font-weight: 700; color: #0F172A; text-transform: uppercase;">
                                 Designación de Cargo: Administrador General
                             </p>
-                            <p style="margin: 16px 0 0 0; font-size: 15px; line-height: 1.6;">
-                                Estimado(a) ${displayName}, has sido formalmente designado como <strong>Administrador General</strong> para gestionar la cuenta corporativa de <strong>${accountName}</strong> en MinReport.
+                            <p style="margin: 13px 0 0 0; font-size: 14px; line-height: 1.5;">
+                                ${displayName}, has sido designado como Administrador General para <strong>${accountName}</strong> en MINREPORT.
                             </p>
-                            
-                            <div style="margin-top: 24px; background: white; border: 1px solid #E2E8F0; padding: 16px;">
-                                <p style="margin: 0 0 4px 0; font-size: 11px; color: #64748B; text-transform: uppercase; font-weight: bold;">Empresa que designa</p>
-                                <p style="margin: 0; font-size: 16px; color: #0F172A; font-weight: bold;">${accountName}</p>
-                            </div>
                         </div>
-
-                        <p style="font-size: 14px; line-height: 1.6; color: #475569;">
-                            Este cargo te otorga privilegios para gestionar el personal operativo, configurar perfiles de cargo y administrar la seguridad interna de la empresa en la plataforma.
-                        </p>
-
-                        <div style="text-align: center; margin: 32px 0;">
-                            <a href="${setupLink}" 
-                               style="background: #C68346; color: white; padding: 16px 32px; text-decoration: none; font-weight: bold; display: inline-block; font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em; border-radius: 2px;">
+                        <div style="text-align: center; margin: 34px 0;">
+                            <a href="${setupLink}" style="background: #C68346; color: #FFFFFF; padding: 13px 34px; text-decoration: none; font-weight: 700; display: inline-block; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;">
                                 Configurar Credenciales de Acceso
                             </a>
                         </div>
-
-                        <p style="font-size: 12px; color: #94A3B8; text-align: center; margin-top: 40px;">
-                            Este es un proceso interno de la empresa. Si no reconoces esta designación, contacta al administrador de TI de tu organización.
-                        </p>
                     </div>
                 `
             });
@@ -354,89 +442,86 @@ router.post('/designate-admin', async (req: express.Request, res: express.Respon
             console.error('[Staff API] Error enviando email de administrador:', e);
         }
 
-        // 4. Sincronización de Perfil: Coordinated Writes
-        try {
-            console.log('[Staff API] Executing structural writes for admin:', run);
-            const batch = db.batch();
+        const userProfileRef = db.collection('users').doc(userRecord.uid);
+        const userProfileSnap = await userProfileRef.get();
+        const existingData = userProfileSnap.exists ? userProfileSnap.data() || {} : {};
+        const existingMemberships = (Array.isArray(existingData.memberships) ? existingData.memberships : [])
+            .filter((m: any) => m?.accountId !== accountId)
+            .map(({ passwordHash: _ph, ...rest }: any) => rest);
 
-            const membership = {
-                accountId: accountId,
-                role: 'ADMIN',
-                companyName: accountName,
-                joinedAt: Date.now()
-            };
+        existingMemberships.push({
+            accountId,
+            role: 'ADMIN',
+            companyName: accountName,
+            status: 'PENDING',
+            joinedAt: Date.now()
+        });
 
-            // 1. user_directory
-            const userDirRef = db.collection('user_directory').doc(run);
-            batch.set(userDirRef, {
-                run: run,
-                fullName: displayName,
-                accounts: admin.firestore.FieldValue.arrayUnion({
-                    accountId: accountId,
-                    authEmail: normalizedEmail,
-                    role: 'ADMIN',
-                    type: 'BUSINESS',
-                    accountName: accountName,
-                    status: 'PENDING'
-                }),
-                updatedAt: new Date().toISOString()
-            }, { merge: true });
-
-            // 2. user profile (/users) - Atomic but careful with taxId
-            const userProfileRef = db.collection('users').doc(userRecord.uid);
-            const userProfileSnap = await userProfileRef.get();
-            const existingTaxId = userProfileSnap.exists ? userProfileSnap.data()?.taxId : null;
-
-            const userUpdate: any = {
+        const batch = db.batch();
+        batch.set(
+            userProfileRef,
+            {
                 uid: userRecord.uid,
                 email: normalizedEmail,
                 fullName: displayName,
-                role: 'USER',
-                memberships: admin.firestore.FieldValue.arrayUnion(membership),
-                status: 'PENDING',
+                role: existingData.role || 'USER',
+                taxId: existingData.taxId || formattedRun,
+                memberships: existingMemberships,
+                status: existingData.status === 'ACTIVE' ? 'ACTIVE' : 'PENDING',
                 updatedAt: Date.now()
-            };
+            },
+            { merge: true }
+        );
 
-            if (!existingTaxId) {
-                userUpdate.taxId = formatRut(cleanRun);
-            }
+        const memberRef = db.collection('accounts').doc(accountId).collection('members').doc(userRecord.uid);
+        batch.set(memberRef, {
+            userId: userRecord.uid,
+            email: normalizedEmail,
+            fullName: displayName,
+            run: formattedRun,
+            role: 'ADMIN',
+            status: 'PENDING',
+            invitedAt: Date.now()
+        });
 
-            batch.set(userProfileRef, userUpdate, { merge: true });
+        const tokenRef = db.collection('setup_tokens').doc(rawToken);
+        batch.set(tokenRef, {
+            accountId,
+            uid: userRecord.uid,
+            taxId: cleanRun,
+            hashedToken,
+            expiresAt,
+            used: false,
+            createdAt: Date.now()
+        });
 
-            // 3. account members (/accounts/{id}/members)
-            const memberRef = db.collection('accounts').doc(accountId).collection('members').doc(userRecord.uid);
-            batch.set(memberRef, {
-                userId: userRecord.uid,
-                email: normalizedEmail,
-                fullName: displayName,
-                run: formatRut(cleanRun),
-                role: 'ADMIN',
-                status: 'PENDING',
-                invitedAt: Date.now()
-            });
+        await batch.commit();
 
-            // 4. Guardar Setup Token
-            const tokenRef = db.collection('setup_tokens').doc(rawToken);
-            batch.set(tokenRef, {
-                accountId,
-                taxId: cleanRun,
-                hashedToken,
-                expiresAt,
-                used: false,
-                createdAt: Date.now()
-            });
+        await upsertUserDirectoryEntry({
+            rawRun: run,
+            fullName: displayName,
+            uid: userRecord.uid,
+            accountId,
+            authEmail: normalizedEmail,
+            role: 'ADMIN',
+            accountName,
+        });
 
-            await batch.commit();
-            console.log('[Staff API] ✅ Structural integrity writes completed for admin');
-        } catch (dirErr) {
-            console.error('[Staff API] ⚠️ Failed to force background persistence:', dirErr);
-        }
+        await AuditLedger.record({
+            tenantId: accountId,
+            actorUid: String(req.user?.uid || ''),
+            actorEmail: String(req.user?.email || ''),
+            action: 'STAFF_DESIGNATE_ADMIN',
+            module: 'b2b-core',
+            targetEntity: userRecord.uid,
+            details: { adminEmail: normalizedEmail, run: formattedRun, isNewUser },
+            ipAddress: extractClientIp(req),
+        });
 
         return res.status(201).json({ uid: userRecord.uid, isNewUser });
-
     } catch (error: any) {
         console.error('[Staff API] Error designating admin:', error);
-        return res.status(500).json({ error: error.message });
+        return res.status(500).json({ error: error.message || 'Error al designar administrador' });
     }
 });
 

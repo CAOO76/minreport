@@ -31,7 +31,7 @@ test.describe('Full Business Integration', () => {
         // 2. APPROVAL (Super Admin)
         const adminContext = await browser.newContext({ storageState: 'tests/.auth/super-admin.json' });
         const adminPage = await adminContext.newPage();
-        await adminPage.goto('http://localhost:5174/admin');
+        await adminPage.goto('http://localhost:5173/admin');
         await adminPage.click('button:has-text("Empresas (B2B)")');
 
         const row = adminPage.locator(`tr:has-text("${companyName}")`);

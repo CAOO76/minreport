@@ -1,35 +1,59 @@
 import * as admin from 'firebase-admin';
+import dotenv from 'dotenv';
 
-process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9190';
+dotenv.config();
 
-admin.initializeApp({
-    projectId: 'minreport-8f2a8'
-});
+function assertSafeScriptEnvironment(): void {
+    const isEmulator = Boolean(process.env.FIREBASE_AUTH_EMULATOR_HOST);
+    if (!isEmulator && process.env.CONFIRM_PRODUCTION_SCRIPT !== 'ACTUALIZAR') {
+        console.error(
+            '[ABORTADO] Ejecución fuera del Auth Emulator bloqueada. Defina FIREBASE_AUTH_EMULATOR_HOST o establezca CONFIRM_PRODUCTION_SCRIPT=ACTUALIZAR.'
+        );
+        process.exit(1);
+    }
+}
 
-const ensureUser = async (email: string, password: string) => {
+assertSafeScriptEnvironment();
+
+if (admin.apps.length === 0) {
+    admin.initializeApp({
+        projectId: process.env.GCP_PROJECT_ID || 'minreport-8f2a8',
+    });
+}
+
+const ensureUser = async (email: string, password: string): Promise<void> => {
     try {
         const user = await admin.auth().getUserByEmail(email);
-        console.log(`User ${email} already exists with UID: ${user.uid}`);
-        // Ensure password is correct even if user exists
-        await admin.auth().updateUser(user.uid, { password });
-        console.log(`User ${email} password updated.`);
+        console.log(`[ENSURE-USER] Usuario existente ${email} (UID: ${user.uid}). Actualizando credencial...`);
+        await admin.auth().updateUser(user.uid, { password, emailVerified: true });
+        console.log(`[ENSURE-USER] Credencial actualizada para ${email} (secreto omitido de consola).`);
     } catch (error: any) {
         if (error.code === 'auth/user-not-found') {
             const newUser = await admin.auth().createUser({
                 email,
                 password,
-                emailVerified: true
+                emailVerified: true,
             });
-            console.log(`User ${email} created with UID: ${newUser.uid}`);
+            console.log(`[ENSURE-USER] Usuario creado ${email} (UID: ${newUser.uid}).`);
         } else {
-            console.error('Error ensuring user:', error);
+            throw error;
         }
     }
 };
 
-ensureUser('admin@minreport.com', 'caoo1976')
+const targetEmail = (process.env.TARGET_USER_EMAIL || '').trim().toLowerCase();
+const targetPassword = (process.env.TARGET_USER_PASSWORD || '').trim();
+
+if (!targetEmail || !targetPassword || targetPassword.length < 10) {
+    console.error(
+        '[ENSURE-USER] Defina TARGET_USER_EMAIL y TARGET_USER_PASSWORD (mínimo 10 caracteres) en variables de entorno. Cero contraseñas hardcodeadas.'
+    );
+    process.exit(1);
+}
+
+ensureUser(targetEmail, targetPassword)
     .then(() => process.exit(0))
     .catch((err) => {
-        console.error(err);
+        console.error('[ENSURE-USER] Error:', err.message || err);
         process.exit(1);
     });

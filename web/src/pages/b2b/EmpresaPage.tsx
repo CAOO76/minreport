@@ -1,16 +1,17 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { db } from '../../config/firebase';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import siiActivities from '../../data/sii_activities.json';
 import { useGooglePlaces } from '../../hooks/useGooglePlaces';
+import { CopyButton } from '../../components/common/CopyButton';
 
-// ─── Estilos base reusables (Minimalismo Industrial) ────────────────────────
-const LBL = 'block text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-1.5';
-const INP = 'w-full bg-transparent border border-gray-300 dark:border-gray-700 px-3 py-2.5 text-sm text-gray-900 dark:text-white focus:outline-none focus:border-[#C68346] rounded-none transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
-const SECTION_TITLE = 'text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-4 border-b border-gray-200 dark:border-gray-800 pb-1.5 flex items-center gap-2';
+const UNDECLARED = '[Información técnica no declarada en ficha]';
+const LBL = 'block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] mb-fib-8';
+const INP = 'w-full bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] px-fib-13 py-fib-8 text-data-dense text-[#0F172A] dark:text-[#F3F4F6] focus:outline-none focus:border-[#C68346] rounded-none shadow-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+const SECTION_HEADER = 'px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-between';
 
-export const EmpresaPage = () => {
+export const EmpresaPage: React.FC = () => {
     const { currentAccount } = useAuth();
     const [editing, setEditing] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -20,7 +21,6 @@ export const EmpresaPage = () => {
     const [showDropdown, setShowDropdown] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
 
-    // GOOGLE MAPS ADDRESS UI States
     const [addressSearchTerm, setAddressSearchTerm] = useState('');
     const [showAddressDropdown, setShowAddressDropdown] = useState(false);
     const [addressPredictions, setAddressPredictions] = useState<any[]>([]);
@@ -30,7 +30,6 @@ export const EmpresaPage = () => {
     const googleApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
     const { isLoaded: isGoogleLoaded, loadError: googleLoadError, getPredictions, getPlaceDetails } = useGooglePlaces(googleApiKey);
 
-    // Inicializar form desde Firestore account
     const [form, setForm] = useState({
         razonSocial: currentAccount?.name || '',
         nombreFantasia: (currentAccount as any)?.nombreFantasia || '',
@@ -49,7 +48,6 @@ export const EmpresaPage = () => {
         postalCode: (currentAccount as any)?.postal_code || '',
     });
 
-    // Sincronizar form cuando cambia currentAccount (ej. post-guardado, otro tab)
     useEffect(() => {
         if (currentAccount) {
             setForm({
@@ -72,13 +70,11 @@ export const EmpresaPage = () => {
         }
     }, [currentAccount]);
 
-    // Detectar si la empresa es Chilena (patrón RUT: XX.XXX.XXX-X)
     const isChilean = useMemo(() => {
         const rutPattern = /^\d{1,2}\.\d{3}\.\d{3}-[\dkK]$/;
         return rutPattern.test(form.rut);
     }, [form.rut]);
 
-    // Filtrar actividades SII
     const filteredActivities = useMemo(() => {
         const list = Array.isArray(siiActivities) ? siiActivities : (siiActivities as any).default || [];
         if (!searchTerm) return list.slice(0, 10);
@@ -88,7 +84,6 @@ export const EmpresaPage = () => {
         ).slice(0, 15);
     }, [searchTerm]);
 
-    // Click fuera del dropdowns → cerrar
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
             if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -102,7 +97,6 @@ export const EmpresaPage = () => {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
-    // Debounced search for places
     useEffect(() => {
         if (!addressSearchTerm || !showAddressDropdown) {
             setAddressPredictions([]);
@@ -158,7 +152,6 @@ export const EmpresaPage = () => {
     const f = (k: keyof typeof form, v: string) => setForm(prev => ({ ...prev, [k]: v }));
 
     const handleCancelEdit = () => {
-        // Revertir cambios no guardados
         if (currentAccount) {
             setForm({
                 razonSocial: currentAccount.name || '',
@@ -185,10 +178,11 @@ export const EmpresaPage = () => {
         setSaveError(null);
     };
 
-    // ─── GUARDAR EN FIRESTORE (DUAL-WRITE: accounts + tenants) ──────────────────
-    const handleSave = async () => {
+    const handleSave = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (confirmWord !== 'ACTUALIZAR') return;
         if (!currentAccount?.id) {
-            setSaveError('Error: No hay cuenta activa. Recarga la página.');
+            setSaveError('No hay cuenta activa seleccionada.');
             return;
         }
         if (!form.razonSocial.trim()) {
@@ -200,10 +194,9 @@ export const EmpresaPage = () => {
         setSaveError(null);
 
         try {
-            // ① Actualizar colección `accounts` (leída por el portal B2B en tiempo real)
             const accountRef = doc(db, 'accounts', currentAccount.id);
             await updateDoc(accountRef, {
-                name: form.razonSocial.trim(),          // ← campo principal Account (portal B2B)
+                name: form.razonSocial.trim(),
                 nombreFantasia: form.nombreFantasia.trim(),
                 giro: form.giro.trim(),
                 direccionComercial: form.direccionComercial.trim(),
@@ -220,18 +213,14 @@ export const EmpresaPage = () => {
                 updatedAt: serverTimestamp(),
             });
 
-            // ② Dual-write a colección `tenants` (leída por el panel MINREPORT admin)
-            // El backend crea ambos documentos con el MISMO ID (accountId === tenantId)
             try {
                 const tenantRef = doc(db, 'tenants', currentAccount.id);
                 await updateDoc(tenantRef, {
-                    company_name: form.razonSocial.trim(), // ← campo que muestra el admin
+                    company_name: form.razonSocial.trim(),
                     updatedAt: serverTimestamp(),
                 });
-                console.log('[EMPRESA-PAGE] tenants dual-write OK');
-            } catch (tenantErr: any) {
-                // Si el tenant no existe o no hay permisos, no bloqueamos el flujo
-                console.warn('[EMPRESA-PAGE] tenants dual-write skipped:', tenantErr?.message);
+            } catch {
+                // Sincronización opcional sobre colección espejo tenants
             }
 
             setSaveSuccess(true);
@@ -240,317 +229,467 @@ export const EmpresaPage = () => {
             setSearchTerm('');
             setShowDropdown(false);
 
-            // Limpiar feedback de éxito a los 3s
             setTimeout(() => setSaveSuccess(false), 3000);
         } catch (err: any) {
-            console.error('[EMPRESA-PAGE] Firestore update error:', err);
-            setSaveError(`Error al guardar: ${err?.message || 'Intente de nuevo.'} `);
+            setSaveError(`Error al persistir ficha legal: ${err?.message || 'Verifique permisos.'}`);
         } finally {
             setSaving(false);
         }
     };
 
-
     if (!currentAccount) return null;
 
-    return (
-        <div className="max-w-4xl mx-auto py-8 px-6 space-y-10">
+    const renderReadField = (label: string, value: string, opts?: { mono?: boolean; copyable?: boolean }) => {
+        const clean = value?.trim() || '';
+        return (
+            <div className="py-fib-13 px-fib-21 flex flex-col sm:flex-row sm:items-center justify-between gap-fib-8">
+                <span className="text-data-dense text-[#475569] dark:text-[#8A93A6]">{label}</span>
+                {clean ? (
+                    <div className="inline-flex items-center gap-fib-8">
+                        <span
+                            className={`text-data-dense font-semibold text-[#0F172A] dark:text-[#F3F4F6] ${
+                                opts?.mono ? 'font-mono tabular-nums' : ''
+                            } ${opts?.copyable ? 'select-text' : ''}`}
+                        >
+                            {clean}
+                        </span>
+                        {opts?.copyable && <CopyButton value={clean} title={`Copiar ${label}`} />}
+                    </div>
+                ) : (
+                    <span className="text-data-dense font-mono text-[#94A3B8] dark:text-[#5A6072]">
+                        {UNDECLARED}
+                    </span>
+                )}
+            </div>
+        );
+    };
 
-            {/* Header */}
-            <div className="flex items-start justify-between border-b border-gray-200 dark:border-gray-800 pb-6">
+    return (
+        <div className="max-w-6xl mx-auto py-fib-34 px-fib-21 space-y-fib-34 font-sans select-none bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6]">
+            {/* Encabezado Modo Informe Técnico con Lápiz Quirúrgico */}
+            <header className="flex items-start justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-21 gap-fib-13">
                 <div>
-                    <h1 className="text-xl font-bold uppercase tracking-wider text-gray-900 dark:text-white">Datos de la Empresa</h1>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        Información registrada ante {isChilean ? 'el SII' : 'el ente regulador nacional'}. Utilizada en facturas y contratos.
+                    <span className="text-microcopy font-mono uppercase text-[#C68346] block mb-fib-8">
+                        MINREPORT // FICHA TÉCNICA DE PERSONA JURÍDICA
+                    </span>
+                    <h1 className="text-h1-header font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
+                        Datos Oficiales de la Empresa
+                    </h1>
+                    <p className="text-data-dense text-[#475569] dark:text-[#8A93A6] mt-fib-8">
+                        Registro tributario y operacional ante {isChilean ? 'el SII (Chile)' : 'el ente regulador nacional'}.
                     </p>
                 </div>
-                <div className="flex items-center gap-3">
+
+                <div className="flex items-center gap-fib-13">
                     {saveSuccess && (
-                        <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-wider flex items-center gap-1.5 animate-in fade-in">
-                            <span className="material-symbols-outlined text-[14px]">check</span> Guardado
+                        <span className="text-microcopy font-mono text-[#00AEEF] uppercase">
+                            REGISTRO ACTUALIZADO
                         </span>
                     )}
                     {!editing ? (
                         <button
+                            type="button"
                             onClick={() => setEditing(true)}
-                            className="text-xs font-bold uppercase tracking-wider px-4 py-2 border border-[#C68346] text-[#C68346] hover:bg-[#C68346]/10 transition-colors rounded-none cursor-pointer"
+                            title="Activar edición quirúrgica"
+                            aria-label="Activar edición quirúrgica"
+                            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                         >
-                            Editar
+                            <span className="material-symbols-outlined text-[20px]">edit</span>
                         </button>
                     ) : (
                         <button
+                            type="button"
                             onClick={handleCancelEdit}
-                            className="text-xs font-bold uppercase tracking-wider px-4 py-2 border border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors rounded-none cursor-pointer"
+                            title="Cancelar edición"
+                            aria-label="Cancelar edición"
+                            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                         >
-                            Cancelar
+                            <span className="material-symbols-outlined text-[20px]">close</span>
                         </button>
                     )}
                 </div>
-            </div>
+            </header>
 
-            {/* Error de guardado */}
             {saveError && (
-                <div className="flex items-start gap-3 p-3 bg-red-500/10 border border-red-500/30 rounded-none text-xs text-red-500 font-mono">
-                    <span className="material-symbols-outlined text-base shrink-0">warning</span>
+                <div className="p-fib-13 bg-red-500/5 border border-red-500/30 rounded-none text-data-dense text-red-600 dark:text-red-400 font-mono">
                     {saveError}
                 </div>
             )}
 
-            {/* ── Sección: Identificación Legal ── */}
-            <section>
-                <p className={SECTION_TITLE}>
-                    <span className="material-symbols-outlined text-base">gavel</span>
-                    Identificación Legal
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="md:col-span-2">
-                        <label className={LBL}>
-                            Razón Social <span className="text-[#C68346]">*</span>
-                        </label>
-                        <input type="text" disabled={!editing} autoComplete="off"
-                            value={form.razonSocial} onChange={e => f('razonSocial', e.target.value)}
-                            className={INP} placeholder="Nombre legal completo de la empresa" />
+            {!editing ? (
+                /* MODO INFORME TÉCNICO POR DEFECTO (SOLO LECTURA) — Proporción Áurea 61.8% / 38.2% */
+                <div className="grid grid-cols-1 lg:grid-cols-[61.8fr_38.2fr] gap-fib-21 items-start">
+                    {/* ÁREA MAYOR (61.8%): Identificación Legal y Direcciones */}
+                    <div className="space-y-fib-21">
+                        <section className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] rounded-none shadow-none">
+                            <div className={SECTION_HEADER}>
+                                <h2 className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
+                                    Identificación Legal y Tributaria
+                                </h2>
+                                <span className="material-symbols-outlined text-[16px] text-[#C68346]">gavel</span>
+                            </div>
+                            <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
+                                {renderReadField('ID Cuenta (Tenant)', currentAccount.id, { mono: true, copyable: true })}
+                                {renderReadField('Razón Social', form.razonSocial)}
+                                {renderReadField(isChilean ? 'RUT Empresa' : 'Tax ID Empresa', form.rut, { mono: true, copyable: true })}
+                                {renderReadField('Nombre de Fantasía', form.nombreFantasia)}
+                                {renderReadField('Giro Comercial', form.giro)}
+                            </div>
+                        </section>
+
+                        <section className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] rounded-none shadow-none">
+                            <div className={SECTION_HEADER}>
+                                <h2 className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
+                                    Domicilio Legal y Sucursal Operativa
+                                </h2>
+                                <span className="material-symbols-outlined text-[16px] text-[#C68346]">location_on</span>
+                            </div>
+                            <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
+                                {renderReadField('Dirección Sede Principal', form.direccionComercial)}
+                                {renderReadField('Comuna', form.comunaComercial)}
+                                {renderReadField('Ciudad', form.ciudadComercial)}
+                                {renderReadField('Región', form.regionComercial)}
+                                {renderReadField('Código Postal', form.postalCode, { mono: true })}
+                                {renderReadField('Dirección Sucursal Faena', form.direccionSucursal)}
+                            </div>
+                        </section>
                     </div>
-                    <div>
-                        <label className={LBL}>{isChilean ? 'RUT' : 'Tax ID'} Empresa</label>
-                        <input type="text" disabled className={INP + ' cursor-not-allowed opacity-50'}
-                            value={form.rut} title="El ID tributario no puede modificarse" />
-                        <p className="text-[10px] text-gray-400 mt-1">
-                            Inmutable · Asignado por {isChilean ? 'vía SII' : 'Registro Nacional'}
-                        </p>
-                    </div>
-                    <div>
-                        <label className={LBL}>Nombre de Fantasía</label>
-                        <input type="text" disabled={!editing} autoComplete="off"
-                            value={form.nombreFantasia} onChange={e => f('nombreFantasia', e.target.value)}
-                            className={INP} placeholder="Nombre comercial (si aplica)" />
-                    </div>
-                    <div className="md:col-span-2">
-                        <label className={LBL}>
-                            Giro Comercial {isChilean && <span className="text-gray-400 font-normal normal-case">· Código SII</span>}
-                        </label>
-                        {isChilean && editing ? (
-                            <div className="relative" ref={dropdownRef}>
-                                <div className="relative">
-                                    <input
-                                        type="text" autoComplete="off"
-                                        placeholder="Buscar actividad económica SII..."
-                                        value={searchTerm || form.giro}
-                                        onFocus={() => setShowDropdown(true)}
-                                        onChange={e => {
-                                            setSearchTerm(e.target.value);
-                                            setShowDropdown(true);
-                                            if (!e.target.value) f('giro', '');
-                                        }}
-                                        className={INP + ' pr-10'}
-                                    />
-                                    <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 text-gray-400 pointer-events-none">
-                                        <span className="material-symbols-outlined text-[14px]">search</span>
-                                        <span className={`material-symbols-outlined text-[14px] transition-transform ${showDropdown ? 'rotate-180' : ''}`}>expand_more</span>
+
+                    {/* ÁREA MENOR (38.2%): Contacto Oficial */}
+                    <aside className="space-y-fib-21">
+                        <section className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] rounded-none shadow-none">
+                            <div className={SECTION_HEADER}>
+                                <h2 className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
+                                    Canales Oficiales y DTE
+                                </h2>
+                                <span className="material-symbols-outlined text-[16px] text-[#C68346]">contact_mail</span>
+                            </div>
+                            <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
+                                {renderReadField('Email Comercial', form.emailComercial, { mono: true, copyable: true })}
+                                {renderReadField(isChilean ? 'Email Tributario DTE / SII' : 'Email Tributario', form.emailTributario, { mono: true, copyable: true })}
+                                {renderReadField('Dominio Corporativo', form.emailDomain, { mono: true, copyable: true })}
+                                {renderReadField('Teléfono Principal', form.telefonoPrincipal, { mono: true })}
+                                {renderReadField('Teléfono Secundario', form.telefonoSecundario, { mono: true })}
+                            </div>
+                        </section>
+                    </aside>
+                </div>
+            ) : (
+                /* MODO EDICIÓN QUIRÚRGICA CON CONFIRMACIÓN HITL "ACTUALIZAR" */
+                <form onSubmit={handleSave} autoComplete="off" spellCheck={false} className="space-y-fib-21">
+                    <div className="grid grid-cols-1 lg:grid-cols-[61.8fr_38.2fr] gap-fib-21 items-start">
+                        {/* ÁREA MAYOR (61.8%): Edición Legal y Direcciones */}
+                        <div className="space-y-fib-21">
+                            <section className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] p-fib-21 rounded-none shadow-none space-y-fib-13">
+                                <h2 className="text-microcopy font-mono uppercase text-[#C68346] border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-8">
+                                    1. Identificación Legal
+                                </h2>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-fib-13">
+                                    <div className="md:col-span-2">
+                                        <label className={LBL}>Razón Social *</label>
+                                        <input
+                                            type="text"
+                                            required
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={form.razonSocial}
+                                            onChange={e => f('razonSocial', e.target.value)}
+                                            className={INP}
+                                        />
                                     </div>
-                                </div>
-                                {showDropdown && (
-                                    <div className="absolute z-[100] w-full mt-1 bg-white dark:bg-[#1a2233] border border-gray-200 dark:border-gray-800 shadow-none max-h-60 overflow-y-auto rounded-none">
-                                        {filteredActivities.length > 0 ? (
-                                            filteredActivities.map((act: any) => (
-                                                <button key={act.code} type="button"
-                                                    onClick={() => { f('giro', act.label); setSearchTerm(act.label); setShowDropdown(false); }}
-                                                    className="w-full text-left px-4 py-3 hover:bg-gray-50 dark:hover:bg-white/5 border-b border-gray-100 dark:border-gray-800 last:border-0 transition-colors flex items-start justify-between gap-3"
-                                                >
-                                                    <div className="flex flex-col">
-                                                        <span className="text-[10px] font-mono font-bold text-[#C68346]">{act.code}</span>
-                                                        <span className="text-xs text-gray-900 dark:text-white mt-0.5 leading-tight">{act.label}</span>
+                                    <div>
+                                        <label className={LBL}>{isChilean ? 'RUT Empresa' : 'Tax ID'}</label>
+                                        <input
+                                            type="text"
+                                            disabled
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={form.rut}
+                                            className={`${INP} font-mono tabular-nums`}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className={LBL}>Nombre de Fantasía</label>
+                                        <input
+                                            type="text"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={form.nombreFantasia}
+                                            onChange={e => f('nombreFantasia', e.target.value)}
+                                            className={INP}
+                                        />
+                                    </div>
+                                    <div className="md:col-span-2">
+                                        <label className={LBL}>Giro Comercial {isChilean ? '· Código SII' : ''}</label>
+                                        {isChilean ? (
+                                            <div className="relative" ref={dropdownRef}>
+                                                <input
+                                                    type="text"
+                                                    autoComplete="off"
+                                                    spellCheck={false}
+                                                    placeholder="Buscar actividad económica SII..."
+                                                    value={searchTerm || form.giro}
+                                                    onFocus={() => setShowDropdown(true)}
+                                                    onChange={e => {
+                                                        setSearchTerm(e.target.value);
+                                                        setShowDropdown(true);
+                                                        if (!e.target.value) f('giro', '');
+                                                    }}
+                                                    className={INP}
+                                                />
+                                                {showDropdown && (
+                                                    <div className="absolute z-[100] w-full mt-1 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] shadow-none max-h-60 overflow-y-auto rounded-none">
+                                                        {filteredActivities.length > 0 ? (
+                                                            filteredActivities.map((act: any) => (
+                                                                <button
+                                                                    key={act.code}
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        f('giro', act.label);
+                                                                        setSearchTerm(act.label);
+                                                                        setShowDropdown(false);
+                                                                    }}
+                                                                    className="w-full text-left px-fib-13 py-fib-8 hover:bg-[#F8FAFC] dark:hover:bg-[#000000] border-b border-[#E2E8F0] dark:border-[#12151C] last:border-0 transition-colors flex items-start justify-between gap-fib-8 cursor-pointer"
+                                                                >
+                                                                    <div className="flex flex-col">
+                                                                        <span className="text-microcopy font-mono tabular-nums text-[#C68346]">{act.code}</span>
+                                                                        <span className="text-data-dense text-[#0F172A] dark:text-[#F3F4F6] mt-0.5">{act.label}</span>
+                                                                    </div>
+                                                                </button>
+                                                            ))
+                                                        ) : (
+                                                            <div className="px-fib-13 py-fib-13 text-data-dense font-mono text-[#94A3B8] dark:text-[#5A6072]">
+                                                                Sin coincidencias SII.
+                                                            </div>
+                                                        )}
                                                     </div>
-                                                    {form.giro === act.label && <span className="material-symbols-outlined text-[14px] text-[#C68346] mt-1 shrink-0">check</span>}
-                                                </button>
-                                            ))
+                                                )}
+                                            </div>
                                         ) : (
-                                            <div className="px-4 py-4 text-xs text-gray-500 italic">No se encontraron actividades...</div>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                        ) : (
-                            <input type="text" disabled={!editing} autoComplete="off"
-                                value={form.giro} onChange={e => f('giro', e.target.value)}
-                                className={INP} placeholder={isChilean ? 'Seleccione un giro comercial' : 'Giro comercial de la empresa'} />
-                        )}
-                    </div>
-                </div>
-            </section>
-
-            {/* ── Sección: Direcciones ── */}
-            <section>
-                <p className={SECTION_TITLE}>
-                    <span className="material-symbols-outlined text-base">location_on</span>
-                    Direcciones
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="md:col-span-1">
-                        <label className={LBL}>Dirección Sede Principal</label>
-                        {editing ? (
-                            <div className="relative" ref={addressDropdownRef}>
-                                <div className="relative">
-                                    <input
-                                        type="text" autoComplete="off" spellCheck={false}
-                                        placeholder="Buscar dirección principal..."
-                                        value={showAddressDropdown ? addressSearchTerm : form.direccionComercial}
-                                        onFocus={() => setShowAddressDropdown(true)}
-                                        onChange={e => {
-                                            setAddressSearchTerm(e.target.value);
-                                            f('direccionComercial', e.target.value);
-                                            setShowAddressDropdown(true);
-                                        }}
-                                        className={INP + ' pr-10 truncate'}
-                                    />
-                                    <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 text-gray-400 pointer-events-none">
-                                        {isGoogleLoaded ? <span className="material-symbols-outlined text-[14px]">search</span> : (
-                                            <div className="w-3 h-3 border border-gray-300 dark:border-gray-700 border-t-[#C68346] animate-spin rounded-none" />
+                                            <input
+                                                type="text"
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                value={form.giro}
+                                                onChange={e => f('giro', e.target.value)}
+                                                className={INP}
+                                            />
                                         )}
                                     </div>
                                 </div>
-                                {googleLoadError && (
-                                    <div className="mt-2 p-3 bg-red-500/5 border border-red-500/10 space-y-1">
-                                        <p className="text-[9px] text-red-500 uppercase font-bold tracking-tighter flex items-center gap-2">
-                                            <span className="material-symbols-outlined text-sm">warning</span>
-                                            Error de Configuración Google Maps
-                                        </p>
-                                        <p className="text-[9px] text-red-500/70 uppercase font-medium leading-tight">
-                                            {googleLoadError.includes('API_KEY_DENIED')
-                                                ? 'La API Key requiere habilitar "Places API" (Legacy) en Google Cloud Console para búsqueda automática.'
-                                                : googleLoadError}
-                                        </p>
-                                        <p className="text-[8px] opacity-40 uppercase font-bold tracking-widest pt-1">Continuar con ingreso manual:</p>
+                            </section>
+
+                            <section className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] p-fib-21 rounded-none shadow-none space-y-fib-13">
+                                <h2 className="text-microcopy font-mono uppercase text-[#C68346] border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-8">
+                                    2. Direcciones Operativas
+                                </h2>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-fib-13">
+                                    <div className="md:col-span-2" ref={addressDropdownRef}>
+                                        <label className={LBL}>Dirección Sede Principal</label>
+                                        <div className="relative">
+                                            <input
+                                                type="text"
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                value={showAddressDropdown ? addressSearchTerm : form.direccionComercial}
+                                                onFocus={() => {
+                                                    setAddressSearchTerm(form.direccionComercial);
+                                                    setShowAddressDropdown(true);
+                                                }}
+                                                onChange={e => {
+                                                    setAddressSearchTerm(e.target.value);
+                                                    f('direccionComercial', e.target.value);
+                                                    setShowAddressDropdown(true);
+                                                }}
+                                                className={INP}
+                                            />
+                                            {isGoogleLoaded && showAddressDropdown && addressSearchTerm && addressPredictions.length > 0 && (
+                                                <div className="absolute z-[100] w-full mt-1 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] shadow-none max-h-60 overflow-y-auto rounded-none">
+                                                    {addressPredictions.map((pred) => (
+                                                        <button
+                                                            key={pred.place_id}
+                                                            type="button"
+                                                            onClick={() => handleSelectAddress(pred.place_id, pred.description)}
+                                                            className="w-full text-left px-fib-13 py-fib-8 hover:bg-[#F8FAFC] dark:hover:bg-[#000000] border-b border-[#E2E8F0] dark:border-[#12151C] last:border-0 transition-colors cursor-pointer"
+                                                        >
+                                                            <p className="text-data-dense font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                                                                {pred.structured_formatting.main_text}
+                                                            </p>
+                                                            <p className="text-microcopy font-mono text-[#475569] dark:text-[#8A93A6] truncate">
+                                                                {pred.structured_formatting.secondary_text}
+                                                            </p>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                        {googleLoadError && (
+                                            <p className="text-microcopy font-mono text-[#94A3B8] dark:text-[#5A6072] mt-fib-8">
+                                                Autocompletado postal no disponible — ingreso manual habilitado.
+                                            </p>
+                                        )}
                                     </div>
-                                )}
-                                {showAddressDropdown && addressSearchTerm && addressPredictions.length > 0 && (
-                                    <div className="absolute z-[100] w-full mt-1 bg-white dark:bg-[#07090D] border border-gray-200 dark:border-gray-800 shadow-none max-h-60 overflow-y-auto rounded-none">
-                                        {addressPredictions.map((pred) => (
-                                            <button key={pred.place_id} type="button"
-                                                onClick={() => handleSelectAddress(pred.place_id, pred.description)}
-                                                className="w-full text-left px-4 py-3 hover:bg-gray-50 dark:hover:bg-white/5 border-b border-gray-100 dark:border-gray-800 last:border-0 transition-colors cursor-pointer"
-                                            >
-                                                <p className="text-xs font-bold text-gray-900 dark:text-white truncate">
-                                                    {pred.structured_formatting.main_text}
-                                                </p>
-                                                <p className="text-[10px] text-gray-500 truncate mt-0.5">
-                                                    {pred.structured_formatting.secondary_text}
-                                                </p>
-                                            </button>
-                                        ))}
+                                    <div>
+                                        <label className={LBL}>Código Postal</label>
+                                        <input
+                                            type="text"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={form.postalCode}
+                                            onChange={e => f('postalCode', e.target.value)}
+                                            className={`${INP} font-mono tabular-nums`}
+                                        />
                                     </div>
-                                )}
-                            </div>
-                        ) : (
-                            <input type="text" disabled autoComplete="off"
-                                value={form.direccionComercial} className={INP} placeholder="Dirección principal" />
-                        )}
-                    </div>
-                    <div>
-                        <label className={LBL}>Código Postal <span className="text-[8px] opacity-40 italic ml-1">(Auto)</span></label>
-                        <input type="text" disabled autoComplete="off"
-                            value={form.postalCode} className={INP + ' cursor-not-allowed opacity-50'} placeholder="Cód. Postal" />
-                    </div>
-                    <div>
-                        <label className={LBL}>Región <span className="text-[8px] opacity-40 italic ml-1">(Auto)</span></label>
-                        <input type="text" disabled autoComplete="off"
-                            value={form.regionComercial} className={INP + ' cursor-not-allowed opacity-50'} />
-                    </div>
-                    <div>
-                        <label className={LBL}>Ciudad <span className="text-[8px] opacity-40 italic ml-1">(Auto)</span></label>
-                        <input type="text" disabled autoComplete="off"
-                            value={form.ciudadComercial} className={INP + ' cursor-not-allowed opacity-50'} />
-                    </div>
-                    <div>
-                        <label className={LBL}>Comuna <span className="text-[8px] opacity-40 italic ml-1">(Auto)</span></label>
-                        <input type="text" disabled autoComplete="off"
-                            value={form.comunaComercial} className={INP + ' cursor-not-allowed opacity-50'} />
-                    </div>
-                    <div className="md:col-span-3">
-                        <label className={LBL}>Dirección Sucursal Operativa <span className="font-normal normal-case text-gray-400">(si aplica)</span></label>
-                        <input type="text" disabled={!editing} autoComplete="off"
-                            value={form.direccionSucursal} onChange={e => f('direccionSucursal', e.target.value)} className={INP} />
-                    </div>
-                </div>
-            </section>
+                                    <div>
+                                        <label className={LBL}>Comuna</label>
+                                        <input
+                                            type="text"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={form.comunaComercial}
+                                            onChange={e => f('comunaComercial', e.target.value)}
+                                            className={INP}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className={LBL}>Ciudad</label>
+                                        <input
+                                            type="text"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={form.ciudadComercial}
+                                            onChange={e => f('ciudadComercial', e.target.value)}
+                                            className={INP}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className={LBL}>Región</label>
+                                        <input
+                                            type="text"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={form.regionComercial}
+                                            onChange={e => f('regionComercial', e.target.value)}
+                                            className={INP}
+                                        />
+                                    </div>
+                                    <div className="md:col-span-3">
+                                        <label className={LBL}>Dirección Sucursal Faena</label>
+                                        <input
+                                            type="text"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={form.direccionSucursal}
+                                            onChange={e => f('direccionSucursal', e.target.value)}
+                                            className={INP}
+                                        />
+                                    </div>
+                                </div>
+                            </section>
+                        </div>
 
-            {/* ── Sección: Contacto Oficial ── */}
-            <section>
-                <p className={SECTION_TITLE}>
-                    <span className="material-symbols-outlined text-base">contact_mail</span>
-                    Contacto Oficial
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label className={LBL}>Email Comercial</label>
-                        <input type="email" disabled={!editing} autoComplete="off" spellCheck={false}
-                            value={form.emailComercial} onChange={e => f('emailComercial', e.target.value)} className={INP} />
-                    </div>
-                    <div>
-                        <label className={LBL}>Email Tributario {isChilean && '/ SII'}</label>
-                        <input type="email" disabled={!editing} autoComplete="off" spellCheck={false}
-                            value={form.emailTributario} onChange={e => f('emailTributario', e.target.value)} className={INP} placeholder="DTE / SII" />
-                    </div>
-                    <div>
-                        <label className={LBL}>Dominio Corporativo</label>
-                        <input type="text" disabled={!editing} autoComplete="off" spellCheck={false}
-                            value={form.emailDomain} onChange={e => f('emailDomain', e.target.value)} className={INP} placeholder="ej. empresa.cl" />
-                    </div>
-                    <div>
-                        <label className={LBL}>Teléfono Principal</label>
-                        <input type="tel" disabled={!editing} autoComplete="off" spellCheck={false}
-                            value={form.telefonoPrincipal} onChange={e => f('telefonoPrincipal', e.target.value)} className={INP} />
-                    </div>
-                    <div>
-                        <label className={LBL}>Teléfono Secundario</label>
-                        <input type="tel" disabled={!editing} autoComplete="off" spellCheck={false}
-                            value={form.telefonoSecundario} onChange={e => f('telefonoSecundario', e.target.value)} className={INP} />
-                    </div>
-                </div>
-            </section>
+                        {/* ÁREA MENOR (38.2%): Contacto Oficial y Confirmación HITL */}
+                        <div className="space-y-fib-21">
+                            <section className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] p-fib-21 rounded-none shadow-none space-y-fib-13">
+                                <h2 className="text-microcopy font-mono uppercase text-[#C68346] border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-8">
+                                    3. Canales Oficiales
+                                </h2>
+                                <div className="space-y-fib-13">
+                                    <div>
+                                        <label className={LBL}>Email Comercial</label>
+                                        <input
+                                            type="email"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={form.emailComercial}
+                                            onChange={e => f('emailComercial', e.target.value)}
+                                            className={`${INP} font-mono`}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className={LBL}>Email Tributario {isChilean ? 'DTE / SII' : ''}</label>
+                                        <input
+                                            type="email"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={form.emailTributario}
+                                            onChange={e => f('emailTributario', e.target.value)}
+                                            className={`${INP} font-mono`}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className={LBL}>Dominio Corporativo</label>
+                                        <input
+                                            type="text"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={form.emailDomain}
+                                            onChange={e => f('emailDomain', e.target.value)}
+                                            className={`${INP} font-mono`}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className={LBL}>Teléfono Principal</label>
+                                        <input
+                                            type="tel"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={form.telefonoPrincipal}
+                                            onChange={e => f('telefonoPrincipal', e.target.value)}
+                                            className={`${INP} font-mono tabular-nums`}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className={LBL}>Teléfono Secundario</label>
+                                        <input
+                                            type="tel"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={form.telefonoSecundario}
+                                            onChange={e => f('telefonoSecundario', e.target.value)}
+                                            className={`${INP} font-mono tabular-nums`}
+                                        />
+                                    </div>
+                                </div>
+                            </section>
 
-            {/* ── Sección: Identidad Visual ── */}
-            <section>
-                <p className={SECTION_TITLE}>
-                    <span className="material-symbols-outlined text-base">image</span>
-                    Identidad Visual
-                </p>
-                <div className="flex items-center gap-6">
-                    <div className="border border-dashed border-gray-300 dark:border-gray-600 w-40 h-20 flex items-center justify-center cursor-pointer hover:border-[#C68346] transition-colors rounded-none">
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Logo Corporativo</span>
+                            {/* Confirmación HITL Obligatoria */}
+                            <section className="border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 rounded-none shadow-none space-y-fib-13">
+                                <label className={LBL}>
+                                    Confirmación HITL — Escriba &quot;ACTUALIZAR&quot;
+                                </label>
+                                <input
+                                    type="text"
+                                    value={confirmWord}
+                                    onChange={e => setConfirmWord(e.target.value.toUpperCase())}
+                                    placeholder="ACTUALIZAR"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    className={`${INP} font-mono font-bold text-center tracking-widest uppercase`}
+                                />
+                                <div className="flex items-center gap-fib-8">
+                                    <button
+                                        type="button"
+                                        onClick={handleCancelEdit}
+                                        className="flex-1 py-fib-8 px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-transparent text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-white rounded-none shadow-none cursor-pointer"
+                                    >
+                                        Cancelar
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        disabled={saving || confirmWord !== 'ACTUALIZAR'}
+                                        className="flex-1 py-fib-8 px-fib-13 bg-[#C68346] hover:bg-[#B0743E] disabled:opacity-30 disabled:cursor-not-allowed text-white text-microcopy font-mono font-bold uppercase rounded-none shadow-none cursor-pointer transition-colors"
+                                    >
+                                        {saving ? 'GUARDANDO...' : 'CONSOLIDAR'}
+                                    </button>
+                                </div>
+                            </section>
+                        </div>
                     </div>
-                    <p className="text-xs text-gray-400">PNG, SVG o JPG · Máx. 2 MB<br />Se incluirá en reportes exportados.</p>
-                </div>
-            </section>
-
-            {/* ── Botón Guardar con HITL Obligatorio ── */}
-            {editing && (
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-6 border-t border-gray-200 dark:border-gray-800">
-                    <div className="flex items-center gap-3 w-full sm:w-auto">
-                        <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-500">Confirmación HITL:</span>
-                        <input
-                            type="text"
-                            value={confirmWord}
-                            onChange={e => setConfirmWord(e.target.value.toUpperCase())}
-                            placeholder='Escriba "ACTUALIZAR"'
-                            autoComplete="off"
-                            spellCheck={false}
-                            className="px-3 py-1.5 text-xs font-mono font-bold border border-gray-300 dark:border-gray-700 bg-transparent text-slate-900 dark:text-white rounded-none tracking-widest uppercase focus:border-[#C68346] outline-none"
-                        />
-                    </div>
-                    <button
-                        onClick={handleSave}
-                        disabled={saving || confirmWord !== 'ACTUALIZAR'}
-                        className="w-full sm:w-auto flex items-center justify-center gap-2 bg-[#C68346] hover:bg-[#b0743e] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold uppercase tracking-wider text-xs py-2.5 px-8 rounded-none transition-colors cursor-pointer"
-                    >
-                        {saving ? (
-                            <><span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span> Guardando...</>
-                        ) : (
-                            <><span className="material-symbols-outlined text-[14px]">check</span> Guardar Cambios</>
-                        )}
-                    </button>
-                </div>
+                </form>
             )}
         </div>
     );
 };
+
+export default EmpresaPage;

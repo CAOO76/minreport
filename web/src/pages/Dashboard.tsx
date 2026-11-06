@@ -1,5 +1,4 @@
 import { Navigate } from 'react-router-dom';
-import LoadingScreen from '../components/common/LoadingScreen';
 import { useAuth } from '../context/AuthContext';
 import { GeneralAdminDashboard } from './b2b/GeneralAdminDashboard';
 import { OperationalDashboard } from './OperationalDashboard';
@@ -16,9 +15,9 @@ export const Dashboard = () => {
         return membership?.role || null;
     }, [currentAccount, profile]);
 
-    // Si no hay cuenta o rol definido, muestra un Loading
+    // Si no hay cuenta o rol definido, retornar null sin pantallas intermedias
     if (!currentAccount || !currentRole) {
-        return <LoadingScreen />;
+        return null;
     }
 
     // Lógica de Despacho B2B

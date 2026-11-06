@@ -2,7 +2,7 @@
     "projectInfo": {
         "name": "MINREPORT Web 3.0",
         "theme": "Minimalismo Industrial Puro (Coffee-Tech & Bauhaus Funcional)",
-        "architecture": "Polimórfica Federada Dual-Mode (Host Integrado + Standalone App sobre Base de Datos Única)"
+        "architecture": "Módulos Nativos 100% Integrados sobre Base de Datos Única (Cloud Firestore & CAS Storage)"
     },
     "accountHierarchy": [
         "1_DEV (DEV_ROOT / dev@minreport.com)",
@@ -14,7 +14,12 @@
     "typography": {
         "primaryFont": "Atkinson Hyperlegible Next",
         "monoFont": "Atkinson Hyperlegible Mono",
-        "prohibitedFonts": ["Google Sans", "Roboto", "Inter"],
+        "selfHostedWoff2": true,
+        "prohibitedFonts": [
+            "Google Sans",
+            "Roboto",
+            "Inter"
+        ],
         "numericAlignment": "tabular-nums font-mono",
         "tokens": {
             "text-hero-display": "clamp(2.5rem, 6vw, 5rem)",
@@ -29,7 +34,9 @@
     "colors": {
         "accent": "#C68346",
         "accentCyan": "#00AEEF",
-        "prohibitedColors": ["#FFCD00"],
+        "prohibitedColors": [
+            "#FFCD00"
+        ],
         "backgrounds": {
             "light": "#FFFFFF",
             "dark": "#000000",
@@ -74,7 +81,8 @@
             "spellCheck": false,
             "borderConfig": "border-[#E2E8F0] dark:border-[#12151C]"
         },
-        "hitlConfirmationKeyword": "ACTUALIZAR"
+        "hitlConfirmationKeyword": "ACTUALIZAR",
+        "missingDataPlaceholder": "[Información técnica no declarada en ficha]"
     },
     "accessibility": {
         "standard": "ISO 9241-300 / WCAG 2.2 AAA",
@@ -85,7 +93,7 @@
     "restrictions": [
         "No App Engine dependencies",
         "No external plugin SDK or MockSecureContext",
-        "Single Firestore & Storage source of truth across Integrated and Standalone modes",
+        "100% Integrated Native Modules on Single Firestore & CAS Storage source of truth",
         "No destructive emulator database resets during dev"
     ]
 }

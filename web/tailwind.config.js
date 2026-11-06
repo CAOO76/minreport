@@ -6,11 +6,41 @@ export default {
     ],
     darkMode: 'class',
     theme: {
+        borderRadius: {
+            none: '0px',
+            DEFAULT: '0px',
+            sm: '0px',
+            md: '0px',
+            lg: '0px',
+            xl: '0px',
+            '2xl': '0px',
+            '3xl': '0px',
+            full: '0px',
+        },
+        boxShadow: {
+            none: 'none',
+            DEFAULT: 'none',
+            sm: 'none',
+            md: 'none',
+            lg: 'none',
+            xl: 'none',
+            '2xl': 'none',
+            inner: 'none',
+        },
         extend: {
             fontFamily: {
                 sans: ['"Atkinson Hyperlegible Next"', '"Atkinson Hyperlegible"', 'system-ui', '-apple-system', 'sans-serif'],
                 mono: ['"Atkinson Hyperlegible Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
                 atkinson: ['"Atkinson Hyperlegible Next"', '"Atkinson Hyperlegible"', 'sans-serif'],
+            },
+            fontSize: {
+                'hero-display': ['clamp(2.5rem, 6vw, 5rem)', { lineHeight: '0.95', letterSpacing: '-0.03em', fontWeight: '700' }],
+                'kpi-display': ['2.25rem', { lineHeight: '1.15', letterSpacing: '-0.02em', fontWeight: '700' }],
+                'h1-header': ['1.375rem', { lineHeight: '1.25', letterSpacing: '-0.01em', fontWeight: '600' }],
+                'h2-section': ['1.0625rem', { lineHeight: '1.35', letterSpacing: '0em', fontWeight: '600' }],
+                'body-main': ['0.9375rem', { lineHeight: '1.45', letterSpacing: '0em', fontWeight: '400' }],
+                'data-dense': ['0.8125rem', { lineHeight: '1.35', letterSpacing: '0.01em', fontWeight: '400' }],
+                'microcopy': ['0.6875rem', { lineHeight: '1.20', letterSpacing: '0.05em', fontWeight: '700' }],
             },
             spacing: {
                 'fib-8': '8px',
@@ -21,10 +51,22 @@ export default {
                 'fib-89': '89px',
             },
             colors: {
-                // Acentos Funcionales Industriales Oficiales MINREPORT
+                background: 'rgb(var(--rgb-background) / <alpha-value>)',
+                foreground: 'rgb(var(--rgb-foreground) / <alpha-value>)',
+                surface: 'rgb(var(--rgb-surface) / <alpha-value>)',
+                'border-base': 'rgb(var(--rgb-border-base) / <alpha-value>)',
+                muted: 'rgb(var(--rgb-muted) / <alpha-value>)',
+                primary: {
+                    DEFAULT: '#C68346',
+                    hover: '#B0743E',
+                },
+                copper: '#C68346',
+                cyan: '#00AEEF',
+                'surface-card-light': '#F8FAFC',
+                'surface-card-dark': '#07090D',
                 industrial: {
-                    copper: '#C68346', // Acento Primario Oficial MINREPORT Cobre
-                    cyan: '#00AEEF',   // Cian Tecnológico
+                    copper: '#C68346',
+                    cyan: '#00AEEF',
                     darkBase: '#000000',
                     darkElevated: '#030406',
                     darkPanel: '#07090D',
@@ -33,14 +75,14 @@ export default {
                     lightElevated: '#F8FAFC',
                     lightBorder: '#E2E8F0',
                 },
-                // Paleta antigravity adaptada
                 antigravity: {
                     light: {
                         bg: '#FFFFFF',
                         surface: '#F8FAFC',
                         text: '#0F172A',
-                        muted: '#64748B',
+                        muted: '#475569',
                         border: '#E2E8F0',
+                        input: '#E2E8F0',
                     },
                     dark: {
                         bg: '#000000',
@@ -48,18 +90,11 @@ export default {
                         text: '#F3F4F6',
                         muted: '#8A93A6',
                         border: '#12151C',
+                        input: '#12151C',
                     },
                     accent: '#C68346',
                 },
             },
-            boxShadow: {
-                DEFAULT: 'none',
-                'none': 'none',
-            },
-            borderRadius: {
-                'none': '0',
-                DEFAULT: '0',
-            }
         },
     },
     plugins: [],

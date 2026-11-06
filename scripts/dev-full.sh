@@ -47,21 +47,21 @@ fi
 echo "📡 Sincronizando IP local para acceso móvil..."
 bash scripts/sync-mobile.sh
 
-# 3. Lanzamiento paralelo de servicios esenciales y satélites originales
-echo "🔥 Iniciando servicios de MINREPORT..."
+# 3. Lanzamiento paralelo de servicios integrados (Monolito Soberano MINREPORT)
+echo "[MINREPORT] Iniciando servicios unificados..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🌐 APP WEB:          http://localhost:5173"
-echo "🔑 PORTAL DEV:       http://localhost:5173/dev"
-echo "🛡️  ADMIN PANEL:      http://localhost:5174"
-echo "⚙️  CORE API:         http://localhost:8080"
+echo "APP WEB (4º/5º):     http://localhost:5173"
+echo "PORTAL DEV (1º):     http://localhost:5173/dev"
+echo "CONSOLA ADMIN (2º):  http://localhost:5173/admin"
+echo "TEST-PILOT (3º):     http://localhost:5173/pilot"
+echo "CORE API:            http://localhost:8080"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 npx concurrently --kill-others \
-  --names "EMU,API,WEB,ADM" \
-  --prefix-colors "yellow,blue,green,magenta" \
+  --names "EMU,API,WEB" \
+  --prefix-colors "yellow,blue,green" \
   "npm run serve:emulators" \
   "npm run dev:server" \
-  "npm run dev:mobile --prefix web" \
-  "npm run dev --prefix admin"
+  "npm run dev:mobile --prefix web"
 
 

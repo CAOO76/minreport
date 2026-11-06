@@ -33,18 +33,18 @@ export const M3Switch: React.FC<M3SwitchProps> = ({
           autoComplete="off"
         />
         <div className={cn(
-          "w-12 h-6 transition-colors duration-200 ease-in-out border",
-          checked ? "bg-copper border-copper" : "bg-transparent border-border-base",
-          "rounded-none" // Estricto industrial
+          "w-12 h-6 transition-colors duration-200 ease-in-out border rounded-none shadow-none",
+          checked
+            ? "bg-[#C68346] border-[#C68346]"
+            : "bg-[#F8FAFC] dark:bg-[#07090D] border-[#E2E8F0] dark:border-[#12151C]"
         )}>
           <div className={cn(
-            "absolute top-1 left-1 w-4 h-4 transition-transform duration-200 ease-in-out",
-            checked ? "translate-x-6 bg-white" : "translate-x-0 bg-muted/40",
-            "rounded-none" // Estricto industrial
+            "absolute top-1 left-1 w-4 h-4 transition-transform duration-200 ease-in-out rounded-none shadow-none",
+            checked ? "translate-x-6 bg-[#000000]" : "translate-x-0 bg-[#475569] dark:bg-[#8A93A6]"
           )} />
         </div>
       </div>
-      {label && <span className="text-sm font-medium">{label}</span>}
+      {label && <span className="text-sm font-medium text-[#0F172A] dark:text-[#F3F4F6]">{label}</span>}
     </label>
   );
 };

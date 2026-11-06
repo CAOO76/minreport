@@ -13,14 +13,14 @@ export const StockpileModule: React.FC = () => {
     };
 
     return (
-        <div className="w-full h-full flex-1 flex flex-col bg-white dark:bg-[#000000] text-slate-900 dark:text-[#F3F4F6] p-0 font-sans select-none">
+        <div className="w-full h-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] p-0 font-sans select-none">
             <Suspense
                 fallback={
-                    <div className="w-full h-96 flex flex-col items-center justify-center p-8 gap-3 font-mono text-[#8A93A6]">
+                    <div className="w-full h-96 flex flex-col items-center justify-center p-[34px] gap-[13px] font-mono bg-[#FFFFFF] dark:bg-[#000000] text-[#475569] dark:text-[#8A93A6]">
                         <span className="material-symbols-outlined text-3xl text-[#C68346] animate-spin">
                             progress_activity
                         </span>
-                        <div className="text-xs uppercase tracking-wider text-[#F3F4F6]">
+                        <div className="text-[11px] uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
                             Cargando Módulo de Cubicación STOCKPILE
                         </div>
                     </div>
@@ -28,7 +28,7 @@ export const StockpileModule: React.FC = () => {
             >
                 <StockpileModuleView
                     tenantContext={{
-                        tenantId: session?.tenantId || 'faena-minreport',
+                        tenantId: session?.tenantId || '',
                         userId: session?.uid || 'operador',
                     }}
                     embedded={true}

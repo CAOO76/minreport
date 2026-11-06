@@ -19,7 +19,7 @@ export const M3ConfirmModal: React.FC<M3ConfirmModalProps> = ({
     onCancel
 }) => {
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 animate-in fade-in duration-300">
             <div className="bg-white dark:bg-[#0a0a0a] border border-black/10 dark:border-white/10 p-8 max-w-md w-full rounded-none space-y-6 animate-in zoom-in-95 duration-300">
                 <div className="space-y-2">
                     <div className="flex items-center gap-2">

@@ -5,21 +5,20 @@ import { auth } from '../../config/firebase';
 import { LanguageSwitch } from '../../components/LanguageSwitch';
 import { ThemeSwitch } from '../../components/ThemeSwitch';
 import BrandLogo from '../../components/BrandLogo';
+import { getApiUrl } from '../../utils/network';
+import { isPasskeySupported, authenticateWithPasskey } from '../../services/passkeyService';
 
 export const MobileLogin: React.FC = () => {
     const navigate = useNavigate();
 
-    // Estados de Formulario
-    const [identifier, setIdentifier] = useState(''); // Email o RUT
+    const [identifier, setIdentifier] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [passkeyLoading, setPasskeyLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    const resolveApiUrl = (endpoint: string) => {
-        const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-        return `http://${host}:8080${endpoint}`;
-    };
+    const passkeyAvailable = isPasskeySupported();
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -28,19 +27,17 @@ export const MobileLogin: React.FC = () => {
 
         const cleanInput = identifier.trim().toLowerCase();
 
-        // [DEV_ROOT SHIELD] Bloqueo de cuenta maestra en terminal móvil
         if (cleanInput === 'dev@minreport.com') {
             setLoading(false);
-            setError('Credenciales corporativas inválidas o tipo de cuenta no autorizada en terminal móvil.');
+            setError('Credenciales corporativas invalidas o tipo de cuenta no autorizada en terminal movil.');
             return;
         }
 
         try {
             let targetEmail = cleanInput;
 
-            // Si no contiene '@', se asume que es un RUT y se resuelve su correo en el directorio
             if (!cleanInput.includes('@')) {
-                const resp = await fetch(resolveApiUrl(`/api/public/accounts-by-id/${encodeURIComponent(cleanInput)}`));
+                const resp = await fetch(getApiUrl(`/api/public/accounts-by-id/${encodeURIComponent(cleanInput)}`));
                 if (resp.ok) {
                     const data = await resp.json();
                     const firstAccount = data.accounts?.[0];
@@ -50,34 +47,52 @@ export const MobileLogin: React.FC = () => {
                 }
             }
 
-            // Autenticación oficial unificada con Firebase Auth
             await signInWithEmailAndPassword(auth, targetEmail, password);
             navigate('/mobile/dashboard');
         } catch (err: any) {
             console.error('[MOBILE-LOGIN] Error:', err);
             if (
-                err.code === 'auth/invalid-credential' || 
-                err.code === 'auth/user-not-found' || 
+                err.code === 'auth/invalid-credential' ||
+                err.code === 'auth/user-not-found' ||
                 err.code === 'auth/wrong-password' ||
                 err.code === 'auth/invalid-email'
             ) {
-                setError('Credenciales operativas inválidas o usuario no registrado.');
+                setError('Credenciales operativas invalidas o usuario no registrado.');
             } else {
-                setError('Error de conexión con la infraestructura de autenticación.');
+                setError('Error de conexion con la infraestructura de autenticacion.');
             }
         } finally {
             setLoading(false);
         }
     };
 
+    const handlePasskeyLogin = async () => {
+        setError(null);
+        setPasskeyLoading(true);
+        const cleanInput = identifier.trim().toLowerCase();
+        if (cleanInput === 'dev@minreport.com') {
+            setPasskeyLoading(false);
+            setError('Credenciales corporativas invalidas o tipo de cuenta no autorizada en terminal movil.');
+            return;
+        }
+        try {
+            await authenticateWithPasskey(cleanInput || undefined);
+            navigate('/mobile/dashboard');
+        } catch (err: any) {
+            if (err?.name !== 'NotAllowedError') {
+                setError(err?.message || 'No se pudo autenticar con Passkey FIDO2.');
+            }
+        } finally {
+            setPasskeyLoading(false);
+        }
+    };
+
     return (
-        <div className="min-h-screen w-full bg-white dark:bg-[#000000] text-slate-900 dark:text-[#F3F4F6] flex flex-col justify-between p-6 select-none font-sans antialiased">
-            
-            {/* Header Técnico */}
-            <header className="flex items-center justify-between border-b border-slate-200 dark:border-[#12151C] pb-4">
+        <div className="min-h-screen w-full bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col justify-between p-fib-21 select-none font-sans antialiased">
+            <header className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-4">
                 <div className="flex items-center gap-2">
                     <BrandLogo variant="isotype" className="h-6 w-auto object-contain" />
-                    <span className="font-mono text-xs uppercase tracking-widest text-slate-800 dark:text-[#F3F4F6] font-bold">
+                    <span className="font-mono text-xs uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6] font-bold">
                         MINREPORT MOBILE
                     </span>
                 </div>
@@ -88,21 +103,19 @@ export const MobileLogin: React.FC = () => {
                 </div>
             </header>
 
-            {/* Contenedor Central */}
-            <main className="w-full max-w-sm mx-auto my-auto space-y-6">
+            <main className="w-full max-w-sm mx-auto my-auto space-y-fib-21">
                 <div className="space-y-1">
-                    <h1 className="font-mono text-sm uppercase tracking-wider text-slate-900 dark:text-[#F3F4F6] font-bold">
+                    <h1 className="font-mono text-sm uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6] font-bold">
                         Acceso Operativo de Faena
                     </h1>
-                    <p className="font-sans text-xs text-slate-500 dark:text-[#8A93A6]">
-                        Ingrese con su correo corporativo o RUT registrado
+                    <p className="font-sans text-xs text-[#475569] dark:text-[#8A93A6]">
+                        Ingrese con su correo corporativo, RUT o Passkey FIDO2
                     </p>
                 </div>
 
-                <form onSubmit={handleLogin} autoComplete="off" spellCheck={false} className="bg-slate-50 dark:bg-[#07090D] border border-slate-200 dark:border-[#12151C] p-6 space-y-4 rounded-none shadow-none">
-                    
+                <form onSubmit={handleLogin} autoComplete="off" spellCheck={false} className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-fib-21 space-y-4 rounded-none shadow-none">
                     {error && (
-                        <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs font-mono flex items-center gap-2 rounded-none">
+                        <div className="p-fib-13 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs font-mono flex items-center gap-2 rounded-none">
                             <span className="material-symbols-outlined text-[16px] text-red-600 dark:text-red-400 shrink-0">
                                 error
                             </span>
@@ -111,7 +124,7 @@ export const MobileLogin: React.FC = () => {
                     )}
 
                     <div>
-                        <label className="block text-[11px] font-mono text-slate-600 dark:text-[#8A93A6] uppercase tracking-wider mb-1.5">
+                        <label className="block text-[11px] font-mono text-[#475569] dark:text-[#8A93A6] uppercase tracking-wider mb-1.5">
                             Correo Corporativo o RUT
                         </label>
                         <input
@@ -121,12 +134,14 @@ export const MobileLogin: React.FC = () => {
                             placeholder="operador@minera.cl o 12.345.678-9"
                             required
                             autoFocus
-                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] px-3 py-2 font-mono text-xs text-slate-900 dark:text-[#F3F4F6] outline-none rounded-none transition-colors"
+                            autoComplete="off"
+                            spellCheck={false}
+                            className="w-full bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] px-3 py-2 font-mono text-xs text-[#0F172A] dark:text-[#F3F4F6] outline-none rounded-none transition-colors select-text"
                         />
                     </div>
 
                     <div>
-                        <label className="block text-[11px] font-mono text-slate-600 dark:text-[#8A93A6] uppercase tracking-wider mb-1.5">
+                        <label className="block text-[11px] font-mono text-[#475569] dark:text-[#8A93A6] uppercase tracking-wider mb-1.5">
                             Contraseña
                         </label>
                         <div className="relative">
@@ -136,7 +151,9 @@ export const MobileLogin: React.FC = () => {
                                 onChange={(e) => setPassword(e.target.value)}
                                 placeholder="••••••••••••"
                                 required
-                                className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] px-3 py-2 pr-10 font-mono text-xs text-slate-900 dark:text-[#F3F4F6] outline-none rounded-none transition-colors"
+                                autoComplete="off"
+                                spellCheck={false}
+                                className="w-full bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] px-3 py-2 pr-10 font-mono text-xs text-[#0F172A] dark:text-[#F3F4F6] outline-none rounded-none transition-colors"
                             />
                             <button
                                 type="button"
@@ -152,8 +169,8 @@ export const MobileLogin: React.FC = () => {
 
                     <button
                         type="submit"
-                        disabled={loading}
-                        className="w-full py-2.5 bg-[#C68346] hover:bg-[#b07238] text-black font-mono font-bold text-xs uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none flex items-center justify-center gap-2"
+                        disabled={loading || passkeyLoading}
+                        className="w-full py-2.5 bg-[#C68346] hover:bg-[#B0743E] text-white font-mono font-bold text-xs uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none border-0 flex items-center justify-center gap-2"
                     >
                         {loading ? (
                             <span>VALIDANDO...</span>
@@ -166,16 +183,28 @@ export const MobileLogin: React.FC = () => {
                             </>
                         )}
                     </button>
+
+                    {passkeyAvailable && (
+                        <button
+                            type="button"
+                            onClick={handlePasskeyLogin}
+                            disabled={loading || passkeyLoading}
+                            className="w-full py-2.5 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-xs uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none flex items-center justify-center gap-2"
+                        >
+                            <span className="material-symbols-outlined text-[18px] text-[#00AEEF]">
+                                {passkeyLoading ? 'progress_activity' : 'fingerprint'}
+                            </span>
+                            <span>{passkeyLoading ? 'VERIFICANDO...' : 'PASSKEY BIOMETRICA'}</span>
+                        </button>
+                    )}
                 </form>
             </main>
 
-            {/* Footer Técnico */}
-            <footer className="border-t border-slate-200 dark:border-[#12151C] pt-4 text-center">
-                <p className="font-mono text-[10px] text-slate-500 dark:text-[#5A6072] uppercase tracking-widest">
-                    SISTEMA MINERO INTEGRADO MINREPORT
+            <footer className="border-t border-[#E2E8F0] dark:border-[#12151C] pt-4 text-center">
+                <p className="font-mono text-[10px] text-[#94A3B8] dark:text-[#5A6072] uppercase tracking-widest">
+                    MINREPORT · SOUTHAMERICA-WEST1
                 </p>
             </footer>
-
         </div>
     );
 };

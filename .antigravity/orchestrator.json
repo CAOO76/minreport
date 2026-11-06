@@ -1,6 +1,6 @@
 {
-  "version": "3.0.0",
-  "description": "Orquestador Soberano de Skills MINREPORT Web 3.0 (5 Capas & Arquitectura Polimórfica Dual-Mode)",
+  "version": "4.0.0",
+  "description": "Orquestador Soberano de Skills MINREPORT Web 3.0 (5 Capas & Módulos Nativos 100% Integrados)",
   "activeSkills": [
     {
       "id": 1,
@@ -11,9 +11,7 @@
         "módulo",
         "opermaq",
         "stockpile",
-        "standalone",
         "integrado",
-        "dual-mode",
         "test-pilot",
         "tenant"
       ]
@@ -138,7 +136,8 @@
       "single_firestore_database_multi_tenant",
       "five_account_tiers_dev_admin_pilot_b2b_edu",
       "autocomplete_off_and_spellcheck_false",
-      "offline_first_sync_queue_engine"
+      "offline_first_sync_queue_engine",
+      "hitl_keyword_actualizar"
     ]
   }
 }

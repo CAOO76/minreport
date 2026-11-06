@@ -5,44 +5,128 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    function isSystemPrivileged() {
+    function isDevRoot() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'DEV_ROOT' ||
+        request.auth.token.isMasterDev == true ||
+        request.auth.uid == 'dev-master-root-uid' ||
+        (request.auth.token.email == 'dev@minreport.com' && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isSuperAdmin() {
       return isAuthenticated() && (
         request.auth.token.role == 'SUPER_ADMIN' ||
-        request.auth.token.role == 'DEV_ROOT' ||
-        request.auth.token.role == 'TEST_PILOT' ||
-        request.auth.token.role == 'PILOT_LEAD' ||
-        request.auth.token.isMasterDev == true ||
-        request.auth.token.email == 'admin@minreport.com' ||
-        request.auth.token.email == 'dev@minreport.com'
+        request.auth.token.admin == true ||
+        request.auth.uid == 'super-admin-uid' ||
+        (request.auth.token.email == 'admin@minreport.com' && request.auth.token.email_verified == true)
       );
     }
 
-    // Activos públicos de marca (solo lectura pública, escritura exclusiva Admin/Dev)
+    function isTestPilot() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'TEST_PILOT' ||
+        request.auth.token.role == 'PILOT_LEAD'
+      );
+    }
+
+    function isSystemPrivileged() {
+      return isDevRoot() || isSuperAdmin() || isTestPilot();
+    }
+
+    function isTenantAuthorized(tenantId) {
+      return isAuthenticated() &&
+        tenantId is string &&
+        tenantId.size() > 0 && (
+          isSystemPrivileged() ||
+          request.auth.token.activeAccountId == tenantId ||
+          request.auth.token.tenantId == tenantId ||
+          firestore.exists(/databases/(default)/documents/accounts/$(tenantId)/members/$(request.auth.uid)) ||
+          (
+            firestore.exists(/databases/(default)/documents/accounts/$(tenantId)) &&
+            firestore.get(/databases/(default)/documents/accounts/$(tenantId)).data.ownerId == request.auth.uid
+          )
+        );
+    }
+
+    function isAllowedTechnicalMedia() {
+      return request.resource != null &&
+        request.resource.contentType != null && (
+          request.resource.contentType.matches('image/(webp|png|jpeg|svg\\+xml)') ||
+          request.resource.contentType == 'application/pdf' ||
+          request.resource.contentType.matches('video/(mp4|webm)') ||
+          request.resource.contentType == 'model/gltf-binary' ||
+          request.resource.contentType == 'application/octet-stream' ||
+          request.resource.contentType == 'text/html'
+        );
+    }
+
+    // Activos públicos de marca corporativa (solo lectura pública, escritura exclusiva DEV/ADMIN)
     match /branding/{allPaths=**} {
       allow read: if true;
-      allow write: if isSystemPrivileged();
+      allow delete: if isDevRoot() || isSuperAdmin();
+      allow create, update: if (isDevRoot() || isSuperAdmin()) &&
+        request.resource.size < 10 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/(webp|png|jpeg|svg\\+xml|x-icon|vnd\\.microsoft\\.icon)');
     }
 
-    // Manuales técnicos globales y corpus IA (lectura habilitada para visor técnico, escritura exclusiva Admin/Dev/Test-Pilot)
+    // Manuales técnicos compilados y corpus OEM global (escritura exclusiva curadores acreditados)
     match /manuals/{allPaths=**} {
-      allow read: if true;
-      allow write: if isSystemPrivileged();
-    }
-
-    // Evidencia fotogramétrica, mallas 3D (.glb) e imágenes WebP por Tenant
-    match /tenants/{tenantId}/{allPaths=**} {
-      allow read, write: if isSystemPrivileged() || (
-        isAuthenticated() && (
-          request.auth.token.activeAccountId == tenantId ||
-          tenantId == 'faena-minreport'
-        )
-      );
-    }
-
-    // Archivos operativos de módulos (stockpiles, opermaq, edu, etc.)
-    match /{moduleFolder}/{allPaths=**} {
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && request.resource.size < 25 * 1024 * 1024;
+      allow delete: if isSystemPrivileged();
+      allow create, update: if isSystemPrivileged() &&
+        request.resource.size < 80 * 1024 * 1024 &&
+        isAllowedTechnicalMedia();
+    }
+
+    // CAS SHA-256 — Activos Globales OEM Verificados
+    match /cas_blobs/global_oem/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow delete: if isDevRoot() || isSuperAdmin();
+      allow create, update: if isSystemPrivileged() &&
+        request.resource.size < 80 * 1024 * 1024 &&
+        isAllowedTechnicalMedia();
+    }
+
+    // CAS SHA-256 — Simbología Industrial Vectorial Maestra
+    match /cas_blobs/symbology/{allPaths=**} {
+      allow read: if true;
+      allow delete: if isDevRoot() || isSuperAdmin();
+      allow create, update: if isSystemPrivileged() &&
+        request.resource.size < 5 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/(svg\\+xml|webp|png)');
+    }
+
+    // CAS SHA-256 — Bóveda Privada Aislada por Tenant (ISO 27001 — Cero cruce entre empresas)
+    match /cas_blobs/tenants/{tenantId}/{allPaths=**} {
+      allow read: if isTenantAuthorized(tenantId);
+      allow delete: if isTenantAuthorized(tenantId);
+      allow create, update: if isTenantAuthorized(tenantId) &&
+        request.resource.size < 50 * 1024 * 1024 &&
+        isAllowedTechnicalMedia();
+    }
+
+    // Bóveda Vectorial Pública de Simbología Industrial (SVG/WebP inmutable)
+    match /assets/symbology/{allPaths=**} {
+      allow read: if true;
+      allow delete: if isDevRoot() || isSuperAdmin();
+      allow create, update: if isSystemPrivileged() &&
+        request.resource.size < 5 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/(svg\\+xml|webp|png)');
+    }
+
+    // Evidencia fotogramétrica, mallas 3D (.glb) e imágenes WebP aisladas por Tenant
+    match /tenants/{tenantId}/{allPaths=**} {
+      allow read: if isTenantAuthorized(tenantId);
+      allow delete: if isTenantAuthorized(tenantId);
+      allow create, update: if isTenantAuthorized(tenantId) &&
+        request.resource.size < 50 * 1024 * 1024 &&
+        isAllowedTechnicalMedia();
+    }
+
+    // Denegación explícita por defecto sobre cualquier ruta no gobernada (Cero comodines OR)
+    match /{allPaths=**} {
+      allow read, write: if false;
     }
   }
 }

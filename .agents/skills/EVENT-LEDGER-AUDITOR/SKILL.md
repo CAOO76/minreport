@@ -5,13 +5,12 @@ description: Auditoría de eventos universales y trazabilidad criptográfica ent
 
 # EVENT-LEDGER-AUDITOR (MINREPORT Web 3.0)
 
-Gobierna la emisión, validación y persistencia de eventos operativos y de auditoría entre el núcleo de **MINREPORT** y sus módulos (`OPERMAQ` y `STOCKPILE CONTROL`), tanto en modo integrado como standalone.
+Gobierna la emisión, validación y persistencia de eventos operativos y de auditoría entre el núcleo de **MINREPORT** y sus módulos nativos integrados (`OPERMAQ` y `STOCKPILE CONTROL`) sobre base de datos única en `southamerica-west1`.
 
 ## 1. Contratos y Persistencia de Eventos
 1. **Esquemas Canónicos (`web/src/contracts/index.ts`):**
-   - Todo evento inter-modular debe cumplir `SystemEventSchema`, `EquipmentMasterTelemetrySchema` o `StockpileSurveyTelemetrySchema`.
+   - Todo evento inter-modular debe cumplir `SystemEventSchema`, `EquipmentMasterTelemetrySchema` o `StockpileSurveyTelemetrySchema` e incluir `tenantId` obligatorio.
 2. **Doble Vía Online / Offline-First:**
-   - En terreno sin conexión, los eventos y capturas se persisten localmente en IndexedDB a través de `SyncQueueEngine` (`web/src/core/offline/SyncQueueEngine.ts`) y se sincronizan automáticamente con Firestore al recuperar red.
-3. **Inmutabilidad Criptográfica (`src/core/audit-ledger.ts`):**
-   - Las mutaciones críticas de cuentas, sellado de bóvedas IA, resoluciones HITL y feedback de `TEST-PILOTS` se asientan con hash SHA-256 en la colección append-only `audit_ledger`.
-
+   - En terreno sin conexión, los eventos y capturas se persisten localmente en IndexedDB particionados por `tenantId` a través de `SyncQueueEngine` (`web/src/core/offline/SyncQueueEngine.ts`) y se sincronizan automáticamente con Firestore al recuperar red.
+3. **Inmutabilidad Criptográfica Encadenada (`src/core/audit-ledger.ts`):**
+   - Las mutaciones críticas de cuentas, sellado de bóvedas IA, resoluciones HITL (`"ACTUALIZAR"`), Passkeys FIDO2, cobros x402 y feedback de `TEST-PILOTS` se asientan con secuencia monotónica y cadena SHA-256 (`prevHash` + `entryHash`) en la colección append-only `audit_ledger`.

@@ -9,9 +9,9 @@ interface CardProps {
 export const Card = ({ children, className }: CardProps) => {
     return (
         <div className={clsx(
-            "bg-surface-card-light dark:bg-surface-card-dark",
-            "border border-gray-200 dark:border-gray-800",
-            "rounded-none p-6",
+            "bg-[#F8FAFC] dark:bg-[#07090D]",
+            "border border-[#E2E8F0] dark:border-[#12151C]",
+            "rounded-none shadow-none p-fib-21",
             className
         )}>
             {children}

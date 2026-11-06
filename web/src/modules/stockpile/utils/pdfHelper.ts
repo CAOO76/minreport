@@ -3,6 +3,7 @@ import { Share } from '@capacitor/share';
 import { Capacitor } from '@capacitor/core';
 import * as htmlToImage from 'html-to-image';
 import jsPDF from 'jspdf';
+import { toast } from 'react-toastify';
 
 /**
  * PDF Generation & Sharing Helper
@@ -148,7 +149,7 @@ export const downloadPDF = async (elementId: string, fileName: string): Promise<
                 directory: Directory.Documents
             });
 
-            alert(`PDF guardado en Documents/${fileName}.pdf`);
+            toast.success(`PDF guardado en Documents/${fileName}.pdf`);
         } else {
             // Browser Web Fallback para Desktop
             const url = window.URL.createObjectURL(pdfBlob);
@@ -162,7 +163,7 @@ export const downloadPDF = async (elementId: string, fileName: string): Promise<
         }
     } catch (error: any) {
         console.error('[PDF Helper] Download ERROR:', error);
-        alert(`Error al descargar: ${error.message || 'Error desconocido'}`);
+        toast.error(`Error al descargar: ${error.message || 'Error desconocido'}`);
     }
 };
 

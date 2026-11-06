@@ -5,19 +5,21 @@
  */
 
 export interface StockpileAsset {
-    // Identificación
+    // Identificación y Aislamiento Multi-Tenant
     id: string;
+    tenantId?: string;
+    accountId?: string;
     name: string;
     clase: 'mineral' | 'esteril' | 'baja_ley';
     createdAt: number;
     createdBy: string;
 
-    // Georeferencia Inicial (Alta del Activo)
-    geo_point: {
+    // Georeferencia Inicial (Opcional — Cero coordenadas falsas 0,0 cuando no hay GPS)
+    geo_point?: {
         latitude: number;
         longitude: number;
         altitude: number | null;
-        accuracy: number;
+        accuracy?: number;
     };
     location_ref?: string; // Descripción manual de la ubicación
 

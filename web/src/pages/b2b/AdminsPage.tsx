@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { StaffService } from '../../services/StaffService';
 import { db } from '../../config/firebase';
 import { collection, query, where, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
+import { CopyButton } from '../../components/common/CopyButton';
 
 interface AdminMember {
     id: string;
@@ -16,8 +17,8 @@ interface AdminMember {
     invitedAt: number;
 }
 
-const labelClass = "block text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] mb-[8px]";
-const inputClass = "w-full bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] px-[13px] py-[8px] text-[13px] text-[#0F172A] dark:text-[#F3F4F6] focus:outline-none focus:border-[#C68346] rounded-none shadow-none transition-colors disabled:opacity-40";
+const labelClass = 'block text-microcopy font-mono font-bold uppercase text-[#475569] dark:text-[#8A93A6] mb-fib-8';
+const inputClass = 'w-full bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] px-fib-13 py-fib-8 text-data-dense text-[#0F172A] dark:text-[#F3F4F6] focus:outline-none focus:border-[#C68346] rounded-none shadow-none transition-colors disabled:opacity-40';
 
 export const AdminsPage: React.FC = () => {
     const { currentAccount, user } = useAuth();
@@ -45,9 +46,8 @@ export const AdminsPage: React.FC = () => {
             const list = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as AdminMember));
             setAdmins(list);
             setInitialLoading(false);
-        }, (err) => {
-            console.error("Error listening to admins:", err);
-            setError("Error al sincronizar administradores.");
+        }, () => {
+            setError('Error al sincronizar administradores.');
             setInitialLoading(false);
         });
         return () => unsubscribe();
@@ -65,7 +65,7 @@ export const AdminsPage: React.FC = () => {
     };
 
     const handleDesignate = async () => {
-        if (confirmText !== 'ACTUALIZAR' && confirmText !== 'DESIGNAR') return;
+        if (confirmText !== 'ACTUALIZAR') return;
         if (!currentAccount || !user) return;
         setLoading(true);
         setError(null);
@@ -92,16 +92,15 @@ export const AdminsPage: React.FC = () => {
     };
 
     const handleConfirmRevoke = async () => {
-        if (!currentAccount?.id || !selectedAdminToRevoke || (revokeConfirmText !== 'REVOCAR' && revokeConfirmText !== 'ACTUALIZAR')) return;
+        if (!currentAccount?.id || !selectedAdminToRevoke || revokeConfirmText !== 'ACTUALIZAR') return;
         setLoading(true);
         try {
             const docRef = doc(db, 'accounts', currentAccount.id, 'members', selectedAdminToRevoke.id);
             await deleteDoc(docRef);
             setShowRevokeModal(false);
             setSelectedAdminToRevoke(null);
-        } catch (err) {
-            console.error("Error revoking admin:", err);
-            setError("Error al revocar acceso.");
+        } catch {
+            setError('Error al revocar acceso.');
         } finally {
             setLoading(false);
         }
@@ -132,30 +131,29 @@ export const AdminsPage: React.FC = () => {
 
     if (initialLoading) {
         return (
-            <div className="p-[21px] font-mono text-[13px] text-[#94A3B8] dark:text-[#5A6072]">
+            <div className="p-fib-21 font-mono text-data-dense text-[#94A3B8] dark:text-[#5A6072]">
                 [Cargando registros...]
             </div>
         );
     }
 
     return (
-        <div className="w-full space-y-[21px] select-none font-sans">
+        <div className="max-w-6xl mx-auto py-fib-34 px-fib-21 space-y-fib-21 select-none font-sans">
             {/* Macro-Layout Proporción Áurea: 38.2% Alta / 61.8% Tabla Técnica */}
-            <div className="grid grid-cols-1 lg:grid-cols-[38.2fr_61.8fr] gap-[21px] items-start">
-
+            <div className="grid grid-cols-1 lg:grid-cols-[38.2fr_61.8fr] gap-fib-21 items-start">
                 {/* ÁREA MENOR (38.2%): ALTA DE ADMINISTRADOR */}
-                <section className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-[21px] rounded-none shadow-none space-y-[21px]">
-                    <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-[13px]">
-                        <h2 className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#C68346]">
+                <section className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-fib-21 rounded-none shadow-none space-y-fib-21">
+                    <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
+                        <h2 className="text-microcopy font-mono font-bold uppercase text-[#C68346]">
                             DESIGNACIÓN DE ADMINISTRADOR
                         </h2>
-                        <span className="text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                        <span className="text-microcopy font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
                             {admins.length} / 2
                         </span>
                     </div>
 
-                    <form onSubmit={handlePreSubmit} autoComplete="off" spellCheck={false} className="space-y-[13px]">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-[13px]">
+                    <form onSubmit={handlePreSubmit} autoComplete="off" spellCheck={false} className="space-y-fib-13">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-fib-13">
                             <div>
                                 <label className={labelClass}>NOMBRES</label>
                                 <input
@@ -182,7 +180,7 @@ export const AdminsPage: React.FC = () => {
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-[13px]">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-fib-13">
                             <div>
                                 <label className={labelClass}>RUN</label>
                                 <input
@@ -210,7 +208,7 @@ export const AdminsPage: React.FC = () => {
                         </div>
 
                         {error && (
-                            <div className="p-[13px] bg-red-500/5 border border-red-500/30 text-[13px] font-mono text-red-600 dark:text-red-400 rounded-none">
+                            <div className="p-fib-13 bg-red-500/5 border border-red-500/30 text-data-dense font-mono text-red-600 dark:text-red-400 rounded-none">
                                 {error}
                             </div>
                         )}
@@ -218,7 +216,7 @@ export const AdminsPage: React.FC = () => {
                         <button
                             type="submit"
                             disabled={admins.length >= 2 || loading}
-                            className="w-full bg-[#C68346] hover:bg-[#b0743e] text-white py-[8px] px-[21px] text-[11px] font-mono font-bold uppercase tracking-[0.05em] transition-colors disabled:opacity-40 cursor-pointer rounded-none shadow-none outline-none"
+                            className="w-full bg-[#C68346] hover:bg-[#B0743E] text-white py-fib-8 px-fib-21 text-microcopy font-mono font-bold uppercase transition-colors disabled:opacity-40 cursor-pointer rounded-none shadow-none outline-none"
                         >
                             {loading ? 'PROCESANDO...' : 'DESIGNAR'}
                         </button>
@@ -227,82 +225,91 @@ export const AdminsPage: React.FC = () => {
 
                 {/* ÁREA MAYOR (61.8%): TABLA TÉCNICA DE ADMINISTRADORES */}
                 <section className="bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none">
-                    <div className="px-[21px] py-[13px] border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between">
-                        <h2 className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6]">
+                    <div className="px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between">
+                        <h2 className="text-microcopy font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
                             REGISTRO DE ADMINISTRADORES
                         </h2>
-                        <span className="text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                        <span className="text-microcopy font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
                             ACTIVOS: {admins.filter(a => a.status === 'ACTIVE').length}
                         </span>
                     </div>
 
                     <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse font-mono text-[13px] tabular-nums">
+                        <table className="w-full text-left border-collapse font-mono text-data-dense tabular-nums">
                             <thead>
-                                <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-[11px] uppercase text-[#475569] dark:text-[#8A93A6]">
-                                    <th className="py-[13px] px-[21px]">RUN</th>
-                                    <th className="py-[13px] px-[21px]">NOMBRE</th>
-                                    <th className="py-[13px] px-[21px]">EMAIL</th>
-                                    <th className="py-[13px] px-[21px]">ESTADO</th>
-                                    <th className="py-[13px] px-[21px] text-right">ACCIÓN</th>
+                                <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                                    <th className="py-fib-13 px-fib-21">RUN</th>
+                                    <th className="py-fib-13 px-fib-21">NOMBRE</th>
+                                    <th className="py-fib-13 px-fib-21">EMAIL</th>
+                                    <th className="py-fib-13 px-fib-21">ESTADO</th>
+                                    <th className="py-fib-13 px-fib-21 text-right">ACCIÓN</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
                                 {admins.length === 0 ? (
                                     <tr>
-                                        <td colSpan={5} className="py-[34px] px-[21px] text-center text-[13px] font-mono text-[#94A3B8] dark:text-[#5A6072]">
+                                        <td colSpan={5} className="py-fib-34 px-fib-21 text-center text-data-dense font-mono text-[#94A3B8] dark:text-[#5A6072]">
                                             [Información técnica no declarada en ficha]
                                         </td>
                                     </tr>
                                 ) : (
-                                    admins.map(admin => (
-                                        <tr key={admin.id} className="hover:bg-[#F8FAFC] dark:hover:bg-[#000000]/40 transition-colors">
-                                            <td className="py-[13px] px-[21px] text-[#0F172A] dark:text-[#F3F4F6] select-text">
-                                                {formatRut(admin.run)}
-                                            </td>
-                                            <td className="py-[13px] px-[21px] font-sans font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
-                                                {admin.fullName}
-                                            </td>
-                                            <td className="py-[13px] px-[21px] text-[#475569] dark:text-[#8A93A6] select-text">
-                                                {admin.email}
-                                            </td>
-                                            <td className="py-[13px] px-[21px]">
-                                                <span className={`px-[8px] py-0.5 text-[11px] font-mono uppercase border rounded-none ${
-                                                    admin.status === 'ACTIVE'
-                                                        ? 'border-[#00AEEF]/40 text-[#00AEEF]'
-                                                        : 'border-[#C68346]/40 text-[#C68346]'
-                                                }`}>
-                                                    {admin.status === 'ACTIVE' ? 'ACTIVO' : 'PENDIENTE'}
-                                                </span>
-                                            </td>
-                                            <td className="py-[13px] px-[21px] text-right">
-                                                <div className="inline-flex items-center justify-end gap-[8px]">
-                                                    {admin.status === 'PENDING' && (
+                                    admins.map(admin => {
+                                        const formattedRun = formatRut(admin.run);
+                                        return (
+                                            <tr key={admin.id} className="hover:bg-[#F8FAFC] dark:hover:bg-[#000000]/40 transition-colors">
+                                                <td className="py-fib-13 px-fib-21 text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    <div className="inline-flex items-center gap-fib-8">
+                                                        <span className="select-text tabular-nums">{formattedRun}</span>
+                                                        <CopyButton value={formattedRun} title="Copiar RUN" />
+                                                    </div>
+                                                </td>
+                                                <td className="py-fib-13 px-fib-21 font-sans font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    {admin.fullName || '[Información técnica no declarada en ficha]'}
+                                                </td>
+                                                <td className="py-fib-13 px-fib-21 text-[#475569] dark:text-[#8A93A6]">
+                                                    <div className="inline-flex items-center gap-fib-8">
+                                                        <span className="select-text">{admin.email}</span>
+                                                        <CopyButton value={admin.email} title="Copiar email" />
+                                                    </div>
+                                                </td>
+                                                <td className="py-fib-13 px-fib-21">
+                                                    <span className={`px-fib-8 py-0.5 text-microcopy font-mono uppercase border rounded-none ${
+                                                        admin.status === 'ACTIVE'
+                                                            ? 'border-[#00AEEF]/40 text-[#00AEEF]'
+                                                            : 'border-[#C68346]/40 text-[#C68346]'
+                                                    }`}>
+                                                        {admin.status === 'ACTIVE' ? 'ACTIVO' : 'PENDIENTE'}
+                                                    </span>
+                                                </td>
+                                                <td className="py-fib-13 px-fib-21 text-right">
+                                                    <div className="inline-flex items-center justify-end gap-fib-8">
+                                                        {admin.status === 'PENDING' && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleResendInvitation(admin)}
+                                                                disabled={loading}
+                                                                title="Reenviar invitación"
+                                                                aria-label="Reenviar invitación"
+                                                                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                                                            >
+                                                                <span className="material-symbols-outlined text-[18px]">forward_to_inbox</span>
+                                                            </button>
+                                                        )}
                                                         <button
                                                             type="button"
-                                                            onClick={() => handleResendInvitation(admin)}
+                                                            onClick={() => handleRevokePreConfirm(admin)}
                                                             disabled={loading}
-                                                            title="Reenviar invitación"
-                                                            aria-label="Reenviar invitación"
-                                                            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                                                            title="Revocar administrador"
+                                                            aria-label="Revocar administrador"
+                                                            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
                                                         >
-                                                            <span className="material-symbols-outlined text-[18px]">forward_to_inbox</span>
+                                                            <span className="material-symbols-outlined text-[18px]">person_remove</span>
                                                         </button>
-                                                    )}
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleRevokePreConfirm(admin)}
-                                                        disabled={loading}
-                                                        title="Revocar administrador"
-                                                        aria-label="Revocar administrador"
-                                                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
-                                                    >
-                                                        <span className="material-symbols-outlined text-[18px]">person_remove</span>
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ))
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })
                                 )}
                             </tbody>
                         </table>
@@ -312,11 +319,11 @@ export const AdminsPage: React.FC = () => {
 
             {/* MODAL CONFIRMACIÓN DESIGNACIÓN (HITL) */}
             {showConfirmModal && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center p-[21px] bg-black/70">
-                    <div className="w-full max-w-md bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-[21px] rounded-none shadow-none space-y-[21px]">
-                        <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-[13px]">
-                            <h3 className="text-[13px] font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
-                                CONFIRMAR DESIGNACIÓN
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-fib-21 bg-black/70">
+                    <div className="w-full max-w-md bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-fib-21 rounded-none shadow-none space-y-fib-21">
+                        <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
+                            <h3 className="text-data-dense font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
+                                CONFIRMAR DESIGNACIÓN HITL
                             </h3>
                             <button
                                 type="button"
@@ -329,12 +336,12 @@ export const AdminsPage: React.FC = () => {
                             </button>
                         </div>
 
-                        <div className="space-y-[13px]">
-                            <p className="text-[13px] text-[#475569] dark:text-[#8A93A6]">
+                        <div className="space-y-fib-13">
+                            <p className="text-data-dense text-[#475569] dark:text-[#8A93A6]">
                                 Administrador: <span className="font-mono font-bold text-[#0F172A] dark:text-[#F3F4F6]">{form.name} {form.lastName}</span> ({form.run})
                             </p>
                             <div>
-                                <label className={labelClass}>ESCRIBA "ACTUALIZAR" PARA CONFIRMAR</label>
+                                <label className={labelClass}>ESCRIBA &quot;ACTUALIZAR&quot; PARA CONFIRMAR</label>
                                 <input
                                     type="text"
                                     autoComplete="off"
@@ -348,10 +355,10 @@ export const AdminsPage: React.FC = () => {
                             <button
                                 type="button"
                                 onClick={handleDesignate}
-                                disabled={confirmText !== 'ACTUALIZAR' && confirmText !== 'DESIGNAR'}
-                                className="w-full bg-[#C68346] hover:bg-[#b0743e] disabled:opacity-40 text-white py-[8px] px-[21px] text-[11px] font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer rounded-none shadow-none"
+                                disabled={confirmText !== 'ACTUALIZAR'}
+                                className="w-full bg-[#C68346] hover:bg-[#B0743E] disabled:opacity-40 text-white py-fib-8 px-fib-21 text-microcopy font-mono font-bold uppercase transition-colors cursor-pointer rounded-none shadow-none"
                             >
-                                CONFIRMAR
+                                CONFIRMAR DESIGNACIÓN
                             </button>
                         </div>
                     </div>
@@ -360,10 +367,10 @@ export const AdminsPage: React.FC = () => {
 
             {/* MODAL CONFIRMACIÓN REVOCACIÓN (HITL) */}
             {showRevokeModal && selectedAdminToRevoke && (
-                <div className="fixed inset-0 z-[101] flex items-center justify-center p-[21px] bg-black/70">
-                    <div className="w-full max-w-md bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-[21px] rounded-none shadow-none space-y-[21px]">
-                        <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-[13px]">
-                            <h3 className="text-[13px] font-mono font-bold uppercase text-red-500">
+                <div className="fixed inset-0 z-[101] flex items-center justify-center p-fib-21 bg-black/70">
+                    <div className="w-full max-w-md bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-fib-21 rounded-none shadow-none space-y-fib-21">
+                        <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
+                            <h3 className="text-data-dense font-mono font-bold uppercase text-red-500">
                                 REVOCAR ADMINISTRADOR
                             </h3>
                             <button
@@ -377,12 +384,12 @@ export const AdminsPage: React.FC = () => {
                             </button>
                         </div>
 
-                        <div className="space-y-[13px]">
-                            <p className="text-[13px] text-[#475569] dark:text-[#8A93A6]">
+                        <div className="space-y-fib-13">
+                            <p className="text-data-dense text-[#475569] dark:text-[#8A93A6]">
                                 Se revocará el acceso de <span className="font-mono font-bold text-[#0F172A] dark:text-[#F3F4F6]">{selectedAdminToRevoke.fullName}</span>.
                             </p>
                             <div>
-                                <label className={labelClass}>ESCRIBA "ACTUALIZAR" O "REVOCAR" PARA CONFIRMAR</label>
+                                <label className={labelClass}>ESCRIBA &quot;ACTUALIZAR&quot; PARA CONFIRMAR</label>
                                 <input
                                     type="text"
                                     autoComplete="off"
@@ -396,8 +403,8 @@ export const AdminsPage: React.FC = () => {
                             <button
                                 type="button"
                                 onClick={handleConfirmRevoke}
-                                disabled={(revokeConfirmText !== 'REVOCAR' && revokeConfirmText !== 'ACTUALIZAR') || loading}
-                                className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white py-[8px] px-[21px] text-[11px] font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer rounded-none shadow-none"
+                                disabled={revokeConfirmText !== 'ACTUALIZAR' || loading}
+                                className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white py-fib-8 px-fib-21 text-microcopy font-mono font-bold uppercase transition-colors cursor-pointer rounded-none shadow-none"
                             >
                                 {loading ? 'PROCESANDO...' : 'EJECUTAR REVOCACIÓN'}
                             </button>
@@ -408,3 +415,5 @@ export const AdminsPage: React.FC = () => {
         </div>
     );
 };
+
+export default AdminsPage;

@@ -1,472 +1,332 @@
 import * as admin from 'firebase-admin';
-import * as path from 'path';
+import * as crypto from 'crypto';
 
 /**
- * Database Seeder for E2E Tests
- * 
- * Populates Firebase Emulators with test data:
- * - Super Admin user
- * - Test accounts (ENTERPRISE, EDUCATIONAL, PERSONAL)
- * - Plugins
- * - Job Profiles
- * - Workers
+ * Aprovisionador Idempotente para Emuladores E2E de MINREPORT.
+ *
+ * Cumplimiento estricto GEMINI.md §1 y §1.1:
+ * - Prohibido reiniciar o eliminar colecciones de bases de datos o usuarios existentes.
+ * - Exclusivo para entorno de emuladores locales (bloqueado contra produccion).
+ * - Cero credenciales hardcodeadas y cero cuentas PERSONAL o plugins legacy.
+ * - Soporta las 5 Cuentas Soberanas: DEV_ROOT, SUPER_ADMIN, TEST_PILOT, B2B, EDUCATIONAL.
  */
 
-// Point to emulators (MUST be set before initializeApp)
-process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8085';
-process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9190';
+const firestoreHost = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8085';
+const authHost = process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9190';
 
-const serviceAccount = require(path.resolve(__dirname, '../../service-account-key.json'));
+if (!firestoreHost.includes('127.0.0.1') && !firestoreHost.includes('localhost')) {
+    throw new Error('[SECURITY] db-seeder.ts solo puede ejecutarse contra emuladores locales.');
+}
 
-admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    projectId: 'minreport-8f2a8'
-});
+process.env.FIRESTORE_EMULATOR_HOST = firestoreHost;
+process.env.FIREBASE_AUTH_EMULATOR_HOST = authHost;
+
+if (!admin.apps.length) {
+    admin.initializeApp({ projectId: 'minreport-8f2a8' });
+}
 
 const db = admin.firestore();
 const auth = admin.auth();
 
-/**
-const PROTECTED_TEST_IDS = new Set([
-    'dev-master-root-uid',
-    'dev-master-sandbox',
-    'super-admin-uid',
-    'super-admin-id'
-]);
-
-const isProtectedRecord = (id: string, email?: string) => {
-    if (PROTECTED_TEST_IDS.has(id)) return true;
-    if (email && (email.toLowerCase() === 'dev@minreport.com' || email.toLowerCase().includes('superadmin'))) return true;
-    return false;
-};
-
-/**
- * Reset all collections (Safeguarding protected system & dev accounts)
- */
-export async function resetDatabase() {
-    console.log('🗑️  Resetting database (preserving protected system accounts)...');
-
-    const collections = [
-        'tenants',
-        'accounts',
-        'users',
-        'user_directory',
-        'plugins'
-    ];
-
-    for (const collectionName of collections) {
-        const snapshot = await db.collection(collectionName).get();
-        const batch = db.batch();
-
-        snapshot.docs.forEach(doc => {
-            if (!isProtectedRecord(doc.id)) {
-                batch.delete(doc.ref);
-            }
-        });
-
-        await batch.commit();
-        console.log(`  ✅ Cleared ${collectionName} (protected entries preserved)`);
-    }
-
-    // Delete non-protected Auth users
-    const listUsersResult = await auth.listUsers();
-    for (const userRecord of listUsersResult.users) {
-        if (!isProtectedRecord(userRecord.uid, userRecord.email)) {
-            await auth.deleteUser(userRecord.uid);
-        }
-    }
-    console.log('  ✅ Cleared test Auth users (DEV & Super Admin preserved)');
+function resolveTestPassword(envVarName: string): string {
+    return process.env[envVarName] || crypto.randomBytes(18).toString('base64url');
 }
 
-/**
- * Seed plugins
- */
-export async function seedPlugins() {
-    console.log('🔌 Seeding plugins...');
-
-    const plugins = [
-        {
-            id: 'opermaq',
-            name: 'OPERMAQ',
-            label: 'OPERMAQ',
-            description: 'Telemetría y registro operativo de maquinaria pesada.',
-            icon: 'local_shipping',
-            version: '1.0.0'
-        },
-        {
-            id: 'stockpile',
-            name: 'STOCKPILE',
-            label: 'STOCKPILE',
-            description: 'Cálculo volumétrico y cubicación topográfica de acopios.',
-            icon: 'layers',
-            version: '1.0.0'
-        },
-        {
-            id: 'mining-flow',
-            name: 'MINING FLOW',
-            label: 'MINING FLOW',
-            description: 'Monitoreo de flujo y transporte de mineral.',
-            icon: 'payments',
-            version: '1.0.0'
-        }
-    ];
-
-    for (const plugin of plugins) {
-        await db.collection('plugins').doc(plugin.id).set(plugin);
-    }
-
-    console.log(`  ✅ Created ${plugins.length} plugins`);
-}
-
-/**
- * Seed Super Admin
- */
-export async function seedSuperAdmin() {
-    console.log('👑 Seeding Super Admin...');
-
+async function ensureAuthUser(params: {
+    uid: string;
+    email: string;
+    displayName: string;
+    passwordEnv: string;
+    claims: Record<string, unknown>;
+}): Promise<void> {
     try {
-        // Create Auth user
-        const userRecord = await auth.createUser({
-            uid: 'super-admin-uid',
-            email: 'admin@minreport.com',
-            password: 'SuperAdmin123!',
-            displayName: 'Super Admin',
-            emailVerified: true
-        });
-
-        // Set custom claims
-        await auth.setCustomUserClaims(userRecord.uid, {
-            role: 'SUPER_ADMIN'
-        });
-
-        console.log('  ✅ Super Admin created');
+        await auth.getUser(params.uid);
     } catch (error: any) {
-        if (error.code === 'auth/email-already-exists') {
-            console.log('  ℹ️  Super Admin already exists');
+        if (error?.code === 'auth/user-not-found') {
+            await auth.createUser({
+                uid: params.uid,
+                email: params.email,
+                password: resolveTestPassword(params.passwordEnv),
+                displayName: params.displayName,
+                emailVerified: true,
+            });
         } else {
             throw error;
         }
     }
+    await auth.setCustomUserClaims(params.uid, params.claims);
 }
 
-/**
- * Seed ENTERPRISE account
- */
-export async function seedEnterpriseAccount() {
-    console.log('🏢 Seeding ENTERPRISE account...');
+export async function seedModulesStatus(): Promise<void> {
+    const nowIso = new Date().toISOString();
+    await Promise.all([
+        db.collection('modules_status').doc('opermaq').set(
+            { id: 'opermaq', enabled: true, updatedAt: nowIso },
+            { merge: true }
+        ),
+        db.collection('modules_status').doc('stockpile').set(
+            { id: 'stockpile', enabled: true, updatedAt: nowIso },
+            { merge: true }
+        ),
+    ]);
+}
 
+export async function seedSuperAdmin(): Promise<void> {
+    await ensureAuthUser({
+        uid: 'super-admin-uid',
+        email: 'admin@minreport.com',
+        displayName: 'Super Admin MINREPORT',
+        passwordEnv: 'E2E_SUPER_ADMIN_PASSWORD',
+        claims: { role: 'SUPER_ADMIN' },
+    });
+
+    await db.collection('users').doc('super-admin-uid').set(
+        {
+            uid: 'super-admin-uid',
+            email: 'admin@minreport.com',
+            displayName: 'Super Admin MINREPORT',
+            role: 'SUPER_ADMIN',
+            updatedAt: Date.now(),
+        },
+        { merge: true }
+    );
+}
+
+export async function seedTestPilot(): Promise<void> {
+    const pilotTenantId = 'pilot-sandbox-faena';
+    const pilotUid = 'test-pilot-lead-uid';
+
+    await ensureAuthUser({
+        uid: pilotUid,
+        email: 'pilot@minreport.com',
+        displayName: 'Especialista Test-Pilot',
+        passwordEnv: 'E2E_TEST_PILOT_PASSWORD',
+        claims: { role: 'PILOT_LEAD', tenantId: pilotTenantId },
+    });
+
+    await db.collection('accounts').doc(pilotTenantId).set(
+        {
+            id: pilotTenantId,
+            name: 'Simulacion Operacional TEST-PILOT',
+            type: 'TEST_PILOT',
+            ownerId: pilotUid,
+            enabledModules: ['opermaq', 'stockpile'],
+            updatedAt: Date.now(),
+        },
+        { merge: true }
+    );
+
+    await db.collection(`accounts/${pilotTenantId}/members`).doc(pilotUid).set(
+        {
+            userId: pilotUid,
+            email: 'pilot@minreport.com',
+            fullName: 'Especialista Test-Pilot',
+            role: 'PILOT_LEAD',
+            status: 'ACTIVE',
+            updatedAt: Date.now(),
+        },
+        { merge: true }
+    );
+
+    await db.collection('users').doc(pilotUid).set(
+        {
+            uid: pilotUid,
+            email: 'pilot@minreport.com',
+            displayName: 'Especialista Test-Pilot',
+            role: 'PILOT_LEAD',
+            accountType: 'TEST_PILOT',
+            tenantId: pilotTenantId,
+            updatedAt: Date.now(),
+        },
+        { merge: true }
+    );
+}
+
+export async function seedB2BAccount(): Promise<void> {
     const accountId = 'minera-abc-id';
     const ownerUid = 'enterprise-owner-uid';
-
-    // 1. Create Auth user for owner
-    try {
-        await auth.createUser({
-            uid: ownerUid,
-            email: 'admin@minera-abc.cl',
-            password: 'MineraABC123!',
-            displayName: 'Juan Pérez',
-            emailVerified: true
-        });
-    } catch (error: any) {
-        if (error.code !== 'auth/email-already-exists') throw error;
-    }
-
-    // 2. Create Account
-    await db.collection('accounts').doc(accountId).set({
-        id: accountId,
-        name: 'Minera ABC S.A.',
-        type: 'ENTERPRISE',
-        taxId: '76.123.456-7',
-        ownerId: ownerUid,
-        enabledPlugins: ['stockpile', 'opermaq'],
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-    });
-
-    // 3. Create User Directory entry
-    await db.collection('user_directory').doc('761234567').set({
-        run: '761234567',
-        fullName: 'Minera ABC S.A.',
-        accounts: [{
-            accountId: accountId,
-            authEmail: 'admin@minera-abc.cl',
-            role: 'OWNER',
-            type: 'BUSINESS',
-            accountName: 'Minera ABC S.A.'
-        }],
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-    });
-
-    // 4. Create User document
-    await db.collection('users').doc(ownerUid).set({
-        uid: ownerUid,
-        email: 'admin@minera-abc.cl',
-        taxId: '76.123.456-7',
-        displayName: 'Juan Pérez',
-        role: 'USER',
-        memberships: [{
-            accountId: accountId,
-            role: 'OWNER',
-            companyName: 'Minera ABC S.A.',
-            joinedAt: Date.now()
-        }],
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-    });
-
-    // 5. Create Job Profile
-    await db.collection(`accounts/${accountId}/job_profiles`).doc('profile-operador-caex').set({
-        id: 'profile-operador-caex',
-        name: 'Operador CAEX',
-        description: 'Operador de camiones CAEX',
-        allowedPlugins: ['opermaq'],
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        createdBy: ownerUid
-    });
-
-    console.log('  ✅ ENTERPRISE account created');
-}
-
-/**
- * Seed EDUCATIONAL account
- */
-export async function seedEducationalAccount() {
-    console.log('🎓 Seeding EDUCATIONAL account...');
-
-    const accountId = 'uchile-student-id';
-    const userUid = 'edu-student-uid';
-
-    // 1. Create Auth user
-    try {
-        await auth.createUser({
-            uid: userUid,
-            email: 'estudiante@uchile.cl',
-            password: 'UChile2027!',
-            displayName: 'María González',
-            emailVerified: true
-        });
-    } catch (error: any) {
-        if (error.code !== 'auth/email-already-exists') throw error;
-    }
-
-    // 2. Create Account
-    await db.collection('accounts').doc(accountId).set({
-        id: accountId,
-        name: 'María González - UChile',
-        type: 'EDUCATIONAL',
-        taxId: '18.765.432-1',
-        ownerId: userUid,
-        enabledPlugins: ['stockpile'],
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-    });
-
-    // 3. Create User Directory entry
-    await db.collection('user_directory').doc('187654321').set({
-        run: '187654321',
-        fullName: 'María González',
-        accounts: [{
-            accountId: accountId,
-            authEmail: 'estudiante@uchile.cl',
-            role: 'OWNER',
-            type: 'EDUCATIONAL',
-            accountName: 'María González - UChile'
-        }],
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-    });
-
-    // 4. Create User document
-    await db.collection('users').doc(userUid).set({
-        uid: userUid,
-        email: 'estudiante@uchile.cl',
-        taxId: '18.765.432-1',
-        displayName: 'María González',
-        role: 'USER',
-        memberships: [{
-            accountId: accountId,
-            role: 'OWNER',
-            companyName: 'María González - UChile',
-            joinedAt: Date.now()
-        }],
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-    });
-
-    console.log('  ✅ EDUCATIONAL account created');
-}
-
-/**
- * Seed PERSONAL account
- */
-export async function seedPersonalAccount() {
-    console.log('👤 Seeding PERSONAL account...');
-
-    const accountId = 'carlos-munoz-id';
-    const userUid = 'personal-user-uid';
-
-    // 1. Create Auth user
-    try {
-        await auth.createUser({
-            uid: userUid,
-            email: 'carlos@gmail.com',
-            password: 'Personal123!',
-            displayName: 'Carlos Muñoz',
-            emailVerified: true
-        });
-    } catch (error: any) {
-        if (error.code !== 'auth/email-already-exists') throw error;
-    }
-
-    // 2. Create Account
-    await db.collection('accounts').doc(accountId).set({
-        id: accountId,
-        name: 'Carlos Muñoz',
-        type: 'PERSONAL',
-        taxId: '15.234.567-8',
-        ownerId: userUid,
-        enabledPlugins: ['stockpile', 'opermaq'],
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-    });
-
-    // 3. Create User Directory entry
-    await db.collection('user_directory').doc('152345678').set({
-        run: '152345678',
-        fullName: 'Carlos Muñoz',
-        accounts: [{
-            accountId: accountId,
-            authEmail: 'carlos@gmail.com',
-            role: 'OWNER',
-            type: 'PERSONAL',
-            accountName: 'Carlos Muñoz'
-        }],
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-    });
-
-    // 4. Create User document
-    await db.collection('users').doc(userUid).set({
-        uid: userUid,
-        email: 'carlos@gmail.com',
-        taxId: '15.234.567-8',
-        displayName: 'Carlos Muñoz',
-        role: 'USER',
-        memberships: [{
-            accountId: accountId,
-            role: 'OWNER',
-            companyName: 'Carlos Muñoz',
-            joinedAt: Date.now()
-        }],
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-    });
-
-    console.log('  ✅ PERSONAL account created');
-}
-
-/**
- * Seed Worker User
- */
-export async function seedWorkerUser() {
-    console.log('👷 Seeding Worker user...');
-
-    const accountId = 'minera-abc-id';
     const workerUid = 'worker-user-uid';
 
-    // 1. Create Auth user
-    try {
-        await auth.createUser({
-            uid: workerUid,
-            email: 'pedro.soto@minera-abc.cl',
-            password: 'Worker123!',
-            displayName: 'Pedro Soto',
-            emailVerified: true
-        });
-    } catch (error: any) {
-        if (error.code !== 'auth/email-already-exists') throw error;
-    }
-
-    // 2. Update User Directory
-    const userDirRef = db.collection('user_directory').doc('198765432');
-    const userDirSnap = await userDirRef.get();
-
-    if (!userDirSnap.exists) {
-        await userDirRef.set({
-            run: '198765432',
-            fullName: 'Pedro Soto',
-            accounts: [{
-                accountId: accountId,
-                authEmail: 'pedro.soto@minera-abc.cl',
-                role: 'OPERATOR',
-                type: 'BUSINESS',
-                accountName: 'Minera ABC S.A.',
-                jobProfileId: 'profile-operador-caex'
-            }],
-            createdAt: Date.now(),
-            updatedAt: Date.now()
-        });
-    }
-
-    // 3. Create Member document
-    await db.collection(`accounts/${accountId}/members`).doc(workerUid).set({
-        userId: workerUid,
-        email: 'pedro.soto@minera-abc.cl',
-        fullName: 'Pedro Soto',
-        run: '198765432',
-        jobProfileId: 'profile-operador-caex',
-        role: 'OPERATOR',
-        status: 'ACTIVE',
-        invitedAt: Date.now()
+    await ensureAuthUser({
+        uid: ownerUid,
+        email: 'admin@minera-abc.cl',
+        displayName: 'Juan Perez',
+        passwordEnv: 'E2E_B2B_OWNER_PASSWORD',
+        claims: { role: 'COMPANY_ADMIN', tenantId: accountId },
     });
 
-    // 4. Create User document
-    await db.collection('users').doc(workerUid).set({
+    await ensureAuthUser({
         uid: workerUid,
         email: 'pedro.soto@minera-abc.cl',
-        taxId: '19.876.543-2',
         displayName: 'Pedro Soto',
-        role: 'USER',
-        memberships: [{
-            accountId: accountId,
-            role: 'OPERATOR',
-            companyName: 'Minera ABC S.A.',
-            joinedAt: Date.now(),
-            jobProfileId: 'profile-operador-caex'
-        }],
-        createdAt: Date.now(),
-        updatedAt: Date.now()
+        passwordEnv: 'E2E_B2B_WORKER_PASSWORD',
+        claims: { role: 'OPERATOR', tenantId: accountId },
     });
 
-    console.log('  ✅ Worker user created');
+    await db.collection('accounts').doc(accountId).set(
+        {
+            id: accountId,
+            name: 'Minera ABC S.A.',
+            type: 'B2B',
+            taxId: '76.123.456-7',
+            ownerId: ownerUid,
+            enabledModules: ['stockpile', 'opermaq'],
+            updatedAt: Date.now(),
+        },
+        { merge: true }
+    );
+
+    await db.collection(`accounts/${accountId}/members`).doc(ownerUid).set(
+        {
+            userId: ownerUid,
+            email: 'admin@minera-abc.cl',
+            fullName: 'Juan Perez',
+            run: '761234567',
+            role: 'OWNER',
+            status: 'ACTIVE',
+            updatedAt: Date.now(),
+        },
+        { merge: true }
+    );
+
+    await db.collection(`accounts/${accountId}/members`).doc(workerUid).set(
+        {
+            userId: workerUid,
+            email: 'pedro.soto@minera-abc.cl',
+            fullName: 'Pedro Soto',
+            run: '198765432',
+            role: 'OPERATOR',
+            status: 'ACTIVE',
+            updatedAt: Date.now(),
+        },
+        { merge: true }
+    );
+
+    await db.collection('users').doc(ownerUid).set(
+        {
+            uid: ownerUid,
+            email: 'admin@minera-abc.cl',
+            taxId: '76.123.456-7',
+            displayName: 'Juan Perez',
+            role: 'COMPANY_ADMIN',
+            accountType: 'B2B',
+            tenantId: accountId,
+            memberships: [
+                {
+                    accountId,
+                    role: 'OWNER',
+                    companyName: 'Minera ABC S.A.',
+                    joinedAt: Date.now(),
+                },
+            ],
+            updatedAt: Date.now(),
+        },
+        { merge: true }
+    );
+
+    await db.collection('users').doc(workerUid).set(
+        {
+            uid: workerUid,
+            email: 'pedro.soto@minera-abc.cl',
+            taxId: '19.876.543-2',
+            displayName: 'Pedro Soto',
+            role: 'OPERATOR',
+            accountType: 'B2B',
+            tenantId: accountId,
+            memberships: [
+                {
+                    accountId,
+                    role: 'OPERATOR',
+                    companyName: 'Minera ABC S.A.',
+                    joinedAt: Date.now(),
+                },
+            ],
+            updatedAt: Date.now(),
+        },
+        { merge: true }
+    );
 }
 
-/**
- * Main seeding function
- */
+export async function seedEducationalAccount(): Promise<void> {
+    const accountId = 'uchile-edu-sandbox';
+    const userUid = 'edu-student-uid';
+
+    await ensureAuthUser({
+        uid: userUid,
+        email: 'estudiante@uchile.cl',
+        displayName: 'Maria Gonzalez',
+        passwordEnv: 'E2E_EDU_PASSWORD',
+        claims: { role: 'ACADEMIC_STUDENT', tenantId: accountId, isEduSandbox: true },
+    });
+
+    await db.collection('accounts').doc(accountId).set(
+        {
+            id: accountId,
+            name: 'Universidad de Chile - Sandbox Mineria',
+            type: 'EDUCATIONAL',
+            isEduSandbox: true,
+            taxId: '18.765.432-1',
+            ownerId: userUid,
+            enabledModules: ['stockpile', 'opermaq'],
+            updatedAt: Date.now(),
+        },
+        { merge: true }
+    );
+
+    await db.collection(`accounts/${accountId}/members`).doc(userUid).set(
+        {
+            userId: userUid,
+            email: 'estudiante@uchile.cl',
+            fullName: 'Maria Gonzalez',
+            run: '187654321',
+            role: 'ACADEMIC_STUDENT',
+            status: 'ACTIVE',
+            isEduSandbox: true,
+            updatedAt: Date.now(),
+        },
+        { merge: true }
+    );
+
+    await db.collection('users').doc(userUid).set(
+        {
+            uid: userUid,
+            email: 'estudiante@uchile.cl',
+            taxId: '18.765.432-1',
+            displayName: 'Maria Gonzalez',
+            role: 'ACADEMIC_STUDENT',
+            accountType: 'EDUCATIONAL',
+            isEduSandbox: true,
+            tenantId: accountId,
+            memberships: [
+                {
+                    accountId,
+                    role: 'ACADEMIC_STUDENT',
+                    companyName: 'Universidad de Chile - Sandbox Mineria',
+                    joinedAt: Date.now(),
+                },
+            ],
+            updatedAt: Date.now(),
+        },
+        { merge: true }
+    );
+}
+
 async function main() {
     try {
-        console.log('\n🌱 Starting database seeding...\n');
-
-        await resetDatabase();
-        await seedPlugins();
+        console.log('[DB Seeder] Iniciando aprovisionamiento idempotente (sin eliminacion de datos)...');
+        await seedModulesStatus();
         await seedSuperAdmin();
-        await seedEnterpriseAccount();
+        await seedTestPilot();
+        await seedB2BAccount();
         await seedEducationalAccount();
-        await seedPersonalAccount();
-        await seedWorkerUser();
-
-        console.log('\n✅ Database seeding complete!\n');
+        console.log('[DB Seeder] Aprovisionamiento completado.');
         process.exit(0);
     } catch (error) {
-        console.error('\n❌ Seeding failed:', error);
+        console.error('[DB Seeder] Error en aprovisionamiento:', error);
         process.exit(1);
     }
 }
 
-// Run if called directly
 if (require.main === module) {
     main();
 }

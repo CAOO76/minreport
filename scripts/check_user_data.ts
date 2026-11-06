@@ -1,52 +1,60 @@
+import { db } from '../src/config/firebase';
 
-import { initializeApp, cert } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+function assertSafeScriptEnvironment(): void {
+    const isEmulator = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
+    if (!isEmulator && process.env.CONFIRM_PRODUCTION_SCRIPT !== 'ACTUALIZAR') {
+        console.error(
+            '[ABORTADO] Lectura diagnóstica fuera del emulador bloqueada. Defina FIRESTORE_EMULATOR_HOST o establezca CONFIRM_PRODUCTION_SCRIPT=ACTUALIZAR.'
+        );
+        process.exit(1);
+    }
+}
 
-// Configuración de Service Account (Asumiendo que existe en el root o usar mock si es entorno local puro)
-// En este entorno, usaremos la configuración existente o simularemos lectura si no hay credenciales.
-// Como soy un agente, intentaré usar el archivo service-account-key.json si existe.
+assertSafeScriptEnvironment();
 
-const serviceAccount = require('./service-account-key.json');
+async function checkInvites(email: string): Promise<void> {
+    const accountsSnap = await db
+        .collection('accounts')
+        .where('primaryOperator.email', '==', email)
+        .get();
 
-initializeApp({
-    credential: cert(serviceAccount)
-});
-
-const db = getFirestore();
-
-async function checkUser() {
-    console.log("Buscando usuario info@wortog.com...");
-    const usersRef = db.collection('users');
-    const snapshot = await usersRef.where('email', '==', 'info@wortog.com').get();
-
-    if (snapshot.empty) {
-        console.log("Usuario NO encontrado.");
+    if (accountsSnap.empty) {
+        console.log('[CHECK-USER] Sin invitaciones pendientes.');
         return;
     }
 
-    snapshot.forEach(doc => {
-        console.log(`Usuario encontrado: ${doc.id}`);
-        const data = doc.data();
-        console.log("Membresías:", JSON.stringify(data.memberships, null, 2));
-        console.log("Last Active Account:", data.lastActiveAccountId);
-
-        // Verificar invites pendientes en cuentas
-        checkInvites('info@wortog.com');
+    accountsSnap.forEach((doc) => {
+        console.log(`[CHECK-USER] Invitación pendiente en cuenta: ${doc.id} (${doc.data().name || ''})`);
     });
 }
 
-async function checkInvites(email: string) {
-    console.log("Buscando invitaciones pendientes...");
-    const accountsRef = db.collection('accounts');
-    const q = await accountsRef.where('primaryOperator.email', '==', email).get();
+async function checkUser(): Promise<void> {
+    const targetEmail = (process.env.TARGET_USER_EMAIL || '').trim().toLowerCase();
+    if (!targetEmail) {
+        throw new Error('Defina TARGET_USER_EMAIL en el entorno para ejecutar la verificación diagnóstica.');
+    }
 
-    if (q.empty) {
-        console.log("No se encontraron invitaciones pendientes.");
-    } else {
-        q.forEach(doc => {
-            console.log(`Invitación pendiente en cuenta: ${doc.id} (${doc.data().name})`);
-        });
+    console.log(`[CHECK-USER] Buscando usuario ${targetEmail}...`);
+    const snapshot = await db.collection('users').where('email', '==', targetEmail).get();
+
+    if (snapshot.empty) {
+        console.log('[CHECK-USER] Usuario no encontrado.');
+        return;
+    }
+
+    for (const doc of snapshot.docs) {
+        const data = doc.data();
+        const safeMemberships = Array.isArray(data.memberships)
+            ? data.memberships.map(({ passwordHash: _ph, ...rest }: any) => rest)
+            : [];
+        console.log(`[CHECK-USER] UID: ${doc.id}`);
+        console.log('[CHECK-USER] Membresías:', JSON.stringify(safeMemberships, null, 2));
+        console.log('[CHECK-USER] Last Active Account:', data.lastActiveAccountId || null);
+        await checkInvites(targetEmail);
     }
 }
 
-checkUser();
+checkUser().catch((err) => {
+    console.error('[CHECK-USER] Error:', err.message || err);
+    process.exit(1);
+});

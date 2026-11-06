@@ -10,12 +10,12 @@ export const SyncIndicator: React.FC = () => {
     if (status === 'idle') return null;
 
     const config = {
-        uploading:     { icon: 'cloud_upload',   label: t('sync.uploading', 'Subiendo...'),          color: 'text-antigravity-accent' },
+        uploading:     { icon: 'cloud_upload',   label: t('sync.uploading', 'Subiendo...'),          color: 'text-[#C68346]' },
         syncing:       { icon: 'cloud_download', label: t('sync.syncing', 'Sincronizando...'),       color: 'text-[#00AEEF]' },
-        success:       { icon: 'check_circle',   label: t('sync.success', 'Sincronizado'),           color: 'text-emerald-500' },
-        error:         { icon: 'error',          label: t('sync.error', 'Error de Sync'),            color: 'text-red-500' },
-        offline:       { icon: 'cloud_off',      label: t('sync.offline', 'Modo Offline'),           color: 'text-slate-500' },
-    }[status] || { icon: 'sync', label: t('sync.processing', 'Procesando...'), color: 'text-slate-400' };
+        success:       { icon: 'check_circle',   label: t('sync.success', 'Sincronizado'),           color: 'text-[#00AEEF]' },
+        error:         { icon: 'error',          label: t('sync.error', 'Error de Sync'),            color: 'text-[#C68346]' },
+        offline:       { icon: 'cloud_off',      label: t('sync.offline', 'Modo Offline'),           color: 'text-[#475569] dark:text-[#8A93A6]' },
+    }[status] || { icon: 'sync', label: t('sync.processing', 'Procesando...'), color: 'text-[#475569] dark:text-[#8A93A6]' };
 
     return (
         <AnimatePresence>

@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import type { AccountReference } from '../../types/user_directory';
 import clsx from 'clsx';
-
 import { useTranslation } from 'react-i18next';
+import { SecureImage } from '../common/SecureImage';
 
 interface AccountSelectorProps {
     accounts: AccountReference[];
@@ -11,19 +11,11 @@ interface AccountSelectorProps {
     loading?: boolean;
 }
 
-/**
- * Selector de Cuentas - Arquitectura "Pasillo de Puertas Blindadas"
- * 
- * Muestra las cuentas disponibles para un RUN y permite seleccionar
- * la cuenta específica para autenticación.
- * 
- * Diseño: STITCH ELITE INDUSTRIAL
- */
 const AccountSelector: React.FC<AccountSelectorProps> = ({
     accounts,
     onSelectAccount,
     onCancel,
-    loading = false
+    loading = false,
 }) => {
     const { t } = useTranslation();
     const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -49,7 +41,7 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
     };
 
     const getStatusLabel = (status?: string) => {
-        if (!status) return t('status.active', 'ACTIVO'); // Fallback
+        if (!status) return t('status.active', 'ACTIVO');
         const s = status.toString().toUpperCase();
         switch (s) {
             case 'PENDING_APPROVAL': return t('status.pending_approval', 'EN REVISIÓN');
@@ -63,122 +55,118 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
     };
 
     return (
-        <div className="animate-in fade-in slide-in-from-right-12 duration-1000 w-full relative z-10">
-            <div className="text-center mb-10">
-                <p className="hud-label text-black/40 dark:text-white/40 mb-2">
-                    [DETECTED_IDENTITY_NODES]
+        <div className="w-full relative z-10 select-none font-sans">
+            <div className="text-center mb-fib-21">
+                <p className="text-microcopy font-mono text-[#475569] dark:text-[#8A93A6] mb-fib-8 uppercase">
+                    [NODOS DE IDENTIDAD ASOCIADOS]
                 </p>
-                <h2 className="text-2xl font-black text-black dark:text-white uppercase tracking-tight leading-none mb-1">
+                <h2 className="text-h1-header font-bold text-[#0F172A] dark:text-[#F3F4F6] uppercase">
                     {t('auth.associated_accounts', 'Cuentas Asociadas')}
                 </h2>
-                <p className="text-[9px] font-mono text-black/20 dark:text-white/20 uppercase tracking-[0.3em]">
-                    SECURITY_ISOLATION_ZONE: {accounts?.length || 0} {t('auth.profiles', 'PERFILES')}
+                <p className="text-microcopy font-mono tabular-nums text-[#475569] dark:text-[#8A93A6] uppercase mt-fib-8">
+                    {accounts?.length || 0} {t('auth.profiles', 'PERFILES')}
                 </p>
             </div>
 
-            <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-                {accounts?.map((account) => (
-                    <button
-                        key={account.accountId}
-                        onClick={() => handleSelect(account)}
-                        disabled={loading}
-                        className={clsx(
-                            "group relative flex items-center p-6 rounded-none border transition-all duration-500 text-left w-full disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden",
-                            selectedId === account.accountId
-                                ? "bg-antigravity-accent/5 border-antigravity-accent shadow-none"
-                                : "bg-white/5 dark:bg-black/20 border-black/5 dark:border-white/5 hover:bg-white/10 dark:hover:bg-white/5 hover:border-black/20 dark:hover:border-white/20 shadow-none"
-                        )}
-                    >
-                        {/* Grid de fondo decorativo selectivo */}
-                        <div className="absolute inset-0 technical-grid opacity-5 pointer-events-none"></div>
-
-                        {/* Avatar o Icono */}
-                        <div className={clsx(
-                            "w-12 h-12 rounded-none flex items-center justify-center mr-6 transition-all duration-500 overflow-hidden shadow-none relative",
-                            selectedId === account.accountId ? "bg-antigravity-accent text-white" : "bg-black/5 dark:bg-white/10 text-black/40 dark:text-white/40"
-                        )}>
-                            <div className="absolute inset-0 technical-grid opacity-20"></div>
+            <div className="space-y-fib-13 max-h-[380px] overflow-y-auto">
+                {accounts?.map((account) => {
+                    const isSelected = selectedId === account.accountId;
+                    return (
+                        <button
+                            key={account.accountId}
+                            type="button"
+                            onClick={() => handleSelect(account)}
+                            disabled={loading}
+                            className={clsx(
+                                'group relative flex items-center gap-fib-13 p-fib-21 rounded-none shadow-none border transition-colors text-left w-full disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer',
+                                isSelected
+                                    ? 'bg-[#F8FAFC] dark:bg-[#07090D] border-[#C68346]'
+                                    : 'bg-[#FFFFFF] dark:bg-[#07090D] border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346]/60'
+                            )}
+                        >
+                            {/* Avatar Blindado o Icono Plano */}
                             {account.avatar ? (
-                                <img
+                                <SecureImage
                                     src={account.avatar}
                                     alt={account.accountName}
-                                    draggable={false}
-                                    onContextMenu={(e) => e.preventDefault()}
-                                    className="w-full h-full object-cover relative z-10 select-none pointer-events-none"
+                                    className="w-10 h-10 object-cover shrink-0 border border-[#E2E8F0] dark:border-[#12151C]"
                                 />
                             ) : (
-                                <span className="material-symbols-outlined text-[28px] relative z-10">
+                                <span
+                                    className={clsx(
+                                        'material-symbols-outlined text-[24px] shrink-0',
+                                        isSelected ? 'text-[#C68346]' : 'text-[#475569] dark:text-[#8A93A6]'
+                                    )}
+                                >
                                     {renderIcon(account.type)}
                                 </span>
                             )}
-                        </div>
 
-                        {/* Info Cuenta */}
-                        <div className="flex-1 space-y-1.5 relative z-10">
-                            <h3 className={clsx(
-                                "text-sm font-black uppercase tracking-tight transition-colors duration-500",
-                                selectedId === account.accountId ? "text-antigravity-accent" : "text-black dark:text-white group-hover:text-black dark:group-hover:text-white"
-                            )}>
-                                {account.accountName}
-                            </h3>
+                            {/* Información de Cuenta */}
+                            <div className="flex-1 min-w-0 space-y-fib-8">
+                                <h3
+                                    className={clsx(
+                                        'text-data-dense font-bold uppercase truncate transition-colors',
+                                        isSelected ? 'text-[#C68346]' : 'text-[#0F172A] dark:text-[#F3F4F6]'
+                                    )}
+                                >
+                                    {account.accountName}
+                                </h3>
 
-                            <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-[9px] font-bold px-2 py-0.5 rounded-none bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/30 uppercase tracking-[0.1em] border border-black/5 dark:border-white/5">
-                                    {account.type}
-                                </span>
-                                <span className="text-[9px] font-bold px-2 py-0.5 rounded-none bg-black/5 dark:bg-white/5 text-black/40 dark:text-white/30 uppercase tracking-[0.1em] border border-black/5 dark:border-white/5">
-                                    {account.role}
-                                </span>
+                                <div className="flex flex-wrap items-center gap-fib-8">
+                                    <span className="text-microcopy font-mono px-fib-8 py-0.5 rounded-none bg-[#F8FAFC] dark:bg-[#000000] text-[#475569] dark:text-[#8A93A6] uppercase border border-[#E2E8F0] dark:border-[#12151C]">
+                                        {account.type}
+                                    </span>
+                                    <span className="text-microcopy font-mono px-fib-8 py-0.5 rounded-none bg-[#F8FAFC] dark:bg-[#000000] text-[#475569] dark:text-[#8A93A6] uppercase border border-[#E2E8F0] dark:border-[#12151C]">
+                                        {account.role}
+                                    </span>
 
-                                {/* Status Pip Badge */}
-                                <div className={clsx(
-                                    "inline-flex items-center gap-2 px-2 py-0.5 rounded-none text-[8px] font-black uppercase tracking-[0.15em] border shadow-none transition-all duration-700",
-                                    account.status === 'PENDING_APPROVAL' && "bg-amber-500/10 text-amber-600 border-amber-500/20",
-                                    account.status === 'APPROVED' && "bg-cyan-500/10 text-cyan-500 border-cyan-500/20",
-                                    account.status === 'ACTIVE' && "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
-                                    account.status === 'REJECTED' && "bg-rose-500/10 text-rose-600 border-rose-500/20",
-                                    account.status === 'SUSPENDED' && "bg-black/5 text-black/40 border-black/10 dark:bg-white/5 dark:text-white/30 dark:border-white/10"
-                                )}>
-                                    <div className={clsx("w-1 h-1 rounded-none",
-                                        account.status === 'PENDING_APPROVAL' ? "bg-amber-500" :
-                                            account.status === 'APPROVED' ? "bg-cyan-500" :
-                                                account.status === 'ACTIVE' ? "bg-emerald-500" :
-                                                    account.status === 'REJECTED' ? "bg-rose-500" : "bg-black/30 dark:bg-white/20"
-                                    )}></div>
-                                    {getStatusLabel(account.status)}
+                                    <span
+                                        className={clsx(
+                                            'inline-flex items-center gap-fib-8 px-fib-8 py-0.5 rounded-none shadow-none text-microcopy font-mono uppercase border',
+                                            account.status === 'PENDING_APPROVAL' && 'bg-[#C68346]/10 text-[#C68346] border-[#C68346]/30',
+                                            account.status === 'APPROVED' && 'bg-[#00AEEF]/10 text-[#00AEEF] border-[#00AEEF]/30',
+                                            account.status === 'ACTIVE' && 'bg-[#00AEEF]/10 text-[#00AEEF] border-[#00AEEF]/30',
+                                            account.status === 'REJECTED' && 'bg-red-500/10 text-red-500 border-red-500/30',
+                                            (!account.status || account.status === 'SUSPENDED' || account.status === 'PENDING') &&
+                                                'bg-[#F8FAFC] dark:bg-[#000000] text-[#475569] dark:text-[#8A93A6] border-[#E2E8F0] dark:border-[#12151C]'
+                                        )}
+                                    >
+                                        {getStatusLabel(account.status)}
+                                    </span>
                                 </div>
                             </div>
-                        </div>
 
-                        {/* Indicador Selección */}
-                        <div className={clsx(
-                            "transition-all duration-500",
-                            selectedId === account.accountId ? "text-antigravity-accent translate-x-1" : "text-black/10 dark:text-white/10 group-hover:text-black/40 dark:group-hover:text-white/40 group-hover:translate-x-1"
-                        )}>
-                            {selectedId === account.accountId && loading ? (
-                                <div className="w-5 h-5 border-2 border-antigravity-accent border-t-transparent rounded-none animate-spin" />
-                            ) : (
-                                <span className="material-symbols-outlined text-[24px]">
-                                    {selectedId === account.accountId ? 'check_circle' : 'chevron_right'}
-                                </span>
-                            )}
-                        </div>
-                    </button>
-                ))}
+                            {/* Indicador Selección */}
+                            <div className="shrink-0">
+                                {isSelected && loading ? (
+                                    <span className="material-symbols-outlined text-[20px] text-[#C68346] animate-spin">
+                                        progress_activity
+                                    </span>
+                                ) : (
+                                    <span
+                                        className={clsx(
+                                            'material-symbols-outlined text-[20px]',
+                                            isSelected ? 'text-[#C68346]' : 'text-[#94A3B8] dark:text-[#5A6072]'
+                                        )}
+                                    >
+                                        {isSelected ? 'check_circle' : 'chevron_right'}
+                                    </span>
+                                )}
+                            </div>
+                        </button>
+                    );
+                })}
             </div>
 
-            <div className="mt-12 pt-8 border-t border-black/5 dark:border-white/5 text-center">
+            <div className="mt-fib-21 pt-fib-21 border-t border-[#E2E8F0] dark:border-[#12151C] text-center">
                 <button
+                    type="button"
                     onClick={onCancel}
                     disabled={loading}
-                    className="group flex flex-col items-center gap-3 mx-auto transition-all duration-500 disabled:opacity-30"
+                    className="px-fib-21 py-fib-8 border border-[#E2E8F0] dark:border-[#12151C] bg-transparent hover:border-[#C68346] text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-white transition-colors disabled:opacity-30 rounded-none shadow-none cursor-pointer"
                 >
-                    <div className="w-10 h-10 border border-black/10 dark:border-white/10 flex items-center justify-center group-hover:border-antigravity-accent transition-colors">
-                        <span className="material-symbols-outlined text-[20px] text-black/40 dark:text-white/40 group-hover:text-antigravity-accent">undo</span>
-                    </div>
-                    <span className="text-[9px] font-black text-black/30 dark:text-white/30 uppercase tracking-[0.3em] group-hover:text-black dark:group-hover:text-white transition-colors">
-                        {t('auth.use_other_id', 'Usar otro documento de identidad')}
-                    </span>
+                    {t('auth.use_other_id', 'Usar otro documento de identidad')}
                 </button>
             </div>
         </div>

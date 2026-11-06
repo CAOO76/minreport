@@ -1,48 +1,35 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ProfileService } from '../../services/ProfileService';
 import { SYSTEM_MODULES } from '../../constants/modules';
 import { useAuth } from '../../context/AuthContext';
 import type { JobProfile } from '../../types/job_profile';
-import { Button } from '../Button';
-import { Card } from '../Card';
 import M3Switch from '../common/M3Switch';
 
-/**
- * JobProfileManager
- * 
- * Panel de administración para gestionar Perfiles de Cargo (Job Profiles).
- * Permite a las empresas B2B crear perfiles estandarizados con conjuntos
- * específicos de módulos integrados asignados.
- */
-
-export const JobProfileManager = () => {
+export const JobProfileManager: React.FC = () => {
     const { currentAccount, user } = useAuth();
     const [profiles, setProfiles] = useState<JobProfile[]>([]);
     const [selectedProfile, setSelectedProfile] = useState<JobProfile | null>(null);
     const [isEditing, setIsEditing] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
 
-    // Form state
     const [formName, setFormName] = useState('');
     const [formDescription, setFormDescription] = useState('');
     const [formPlugins, setFormPlugins] = useState<string[]>([]);
 
-    // Módulos integrados del sistema disponibles
+    // Modal HITL ("ACTUALIZAR") para Guardar o Eliminar
+    const [confirmAction, setConfirmAction] = useState<'save' | 'delete' | null>(null);
+    const [confirmKeyword, setConfirmKeyword] = useState('');
+
     const availableModules = SYSTEM_MODULES;
 
-    // Cargar perfiles
     useEffect(() => {
         if (!currentAccount?.id) return;
-
         const unsubscribe = ProfileService.getProfiles(currentAccount.id, (loadedProfiles) => {
-            console.log(`[JobProfileManager] Perfiles cargados: ${loadedProfiles.length}`);
             setProfiles(loadedProfiles);
         });
-
         return () => unsubscribe();
     }, [currentAccount?.id]);
 
-    // Sincronizar formulario
     useEffect(() => {
         if (selectedProfile) {
             setFormName(selectedProfile.name);
@@ -72,190 +59,330 @@ export const JobProfileManager = () => {
         );
     };
 
-    const handleSave = async () => {
-        if (!user?.uid) {
-            console.error('[JobProfileManager] Error: No user UID found');
-            return;
-        }
-        if (!currentAccount?.id || !formName.trim()) return;
-
-        setIsSaving(true);
-        try {
-            const profileData: Partial<JobProfile> = {
-                id: selectedProfile?.id,
-                name: formName.trim(),
-                description: formDescription.trim(),
-                allowedPlugins: formPlugins,
-                createdBy: selectedProfile?.createdBy || user.uid
-            };
-
-            await ProfileService.saveProfile(currentAccount.id, profileData);
-            setIsEditing(false);
-        } catch (error) {
-            console.error('Error saving profile:', error);
-        } finally {
-            setIsSaving(false);
-        }
+    const openHitlConfirm = (action: 'save' | 'delete') => {
+        setConfirmKeyword('');
+        setConfirmAction(action);
     };
 
-    const handleDeleteProfile = async () => {
-        if (!selectedProfile || !currentAccount?.id) return;
-        const confirmed = window.confirm(`¿Eliminar el perfil "${selectedProfile.name}"?`);
-        if (!confirmed) return;
+    const handleExecuteConfirmed = async () => {
+        if (confirmKeyword !== 'ACTUALIZAR') return;
+        if (!currentAccount?.id) return;
 
-        try {
-            await ProfileService.deleteProfile(currentAccount.id, selectedProfile.id);
-            setSelectedProfile(null);
-            setIsEditing(false);
-        } catch (error) {
-            console.error('Error deleting profile:', error);
+        if (confirmAction === 'save') {
+            if (!user?.uid || !formName.trim()) return;
+            setIsSaving(true);
+            setConfirmAction(null);
+            try {
+                const profileData: Partial<JobProfile> = {
+                    id: selectedProfile?.id,
+                    name: formName.trim(),
+                    description: formDescription.trim(),
+                    allowedPlugins: formPlugins,
+                    createdBy: selectedProfile?.createdBy || user.uid,
+                };
+                await ProfileService.saveProfile(currentAccount.id, profileData);
+                setIsEditing(false);
+                setConfirmKeyword('');
+            } finally {
+                setIsSaving(false);
+            }
+        } else if (confirmAction === 'delete' && selectedProfile) {
+            setIsSaving(true);
+            setConfirmAction(null);
+            try {
+                await ProfileService.deleteProfile(currentAccount.id, selectedProfile.id);
+                setSelectedProfile(null);
+                setIsEditing(false);
+                setConfirmKeyword('');
+            } finally {
+                setIsSaving(false);
+            }
         }
     };
 
     if (!currentAccount?.id) {
         return (
-            <div className="flex items-center justify-center p-12 h-64">
-                <div className="text-center animate-pulse">
-                    <span className="material-symbols-outlined text-[48px] mx-auto mb-3 text-gray-400 block">error</span>
-                    <p className="text-sm text-gray-500">Cargando perfiles...</p>
-                </div>
+            <div className="flex items-center justify-center p-fib-34 h-64 font-mono text-data-dense text-[#94A3B8] dark:text-[#5A6072]">
+                [Cargando perfiles de cargo...]
             </div>
         );
     }
 
     return (
-        <div className="h-full flex flex-col md:flex-row gap-6 p-6 font-sans">
-            {/* LISTA DE PERFILES */}
-            <aside className="w-full md:w-80 flex flex-col gap-4">
-                <div className="flex items-center justify-between mb-6">
-                    <h2 className="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400" data-testid="page-title">
-                        Perfiles de Cargo
-                    </h2>
-                    <Button
-                        variant="primary"
-                        icon="add"
-                        onClick={handleNewProfile}
-                        className="!p-2 !rounded-none"
-                        data-testid="add-profile-btn"
-                    >
-                        Nuevo Perfil
-                    </Button>
-                </div>
-
-                <div className="flex-1 overflow-y-auto space-y-2">
-                    {profiles.map(profile => (
-                        <button
-                            key={profile.id}
-                            onClick={() => handleSelectProfile(profile)}
-                            className={`w-full text-left p-5 rounded-none border transition-all ${selectedProfile?.id === profile.id
-                                ? 'bg-black dark:bg-white text-white dark:text-black border-transparent'
-                                : 'bg-black/5 dark:bg-white/5 border-black/10 dark:border-white/10 hover:border-black/30'
-                                }`}
-                            data-testid="profile-item"
+        <div className="max-w-6xl mx-auto py-fib-34 px-fib-21 font-sans select-none bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6]">
+            {/* Macro-Layout Proporción Áurea: 38.2% Lista de Perfiles / 61.8% Ficha o Edición */}
+            <div className="grid grid-cols-1 lg:grid-cols-[38.2fr_61.8fr] gap-fib-21 items-start">
+                {/* ÁREA MENOR (38.2%): LISTA DE PERFILES */}
+                <aside className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-fib-21 rounded-none shadow-none space-y-fib-21">
+                    <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
+                        <h2
+                            className="text-microcopy font-mono font-bold uppercase text-[#C68346]"
+                            data-testid="page-title"
                         >
-                            <h3 className={`font-black text-[11px] uppercase tracking-widest truncate ${selectedProfile?.id === profile.id ? 'text-white dark:text-black' : 'text-black dark:text-white'}`}>{profile.name}</h3>
-                            <p className={`text-[10px] line-clamp-2 mt-1 ${selectedProfile?.id === profile.id ? 'text-white/60 dark:text-black/60' : 'text-black/40 dark:text-white/40'}`}>{profile.description}</p>
+                            Perfiles de Cargo ({profiles.length})
+                        </h2>
+                        <button
+                            type="button"
+                            onClick={handleNewProfile}
+                            data-testid="add-profile-btn"
+                            className="px-fib-13 py-fib-8 bg-[#C68346] hover:bg-[#B0743E] text-white text-microcopy font-mono font-bold uppercase rounded-none shadow-none cursor-pointer transition-colors"
+                        >
+                            Nuevo Perfil
                         </button>
-                    ))}
-                    {profiles.length === 0 && (
-                        <div className="p-8 text-center border border-gray-200 dark:border-gray-800">
-                            <p className="text-xs text-gray-400 uppercase tracking-wider">Sin perfiles definidos</p>
-                        </div>
-                    )}
-                </div>
-            </aside>
+                    </div>
 
-            {/* EDITOR */}
-            <main className="flex-1 flex flex-col gap-4 min-w-0">
-                {!selectedProfile && !isEditing ? (
-                    <Card className="flex-1 flex flex-col items-center justify-center !p-12 text-center">
-                        <span className="material-symbols-outlined text-[48px] text-gray-300 mb-4 block">info</span>
-                        <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">Selecciona un perfil</h3>
-                        <p className="text-sm text-gray-500 max-w-sm">Define las herramientas permitidas para cada cargo administrativo u operativo.</p>
-                    </Card>
-                ) : (
-                    <>
-                        <Card className="!p-4">
-                            <div className="flex items-center justify-between">
-                                <h2 className="text-sm font-bold uppercase tracking-tight text-gray-900 dark:text-white">
-                                    {isEditing ? (selectedProfile ? 'Editar Perfil' : 'Nuevo Perfil') : selectedProfile?.name}
+                    <div className="space-y-fib-8 max-h-[520px] overflow-y-auto">
+                        {profiles.map(profile => {
+                            const active = selectedProfile?.id === profile.id;
+                            return (
+                                <button
+                                    key={profile.id}
+                                    type="button"
+                                    onClick={() => handleSelectProfile(profile)}
+                                    data-testid="profile-item"
+                                    className={`w-full text-left p-fib-13 rounded-none shadow-none border transition-colors cursor-pointer ${
+                                        active
+                                            ? 'bg-[#FFFFFF] dark:bg-[#000000] border-[#C68346]'
+                                            : 'bg-[#FFFFFF] dark:bg-[#000000] border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346]/60'
+                                    }`}
+                                >
+                                    <div className="flex items-center justify-between gap-fib-8">
+                                        <h3 className="text-data-dense font-bold uppercase truncate text-[#0F172A] dark:text-[#F3F4F6]">
+                                            {profile.name}
+                                        </h3>
+                                        <span className="text-microcopy font-mono tabular-nums text-[#00AEEF]">
+                                            {(profile.allowedPlugins || []).length} mód.
+                                        </span>
+                                    </div>
+                                    <p className="text-microcopy text-[#475569] dark:text-[#8A93A6] line-clamp-2 mt-fib-8 normal-case font-normal">
+                                        {profile.description || '[Información técnica no declarada en ficha]'}
+                                    </p>
+                                </button>
+                            );
+                        })}
+
+                        {profiles.length === 0 && (
+                            <div className="p-fib-21 text-center border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+                                <p className="text-data-dense font-mono text-[#94A3B8] dark:text-[#5A6072]">
+                                    [Información técnica no declarada en ficha]
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                </aside>
+
+                {/* ÁREA MAYOR (61.8%): VISOR TÉCNICO / EDITOR QUIRÚRGICO */}
+                <main className="min-w-0">
+                    {!selectedProfile && !isEditing ? (
+                        <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-55 text-center rounded-none shadow-none space-y-fib-13">
+                            <span className="material-symbols-outlined text-[32px] text-[#C68346] block">badge</span>
+                            <h3 className="text-h2-section font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
+                                Seleccione o cree un perfil de cargo
+                            </h3>
+                            <p className="text-data-dense text-[#475569] dark:text-[#8A93A6] max-w-md mx-auto">
+                                Defina los permisos modulares asignados a cada rol operativo o administrativo dentro de la cuenta.
+                            </p>
+                        </div>
+                    ) : (
+                        <form
+                            onSubmit={(e) => {
+                                e.preventDefault();
+                                if (isEditing && formName.trim()) openHitlConfirm('save');
+                            }}
+                            autoComplete="off"
+                            spellCheck={false}
+                            className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] rounded-none shadow-none"
+                        >
+                            {/* Cabecera de Ficha */}
+                            <div className="px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-between gap-fib-13">
+                                <h2 className="text-h2-section font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                                    {isEditing ? (selectedProfile ? 'Editar Perfil de Cargo' : 'Nuevo Perfil de Cargo') : selectedProfile?.name}
                                 </h2>
-                                <div className="flex items-center gap-2">
+
+                                <div className="flex items-center gap-fib-8">
                                     {!isEditing ? (
                                         <>
-                                            <Button variant="secondary" icon="edit" onClick={() => setIsEditing(true)}>Editar</Button>
-                                            <Button variant="secondary" icon="delete" onClick={handleDeleteProfile} className="!text-red-500">Eliminar</Button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsEditing(true)}
+                                                title="Editar perfil"
+                                                aria-label="Editar perfil"
+                                                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                                            >
+                                                <span className="material-symbols-outlined text-[20px]">edit</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => openHitlConfirm('delete')}
+                                                title="Eliminar perfil"
+                                                aria-label="Eliminar perfil"
+                                                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
+                                            >
+                                                <span className="material-symbols-outlined text-[20px]">delete</span>
+                                            </button>
                                         </>
                                     ) : (
                                         <>
-                                            <Button variant="secondary" onClick={() => setIsEditing(false)}>Cancelar</Button>
-                                            <Button variant="primary" icon="save" onClick={handleSave} disabled={isSaving || !formName.trim()} data-testid="save-profile-btn">
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    if (selectedProfile) {
+                                                        setFormName(selectedProfile.name);
+                                                        setFormDescription(selectedProfile.description);
+                                                        setFormPlugins(selectedProfile.allowedPlugins || []);
+                                                    }
+                                                    setIsEditing(false);
+                                                }}
+                                                className="px-fib-13 py-fib-8 border border-[#E2E8F0] dark:border-[#12151C] bg-transparent text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-white rounded-none shadow-none cursor-pointer"
+                                            >
+                                                Cancelar
+                                            </button>
+                                            <button
+                                                type="submit"
+                                                disabled={isSaving || !formName.trim()}
+                                                data-testid="save-profile-btn"
+                                                className="px-fib-21 py-fib-8 bg-[#C68346] hover:bg-[#B0743E] disabled:opacity-40 text-white text-microcopy font-mono font-bold uppercase rounded-none shadow-none cursor-pointer transition-colors"
+                                            >
                                                 {isSaving ? 'Guardando...' : 'Guardar'}
-                                            </Button>
+                                            </button>
                                         </>
                                     )}
                                 </div>
                             </div>
-                        </Card>
 
-                        <Card className="flex-1 overflow-y-auto space-y-6">
-                            <div>
-                                <label className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-3">Nombre del Perfil</label>
-                                <input
-                                    type="text"
-                                    value={formName}
-                                    onChange={(e) => setFormName(e.target.value)}
-                                    disabled={!isEditing}
-                                    placeholder="ej: Operador CAEX"
-                                    autoComplete="off"
-                                    spellCheck="false"
-                                    className="w-full p-4 rounded-none bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-gray-900 dark:text-white font-bold tracking-wide focus:outline-none focus:border-black dark:focus:border-white"
-                                    data-testid="profile-name-input"
-                                />
-                            </div>
+                            {/* Cuerpo Técnico */}
+                            <div className="p-fib-21 space-y-fib-21">
+                                <div>
+                                    <label className="block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] mb-fib-8">
+                                        Nombre del Perfil *
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={formName}
+                                        onChange={(e) => setFormName(e.target.value)}
+                                        disabled={!isEditing}
+                                        placeholder="Ej. Operador CAEX"
+                                        autoComplete="off"
+                                        spellCheck={false}
+                                        data-testid="profile-name-input"
+                                        className="w-full px-fib-13 py-fib-8 rounded-none shadow-none bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] text-data-dense text-[#0F172A] dark:text-[#F3F4F6] font-bold focus:outline-none focus:border-[#C68346] disabled:opacity-60"
+                                    />
+                                </div>
 
-                            <div>
-                                <label className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-3">Descripción</label>
-                                <textarea
-                                    value={formDescription}
-                                    onChange={(e) => setFormDescription(e.target.value)}
-                                    disabled={!isEditing}
-                                    placeholder="Responsabilidades del cargo..."
-                                    autoComplete="off"
-                                    spellCheck="false"
-                                    className="w-full p-4 rounded-none bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-gray-900 dark:text-white resize-none font-medium h-32 focus:outline-none focus:border-black dark:focus:border-white"
-                                    data-testid="profile-description-textarea"
-                                />
-                            </div>
+                                <div>
+                                    <label className="block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] mb-fib-8">
+                                        Alcance y Responsabilidades
+                                    </label>
+                                    <textarea
+                                        value={formDescription}
+                                        onChange={(e) => setFormDescription(e.target.value)}
+                                        disabled={!isEditing}
+                                        placeholder="Descripción técnica del cargo..."
+                                        autoComplete="off"
+                                        spellCheck={false}
+                                        data-testid="profile-description-textarea"
+                                        className="w-full p-fib-13 rounded-none shadow-none bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] text-data-dense text-[#0F172A] dark:text-[#F3F4F6] resize-none h-28 focus:outline-none focus:border-[#C68346] disabled:opacity-60"
+                                    />
+                                </div>
 
-                            <div>
-                                <label className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-5">Acceso a Módulos</label>
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                    {availableModules.map(mod => (
-                                        <div key={mod.id} className="p-4 rounded-none bg-black/2 dark:bg-white/5 border border-black/5 dark:border-white/10 flex items-center justify-between">
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-8 h-8 rounded-none bg-white dark:bg-gray-700 flex items-center justify-center">
-                                                    <span className="material-symbols-outlined text-sm">{mod.icon}</span>
+                                <div>
+                                    <label className="block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] mb-fib-13">
+                                        Módulos Operativos Autorizados
+                                    </label>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-fib-13">
+                                        {availableModules.map(mod => (
+                                            <div
+                                                key={mod.id}
+                                                className="p-fib-13 rounded-none shadow-none bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between gap-fib-13"
+                                            >
+                                                <div className="flex items-center gap-fib-13">
+                                                    <span className="material-symbols-outlined text-[20px] text-[#C68346]">
+                                                        {mod.icon}
+                                                    </span>
+                                                    <div>
+                                                        <p className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                            {mod.name}
+                                                        </p>
+                                                        <p className="text-microcopy font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                                                            v{mod.version}
+                                                        </p>
+                                                    </div>
                                                 </div>
-                                                <div>
-                                                    <p className="text-sm font-medium">{mod.name}</p>
-                                                    <p className="text-xs text-gray-500">v{mod.version}</p>
-                                                </div>
+                                                <M3Switch
+                                                    checked={formPlugins.includes(mod.id)}
+                                                    onChange={() => isEditing && handleTogglePlugin(mod.id)}
+                                                    data-testid={`plugin-switch-${mod.id}`}
+                                                    disabled={!isEditing}
+                                                />
                                             </div>
-                                            <M3Switch
-                                                checked={formPlugins.includes(mod.id)}
-                                                onChange={() => isEditing && handleTogglePlugin(mod.id)}
-                                                data-testid={`plugin-switch-${mod.id}`}
-                                                disabled={!isEditing}
-                                            />
-                                        </div>
-                                    ))}
+                                        ))}
+                                    </div>
                                 </div>
                             </div>
-                        </Card>
-                    </>
-                )}
-            </main>
+                        </form>
+                    )}
+                </main>
+            </div>
+
+            {/* MODAL DE CONFIRMACIÓN HITL ("ACTUALIZAR") */}
+            {confirmAction && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-fib-21 bg-black/70">
+                    <div className="w-full max-w-md bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-fib-21 rounded-none shadow-none space-y-fib-21">
+                        <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
+                            <span className="text-microcopy font-mono font-bold uppercase text-[#C68346]">
+                                {confirmAction === 'delete' ? 'CONFIRMAR ELIMINACIÓN DE PERFIL' : 'CONFIRMAR GUARDADO DE PERFIL'}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => setConfirmAction(null)}
+                                title="Cerrar"
+                                aria-label="Cerrar"
+                                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                            >
+                                <span className="material-symbols-outlined text-[18px]">close</span>
+                            </button>
+                        </div>
+
+                        <p className="text-data-dense text-[#475569] dark:text-[#8A93A6] leading-relaxed">
+                            {confirmAction === 'delete'
+                                ? `Se eliminará el perfil de cargo "${selectedProfile?.name}".`
+                                : `Se actualizará la definición de permisos del perfil "${formName}".`}{' '}
+                            Escriba obligatoriamente <strong className="font-mono text-[#C68346]">ACTUALIZAR</strong> para continuar:
+                        </p>
+
+                        <input
+                            type="text"
+                            autoFocus
+                            autoComplete="off"
+                            spellCheck={false}
+                            value={confirmKeyword}
+                            onChange={(e) => setConfirmKeyword(e.target.value.toUpperCase())}
+                            placeholder="ACTUALIZAR"
+                            className="w-full px-fib-13 py-fib-8 bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-data-dense font-mono font-bold text-center tracking-widest text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none"
+                        />
+
+                        <div className="flex justify-end gap-fib-8">
+                            <button
+                                type="button"
+                                onClick={() => setConfirmAction(null)}
+                                className="px-fib-13 py-fib-8 border border-[#E2E8F0] dark:border-[#12151C] bg-transparent text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] rounded-none cursor-pointer"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleExecuteConfirmed}
+                                disabled={confirmKeyword !== 'ACTUALIZAR' || isSaving}
+                                className={`px-fib-21 py-fib-8 text-microcopy font-mono font-bold uppercase text-white disabled:opacity-30 rounded-none shadow-none cursor-pointer transition-colors ${
+                                    confirmAction === 'delete' ? 'bg-red-600 hover:bg-red-700' : 'bg-[#C68346] hover:bg-[#B0743E]'
+                                }`}
+                            >
+                                Confirmar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

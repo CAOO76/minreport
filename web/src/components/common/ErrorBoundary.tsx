@@ -1,4 +1,5 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
+import { Capacitor } from '@capacitor/core';
 
 interface Props {
     children: ReactNode;
@@ -14,7 +15,7 @@ class ErrorBoundary extends Component<Props, State> {
     public state: State = {
         hasError: false,
         error: null,
-        errorInfo: null
+        errorInfo: null,
     };
 
     public static getDerivedStateFromError(error: Error): State {
@@ -22,47 +23,50 @@ class ErrorBoundary extends Component<Props, State> {
     }
 
     public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-        console.error("Uncaught error:", error, errorInfo);
+        console.error('[ErrorBoundary] Uncaught render error:', error, errorInfo);
         this.setState({ errorInfo });
     }
 
     private handleReset = () => {
-        window.location.href = '/mobile/login';
+        window.location.href = Capacitor.isNativePlatform() ? '/mobile/login' : '/login';
     };
 
     public render() {
         if (this.state.hasError) {
             return (
-                <div className="h-screen w-screen flex flex-col items-center justify-center p-8 bg-[#0D0D0D] text-white select-none relative overflow-hidden">
-                    <div className="absolute inset-0 technical-grid opacity-5 pointer-events-none"></div>
-                    <div className="bg-red-500/5 border border-red-500/20 p-8 rounded-none flex flex-col items-center max-w-sm w-full relative z-10">
-                        <div className="w-16 h-16 bg-red-600 rounded-none flex items-center justify-center mb-8 border border-red-500/40">
-                            <span className="material-symbols-outlined text-[32px] text-white">warning</span>
+                <div className="min-h-screen w-full flex flex-col items-center justify-center p-fib-34 bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] select-none font-sans">
+                    <div className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-fib-34 rounded-none shadow-none flex flex-col items-center max-w-md w-full space-y-fib-21">
+                        <span className="material-symbols-outlined text-[32px] text-red-500">
+                            warning
+                        </span>
+
+                        <div className="text-center space-y-fib-8">
+                            <h1 className="text-microcopy font-mono font-bold uppercase text-red-500">
+                                [EXCEPCIÓN CRÍTICA DE INTERFAZ]
+                            </h1>
+                            <p className="text-data-dense text-[#475569] dark:text-[#8A93A6]">
+                                Se interrumpió el ciclo de renderizado del componente activo.
+                            </p>
                         </div>
 
-                        <h1 className="hud-label text-red-500 text-lg mb-2">[CRITICAL_FAULT_DETECTION]</h1>
-                        <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest text-center mb-8">
-                            Se ha detectado una ruptura en la integridad del renderizado.
-                        </p>
-
-                        <div className="w-full bg-black/40 rounded-none p-5 mb-8 border border-white/5">
-                            <p className="hud-label text-red-500/60 text-[9px] mb-2">[EXCEPTION_LOG]</p>
-                            <p className="text-xs font-mono text-red-400/80 break-all">
-                                {this.state.error?.message}
+                        <div className="w-full bg-[#FFFFFF] dark:bg-[#000000] rounded-none p-fib-13 border border-[#E2E8F0] dark:border-[#12151C]">
+                            <p className="text-microcopy font-mono text-red-500 mb-fib-8">[DETALLE TÉCNICO]</p>
+                            <p className="text-data-dense font-mono text-[#0F172A] dark:text-[#F3F4F6] break-all select-text">
+                                {this.state.error?.message || 'Error de ejecución no especificado'}
                             </p>
                             {this.state.errorInfo && (
-                                <p className="text-[9px] font-mono text-white/20 mt-4 overflow-hidden h-20 opacity-40">
+                                <p className="text-microcopy font-mono text-[#94A3B8] dark:text-[#5A6072] mt-fib-8 overflow-hidden max-h-20">
                                     {this.state.errorInfo.componentStack}
                                 </p>
                             )}
                         </div>
 
                         <button
+                            type="button"
                             onClick={this.handleReset}
-                            className="w-full py-5 bg-white text-black font-black text-[11px] uppercase tracking-[0.3em] rounded-none flex items-center justify-center gap-3 active:scale-95 transition-all shadow-none"
+                            className="w-full py-fib-13 px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white font-mono font-bold text-microcopy uppercase rounded-none shadow-none transition-colors cursor-pointer"
                         >
-                            <span className="material-symbols-outlined text-[18px]">restart_alt</span>
-                            RECOVER_SYSTEM
+                            RESTABLECER SESIÓN OPERATIVA
                         </button>
                     </div>
                 </div>

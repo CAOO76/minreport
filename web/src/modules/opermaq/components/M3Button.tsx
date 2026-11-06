@@ -44,9 +44,9 @@ export const M3Button: React.FC<M3ButtonProps> = ({
     >
       {loading ? (
         <span className="material-symbols-outlined notranslate text-[18px] animate-spin">progress_activity</span>
-      ) : icon && (
+      ) : !children && icon ? (
         <span className="material-symbols-outlined notranslate text-[18px]">{icon}</span>
-      )}
+      ) : null}
       {children && <span>{children}</span>}
     </button>
   );

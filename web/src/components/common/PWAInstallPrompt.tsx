@@ -15,14 +15,12 @@ export const PWAInstallPrompt: React.FC = () => {
         const handler = (e: Event) => {
             e.preventDefault();
             setDeferredPrompt(e as BeforeInstallPromptEvent);
-            // No mostrar si ya fue descartado en la sesión
             if (!sessionStorage.getItem('pwa_prompt_dismissed')) {
                 setIsVisible(true);
             }
         };
 
         window.addEventListener('beforeinstallprompt', handler);
-
         return () => {
             window.removeEventListener('beforeinstallprompt', handler);
         };
@@ -43,43 +41,41 @@ export const PWAInstallPrompt: React.FC = () => {
         sessionStorage.setItem('pwa_prompt_dismissed', 'true');
     };
 
-    // No interrumpir flujos críticos de autenticación
-    const isAuthPage = typeof window !== 'undefined' && 
+    const isAuthPage = typeof window !== 'undefined' &&
         (window.location.pathname.includes('/login') || window.location.pathname.includes('/register'));
 
     if (!isVisible || isAuthPage) return null;
 
     return (
-        <div className="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-96 bg-white dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] shadow-none z-[9999] p-4 flex gap-4 font-sans select-none">
-            <div className="w-10 h-10 bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center shrink-0">
-                <span className="material-symbols-outlined text-[#C68346] text-[20px]">
-                    download
-                </span>
-            </div>
-            <div className="flex-1">
-                <h3 className="font-bold text-xs uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6] mb-1">
-                    {t('pwa.install_title', 'Instalar MINREPORT')}
-                </h3>
-                <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] mb-3 leading-normal">
-                    {t('pwa.install_desc', 'Instale la aplicación para garantizar acceso offline y mayor rendimiento en terreno.')}
-                </p>
-                <div className="flex gap-2">
+        <div className="fixed bottom-fib-21 left-fib-21 right-fib-21 md:left-auto md:right-fib-21 md:w-96 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none z-[9999] p-fib-21 flex items-start gap-fib-13 font-sans select-none">
+            <span className="material-symbols-outlined text-[#C68346] text-[22px] shrink-0 mt-0.5">
+                download
+            </span>
+            <div className="flex-1 min-w-0">
+                <div className="flex items-start justify-between gap-fib-8 mb-fib-8">
+                    <h3 className="font-bold text-data-dense uppercase text-[#0F172A] dark:text-[#F3F4F6]">
+                        {t('pwa.install_title', 'Instalar MINREPORT')}
+                    </h3>
                     <button
-                        onClick={handleInstallClick}
-                        className="flex-1 bg-[#C68346] hover:opacity-90 text-white text-[10px] font-mono uppercase tracking-wider py-1.5 transition-opacity cursor-pointer"
-                    >
-                        {t('pwa.install_button', 'Instalar Aplicación')}
-                    </button>
-                    <button
+                        type="button"
                         onClick={handleDismiss}
-                        className="w-8 flex items-center justify-center border border-[#E2E8F0] dark:border-[#12151C] text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-white transition-colors cursor-pointer"
-                        title="Descartar"
+                        title={t('pwa.dismiss', 'Descartar')}
+                        aria-label={t('pwa.dismiss', 'Descartar')}
+                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                     >
-                        <span className="material-symbols-outlined text-[16px]">
-                            close
-                        </span>
+                        <span className="material-symbols-outlined text-[16px]">close</span>
                     </button>
                 </div>
+                <p className="text-data-dense text-[#475569] dark:text-[#8A93A6] mb-fib-13 leading-relaxed">
+                    {t('pwa.install_desc', 'Instale la aplicación para habilitar operación offline en faena.')}
+                </p>
+                <button
+                    type="button"
+                    onClick={handleInstallClick}
+                    className="w-full bg-[#C68346] hover:bg-[#B0743E] text-white text-microcopy font-mono font-bold uppercase py-fib-8 px-fib-13 rounded-none shadow-none transition-colors cursor-pointer"
+                >
+                    {t('pwa.install_button', 'Instalar Aplicación')}
+                </button>
             </div>
         </div>
     );

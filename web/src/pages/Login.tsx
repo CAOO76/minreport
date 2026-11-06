@@ -1,24 +1,26 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { 
-    signInWithEmailAndPassword, 
-    signInWithPopup, 
-    GoogleAuthProvider 
+import {
+    signInWithEmailAndPassword,
+    signInWithPopup,
+    GoogleAuthProvider
 } from 'firebase/auth';
 import { auth } from '../config/firebase';
 import BrandLogo from '../components/BrandLogo';
+import { isPasskeySupported, authenticateWithPasskey } from '../services/passkeyService';
 
 export const Login: React.FC = () => {
     const navigate = useNavigate();
-    
-    // Estados estrictos y limpios (sin pre-llenados)
+
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [passkeyLoading, setPasskeyLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // Login con Correo y Contraseña
+    const passkeyAvailable = isPasskeySupported();
+
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
         setError(null);
@@ -26,10 +28,9 @@ export const Login: React.FC = () => {
 
         const normalizedEmail = email.trim().toLowerCase();
 
-        // [DEV_ROOT SHIELD] La cuenta maestra dev@minreport.com opera exclusivamente por gateway secreto
         if (normalizedEmail === 'dev@minreport.com') {
             setLoading(false);
-            setError('Credenciales corporativas inválidas o tipo de acceso no permitido desde este portal.');
+            setError('Credenciales corporativas invalidas o tipo de acceso no permitido desde este portal.');
             return;
         }
 
@@ -39,21 +40,20 @@ export const Login: React.FC = () => {
         } catch (err: any) {
             console.error('[AUTH] Login error:', err);
             if (
-                err.code === 'auth/invalid-credential' || 
-                err.code === 'auth/user-not-found' || 
+                err.code === 'auth/invalid-credential' ||
+                err.code === 'auth/user-not-found' ||
                 err.code === 'auth/wrong-password' ||
                 err.code === 'auth/invalid-email'
             ) {
-                setError('Credenciales corporativas inválidas o cuenta no registrada.');
+                setError('Credenciales corporativas invalidas o cuenta no registrada.');
             } else {
-                setError(err.message || 'Error de conexión con el servicio de autenticación.');
+                setError(err.message || 'Error de conexion con el servicio de autenticacion.');
             }
         } finally {
             setLoading(false);
         }
     };
 
-    // Login con Google
     const handleGoogleLogin = async () => {
         setError(null);
         setLoading(true);
@@ -70,24 +70,38 @@ export const Login: React.FC = () => {
         }
     };
 
+    const handlePasskeyLogin = async () => {
+        setError(null);
+        setPasskeyLoading(true);
+        const normalizedEmail = email.trim().toLowerCase();
+        if (normalizedEmail === 'dev@minreport.com') {
+            setPasskeyLoading(false);
+            setError('Credenciales corporativas invalidas o tipo de acceso no permitido desde este portal.');
+            return;
+        }
+        try {
+            await authenticateWithPasskey(normalizedEmail || undefined);
+            navigate('/dashboard');
+        } catch (err: any) {
+            if (err?.name !== 'NotAllowedError') {
+                setError(err?.message || 'No se pudo autenticar con Passkey FIDO2.');
+            }
+        } finally {
+            setPasskeyLoading(false);
+        }
+    };
+
     return (
-        <div className="min-h-screen bg-white dark:bg-[#030406] text-slate-900 dark:text-[#F3F4F6] flex flex-col items-center justify-center p-6 antialiased select-none">
-            
-            {/* Contenedor Minimalista Centrado */}
-            <div className="w-full max-w-sm mx-auto space-y-8">
-                
-                {/* Identidad Oficial: Isotipo arriba y Logotipo abajo */}
-                <div className="flex flex-col items-center justify-center space-y-3">
+        <div className="min-h-screen bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col items-center justify-center p-fib-21 antialiased select-none">
+            <div className="w-full max-w-sm mx-auto space-y-fib-34">
+                <div className="flex flex-col items-center justify-center space-y-fib-13">
                     <BrandLogo variant="isotype" className="h-16 w-auto object-contain" />
                     <BrandLogo variant="logotype" className="h-5 w-auto object-contain" />
                 </div>
 
-                {/* Formulario de Acceso Directo */}
-                <div className="bg-[#F8FAFC] dark:bg-[#07090D] border border-slate-200 dark:border-[#12151C] p-8 shadow-none rounded-none space-y-6">
-                    
-                    {/* Alerta de Error Aséptica */}
+                <div className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-fib-34 shadow-none rounded-none space-y-fib-21">
                     {error && (
-                        <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs flex items-center gap-2 font-mono rounded-none">
+                        <div className="p-fib-13 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs flex items-center gap-fib-8 font-mono rounded-none">
                             <span className="material-symbols-outlined text-[16px] text-red-600 dark:text-red-400 shrink-0">
                                 error
                             </span>
@@ -95,34 +109,53 @@ export const Login: React.FC = () => {
                         </div>
                     )}
 
-                    {/* Botón Google Workspace */}
-                    <button
-                        type="button"
-                        onClick={handleGoogleLogin}
-                        disabled={loading}
-                        className="w-full py-2.5 px-4 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 border border-slate-200 dark:border-[#12151C] hover:border-slate-300 dark:hover:border-neutral-700 text-xs font-mono text-slate-900 dark:text-[#F3F4F6] transition-colors flex items-center justify-center gap-3 disabled:opacity-50 cursor-pointer rounded-none"
-                    >
-                        <svg className="w-4 h-4" viewBox="0 0 24 24">
-                            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-                            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-                        </svg>
-                        <span>Continuar con Google</span>
-                    </button>
+                    <div className="space-y-fib-8">
+                        <button
+                            type="button"
+                            onClick={handleGoogleLogin}
+                            disabled={loading || passkeyLoading}
+                            className="w-full py-2.5 px-4 bg-[#FFFFFF] dark:bg-[#000000] hover:border-[#C68346] dark:hover:border-[#C68346] border border-[#E2E8F0] dark:border-[#12151C] text-xs font-mono text-[#0F172A] dark:text-[#F3F4F6] transition-colors flex items-center justify-center gap-3 disabled:opacity-50 cursor-pointer rounded-none shadow-none"
+                        >
+                            <svg
+                                className="w-4 h-4 select-none pointer-events-none"
+                                viewBox="0 0 24 24"
+                                {...({ draggable: false } as Record<string, unknown>)}
+                                onContextMenu={(e) => e.preventDefault()}
+                                style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
+                            >
+                                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                            </svg>
+                            <span>Continuar con Google</span>
+                        </button>
 
-                    {/* Divisor */}
+                        {passkeyAvailable && (
+                            <button
+                                type="button"
+                                onClick={handlePasskeyLogin}
+                                disabled={loading || passkeyLoading}
+                                className="w-full py-2.5 px-4 bg-[#FFFFFF] dark:bg-[#000000] hover:border-[#00AEEF] dark:hover:border-[#00AEEF] border border-[#E2E8F0] dark:border-[#12151C] text-xs font-mono text-[#0F172A] dark:text-[#F3F4F6] transition-colors flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer rounded-none shadow-none"
+                            >
+                                <span className="material-symbols-outlined text-[18px] text-[#00AEEF] select-none">
+                                    {passkeyLoading ? 'progress_activity' : 'fingerprint'}
+                                </span>
+                                <span>{passkeyLoading ? 'Verificando Passkey...' : 'Acceder con Passkey FIDO2'}</span>
+                            </button>
+                        )}
+                    </div>
+
                     <div className="relative flex items-center justify-center my-2">
-                        <div className="border-t border-slate-200 dark:border-[#12151C] w-full" />
-                        <span className="bg-[#F8FAFC] dark:bg-[#07090D] px-2 text-[9px] text-slate-400 dark:text-[#5A6072] uppercase font-mono tracking-widest absolute">
+                        <div className="border-t border-[#E2E8F0] dark:border-[#12151C] w-full" />
+                        <span className="bg-[#F8FAFC] dark:bg-[#07090D] px-2 text-[9px] text-[#94A3B8] dark:text-[#5A6072] uppercase font-mono tracking-widest absolute">
                             O
                         </span>
                     </div>
 
-                    {/* Formulario Correo + Contraseña */}
                     <form onSubmit={handleLogin} className="space-y-4" autoComplete="off" spellCheck={false}>
                         <div>
-                            <label className="block text-xs font-mono text-slate-600 dark:text-[#8A93A6] mb-1.5">
+                            <label className="block text-xs font-mono text-[#475569] dark:text-[#8A93A6] mb-1.5">
                                 Correo Corporativo
                             </label>
                             <input
@@ -137,12 +170,12 @@ export const Login: React.FC = () => {
                                 autoCorrect="off"
                                 autoCapitalize="off"
                                 spellCheck={false}
-                                className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] placeholder-slate-400 dark:placeholder-[#5A6072] px-3 py-2 text-xs font-mono outline-none transition-colors rounded-none"
+                                className="w-full bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] placeholder-[#94A3B8] dark:placeholder-[#5A6072] px-3 py-2 text-xs font-mono outline-none transition-colors rounded-none select-text"
                             />
                         </div>
 
                         <div>
-                            <label className="block text-xs font-mono text-slate-600 dark:text-[#8A93A6] mb-1.5">
+                            <label className="block text-xs font-mono text-[#475569] dark:text-[#8A93A6] mb-1.5">
                                 Contraseña
                             </label>
                             <div className="relative">
@@ -154,14 +187,14 @@ export const Login: React.FC = () => {
                                     value={password}
                                     onChange={e => setPassword(e.target.value)}
                                     placeholder="••••••••••••"
-                                    autoComplete="new-password"
+                                    autoComplete="off"
                                     spellCheck={false}
-                                    className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] placeholder-slate-400 dark:placeholder-[#5A6072] pl-3 pr-10 py-2 text-xs font-mono outline-none transition-colors rounded-none"
+                                    className="w-full bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] placeholder-[#94A3B8] dark:placeholder-[#5A6072] pl-3 pr-10 py-2 text-xs font-mono outline-none transition-colors rounded-none"
                                 />
                                 <button
                                     type="button"
                                     onClick={() => setShowPassword(!showPassword)}
-                                    className="absolute right-2 top-2 p-1 bg-transparent border-0 outline-none text-slate-400 dark:text-[#5A6072] hover:text-slate-900 dark:hover:text-[#F3F4F6] transition-colors cursor-pointer"
+                                    className="absolute right-2 top-1.5 p-1 bg-transparent border-0 outline-none text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                                     tabIndex={-1}
                                     title={showPassword ? 'Ocultar' : 'Mostrar'}
                                 >
@@ -172,13 +205,12 @@ export const Login: React.FC = () => {
                             </div>
                         </div>
 
-                        {/* Botón Principal Iniciar Sesión */}
                         <button
                             type="submit"
-                            disabled={loading}
-                            className="w-full py-2.5 px-4 bg-[#C68346] hover:opacity-90 active:scale-[0.99] text-white text-xs font-mono font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer shadow-none rounded-none mt-6"
+                            disabled={loading || passkeyLoading}
+                            className="w-full py-2.5 px-4 bg-[#C68346] hover:bg-[#B0743E] text-white text-xs font-mono font-bold uppercase tracking-wider transition-colors flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer shadow-none rounded-none mt-6 border-0 outline-none"
                         >
-                            <span>{loading ? 'Accediendo...' : 'Iniciar Sesión'}</span>
+                            <span>{loading ? 'Accediendo...' : 'Iniciar Sesion'}</span>
                             {!loading && (
                                 <span className="material-symbols-outlined text-[16px]">
                                     login
@@ -188,13 +220,12 @@ export const Login: React.FC = () => {
                     </form>
                 </div>
 
-                {/* Enlace Secundario Sobrio */}
                 <div className="text-center">
                     <Link
                         to="/register"
-                        className="text-[11px] font-mono text-slate-500 dark:text-[#8A93A6] hover:text-slate-900 dark:hover:text-[#F3F4F6] transition-colors"
+                        className="text-[11px] font-mono text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] transition-colors"
                     >
-                        Registrar Cuenta Titular B2B
+                        Registrar Cuenta Titular B2B / EDU
                     </Link>
                 </div>
             </div>

@@ -11,12 +11,12 @@ export interface SystemModuleInfo {
 export const SYSTEM_MODULES: SystemModuleInfo[] = [
     {
         id: 'opermaq',
-        name: 'OPERMAQ',
+        name: 'FLOTA',
         path: '/opermaq',
-        icon: 'local_shipping',
-        description: 'Flota y Equipos',
-        scope: 'Telemetría y registro operativo de maquinaria pesada.',
-        version: '1.0.0'
+        icon: 'lists',
+        description: 'Control de Flota',
+        scope: 'Registro de unidades por número de serie, fotografías privadas y consulta de 5 pilares.',
+        version: '1.0.0',
     },
     {
         id: 'stockpile',
@@ -25,10 +25,10 @@ export const SYSTEM_MODULES: SystemModuleInfo[] = [
         icon: 'layers',
         description: 'Cubicaciones y Volumetría',
         scope: 'Cálculo volumétrico y cubicación topográfica de acopios.',
-        version: '1.0.0'
-    }
+        version: '1.0.0',
+    },
 ];
 
 export const getSystemModuleById = (id: string): SystemModuleInfo | undefined => {
-    return SYSTEM_MODULES.find(m => m.id === id);
+    return SYSTEM_MODULES.find((m) => m.id === id);
 };

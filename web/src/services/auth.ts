@@ -48,19 +48,3 @@ export const registerUser = async (data: RegisterTitularB2BData | RegisterData) 
 
     return body;
 };
-
-export const checkAccountsById = async (taxId: string): Promise<{ accounts: any[] }> => {
-    const response = await fetch(getApiUrl(`/api/public/accounts-by-id/${encodeURIComponent(taxId)}`));
-
-    if (response.status === 404) {
-        return { accounts: [] };
-    }
-
-    const body = await response.json();
-
-    if (!response.ok) {
-        throw new Error(body.message || 'Identity check failed');
-    }
-
-    return body;
-};

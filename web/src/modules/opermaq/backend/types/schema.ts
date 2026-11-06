@@ -119,7 +119,92 @@ export interface PillarItem {
   // ── Campo de enlace a la Simbología Global ───────────────────────────────
   /** Referencias a los concept_id de master_symbology_vault que ilustran este ítem */
   symbology_refs?: string[];
+
+  // ── v4.0: Figuras técnicas CAS, Huellas de hechos y Avisos HITL ──────────
+  figures?: ExtractedFigureRef[];
+  fact_fingerprints?: string[];
+  locked_item_advisories?: LockedItemAdvisory[];
 }
+
+export interface FigureCallout {
+  callout: string;
+  component_es: string;
+  function_or_spec?: string;
+  box_2d?: [number, number, number, number];
+}
+
+export interface ExtractedFigureRef {
+  figure_id: string;
+  sha256: string;
+  phash_hex?: string;
+  storage_url: string;
+  mime_type: 'image/webp' | 'image/svg+xml' | 'image/png';
+  figure_type:
+    | 'DIAGRAMA_ACOTADO'
+    | 'CURVA_RENDIMIENTO'
+    | 'ESQUEMA_HIDRAULICO_ELECTRICO'
+    | 'FOTO_COMPONENTE'
+    | 'MAPA_LUBRICACION_PM'
+    | 'SIMBOLOGIA_SEGURIDAD'
+    | 'PLANO_VECTORIAL_SVG';
+  title_es: string;
+  caption_es?: string;
+  source_page?: number;
+  source_doc_hash?: string;
+  source_url?: string;
+  box_2d?: [number, number, number, number];
+  width?: number;
+  height?: number;
+  callouts?: FigureCallout[];
+  is_parametric_svg?: boolean;
+}
+
+export interface LockedItemAdvisory {
+  advisory_id: string;
+  detected_at: string;
+  source_label: string;
+  source_url?: string;
+  summary: string;
+  proposed_value: string;
+  current_locked_snapshot?: string;
+  acknowledged?: boolean;
+  acknowledged_by?: string;
+  acknowledged_at?: string;
+}
+
+export type SymbologyFunctionalGroup =
+  | 'MANDATORY_PPE'
+  | 'HAZARD_PROHIBITION'
+  | 'CABIN_TELLTALES_CONTROLS'
+  | 'MAINTENANCE_FLUIDS_ELECTRICAL';
+
+export interface SymbologyPackEntry {
+  concept_id: string;
+  standard_family: 'ISO_7010' | 'ISO_7000' | 'ISO_2575' | 'IEC_60417' | 'GHS' | 'OEM_CUSTOM';
+  iso_reference: string;
+  group: SymbologyFunctionalGroup;
+  technical_name_es: string;
+  action_operator_es: string;
+  critical_color: string;
+  icon_url: string;
+  svg_inline?: string;
+  is_brand_specific?: boolean;
+  source_layer: 'ARCHETYPE' | 'POWERTRAIN_TECH' | 'TENANT_FAENA' | 'OEM_MANUAL';
+}
+
+export interface EquipmentSymbologyPack {
+  generated_at: string;
+  archetype_key: string;
+  powertrain_tags: string[];
+  total_symbols: number;
+  groups: Record<SymbologyFunctionalGroup, SymbologyPackEntry[]>;
+}
+
+export type AdHocManualProfileId =
+  | 'MASTER_5_PILLARS'
+  | 'OPERATOR_POCKET_GUIDE'
+  | 'WORKSHOP_PM_MANUAL'
+  | 'REGULATORY_DS132_LOTO';
 
 
 /**
@@ -327,6 +412,8 @@ export interface ProposedUpdate {
   decided_by?: string;
   /** URL o referencia a la fuente técnica de origen que sustenta la propuesta */
   source_url?: string;
+  fact_fingerprint?: string;
+  figures?: ExtractedFigureRef[];
 }
 
 /**

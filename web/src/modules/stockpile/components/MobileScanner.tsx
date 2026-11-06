@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { toast } from 'react-toastify';
 import { Geolocation } from '@capacitor/geolocation';
 import { Motion } from '@capacitor/motion';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { dataService } from '../services/DataService';
 import { storageService } from '../services/StorageService';
+import { calculationEngine } from '../services/calculation-engine';
 import { visionIAService, type VisionSuggestion } from '../services/vision-ia';
 import { compressImage } from '../utils/imageOptimizer';
 import { auth } from '../config/firebase.config';
@@ -15,40 +17,98 @@ interface MobileScannerProps {
 }
 
 /**
- * MobileScanner - MEDICIÓN DIGITAL (IA)
- * Flujo: Foto Referencia → Escaneo Multi-Foto (5-10 capturas) → Inferencia Granulométrica IA (`/api/ai/inference`) → Inputs Operador → Guardar.
+ * Extrae características reales de luminancia y contraste desde los píxeles del fotograma
+ * liberando memoria del canvas inmediatamente (Cero datos inventados).
+ */
+async function extractRealTextureFeatures(imageSrc: string): Promise<{ mean: number; stdDev: number } | null> {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            try {
+                const maxSide = 256;
+                const ratio = Math.min(1, maxSide / Math.max(img.width || 1, img.height || 1));
+                canvas.width = Math.max(1, Math.round(img.width * ratio));
+                canvas.height = Math.max(1, Math.round(img.height * ratio));
+                const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                if (!ctx) {
+                    resolve(null);
+                    return;
+                }
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const totalPixels = Math.max(1, Math.floor(data.length / 4));
+                const sampleCount = Math.min(4096, totalPixels);
+                const step = Math.max(1, Math.floor(totalPixels / sampleCount));
+                const luminances: number[] = [];
+
+                for (let i = 0; i < sampleCount; i++) {
+                    const idx = ((i * step) % totalPixels) * 4;
+                    const lum = 0.2126 * data[idx] + 0.7152 * data[idx + 1] + 0.0722 * data[idx + 2];
+                    luminances.push(lum);
+                }
+
+                if (luminances.length === 0) {
+                    resolve(null);
+                    return;
+                }
+
+                const mean = luminances.reduce((acc, v) => acc + v, 0) / luminances.length;
+                const variance = luminances.reduce((acc, v) => acc + (v - mean) ** 2, 0) / luminances.length;
+                const stdDev = Math.sqrt(variance);
+                resolve({
+                    mean: Number(mean.toFixed(2)),
+                    stdDev: Number(stdDev.toFixed(2))
+                });
+            } catch {
+                resolve(null);
+            } finally {
+                canvas.width = 0;
+                canvas.height = 0;
+            }
+        };
+        img.onerror = () => resolve(null);
+        img.src = imageSrc;
+    });
+}
+
+/**
+ * MobileScanner - MEDICIÓN DIGITAL (IA + Telemetría IMU)
+ * Cumple GEMINI.md §3.1: Cero volúmenes, texturas o densidades inventadas.
+ * Exige cotas base/altura declaradas por el operador e inferencia verificada con HITL.
  */
 export const MobileScanner: React.FC<MobileScannerProps> = ({ assetId, onSuccess, onBack }) => {
-    // Estados de captura
-    const [photo, setPhoto] = useState<string | null>(null);
+    const [photoBlob, setPhotoBlob] = useState<Blob | null>(null);
+    const [photoPreview, setPhotoPreview] = useState<string | null>(null);
     const [isScanning, setIsScanning] = useState(false);
     const [scanComplete, setScanComplete] = useState(false);
 
-    // Fotos del escaneo (múltiples capturas desde diferentes ángulos)
-    const [scanPhotos, setScanPhotos] = useState<Array<{ dataUrl: string; imu: any }>>([]);
+    const [scanPhotos, setScanPhotos] = useState<Array<{ previewUrl: string; imu: { alpha: number; beta: number; gamma: number; accel_x: number; accel_y: number; accel_z: number } }>>([]);
     const targetPhotoCount = 5;
 
-    // Inputs del operador + Sugerencia IA (HITL)
+    // Cotas geométricas explícitas declaradas por el operador (Cono Elíptico)
+    const [baseMajorAxis, setBaseMajorAxis] = useState('');
+    const [baseMinorAxis, setBaseMinorAxis] = useState('');
+    const [totalHeight, setTotalHeight] = useState('');
+
+    // Inputs granulométricos del operador + Sugerencia IA (HITL)
     const [classification, setClassification] = useState<'COLPA' | 'GRANSA' | 'FINO' | null>(null);
     const [density, setDensity] = useState('');
     const [aiSuggestion, setAiSuggestion] = useState<VisionSuggestion | null>(null);
 
-    // Metadata
     const [isSaving, setIsSaving] = useState(false);
     const [gps, setGps] = useState<{ lat: number; lng: number; acc: number } | null>(null);
     const [userId, setUserId] = useState<string>('');
 
-    // Datos de sensores IMU
     const [imuData, setImuData] = useState({
         alpha: 0, beta: 45, gamma: 0,
         accel_x: 0, accel_y: 0, accel_z: 0
     });
     const [, setIsGroundDetected] = useState(false);
 
-    // Datos de textura capturados durante el escaneo
     const [textureData, setTextureData] = useState<{ mean: number; stdDev: number } | null>(null);
 
-    // Inicializar GPS y Usuario Autenticado de Firebase
     useEffect(() => {
         const initMetadata = async () => {
             try {
@@ -67,10 +127,9 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({ assetId, onSuccess
                 console.warn('[Scanner] User Error:', err);
             }
         };
-        initMetadata();
+        void initMetadata();
     }, []);
 
-    // Inicializar sensores IMU
     useEffect(() => {
         let motionListener: any;
         const initSensors = async () => {
@@ -91,13 +150,20 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({ assetId, onSuccess
                 console.warn('[Scanner] IMU Error:', err);
             }
         };
-        initSensors();
+        void initSensors();
         return () => {
             if (motionListener) motionListener.remove();
         };
     }, []);
 
-    // Capturar foto de referencia del lugar
+    useEffect(() => {
+        return () => {
+            if (photoPreview && photoPreview.startsWith('blob:')) {
+                URL.revokeObjectURL(photoPreview);
+            }
+        };
+    }, [photoPreview]);
+
     const captureReferencePhoto = async () => {
         try {
             const image = await Camera.getPhoto({
@@ -111,21 +177,30 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({ assetId, onSuccess
             });
             if (image.dataUrl) {
                 const optimized = await compressImage(image.dataUrl, { profile: 'evidence' });
-                setPhoto(optimized);
-                // Invocar análisis granulométrico en segundo plano
+                const blob = await fetch(optimized).then(r => r.blob());
+                const preview = URL.createObjectURL(blob);
+                setPhotoBlob(blob);
+                setPhotoPreview(prev => {
+                    if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+                    return preview;
+                });
+
+                const realTexture = await extractRealTextureFeatures(optimized);
+                setTextureData(realTexture);
+
                 visionIAService.analyzeTexture(optimized).then((suggestion) => {
                     setAiSuggestion(suggestion);
-                    if (!classification) {
+                    if (suggestion.verified && suggestion.granulometry) {
                         const mapped =
                             suggestion.granulometry === 'COLPAS'
                                 ? 'COLPA'
                                 : suggestion.granulometry === 'FINOS'
                                 ? 'FINO'
                                 : 'GRANSA';
-                        setClassification(mapped);
+                        setClassification(prev => prev || mapped);
                     }
-                    if (!density) {
-                        setDensity(String(suggestion.suggestedFactor));
+                    if (suggestion.verified && typeof suggestion.suggestedFactor === 'number') {
+                        setDensity(prev => prev || String(suggestion.suggestedFactor));
                     }
                 }).catch(() => {});
             }
@@ -152,95 +227,57 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({ assetId, onSuccess
             });
             if (image.dataUrl) {
                 const optimized = await compressImage(image.dataUrl, { profile: 'scan' });
-                const newPhoto = {
-                    dataUrl: optimized,
-                    imu: { ...imuData }
-                };
-                setScanPhotos(prev => [...prev, newPhoto]);
+                const blob = await fetch(optimized).then(r => r.blob());
+                const previewUrl = URL.createObjectURL(blob);
+                setScanPhotos(prev => [
+                    ...prev,
+                    {
+                        previewUrl,
+                        imu: { ...imuData }
+                    }
+                ]);
+                if (!textureData) {
+                    const realTexture = await extractRealTextureFeatures(optimized);
+                    if (realTexture) setTextureData(realTexture);
+                }
             }
         } catch (err) {
             console.warn('[Scanner] Captura cancelada:', err);
         }
     };
 
-    // Cálculo volumétrico determinista basado en trigonometría de inclinación IMU y conteo de estaciones
-    const calculateEstimatedVolume = () => {
-        const count = Math.max(1, scanPhotos.length);
-        const avgBeta = scanPhotos.reduce((acc, p) => acc + (p.imu.beta || 45), 0) / count;
-        const clampedBeta = Math.max(15, Math.min(75, Math.abs(avgBeta)));
-        const angleInRadians = (clampedBeta * Math.PI) / 180;
-        const distToCenter = Math.abs(1.6 / Math.tan(angleInRadians));
-        const estimatedRadius = Math.max(2, distToCenter * 0.8);
-        const reposeAngle = 35 * (Math.PI / 180);
-        const estimatedHeight = estimatedRadius * Math.tan(reposeAngle);
-        let vol = (1 / 3) * Math.PI * Math.pow(estimatedRadius, 2) * estimatedHeight * 0.8;
-        const photoFactor = 1 + ((count - 5) * 0.05);
-        vol = vol * photoFactor;
-
-        if (vol < 5) vol = 5.5;
-        if (vol > 1000) vol = 1000;
-
-        return Math.round(vol * 100) / 100;
-    };
+    const declaredVolume = useMemo(() => {
+        const a = parseFloat(baseMajorAxis) || 0;
+        const b = parseFloat(baseMinorAxis) || 0;
+        const h = parseFloat(totalHeight) || 0;
+        if (a <= 0 || b <= 0 || h <= 0) return 0;
+        return calculationEngine.calculateEllipticCone(a, b, h);
+    }, [baseMajorAxis, baseMinorAxis, totalHeight]);
 
     const stopScan = () => {
         if (scanPhotos.length < targetPhotoCount) {
-            alert(`Se requieren al menos ${targetPhotoCount} capturas para completar el escaneo. Capturas actuales: ${scanPhotos.length}.`);
+            toast.warning(`Se requieren al menos ${targetPhotoCount} capturas perimetrales (${scanPhotos.length}/${targetPhotoCount}).`);
             return;
         }
-
         setIsScanning(false);
         setScanComplete(true);
-
-        const estimatedVol = calculateEstimatedVolume();
-        setTextureData({
-            mean: 112.4,
-            stdDev: 24.8
-        });
-        console.log('[Scanner] Escaneo completado. Volumen calculado:', estimatedVol, 'm3');
     };
 
     const handleSave = async () => {
-        if (!classification || !density || !photo || !scanComplete) {
-            alert('Por favor, complete todos los pasos: foto de referencia, escaneo, clasificación y densidad.');
+        const parsedDensity = parseFloat(density) || 0;
+        if (!classification || parsedDensity <= 0 || !photoBlob || !scanComplete || declaredVolume <= 0) {
+            toast.warning('Complete evidencia, escaneo, cotas geométricas reales (eje mayor, eje menor, altura), clasificación y densidad.');
             return;
         }
 
         setIsSaving(true);
-        let finalPhotoUrl = '';
-        let uploadFailed = false;
-
         try {
-            const estimatedVol = calculateEstimatedVolume();
-            const parsedDensity = parseFloat(density) || 1.78;
-            const weightT = Math.round(estimatedVol * parsedDensity * 100) / 100;
+            const weightT = calculationEngine.computeTotalMass(declaredVolume, parsedDensity);
+            const uploadResult = await storageService.uploadStockpileImage(photoBlob, assetId);
+            const finalPhotoUrl = uploadResult.url;
+            const uploadDeferred = finalPhotoUrl.startsWith('offline-cas://');
 
-            try {
-                if (photo) {
-                    const response = await fetch(photo);
-                    const blob = await response.blob();
-
-                    const result: any = await Promise.race([
-                        storageService.uploadStockpileImage(blob, assetId),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout de red')), 4000))
-                    ]);
-
-                    finalPhotoUrl = result.url;
-                    if (result.path?.startsWith('offline://')) {
-                        uploadFailed = true;
-                    }
-                }
-            } catch (uploadError) {
-                console.warn('[Scanner] Subida diferida a modo autónomo:', uploadError);
-                uploadFailed = true;
-                if (photo && photo.length < 2000000) {
-                    finalPhotoUrl = photo;
-                } else {
-                    finalPhotoUrl = '';
-                }
-            }
-
-            if (aiSuggestion) {
+            if (aiSuggestion && aiSuggestion.verified && aiSuggestion.granulometry) {
                 const finalGran = classification === 'COLPA' ? 'COLPAS' : classification === 'FINO' ? 'FINOS' : 'GRANSA';
                 await visionIAService.recordOperatorFeedback(
                     aiSuggestion,
@@ -249,15 +286,23 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({ assetId, onSuccess
                 );
             }
 
+            const a = parseFloat(baseMajorAxis) || 0;
+            const b = parseFloat(baseMinorAxis) || 0;
+            const h = parseFloat(totalHeight) || 0;
+
             const measurementData: any = {
                 assetId,
                 timestamp: Date.now(),
-                volumen_m3: estimatedVol,
+                volumen_m3: declaredVolume,
                 peso_t: weightT,
                 density_factor: parsedDensity,
                 granulometry: classification === 'COLPA' ? 'COLPAS' : classification === 'FINO' ? 'FINOS' : 'GRANSA',
                 method: 'digital',
                 photo_url: finalPhotoUrl,
+                geometry: {
+                    type: 'CONO_ELIPTICO',
+                    dimensions: { a, b, h }
+                },
                 operator_classification: classification,
                 operator_density: parsedDensity,
                 imu_data: {
@@ -269,8 +314,12 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({ assetId, onSuccess
                     accel_z: imuData.accel_z
                 },
                 scan_photo_count: scanPhotos.length,
-                offline_pending: uploadFailed
+                offline_pending: uploadDeferred
             };
+
+            if (aiSuggestion?.verified && typeof aiSuggestion.confidence === 'number') {
+                measurementData.ai_confidence = Math.round(aiSuggestion.confidence * 100);
+            }
 
             if (textureData) {
                 measurementData.texture_features = {
@@ -295,107 +344,112 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({ assetId, onSuccess
             onSuccess(measurementId);
         } catch (error: any) {
             console.error('[Scanner] Error guardando medición:', error);
-            alert(`Error al guardar medición: ${error.message}`);
+            toast.error(`Error al guardar medición: ${error?.message || 'Fallo de registro'}`);
         } finally {
             setIsSaving(false);
         }
     };
 
-    const previewVolume = scanComplete ? calculateEstimatedVolume() : 0;
+    const sanitizeDecimalInput = (raw: string) => raw.replace(/,/g, '.').replace(/[^0-9.]/g, '');
 
     return (
-        <div className="h-full w-full flex-1 min-h-[600px] bg-antigravity-light-bg dark:bg-antigravity-dark-bg flex flex-col font-atkinson text-antigravity-light-text dark:text-antigravity-dark-text overflow-hidden relative transition-colors duration-200 rounded-none shadow-none">
+        <div className="h-full w-full flex-1 min-h-[600px] bg-[#FFFFFF] dark:bg-[#000000] flex flex-col font-atkinson text-[#0F172A] dark:text-[#F3F4F6] overflow-hidden relative transition-colors duration-200 rounded-none shadow-none select-none">
 
-            {/* Header Técnico */}
-            <header className="flex-none pt-8 pb-4 px-6 flex items-center justify-between bg-antigravity-light-bg dark:bg-black border-b border-antigravity-light-border dark:border-[#12151C] z-50">
-                <div className="flex items-center gap-4">
+            <header className="flex-none pt-8 pb-4 px-6 flex items-center justify-between bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] z-50">
+                <div className="flex items-center gap-[13px]">
                     <button
                         type="button"
                         onClick={onBack}
                         className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none shadow-none"
                         title="Volver"
+                        aria-label="Volver"
                     >
-                        <span className="material-symbols-outlined text-2xl text-antigravity-accent">arrow_back</span>
+                        <span className="material-symbols-outlined text-2xl text-[#C68346]">arrow_back</span>
                     </button>
                     <div className="flex flex-col">
-                        <span className="text-[10px] font-black tracking-[0.4em] uppercase text-antigravity-light-text/50 dark:text-white/40">MEDICIÓN</span>
-                        <span className="text-xl font-black tracking-tight text-antigravity-light-text dark:text-white/90 uppercase">DIGITAL (IA)</span>
+                        <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-[#475569] dark:text-[#8A93A6]">MEDICIÓN</span>
+                        <span className="text-xl font-bold tracking-tight text-[#0F172A] dark:text-[#F3F4F6] uppercase">DIGITAL (IA)</span>
                     </div>
                 </div>
-                <span className="material-symbols-outlined text-3xl opacity-30 dark:opacity-20">landscape</span>
             </header>
 
-            {/* Área de Trabajo */}
-            <main className="flex-1 overflow-y-auto px-6 py-8 relative">
-                <div className="max-w-sm mx-auto space-y-10 relative z-10">
+            <main className="flex-1 overflow-y-auto px-[21px] py-[34px] relative">
+                <div className="max-w-sm mx-auto space-y-[34px] relative z-10">
 
                     {/* 1. FOTO DE REFERENCIA DEL LUGAR */}
-                    <div className="space-y-4">
-                        <span className="text-[10px] font-black tracking-[0.4em] text-antigravity-light-text/50 dark:text-white/40 uppercase">EVIDENCIA TÉCNICA</span>
+                    <div className="space-y-[13px]">
+                        <span className="text-[11px] font-bold tracking-[0.2em] text-[#475569] dark:text-[#8A93A6] uppercase">EVIDENCIA TÉCNICA</span>
                         <div
-                            onClick={photo ? undefined : captureReferencePhoto}
-                            className={`relative w-full aspect-video rounded-none border-2 border-dashed transition-all overflow-hidden flex flex-col items-center justify-center cursor-pointer
-                                    ${photo ? 'border-antigravity-accent/40 bg-black' : 'border-antigravity-light-border dark:border-white/10 bg-antigravity-light-surface dark:bg-white/5'}`}
+                            onClick={photoPreview ? undefined : captureReferencePhoto}
+                            className={`relative w-full aspect-video rounded-none border-2 border-dashed transition-colors overflow-hidden flex flex-col items-center justify-center cursor-pointer
+                                ${photoPreview ? 'border-[#C68346]/60 bg-[#000000]' : 'border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D]'}`}
                         >
-                            {photo ? (
+                            {photoPreview ? (
                                 <>
-                                    <img src={photo} draggable={false} className="w-full h-full object-cover select-none pointer-events-none" alt="Evidencia" />
-                                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                                    <div className="absolute bottom-4 left-4 flex items-center gap-2">
-                                        <span className="material-symbols-outlined text-antigravity-accent text-xl">check_circle</span>
-                                        <span className="text-[10px] font-black text-white uppercase tracking-widest">CAPTURA REGISTRADA</span>
+                                    <img
+                                        src={photoPreview}
+                                        draggable={false}
+                                        onContextMenu={(e) => e.preventDefault()}
+                                        className="w-full h-full object-cover select-none pointer-events-none"
+                                        alt="Evidencia"
+                                    />
+                                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
+                                    <div className="absolute bottom-4 left-4 flex items-center gap-[8px]">
+                                        <span className="text-[11px] font-bold text-[#FFFFFF] uppercase tracking-widest bg-[#C68346] px-[8px] py-0.5">CAPTURA REGISTRADA</span>
                                     </div>
                                     <button
                                         type="button"
-                                        onClick={(e) => { e.stopPropagation(); setPhoto(null); setAiSuggestion(null); }}
-                                        className="absolute top-4 right-4 bg-transparent border-0 outline-none p-1 text-white/80 hover:text-white transition-colors cursor-pointer"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setPhotoBlob(null);
+                                            setPhotoPreview(null);
+                                            setAiSuggestion(null);
+                                            setTextureData(null);
+                                        }}
+                                        className="absolute top-3 right-3 bg-transparent border-0 outline-none p-1 text-white/80 hover:text-white transition-colors cursor-pointer"
                                         title="Eliminar captura"
+                                        aria-label="Eliminar captura"
                                     >
                                         <span className="material-symbols-outlined">delete</span>
                                     </button>
                                 </>
                             ) : (
                                 <>
-                                    <span className="material-symbols-outlined text-5xl text-antigravity-light-text/20 dark:text-white/20 mb-2 font-light">add_a_photo</span>
-                                    <span className="text-[10px] font-black text-antigravity-light-text/40 dark:text-white/30 uppercase tracking-[0.2em]">CAPTURAR REFERENCIA</span>
+                                    <span className="material-symbols-outlined text-5xl text-[#94A3B8] dark:text-[#5A6072] mb-2">add_a_photo</span>
+                                    <span className="text-[11px] font-bold text-[#475569] dark:text-[#8A93A6] uppercase tracking-[0.2em]">CAPTURAR REFERENCIA</span>
                                 </>
                             )}
                         </div>
                     </div>
 
                     {/* 2. ESCANEO MULTI-FOTO */}
-                    {photo && !scanComplete && (
-                        <div className="space-y-4">
-                            <span className="text-[10px] font-black tracking-[0.4em] text-antigravity-light-text/50 dark:text-white/40 uppercase">ESCANEO TÉCNICO</span>
+                    {photoPreview && !scanComplete && (
+                        <div className="space-y-[13px]">
+                            <span className="text-[11px] font-bold tracking-[0.2em] text-[#475569] dark:text-[#8A93A6] uppercase">ESCANEO TÉCNICO</span>
 
-                            <div className="bg-antigravity-light-surface dark:bg-[#07090D] border border-antigravity-light-border dark:border-[#12151C] rounded-none p-6 shadow-none">
-                                <div className="flex items-center justify-between mb-4">
-                                    <div className="flex items-center gap-3">
-                                        <span className="material-symbols-outlined text-2xl text-antigravity-light-text/40 dark:text-white/40">photo_library</span>
-                                        <div className="flex flex-col">
-                                            <span className="text-xs font-black text-antigravity-light-text/70 dark:text-white/60">PROGRESO DEL ESCANEO</span>
-                                            <span className={`text-[10px] font-black font-mono tabular-nums uppercase ${scanPhotos.length >= targetPhotoCount ? 'text-antigravity-accent' : 'text-antigravity-light-text/40 dark:text-white/40'}`}>
-                                                {scanPhotos.length} / {targetPhotoCount} FOTOS
-                                            </span>
-                                        </div>
+                            <div className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none p-[21px] shadow-none">
+                                <div className="flex items-center justify-between mb-[13px]">
+                                    <div className="flex flex-col">
+                                        <span className="text-xs font-bold text-[#0F172A] dark:text-[#F3F4F6]">PROGRESO DEL ESCANEO</span>
+                                        <span className={`text-[11px] font-bold font-mono tabular-nums uppercase ${scanPhotos.length >= targetPhotoCount ? 'text-[#C68346]' : 'text-[#475569] dark:text-[#8A93A6]'}`}>
+                                            {scanPhotos.length} / {targetPhotoCount} ESTACIONES
+                                        </span>
                                     </div>
-                                    <div className="text-right">
-                                        <span className="text-xs font-mono tabular-nums text-antigravity-light-text/40 dark:text-white/40">{imuData.beta.toFixed(1)}°</span>
-                                    </div>
+                                    <span className="text-xs font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">{imuData.beta.toFixed(1)}°</span>
                                 </div>
 
-                                <div className="w-full h-2 bg-antigravity-light-border dark:bg-white/5 rounded-none overflow-hidden">
+                                <div className="w-full h-2 bg-[#E2E8F0] dark:bg-[#12151C] rounded-none overflow-hidden">
                                     <div
-                                        className="h-full bg-antigravity-accent transition-all duration-300"
+                                        className="h-full bg-[#C68346] transition-all duration-300"
                                         style={{ width: `${Math.min(100, (scanPhotos.length / targetPhotoCount) * 100)}%` }}
                                     />
                                 </div>
                             </div>
 
                             {!isScanning && scanPhotos.length === 0 && (
-                                <div className="bg-antigravity-accent/5 border border-antigravity-accent/20 rounded-none p-4">
-                                    <p className="text-[11px] text-antigravity-accent leading-relaxed">
-                                        <span className="font-black">PROCEDIMIENTO:</span> Capture {targetPhotoCount} estaciones perimetrales alrededor del acopio para integración fotogramétrica e inercial.
+                                <div className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#C68346]/40 rounded-none p-[13px]">
+                                    <p className="text-xs text-[#0F172A] dark:text-[#F3F4F6] leading-relaxed">
+                                        <span className="font-bold text-[#C68346]">PROCEDIMIENTO:</span> Capture {targetPhotoCount} estaciones perimetrales alrededor del acopio para registro fotográfico e inclinometría IMU.
                                     </p>
                                 </div>
                             )}
@@ -404,30 +458,27 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({ assetId, onSuccess
                                 <button
                                     type="button"
                                     onClick={startScan}
-                                    className="w-full h-16 rounded-none bg-antigravity-accent text-white font-black shadow-none transition-all flex items-center justify-center gap-4 cursor-pointer"
+                                    className="w-full h-14 rounded-none bg-[#C68346] text-[#FFFFFF] font-bold text-xs tracking-widest uppercase shadow-none transition-colors flex items-center justify-center cursor-pointer"
                                 >
-                                    <span className="material-symbols-outlined text-3xl">shutter_speed</span>
-                                    <span className="text-sm tracking-widest uppercase">INICIAR ESCANEO</span>
+                                    INICIAR ESCANEO
                                 </button>
                             ) : (
-                                <div className="space-y-3">
+                                <div className="space-y-[13px]">
                                     <button
                                         type="button"
                                         onClick={captureScanPhoto}
-                                        className="w-full h-16 rounded-none bg-antigravity-accent text-white font-black shadow-none transition-all flex items-center justify-center gap-4 cursor-pointer"
+                                        className="w-full h-14 rounded-none bg-[#C68346] text-[#FFFFFF] font-bold text-xs tracking-widest uppercase font-mono tabular-nums shadow-none transition-colors flex items-center justify-center cursor-pointer"
                                     >
-                                        <span className="material-symbols-outlined text-3xl">photo_camera</span>
-                                        <span className="text-sm tracking-widest uppercase font-mono tabular-nums">CAPTURAR ESTACIÓN {scanPhotos.length + 1}</span>
+                                        CAPTURAR ESTACIÓN {scanPhotos.length + 1}
                                     </button>
 
                                     {scanPhotos.length >= targetPhotoCount && (
                                         <button
                                             type="button"
                                             onClick={stopScan}
-                                            className="w-full h-14 rounded-none bg-emerald-600 text-white font-black shadow-none transition-all flex items-center justify-center gap-3 cursor-pointer"
+                                            className="w-full h-14 rounded-none bg-[#00AEEF] text-[#000000] font-bold text-xs tracking-widest uppercase shadow-none transition-colors flex items-center justify-center cursor-pointer"
                                         >
-                                            <span className="material-symbols-outlined text-2xl">check_circle</span>
-                                            <span className="text-sm tracking-widest uppercase">FINALIZAR ESCANEO</span>
+                                            FINALIZAR ESCANEO
                                         </button>
                                     )}
                                 </div>
@@ -435,42 +486,95 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({ assetId, onSuccess
                         </div>
                     )}
 
-                    {/* 3. INPUTS DEL OPERADOR + SUGERENCIA IA (HITL) */}
+                    {/* 3. COTAS DECLARADAS + SUGERENCIA IA (HITL) */}
                     {scanComplete && (
-                        <div className="space-y-8">
-                            <div className="bg-antigravity-accent/10 border border-antigravity-accent/30 rounded-none p-4 flex items-center gap-3">
-                                <span className="material-symbols-outlined text-2xl text-antigravity-accent">check_circle</span>
-                                <div className="flex flex-col">
-                                    <span className="text-xs font-black text-antigravity-accent uppercase">ESCANEO COMPLETADO</span>
-                                    <span className="text-[11px] font-mono tabular-nums text-antigravity-light-text/60 dark:text-white/60">{scanPhotos.length} estaciones registradas con telemetría IMU</span>
-                                </div>
+                        <div className="space-y-[21px]">
+                            <div className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#C68346]/40 rounded-none p-[13px] flex flex-col gap-1">
+                                <span className="text-xs font-bold text-[#C68346] uppercase">ESCANEO COMPLETADO</span>
+                                <span className="text-[12px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                                    {scanPhotos.length} estaciones registradas con telemetría IMU
+                                    {textureData ? ` · L=${textureData.mean} σ=${textureData.stdDev}` : ''}
+                                </span>
                             </div>
 
                             {aiSuggestion && (
-                                <div className="p-4 border border-[#00AEEF]/40 bg-[#00AEEF]/5 rounded-none space-y-1">
-                                    <div className="flex items-center justify-between text-[10px] font-mono font-bold uppercase text-[#00AEEF]">
+                                <div className="p-[13px] border border-[#00AEEF]/40 bg-[#F8FAFC] dark:bg-[#07090D] rounded-none space-y-[8px]">
+                                    <div className="flex items-center justify-between text-[11px] font-mono font-bold uppercase text-[#00AEEF]">
                                         <span>DIAGNÓSTICO IA GRANULOMÉTRICO</span>
-                                        <span className="tabular-nums">CONFIANZA {(aiSuggestion.confidence * 100).toFixed(0)}%</span>
+                                        <span className="tabular-nums">
+                                            {aiSuggestion.verified && typeof aiSuggestion.confidence === 'number'
+                                                ? `CONFIANZA ${(aiSuggestion.confidence * 100).toFixed(0)}%`
+                                                : 'SIN CONEXIÓN IA'}
+                                        </span>
                                     </div>
                                     <p className="text-xs text-[#0F172A] dark:text-[#F3F4F6]">{aiSuggestion.reasoning}</p>
                                 </div>
                             )}
 
+                            {/* Cotas Geométricas Reales (Obligatorias — Cero Volumen Inventado) */}
+                            <div className="space-y-[13px]">
+                                <span className="text-[11px] font-bold text-[#475569] dark:text-[#8A93A6] tracking-widest uppercase">
+                                    COTAS GEOMÉTRICAS MEDIDAS / ESTIMADAS (m)
+                                </span>
+                                <div className="grid grid-cols-3 gap-[8px]">
+                                    <div className="flex flex-col gap-[8px]">
+                                        <label className="text-[10px] font-bold text-[#475569] dark:text-[#8A93A6] uppercase">EJE MAYOR</label>
+                                        <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={baseMajorAxis}
+                                            onChange={(e) => setBaseMajorAxis(sanitizeDecimalInput(e.target.value))}
+                                            placeholder="0.0"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            className="w-full h-12 px-2 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] rounded-none shadow-none text-center text-base font-bold font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] outline-none"
+                                        />
+                                    </div>
+                                    <div className="flex flex-col gap-[8px]">
+                                        <label className="text-[10px] font-bold text-[#475569] dark:text-[#8A93A6] uppercase">EJE MENOR</label>
+                                        <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={baseMinorAxis}
+                                            onChange={(e) => setBaseMinorAxis(sanitizeDecimalInput(e.target.value))}
+                                            placeholder="0.0"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            className="w-full h-12 px-2 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] rounded-none shadow-none text-center text-base font-bold font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] outline-none"
+                                        />
+                                    </div>
+                                    <div className="flex flex-col gap-[8px]">
+                                        <label className="text-[10px] font-bold text-[#475569] dark:text-[#8A93A6] uppercase">ALTURA (H)</label>
+                                        <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={totalHeight}
+                                            onChange={(e) => setTotalHeight(sanitizeDecimalInput(e.target.value))}
+                                            placeholder="0.0"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            className="w-full h-12 px-2 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] rounded-none shadow-none text-center text-base font-bold font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] outline-none"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
                             {/* Clasificación */}
-                            <div className="flex flex-col gap-3">
-                                <label className="text-[10px] font-black text-antigravity-light-text/50 dark:text-white/40 tracking-widest pl-1 uppercase">
+                            <div className="flex flex-col gap-[8px]">
+                                <label className="text-[11px] font-bold text-[#475569] dark:text-[#8A93A6] tracking-widest uppercase">
                                     CLASIFICACIÓN DEL MATERIAL
                                 </label>
-                                <div className="grid grid-cols-3 gap-3">
+                                <div className="grid grid-cols-3 gap-[8px]">
                                     {(['COLPA', 'GRANSA', 'FINO'] as const).map((c) => (
                                         <button
                                             key={c}
                                             type="button"
                                             onClick={() => setClassification(c)}
-                                            className={`h-14 rounded-none shadow-none font-black text-xs transition-all border cursor-pointer ${classification === c
-                                                ? 'bg-antigravity-accent text-white border-antigravity-accent'
-                                                : 'bg-antigravity-light-surface text-antigravity-light-text/60 border-antigravity-light-border dark:bg-[#07090D] dark:text-white/60 dark:border-[#12151C]'
-                                                }`}
+                                            className={`h-12 rounded-none shadow-none font-bold font-mono text-xs transition-colors border cursor-pointer ${
+                                                classification === c
+                                                    ? 'bg-[#C68346] text-[#FFFFFF] border-[#C68346]'
+                                                    : 'bg-[#F8FAFC] text-[#475569] border-[#E2E8F0] dark:bg-[#07090D] dark:text-[#8A93A6] dark:border-[#12151C]'
+                                            }`}
                                         >
                                             {c}
                                         </button>
@@ -479,34 +583,35 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({ assetId, onSuccess
                             </div>
 
                             {/* Densidad */}
-                            <div className="flex flex-col gap-3">
-                                <label className="text-[10px] font-black text-antigravity-light-text/50 dark:text-white/40 tracking-widest pl-1 uppercase">
-                                    FACTOR DENSIDAD (T/m³)
+                            <div className="flex flex-col gap-[8px]">
+                                <label className="text-[11px] font-bold text-[#475569] dark:text-[#8A93A6] tracking-widest uppercase">
+                                    FACTOR DENSIDAD DECLARADO (T/m³)
                                 </label>
                                 <input
                                     type="text"
                                     inputMode="decimal"
                                     value={density}
-                                    onChange={(e) => {
-                                        const val = e.target.value.replace(/,/g, '.').replace(/[^0-9.]/g, '');
-                                        setDensity(val);
-                                    }}
-                                    className="w-full bg-antigravity-light-surface dark:bg-[#07090D] border border-antigravity-light-border dark:border-[#12151C] rounded-none shadow-none h-14 px-6 text-2xl font-black font-mono tabular-nums text-antigravity-light-text dark:text-white outline-none focus:border-antigravity-accent transition-all text-center tracking-tight"
-                                    placeholder="1.78"
+                                    onChange={(e) => setDensity(sanitizeDecimalInput(e.target.value))}
+                                    className="w-full bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none h-14 px-6 text-2xl font-bold font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] outline-none focus:border-[#C68346] transition-colors text-center tracking-tight"
+                                    placeholder="0.00"
                                     autoComplete="off"
                                     spellCheck={false}
                                 />
                             </div>
 
                             {/* 4. VOLUMEN CALCULADO */}
-                            <div className="bg-antigravity-light-surface dark:bg-[#07090D] border border-antigravity-light-border dark:border-[#12151C] rounded-none p-6 flex flex-col items-center gap-2 shadow-none">
-                                <span className="text-[11px] font-black text-antigravity-light-text/50 dark:text-white/40 tracking-[0.3em] uppercase">VOLUMEN ESTIMADO</span>
-                                <div className="flex items-baseline gap-2">
-                                    <span className="text-4xl font-black font-mono tabular-nums text-antigravity-accent tracking-tighter">
-                                        {previewVolume.toFixed(1)}
-                                    </span>
-                                    <span className="text-sm font-black text-antigravity-light-text/50 dark:text-white/40 uppercase">m³</span>
-                                </div>
+                            <div className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none p-[21px] flex flex-col items-center gap-[8px] shadow-none">
+                                <span className="text-[11px] font-bold text-[#475569] dark:text-[#8A93A6] tracking-[0.2em] uppercase">VOLUMEN CALCULADO</span>
+                                {declaredVolume > 0 ? (
+                                    <div className="flex items-baseline gap-[8px]">
+                                        <span className="text-4xl font-bold font-mono tabular-nums text-[#C68346] tracking-tight">
+                                            {declaredVolume.toFixed(2)}
+                                        </span>
+                                        <span className="text-sm font-bold font-mono text-[#475569] dark:text-[#8A93A6] uppercase">m³</span>
+                                    </div>
+                                ) : (
+                                    <span className="text-xs font-mono text-[#94A3B8] dark:text-[#5A6072]">[Pendiente de registro de cotas]</span>
+                                )}
                             </div>
                         </div>
                     )}
@@ -517,20 +622,18 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({ assetId, onSuccess
                             <button
                                 type="button"
                                 onClick={handleSave}
-                                disabled={isSaving || !classification || !density}
-                                className={`w-full h-16 rounded-none shadow-none flex items-center justify-center gap-4 transition-all cursor-pointer
-                                        ${isSaving || !classification || !density
-                                        ? 'bg-antigravity-light-surface text-antigravity-light-text/20 dark:bg-white/5 dark:text-white/20 border border-antigravity-light-border dark:border-transparent cursor-not-allowed'
-                                        : 'bg-antigravity-accent text-white font-black'
+                                disabled={isSaving || !classification || !(parseFloat(density) > 0) || declaredVolume <= 0}
+                                className={`w-full h-14 rounded-none shadow-none flex items-center justify-center transition-colors cursor-pointer
+                                    ${
+                                        isSaving || !classification || !(parseFloat(density) > 0) || declaredVolume <= 0
+                                            ? 'bg-[#F8FAFC] text-[#94A3B8] dark:bg-[#07090D] dark:text-[#5A6072] border border-[#E2E8F0] dark:border-[#12151C] cursor-not-allowed'
+                                            : 'bg-[#C68346] text-[#FFFFFF] font-bold'
                                     }`}
                             >
                                 {isSaving ? (
-                                    <span className="material-symbols-outlined text-3xl animate-spin">sync</span>
+                                    <span className="material-symbols-outlined text-2xl animate-spin">sync</span>
                                 ) : (
-                                    <>
-                                        <span className="material-symbols-outlined text-2xl">save</span>
-                                        <span className="text-sm tracking-widest uppercase">GUARDAR MEDICIÓN</span>
-                                    </>
+                                    <span className="text-xs tracking-widest uppercase">GUARDAR MEDICIÓN</span>
                                 )}
                             </button>
                         </div>

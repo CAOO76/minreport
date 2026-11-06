@@ -12,7 +12,6 @@ interface M3ChipProps {
 
 export const M3Chip: React.FC<M3ChipProps> = ({
     label,
-    icon,
     variant = 'assist',
     selected = false,
     onClick,
@@ -22,16 +21,15 @@ export const M3Chip: React.FC<M3ChipProps> = ({
         <div
             onClick={onClick}
             className={clsx(
-                "inline-flex items-center gap-2 px-4 py-1.5 rounded-none shadow-none text-sm font-medium transition-all duration-200 cursor-pointer select-none",
+                "inline-flex items-center gap-[8px] px-[13px] py-[8px] rounded-none shadow-none text-[13px] font-medium transition-colors duration-200 cursor-pointer select-none",
                 {
-                    'bg-[rgba(28,27,31,0.8)] text-white backdrop-blur-sm border border-white/10': variant === 'assist',
-                    'bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-antigravity-light-border dark:border-antigravity-dark-border': variant === 'filter' && !selected,
-                    'bg-antigravity-accent/20 text-antigravity-accent border border-antigravity-accent': selected,
+                    'bg-[#F8FAFC] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C]':
+                        (variant === 'assist' || variant === 'filter' || variant === 'input' || variant === 'suggestion') && !selected,
+                    'bg-[#C68346]/15 text-[#C68346] border border-[#C68346]': selected,
                 },
                 className
             )}
         >
-            {icon && <span className="material-symbols-outlined text-lg">{icon}</span>}
             <span>{label}</span>
         </div>
     );

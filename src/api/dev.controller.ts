@@ -1,6 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
-import admin, { db, auth } from '../config/firebase';
+import crypto from 'crypto';
+import { db, auth } from '../config/firebase';
 import { z } from 'zod';
+import { resolveDevRootPassword } from '../config/secrets';
+import { constantTimeEqualStrings } from '../utils/security';
+import { extractClientIp } from '../middleware/rateLimiter';
+import { AuditLedger } from '../core/audit-ledger';
 import { DEV_ROOT_EMAIL, DEV_ROOT_UID, ensureDevRootAccount } from '../services/bootstrap.service';
 import { DevChallengeService } from '../services/dev-challenge.service';
 
@@ -10,6 +15,7 @@ export interface DevRequest extends Request {
 
 /**
  * Middleware de protección de acceso exclusivo a la Cuenta Maestra DEV.
+ * Prohibida cualquier decodificación JWT sin verificación criptográfica.
  */
 export const requireDevRoot = async (req: DevRequest, res: Response, next: NextFunction) => {
     try {
@@ -18,55 +24,28 @@ export const requireDevRoot = async (req: DevRequest, res: Response, next: NextF
             return res.status(401).json({ error: 'Acceso no autorizado: Token ausente' });
         }
 
-        const token = authHeader.split('Bearer ')[1];
-        let decodedToken: any;
-
-        try {
-            decodedToken = await auth.verifyIdToken(token);
-        } catch (idErr) {
-            // Si verifyIdToken falla, verificar si es un Custom Token válido emitido para DEV_ROOT
-            try {
-                const parts = token.split('.');
-                if (parts.length === 3) {
-                    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
-                    const nowSec = Math.floor(Date.now() / 1000);
-
-                    if (
-                        payload.exp > nowSec &&
-                        (payload.uid === DEV_ROOT_UID || payload.sub === DEV_ROOT_UID) &&
-                        (payload.claims?.role === 'DEV_ROOT' || payload.claims?.isMasterDev === true)
-                    ) {
-                        decodedToken = {
-                            uid: payload.uid || payload.sub,
-                            email: DEV_ROOT_EMAIL,
-                            role: 'DEV_ROOT',
-                            isMasterDev: true,
-                            ...payload.claims
-                        };
-                    }
-                }
-            } catch (customErr) {
-                console.warn('[DEV-GATEWAY] Fallo decodificando token custom:', customErr);
-            }
-
-            if (!decodedToken) {
-                throw idErr;
-            }
+        const token = authHeader.slice(7).trim();
+        if (!token) {
+            return res.status(401).json({ error: 'Acceso no autorizado: Token vacío' });
         }
 
-        const isDevRoot = 
-            decodedToken.email?.toLowerCase() === DEV_ROOT_EMAIL.toLowerCase() ||
+        const decodedToken = await auth.verifyIdToken(token);
+        const emailLower = String(decodedToken.email || '').toLowerCase();
+        const emailVerifiedOk = decodedToken.email_verified !== false;
+
+        const isDevRoot =
             decodedToken.role === 'DEV_ROOT' ||
             decodedToken.isMasterDev === true ||
-            decodedToken.uid === DEV_ROOT_UID;
+            decodedToken.uid === DEV_ROOT_UID ||
+            (emailVerifiedOk && emailLower === DEV_ROOT_EMAIL.toLowerCase());
 
         if (!isDevRoot) {
-            console.warn(`[DEV-GATEWAY] Intento de acceso denegado por: ${decodedToken.email}`);
+            console.warn(`[DEV-GATEWAY] Intento de acceso denegado por: ${decodedToken.uid} (${emailLower})`);
             return res.status(403).json({ error: 'Prohibido: Acceso exclusivo a Cuenta Maestra de Desarrollo (DEV_ROOT)' });
         }
 
         req.devUser = decodedToken;
-        next();
+        return next();
     } catch (error) {
         console.error('[DEV-GATEWAY] Error de verificación de token DEV:', error);
         return res.status(401).json({ error: 'Token inválido o expirado' });
@@ -75,12 +54,12 @@ export const requireDevRoot = async (req: DevRequest, res: Response, next: NextF
 
 const devLoginSchema = z.object({
     email: z.string().email(),
-    password: z.string().min(6)
+    password: z.string().min(6).max(256)
 });
 
 /**
  * POST /api/dev/auth/login
- * Autenticación exclusiva para la URL secreta del Portal DEV.
+ * Autenticación exclusiva para el Portal DEV con comparación en tiempo constante.
  */
 export const devLogin = async (req: Request, res: Response) => {
     try {
@@ -92,22 +71,21 @@ export const devLogin = async (req: Request, res: Response) => {
         const { email, password } = parsed.data;
         const normalizedEmail = email.toLowerCase().trim();
 
-        if (normalizedEmail !== DEV_ROOT_EMAIL.toLowerCase()) {
+        if (normalizedEmail !== DEV_ROOT_EMAIL.toLowerCase() || !password.trim()) {
             return res.status(401).json({ error: 'Credenciales no autorizadas en Gateway de Desarrollo' });
         }
 
-        const expectedPassword = process.env.DEV_ROOT_PASSWORD || process.env.SUPER_ADMIN_PASSWORD;
+        const expectedPassword = (await resolveDevRootPassword())?.trim() || '';
 
         if (!expectedPassword) {
-            console.error('[DEV-AUTH] DEV_ROOT_PASSWORD no configurado en entorno');
-            return res.status(500).json({ error: 'Configuración de credenciales de desarrollo no encontrada en servidor' });
+            console.error('[DEV-AUTH] DEV_ROOT_PASSWORD no configurado en Secret Manager / entorno');
+            return res.status(503).json({ error: 'Configuración de credenciales de desarrollo no disponible en servidor' });
         }
 
-        if (password !== expectedPassword) {
+        if (!constantTimeEqualStrings(password, expectedPassword)) {
             return res.status(401).json({ error: 'Credenciales no autorizadas en Gateway de Desarrollo' });
         }
 
-        // Asegurar que el usuario existe en Firebase Auth (autocorrección bajo demanda)
         let userRecord;
         try {
             userRecord = await auth.getUser(DEV_ROOT_UID);
@@ -122,7 +100,6 @@ export const devLogin = async (req: Request, res: Response) => {
 
         const uid = userRecord.uid;
 
-        // Claims soberanos DEV
         await auth.setCustomUserClaims(uid, {
             role: 'DEV_ROOT',
             isMasterDev: true,
@@ -135,7 +112,6 @@ export const devLogin = async (req: Request, res: Response) => {
             suiteAccess: true
         });
 
-        // Intercambiar por ID token para compatibilidad de Bearer
         let idToken = customToken;
         const emulatorHost = process.env.FIREBASE_AUTH_EMULATOR_HOST;
         const apiKey = process.env.VITE_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || 'fake-api-key';
@@ -157,6 +133,17 @@ export const devLogin = async (req: Request, res: Response) => {
             console.warn('[DEV-AUTH] Token exchange warning:', e);
         }
 
+        await AuditLedger.record({
+            tenantId: 'dev-master-sandbox',
+            actorUid: uid,
+            actorEmail: DEV_ROOT_EMAIL,
+            action: 'DEV_ROOT_LOGIN',
+            module: 'core',
+            targetEntity: uid,
+            details: { method: 'dev_login' },
+            ipAddress: extractClientIp(req),
+        }).catch(() => {});
+
         return res.status(200).json({
             success: true,
             token: idToken,
@@ -175,10 +162,10 @@ export const devLogin = async (req: Request, res: Response) => {
 };
 
 const createTestPilotSchema = z.object({
-    collaboratorName: z.string().min(2),
+    collaboratorName: z.string().min(2).max(120),
     collaboratorEmail: z.string().email(),
-    organization: z.string().optional(),
-    purpose: z.string().min(3),
+    organization: z.string().max(160).optional(),
+    purpose: z.string().min(3).max(500),
     expiresDays: z.number().int().min(1).max(365).default(90)
 });
 
@@ -196,13 +183,12 @@ export const createTestPilotAccount = async (req: DevRequest, res: Response) => 
         const { collaboratorName, collaboratorEmail, organization, purpose, expiresDays } = parsed.data;
         const normalizedEmail = collaboratorEmail.toLowerCase().trim();
 
-        // 1. Crear o recuperar usuario en Firebase Auth
         let userRecord;
         try {
             userRecord = await auth.getUserByEmail(normalizedEmail);
         } catch (e: any) {
             if (e.code === 'auth/user-not-found') {
-                const tempPassword = `Pilot${Math.random().toString(36).slice(-6)}!2026`;
+                const tempPassword = `Pilot-${crypto.randomBytes(12).toString('base64url')}!9A`;
                 userRecord = await auth.createUser({
                     email: normalizedEmail,
                     displayName: collaboratorName,
@@ -215,10 +201,9 @@ export const createTestPilotAccount = async (req: DevRequest, res: Response) => 
         }
 
         const pilotUserId = userRecord.uid;
-        const pilotAccountId = `pilot-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+        const pilotAccountId = `pilot-${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}`;
         const expiresAt = Date.now() + expiresDays * 24 * 60 * 60 * 1000;
 
-        // 2. Crear registro en colección segregada /test_pilots
         const pilotMetadata = {
             id: pilotAccountId,
             accountId: pilotAccountId,
@@ -240,7 +225,6 @@ export const createTestPilotAccount = async (req: DevRequest, res: Response) => 
 
         await db.collection('test_pilots').doc(pilotAccountId).set(pilotMetadata);
 
-        // 3. Crear Workspace de cuenta en /accounts con clasificación 'test-pilot'
         const accountData = {
             id: pilotAccountId,
             name: `PILOT: ${organization || collaboratorName}`,
@@ -271,7 +255,6 @@ export const createTestPilotAccount = async (req: DevRequest, res: Response) => 
 
         await db.collection('accounts').doc(pilotAccountId).set(accountData);
 
-        // 4. Agregar membresía de colaborador
         await db.collection('accounts').doc(pilotAccountId).collection('members').doc(pilotUserId).set({
             id: pilotUserId,
             userId: pilotUserId,
@@ -282,19 +265,18 @@ export const createTestPilotAccount = async (req: DevRequest, res: Response) => 
             joinedAt: Date.now()
         });
 
-        // 5. Asignar custom claim a usuario
         await auth.setCustomUserClaims(pilotUserId, {
             role: 'TEST_PILOT',
             activeAccountId: pilotAccountId,
             pilotExpiresAt: expiresAt
         });
 
-        // 6. Actualizar perfil /users
         await db.collection('users').doc(pilotUserId).set({
             uid: pilotUserId,
             email: normalizedEmail,
             displayName: collaboratorName,
             role: 'TEST_PILOT',
+            status: 'ACTIVE',
             classification: 'test-pilot',
             primaryAccountId: pilotAccountId,
             memberships: [
@@ -310,7 +292,16 @@ export const createTestPilotAccount = async (req: DevRequest, res: Response) => 
             updatedAt: Date.now()
         }, { merge: true });
 
-        console.log(`[TEST-PILOT] ✅ Cuenta creada para colaborador: ${normalizedEmail} (ID: ${pilotAccountId})`);
+        await AuditLedger.record({
+            tenantId: pilotAccountId,
+            actorUid: req.devUser?.uid || DEV_ROOT_UID,
+            actorEmail: req.devUser?.email || DEV_ROOT_EMAIL,
+            action: 'CREATE_TEST_PILOT_ACCOUNT',
+            module: 'test-pilot',
+            targetEntity: pilotUserId,
+            details: { collaboratorEmail: normalizedEmail, expiresAt },
+            ipAddress: extractClientIp(req),
+        }).catch(() => {});
 
         return res.status(201).json({
             success: true,
@@ -327,7 +318,7 @@ export const createTestPilotAccount = async (req: DevRequest, res: Response) => 
  * GET /api/dev/test-pilots
  * Lista todas las cuentas de colaboradores TEST-PILOT registradas.
  */
-export const listTestPilots = async (req: DevRequest, res: Response) => {
+export const listTestPilots = async (_req: DevRequest, res: Response) => {
     try {
         const snapshot = await db.collection('test_pilots').orderBy('createdAt', 'desc').get();
         const pilots = snapshot.docs.map(doc => ({
@@ -347,7 +338,7 @@ export const listTestPilots = async (req: DevRequest, res: Response) => {
  */
 export const revokeTestPilot = async (req: DevRequest, res: Response) => {
     try {
-        const { id } = req.params;
+        const id = z.string().min(3).max(128).parse(req.params.id);
         const pilotDoc = await db.collection('test_pilots').doc(id).get();
         if (!pilotDoc.exists) {
             return res.status(404).json({ error: 'Cuenta piloto no encontrada' });
@@ -365,7 +356,28 @@ export const revokeTestPilot = async (req: DevRequest, res: Response) => {
             suspendedAt: Date.now()
         });
 
-        console.log(`[TEST-PILOT] 🚫 Cuenta piloto ${id} revocada por ${DEV_ROOT_EMAIL}`);
+        if (pilotData.userId) {
+            await db.collection('users').doc(pilotData.userId).set({
+                status: 'REVOKED',
+                role: 'OPERATOR',
+                updatedAt: Date.now(),
+            }, { merge: true }).catch(() => {});
+            await auth.setCustomUserClaims(pilotData.userId, {
+                role: 'REVOKED',
+            }).catch(() => {});
+        }
+
+        await AuditLedger.record({
+            tenantId: id,
+            actorUid: req.devUser?.uid || DEV_ROOT_UID,
+            actorEmail: req.devUser?.email || DEV_ROOT_EMAIL,
+            action: 'REVOKE_TEST_PILOT_ACCOUNT',
+            module: 'test-pilot',
+            targetEntity: String(pilotData.userId || id),
+            details: { pilotAccountId: id },
+            ipAddress: extractClientIp(req),
+        }).catch(() => {});
+
         return res.status(200).json({ success: true, message: 'Acceso a cuenta piloto revocado' });
     } catch (error: any) {
         console.error('[TEST-PILOT] Error revocando piloto:', error);
@@ -373,14 +385,21 @@ export const revokeTestPilot = async (req: DevRequest, res: Response) => {
     }
 };
 
+const impersonateClientSchema = z.object({
+    targetAccountId: z.string().min(2).max(128).optional(),
+});
+
 /**
  * POST /api/dev/impersonate-client
- * Genera sesión de prueba de vista previa de cliente (View-as Client) para la cuenta DEV.
+ * Genera sesión de vista previa de cliente (View-as Client) para la cuenta DEV.
  */
 export const impersonateClient = async (req: DevRequest, res: Response) => {
     try {
-        const { targetAccountId } = req.body as { targetAccountId?: string };
-        const accountId = targetAccountId || 'dev-master-sandbox';
+        const parsed = impersonateClientSchema.safeParse(req.body || {});
+        if (!parsed.success) {
+            return res.status(400).json({ error: 'Parámetros de simulación inválidos' });
+        }
+        const accountId = parsed.data.targetAccountId || 'dev-master-sandbox';
 
         const accountDoc = await db.collection('accounts').doc(accountId).get();
         if (!accountDoc.exists) {
@@ -389,7 +408,6 @@ export const impersonateClient = async (req: DevRequest, res: Response) => {
 
         const accountData = accountDoc.data()!;
 
-        // Token de simulación con claims de impersonación
         const impersonationToken = await auth.createCustomToken(DEV_ROOT_UID, {
             role: 'CLIENT_OWNER',
             activeAccountId: accountId,
@@ -398,7 +416,6 @@ export const impersonateClient = async (req: DevRequest, res: Response) => {
             targetAccountName: accountData.name || 'Sandbox Client'
         });
 
-        // Intercambio por ID token para llamadas de API
         let idToken = impersonationToken;
         const emulatorHost = process.env.FIREBASE_AUTH_EMULATOR_HOST;
         const apiKey = process.env.VITE_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || 'fake-api-key';
@@ -420,6 +437,17 @@ export const impersonateClient = async (req: DevRequest, res: Response) => {
             console.warn('[DEV-IMPERSONATE] Token exchange warning:', e);
         }
 
+        await AuditLedger.record({
+            tenantId: accountId,
+            actorUid: req.devUser?.uid || DEV_ROOT_UID,
+            actorEmail: req.devUser?.email || DEV_ROOT_EMAIL,
+            action: 'DEV_IMPERSONATE_TENANT',
+            module: 'core',
+            targetEntity: accountId,
+            details: { targetAccountName: accountData.name || '' },
+            ipAddress: extractClientIp(req),
+        }).catch(() => {});
+
         return res.status(200).json({
             success: true,
             impersonationToken,
@@ -439,19 +467,14 @@ export const impersonateClient = async (req: DevRequest, res: Response) => {
 
 /**
  * POST /api/dev/auth/challenge/init
- * Inicia el reto al presionar el Isotipo en la web silenciosa.
+ * Inicia el reto OOB usando estrictamente la URL base canónica (`env.API_URL`), sin `req.get('host')`.
  */
 export const initDevChallenge = async (req: Request, res: Response) => {
     try {
-        const ip = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1';
-        const userAgent = req.headers['user-agent'] || 'Desconocido';
-        
-        // Asegurar que el enlace del correo apunte al servidor Express (puerto 8080 o dominio API)
-        const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
-        const host = req.get('host') || `localhost:${process.env.PORT || 8080}`;
-        const apiBaseUrl = process.env.API_URL || `${protocol}://${host}`;
+        const ip = extractClientIp(req);
+        const userAgent = String(req.headers['user-agent'] || 'Desconocido').slice(0, 256);
 
-        const result = await DevChallengeService.initChallenge(ip, userAgent, apiBaseUrl);
+        const result = await DevChallengeService.initChallenge(ip, userAgent);
         return res.status(200).json({
             success: true,
             challengeId: result.challengeId,
@@ -466,15 +489,14 @@ export const initDevChallenge = async (req: Request, res: Response) => {
 
 /**
  * GET /api/dev/auth/challenge/confirm
- * Confirma el acceso desde el enlace en el email y muestra el OTP de 6 dígitos.
+ * Confirma el acceso desde el enlace en el email y redirige estrictamente a `env.WEB_URL` (sin Host Header Injection).
  */
 export const confirmDevChallenge = async (req: Request, res: Response) => {
     try {
-        const cid = req.query.cid as string;
-        const token = req.query.token as string;
-        const hostHeader = req.get('host');
+        const cid = typeof req.query.cid === 'string' ? req.query.cid.trim() : '';
+        const token = typeof req.query.token === 'string' ? req.query.token.trim() : '';
 
-        const result = await DevChallengeService.confirmChallenge(cid, token, hostHeader);
+        const result = await DevChallengeService.confirmChallenge(cid, token);
         if (result.redirectUrl) {
             return res.redirect(302, result.redirectUrl);
         }
@@ -488,12 +510,11 @@ export const confirmDevChallenge = async (req: Request, res: Response) => {
 
 /**
  * GET /api/dev/auth/challenge/status/:id
- * Consulta de estado silenciosa por parte de la web (sin exponer OTP).
  */
 export const getDevChallengeStatus = async (req: Request, res: Response) => {
     try {
-        const challengeId = req.params.id;
-        const clientToken = req.query.clientToken as string;
+        const challengeId = String(req.params.id || '').trim();
+        const clientToken = typeof req.query.clientToken === 'string' ? req.query.clientToken.trim() : '';
 
         if (!challengeId || !clientToken) {
             return res.status(400).json({ error: 'Parámetros requeridos ausentes' });
@@ -509,13 +530,12 @@ export const getDevChallengeStatus = async (req: Request, res: Response) => {
 
 const verifyOtpSchema = z.object({
     challengeId: z.string().uuid(),
-    clientToken: z.string().min(10),
-    otp: z.string().length(6)
+    clientToken: z.string().min(10).max(256),
+    otp: z.string().length(6).regex(/^\d{6}$/)
 });
 
 /**
  * POST /api/dev/auth/challenge/verify-otp
- * Valida los 6 dígitos ingresados en la web.
  */
 export const verifyDevChallengeOtp = async (req: Request, res: Response) => {
     try {
@@ -546,14 +566,13 @@ export const verifyDevChallengeOtp = async (req: Request, res: Response) => {
 
 const verifyUserSchema = z.object({
     challengeId: z.string().uuid(),
-    clientToken: z.string().min(10),
-    stepToken: z.string().min(10),
+    clientToken: z.string().min(10).max(256),
+    stepToken: z.string().min(10).max(256),
     username: z.string().email()
 });
 
 /**
  * POST /api/dev/auth/challenge/verify-user
- * Valida el nombre de usuario DEV y verifica si la clave tradicional requiere rotación (30 días).
  */
 export const verifyDevChallengeUser = async (req: Request, res: Response) => {
     try {
@@ -582,16 +601,15 @@ export const verifyDevChallengeUser = async (req: Request, res: Response) => {
 
 const loginFinalSchema = z.object({
     challengeId: z.string().uuid(),
-    clientToken: z.string().min(10),
-    stepToken: z.string().min(10),
+    clientToken: z.string().min(10).max(256),
+    stepToken: z.string().min(10).max(256),
     username: z.string().email(),
-    password: z.string().min(1),
-    newPassword: z.string().optional()
+    password: z.string().min(1).max(256),
+    newPassword: z.string().max(256).optional()
 });
 
 /**
  * POST /api/dev/auth/challenge/login-final
- * Autenticación final y rotación de contraseña si corresponde.
  */
 export const loginDevChallengeFinal = async (req: Request, res: Response) => {
     try {
@@ -607,6 +625,17 @@ export const loginDevChallengeFinal = async (req: Request, res: Response) => {
             return res.status(401).json({ error: result.error || 'Credenciales inválidas' });
         }
 
+        await AuditLedger.record({
+            tenantId: 'dev-master-sandbox',
+            actorUid: result.user?.uid || DEV_ROOT_UID,
+            actorEmail: DEV_ROOT_EMAIL,
+            action: 'DEV_ROOT_CHALLENGE_LOGIN',
+            module: 'core',
+            targetEntity: challengeId,
+            details: { passwordRotated: Boolean(newPassword) },
+            ipAddress: extractClientIp(req),
+        }).catch(() => {});
+
         return res.status(200).json({
             success: true,
             token: result.token,
@@ -619,3 +648,42 @@ export const loginDevChallengeFinal = async (req: Request, res: Response) => {
     }
 };
 
+/**
+ * POST /api/dev/auth/session-sync
+ * Emite un customToken fresco para sincronizar Firebase Auth del navegador (Firestore / Storage)
+ * cuando la cabina /dev opera bajo un Bearer token verificado de DEV_ROOT.
+ */
+export const syncDevFirebaseSession = async (_req: DevRequest, res: Response) => {
+    try {
+        let userRecord;
+        try {
+            userRecord = await auth.getUser(DEV_ROOT_UID);
+        } catch {
+            await ensureDevRootAccount();
+            userRecord = await auth.getUser(DEV_ROOT_UID);
+        }
+
+        const uid = userRecord.uid;
+        await auth.setCustomUserClaims(uid, {
+            role: 'DEV_ROOT',
+            isMasterDev: true,
+            suiteAccess: true,
+        });
+
+        const customToken = await auth.createCustomToken(uid, {
+            role: 'DEV_ROOT',
+            isMasterDev: true,
+            suiteAccess: true,
+        });
+
+        return res.status(200).json({
+            success: true,
+            firebaseToken: customToken,
+            uid,
+            email: DEV_ROOT_EMAIL,
+        });
+    } catch (err: any) {
+        console.error('[DEV-GATEWAY] Error sincronizando sesión Firebase DEV:', err);
+        return res.status(500).json({ error: 'No fue posible sincronizar la sesión Firebase DEV.' });
+    }
+};

@@ -1,103 +1,127 @@
+import React from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useMinReportSession } from '../context/MinReportSessionContext';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import { SYSTEM_MODULES, SystemModuleInfo } from '../constants/modules';
 
-export const OperationalDashboard = () => {
+export const OperationalDashboard: React.FC = () => {
     const { currentAccount } = useAuth();
+    const { hasModuleAccess, session } = useMinReportSession();
+    const isEduSandbox = Boolean(session?.isEduSandbox);
     const { isOnline } = useNetworkStatus();
     const navigate = useNavigate();
 
-    // Fallback de seguridad
     if (!currentAccount) return null;
 
     const APP_VERSION = '__APP_VERSION__' in window ? (window as any).__APP_VERSION__ : 'v3.0.0';
 
-    // Módulos autorizados para la cuenta actual
-    const rawKeys = (currentAccount as any)?.enabledPlugins;
-    const enabledKeys: string[] = (Array.isArray(rawKeys) && rawKeys.length > 0)
-        ? rawKeys
-        : ['opermaq', 'stockpile'];
-    const activeModules: SystemModuleInfo[] = SYSTEM_MODULES.filter(mod => enabledKeys.includes(mod.id));
+    const activeModules: SystemModuleInfo[] = SYSTEM_MODULES.filter((mod) =>
+        mod.id === 'opermaq' || mod.id === 'stockpile'
+            ? hasModuleAccess(mod.id)
+            : false
+    );
 
     return (
-        <div className="max-w-6xl mx-auto py-8 px-4 space-y-8 animate-in fade-in duration-500 font-sans">
+        <div className="max-w-6xl mx-auto py-fib-34 px-fib-21 space-y-fib-34 font-sans select-none bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6]">
             {/* Encabezado Técnico Aséptico */}
-            <header className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-slate-200 dark:border-[#12151C] pb-6">
+            <header className="flex flex-col md:flex-row md:items-end justify-between gap-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-21">
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-900 dark:text-white uppercase tracking-tight">
+                    <h1 className="text-h1-header font-bold text-[#0F172A] dark:text-[#F3F4F6] uppercase">
                         Panel de Control Operacional
                     </h1>
-                    <p className="text-xs text-slate-500 dark:text-[#8A93A6] mt-1 font-mono">
+                    <p className="text-data-dense text-[#475569] dark:text-[#8A93A6] mt-fib-8 font-mono">
                         Contexto Operativo: <span className="text-[#C68346] font-bold">{currentAccount.name}</span>
+                        {isEduSandbox && (
+                            <span className="ml-fib-13 text-microcopy text-[#00AEEF]">
+                                [SANDBOX EDU]
+                            </span>
+                        )}
                     </p>
                 </div>
 
-                <div className="flex items-center gap-6 bg-[#F8FAFC] dark:bg-[#07090D] p-3.5 rounded-none border border-slate-200 dark:border-[#12151C]">
-                    <div className="px-3 border-r border-slate-200 dark:border-[#12151C]">
-                        <p className="text-[9px] font-mono text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-0.5">ESTADO RED</p>
-                        <div className="flex items-center gap-2">
-                            <div className={`w-2 h-2 rounded-none ${isOnline ? 'bg-emerald-500' : 'bg-red-500 animate-pulse'}`} />
-                            <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                                {isOnline ? 'En línea' : 'Sin conexión'}
+                <div className="flex items-center gap-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] p-fib-13 rounded-none shadow-none border border-[#E2E8F0] dark:border-[#12151C]">
+                    <div className="px-fib-13 border-r border-[#E2E8F0] dark:border-[#12151C]">
+                        <p className="text-microcopy font-mono text-[#475569] dark:text-[#8A93A6] uppercase mb-0.5">ESTADO RED</p>
+                        <div className="flex items-center gap-fib-8">
+                            <div className={`w-2 h-2 rounded-none ${isOnline ? 'bg-[#00AEEF]' : 'bg-red-500'}`} />
+                            <span className="text-microcopy font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
+                                {isOnline ? 'En línea' : 'Modo Offline'}
                             </span>
                         </div>
                     </div>
-                    <div className="px-3">
-                        <p className="text-[9px] font-mono text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-0.5">SISTEMA</p>
-                        <p className="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-300">{APP_VERSION}</p>
+                    <div className="px-fib-13">
+                        <p className="text-microcopy font-mono text-[#475569] dark:text-[#8A93A6] uppercase mb-0.5">VERSIÓN</p>
+                        <p className="text-microcopy font-mono font-bold tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">{APP_VERSION}</p>
                     </div>
                 </div>
             </header>
 
-            {/* Módulos Industriales Centralizados */}
-            <section className="space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#12151C] pb-3">
-                    <h2 className="text-xs font-mono font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 flex items-center gap-2">
-                        <span className="material-symbols-outlined text-base text-[#C68346]">apps</span>
-                        Módulos Operativos Integrados
+            {/* Módulos Industriales Integrados */}
+            <section className="space-y-fib-21">
+                <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
+                    <h2 className="text-microcopy font-mono font-bold uppercase text-[#475569] dark:text-[#8A93A6] flex items-center gap-fib-8">
+                        <span className="material-symbols-outlined text-[18px] text-[#C68346]">apps</span>
+                        <span>Módulos Operativos Integrados</span>
                     </h2>
-                    <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
-                        {activeModules.length} activos
+                    <span className="text-microcopy font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                        {activeModules.length} habilitado(s)
                     </span>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                    {activeModules.map((module) => (
-                        <motion.div
-                            key={module.id}
-                            whileHover={{ y: -2 }}
-                            whileTap={{ scale: 0.98 }}
-                            onClick={() => navigate(module.path)}
-                            className="group cursor-pointer p-6 rounded-none bg-[#F8FAFC] dark:bg-[#07090D] border border-slate-200 dark:border-[#12151C] hover:border-[#C68346] dark:hover:border-[#C68346] transition-all flex flex-col justify-between h-52 relative overflow-hidden shadow-none"
-                        >
-                            <div className="flex items-start justify-between">
-                                <div className="w-12 h-12 rounded-none bg-[#C68346]/10 border border-[#C68346]/20 flex items-center justify-center text-[#C68346] group-hover:bg-[#C68346] group-hover:text-white transition-colors">
-                                    <span className="material-symbols-outlined text-2xl">{module.icon}</span>
+                {activeModules.length === 0 ? (
+                    <div className="p-fib-34 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] rounded-none shadow-none text-center">
+                        <p className="text-data-dense font-mono text-[#94A3B8] dark:text-[#5A6072]">
+                            [Información técnica no declarada en ficha] — Sin módulos operativos habilitados para esta cuenta.
+                        </p>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-fib-21">
+                        {activeModules.map((module) => (
+                            <div
+                                key={module.id}
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => navigate(module.path)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        navigate(module.path);
+                                    }
+                                }}
+                                className="group cursor-pointer p-fib-21 rounded-none shadow-none bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] dark:hover:border-[#C68346] transition-colors flex flex-col justify-between min-h-[196px]"
+                            >
+                                <div className="flex items-start justify-between">
+                                    <span className="material-symbols-outlined text-[24px] text-[#C68346]">
+                                        {module.icon}
+                                    </span>
+                                    <span className="text-microcopy font-mono tabular-nums text-[#475569] dark:text-[#8A93A6] uppercase">
+                                        v{module.version}
+                                    </span>
                                 </div>
-                                <span className="text-[9px] font-mono text-slate-400 dark:text-slate-500 uppercase tracking-widest">
-                                    v{module.version}
-                                </span>
-                            </div>
 
-                            <div className="space-y-1 mt-4">
-                                <h3 className="font-bold text-sm uppercase tracking-tight text-slate-900 dark:text-white group-hover:text-[#C68346] transition-colors">
-                                    {module.name}
-                                </h3>
-                                <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed">
-                                    {module.scope}
-                                </p>
-                            </div>
+                                <div className="space-y-fib-8 mt-fib-21">
+                                    <h3 className="text-h2-section font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] group-hover:text-[#C68346] transition-colors">
+                                        {module.name}
+                                    </h3>
+                                    <p className="text-data-dense text-[#475569] dark:text-[#8A93A6] leading-relaxed">
+                                        {module.scope}
+                                    </p>
+                                </div>
 
-                            <div className="pt-3 border-t border-slate-200 dark:border-[#12151C] flex items-center justify-between text-[10px] font-mono font-bold uppercase tracking-wider text-[#C68346]">
-                                <span>Acceder</span>
-                                <span className="material-symbols-outlined text-sm group-hover:translate-x-1 transition-transform">arrow_forward</span>
+                                <div className="pt-fib-13 mt-fib-21 border-t border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between text-microcopy font-mono font-bold uppercase text-[#C68346]">
+                                    <span>Abrir módulo</span>
+                                    <span className="material-symbols-outlined text-[16px] group-hover:translate-x-1 transition-transform">
+                                        arrow_forward
+                                    </span>
+                                </div>
                             </div>
-                        </motion.div>
-                    ))}
-                </div>
+                        ))}
+                    </div>
+                )}
             </section>
         </div>
     );
 };
+
+export default OperationalDashboard;

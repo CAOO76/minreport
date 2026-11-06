@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'react-toastify';
 import { calculationEngine } from '../services/calculation-engine';
 import { dataService } from '../services/DataService';
 import { storageService } from '../services/StorageService';
@@ -22,7 +23,8 @@ export const ManualCapture: React.FC<ManualCaptureProps> = ({ assetId, initialGe
     const [geometria] = useState<GeometryType>(initialGeometry);
     const [dimensions, setDimensions] = useState({ a: '', b: '', h: '', ap: '', bp: '', p: '', pp: '' });
     const [density, setDensity] = useState('');
-    const [photo, setPhoto] = useState<string | null>(null);
+    const [photoBlob, setPhotoBlob] = useState<Blob | null>(null);
+    const [photoPreview, setPhotoPreview] = useState<string | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [gps, setGps] = useState<{ lat: number; lng: number; acc: number } | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -32,10 +34,31 @@ export const ManualCapture: React.FC<ManualCaptureProps> = ({ assetId, initialGe
             try {
                 const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 5000 });
                 setGps({ lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy });
-            } catch (err) { console.warn('[ManualCapture] GPS Error:', err); }
+            } catch (err) {
+                console.warn('[ManualCapture] GPS Error:', err);
+            }
         };
-        initGps();
+        void initGps();
     }, []);
+
+    useEffect(() => {
+        return () => {
+            if (photoPreview && photoPreview.startsWith('blob:')) {
+                URL.revokeObjectURL(photoPreview);
+            }
+        };
+    }, [photoPreview]);
+
+    const applyOptimizedPhoto = async (sourceUrl: string) => {
+        const optimized = await compressImage(sourceUrl, { profile: 'evidence' });
+        const blob = await fetch(optimized).then(r => r.blob());
+        const nextPreview = URL.createObjectURL(blob);
+        setPhotoBlob(blob);
+        setPhotoPreview(prev => {
+            if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+            return nextPreview;
+        });
+    };
 
     const takePhoto = async () => {
         try {
@@ -48,25 +71,25 @@ export const ManualCapture: React.FC<ManualCaptureProps> = ({ assetId, initialGe
                 saveToGallery: false
             });
             if (image.dataUrl) {
-                const optimized = await compressImage(image.dataUrl, { profile: 'evidence' });
-                setPhoto(optimized);
+                await applyOptimizedPhoto(image.dataUrl);
             }
         } catch {
             fileInputRef.current?.click();
         }
     };
 
-    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
-        const reader = new FileReader();
-        reader.onload = async () => {
-            if (typeof reader.result === 'string') {
-                const optimized = await compressImage(reader.result, { profile: 'evidence' });
-                setPhoto(optimized);
-            }
-        };
-        reader.readAsDataURL(file);
+        const tempUrl = URL.createObjectURL(file);
+        try {
+            await applyOptimizedPhoto(tempUrl);
+        } catch (err: any) {
+            toast.error(`Error al procesar foto: ${err?.message || 'Formato inválido'}`);
+        } finally {
+            URL.revokeObjectURL(tempUrl);
+            e.target.value = '';
+        }
     };
 
     const liveEstimation = useMemo(() => {
@@ -90,17 +113,15 @@ export const ManualCapture: React.FC<ManualCaptureProps> = ({ assetId, initialGe
 
     const handleSave = async () => {
         if (isSaving || liveEstimation <= 0) return;
-        if (!hidePhoto && !photo) {
-            alert(t('manual_capture.required_photo_alert'));
+        if (!hidePhoto && !photoBlob) {
+            toast.warning(t('manual_capture.required_photo_alert'));
             return;
         }
         setIsSaving(true);
         try {
             let photoUrl = initialPhotoUrl || '';
-            if (photo && !hidePhoto) {
-                const response = await fetch(photo);
-                const blob = await response.blob();
-                const uploadResult = await storageService.uploadStockpileImage(blob, assetId);
+            if (photoBlob && !hidePhoto) {
+                const uploadResult = await storageService.uploadStockpileImage(photoBlob, assetId);
                 photoUrl = uploadResult.url;
             }
 
@@ -127,85 +148,99 @@ export const ManualCapture: React.FC<ManualCaptureProps> = ({ assetId, initialGe
                         pp: parseFloat(dimensions.pp) || 0
                     }
                 },
-                location_metadata: gps ? {
-                    lat: gps.lat,
-                    lng: gps.lng,
-                    accuracy: gps.acc
-                } : undefined
+                location_metadata: gps
+                    ? {
+                          lat: gps.lat,
+                          lng: gps.lng,
+                          accuracy: gps.acc
+                      }
+                    : undefined
             });
 
             onSuccess(measurementId);
         } catch (error: any) {
             console.error('[ManualCapture] Error:', error);
-            alert(`${t('manual_capture.save_error')}: ${error.message || 'Falla de conexión'}`);
+            toast.error(`${t('manual_capture.save_error')}: ${error?.message || 'Falla de conexión'}`);
         } finally {
             setIsSaving(false);
         }
     };
 
     return (
-        <div className="h-full w-full flex-1 min-h-[600px] bg-antigravity-light-bg dark:bg-antigravity-dark-bg flex flex-col font-atkinson text-antigravity-light-text dark:text-antigravity-dark-text overflow-hidden relative transition-colors duration-200 rounded-none shadow-none">
+        <div className="h-full w-full flex-1 min-h-[600px] bg-[#FFFFFF] dark:bg-[#000000] flex flex-col font-atkinson text-[#0F172A] dark:text-[#F3F4F6] overflow-hidden relative transition-colors duration-200 rounded-none shadow-none select-none">
 
-            <header className="flex-none pt-8 pb-4 px-6 flex items-center justify-between bg-antigravity-light-surface dark:bg-antigravity-dark-surface border-b border-antigravity-light-border dark:border-antigravity-dark-border z-50">
-                <div className="flex items-center gap-4">
+            <header className="flex-none pt-8 pb-4 px-6 flex items-center justify-between bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] z-50">
+                <div className="flex items-center gap-[13px]">
                     <button
                         type="button"
                         onClick={onBack}
                         className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none shadow-none"
                         title="Volver"
+                        aria-label="Volver"
                     >
-                        <span className="material-symbols-outlined text-2xl text-antigravity-accent">arrow_back</span>
+                        <span className="material-symbols-outlined text-2xl text-[#C68346]">arrow_back</span>
                     </button>
                     <div className="flex flex-col">
-                        <span className="text-[10px] font-black tracking-[0.4em] uppercase text-antigravity-light-text/40 dark:text-antigravity-dark-text/40">{t('manual_capture.measurement_label')}</span>
-                        <span className="text-xl font-black tracking-tight text-antigravity-light-text dark:text-antigravity-dark-text/90 uppercase">
+                        <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-[#475569] dark:text-[#8A93A6]">{t('manual_capture.measurement_label')}</span>
+                        <span className="text-xl font-bold tracking-tight text-[#0F172A] dark:text-[#F3F4F6] uppercase">
                             {t(`geometries.${geometria}`)}
                         </span>
                     </div>
                 </div>
-                <span className="material-symbols-outlined text-3xl opacity-20">landscape</span>
             </header>
 
-            <main className="flex-1 overflow-y-auto px-6 py-8 relative">
+            <main className="flex-1 overflow-y-auto px-[21px] py-[34px] relative">
                 <input
                     type="file"
                     ref={fileInputRef}
                     accept="image/*"
                     onChange={handleFileUpload}
+                    autoComplete="off"
+                    spellCheck={false}
                     className="hidden"
                 />
 
-                <div className="max-w-sm mx-auto space-y-10 relative z-10">
+                <div className="max-w-sm mx-auto space-y-[34px] relative z-10">
 
                     {!hidePhoto && (
-                        <div className="space-y-4">
-                            <span className="text-[10px] font-black tracking-[0.4em] text-antigravity-light-text/40 dark:text-antigravity-dark-text/40 uppercase">{t('manual_capture.evidence_title')}</span>
+                        <div className="space-y-[13px]">
+                            <span className="text-[11px] font-bold tracking-[0.2em] text-[#475569] dark:text-[#8A93A6] uppercase">{t('manual_capture.evidence_title')}</span>
                             <div
                                 onClick={takePhoto}
-                                className={`relative w-full aspect-video rounded-none border-2 border-dashed transition-all overflow-hidden flex flex-col items-center justify-center cursor-pointer
-                                    ${photo ? 'border-antigravity-accent/40 bg-black' : 'border-antigravity-light-border dark:border-antigravity-dark-border bg-antigravity-light-surface dark:bg-antigravity-dark-surface'}`}
+                                className={`relative w-full aspect-video rounded-none border-2 border-dashed transition-colors overflow-hidden flex flex-col items-center justify-center cursor-pointer
+                                    ${photoPreview ? 'border-[#C68346]/60 bg-[#000000]' : 'border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D]'}`}
                             >
-                                {photo ? (
+                                {photoPreview ? (
                                     <>
-                                        <img src={photo} draggable={false} className="w-full h-full object-cover select-none pointer-events-none" alt="Evidencia" />
-                                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                                        <div className="absolute bottom-4 left-4 flex items-center gap-2">
-                                            <span className="material-symbols-outlined text-antigravity-accent text-xl">check_circle</span>
-                                            <span className="text-[10px] font-black uppercase tracking-widest text-white">{t('manual_capture.success_message')}</span>
+                                        <img
+                                            src={photoPreview}
+                                            draggable={false}
+                                            onContextMenu={(e) => e.preventDefault()}
+                                            className="w-full h-full object-cover select-none pointer-events-none"
+                                            alt="Evidencia"
+                                        />
+                                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
+                                        <div className="absolute bottom-4 left-4 flex items-center gap-[8px]">
+                                            <span className="text-[11px] font-bold uppercase tracking-widest text-[#FFFFFF] bg-[#C68346] px-[8px] py-0.5">{t('manual_capture.success_message')}</span>
                                         </div>
                                         <button
                                             type="button"
-                                            onClick={(e) => { e.stopPropagation(); setPhoto(null); }}
-                                            className="absolute top-4 right-4 bg-transparent border-0 outline-none p-1 text-white/80 hover:text-white transition-colors cursor-pointer"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setPhotoBlob(null);
+                                                setPhotoPreview(null);
+                                            }}
+                                            className="absolute top-3 right-3 bg-transparent border-0 outline-none p-1 text-white/80 hover:text-white transition-colors cursor-pointer"
                                             title="Eliminar foto"
+                                            aria-label="Eliminar foto"
                                         >
                                             <span className="material-symbols-outlined">delete</span>
                                         </button>
                                     </>
                                 ) : (
                                     <>
-                                        <span className="material-symbols-outlined text-5xl text-antigravity-light-text/20 dark:text-white/20 mb-2 font-light">add_a_photo</span>
-                                        <span className="text-[10px] font-black text-antigravity-light-text/40 dark:text-white/30 uppercase tracking-[0.2em]">{t('manual_capture.tap_to_capture')}</span>
+                                        <span className="material-symbols-outlined text-5xl text-[#94A3B8] dark:text-[#5A6072] mb-2">add_a_photo</span>
+                                        <span className="text-[11px] font-bold text-[#475569] dark:text-[#8A93A6] uppercase tracking-[0.2em]">{t('manual_capture.tap_to_capture')}</span>
                                     </>
                                 )}
                             </div>
@@ -213,7 +248,7 @@ export const ManualCapture: React.FC<ManualCaptureProps> = ({ assetId, initialGe
                     )}
 
                     {/* Formulario de Medidas */}
-                    <div className="grid grid-cols-1 gap-8">
+                    <div className="grid grid-cols-1 gap-[21px]">
                         {geometria === 'CONO_ELIPTICO' && (
                             <>
                                 <Field label={t('manual_capture.fields.major_axis_base')} value={dimensions.a} onChange={(v) => setDimensions({ ...dimensions, a: v })} />
@@ -239,13 +274,13 @@ export const ManualCapture: React.FC<ManualCaptureProps> = ({ assetId, initialGe
                     </div>
 
                     {/* Dashboard de Resultados en Vivo */}
-                    <div className="bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-antigravity-light-border dark:border-antigravity-dark-border rounded-none shadow-none p-8 flex flex-col items-center gap-2 transition-colors">
-                        <span className="text-[11px] font-black text-antigravity-light-text/40 dark:text-antigravity-dark-text/40 tracking-[0.4em] uppercase">{t('manual_capture.estimated_volume')}</span>
-                        <div className="flex items-baseline gap-3 font-mono tabular-nums">
-                            <span className="text-5xl font-black text-antigravity-accent tracking-tighter">
+                    <div className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none p-[21px] flex flex-col items-center gap-[8px] transition-colors">
+                        <span className="text-[11px] font-bold text-[#475569] dark:text-[#8A93A6] tracking-[0.2em] uppercase">{t('manual_capture.estimated_volume')}</span>
+                        <div className="flex items-baseline gap-[8px] font-mono tabular-nums">
+                            <span className="text-4xl font-bold text-[#C68346] tracking-tight">
                                 {liveEstimation.toFixed(1)}
                             </span>
-                            <span className="text-lg font-black text-antigravity-accent/60 uppercase">m³</span>
+                            <span className="text-base font-bold text-[#475569] dark:text-[#8A93A6] uppercase">m³</span>
                         </div>
                     </div>
 
@@ -255,19 +290,17 @@ export const ManualCapture: React.FC<ManualCaptureProps> = ({ assetId, initialGe
                             type="button"
                             onClick={handleSave}
                             disabled={isSaving || liveEstimation <= 0}
-                            className={`w-full h-16 rounded-none shadow-none flex items-center justify-center gap-4 transition-all cursor-pointer
-                                ${isSaving || liveEstimation <= 0
-                                    ? 'bg-antigravity-light-border/20 dark:bg-antigravity-dark-border/20 text-antigravity-light-text/20 dark:text-antigravity-dark-text/20 cursor-not-allowed'
-                                    : 'bg-antigravity-accent text-white font-black'
+                            className={`w-full h-14 rounded-none shadow-none flex items-center justify-center transition-colors cursor-pointer
+                                ${
+                                    isSaving || liveEstimation <= 0
+                                        ? 'bg-[#F8FAFC] dark:bg-[#07090D] text-[#94A3B8] dark:text-[#5A6072] border border-[#E2E8F0] dark:border-[#12151C] cursor-not-allowed'
+                                        : 'bg-[#C68346] text-[#FFFFFF] font-bold'
                                 }`}
                         >
                             {isSaving ? (
-                                <span className="material-symbols-outlined text-3xl animate-spin">sync</span>
+                                <span className="material-symbols-outlined text-2xl animate-spin">sync</span>
                             ) : (
-                                <>
-                                    <span className="material-symbols-outlined text-2xl">measuring_tape</span>
-                                    <span className="text-sm tracking-widest uppercase">{t('manual_capture.save_measurement')}</span>
-                                </>
+                                <span className="text-xs tracking-widest uppercase">{t('manual_capture.save_measurement')}</span>
                             )}
                         </button>
                     </div>
@@ -278,9 +311,9 @@ export const ManualCapture: React.FC<ManualCaptureProps> = ({ assetId, initialGe
     );
 };
 
-const Field: React.FC<{ label: string, value: string, onChange: (v: string) => void }> = ({ label, value, onChange }) => (
-    <div className="flex flex-col gap-3 group">
-        <label className="text-[10px] font-black text-antigravity-light-text/50 dark:text-antigravity-dark-text/40 tracking-widest pl-1 uppercase group-focus-within:text-antigravity-accent transition-colors">
+const Field: React.FC<{ label: string; value: string; onChange: (v: string) => void }> = ({ label, value, onChange }) => (
+    <div className="flex flex-col gap-[8px] group">
+        <label className="text-[11px] font-bold text-[#475569] dark:text-[#8A93A6] tracking-widest uppercase group-focus-within:text-[#C68346] transition-colors">
             {label}
         </label>
         <div className="relative">
@@ -292,7 +325,7 @@ const Field: React.FC<{ label: string, value: string, onChange: (v: string) => v
                     const val = e.target.value.replace(/,/g, '.').replace(/[^0-9.]/g, '');
                     onChange(val);
                 }}
-                className="w-full bg-antigravity-light-surface dark:bg-antigravity-dark-surface border border-[#9ca3af] dark:border-antigravity-dark-border rounded-none shadow-none h-14 px-6 text-2xl font-black font-mono tabular-nums text-antigravity-light-text dark:text-antigravity-dark-text outline-none focus:border-antigravity-accent transition-all text-center tracking-tight"
+                className="w-full bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none h-14 px-6 text-2xl font-bold font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] outline-none focus:border-[#C68346] transition-colors text-center tracking-tight"
                 placeholder="0.0"
                 autoComplete="off"
                 spellCheck={false}

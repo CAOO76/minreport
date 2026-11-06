@@ -56,7 +56,7 @@ export const TenantContextSchema = z.object({
 
 export type TenantContext = z.infer<typeof TenantContextSchema>;
 
-// ── 2. Master Equipment Catalog & Telemetry (OPERMAQ ➔ MINREPORT) ──────────────
+// ── 2. Master Equipment Catalog & Telemetry (OPERMAQ -> MINREPORT) ──────────────
 export const EquipmentMasterTelemetrySchema = z.object({
     assetId: z.string().min(1),
     code: z.string().min(1),
@@ -71,13 +71,13 @@ export const EquipmentMasterTelemetrySchema = z.object({
         manufacturer: z.string().optional(),
         modelFamily: z.string().optional(),
         operatingHoursInterval: z.number().optional(),
-        componentHealthAvg: z.record(z.number()).optional()
+        componentHealthAvg: z.record(z.string(), z.number()).optional()
     }).optional()
 });
 
 export type EquipmentMasterTelemetry = z.infer<typeof EquipmentMasterTelemetrySchema>;
 
-// ── 3. Stockpile Cubication Survey (STOCKPILE ➔ MINREPORT) ───────────────────
+// ── 3. Stockpile Cubication Survey (STOCKPILE -> MINREPORT) ───────────────────
 export const StockpileSurveyTelemetrySchema = z.object({
     surveyId: z.string().min(1),
     tag: z.string().min(1),
@@ -88,7 +88,7 @@ export const StockpileSurveyTelemetrySchema = z.object({
     tonnage: z.number().positive(),
     confidence: z.number().min(0).max(100),
     surveyDate: z.string().datetime(),
-    metadata: z.record(z.unknown()).optional()
+    metadata: z.record(z.string(), z.unknown()).optional()
 });
 
 export type StockpileSurveyTelemetry = z.infer<typeof StockpileSurveyTelemetrySchema>;
@@ -120,9 +120,127 @@ export const SystemEventSchema = z.object({
     tenantId: z.string().min(1),
     sourceApp: z.enum(['opermaq', 'stockpile-control', 'minreport-core']),
     eventType: z.string().min(1),
-    payload: z.record(z.unknown()),
+    payload: z.record(z.string(), z.unknown()),
     timestamp: z.string().datetime(),
     signature: z.string().optional()
 });
 
 export type SystemEvent = z.infer<typeof SystemEventSchema>;
+
+// ── 6. OPERMAQ Fleet Ownership, Private Photos & PDF Quarantine Governance ────
+export const FleetIdentifierTypeSchema = z.enum([
+    'SERIAL_NUMBER',
+    'LICENSE_PLATE',
+    'VIN',
+    'ASSET_TAG'
+]);
+
+export type FleetIdentifierType = z.infer<typeof FleetIdentifierTypeSchema>;
+
+export const FleetOwnershipConditionSchema = z.enum([
+    'PROPIO',
+    'ARRENDADO',
+    'CONTRATISTA',
+    'COMODATO'
+]);
+
+export type FleetOwnershipCondition = z.infer<typeof FleetOwnershipConditionSchema>;
+
+export const EquipmentAxisValueKindSchema = z.enum(['PHYSICAL_MAGNITUDE', 'CLOSED_ENUM']);
+
+export type EquipmentAxisValueKind = z.infer<typeof EquipmentAxisValueKindSchema>;
+
+export const EquipmentTypeAxisSchema = z.object({
+    axis_key: z.string().trim().min(1).max(64),
+    label_es: z.string().trim().min(1).max(48),
+    unit_si: z.string().trim().min(1).max(48),
+    value_kind: EquipmentAxisValueKindSchema,
+    allowed_enum_values: z.array(z.string().trim().min(1)).optional(),
+    search_keywords: z.array(z.string().trim().min(1)).min(1).max(12),
+    mandatory: z.boolean().default(true),
+    is_differentiator: z.boolean().default(false),
+});
+
+export type EquipmentTypeAxis = z.infer<typeof EquipmentTypeAxisSchema>;
+
+export const GlobalEquipmentTypeSchema = z.object({
+    type_key: z.string().trim().min(2).max(80),
+    canonical_type_es: z.string().trim().min(2).max(96),
+    categoria_equipo: z.string().trim().min(2).max(96),
+    archetype_id: z.string().trim().optional(),
+    type_aliases: z.array(z.string()).default([]),
+    search_tokens: z.array(z.string()).default([]),
+    spec_schema: z.array(EquipmentTypeAxisSchema).min(2).max(6),
+    schema_version: z.number().int().positive().default(1),
+    origin: z.enum(['SEEDED_ISO_BASE', 'AI_DISCOVERED', 'HUMAN_CURATED_HITL']),
+    is_human_locked: z.boolean().default(false),
+    usage_count: z.number().int().nonnegative().default(0),
+    created_at: z.string(),
+    updated_at: z.string(),
+});
+
+export type GlobalEquipmentType = z.infer<typeof GlobalEquipmentTypeSchema>;
+
+export const CanonicalSpecSlotSchema = z.object({
+    axis_key: z.string().trim().min(1),
+    label_es: z.string().trim().min(1),
+    value_si: z.string().trim().nullable(),
+    unit_si: z.string().trim().optional(),
+    mandatory: z.boolean().optional(),
+    is_differentiator: z.boolean().optional(),
+    value_kind: EquipmentAxisValueKindSchema.optional(),
+    allowed_enum_values: z.array(z.string().trim().min(1)).optional(),
+    source_url: z.string().trim().nullable().optional(),
+    verbatim_evidence: z.string().trim().nullable().optional(),
+});
+
+export type CanonicalSpecSlot = z.infer<typeof CanonicalSpecSlotSchema>;
+
+export const FleetUnitRegistrationSchema = z.object({
+    global_asset_id: z.string().optional(),
+    make_oficial: z.string().min(1, 'Marca oficial requerida'),
+    model_oficial: z.string().min(1, 'Modelo oficial requerido'),
+    categoria_equipo: z.string().optional(),
+    tipo_equipo: z.string().optional(),
+    equipment_type_key: z.string().optional(),
+    archetype_id: z.string().optional(),
+    canonical_specs: z.array(CanonicalSpecSlotSchema).optional(),
+    ambiente_operativo: z.array(z.string()).optional(),
+    contexto_operativo: z.array(z.string()).optional(),
+    caracteristicas_principales: z.array(z.string()).optional(),
+    chassis_versions: z.array(z.string()).optional(),
+    version: z.string().default('ESTÁNDAR'),
+    official_url: z.string().optional(),
+    original_jargon: z.string().optional(),
+    identifier_type: FleetIdentifierTypeSchema.default('SERIAL_NUMBER'),
+    identifier_value: z.string().trim().min(2, 'Número de serie, patente o identificador único obligatorio').max(80),
+    ownership_type: FleetOwnershipConditionSchema.default('PROPIO'),
+    horometer: z.number().nonnegative().default(0),
+    confirm_word: z.literal('ACTUALIZAR')
+});
+
+export type FleetUnitRegistration = z.infer<typeof FleetUnitRegistrationSchema>;
+
+export const TenantPrivatePhotoSchema = z.object({
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    url: z.string().min(1),
+    caption: z.string().max(160).optional(),
+    width: z.number().int().positive().optional(),
+    height: z.number().int().positive().optional(),
+    uploadedAt: z.string(),
+    uploadedBy: z.string().optional()
+});
+
+export type TenantPrivatePhoto = z.infer<typeof TenantPrivatePhotoSchema>;
+
+export const KnowledgeContributionStatusSchema = z.enum([
+    'PENDING_HUMAN_REVIEW',
+    'AUTO_DEDUPLICATED_NO_DELTA',
+    'APPROVED',
+    'REJECTED'
+]);
+
+export type KnowledgeContributionStatus = z.infer<typeof KnowledgeContributionStatusSchema>;
+
+// ── 7. Universal Media Digestor & Content-Addressable Storage (CAS v4.0) ──────
+export * from './media.contracts';

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dataService } from '../services/DataService';
+import { storageService, useResolvedStockpileImage } from '../services/StorageService';
 import { useTheme } from '../hooks/useTheme';
 import { calculationEngine } from '../services/calculation-engine';
 import type { StockpileAsset, StockpileMeasurement } from '../types/StockpileAsset';
@@ -16,6 +17,27 @@ import {
     ReferenceDot
 } from 'recharts';
 
+const StockpileResolvedPhoto: React.FC<{ url?: string | null; alt: string; className?: string }> = ({ url, alt, className }) => {
+    const resolvedUrl = useResolvedStockpileImage(url);
+    if (!resolvedUrl) {
+        return (
+            <div className="flex flex-col items-center justify-center opacity-40 gap-1 text-white px-4 text-center">
+                <span className="material-symbols-outlined text-3xl">no_photography</span>
+                <span className="text-[10px] font-mono uppercase tracking-wider">[Información técnica no declarada en ficha]</span>
+            </div>
+        );
+    }
+    return (
+        <img
+            src={resolvedUrl}
+            alt={alt}
+            draggable={false}
+            onContextMenu={(e) => e.preventDefault()}
+            className={`select-none pointer-events-none ${className || ''}`}
+        />
+    );
+};
+
 export interface DesktopAnalyticsProps {
     embedded?: boolean;
 }
@@ -26,26 +48,28 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
     const [selectedMeasurement, setSelectedMeasurement] = useState<StockpileMeasurement | null>(null);
     const [measurements, setMeasurements] = useState<Record<string, StockpileMeasurement[]>>({});
     const [generatingPdf, setGeneratingPdf] = useState(false);
+    const [errorBanner, setErrorBanner] = useState<string | null>(null);
     
     // Pestaña del panel lateral: 'assets' | 'history'
     const [sidebarTab, setSidebarTab] = useState<'assets' | 'history'>('assets');
 
-    // Estado para flujo de eliminación
+    // Estado para flujo de eliminación (HITL obligatorio: ACTUALIZAR)
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
-    // Estado para Modal: Nuevo Acopio
+    // Estado para Modal: Nuevo Acopio (CAS Multimedia — Cero Base64 en Firestore)
     const [showNewAssetModal, setShowNewAssetModal] = useState(false);
     const [newAssetName, setNewAssetName] = useState('');
     const [newAssetClase, setNewAssetClase] = useState<'mineral' | 'esteril' | 'baja_ley'>('mineral');
     const [newAssetLocation, setNewAssetLocation] = useState('');
     const [newAssetLat, setNewAssetLat] = useState('');
     const [newAssetLng, setNewAssetLng] = useState('');
-    const [newAssetPhoto, setNewAssetPhoto] = useState<string | null>(null);
+    const [newAssetFile, setNewAssetFile] = useState<File | null>(null);
+    const [newAssetPreviewUrl, setNewAssetPreviewUrl] = useState<string | null>(null);
     const [isCreatingAsset, setIsCreatingAsset] = useState(false);
     const assetFileInputRef = useRef<HTMLInputElement>(null);
 
-    // Estado para Modal: Nueva Medición / Cubicación
+    // Estado para Modal: Nueva Medición / Cubicación (CAS Multimedia — Cero Base64 en Firestore)
     const [showNewMeasurementModal, setShowNewMeasurementModal] = useState(false);
     const [measMethod, setMeasMethod] = useState<'DIRECT' | 'ELLIPTIC_CONE'>('DIRECT');
     const [measVolumen, setMeasVolumen] = useState('');
@@ -53,11 +77,24 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
     const [coneD1, setConeD1] = useState('');
     const [coneD2, setConeD2] = useState('');
     const [coneH, setConeH] = useState('');
-    const [measPhoto, setMeasPhoto] = useState<string | null>(null);
+    const [measFile, setMeasFile] = useState<File | null>(null);
+    const [measPreviewUrl, setMeasPreviewUrl] = useState<string | null>(null);
     const [isSavingMeas, setIsSavingMeas] = useState(false);
     const measFileInputRef = useRef<HTMLInputElement>(null);
 
     const { theme } = useTheme();
+
+    useEffect(() => {
+        return () => {
+            if (newAssetPreviewUrl) URL.revokeObjectURL(newAssetPreviewUrl);
+        };
+    }, [newAssetPreviewUrl]);
+
+    useEffect(() => {
+        return () => {
+            if (measPreviewUrl) URL.revokeObjectURL(measPreviewUrl);
+        };
+    }, [measPreviewUrl]);
 
     // Suscripción reactiva a todos los activos en tiempo real
     useEffect(() => {
@@ -149,13 +186,17 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
 
     const handleConfirmDelete = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation();
-        if (deleteConfirmText.trim().toUpperCase() === 'ELIMINAR') {
-            await dataService.deleteAsset(id);
-            setDeletingId(null);
-            setDeleteConfirmText('');
-            if (selectedAssetId === id) {
-                setSelectedAssetId(null);
-                setSelectedMeasurement(null);
+        if (deleteConfirmText.trim().toUpperCase() === 'ACTUALIZAR') {
+            try {
+                await dataService.deleteAsset(id);
+                setDeletingId(null);
+                setDeleteConfirmText('');
+                if (selectedAssetId === id) {
+                    setSelectedAssetId(null);
+                    setSelectedMeasurement(null);
+                }
+            } catch (err: any) {
+                setErrorBanner(`Error al eliminar acopio: ${err?.message || 'Error de persistencia'}`);
             }
         }
     };
@@ -177,13 +218,11 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
     const handleAssetPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
-            const reader = new FileReader();
-            reader.onload = () => {
-                if (typeof reader.result === 'string') {
-                    setNewAssetPhoto(reader.result);
-                }
-            };
-            reader.readAsDataURL(file);
+            setNewAssetFile(file);
+            setNewAssetPreviewUrl((prev) => {
+                if (prev) URL.revokeObjectURL(prev);
+                return URL.createObjectURL(file);
+            });
         }
     };
 
@@ -191,15 +230,24 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
         e.preventDefault();
         if (!newAssetName.trim()) return;
         setIsCreatingAsset(true);
+        setErrorBanner(null);
         try {
             const lat = parseFloat(newAssetLat) || 0;
             const lng = parseFloat(newAssetLng) || 0;
+            let photoRef: string | undefined = undefined;
+            if (newAssetFile) {
+                const uploaded = await storageService.uploadStockpileImage(
+                    newAssetFile,
+                    `stock_${Date.now()}`
+                );
+                photoRef = uploaded.url;
+            }
             const newId = await dataService.createAsset({
                 name: newAssetName.trim().toUpperCase(),
                 clase: newAssetClase,
                 location_ref: newAssetLocation.trim() || undefined,
-                initial_photo_url: newAssetPhoto || undefined,
-                thumbnail_url: newAssetPhoto || undefined,
+                initial_photo_url: photoRef,
+                thumbnail_url: photoRef,
                 geo_point: {
                     latitude: lat,
                     longitude: lng,
@@ -213,10 +261,14 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
             setNewAssetLocation('');
             setNewAssetLat('');
             setNewAssetLng('');
-            setNewAssetPhoto(null);
+            setNewAssetFile(null);
+            setNewAssetPreviewUrl((prev) => {
+                if (prev) URL.revokeObjectURL(prev);
+                return null;
+            });
         } catch (err: any) {
             console.error('[DesktopAnalytics] Error creando acopio:', err);
-            alert(`Error al registrar acopio: ${err?.message || 'Error de almacenamiento'}`);
+            setErrorBanner(`Error al registrar acopio: ${err?.message || 'Error de almacenamiento'}`);
         } finally {
             setIsCreatingAsset(false);
         }
@@ -242,13 +294,11 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
     const handleMeasPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
-            const reader = new FileReader();
-            reader.onload = () => {
-                if (typeof reader.result === 'string') {
-                    setMeasPhoto(reader.result);
-                }
-            };
-            reader.readAsDataURL(file);
+            setMeasFile(file);
+            setMeasPreviewUrl((prev) => {
+                if (prev) URL.revokeObjectURL(prev);
+                return URL.createObjectURL(file);
+            });
         }
     };
 
@@ -256,14 +306,20 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
         e.preventDefault();
         if (!selectedAssetId || calculatedMeasurement.volume <= 0) return;
         setIsSavingMeas(true);
+        setErrorBanner(null);
         try {
+            let photoRef = selectedAsset?.last_photo_url || '';
+            if (measFile) {
+                const uploaded = await storageService.uploadStockpileImage(measFile, selectedAssetId);
+                photoRef = uploaded.url;
+            }
             await dataService.addMeasurement({
                 assetId: selectedAssetId,
                 timestamp: Date.now(),
                 volumen_m3: calculatedMeasurement.volume,
                 peso_t: calculatedMeasurement.mass,
                 density_factor: calculatedMeasurement.density,
-                photo_url: measPhoto || selectedAsset?.last_photo_url || '',
+                photo_url: photoRef,
                 method: 'manual',
                 geometry: {
                     type: measMethod === 'DIRECT' ? 'PRISMOIDE' : 'CONO_ELIPTICO',
@@ -277,10 +333,14 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
             setConeD1('');
             setConeD2('');
             setConeH('');
-            setMeasPhoto(null);
+            setMeasFile(null);
+            setMeasPreviewUrl((prev) => {
+                if (prev) URL.revokeObjectURL(prev);
+                return null;
+            });
         } catch (err: any) {
             console.error('[DesktopAnalytics] Error guardando cubicación:', err);
-            alert(`Error al guardar medición: ${err?.message || 'Error de almacenamiento'}`);
+            setErrorBanner(`Error al guardar medición: ${err?.message || 'Error de almacenamiento'}`);
         } finally {
             setIsSavingMeas(false);
         }
@@ -303,6 +363,19 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
 
             {/* MAIN LAYOUT */}
             <main className="flex-1 flex flex-col overflow-hidden">
+                {errorBanner && (
+                    <div className="px-[21px] py-[8px] bg-red-50 dark:bg-red-950/30 border-b border-red-300 dark:border-red-900/50 flex items-center justify-between text-xs font-mono text-red-700 dark:text-red-300 shrink-0">
+                        <span>{errorBanner}</span>
+                        <button
+                            type="button"
+                            onClick={() => setErrorBanner(null)}
+                            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                            title="Cerrar alerta"
+                        >
+                            <span className="material-symbols-outlined text-[16px]">close</span>
+                        </button>
+                    </div>
+                )}
                 
                 {/* TOP HUD: GLOBAL KPIs TÉCNICOS */}
                 <section className="h-16 border-b border-slate-200 dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] flex items-center px-4 overflow-hidden shrink-0">
@@ -313,13 +386,13 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                     <div className="flex items-center h-full px-6 border-r border-slate-200 dark:border-[#12151C]">
                         <span className="text-[10px] font-bold font-mono opacity-40 uppercase tracking-widest mr-4">VOLUMEN TOTAL</span>
                         <div className="text-2xl font-bold font-mono tabular-nums text-[#C68346]">
-                            {stats.totalVolume.toLocaleString('es-CL', { maximumFractionDigits: 1 })} <span className="text-xs text-slate-400 font-sans ml-0.5">m³</span>
+                            {stats.totalVolume.toLocaleString('es-CL', { maximumFractionDigits: 1 })} <span className="text-xs text-slate-400 font-atkinson ml-0.5">m³</span>
                         </div>
                     </div>
                     <div className="flex items-center h-full px-6 border-r border-slate-200 dark:border-[#12151C]">
                         <span className="text-[10px] font-bold font-mono opacity-40 uppercase tracking-widest mr-4">MASA TOTAL</span>
                         <div className="text-2xl font-bold font-mono tabular-nums text-[#C68346]">
-                            {stats.totalWeight.toLocaleString('es-CL', { maximumFractionDigits: 0 })} <span className="text-xs text-slate-400 font-sans ml-0.5">t</span>
+                            {stats.totalWeight.toLocaleString('es-CL', { maximumFractionDigits: 0 })} <span className="text-xs text-slate-400 font-atkinson ml-0.5">t</span>
                         </div>
                     </div>
                     <div className="flex-1 flex items-center justify-end px-6 gap-3">
@@ -348,12 +421,11 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                             {/* Botón Primario: Registrar Nuevo Acopio */}
                             <button
                                 type="button"
-                                onClick={() => setShowNewAssetModal(true)}
-                                className="h-8 px-3 bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold text-[11px] uppercase tracking-wider transition-colors rounded-none shadow-none flex items-center gap-1.5 cursor-pointer border-0 outline-none select-none"
+                                onClick={() => { setErrorBanner(null); setShowNewAssetModal(true); }}
+                                className="h-8 px-3 bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold text-[11px] uppercase tracking-wider transition-colors rounded-none shadow-none flex items-center cursor-pointer border-0 outline-none select-none"
                                 title="Crear nuevo acopio en el sistema"
                             >
-                                <span className="material-symbols-outlined text-[16px]">add</span>
-                                <span>NUEVO ACOPIO</span>
+                                NUEVO ACOPIO
                             </button>
                         </div>
 
@@ -394,10 +466,11 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                             <span className="material-symbols-outlined text-4xl opacity-30">inventory_2</span>
                                             <p className="uppercase tracking-widest text-[10px]">Sin acopios registrados</p>
                                             <button
-                                                onClick={() => setShowNewAssetModal(true)}
+                                                type="button"
+                                                onClick={() => { setErrorBanner(null); setShowNewAssetModal(true); }}
                                                 className="px-3 py-1.5 bg-[#C68346] text-white font-mono text-xs uppercase tracking-wider rounded-none cursor-pointer border-0"
                                             >
-                                                [+] Crear Primer Acopio
+                                                CREAR PRIMER ACOPIO
                                             </button>
                                         </div>
                                     ) : (
@@ -411,13 +484,13 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                                 return (
                                                     <div key={asset.id} className="p-4 bg-red-50 dark:bg-red-950/20 border-b border-red-200 dark:border-red-900/40 flex flex-col gap-2">
                                                         <p className="text-[10px] font-mono font-bold uppercase tracking-wider text-red-600 dark:text-red-400">
-                                                            Escriba ELIMINAR para confirmar borrado de "{asset.name}"
+                                                            Escriba ACTUALIZAR para confirmar borrado de "{asset.name}"
                                                         </p>
                                                         <input
                                                             type="text"
                                                             value={deleteConfirmText}
                                                             onChange={e => setDeleteConfirmText(e.target.value)}
-                                                            placeholder="ELIMINAR"
+                                                            placeholder="ACTUALIZAR"
                                                             autoComplete="off"
                                                             spellCheck={false}
                                                             className="w-full h-8 px-2 text-xs font-mono uppercase bg-white dark:bg-black border border-red-300 dark:border-red-900 outline-none rounded-none"
@@ -434,7 +507,7 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                                             <button
                                                                 type="button"
                                                                 onClick={(e) => handleConfirmDelete(e, asset.id!)}
-                                                                disabled={deleteConfirmText.trim().toUpperCase() !== 'ELIMINAR'}
+                                                                disabled={deleteConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'}
                                                                 className="px-3 py-1 text-[10px] font-mono font-bold bg-red-600 text-white uppercase rounded-none cursor-pointer disabled:opacity-40 border-0"
                                                             >
                                                                 Confirmar
@@ -481,7 +554,7 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                                         <div className="flex flex-col text-right">
                                                             <span className="text-[8px] font-bold opacity-40 uppercase">ÚLTIMO REGISTRO</span>
                                                             <span className="tabular-nums text-slate-500">
-                                                                {lastMeas ? new Date(lastMeas.timestamp).toLocaleDateString('es-CL', { month: 'short', day: '2-digit' }) : 'Sin datos'}
+                                                                {lastMeas ? new Date(lastMeas.timestamp).toLocaleDateString('es-CL', { month: 'short', day: '2-digit' }) : '[Pendiente de registro]'}
                                                             </span>
                                                         </div>
                                                     </div>
@@ -494,7 +567,7 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                                             setDeletingId(asset.id!);
                                                             setDeleteConfirmText('');
                                                         }}
-                                                        className="absolute right-2 top-3 w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-100 hover:text-red-500 text-slate-400 transition-all bg-transparent border-0 cursor-pointer"
+                                                        className="absolute right-2 top-3 bg-transparent border-0 outline-none p-1 opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
                                                         title="Eliminar activo"
                                                     >
                                                         <span className="material-symbols-outlined text-[16px]">delete</span>
@@ -529,17 +602,17 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                                     }`}
                                                 >
                                                     <div className="flex justify-between items-center text-xs">
-                                                        <span className="font-mono text-slate-500">
+                                                        <span className="font-mono text-slate-500 tabular-nums">
                                                             {new Date(m.timestamp).toLocaleDateString('es-CL', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                                                         </span>
                                                         <span className="font-mono font-bold text-sm tabular-nums text-[#C68346]">
                                                             {m.volumen_m3.toFixed(1)} m³
                                                         </span>
                                                     </div>
-                                                    <div className="flex justify-between items-center text-[10px] font-mono text-slate-400">
+                                                    <div className="flex justify-between items-center text-[10px] font-mono text-slate-400 tabular-nums">
                                                         <span>Masa: {m.peso_t.toFixed(0)} t</span>
                                                         {diff !== 0 && (
-                                                            <span className={`font-bold ${diff > 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                                                            <span className={`font-bold tabular-nums ${diff > 0 ? 'text-[#00AEEF]' : 'text-red-500'}`}>
                                                                 {diff > 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1)} m³
                                                             </span>
                                                         )}
@@ -571,26 +644,24 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                     </div>
 
                                     {/* Acciones Primarias: Nueva Medición & Reporte PDF */}
-                                    <div className="flex items-center gap-3">
+                                    <div className="flex items-center gap-[13px]">
                                         <button
                                             type="button"
-                                            onClick={() => setShowNewMeasurementModal(true)}
-                                            className="h-9 px-4 bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold text-xs uppercase tracking-wider transition-colors rounded-none shadow-none flex items-center gap-2 cursor-pointer border-0 outline-none select-none"
+                                            onClick={() => { setErrorBanner(null); setShowNewMeasurementModal(true); }}
+                                            className="h-9 px-4 bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold text-xs uppercase tracking-wider transition-colors rounded-none shadow-none flex items-center cursor-pointer border-0 outline-none select-none"
                                             title="Ingresar nueva cubicación o medición para este acopio"
                                         >
-                                            <span className="material-symbols-outlined text-[18px]">straighten</span>
-                                            <span>NUEVA MEDICIÓN</span>
+                                            NUEVA MEDICIÓN
                                         </button>
 
                                         <button 
                                             type="button"
                                             onClick={handleDownloadPDF}
                                             disabled={generatingPdf}
-                                            className="h-9 px-3 bg-transparent border border-slate-300 dark:border-[#12151C] text-slate-700 dark:text-[#F3F4F6] hover:border-[#C68346] hover:text-[#C68346] font-mono text-xs uppercase tracking-wider transition-colors rounded-none shadow-none flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                                            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer disabled:opacity-40"
                                             title="Descargar informe técnico PDF"
                                         >
-                                            <span className="material-symbols-outlined text-[18px]">picture_as_pdf</span>
-                                            <span className="hidden sm:inline">REPORTE</span>
+                                            <span className="material-symbols-outlined text-[20px]">picture_as_pdf</span>
                                         </button>
                                     </div>
                                 </div>
@@ -623,13 +694,13 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                                         dataKey="timestamp" 
                                                         axisLine={false} 
                                                         tickLine={false} 
-                                                        tick={{ fontSize: 9, fill: '#8A93A6', fontFamily: 'monospace' }}
+                                                        tick={{ fontSize: 9, fill: '#8A93A6', fontFamily: '"Atkinson Hyperlegible Mono", monospace' }}
                                                         tickFormatter={(t) => new Date(t).toLocaleDateString('es-CL', { day: '2-digit', month: 'short' })}
                                                     />
                                                     <YAxis 
                                                         axisLine={false} 
                                                         tickLine={false} 
-                                                        tick={{ fontSize: 9, fill: '#8A93A6', fontFamily: 'monospace' }} 
+                                                        tick={{ fontSize: 9, fill: '#8A93A6', fontFamily: '"Atkinson Hyperlegible Mono", monospace' }} 
                                                     />
                                                     <Tooltip 
                                                         contentStyle={{ 
@@ -637,7 +708,7 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                                             border: '1px solid #C68346', 
                                                             fontSize: '11px', 
                                                             borderRadius: '0px',
-                                                            fontFamily: 'monospace',
+                                                            fontFamily: '"Atkinson Hyperlegible Mono", monospace',
                                                             color: theme === 'dark' ? '#F3F4F6' : '#0F172A'
                                                         }}
                                                         itemStyle={{ color: '#C68346', fontWeight: 'bold' }}
@@ -668,14 +739,14 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                     </div>
 
                                     {/* Grilla de KPIs Técnicos */}
-                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-[21px]">
                                         <div className="bg-slate-50 dark:bg-[#07090D] border border-slate-200 dark:border-[#12151C] p-5">
                                             <span className="text-[10px] font-mono font-bold text-slate-400 dark:text-[#8A93A6] uppercase tracking-wider block mb-2">
                                                 VOLUMEN CUBICADO
                                             </span>
                                             <div className="text-3xl font-bold font-mono tabular-nums text-slate-900 dark:text-[#F3F4F6]">
                                                 {selectedAsset.last_volume_m3 ? selectedAsset.last_volume_m3.toFixed(1) : '0.0'}
-                                                <span className="text-xs text-slate-400 font-sans ml-1">m³</span>
+                                                <span className="text-xs text-slate-400 font-atkinson ml-1">m³</span>
                                             </div>
                                         </div>
 
@@ -685,7 +756,7 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                             </span>
                                             <div className="text-3xl font-bold font-mono tabular-nums text-slate-900 dark:text-[#F3F4F6]">
                                                 {selectedAsset.last_weight_t ? selectedAsset.last_weight_t.toFixed(0) : '0'}
-                                                <span className="text-xs text-slate-400 font-sans ml-1">t</span>
+                                                <span className="text-xs text-slate-400 font-atkinson ml-1">t</span>
                                             </div>
                                         </div>
 
@@ -695,7 +766,7 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                             </span>
                                             <div className="text-3xl font-bold font-mono tabular-nums text-[#C68346]">
                                                 {(selectedAsset.last_weight_t && selectedAsset.last_volume_m3 ? selectedAsset.last_weight_t / selectedAsset.last_volume_m3 : 2.2).toFixed(2)}
-                                                <span className="text-xs text-slate-400 font-sans ml-1">t/m³</span>
+                                                <span className="text-xs text-slate-400 font-atkinson ml-1">t/m³</span>
                                             </div>
                                         </div>
                                     </div>
@@ -723,23 +794,16 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                     </div>
 
                                     {/* Evidencias Técnicas: Foto y Mapa */}
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 h-56">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-[21px] h-56">
                                         <div className="border border-slate-200 dark:border-[#12151C] bg-black relative overflow-hidden flex flex-col justify-center items-center">
                                             <span className="absolute top-2 left-3 text-[9px] font-mono font-bold uppercase tracking-wider text-white/50 z-10">
                                                 ÚLTIMA FOTOGRAFÍA REGISTRADA
                                             </span>
-                                            {selectedAsset.last_photo_url ? (
-                                                <img 
-                                                    src={selectedAsset.last_photo_url} 
-                                                    alt="Evidencia fotográfica" 
-                                                    className="w-full h-full object-cover opacity-80 hover:opacity-100 transition-opacity"
-                                                />
-                                            ) : (
-                                                <div className="flex flex-col items-center justify-center opacity-30 gap-1 text-white">
-                                                    <span className="material-symbols-outlined text-4xl">no_photography</span>
-                                                    <span className="text-[10px] font-mono uppercase tracking-widest">[Sin registro visual]</span>
-                                                </div>
-                                            )}
+                                            <StockpileResolvedPhoto
+                                                url={selectedAsset.last_photo_url}
+                                                alt="Evidencia fotográfica"
+                                                className="w-full h-full object-cover opacity-80"
+                                            />
                                         </div>
 
                                         <div className="border border-slate-200 dark:border-[#12151C] bg-[#030406] relative overflow-hidden flex flex-col justify-center items-center">
@@ -756,15 +820,22 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                                     return (
                                                         <img 
                                                             src={mapUrl} 
-                                                            className="w-full h-full object-cover opacity-70 hover:opacity-100 transition-opacity" 
+                                                            draggable={false}
+                                                            onContextMenu={(e) => e.preventDefault()}
+                                                            className="w-full h-full object-cover opacity-70 select-none pointer-events-none" 
                                                             alt="Satélite" 
                                                         />
                                                     );
                                                 }
                                                 return (
-                                                    <div className="flex flex-col items-center justify-center text-slate-500 font-mono text-[10px] gap-1">
+                                                    <div className="flex flex-col items-center justify-center text-slate-500 font-mono text-[10px] gap-1 px-4 text-center">
                                                         <span className="material-symbols-outlined text-3xl opacity-30">map</span>
-                                                        <span>COMODÍN SATELITAL ({lat ? lat.toFixed(4) : '0'}, {lng ? lng.toFixed(4) : '0'})</span>
+                                                        <span>[Información técnica no declarada en ficha]</span>
+                                                        {Boolean(lat || lng) && (
+                                                            <span className="tabular-nums text-[9px] opacity-60">
+                                                                {lat ? lat.toFixed(4) : '0.0000'}, {lng ? lng.toFixed(4) : '0.0000'}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 );
                                             })()}
@@ -778,10 +849,11 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                 <span className="material-symbols-outlined text-5xl opacity-20">layers</span>
                                 <p className="uppercase tracking-widest">Seleccione o registre un acopio para ver analítica</p>
                                 <button
-                                    onClick={() => setShowNewAssetModal(true)}
+                                    type="button"
+                                    onClick={() => { setErrorBanner(null); setShowNewAssetModal(true); }}
                                     className="px-4 py-2 bg-[#C68346] text-white font-mono text-xs font-bold uppercase tracking-wider rounded-none cursor-pointer border-0"
                                 >
-                                    [+] REGISTRAR ACOPIO
+                                    REGISTRAR ACOPIO
                                 </button>
                             </div>
                         )}
@@ -791,7 +863,7 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
 
                 {/* MODAL 1: REGISTRAR NUEVO ACOPIO */}
                 {showNewAssetModal && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
                         <div className="w-full max-w-md bg-white dark:bg-[#07090D] border border-slate-300 dark:border-[#12151C] shadow-none rounded-none p-6 font-atkinson">
                             <div className="flex justify-between items-center border-b border-slate-200 dark:border-[#12151C] pb-3 mb-4">
                                 <div className="flex items-center gap-2">
@@ -803,11 +875,18 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                 <button
                                     type="button"
                                     onClick={() => setShowNewAssetModal(false)}
-                                    className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-slate-900 dark:hover:text-white bg-transparent border-0 cursor-pointer"
+                                    className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                                    title="Cerrar"
                                 >
                                     <span className="material-symbols-outlined text-[18px]">close</span>
                                 </button>
                             </div>
+
+                            {errorBanner && (
+                                <div className="mb-3 p-2.5 bg-red-50 dark:bg-red-950/30 border border-red-300 dark:border-red-900/50 text-[11px] font-mono text-red-700 dark:text-red-300">
+                                    {errorBanner}
+                                </div>
+                            )}
 
                             <form onSubmit={handleCreateAssetSubmit} autoComplete="off" spellCheck={false} className="space-y-4">
                                 <div>
@@ -875,7 +954,7 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                             placeholder="-23.8631"
                                             autoComplete="off"
                                             spellCheck={false}
-                                            className="w-full h-8 px-2 bg-slate-50 dark:bg-black border border-slate-200 dark:border-[#12151C] text-xs font-mono focus:border-[#C68346] outline-none rounded-none"
+                                            className="w-full h-8 px-2 bg-slate-50 dark:bg-black border border-slate-200 dark:border-[#12151C] text-xs font-mono tabular-nums focus:border-[#C68346] outline-none rounded-none"
                                         />
                                     </div>
                                     <div>
@@ -889,16 +968,15 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                             placeholder="-69.1382"
                                             autoComplete="off"
                                             spellCheck={false}
-                                            className="w-full h-8 px-2 bg-slate-50 dark:bg-black border border-slate-200 dark:border-[#12151C] text-xs font-mono focus:border-[#C68346] outline-none rounded-none"
+                                            className="w-full h-8 px-2 bg-slate-50 dark:bg-black border border-slate-200 dark:border-[#12151C] text-xs font-mono tabular-nums focus:border-[#C68346] outline-none rounded-none"
                                         />
                                     </div>
                                 </div>
                                 <button
                                     type="button"
                                     onClick={handleGetGPS}
-                                    className="w-full py-1 text-[10px] font-mono text-[#C68346] hover:underline bg-transparent border-0 cursor-pointer flex items-center justify-center gap-1"
+                                    className="w-full py-1 text-[10px] font-mono text-[#C68346] hover:underline bg-transparent border-0 cursor-pointer flex items-center justify-center"
                                 >
-                                    <span className="material-symbols-outlined text-[14px]">my_location</span>
                                     Detectar coordenadas actuales
                                 </button>
 
@@ -910,6 +988,8 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                         type="file"
                                         ref={assetFileInputRef}
                                         accept="image/*"
+                                        autoComplete="off"
+                                        spellCheck={false}
                                         onChange={handleAssetPhotoUpload}
                                         className="hidden"
                                     />
@@ -917,8 +997,14 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                         onClick={() => assetFileInputRef.current?.click()}
                                         className="w-full h-20 border border-dashed border-slate-300 dark:border-[#12151C] flex flex-col items-center justify-center cursor-pointer hover:border-[#C68346] bg-slate-50 dark:bg-black/40 overflow-hidden"
                                     >
-                                        {newAssetPhoto ? (
-                                            <img src={newAssetPhoto} className="w-full h-full object-cover" alt="Preview" />
+                                        {newAssetPreviewUrl ? (
+                                            <img
+                                                src={newAssetPreviewUrl}
+                                                draggable={false}
+                                                onContextMenu={(e) => e.preventDefault()}
+                                                className="w-full h-full object-cover select-none pointer-events-none"
+                                                alt="Preview"
+                                            />
                                         ) : (
                                             <div className="flex flex-col items-center text-slate-400 gap-1">
                                                 <span className="material-symbols-outlined text-2xl">add_photo_alternate</span>
@@ -941,7 +1027,7 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                         disabled={isCreatingAsset || !newAssetName.trim()}
                                         className="flex-1 h-10 bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold text-xs uppercase tracking-wider rounded-none shadow-none disabled:opacity-50 cursor-pointer border-0"
                                     >
-                                        {isCreatingAsset ? 'Guardando...' : 'GUARDAR ACOPIO'}
+                                        {isCreatingAsset ? 'DIGIRIENDO CAS...' : 'GUARDAR ACOPIO'}
                                     </button>
                                 </div>
                             </form>
@@ -951,7 +1037,7 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
 
                 {/* MODAL 2: REGISTRAR NUEVA MEDICIÓN / CUBICACIÓN */}
                 {showNewMeasurementModal && selectedAsset && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
                         <div className="w-full max-w-md bg-white dark:bg-[#07090D] border border-slate-300 dark:border-[#12151C] shadow-none rounded-none p-6 font-atkinson">
                             <div className="flex justify-between items-center border-b border-slate-200 dark:border-[#12151C] pb-3 mb-4">
                                 <div className="flex items-center gap-2">
@@ -968,11 +1054,18 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                 <button
                                     type="button"
                                     onClick={() => setShowNewMeasurementModal(false)}
-                                    className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-slate-900 dark:hover:text-white bg-transparent border-0 cursor-pointer"
+                                    className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                                    title="Cerrar"
                                 >
                                     <span className="material-symbols-outlined text-[18px]">close</span>
                                 </button>
                             </div>
+
+                            {errorBanner && (
+                                <div className="mb-3 p-2.5 bg-red-50 dark:bg-red-950/30 border border-red-300 dark:border-red-900/50 text-[11px] font-mono text-red-700 dark:text-red-300">
+                                    {errorBanner}
+                                </div>
+                            )}
 
                             <form onSubmit={handleCreateMeasurementSubmit} autoComplete="off" spellCheck={false} className="space-y-4">
                                 <div>
@@ -1114,6 +1207,8 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                         type="file"
                                         ref={measFileInputRef}
                                         accept="image/*"
+                                        autoComplete="off"
+                                        spellCheck={false}
                                         onChange={handleMeasPhotoUpload}
                                         className="hidden"
                                     />
@@ -1121,8 +1216,14 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                         onClick={() => measFileInputRef.current?.click()}
                                         className="w-full h-16 border border-dashed border-slate-300 dark:border-[#12151C] flex flex-col items-center justify-center cursor-pointer hover:border-[#C68346] bg-slate-50 dark:bg-black/40 overflow-hidden"
                                     >
-                                        {measPhoto ? (
-                                            <img src={measPhoto} className="w-full h-full object-cover" alt="Preview Medición" />
+                                        {measPreviewUrl ? (
+                                            <img
+                                                src={measPreviewUrl}
+                                                draggable={false}
+                                                onContextMenu={(e) => e.preventDefault()}
+                                                className="w-full h-full object-cover select-none pointer-events-none"
+                                                alt="Preview Medición"
+                                            />
                                         ) : (
                                             <span className="text-[10px] font-mono uppercase text-slate-400">
                                                 Adjuntar captura de cota / evidencia
@@ -1144,7 +1245,7 @@ export const DesktopAnalytics: React.FC<DesktopAnalyticsProps> = ({ embedded = f
                                         disabled={isSavingMeas || calculatedMeasurement.volume <= 0}
                                         className="flex-1 h-10 bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold text-xs uppercase tracking-wider rounded-none shadow-none disabled:opacity-50 cursor-pointer border-0"
                                     >
-                                        {isSavingMeas ? 'Guardando...' : 'GUARDAR CUBICACIÓN'}
+                                        {isSavingMeas ? 'DIGIRIENDO CAS...' : 'GUARDAR CUBICACIÓN'}
                                     </button>
                                 </div>
                             </form>

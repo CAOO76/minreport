@@ -12,7 +12,7 @@ export default defineConfig({
             '@stockpile': path.resolve(__dirname, './src/modules/stockpile'),
         },
         preserveSymlinks: true,
-        dedupe: ['react', 'react-dom', 'firebase', 'framer-motion']
+        dedupe: ['react', 'react-dom', 'firebase']
     },
     plugins: [
         react(),
@@ -22,7 +22,7 @@ export default defineConfig({
                 server.httpServer?.once('listening', () => {
                     setTimeout(() => {
                         const port = server.config.server.port || 5173;
-                        console.log(`\x1b[38;2;198;131;70m  ➜  DEV Gateway:\x1b[0m http://localhost:${port}/dev`);
+                        console.log(`\x1b[38;2;198;131;70m  [DEV] Gateway:\x1b[0m http://localhost:${port}/dev`);
                     }, 100);
                 });
             }
@@ -32,14 +32,14 @@ export default defineConfig({
             devOptions: {
                 enabled: true
             },
-            includeAssets: ['favicon.ico', 'pwa-192x192.png', 'pwa-512x512.png'],
+            includeAssets: ['favicon.ico', 'favicon.svg', 'pwa-192x192.png', 'pwa-512x512.png'],
             manifest: {
                 id: '/',
-                name: 'MinReport',
-                short_name: 'MinReport',
-                description: 'MinReport Field Application',
-                theme_color: '#121212',
-                background_color: '#121212',
+                name: 'MINREPORT',
+                short_name: 'MINREPORT',
+                description: 'Plataforma de reporteria y analitica industrial minera',
+                theme_color: '#C68346',
+                background_color: '#000000',
                 display: 'standalone',
                 orientation: 'portrait',
                 start_url: '/',
@@ -73,20 +73,22 @@ export default defineConfig({
             },
             workbox: {
                 cleanupOutdatedCaches: true,
-                globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-                maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
+                globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+                maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
                 navigateFallback: 'index.html',
                 navigateFallbackAllowlist: [/^(?!\/__).*/],
                 navigateFallbackDenylist: [/^\/src/, /^\/node_modules/, /^\/@/],
                 runtimeCaching: [
                     {
-                        urlPattern: ({ url }) => url.origin.includes('firebasestorage'),
+                        urlPattern: ({ url }) =>
+                            url.origin.includes('firebasestorage') ||
+                            url.pathname.startsWith('/api/media/blob/'),
                         handler: 'CacheFirst',
                         options: {
-                            cacheName: 'media-cache',
+                            cacheName: 'media-cas-immutable-cache',
                             expiration: {
-                                maxEntries: 200,
-                                maxAgeSeconds: 30 * 24 * 60 * 60,
+                                maxEntries: 600,
+                                maxAgeSeconds: 365 * 24 * 60 * 60,
                             },
                         },
                     },
@@ -137,14 +139,14 @@ export default defineConfig({
                         if (id.includes('firebase')) {
                             return 'vendor-firebase';
                         }
-                        if (id.includes('framer-motion')) {
-                            return 'vendor-motion';
-                        }
                         if (id.includes('@capacitor')) {
                             return 'vendor-capacitor';
                         }
                         if (id.includes('i18next') || id.includes('react-i18next')) {
                             return 'vendor-i18n';
+                        }
+                        if (id.includes('pdf-lib') || id.includes('pdfjs-dist') || id.includes('mediabunny')) {
+                            return 'vendor-media-digestor';
                         }
                         if (id.includes('react-dom') || id.includes('react-router-dom') || id.includes('/react/')) {
                             return 'vendor-react';

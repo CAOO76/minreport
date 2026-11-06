@@ -1,4 +1,43 @@
 /**
+ * Normaliza un RUT/RUN eliminando puntos, guiones y espacios en mayúsculas (ej. "12345678K").
+ */
+export const cleanRut = (rut: string | number): string => {
+    if (rut === null || rut === undefined) return '';
+    return String(rut)
+        .replace(/[^0-9kK]/g, '')
+        .trim()
+        .toUpperCase();
+};
+
+/**
+ * Genera todas las variantes canónicas de un RUT/TaxID para resolución retrocompatible en `user_directory`:
+ * - Limpio sin separadores (`12345678K`)
+ * - Sin puntos con guion (`12345678-K`)
+ * - Formato chileno completo (`12.345.678-K`)
+ * - Entrada original saneada
+ */
+export const getRutVariants = (rut: string | number): string[] => {
+    const raw = String(rut || '').trim();
+    const cleaned = cleanRut(raw);
+    const variants = new Set<string>();
+
+    if (cleaned) {
+        variants.add(cleaned);
+        if (cleaned.length >= 2) {
+            const body = cleaned.slice(0, -1);
+            const dv = cleaned.slice(-1);
+            variants.add(`${body}-${dv}`);
+            variants.add(formatRut(cleaned));
+        }
+    }
+    if (raw && !raw.includes('/')) {
+        variants.add(raw.toUpperCase());
+    }
+
+    return Array.from(variants).filter(Boolean);
+};
+
+/**
  * Validates a Chilean RUT/RUN using the Modulo 11 algorithm.
  * @param rut string | number The RUT to validate (can include dots and dash)
  * @returns boolean

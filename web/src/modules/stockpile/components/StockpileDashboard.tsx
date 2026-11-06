@@ -1,8 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
+import { toast } from 'react-toastify';
 import { dataService } from '../services/DataService';
+import { useResolvedStockpileImage } from '../services/StorageService';
 import { M3Chip } from './M3Chip';
-import { StockpileSummary } from './StockpileSummary';
 import type { StockpileAsset, StockpileMeasurement } from '../types/StockpileAsset';
+
+const StockpileSummary = React.lazy(() =>
+    import('./StockpileSummary').then(m => ({ default: m.StockpileSummary }))
+);
 
 interface StockpileDashboardProps {
     assetId: string;
@@ -10,6 +15,20 @@ interface StockpileDashboardProps {
     onSelectMeasurement: (measurementId: string) => void;
     onBack: () => void;
 }
+
+const HistoryThumb: React.FC<{ rawUrl?: string }> = ({ rawUrl }) => {
+    const resolved = useResolvedStockpileImage(rawUrl);
+    if (!resolved) return null;
+    return (
+        <img
+            src={resolved}
+            draggable={false}
+            onContextMenu={(e) => e.preventDefault()}
+            className="w-full h-full object-cover grayscale opacity-70 dark:opacity-50 select-none pointer-events-none"
+            alt=""
+        />
+    );
+};
 
 /**
  * StockpileDashboard (Ficha de Activo)
@@ -36,7 +55,7 @@ export const StockpileDashboard: React.FC<StockpileDashboardProps> = ({ assetId,
             }
         };
 
-        loadData();
+        void loadData();
 
         const unsubAsset = dataService.subscribeToAsset(assetId, (updated) => {
             if (updated) setAsset(updated);
@@ -52,7 +71,6 @@ export const StockpileDashboard: React.FC<StockpileDashboardProps> = ({ assetId,
         };
     }, [assetId]);
 
-    // Handle Direct Sharing logic
     useEffect(() => {
         if (generatingPdf && shareImmediately && asset) {
             const performShare = async () => {
@@ -72,48 +90,52 @@ export const StockpileDashboard: React.FC<StockpileDashboardProps> = ({ assetId,
                     );
                 } catch (err: any) {
                     console.error('[Dashboard] Direct share error:', err);
-                    alert('Error al compartir: ' + err.message);
+                    toast.error(`Error al compartir: ${err?.message || 'Error desconocido'}`);
                 } finally {
                     setGeneratingPdf(false);
                     setShareImmediately(false);
                 }
             };
-            performShare();
+            void performShare();
         }
     }, [generatingPdf, shareImmediately, asset]);
 
     const validHistory = React.useMemo(() => history.filter(m => !m.ignored), [history]);
-
     const lastM = validHistory[0];
     const prevM = validHistory[1];
     const deltaVol = lastM && prevM ? lastM.volumen_m3 - prevM.volumen_m3 : 0;
 
+    const rawHeroUrl = showOriginal
+        ? asset?.initial_photo_url
+        : (asset?.last_photo_url || asset?.initial_photo_url);
+    const resolvedHeroUrl = useResolvedStockpileImage(rawHeroUrl);
+
     if (loading || !asset) {
         return (
-            <div className="h-full w-full flex-1 min-h-[480px] bg-antigravity-light-bg dark:bg-antigravity-dark-bg flex items-center justify-center transition-colors duration-200">
-                <div className="w-12 h-12 border-4 border-antigravity-accent border-t-transparent rounded-none animate-spin"></div>
+            <div className="h-full w-full flex-1 min-h-[480px] bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-center transition-colors duration-200">
+                <div className="w-12 h-12 border-4 border-[#C68346] border-t-transparent rounded-none animate-spin" />
             </div>
         );
     }
 
     return (
-        <main className="h-full w-full flex-1 min-h-[600px] bg-antigravity-light-bg dark:bg-antigravity-dark-bg flex flex-col font-atkinson text-antigravity-light-text dark:text-antigravity-dark-text overflow-hidden relative transition-colors duration-200 rounded-none shadow-none">
+        <main className="h-full w-full flex-1 min-h-[600px] bg-[#FFFFFF] dark:bg-[#000000] flex flex-col font-atkinson text-[#0F172A] dark:text-[#F3F4F6] overflow-hidden relative transition-colors duration-200 rounded-none shadow-none select-none">
 
-            {/* Header Técnico */}
-            <header className="shrink-0 pt-8 pb-4 px-6 flex items-center justify-between bg-antigravity-light-surface dark:bg-antigravity-dark-surface border-b border-antigravity-light-border dark:border-antigravity-dark-border z-40">
+            <header className="shrink-0 pt-8 pb-4 px-6 flex items-center justify-between bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] z-40">
                 <button
                     type="button"
                     onClick={onBack}
                     className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                     title="Volver"
+                    aria-label="Volver"
                 >
-                    <span className="material-symbols-outlined text-2xl text-antigravity-accent">arrow_back</span>
+                    <span className="material-symbols-outlined text-2xl text-[#C68346]">arrow_back</span>
                 </button>
                 <div className="flex flex-col items-center">
-                    <h1 className="text-[10px] font-bold tracking-[0.4em] uppercase text-antigravity-light-text/50 dark:text-antigravity-dark-text/40">ACTIVO</h1>
-                    <span className="text-sm font-black tracking-widest uppercase text-antigravity-light-text dark:text-antigravity-dark-text/90">{asset.name}</span>
+                    <h1 className="text-[11px] font-bold tracking-[0.2em] uppercase text-[#475569] dark:text-[#8A93A6]">ACTIVO</h1>
+                    <span className="text-sm font-bold tracking-widest uppercase text-[#0F172A] dark:text-[#F3F4F6]">{asset.name}</span>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-[8px]">
                     <button
                         type="button"
                         onClick={() => {
@@ -122,39 +144,48 @@ export const StockpileDashboard: React.FC<StockpileDashboardProps> = ({ assetId,
                         }}
                         className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                         title="Compartir Reporte PDF"
+                        aria-label="Compartir Reporte PDF"
                     >
                         <span className="material-symbols-outlined text-xl">share</span>
                     </button>
                 </div>
             </header>
 
-            {/* Main Content */}
             <section className="flex-1 overflow-y-auto hide-scrollbar">
 
                 {/* Photo Hero */}
-                <div className="relative w-full aspect-[16/10] max-h-[360px] bg-black group overflow-hidden">
-                    <img
-                        src={showOriginal ? asset.initial_photo_url : (asset.last_photo_url || asset.initial_photo_url)}
-                        draggable={false}
-                        className={`w-full h-full object-cover transition-all duration-700 select-none pointer-events-none ${showOriginal ? 'scale-110 sepia-[.3]' : ''}`}
-                        alt="Vista Acopio"
-                    />
+                <div className="relative w-full aspect-[16/10] max-h-[360px] bg-[#07090D] group overflow-hidden">
+                    {resolvedHeroUrl ? (
+                        <img
+                            src={resolvedHeroUrl}
+                            draggable={false}
+                            onContextMenu={(e) => e.preventDefault()}
+                            className={`w-full h-full object-cover transition-all duration-500 select-none pointer-events-none ${showOriginal ? 'scale-105' : ''}`}
+                            alt="Vista Acopio"
+                        />
+                    ) : (
+                        <div className="w-full h-full flex items-center justify-center text-xs font-mono text-[#5A6072]">
+                            [Información técnica no declarada en ficha]
+                        </div>
+                    )}
 
-                    {/* Traceability Toggle (Original) */}
                     <button
                         type="button"
                         onClick={() => setShowOriginal(!showOriginal)}
-                        className={`absolute top-4 right-4 z-20 px-3 py-2 rounded-none shadow-none border flex items-center gap-2 transition-all cursor-pointer ${showOriginal ? 'bg-primary border-primary text-black' : 'bg-black/60 border-white/10 text-white/80'}`}
+                        className={`absolute top-4 right-4 z-20 px-[13px] py-[8px] rounded-none shadow-none border text-[11px] font-bold uppercase tracking-widest transition-colors cursor-pointer ${
+                            showOriginal
+                                ? 'bg-[#C68346] border-[#C68346] text-[#FFFFFF]'
+                                : 'bg-[#07090D]/85 border-[#12151C] text-[#F3F4F6]'
+                        }`}
                     >
-                        <span className="material-symbols-outlined text-lg">history</span>
-                        <span className="text-[10px] font-black uppercase tracking-widest">{showOriginal ? 'Viendo Original' : 'Ver Original'}</span>
+                        {showOriginal ? 'Viendo Original' : 'Ver Original'}
                     </button>
 
-                    <div className="absolute inset-0 bg-gradient-to-t from-antigravity-light-bg dark:from-antigravity-dark-bg via-transparent to-transparent pointer-events-none"></div>
+                    <div className="absolute inset-0 bg-gradient-to-t from-[#FFFFFF] dark:from-[#000000] via-transparent to-transparent pointer-events-none" />
 
                     {!showOriginal && (
                         <div className="absolute bottom-10 left-6">
-                            <span className="text-[10px] font-black uppercase tracking-[.4em] text-antigravity-light-text/60 dark:text-antigravity-dark-text/40 block mb-1">
+                            <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#475569] dark:text-[#8A93A6] block mb-1">
                                 {asset.last_measured_at ? 'ÚLTIMO ESTADO TÉCNICO' : 'FICHA DE ALTA'}
                             </span>
                         </div>
@@ -162,57 +193,62 @@ export const StockpileDashboard: React.FC<StockpileDashboardProps> = ({ assetId,
                 </div>
 
                 {/* Content Details */}
-                <div className="px-6 -mt-8 relative z-10 space-y-6 pb-28">
+                <div className="px-[21px] -mt-6 relative z-10 space-y-[21px] pb-28">
                     <div>
-                        <h2 className="text-xl font-black tracking-tight text-antigravity-light-text/95 dark:text-antigravity-dark-text/95 uppercase">{asset.name}</h2>
-                        <p className="text-[10px] text-antigravity-light-text/50 dark:text-antigravity-dark-text/50 font-bold uppercase tracking-wider">
+                        <h2 className="text-xl font-bold tracking-tight text-[#0F172A] dark:text-[#F3F4F6] uppercase">{asset.name}</h2>
+                        <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] font-bold uppercase tracking-wider">
                             {asset.location_ref || '[Información técnica no declarada en ficha]'}
                         </p>
                     </div>
 
                     {/* Metrics Layout */}
-                    <div className="flex items-baseline gap-2 py-2 font-mono tabular-nums">
-                        <span className="text-5xl font-black text-antigravity-accent tracking-tighter">
-                            {asset.last_volume_m3?.toFixed(1) || '0.0'}
+                    <div className="flex items-baseline gap-[8px] py-2 font-mono tabular-nums">
+                        <span className="text-4xl font-bold text-[#C68346] tracking-tight">
+                            {typeof asset.last_volume_m3 === 'number' ? asset.last_volume_m3.toFixed(1) : '0.0'}
                         </span>
-                        <span className="text-xs font-bold text-antigravity-accent uppercase tracking-widest">m³</span>
-                        <span className="text-3xl font-light text-antigravity-light-text/20 dark:text-antigravity-dark-text/20 px-1 select-none">/</span>
-                        <span className="text-4xl font-black text-antigravity-light-text dark:text-antigravity-dark-text/90 tracking-tighter">
-                            {asset.last_weight_t?.toFixed(1) || '0.0'}
+                        <span className="text-xs font-bold text-[#C68346] uppercase tracking-widest">m³</span>
+                        <span className="text-2xl font-light text-[#94A3B8] dark:text-[#5A6072] px-1 select-none">/</span>
+                        <span className="text-3xl font-bold text-[#0F172A] dark:text-[#F3F4F6] tracking-tight">
+                            {typeof asset.last_weight_t === 'number' ? asset.last_weight_t.toFixed(1) : '0.0'}
                         </span>
-                        <span className="text-xs font-bold text-antigravity-light-text/60 dark:text-antigravity-dark-text/40 uppercase tracking-widest">t</span>
+                        <span className="text-xs font-bold text-[#475569] dark:text-[#8A93A6] uppercase tracking-widest">t</span>
                     </div>
 
                     {/* Deltas Grid */}
-                    <div className="grid grid-cols-2 gap-4 pt-6 border-t border-antigravity-light-border dark:border-antigravity-dark-border">
-                        <div className="p-4 bg-antigravity-light-surface dark:bg-antigravity-dark-surface rounded-none shadow-none border border-antigravity-light-border dark:border-antigravity-dark-border flex flex-col gap-2">
-                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-antigravity-light-text/60 dark:text-antigravity-dark-text/60">Anterior</span>
-                            <p className="text-2xl font-black font-mono tabular-nums text-antigravity-accent tracking-tight">
-                                {prevM ? `${prevM.volumen_m3.toFixed(1)}` : '---'}
-                                {prevM && <span className="text-[10px] ml-1 text-antigravity-light-text/40 dark:text-antigravity-dark-text/40">m³</span>}
-                            </p>
+                    <div className="grid grid-cols-2 gap-[13px] pt-[21px] border-t border-[#E2E8F0] dark:border-[#12151C]">
+                        <div className="p-[13px] bg-[#F8FAFC] dark:bg-[#07090D] rounded-none shadow-none border border-[#E2E8F0] dark:border-[#12151C] flex flex-col gap-[8px]">
+                            <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#475569] dark:text-[#8A93A6]">Anterior</span>
+                            {prevM ? (
+                                <p className="text-2xl font-bold font-mono tabular-nums text-[#C68346] tracking-tight">
+                                    {prevM.volumen_m3.toFixed(1)}
+                                    <span className="text-[11px] ml-1 text-[#475569] dark:text-[#8A93A6]">m³</span>
+                                </p>
+                            ) : (
+                                <p className="text-xs font-mono text-[#94A3B8] dark:text-[#5A6072]">[Pendiente de registro]</p>
+                            )}
                         </div>
-                        <div className="p-4 bg-antigravity-light-surface dark:bg-antigravity-dark-surface rounded-none shadow-none border border-antigravity-light-border dark:border-antigravity-dark-border flex flex-col gap-2">
-                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-antigravity-light-text/60 dark:text-antigravity-dark-text/60">Variación</span>
-                            <div className={`flex items-baseline gap-1 text-2xl font-black font-mono tabular-nums ${deltaVol >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                                <span className="material-symbols-outlined text-xl font-black translate-y-0.5">
-                                    {deltaVol >= 0 ? 'north_east' : 'south_east'}
-                                </span>
-                                {deltaVol >= 0 ? '+' : ''}{deltaVol.toFixed(1)}
-                                <span className="text-[10px] ml-0.5 text-inherit opacity-40 font-bold">m³</span>
-                            </div>
+                        <div className="p-[13px] bg-[#F8FAFC] dark:bg-[#07090D] rounded-none shadow-none border border-[#E2E8F0] dark:border-[#12151C] flex flex-col gap-[8px]">
+                            <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#475569] dark:text-[#8A93A6]">Variación</span>
+                            {lastM && prevM ? (
+                                <div className={`flex items-baseline gap-1 text-2xl font-bold font-mono tabular-nums ${deltaVol >= 0 ? 'text-[#00AEEF]' : 'text-[#C68346]'}`}>
+                                    {deltaVol >= 0 ? '+' : ''}{deltaVol.toFixed(1)}
+                                    <span className="text-[11px] ml-0.5 text-[#475569] dark:text-[#8A93A6] font-bold">m³</span>
+                                </div>
+                            ) : (
+                                <p className="text-xs font-mono text-[#94A3B8] dark:text-[#5A6072]">[Pendiente de registro]</p>
+                            )}
                         </div>
                     </div>
 
                     {/* GPS Map Section */}
-                    <div className="space-y-3 pt-6">
+                    <div className="space-y-[13px] pt-[13px]">
                         {(() => {
                             const apiKey = (import.meta as any).env.VITE_GOOGLE_MAPS_API_KEY;
 
                             if (!lastM?.location_metadata) {
                                 return (
-                                    <div className="p-4 rounded-none border border-antigravity-light-border dark:border-white/10 bg-antigravity-light-surface dark:bg-white/5 flex items-center justify-center">
-                                        <p className="text-[10px] font-bold text-antigravity-light-text/50 dark:text-white/40 uppercase tracking-widest text-center">
+                                    <div className="p-[13px] rounded-none border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] flex items-center justify-center">
+                                        <p className="text-[11px] font-bold text-[#94A3B8] dark:text-[#5A6072] uppercase tracking-widest text-center">
                                             [Información técnica no declarada en ficha]
                                         </p>
                                     </div>
@@ -221,11 +257,11 @@ export const StockpileDashboard: React.FC<StockpileDashboardProps> = ({ assetId,
 
                             if (!apiKey) {
                                 return (
-                                    <div className="p-4 rounded-none border border-antigravity-light-border dark:border-white/10 bg-antigravity-light-surface dark:bg-white/5 flex flex-col items-center justify-center gap-1">
-                                        <span className="text-[10px] font-mono font-bold text-antigravity-accent uppercase tracking-widest">
+                                    <div className="p-[13px] rounded-none border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col items-center justify-center gap-1">
+                                        <span className="text-[11px] font-mono font-bold text-[#C68346] uppercase tracking-widest">
                                             COORDENADAS REGISTRADAS
                                         </span>
-                                        <span className="text-xs font-mono tabular-nums text-antigravity-light-text dark:text-white/80">
+                                        <span className="text-xs font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
                                             {lastM.location_metadata.lat.toFixed(6)} / {lastM.location_metadata.lng.toFixed(6)} (±{lastM.location_metadata.accuracy.toFixed(1)}m)
                                         </span>
                                     </div>
@@ -238,24 +274,24 @@ export const StockpileDashboard: React.FC<StockpileDashboardProps> = ({ assetId,
                                 <>
                                     <div className="flex flex-col gap-1 px-1">
                                         <div className="flex justify-between items-end">
-                                            <span className="text-[10px] font-bold text-antigravity-accent uppercase tracking-widest">LOCALIZACIÓN SATELITAL (ÚLTIMA MEDICIÓN)</span>
-                                            <span className="text-[10px] font-bold font-mono tabular-nums text-antigravity-light-text/60 dark:text-antigravity-dark-text/40">±{lastM.location_metadata.accuracy.toFixed(1)}m</span>
+                                            <span className="text-[11px] font-bold text-[#C68346] uppercase tracking-widest">LOCALIZACIÓN SATELITAL (ÚLTIMA MEDICIÓN)</span>
+                                            <span className="text-[11px] font-bold font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">±{lastM.location_metadata.accuracy.toFixed(1)}m</span>
                                         </div>
-                                        <p className="text-xs font-black text-antigravity-light-text/80 dark:text-antigravity-dark-text/60 font-mono tabular-nums tracking-tighter">
+                                        <p className="text-xs font-bold text-[#0F172A] dark:text-[#F3F4F6] font-mono tabular-nums tracking-tight">
                                             {lastM.location_metadata.lat.toFixed(6)} / {lastM.location_metadata.lng.toFixed(6)}
                                         </p>
                                     </div>
 
-                                    <div className="w-full aspect-video rounded-none overflow-hidden border border-antigravity-light-border dark:border-white/10 bg-black shadow-none relative group">
+                                    <div className="w-full aspect-video rounded-none overflow-hidden border border-[#E2E8F0] dark:border-[#12151C] bg-[#000000] shadow-none relative group">
                                         <img
                                             src={mapUrl}
                                             draggable={false}
-                                            className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity duration-500 select-none pointer-events-none"
+                                            onContextMenu={(e) => e.preventDefault()}
+                                            className="w-full h-full object-cover opacity-85 group-hover:opacity-100 transition-opacity duration-300 select-none pointer-events-none"
                                             alt="Ubicación Satelital"
                                         />
-                                        <div className="absolute inset-0 pointer-events-none border-[12px] border-black/20 rounded-none" />
                                         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                            <div className="w-4 h-4 bg-primary rounded-none shadow-none animate-pulse"></div>
+                                            <div className="w-3 h-3 bg-[#C68346] rounded-none shadow-none" />
                                         </div>
                                     </div>
                                 </>
@@ -264,36 +300,38 @@ export const StockpileDashboard: React.FC<StockpileDashboardProps> = ({ assetId,
                     </div>
 
                     {/* History Selection */}
-                    <div className="space-y-4 pt-2">
+                    <div className="space-y-[13px] pt-2">
                         <div className="flex items-center justify-between">
-                            <h3 className="text-[10px] font-bold uppercase tracking-[0.3em] text-antigravity-light-text/40 dark:text-white/40">HISTORIAL</h3>
-                            <M3Chip label={history.length.toString()} className="h-4 px-2 text-[10px] bg-antigravity-light-surface dark:bg-white/5 border-antigravity-light-border dark:border-white/5 font-black font-mono tabular-nums" />
+                            <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#475569] dark:text-[#8A93A6]">HISTORIAL</h3>
+                            <M3Chip label={history.length.toString()} className="font-bold font-mono tabular-nums" />
                         </div>
 
-                        <div className="grid grid-cols-1 gap-2">
+                        <div className="grid grid-cols-1 gap-[8px]">
                             {history.slice(0, 10).map((m) => (
                                 <div
                                     key={m.id}
                                     onClick={() => onSelectMeasurement(m.id)}
-                                    className={`flex items-center gap-4 p-3 rounded-none border shadow-none transition-all cursor-pointer ${m.ignored ? 'bg-red-50 border-red-200 opacity-60 dark:bg-red-500/5 dark:border-red-500/10 dark:opacity-50' : 'bg-antigravity-light-surface border-antigravity-light-border hover:border-antigravity-accent/30 dark:bg-white/5 dark:border-white/10'}`}
+                                    className={`flex items-center gap-[13px] p-[13px] rounded-none border shadow-none transition-colors cursor-pointer ${
+                                        m.ignored
+                                            ? 'bg-[#F8FAFC] dark:bg-[#07090D] border-[#C68346]/40 opacity-55'
+                                            : 'bg-[#F8FAFC] dark:bg-[#07090D] border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346]'
+                                    }`}
                                 >
-                                    <div className="w-12 h-12 rounded-none overflow-hidden bg-black shrink-0 border border-antigravity-light-border dark:border-white/10">
-                                        {m.photo_url ? (
-                                            <img src={m.photo_url} draggable={false} className="w-full h-full object-cover grayscale opacity-60 dark:opacity-40 select-none pointer-events-none" alt="" />
-                                        ) : null}
+                                    <div className="w-12 h-12 rounded-none overflow-hidden bg-[#000000] shrink-0 border border-[#E2E8F0] dark:border-[#12151C]">
+                                        <HistoryThumb rawUrl={m.photo_url} />
                                     </div>
                                     <div className="flex-1">
                                         <div className="flex items-center justify-between">
-                                            <span className="text-sm font-black font-mono tabular-nums text-antigravity-light-text dark:text-antigravity-dark-text/80">{m.volumen_m3.toFixed(1)} m³</span>
-                                            <span className="text-[10px] font-bold font-mono tabular-nums text-antigravity-light-text/60 dark:text-antigravity-dark-text/40 uppercase tracking-tighter">
+                                            <span className="text-sm font-bold font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">{m.volumen_m3.toFixed(1)} m³</span>
+                                            <span className="text-[11px] font-bold font-mono tabular-nums text-[#475569] dark:text-[#8A93A6] uppercase">
                                                 {new Date(m.timestamp).toLocaleDateString('es-CL', { day: '2-digit', month: 'short' })}
                                             </span>
                                         </div>
-                                        <div className="flex items-center gap-2 mt-0.5">
+                                        <div className="flex items-center gap-[8px] mt-0.5">
                                             {m.ignored ? (
-                                                <span className="text-[10px] font-black text-red-600 dark:text-red-500 uppercase tracking-widest bg-red-100 dark:bg-red-500/10 px-1.5 py-0.5 rounded-none">IGNORADO</span>
+                                                <span className="text-[10px] font-bold text-[#C68346] uppercase tracking-widest border border-[#C68346]/40 px-1.5 py-0.5 rounded-none">IGNORADO</span>
                                             ) : (
-                                                <span className="text-[10px] font-bold text-antigravity-light-text/60 dark:text-antigravity-dark-text/40 uppercase tracking-widest">
+                                                <span className="text-[10px] font-bold text-[#475569] dark:text-[#8A93A6] uppercase tracking-widest">
                                                     {m.method}
                                                 </span>
                                             )}
@@ -307,53 +345,48 @@ export const StockpileDashboard: React.FC<StockpileDashboardProps> = ({ assetId,
             </section>
 
             {/* Botón Primario de Cubicación */}
-            <footer className="shrink-0 p-6 bg-antigravity-light-bg dark:bg-antigravity-dark-bg border-t border-antigravity-light-border dark:border-antigravity-dark-border z-40">
+            <footer className="shrink-0 p-[21px] bg-[#FFFFFF] dark:bg-[#000000] border-t border-[#E2E8F0] dark:border-[#12151C] z-40">
                 <button
                     type="button"
                     onClick={() => onAddMeasurement()}
-                    className="w-full h-14 bg-antigravity-accent text-white rounded-none shadow-none font-black uppercase tracking-[0.3em] text-xs flex items-center justify-center gap-4 transition-all cursor-pointer"
+                    className="w-full h-14 bg-[#C68346] text-[#FFFFFF] rounded-none shadow-none font-bold uppercase tracking-[0.25em] text-xs flex items-center justify-center transition-colors cursor-pointer"
                 >
-                    <span className="material-symbols-outlined text-2xl font-black">straighten</span>
                     CUBICAR
                 </button>
             </footer>
 
             {/* Loading Overlay for PDF */}
             {generatingPdf && !manualPdfUrl && (
-                <div className="fixed inset-0 z-[9999] bg-black/90 flex flex-col items-center justify-center backdrop-blur-md">
-                    <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-none animate-spin mb-4"></div>
-                    <h2 className="text-xl font-black text-white uppercase tracking-widest">Generando Reporte PDF</h2>
-                    <p className="text-xs text-white/50 uppercase tracking-wider mt-2">Por favor espere...</p>
+                <div className="fixed inset-0 z-[9999] bg-[#FFFFFF]/95 dark:bg-[#000000]/95 flex flex-col items-center justify-center">
+                    <div className="w-16 h-16 border-4 border-[#C68346] border-t-transparent rounded-none animate-spin mb-4" />
+                    <h2 className="text-lg font-bold text-[#0F172A] dark:text-[#F3F4F6] uppercase tracking-widest">Generando Reporte PDF</h2>
+                    <p className="text-xs text-[#475569] dark:text-[#8A93A6] uppercase tracking-wider mt-2">Procesando trazabilidad...</p>
                 </div>
             )}
 
             {/* Success/Download Overlay */}
             {manualPdfUrl && (
-                <div className="fixed inset-0 z-[10000] bg-black/95 flex flex-col items-center justify-center backdrop-blur-md p-8 animate-in fade-in duration-300">
-                    <div className="w-20 h-20 rounded-none bg-emerald-500/20 flex items-center justify-center mb-6">
-                        <span className="material-symbols-outlined text-5xl text-emerald-500">check</span>
-                    </div>
-                    <h2 className="text-2xl font-black text-white uppercase tracking-widest text-center mb-2">Reporte Listo</h2>
-                    <p className="text-xs text-white/50 font-bold uppercase tracking-wider text-center mb-10 max-w-[200px]">
-                        El documento se ha generado correctamente.
+                <div className="fixed inset-0 z-[10000] bg-[#FFFFFF] dark:bg-[#000000] flex flex-col items-center justify-center p-[34px]">
+                    <h2 className="text-2xl font-bold text-[#0F172A] dark:text-[#F3F4F6] uppercase tracking-widest text-center mb-2">Reporte Listo</h2>
+                    <p className="text-xs text-[#475569] dark:text-[#8A93A6] font-bold uppercase tracking-wider text-center mb-8 max-w-[240px]">
+                        El informe técnico se ha generado correctamente.
                     </p>
 
                     <a
                         href={manualPdfUrl}
                         download={`Ficha_${asset.name}.pdf`}
-                        className="w-full max-w-xs h-16 bg-primary text-black rounded-none shadow-none font-black uppercase tracking-[0.2em] flex items-center justify-center gap-3 text-sm transition-transform"
+                        className="w-full max-w-xs h-14 bg-[#C68346] text-[#FFFFFF] rounded-none shadow-none font-bold uppercase tracking-[0.2em] flex items-center justify-center text-xs transition-colors"
                         onClick={() => {
                             setTimeout(() => setManualPdfUrl(null), 2000);
                         }}
                     >
-                        <span className="material-symbols-outlined text-2xl">download</span>
                         Descargar PDF
                     </a>
 
                     <button
                         type="button"
                         onClick={() => setManualPdfUrl(null)}
-                        className="mt-8 px-6 py-4 text-white/30 text-[10px] font-black uppercase tracking-[0.2em] hover:text-white transition-colors"
+                        className="mt-6 px-6 py-3 text-[#475569] dark:text-[#8A93A6] text-[11px] font-bold uppercase tracking-[0.2em] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] transition-colors cursor-pointer"
                     >
                         Cerrar
                     </button>
@@ -363,10 +396,10 @@ export const StockpileDashboard: React.FC<StockpileDashboardProps> = ({ assetId,
             {/* Enhanced Report View */}
             {asset && generatingPdf && (
                 <div
-                    className={`fixed z-[9000] bg-white overflow-auto ${shareImmediately ? 'pointer-events-none' : 'inset-0'}`}
+                    className={`fixed z-[9000] bg-[#FFFFFF] dark:bg-[#FFFFFF] overflow-auto ${shareImmediately ? 'pointer-events-none' : 'inset-0'}`}
                     style={shareImmediately ? { left: '0', top: '0', opacity: '0.05', width: '210mm', height: 'auto', zIndex: 50, position: 'fixed', pointerEvents: 'none' } : {}}
                 >
-                    <div className="fixed top-4 right-4 z-[10001] flex flex-col gap-2">
+                    <div className="fixed top-4 right-4 z-[10001] flex flex-col gap-[8px] bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-[8px]">
                         <button
                             type="button"
                             onClick={async () => {
@@ -378,29 +411,33 @@ export const StockpileDashboard: React.FC<StockpileDashboardProps> = ({ assetId,
                                     );
                                 } catch (err: any) {
                                     console.error('[Dashboard] Download error:', err);
-                                    alert('Error al descargar: ' + err.message);
+                                    toast.error(`Error al descargar: ${err?.message || 'Error desconocido'}`);
                                 }
                             }}
-                            className="w-14 h-14 rounded-none bg-primary text-black flex items-center justify-center shadow-none transition-transform"
+                            className="bg-transparent border-0 outline-none p-2 text-[#C68346] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] transition-colors cursor-pointer"
                             title="Descargar PDF"
+                            aria-label="Descargar PDF"
                         >
-                            <span className="material-symbols-outlined text-2xl font-black">download</span>
+                            <span className="material-symbols-outlined text-2xl">download</span>
                         </button>
 
                         <button
                             type="button"
                             onClick={() => setGeneratingPdf(false)}
-                            className="w-14 h-14 rounded-none bg-red-600 text-white flex items-center justify-center shadow-none transition-transform"
+                            className="bg-transparent border-0 outline-none p-2 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors cursor-pointer"
                             title="Cerrar"
+                            aria-label="Cerrar"
                         >
                             <span className="material-symbols-outlined text-2xl">close</span>
                         </button>
                     </div>
 
-                    <StockpileSummary
-                        asset={asset}
-                        history={validHistory}
-                    />
+                    <Suspense fallback={null}>
+                        <StockpileSummary
+                            asset={asset}
+                            history={validHistory}
+                        />
+                    </Suspense>
                 </div>
             )}
         </main>

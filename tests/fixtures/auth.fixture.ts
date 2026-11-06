@@ -27,7 +27,7 @@ export const test = base.extend<AuthFixtures>({
     superAdmin: async ({ browser }, use) => {
         const context = await browser.newContext({
             storageState: 'tests/.auth/super-admin.json',
-            baseURL: 'http://localhost:5174'
+            baseURL: 'http://localhost:5173'
         });
         const page = await context.newPage();
         await use(page);

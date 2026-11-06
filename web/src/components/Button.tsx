@@ -3,7 +3,7 @@ import { ButtonHTMLAttributes, ReactNode } from 'react';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
     variant?: 'primary' | 'secondary';
-    icon?: string; // Material Symbol name
+    icon?: string;
     children: ReactNode;
 }
 
@@ -11,15 +11,15 @@ export const Button = ({ variant = 'primary', icon, children, className, ...prop
     return (
         <button
             className={clsx(
-                "flex items-center justify-center gap-2 px-6 py-2.5 rounded-none font-medium transition-all text-sm tracking-wide",
-                variant === 'primary' && "bg-primary text-white hover:bg-primary-hover border border-transparent",
-                variant === 'secondary' && "bg-transparent text-slate-700 dark:text-slate-200 border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800",
+                "flex items-center justify-center gap-fib-8 px-fib-21 py-[10px] rounded-none shadow-none font-sans font-semibold transition-colors text-xs uppercase tracking-wider cursor-pointer outline-none",
+                variant === 'primary' && "bg-[#C68346] text-[#FFFFFF] hover:bg-[#B0743E] border border-[#C68346]",
+                variant === 'secondary' && "bg-transparent text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] dark:hover:border-[#C68346]",
                 "disabled:opacity-50 disabled:cursor-not-allowed",
                 className
             )}
             {...props}
         >
-            {icon && <span className="material-symbols-outlined text-lg">{icon}</span>}
+            {icon && <span className="material-symbols-outlined text-[18px] select-none">{icon}</span>}
             {children}
         </button>
     );

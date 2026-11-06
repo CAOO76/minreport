@@ -9,10 +9,10 @@ Gobierna toda inferencia de Inteligencia Artificial en **MINREPORT**, **OPERMAQ*
 
 ## 1. Reglas de Arquitectura de Inferencia
 1. **Prohibición de Llamadas Directas desde el Cliente:** Ningún componente frontend ni servicio de módulo (como `vision-ia.ts`) puede leer `VITE_GEMINI_API_KEY` ni llamar directamente a `generativelanguage.googleapis.com`. Toda solicitud debe pasar por el backend (`/api/ai/inference` o `/api/vault/*`) hacia `src/core/resilient-ai-client.ts`.
-2. **Jerarquía del Enjambre Gemini:**
-   - **Primario (Razonamiento Crítico / HITL / Visión Compleja):** `gemini-2.5-pro`
-   - **Secundario (Operación Estándar / Velocidad):** `gemini-2.5-flash`
-   - **Ancla de Alta Disponibilidad (< 400ms P95):** `gemini-2.5-flash-lite`
+2. **Jerarquía del Enjambre Gemini (Evergreen 3.x):**
+   - **Primario (Razonamiento Crítico / HITL / Visión Compleja):** `gemini-3.1-pro-preview`
+   - **Secundario (Operación Estándar / Velocidad):** `gemini-3.8-flash`
+   - **Ancla de Alta Disponibilidad (< 400ms P95):** `gemini-3.5-flash-lite`
 3. **Algoritmo Invariante de Retroceso con Jitter:**
    $$D(n) = \min(32\text{ s}, 2.0\text{ s} \times 2^n) + \text{jitter}(0, 1\text{ s})$$
 4. **Optimización de Costos Cloud/IA (Caché SHA-256):**

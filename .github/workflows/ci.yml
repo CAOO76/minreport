@@ -1,15 +1,17 @@
-name: CI - Build & Verify
+name: CI - Build, Verify & Deploy (southamerica-west1)
 
 on:
   push:
-    branches: [ main, master, MINREPORT_ANTIGRAVITY, 'feature/*', 'fix/*', 'hotfix/*' ]
+    branches: [ main, 'feature/**', 'fix/**', 'hotfix/**' ]
   pull_request:
-    branches: [ main, master, MINREPORT_ANTIGRAVITY, 'feature/*', 'fix/*', 'hotfix/*' ]
+    branches: [ main ]
 
 jobs:
-  build-and-deploy:
-    name: Build, Verify & Deploy
+  build-and-verify:
+    name: Typecheck, Unit Tests, Build & Deploy Hosting
     runs-on: ubuntu-latest
+    env:
+      HAS_FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_MINREPORT_8F2A8 != '' }}
 
     steps:
       - name: Checkout Code
@@ -20,44 +22,56 @@ jobs:
         with:
           node-version: 22
           cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            services/functions/package-lock.json
+            web/package-lock.json
 
-      - name: Install Root Dependencies
+      - name: Install Backend Dependencies
         run: npm ci
 
-      - name: Build Backend Core (Root)
-        run: npm run build
+      - name: Verify & Build Backend Core (TypeScript Strict)
+        run: |
+          npx tsc --noEmit
+          npm run build
 
-      - name: Build Cloud Functions
+      - name: Build Cloud Functions Gen 2 (southamerica-west1)
         run: |
           cd services/functions
           npm ci
           npm run build
 
-      - name: Build Web Client
+      - name: Install, Typecheck, Test & Build Unified Web PWA
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN || 'minreport-8f2a8.firebaseapp.com' }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID || 'minreport-8f2a8' }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET || 'minreport-8f2a8.firebasestorage.app' }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          VITE_USE_EMULATORS: 'false'
         run: |
           cd web
           npm ci
+          npx tsc --noEmit
+          npx vitest run
           npm run build
 
-      - name: Build Admin Panel
-        run: |
-          cd admin
-          npm ci
-          npm run build
-
-      - name: Deploy to Firebase Hosting (Preview)
-        if: github.event_name == 'pull_request'
+      - name: Deploy Preview Channel (Firebase Hosting minreport-web)
+        if: github.event_name == 'pull_request' && env.HAS_FIREBASE_SERVICE_ACCOUNT == 'true'
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'
           firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_MINREPORT_8F2A8 }}'
           projectId: minreport-8f2a8
+          target: minreport-web
 
-      - name: Deploy to Firebase (Production)
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/MINREPORT_ANTIGRAVITY')
+      - name: Deploy Live Channel (Firebase Hosting minreport-web)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.HAS_FIREBASE_SERVICE_ACCOUNT == 'true'
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'
           firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_MINREPORT_8F2A8 }}'
           channelId: live
           projectId: minreport-8f2a8
+          target: minreport-web

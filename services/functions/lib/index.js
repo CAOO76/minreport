@@ -33,11 +33,30 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.helloWorld = void 0;
+exports.systemHealthCheck = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const logger = __importStar(require("firebase-functions/logger"));
-exports.helloWorld = (0, https_1.onRequest)({ region: "southamerica-west1" }, (request, response) => {
-    logger.info("Hello logs!", { structuredData: true });
-    response.send("Hello from Firebase!");
+/**
+ * Healthcheck soberano minimalista de Cloud Functions Gen 2 (`southamerica-west1`).
+ */
+exports.systemHealthCheck = (0, https_1.onRequest)({
+    region: "southamerica-west1",
+    cors: ["https://minreport-access.web.app"],
+    maxInstances: 5,
+}, (request, response) => {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+        response.status(405).json({ error: "METHOD_NOT_ALLOWED" });
+        return;
+    }
+    const payload = {
+        service: "minreport-functions-gen2",
+        region: "southamerica-west1",
+        timestamp: new Date().toISOString(),
+    };
+    logger.info("MINREPORT systemHealthCheck ejecutado", {
+        region: payload.region,
+        method: request.method,
+    });
+    response.status(200).json(payload);
 });
 //# sourceMappingURL=index.js.map

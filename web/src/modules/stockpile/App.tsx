@@ -1,23 +1,54 @@
 import './i18n/config';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MobileScanner } from './components/MobileScanner';
+import { ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 import { MobileHome } from './components/MobileHome';
 import { CaptureSelection } from './components/CaptureSelection';
-import { DesktopAnalytics } from './components/DesktopAnalytics';
-import VisionAnalyzer from './components/VisionAnalyzer';
 import { usePlatform } from './hooks/usePlatform';
+import { useTheme } from './hooks/useTheme';
 import { MainLayout, type ViewState } from './layouts/MainLayout';
 import { dataService } from './services/DataService';
-import { ManualCapture } from './components/ManualCapture';
-import { StockpileRegistration } from './components/StockpileRegistration';
-import { StockpileDashboard } from './components/StockpileDashboard';
 import { StockList } from './components/StockList';
-import { MeasurementDetail } from './components/MeasurementDetail';
 import { GeometrySelection } from './components/GeometrySelection';
 import type { GeometryType } from './components/GeometrySelection';
 import { ThemeToggle } from './components/ThemeToggle';
 import { SyncIndicator } from './components/SyncIndicator';
+
+// Carga diferida obligatoria (Capa 2 MINREPORT — LCP < 1.2s, INP < 100ms, cero bloqueo en render path)
+const DesktopAnalytics = lazy(() =>
+  import('./components/DesktopAnalytics').then((m) => ({ default: m.DesktopAnalytics }))
+);
+const MobileScanner = lazy(() =>
+  import('./components/MobileScanner').then((m) => ({ default: m.MobileScanner }))
+);
+const VisionAnalyzer = lazy(() => import('./components/VisionAnalyzer'));
+const ManualCapture = lazy(() =>
+  import('./components/ManualCapture').then((m) => ({ default: m.ManualCapture }))
+);
+const StockpileDashboard = lazy(() =>
+  import('./components/StockpileDashboard').then((m) => ({ default: m.StockpileDashboard }))
+);
+const StockpileRegistration = lazy(() =>
+  import('./components/StockpileRegistration').then((m) => ({ default: m.StockpileRegistration }))
+);
+const MeasurementDetail = lazy(() =>
+  import('./components/MeasurementDetail').then((m) => ({ default: m.MeasurementDetail }))
+);
+export const LazyStockpileSummary = lazy(() =>
+  import('./components/StockpileSummary').then((m) => ({ default: m.StockpileSummary }))
+);
+
+const StockpileViewFallback = () => (
+  <div className="h-full w-full min-h-[360px] flex flex-col items-center justify-center gap-[13px] p-[34px] bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-mono select-none">
+    <span className="material-symbols-outlined text-3xl text-[#C68346] animate-spin">
+      progress_activity
+    </span>
+    <span className="text-[11px] uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
+      [Cargando vista técnica...]
+    </span>
+  </div>
+);
 
 export type { ViewState };
 
@@ -27,11 +58,12 @@ export interface StockpileAppProps {
     userId?: string;
   };
   embedded?: boolean;
-  onTelemetryEvent?: (event: any) => void;
+  onTelemetryEvent?: (event: unknown) => void;
 }
 
 function App({ tenantContext, embedded = false, onTelemetryEvent }: StockpileAppProps = {}) {
   const { isNative } = usePlatform();
+  const { isDark } = useTheme();
   const [view, setView] = useState<ViewState>(isNative ? 'home' : 'management');
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [selectedMeasurementId, setSelectedMeasurementId] = useState<string | null>(null);
@@ -40,7 +72,7 @@ function App({ tenantContext, embedded = false, onTelemetryEvent }: StockpileApp
   // Sincronización de contexto multi-tenant con DataService (Firestore + IndexedDB + SyncQueueEngine)
   useEffect(() => {
     dataService.setTenantContext({
-      tenantId: tenantContext?.tenantId || 'faena-minreport',
+      tenantId: tenantContext?.tenantId || '',
       userId: tenantContext?.userId || 'operador'
     });
   }, [tenantContext?.tenantId, tenantContext?.userId]);
@@ -279,7 +311,7 @@ function App({ tenantContext, embedded = false, onTelemetryEvent }: StockpileApp
   // VERSIÓN MÓVIL NATIVA
   if (isNative) {
     return (
-      <div className={`relative ${embedded ? 'h-full w-full flex-1' : 'h-screen w-screen'} overflow-hidden bg-white dark:bg-[#000000]`}>
+      <div className={`relative ${embedded ? 'h-full w-full flex-1' : 'h-screen w-screen'} overflow-hidden bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6]`}>
         <AnimatePresence mode="wait">
           <motion.div
             key={view}
@@ -289,11 +321,18 @@ function App({ tenantContext, embedded = false, onTelemetryEvent }: StockpileApp
             exit="exit"
             className="h-full w-full"
           >
-            {renderOperationalView()}
+            <Suspense fallback={<StockpileViewFallback />}>
+              {renderOperationalView()}
+            </Suspense>
           </motion.div>
         </AnimatePresence>
         {!embedded && <ThemeToggle />}
         {!embedded && <SyncIndicator />}
+        <ToastContainer
+          position="bottom-right"
+          theme={isDark ? 'dark' : 'light'}
+          toastStyle={{ borderRadius: '0', boxShadow: 'none' }}
+        />
       </div>
     );
   }
@@ -308,7 +347,14 @@ function App({ tenantContext, embedded = false, onTelemetryEvent }: StockpileApp
     >
       {!embedded && <ThemeToggle />}
       {!embedded && <SyncIndicator />}
-      {renderOperationalView()}
+      <Suspense fallback={<StockpileViewFallback />}>
+        {renderOperationalView()}
+      </Suspense>
+      <ToastContainer
+        position="bottom-right"
+        theme={isDark ? 'dark' : 'light'}
+        toastStyle={{ borderRadius: '0', boxShadow: 'none' }}
+      />
     </MainLayout>
   );
 }

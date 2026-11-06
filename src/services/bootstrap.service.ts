@@ -1,3 +1,5 @@
+import { resolveDevRootPassword } from '../config/secrets';
+
 export const DEV_ROOT_EMAIL = 'dev@minreport.com';
 export const DEV_ROOT_UID = 'dev-master-root-uid';
 
@@ -25,14 +27,15 @@ export const isProtectedSystemAccount = (identifier?: string | null): boolean =>
 /**
  * Bootstrapping determinista e idempotente de la Cuenta Maestra DEV.
  * Se ejecuta automáticamente en el arranque del servidor.
+ * Nunca imprime credenciales ni contraseñas en consola.
  */
 export const ensureDevRootAccount = async (): Promise<void> => {
     const { auth, db } = await import('../config/firebase');
-    console.log('[BOOTSTRAP] Verificando cuenta maestra DEV (Code-Level Insertion)...');
+    console.log('[BOOTSTRAP] Verificando cuenta maestra DEV...');
 
-    const password = process.env.DEV_ROOT_PASSWORD || process.env.SUPER_ADMIN_PASSWORD;
+    const password = (await resolveDevRootPassword())?.trim() || '';
     if (!password) {
-        console.warn('[BOOTSTRAP] ⚠️ DEV_ROOT_PASSWORD no configurado en entorno. Omitiendo aprovisionamiento de contraseña.');
+        console.warn('[BOOTSTRAP] DEV_ROOT_PASSWORD no configurado en Secret Manager / entorno. Omitiendo aprovisionamiento de contraseña.');
         return;
     }
 
@@ -40,7 +43,6 @@ export const ensureDevRootAccount = async (): Promise<void> => {
     const MAX_RETRIES = 60;
     let retries = MAX_RETRIES;
 
-    // Si estamos conectados al emulador local, esperar activamente a que los puertos 9190 (Auth) y 8085 (Firestore) respondan
     if (process.env.FIREBASE_AUTH_EMULATOR_HOST) {
         const authHost = process.env.FIREBASE_AUTH_EMULATOR_HOST;
         const firestoreHost = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8085';
@@ -59,7 +61,7 @@ export const ensureDevRootAccount = async (): Promise<void> => {
                 // Emuladores aún iniciando o importando ./data
             }
             if (attempt === 1 || attempt % 5 === 0) {
-                console.log(`[BOOTSTRAP] ⏳ Esperando disponibilidad de emuladores Auth/Firestore (${attempt}/${MAX_RETRIES})...`);
+                console.log(`[BOOTSTRAP] Esperando disponibilidad de emuladores Auth/Firestore (${attempt}/${MAX_RETRIES})...`);
             }
             await new Promise(res => setTimeout(res, 2000));
         }
@@ -68,7 +70,7 @@ export const ensureDevRootAccount = async (): Promise<void> => {
     while (retries > 0) {
         try {
             userRecord = await auth.getUser(DEV_ROOT_UID);
-            console.log(`[BOOTSTRAP] ✅ Cuenta DEV encontrada por UID: ${DEV_ROOT_UID}`);
+            console.log(`[BOOTSTRAP] Cuenta DEV encontrada por UID: ${DEV_ROOT_UID}`);
             break;
         } catch (err: any) {
             const errMsg = String(err?.message || '');
@@ -84,23 +86,21 @@ export const ensureDevRootAccount = async (): Promise<void> => {
 
             if (errCode === 'auth/user-not-found') {
                 try {
-                    // Verificar si existe por email para migrar/alinear UID
                     const existingByEmail = await auth.getUserByEmail(DEV_ROOT_EMAIL);
                     userRecord = existingByEmail;
-                    console.log(`[BOOTSTRAP] ⚠️ Cuenta DEV existía con otro UID (${existingByEmail.uid}).`);
+                    console.log(`[BOOTSTRAP] Cuenta DEV existente alineada (${existingByEmail.uid}).`);
                     break;
                 } catch (emailErr: any) {
                     if (emailErr.code === 'auth/user-not-found') {
-                        // Crear usuario determinista con UID fijo
                         userRecord = await auth.createUser({
                             uid: DEV_ROOT_UID,
                             email: DEV_ROOT_EMAIL,
-                            password: password,
+                            password,
                             displayName: 'MINREPORT DEV ROOT',
                             emailVerified: true,
                             disabled: false
                         });
-                        console.log(`[BOOTSTRAP] 👑 Cuenta DEV creada determinísticamente con UID: ${DEV_ROOT_UID}`);
+                        console.log(`[BOOTSTRAP] Cuenta DEV creada determinísticamente con UID: ${DEV_ROOT_UID}`);
                         break;
                     } else {
                         throw emailErr;
@@ -109,13 +109,12 @@ export const ensureDevRootAccount = async (): Promise<void> => {
             } else if (isNetworkRetryable) {
                 retries--;
                 if (retries === 0) {
-                    console.warn('[BOOTSTRAP] ⚠️ Emulador de Auth aún no disponible tras reintentos.');
+                    console.warn('[BOOTSTRAP] Emulador de Auth aún no disponible tras reintentos.');
                     return;
                 }
-                console.log(`[BOOTSTRAP] ⏳ Esperando importación de Auth Emulator (${MAX_RETRIES - retries}/${MAX_RETRIES})...`);
                 await new Promise(res => setTimeout(res, 2000));
             } else {
-                console.error('[BOOTSTRAP] ❌ Error consultando Auth para cuenta DEV:', err);
+                console.error('[BOOTSTRAP] Error consultando Auth para cuenta DEV:', errCode || errMsg);
                 return;
             }
         }
@@ -123,7 +122,6 @@ export const ensureDevRootAccount = async (): Promise<void> => {
 
     const activeUid = userRecord?.uid || DEV_ROOT_UID;
 
-    // 1. Asegurar Custom Claims soberanos (1º DEV en Jerarquía de 5 Cuentas)
     await auth.setCustomUserClaims(activeUid, {
         role: 'DEV_ROOT',
         accountTier: 1,
@@ -132,7 +130,6 @@ export const ensureDevRootAccount = async (): Promise<void> => {
         suiteAccess: true
     });
 
-    // 2. Asegurar Perfil en Firestore (/users)
     await db.collection('users').doc(activeUid).set({
         uid: activeUid,
         email: DEV_ROOT_EMAIL,
@@ -158,7 +155,6 @@ export const ensureDevRootAccount = async (): Promise<void> => {
         updatedAt: Date.now()
     }, { merge: true });
 
-    // 3. Asegurar Workspace Maestro Sandbox
     await db.collection('accounts').doc('dev-master-sandbox').set({
         id: 'dev-master-sandbox',
         name: 'MINREPORT CORE SYSTEM',
@@ -176,5 +172,5 @@ export const ensureDevRootAccount = async (): Promise<void> => {
         updatedAt: Date.now()
     }, { merge: true });
 
-    console.log('[BOOTSTRAP] ✅ Cuenta DEV y Workspace Sandbox asegurados y blindados por código.');
+    console.log('[BOOTSTRAP] Cuenta DEV y Workspace Sandbox asegurados.');
 };

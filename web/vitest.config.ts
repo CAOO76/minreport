@@ -9,9 +9,6 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/setupTests.ts'],
     passWithNoTests: true,
-    members: {
-      "Atkinson Hyperlegible": true
-    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

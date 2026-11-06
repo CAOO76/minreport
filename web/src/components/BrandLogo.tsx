@@ -10,6 +10,12 @@ interface BrandLogoProps {
     forcedTheme?: 'light' | 'dark';
 }
 
+const svgShieldProps = {
+    draggable: false,
+    onContextMenu: (e: React.MouseEvent<SVGSVGElement>) => e.preventDefault(),
+    style: { WebkitUserDrag: 'none' } as React.CSSProperties,
+};
+
 export const BrandLogo: React.FC<BrandLogoProps> = ({ variant = 'imagotype', className = '', forcedTheme }) => {
     const { theme: contextTheme } = useTheme();
     const { branding } = useBranding();
@@ -32,12 +38,11 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({ variant = 'imagotype', cla
 
     const shouldInvertInDark = (branding?.invertDarkMap?.[variant] ?? true) && theme === 'dark';
 
-    // Fallback vectorial industrial puro si tanto Storage como el activo local fallan
     if (hasError) {
         if (variant === 'isotype') {
             return (
                 <div className={`flex items-center justify-center select-none pointer-events-none ${className}`}>
-                    <svg viewBox="0 0 32 32" className="w-full h-full" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <svg viewBox="0 0 32 32" className="w-full h-full select-none pointer-events-none" fill="none" xmlns="http://www.w3.org/2000/svg" {...svgShieldProps}>
                         <polygon points="16,2 30,10 30,22 16,30 2,22 2,10" stroke="#C68346" strokeWidth="2" fill="none" />
                         <line x1="16" y1="2" x2="16" y2="30" stroke="#C68346" strokeWidth="1.5" />
                         <line x1="2" y1="10" x2="16" y2="18" stroke="#C68346" strokeWidth="1.5" />
@@ -58,7 +63,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({ variant = 'imagotype', cla
         if (variant === 'imagotypeVertical') {
             return (
                 <div className={`flex flex-col items-center justify-center gap-2 select-none pointer-events-none ${className}`}>
-                    <svg viewBox="0 0 32 32" className="h-10 w-10 shrink-0" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <svg viewBox="0 0 32 32" className="h-10 w-10 shrink-0 select-none pointer-events-none" fill="none" xmlns="http://www.w3.org/2000/svg" {...svgShieldProps}>
                         <polygon points="16,2 30,10 30,22 16,30 2,22 2,10" stroke="#C68346" strokeWidth="2" fill="none" />
                         <line x1="16" y1="2" x2="16" y2="30" stroke="#C68346" strokeWidth="1.5" />
                         <line x1="2" y1="10" x2="16" y2="18" stroke="#C68346" strokeWidth="1.5" />
@@ -72,7 +77,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({ variant = 'imagotype', cla
         }
         return (
             <div className={`flex items-center gap-3 select-none pointer-events-none ${className}`}>
-                <svg viewBox="0 0 32 32" className="h-8 w-8 shrink-0" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <svg viewBox="0 0 32 32" className="h-8 w-8 shrink-0 select-none pointer-events-none" fill="none" xmlns="http://www.w3.org/2000/svg" {...svgShieldProps}>
                     <polygon points="16,2 30,10 30,22 16,30 2,22 2,10" stroke="#C68346" strokeWidth="2" fill="none" />
                     <line x1="16" y1="2" x2="16" y2="30" stroke="#C68346" strokeWidth="1.5" />
                     <line x1="2" y1="10" x2="16" y2="18" stroke="#C68346" strokeWidth="1.5" />

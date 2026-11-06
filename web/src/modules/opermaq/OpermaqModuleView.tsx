@@ -1,14 +1,10 @@
-import React from "react";
-import App, { type OpermaqAppProps } from "./App";
-import { ThemeProvider } from "./providers/ThemeProvider";
-import "./locales/i18n";
+import React from 'react';
+import App, { type OpermaqAppProps } from './App';
+import './locales/i18n';
+import './index.css';
 
 export const OpermaqModuleView: React.FC<OpermaqAppProps> = (props) => {
-    return (
-        <ThemeProvider embedded={true}>
-            <App {...props} embedded={true} />
-        </ThemeProvider>
-    );
+    return <App {...props} embedded={true} />;
 };
 
 export default OpermaqModuleView;

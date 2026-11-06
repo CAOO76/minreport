@@ -5,7 +5,7 @@ export class AdminApprovalsPage {
     constructor(private page: Page) { }
 
     async goto() {
-        await this.page.goto('http://localhost:5174/admin');
+        await this.page.goto('http://localhost:5173/admin');
     }
 
     async selectTab(tab: 'Empresas (B2B)' | 'Educacional' | 'Personal') {

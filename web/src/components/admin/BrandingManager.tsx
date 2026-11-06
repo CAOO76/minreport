@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { auth, db, storage } from '../../config/firebase';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { SecureImage } from '../common/SecureImage';
+import { getApiUrl } from '../../utils/network';
 
 export interface LogoSet {
     isotype: string;
@@ -316,10 +318,6 @@ export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = ''
 
             // 2. Notificar al backend para sincronización automática de filesystem (Web, Admin, Mobile y ./data)
             try {
-                const apiBase = (import.meta as any).env?.VITE_API_URL 
-                    ? (import.meta as any).env.VITE_API_URL 
-                    : `http://${window.location.hostname}:8080`;
-                
                 const firebaseIdToken = await auth.currentUser?.getIdToken().catch(() => '');
                 const token =
                     firebaseIdToken ||
@@ -329,7 +327,7 @@ export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = ''
                     localStorage.getItem('admin_token') ||
                     '';
                 if (token) {
-                    await fetch(`${apiBase}/api/admin/settings/branding`, {
+                    await fetch(getApiUrl('/api/admin/settings/branding'), {
                         method: 'PUT',
                         headers: {
                             'Content-Type': 'application/json',
@@ -476,7 +474,7 @@ export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = ''
                                                     </span>
                                                 )}
                                                 {currentFile && (
-                                                    <span className="px-1.5 py-0.5 text-[9px] font-mono uppercase border border-amber-500/40 text-amber-500 bg-amber-500/5 animate-pulse">
+                                                    <span className="px-1.5 py-0.5 text-[9px] font-mono uppercase border border-[#00AEEF]/40 text-[#00AEEF] bg-[#00AEEF]/5">
                                                         PENDIENTE DE SUBIDA
                                                     </span>
                                                 )}
@@ -501,13 +499,10 @@ export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = ''
                                                 <span className="tabular-nums">Luminancia 100%</span>
                                             </div>
                                             <div className="w-full flex-1 flex items-center justify-center py-3">
-                                                <img
+                                                <SecureImage
                                                     src={previewSrc}
                                                     alt={`${asset.label} Claro`}
-                                                    draggable={false}
-                                                    onContextMenu={(e) => e.preventDefault()}
-                                                    className="max-h-14 max-w-[85%] object-contain select-none pointer-events-none"
-                                                    style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
+                                                    className="max-h-14 max-w-[85%] object-contain"
                                                     onError={(e) => {
                                                         (e.currentTarget as HTMLImageElement).src = asset.defaultPath;
                                                     }}
@@ -522,25 +517,22 @@ export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = ''
                                                 <button
                                                     type="button"
                                                     onClick={() => toggleInvert(asset.key)}
-                                                    className="bg-transparent border-0 outline-none p-0 text-slate-400 hover:text-[#C68346] flex items-center gap-1 cursor-pointer transition-colors"
-                                                    title="Alternar inversión de luminancia para activos monocromáticos"
+                                                    className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-[#C68346] cursor-pointer transition-colors"
+                                                    title={isDarkInverted ? 'Inversión activa — alternar a original' : 'Original — alternar a inversión'}
+                                                    aria-label="Alternar inversión de luminancia"
                                                 >
-                                                    <span className="material-symbols-outlined text-[13px]">
+                                                    <span className="material-symbols-outlined text-[16px]">
                                                         {isDarkInverted ? 'contrast' : 'tonality'}
                                                     </span>
-                                                    <span>{isDarkInverted ? 'Invertido' : 'Original'}</span>
                                                 </button>
                                             </div>
                                             <div className="w-full flex-1 flex items-center justify-center py-3">
-                                                <img
+                                                <SecureImage
                                                     src={previewSrc}
                                                     alt={`${asset.label} Oscuro`}
-                                                    draggable={false}
-                                                    onContextMenu={(e) => e.preventDefault()}
-                                                    className={`max-h-14 max-w-[85%] object-contain select-none pointer-events-none transition-all ${
+                                                    className={`max-h-14 max-w-[85%] object-contain transition-all ${
                                                         isDarkInverted ? 'invert brightness-150 contrast-125' : ''
                                                     }`}
-                                                    style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
                                                     onError={(e) => {
                                                         (e.currentTarget as HTMLImageElement).src = asset.defaultPath;
                                                     }}
@@ -729,7 +721,7 @@ export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = ''
 
             {/* MODAL DE CONFIRMACIÓN OBLIGATORIA POR PALABRA CLAVE ("ACTUALIZAR") */}
             {showConfirmModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-[2px] p-4 animate-in fade-in duration-200">
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200">
                     <div className="w-full max-w-md bg-white dark:bg-[#07090D] border border-slate-300 dark:border-[#12151C] p-6 rounded-none space-y-5 shadow-none font-mono">
                         <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#12151C] pb-3">
                             <div className="flex items-center gap-2 text-slate-900 dark:text-[#F3F4F6]">

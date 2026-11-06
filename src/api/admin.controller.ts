@@ -1,18 +1,21 @@
-import express, { Request, Response } from 'express';
-import admin, { db, auth } from '../config/firebase';
-import { EmailService } from '../services/EmailService';
-import { env } from '../config/env';
-import { generateSetupToken } from '../utils/security';
-import { formatRut } from '../utils/rut';
-import { z } from 'zod';
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import https from 'https';
+import os from 'os';
+import sharp from 'sharp';
+import { z } from 'zod';
+import { db, auth, storage } from '../config/firebase';
+import { EmailService } from '../services/EmailService';
+import { env, getCanonicalWebUrl } from '../config/env';
+import { resolveSuperAdminPassword } from '../config/secrets';
+import { generateSetupToken, constantTimeEqualStrings } from '../utils/security';
+import { safeFetchExternal } from '../utils/ssrfGuard';
+import { formatRut, cleanRut, getRutVariants } from '../utils/rut';
 import { isProtectedSystemAccount } from '../services/bootstrap.service';
-
-const execAsync = promisify(exec);
+import { AuthRequest } from '../middleware/admin';
+import { extractClientIp } from '../middleware/rateLimiter';
+import { AuditLedger } from '../core/audit-ledger';
+import { ResilientAIClient, SWARM_MODELS } from '../core/resilient-ai-client';
 
 const exchangeCustomTokenForIdToken = async (customToken: string): Promise<string> => {
     try {
@@ -37,47 +40,94 @@ const exchangeCustomTokenForIdToken = async (customToken: string): Promise<strin
     return customToken;
 };
 
-const downloadFile = async (url: string, dest: string): Promise<void> => {
-    console.log(`[DevOps] Executing download via curl to follow redirects: ${dest}`);
-    // -L follows redirects, -o specifies output file
-    await execAsync(`curl -L "${url}" -o "${dest}"`);
-    if (!fs.existsSync(dest) || fs.statSync(dest).size < 1) { // Changed from 100 to 1 for small SVGs
-        throw new Error(`Download failed or file empty: ${dest}`);
+/**
+ * Descarga segura de activos remotos exclusivamente mediante `safeFetchExternal` (anti-SSRF, cero `child_process.exec`).
+ */
+const downloadSafeAssetBuffer = async (rawUrl: string): Promise<Buffer> => {
+    const response = await safeFetchExternal(rawUrl, {
+        method: 'GET',
+        maxBytes: 15 * 1024 * 1024, // Tope 15 MB para iconos/activos de marca
+    });
+    if (!response.ok) {
+        throw new Error(`Descarga remota rechazada (${response.status})`);
     }
+    const ab = await response.arrayBuffer();
+    const buf = Buffer.from(ab);
+    if (buf.length < 1) {
+        throw new Error('Archivo descargado vacío');
+    }
+    return buf;
 };
 
-// [NEW] Helper: Audit Action Logger
-const auditAction = async (actorEmail: string, action: string, targetId: string, details?: any) => {
-    try {
-        await db.collection('audit_logs').add({
-            actor: actorEmail,
-            action,
-            targetId,
-            details: details || {},
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            ip: '127.0.0.1' // In a real deployment, extract from req currently not passed here
-        });
-        console.log(`[AUDIT] Action logged: ${action} by ${actorEmail}`);
-    } catch (error) {
-        console.error('[AUDIT] Failed to log action:', error);
-    }
+/**
+ * Redimensiona un icono PWA cuadrado en memoria con `sharp` (reemplazo nativo de `sips`).
+ */
+const renderSquarePngIcon = async (inputBuffer: Buffer, dimension: 192 | 512): Promise<Buffer> => {
+    return sharp(inputBuffer, { density: 300 })
+        .resize(dimension, dimension, {
+            fit: 'contain',
+            background: { r: 0, g: 0, b: 0, alpha: 0 },
+        })
+        .png({ compressionLevel: 9 })
+        .toBuffer();
 };
 
+/**
+ * Redimensiona un icono adaptativo Android con zona segura del 66% centrada mediante `sharp`.
+ */
+const renderSafeZonePngIcon = async (inputBuffer: Buffer, targetDimension: number): Promise<Buffer> => {
+    const safeSize = Math.max(1, Math.floor(targetDimension * 0.66));
+    const padTotal = Math.max(0, targetDimension - safeSize);
+    const padBefore = Math.floor(padTotal / 2);
+    const padAfter = padTotal - padBefore;
 
+    return sharp(inputBuffer, { density: 300 })
+        .resize(safeSize, safeSize, {
+            fit: 'contain',
+            background: { r: 0, g: 0, b: 0, alpha: 0 },
+        })
+        .extend({
+            top: padBefore,
+            bottom: padAfter,
+            left: padBefore,
+            right: padAfter,
+            background: { r: 0, g: 0, b: 0, alpha: 0 },
+        })
+        .png({ compressionLevel: 9 })
+        .toBuffer();
+};
+
+const recordAdminAudit = async (
+    req: express.Request,
+    action: string,
+    targetEntity: string,
+    details: Record<string, any> = {},
+    tenantId: string = 'admin-governance'
+): Promise<void> => {
+    const actor = (req as AuthRequest).user || {};
+    await AuditLedger.record({
+        tenantId,
+        actorUid: String(actor.uid || 'super-admin-uid'),
+        actorEmail: String(actor.email || env.SUPER_ADMIN_EMAIL),
+        action,
+        module: 'b2b-core',
+        targetEntity,
+        details,
+        ipAddress: extractClientIp(req),
+    });
+};
 
 export const listTenants = async (req: express.Request, res: express.Response) => {
     try {
-        const status = req.query.status as string;
-        let query: any = db.collection('tenants');
+        const status = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+        let query: FirebaseFirestore.Query = db.collection('tenants');
 
         if (status) {
             query = query.where('status', '==', status);
         }
 
         const snapshot = await query.orderBy('createdAt', 'desc').get();
-        console.log(`[ADMIN] Found ${snapshot.size} tenants in Firestore`);
-
-        const tenants = snapshot.docs.map((doc: any) => ({
+        const tenants = snapshot.docs.map((doc) => ({
             id: doc.id,
             ...doc.data()
         }));
@@ -91,17 +141,15 @@ export const listTenants = async (req: express.Request, res: express.Response) =
 
 export const listAccounts = async (req: express.Request, res: express.Response) => {
     try {
-        const type = req.query.type as string;
-        let query: any = db.collection('accounts');
+        const type = typeof req.query.type === 'string' ? req.query.type.trim() : '';
+        let query: FirebaseFirestore.Query = db.collection('accounts');
 
         if (type) {
             query = query.where('type', '==', type);
         }
 
         const snapshot = await query.orderBy('createdAt', 'desc').get();
-        console.log(`[ADMIN] Found ${snapshot.size} accounts in Firestore (type: ${type || 'ALL'})`);
-
-        const accounts = snapshot.docs.map((doc: any) => ({
+        const accounts = snapshot.docs.map((doc) => ({
             id: doc.id,
             ...doc.data()
         }));
@@ -115,41 +163,47 @@ export const listAccounts = async (req: express.Request, res: express.Response) 
 
 const adminLoginSchema = z.object({
     email: z.string().email(),
-    password: z.string()
+    password: z.string().min(1).max(256)
 });
 
 export const adminLogin = async (req: express.Request, res: express.Response) => {
-    // [SEC-SHIELD] Validación estricta de entrada
     const parseResult = adminLoginSchema.safeParse(req.body);
     if (!parseResult.success) {
-        return res.status(400).json({ error: 'Invalid payload (SEC-SHIELD Intervention)', details: parseResult.error.format() });
+        return res.status(400).json({ error: 'Payload inválido', details: parseResult.error.format() });
     }
-    const { email, password } = parseResult.data;
 
-    console.log(`[ADMIN-LOGIN] Attempt for: ${email}`);
-    if (email === env.SUPER_ADMIN_EMAIL && password === env.SUPER_ADMIN_PASSWORD) {
-        // Create or get the Super Admin user in Firebase Auth
-        let uid = 'super-admin-id';
+    const { email, password } = parseResult.data;
+    const normalizedEmail = email.trim().toLowerCase();
+    const expectedEmail = env.SUPER_ADMIN_EMAIL.trim().toLowerCase();
+    const expectedPassword = (await resolveSuperAdminPassword())?.trim() || '';
+
+    if (!expectedPassword || !password.trim()) {
+        return res.status(401).json({ error: 'Invalid admin credentials' });
+    }
+
+    if (
+        normalizedEmail === expectedEmail &&
+        constantTimeEqualStrings(password, expectedPassword)
+    ) {
+        let uid = 'super-admin-uid';
         try {
             const user = await auth.getUserByEmail(env.SUPER_ADMIN_EMAIL);
             uid = user.uid;
-        } catch (e) {
-            // If doesn't exist, Create it (though it should exist by script)
+            await auth.setCustomUserClaims(uid, { role: 'SUPER_ADMIN', admin: true });
+        } catch {
             const newUser = await auth.createUser({
+                uid: 'super-admin-uid',
                 email: env.SUPER_ADMIN_EMAIL,
-                password: env.SUPER_ADMIN_PASSWORD,
-                displayName: 'Super Admin'
+                password: expectedPassword,
+                displayName: 'Super Admin',
+                emailVerified: true,
             });
             uid = newUser.uid;
-            // Set claims
-            await auth.setCustomUserClaims(uid, { role: 'SUPER_ADMIN' });
+            await auth.setCustomUserClaims(uid, { role: 'SUPER_ADMIN', admin: true });
         }
 
-        // Generate Custom Token for Client SDK
-        const firebaseToken = await auth.createCustomToken(uid, { role: 'SUPER_ADMIN' });
+        const firebaseToken = await auth.createCustomToken(uid, { role: 'SUPER_ADMIN', admin: true });
 
-        // [NEW] Ensure Super Admin document exists in Firestore for Rule compatibility
-        console.log(`[ADMIN] Ensuring Super Admin doc exists for UID: ${uid}`);
         await db.collection('users').doc(uid).set({
             uid,
             email: env.SUPER_ADMIN_EMAIL,
@@ -158,42 +212,83 @@ export const adminLogin = async (req: express.Request, res: express.Response) =>
             status: 'ACTIVE',
             updatedAt: new Date().toISOString()
         }, { merge: true });
-        console.log(`[ADMIN] Super Admin doc synced successfully`);
 
-        // Exchange custom token for valid Firebase ID token
         const idToken = await exchangeCustomTokenForIdToken(firebaseToken);
+
+        await AuditLedger.record({
+            tenantId: 'admin-governance',
+            actorUid: uid,
+            actorEmail: env.SUPER_ADMIN_EMAIL,
+            action: 'SUPER_ADMIN_LOGIN',
+            module: 'b2b-core',
+            targetEntity: uid,
+            details: { method: 'admin_login' },
+            ipAddress: extractClientIp(req),
+        }).catch(() => {});
 
         return res.status(200).json({
             success: true,
             token: idToken,
-            firebaseToken, // Return the custom token for SDKs
-            user: { email: env.SUPER_ADMIN_EMAIL, role: 'super-admin' }
+            firebaseToken,
+            user: { uid, email: env.SUPER_ADMIN_EMAIL, role: 'SUPER_ADMIN' }
         });
     }
 
     return res.status(401).json({ error: 'Invalid admin credentials' });
 };
 
-import { AuthRequest } from '../middleware/admin';
+const tenantUidParamSchema = z.object({
+    uid: z.string().min(1).max(128),
+});
 
 const updateTenantStatusSchema = z.object({
     status: z.enum(['ACTIVE', 'REJECTED']),
-    rejectionReason: z.string().optional().nullable(),
-    observations: z.string().optional().nullable(),
-    enabledPlugins: z.array(z.string()).optional()
+    rejectionReason: z.string().max(1000).optional().nullable(),
+    observations: z.string().max(1000).optional().nullable(),
+    enabledPlugins: z.array(z.enum(['opermaq', 'stockpile'])).max(10).optional()
 });
 
+const approveTenantBodySchema = z.object({
+    observations: z.string().max(1000).optional().nullable(),
+    enabledPlugins: z.array(z.enum(['opermaq', 'stockpile'])).max(10).optional()
+});
+
+const rejectTenantBodySchema = z.object({
+    rejectionReason: z.string().min(3).max(1000),
+    observations: z.string().max(1000).optional().nullable(),
+});
+
+export const approveTenant = async (req: AuthRequest, res: express.Response) => {
+    const parsedBody = approveTenantBodySchema.safeParse(req.body || {});
+    if (!parsedBody.success) {
+        return res.status(400).json({ error: 'Payload de aprobación inválido', details: parsedBody.error.format() });
+    }
+    req.body = { ...parsedBody.data, status: 'ACTIVE' };
+    return updateTenantStatus(req, res);
+};
+
+export const rejectTenant = async (req: AuthRequest, res: express.Response) => {
+    const parsedBody = rejectTenantBodySchema.safeParse(req.body || {});
+    if (!parsedBody.success) {
+        return res.status(400).json({ error: 'Payload de rechazo inválido', details: parsedBody.error.format() });
+    }
+    req.body = { ...parsedBody.data, status: 'REJECTED' };
+    return updateTenantStatus(req, res);
+};
+
 export const updateTenantStatus = async (req: AuthRequest, res: express.Response) => {
-    console.log('Admin Params received:', req.params);
-    const { uid } = req.params;
-    
-    // [SEC-SHIELD] Validación estricta y limpieza de payload
+    const parsedParams = tenantUidParamSchema.safeParse(req.params);
+    if (!parsedParams.success) {
+        return res.status(400).json({ error: 'Identificador de tenant inválido' });
+    }
+    const { uid } = parsedParams.data;
+
     const parseResult = updateTenantStatusSchema.safeParse(req.body);
     if (!parseResult.success) {
-        return res.status(400).json({ error: 'Invalid payload (SEC-SHIELD Intervention)', details: parseResult.error.format() });
+        return res.status(400).json({ error: 'Payload inválido', details: parseResult.error.format() });
     }
     const { status, rejectionReason, observations, enabledPlugins } = parseResult.data;
-    const adminEmail = req.user?.email || 'master-admin';
+    const adminEmail = req.user?.email || env.SUPER_ADMIN_EMAIL;
 
     try {
         const tenantRef = db.collection('tenants').doc(uid);
@@ -204,7 +299,7 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
         }
 
         const tenantData = tenantDoc.data()!;
-        const entityName = tenantData.company_name || tenantData.institution_name || tenantData.full_name || 'tu cuenta';
+        const entityName = tenantData.company_name || tenantData.institution_name || tenantData.full_name || 'Entidad MINREPORT';
 
         if (status === 'ACTIVE') {
             const taxId = 'rut' in tenantData ? tenantData.rut : ('run' in tenantData ? tenantData.run : null);
@@ -212,11 +307,10 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
                 return res.status(400).json({ error: 'Falta RUT/RUN en el registro del tenant.' });
             }
 
-            // Normalizamos el RUT/RUN para usarlo como UID inmutable
-            const cleanTaxId = taxId.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
-            const realEmail = (tenantData.email || `${cleanTaxId.toLowerCase()}@minreport.com`).toLowerCase().trim();
+            const cleanTaxId = cleanRut(String(taxId));
+            const formattedTaxId = formatRut(cleanTaxId);
+            const realEmail = String(tenantData.email || `${cleanTaxId.toLowerCase()}@minreport.com`).toLowerCase().trim();
 
-            // 1. Forzar Creación/Búsqueda de Usuario usando el email real
             let userRecord;
             try {
                 userRecord = await auth.getUserByEmail(realEmail);
@@ -228,46 +322,53 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
                         displayName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
                         disabled: false
                     });
-                    console.log(`[ADMIN-IDENTITY] Creado Identity Titular con email real: ${realEmail} (UID: ${userRecord.uid})`);
                 } else {
                     throw authError;
                 }
             }
 
-            // 2. Set Custom Claims usando el RUT UID
             await auth.setCustomUserClaims(userRecord.uid, {
                 role: 'USER',
                 tier: tenantData.type,
-                tenantId: uid
+                tenantId: uid,
+                activeAccountId: uid,
             });
 
-            // 3. Generar Custom Setup Token (Reemplaza Firebase Auth Reset Link)
             const accountId = uid;
-            const baseUrl = process.env.NODE_ENV === 'production'
-                ? 'https://minreport-access.web.app'
-                : 'http://localhost:5173';
-
+            const baseUrl = getCanonicalWebUrl();
             const { rawToken, hashedToken, expiresAt } = generateSetupToken();
+            const resolvedPlugins = enabledPlugins && enabledPlugins.length > 0 ? enabledPlugins : ['opermaq', 'stockpile'];
 
-            // 4. Update Firestore with uid and status in tenants
             await tenantRef.update({
                 status: 'APPROVED',
                 authUid: userRecord.uid,
                 processedAt: new Date().toISOString(),
                 processedBy: adminEmail,
                 observations: observations || null,
-                enabledPlugins: (enabledPlugins && enabledPlugins.length > 0) ? enabledPlugins : ['opermaq', 'stockpile'],
+                enabledPlugins: resolvedPlugins,
                 updatedAt: new Date().toISOString()
             });
 
-            // 4.1 Create Account Document (The Business Entity)
             await db.collection('accounts').doc(accountId).set({
                 id: accountId,
                 name: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
                 type: tenantData.type,
-                taxId: taxId,
+                status: 'ACTIVE',
+                taxId: formattedTaxId,
                 ownerId: userRecord.uid,
-                enabledPlugins: (enabledPlugins && enabledPlugins.length > 0) ? enabledPlugins : ['opermaq', 'stockpile'],
+                enabledPlugins: resolvedPlugins,
+                contract: {
+                    plan: tenantData.type === 'EDUCATIONAL' ? 'ACADEMIC_SANDBOX' : 'ENTERPRISE_B2B_CORE',
+                    status: 'ACTIVE',
+                    activeModules: {
+                        opermaq: resolvedPlugins.includes('opermaq'),
+                        stockpile: resolvedPlugins.includes('stockpile'),
+                    },
+                    activatedAt: Date.now(),
+                },
+                licensing: tenantData.type === 'EDUCATIONAL'
+                    ? { maxUsers: 1, allowInternalUsers: false, isCommercial: false, watermarkRequired: true }
+                    : { maxUsers: 100, allowInternalUsers: true, isCommercial: true, watermarkRequired: false },
                 giro: tenantData.industry || '',
                 direccionComercial: tenantData.address || '',
                 postal_code: tenantData.postal_code || '',
@@ -280,62 +381,41 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
                 updatedAt: new Date().toISOString()
             }, { merge: true });
 
-            // 4.5 Create/Sync User Document in 'users' collection for Titular
-
-            // Determine role based on segregation B2B requirements
-            // Enterprise (B2B) initial access is always 'BILLING_ONLY' (Management Hub)
-            const userRole = tenantData.type === 'ENTERPRISE'
-                ? 'BILLING_ONLY'
-                : 'OWNER';
-
+            const userRole = tenantData.type === 'ENTERPRISE' ? 'BILLING_ONLY' : 'OWNER';
             const memberships = [{
-                accountId: accountId,
+                accountId,
                 role: userRole,
                 companyName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
+                status: 'APPROVED',
                 joinedAt: Date.now()
             }];
 
-            // Check if user document already exists
             const existingUserDoc = await db.collection('users').doc(userRecord.uid).get();
-
             if (existingUserDoc.exists) {
-                // User exists: Check for existing membership to avoid duplicates
                 const userData = existingUserDoc.data();
-                const currentMemberships = userData?.memberships || [];
-                const alreadyMember = currentMemberships.some((m: any) => m.accountId === accountId);
+                const existingMems = Array.isArray(userData?.memberships) ? userData!.memberships : [];
+                const cleanedMems = existingMems
+                    .filter((m: any) => m.accountId !== accountId)
+                    .map(({ passwordHash: _legacy, ...rest }: any) => rest);
+                cleanedMems.push(...memberships);
 
-                if (!alreadyMember) {
-                    // Update memberships and protect taxId if not set.
-                    // Use filter + push to REPLACE existing entries for same accountId,
-                    // preventing duplicates from accumulating in the array.
-                    const existingMems = userData?.memberships || [];
-                    const cleanedMems = existingMems.filter((m: any) => m.accountId !== accountId);
-                    cleanedMems.push(...memberships);
-
-                    const updateData: any = {
-                        memberships: cleanedMems,
-                        updatedAt: new Date().toISOString()
-                    };
-
-                    await db.collection('users').doc(userRecord.uid).update(updateData);
-                    console.log(`[ADMIN-IDENTITY] Titular account membership synced for ${userRecord.uid}`);
-                } else {
-                    console.log(`[ADMIN-IDENTITY] Titular ${userRecord.uid} already member, skipping add.`);
-                }
+                await db.collection('users').doc(userRecord.uid).update({
+                    memberships: cleanedMems,
+                    updatedAt: new Date().toISOString()
+                });
             } else {
-                // New user, create full document
                 await db.collection('users').doc(userRecord.uid).set({
                     uid: userRecord.uid,
-                    email: tenantData.email,
-                    taxId: formatRut(taxId), // Standardized format
+                    email: realEmail,
+                    taxId: formattedTaxId,
                     displayName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
                     role: 'USER',
-                    memberships: memberships,
+                    memberships,
                     lastActiveAccountId: accountId,
                     status: 'APPROVED',
                     entitlements: {
-                        pluginsEnabled: [],
-                        storageLimit: 1073741824 // 1GB default
+                        pluginsEnabled: resolvedPlugins,
+                        storageLimit: 1073741824
                     },
                     stats: {
                         storageUsed: 0,
@@ -344,93 +424,80 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
                     createdAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString()
                 });
-                console.log(`[ADMIN] Created new user document for ${userRecord.uid}`);
             }
 
-            // 4.6 Sync with user_directory (Pasillo de Puertas Blindadas)
-            // This ensures the user is findable during the new login flow
-            const userDirRef = db.collection('user_directory').doc(taxId);
-            const userDirSnap = await userDirRef.get();
-
-            const accountRef = {
-                accountId: accountId,
-                authEmail: tenantData.email,
+            // Sincronizar user_directory con `uid` explícito para evitar fractura de ID
+            const accountRefEntry = {
+                accountId,
+                uid: userRecord.uid,
+                authEmail: realEmail,
                 role: userRole,
                 type: tenantData.type,
                 accountName: entityName,
                 status: 'APPROVED'
             };
 
-            if (userDirSnap.exists) {
-                const dirData = userDirSnap.data();
-                let accounts = dirData?.accounts || [];
+            const dirKeys = Array.from(new Set([String(taxId), cleanTaxId, formattedTaxId]));
+            for (const dirKey of dirKeys) {
+                const userDirRef = db.collection('user_directory').doc(dirKey);
+                const userDirSnap = await userDirRef.get();
 
-                if (tenantData.type === 'PERSONAL') {
-                    // Rule 1: PERSONAL (1:1 Estricto) - Remove any old reference
-                    accounts = accounts.filter((a: any) => a.type !== 'PERSONAL');
-                } else if (tenantData.type === 'EDUCATIONAL') {
-                    // Rule 2: EDUCATIONAL (1:1 Reemplazable)
-                    // If institution changes, the previous one is purged from directory and deactivated
-                    const prevEdu = accounts.find((a: any) => a.type === 'EDUCATIONAL');
-                    if (prevEdu && prevEdu.accountId !== accountId) {
-                        console.log(`[ADMIN-INTEGRITY] Replacing EDUCATIONAL account: ${prevEdu.accountId} -> ${accountId}`);
+                if (userDirSnap.exists) {
+                    const dirData = userDirSnap.data();
+                    let accounts = Array.isArray(dirData?.accounts) ? dirData!.accounts : [];
 
-                        // Deactivate previous enrollment
-                        await db.collection('tenants').doc(prevEdu.accountId).update({
-                            status: 'REPLACED_BY_NEW_ENROLLMENT',
-                            updatedAt: new Date().toISOString()
-                        });
-                        await db.collection('accounts').doc(prevEdu.accountId).update({
-                            status: 'REPLACED_BY_NEW_ENROLLMENT',
-                            updatedAt: new Date().toISOString()
-                        });
-
-                        // Clean up memberships in main user document
-                        const userDoc = await db.collection('users').doc(userRecord.uid).get();
-                        if (userDoc.exists) {
-                            const currentMems = userDoc.data()?.memberships || [];
-                            const updatedMems = currentMems.filter((m: any) => m.accountId !== prevEdu.accountId);
-                            await db.collection('users').doc(userRecord.uid).update({ memberships: updatedMems });
+                    if (tenantData.type === 'PERSONAL') {
+                        accounts = accounts.filter((a: any) => a.type !== 'PERSONAL');
+                    } else if (tenantData.type === 'EDUCATIONAL') {
+                        const prevEdu = accounts.find((a: any) => a.type === 'EDUCATIONAL');
+                        if (prevEdu && prevEdu.accountId !== accountId) {
+                            await db.collection('tenants').doc(prevEdu.accountId).update({
+                                status: 'REPLACED_BY_NEW_ENROLLMENT',
+                                updatedAt: new Date().toISOString()
+                            }).catch(() => {});
+                            await db.collection('accounts').doc(prevEdu.accountId).update({
+                                status: 'REPLACED_BY_NEW_ENROLLMENT',
+                                updatedAt: new Date().toISOString()
+                            }).catch(() => {});
                         }
+                        accounts = accounts.filter((a: any) => a.type !== 'EDUCATIONAL');
+                    } else {
+                        accounts = accounts.filter((a: any) => a.accountId !== accountId);
                     }
-                    accounts = accounts.filter((a: any) => a.type !== 'EDUCATIONAL');
+
+                    accounts.push(accountRefEntry);
+
+                    await userDirRef.update({
+                        uid: userRecord.uid,
+                        accounts,
+                        fullName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (dirData?.fullName || entityName),
+                        updatedAt: new Date().toISOString()
+                    });
                 } else {
-                    // Rule 3: BUSINESS (1:N) - Just prevent duplicate accountId
-                    accounts = accounts.filter((a: any) => a.accountId !== accountId);
+                    await userDirRef.set({
+                        uid: userRecord.uid,
+                        run: formattedTaxId,
+                        fullName: tenantData.type === 'PERSONAL' ? tenantData.full_name : entityName,
+                        accounts: [accountRefEntry],
+                        createdAt: new Date().toISOString(),
+                        updatedAt: new Date().toISOString()
+                    });
                 }
-
-                accounts.push(accountRef);
-
-                await userDirRef.update({
-                    accounts,
-                    fullName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (dirData?.fullName || entityName),
-                    updatedAt: new Date().toISOString()
-                });
-            } else {
-                await userDirRef.set({
-                    run: taxId,
-                    fullName: tenantData.type === 'PERSONAL' ? tenantData.full_name : entityName,
-                    accounts: [accountRef],
-                    createdAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString()
-                });
             }
 
-            // 4.7 Sync with accounts/{id}/members subcollection (NEW: Ensure Titular is in members)
-            const memberRef = db.collection('accounts').doc(accountId).collection('members').doc(userRecord.uid);
-            await memberRef.set({
+            await db.collection('accounts').doc(accountId).collection('members').doc(userRecord.uid).set({
                 userId: userRecord.uid,
-                email: tenantData.email,
+                email: realEmail,
                 fullName: tenantData.type === 'PERSONAL' ? tenantData.full_name : entityName,
-                run: taxId,
+                run: formattedTaxId,
                 role: userRole,
                 status: 'ACTIVE',
                 joinedAt: Date.now()
             });
 
-            // 4.8 Save Setup Token to initiate password creation
             await db.collection('setup_tokens').doc(rawToken).set({
                 accountId,
+                uid: userRecord.uid,
                 taxId: cleanTaxId,
                 hashedToken,
                 expiresAt,
@@ -438,90 +505,75 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
                 createdAt: Date.now()
             });
 
-            const actionLink = `${baseUrl}/setup-access?accountId=${uid}&taxId=${cleanTaxId}&name=${encodeURIComponent(entityName)}&type=${tenantData.type}&token=${rawToken}`;
+            const actionLink = `${baseUrl}/setup-access?accountId=${encodeURIComponent(uid)}&taxId=${encodeURIComponent(cleanTaxId)}&name=${encodeURIComponent(entityName)}&type=${encodeURIComponent(tenantData.type)}&token=${encodeURIComponent(rawToken)}`;
 
-            // 5. Send Notification Email
             await EmailService.sendEmail({
-                from: 'MinReport System <support@minreport.com>',
-                to: tenantData.email,
+                from: 'MINREPORT System <support@minreport.com>',
+                to: realEmail,
                 subject: 'Solicitud de Registro Aprobada',
                 html: `
-                    <div style="font-family: 'Arial', sans-serif; max-width: 600px; color: #334155; padding: 40px 20px;">
-                        <div style="text-align: center; margin-bottom: 32px;">
-                            <img src="https://minreport-access.web.app/pwa-192x192.png" alt="MINREPORT" style="height: 48px; width: auto; opacity: 0.9;" />
-                        </div>
-                        
-                        <div style="background: #F8FAFC; border-left: 4px solid #0F172A; padding: 24px; margin-bottom: 24px;">
-                            <h2 style="color: #0F172A; font-size: 18px; margin-top: 0; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px;">Solicitud Aprobada</h2>
-                            <p style="margin: 0; font-size: 15px; line-height: 1.6;">
-                                Tu solicitud de registro ha sido validada exitosamente para operar en la plataforma.
+                    <div style="font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; max-width: 600px; color: #334155; padding: 34px 21px;">
+                        <div style="background: #F8FAFC; border-left: 4px solid #C68346; padding: 21px; margin-bottom: 21px;">
+                            <h2 style="color: #0F172A; font-size: 18px; margin-top: 0; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 13px;">Solicitud Aprobada</h2>
+                            <p style="margin: 0; font-size: 15px; line-height: 1.5;">
+                                Solicitud de registro validada para operar en MINREPORT.
                             </p>
-                            
-                            <div style="margin-top: 24px; background: white; border: 1px solid #E2E8F0; padding: 16px; border-radius: 4px;">
-                                <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Entidad Registrada</p>
-                                <p style="margin: 0 0 16px 0; font-size: 16px; color: #0F172A; font-weight: bold;">${entityName}</p>
-                                
-                                <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Correo Asociado</p>
-                                <p style="margin: 0 0 16px 0; font-size: 14px; color: #0F172A;">${tenantData.email}</p>
-                                
-                                <p style="margin: 0 0 8px 0; font-size: 12px; color: #64748B; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Tipo de Entorno</p>
-                                <p style="margin: 0; font-size: 14px; color: #0F172A;">${tenantData.type}</p>
+                            <div style="margin-top: 21px; background: #FFFFFF; border: 1px solid #E2E8F0; padding: 13px;">
+                                <p style="margin: 0 0 8px 0; font-size: 11px; color: #475569; text-transform: uppercase; font-weight: 700;">Entidad Registrada</p>
+                                <p style="margin: 0 0 13px 0; font-size: 15px; color: #0F172A; font-weight: 700;">${entityName}</p>
+                                <p style="margin: 0 0 8px 0; font-size: 11px; color: #475569; text-transform: uppercase; font-weight: 700;">Correo Asociado</p>
+                                <p style="margin: 0; font-size: 14px; color: #0F172A;">${realEmail}</p>
                             </div>
-                            
-                            <p style="margin: 24px 0 0 0; font-size: 15px; line-height: 1.6;">
-                                Por seguridad, deberás verificar tu identidad ingresando tu documento principal antes de establecer tu contraseña exclusiva de acceso.
-                            </p>
                         </div>
-                        
-                        <div style="text-align: center; margin: 32px 0;">
-                            <a href="${actionLink}" style="background: #0F172A; color: white; padding: 16px 32px; text-decoration: none; font-weight: bold; display: inline-block; font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em; border-radius: 2px;">Configurar Acceso Seguro</a>
+                        <div style="text-align: center; margin: 34px 0;">
+                            <a href="${actionLink}" style="background: #0F172A; color: #FFFFFF; padding: 13px 34px; text-decoration: none; font-weight: 700; display: inline-block; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;">Configurar Acceso Seguro</a>
                         </div>
-                        
-                        <hr style="border: 0; border-top: 1px solid #E2E8F0; margin: 32px 0;" />
-                        <p style="font-size: 10px; color: #94A3B8; text-align: center; margin: 0; text-transform: uppercase; letter-spacing: 0.1em;">
-                            MINREPORT SYSTEM INFRASTRUCTURE
-                        </p>
                     </div>
                 `
             });
 
-            // [AUDIT] Log Approval
-            await auditAction(adminEmail, 'APPROVE_TENANT', uid, { type: tenantData.type });
-
+            await recordAdminAudit(
+                req,
+                'APPROVE_TENANT',
+                uid,
+                { type: tenantData.type, ownerUid: userRecord.uid, enabledPlugins: resolvedPlugins },
+                accountId
+            );
         } else if (status === 'REJECTED') {
+            const effectiveReason = rejectionReason || 'Documentación no validada según políticas vigentes.';
             await tenantRef.update({
                 status: 'REJECTED',
-                rejectionReason: rejectionReason || 'No cumple con los requisitos mínimos',
+                rejectionReason: effectiveReason,
                 processedAt: new Date().toISOString(),
                 processedBy: adminEmail,
                 observations: observations || null,
                 updatedAt: new Date().toISOString()
             });
 
-            // 2. Notify Rejection
-            await EmailService.sendEmail({
-                from: 'MinReport <ops@minreport.com>',
-                to: tenantData.email,
-                subject: 'Estado de Solicitud',
-                html: `
-                    <div style="font-family: 'Arial', sans-serif; max-width: 600px; color: #334155; padding: 40px 20px;">
-                        <div style="text-align: center; margin-bottom: 32px;">
-                            <img src="https://minreport-access.web.app/pwa-192x192.png" alt="MINREPORT" style="height: 48px; width: auto; opacity: 0.9;" />
+            if (tenantData.email) {
+                await EmailService.sendEmail({
+                    from: 'MINREPORT <ops@minreport.com>',
+                    to: tenantData.email,
+                    subject: 'Estado de Solicitud MINREPORT',
+                    html: `
+                        <div style="font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; max-width: 600px; color: #334155; padding: 34px 21px;">
+                            <div style="background: #F8FAFC; border-left: 4px solid #0F172A; padding: 21px; margin-bottom: 21px;">
+                                <h2 style="color: #0F172A; font-size: 18px; margin-top: 0; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 13px;">Estado de Solicitud</h2>
+                                <p style="margin: 0; font-size: 15px; line-height: 1.5;">La solicitud de acceso no ha sido aprobada.</p>
+                                <p style="margin: 13px 0 0 0; font-size: 14px; line-height: 1.5;"><strong>Motivo:</strong> ${effectiveReason}</p>
+                            </div>
                         </div>
-                        
-                        <div style="background: #FFF1F2; border-left: 4px solid #E11D48; padding: 24px; margin-bottom: 24px;">
-                            <h2 style="color: #E11D48; font-size: 18px; margin-top: 0; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px;">Estado de Solicitud</h2>
-                            <p style="margin: 0; font-size: 15px; line-height: 1.6;">Lamentamos informarte que tu solicitud de acceso no ha sido aprobada.</p>
-                            <p style="margin: 12px 0 0 0; font-size: 15px; line-height: 1.6;"><strong>Motivo:</strong> ${rejectionReason || 'La documentación proporcionada no ha podido ser validada conforme a nuestras políticas actuales.'}</p>
-                        </div>
-                        
-                        <hr style="border: 0; border-top: 1px solid #E2E8F0; margin: 32px 0;" />
-                        <p style="font-size: 10px; color: #94A3B8; text-align: center; margin: 0; text-transform: uppercase; letter-spacing: 0.1em;">
-                            MINREPORT OPERATIONS SECURITY
-                        </p>
-                    </div>
-                `
-            });
+                    `
+                });
+            }
+
+            await recordAdminAudit(
+                req,
+                'REJECT_TENANT',
+                uid,
+                { rejectionReason: effectiveReason },
+                uid
+            );
         }
 
         return res.status(200).json({ success: true, status });
@@ -531,18 +583,10 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
     }
 };
 
-/**
- * Helper to cleanup members of an account. 
- * If a user has no other memberships after this account is removed, 
- * they are fully purged from Firebase Auth, /users, and /user_directory.
- */
 async function cleanupAccountMembers(accountId: string, isPurge: boolean = false) {
     try {
         const membersSnap = await db.collection('accounts').doc(accountId).collection('members').get();
         if (membersSnap.empty) {
-            console.log(`[CLEANUP] No members found in subcollection for account ${accountId}`);
-
-            // Reintentar buscar en /users (escaneo completo) por seguridad si la subcolección falló
             const usersSnap = await db.collection('users').get();
             for (const userDoc of usersSnap.docs) {
                 const userData = userDoc.data();
@@ -555,9 +599,9 @@ async function cleanupAccountMembers(accountId: string, isPurge: boolean = false
         }
 
         for (const memberDoc of membersSnap.docs) {
-            const userId = memberDoc.id; // UID
+            const userId = memberDoc.id;
             const memberData = memberDoc.data();
-            const taxId = memberData.run || memberData.rut || memberData.taxId; // Dependiendo de la versión
+            const taxId = memberData.run || memberData.rut || memberData.taxId;
 
             const userDoc = await db.collection('users').doc(userId).get();
             if (userDoc.exists) {
@@ -572,90 +616,71 @@ async function cleanupAccountMembers(accountId: string, isPurge: boolean = false
     }
 }
 
-async function processUserCleanup(userId: string, taxId: string, accountId: string, memberships: any[], isPurge: boolean) {
-    // [ANTI-PURGE GUARDRAIL] Blindaje absoluto para cuentas DEV_ROOT y SUPER_ADMIN
+async function processUserCleanup(userId: string, taxId: string, accountId: string, memberships: any[], _isPurge: boolean) {
     if (isProtectedSystemAccount(userId) || isProtectedSystemAccount(taxId)) {
-        console.warn(`[CLEANUP-GUARD] Identidad protegida detectada (${userId} / ${taxId}). Purga o eliminación abortada.`);
+        console.warn(`[CLEANUP-GUARD] Identidad protegida detectada (${userId} / ${taxId}). Operación abortada.`);
         return;
     }
 
-    // Filtrar membresías
     const filteredMemberships = memberships.filter((m: any) => m.accountId !== accountId);
 
     if (filteredMemberships.length === 0) {
-        // El usuario ya no tiene cuentas en MINREPORT. ¡PURGAR!
-        console.log(`[CLEANUP] User ${userId} (${taxId}) has no remaining accounts. Deleting from DB and Auth.`);
-
-        // 1. Delete from users
         await db.collection('users').doc(userId).delete();
+        await db.collection('user_auth_credentials').doc(userId).delete().catch(() => {});
 
-        // 2. Delete from user_directory
         if (taxId) {
-            const cleanTaxId = taxId.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
-            await db.collection('user_directory').doc(cleanTaxId).delete();
-            // Delete formatted variant too just in case
-            await db.collection('user_directory').doc(taxId).delete();
+            for (const variant of getRutVariants(String(taxId))) {
+                await db.collection('user_directory').doc(variant).delete().catch(() => {});
+            }
         }
 
-        // 3. Delete from Firebase Auth
         try {
             await auth.deleteUser(userId);
-            console.log(`[CLEANUP] ✅ Firebase Auth account deleted for UID: ${userId}`);
         } catch (authErr: any) {
-            console.warn(`[CLEANUP] ⚠️ Failed to delete Firebase Auth user ${userId}:`, authErr.message);
+            console.warn(`[CLEANUP] Failed to delete Firebase Auth user ${userId}:`, authErr.message);
         }
-
     } else {
-        // Al usuario aún le quedan otras cuentas en MINREPORT.
-        console.log(`[CLEANUP] User ${userId} (${taxId}) still has ${filteredMemberships.length} accounts. Updating.`);
-
-        // 1. Update users
         await db.collection('users').doc(userId).update({ memberships: filteredMemberships });
 
-        // 2. Update user_directory
         if (taxId) {
-            const cleanTaxId = taxId.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
-            try {
-                const dirRef = db.collection('user_directory').doc(cleanTaxId);
-                const dirDoc = await dirRef.get();
-                if (dirDoc.exists) {
-                    const dirData = dirDoc.data()!;
-                    const dirAccounts = (dirData.accounts || []).filter((a: any) => a.accountId !== accountId);
-                    if (dirAccounts.length === 0) {
-                        await dirRef.delete();
-                    } else {
-                        await dirRef.update({ accounts: dirAccounts });
+            for (const variant of getRutVariants(String(taxId))) {
+                try {
+                    const dirRef = db.collection('user_directory').doc(variant);
+                    const dirDoc = await dirRef.get();
+                    if (dirDoc.exists) {
+                        const dirData = dirDoc.data()!;
+                        const dirAccounts = (dirData.accounts || []).filter((a: any) => a.accountId !== accountId);
+                        if (dirAccounts.length === 0) {
+                            await dirRef.delete();
+                        } else {
+                            await dirRef.update({ accounts: dirAccounts });
+                        }
                     }
-                }
-            } catch (dirErr) { }
+                } catch { }
+            }
         }
     }
 }
 
-/**
- * DELETE /api/admin/tenants/:uid
- * Soft Delete: Marks status as DELETED, prevents access, retains data for 30 days.
- * Also decouples user memberships to preserve identity.
- */
 export const deleteTenant = async (req: express.Request, res: express.Response) => {
     try {
-        const { uid } = req.params;
-        const actor = (req as any).user?.email || 'system';
+        const parsedParams = tenantUidParamSchema.safeParse(req.params);
+        if (!parsedParams.success) {
+            return res.status(400).json({ error: 'Identificador de tenant inválido' });
+        }
+        const { uid } = parsedParams.data;
+        const actor = (req as AuthRequest).user?.email || env.SUPER_ADMIN_EMAIL;
 
         if (isProtectedSystemAccount(uid)) {
             return res.status(403).json({ error: 'Operación denegada: No se pueden eliminar cuentas raíz de desarrollo o del sistema.' });
         }
 
-        console.log(`[SOFT-DELETE] Initiated for tenant ${uid} by ${actor}`);
-
-        // 1. Update Tenant Status (Soft Delete)
         await db.collection('tenants').doc(uid).update({
             status: 'DELETED',
             deletedAt: new Date().toISOString(),
             deletedBy: actor
         });
 
-        // 2. Update Account Status (Blocks Access)
         const accountRef = db.collection('accounts').doc(uid);
         const accountDoc = await accountRef.get();
         if (accountDoc.exists) {
@@ -665,48 +690,49 @@ export const deleteTenant = async (req: express.Request, res: express.Response) 
             });
         }
 
-        // 2.5 Cleanup users attached to this account
         await cleanupAccountMembers(uid, false);
-
-        // 3. Audit
-        await auditAction(actor, 'SOFT_DELETE_TENANT', uid, { retentionDays: 30 });
+        await recordAdminAudit(req, 'SOFT_DELETE_TENANT', uid, { retentionDays: 30 }, uid);
 
         return res.status(200).json({
             success: true,
             message: 'Account moved to trash (Soft Delete). Data retained for 30 days.'
         });
-
     } catch (error) {
         console.error('[ADMIN] Error soft-deleting tenant:', error);
         return res.status(500).json({ error: 'Failed to delete tenant' });
     }
 };
 
-/**
- * DELETE /api/admin/tenants/:uid/purge
- * Hard Delete: Permanently removes data from Firestore and Storage.
- * Super Admin Only.
- */
+const purgeTenantBodySchema = z.object({
+    reason: z.string().max(500).optional(),
+    confirmationWord: z.string().max(32).optional(),
+}).optional();
+
 export const purgeTenant = async (req: express.Request, res: express.Response) => {
     try {
-        const { uid } = req.params;
-        const actor = (req as any).user?.email || 'system';
+        const parsedParams = tenantUidParamSchema.safeParse(req.params);
+        const parsedBody = purgeTenantBodySchema.safeParse(req.body);
+        if (!parsedParams.success || !parsedBody.success) {
+            return res.status(400).json({ error: 'Parámetros de purga inválidos' });
+        }
+        const { uid } = parsedParams.data;
 
         if (isProtectedSystemAccount(uid)) {
             return res.status(403).json({ error: 'Operación denegada: No se pueden purgar cuentas raíz de desarrollo o del sistema.' });
         }
 
-        console.log(`[HARD-PURGE] Initiated for tenant ${uid} by ${actor}`);
-
-        // 0.5 Cleanup users attached to this account (Before deleting the account doc)
         await cleanupAccountMembers(uid, true);
 
-        // 1. Delete Firestore Documents
         await db.collection('tenants').doc(uid).delete();
         await db.collection('accounts').doc(uid).delete();
 
-        // 2. Audit
-        await auditAction(actor, 'PURGE_TENANT', uid, { outcome: 'PERMANENT_DATA_LOSS' });
+        await recordAdminAudit(
+            req,
+            'PURGE_TENANT',
+            uid,
+            { outcome: 'PERMANENT_PURGE', reason: parsedBody.data?.reason || null },
+            uid
+        );
 
         return res.status(200).json({
             success: true,
@@ -718,212 +744,180 @@ export const purgeTenant = async (req: express.Request, res: express.Response) =
     }
 };
 
-export const getBrandingSettings = async (req: express.Request, res: express.Response) => {
+export const getBrandingSettings = async (_req: express.Request, res: express.Response) => {
     try {
         const doc = await db.collection('settings').doc('branding').get();
         if (!doc.exists) {
-            return res.json({ siteName: 'MinReport', primaryColor: '#000000' });
+            return res.json({ siteName: 'MINREPORT', primaryColor: '#C68346' });
         }
-        res.json(doc.data());
+        return res.json(doc.data());
     } catch (error) {
         console.error('Error getting branding settings:', error);
-        res.status(500).json({ message: 'Internal server error.' });
+        return res.status(500).json({ message: 'Internal server error.' });
     }
 };
+
+const brandingThemeAssetsSchema = z.object({
+    isotype: z.string().max(2048).optional(),
+    logotype: z.string().max(2048).optional(),
+    imagotype: z.string().max(2048).optional(),
+    imagotypeVertical: z.string().max(2048).optional(),
+    pwaIcon: z.string().max(2048).optional(),
+    appIcon: z.string().max(2048).optional(),
+}).passthrough();
+
+const updateBrandingSettingsSchema = z.object({
+    siteName: z.string().min(1).max(120).optional(),
+    primaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+    secondaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+    light: brandingThemeAssetsSchema.optional(),
+    dark: brandingThemeAssetsSchema.optional(),
+}).passthrough();
 
 export const updateBrandingSettings = async (req: express.Request, res: express.Response) => {
     try {
-        const settings = req.body;
-        await db.collection('settings').doc('branding').set(settings, { merge: true });
+        const parsed = updateBrandingSettingsSchema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({ error: 'Configuración de marca inválida', details: parsed.error.format() });
+        }
 
-        // 🔥 AUTOMATED DEVOPS: Sync icons with local filesystem (Zero-Code Solution)
-        // We do this in background to not block the UI
-        const syncAssets = async () => {
+        const settings = parsed.data;
+        const generatedAssets: Record<string, string> = {};
+
+        // Procesamiento seguro en memoria con `safeFetchExternal` + `sharp` (Cero RCE, cero `curl`, cero `sips`)
+        const pwaIconUrl = settings.light?.pwaIcon || settings.dark?.pwaIcon || settings.light?.isotype;
+        if (pwaIconUrl && (pwaIconUrl.startsWith('https://') || pwaIconUrl.startsWith('http://'))) {
             try {
-                const rootDir = process.cwd();
-                const webPublicDir = path.join(rootDir, 'web/public');
-                const adminPublicDir = path.join(rootDir, 'admin/public');
-                const androidResDir = path.join(rootDir, 'web/android/app/src/main/res');
-                console.log(`[DevOps] Sync starting. rootDir: ${rootDir}`);
+                const rawIconBuf = await downloadSafeAssetBuffer(pwaIconUrl);
+                const [png192, png512] = await Promise.all([
+                    renderSquarePngIcon(rawIconBuf, 192),
+                    renderSquarePngIcon(rawIconBuf, 512),
+                ]);
 
-                // 0. Sync ALL Branding Variants (isotype, logotype, imagotype, imagotypeVertical, pwaIcon, appIcon) to web/public/branding & admin/public/branding
-                const assetKeys = ['isotype', 'logotype', 'imagotype', 'imagotypeVertical', 'pwaIcon', 'appIcon'];
-                for (const key of assetKeys) {
-                    const assetUrl = settings.light?.[key] || settings.dark?.[key];
-                    if (assetUrl && (assetUrl.startsWith('http://') || assetUrl.startsWith('https://'))) {
-                        try {
-                            const fileKey = key === 'imagotypeVertical' ? 'imagotype_vertical' : key;
-                            const ext = assetUrl.toLowerCase().includes('.png') ? '.png' : '.svg';
-                            const tempVariantFile = path.join(rootDir, `temp_brand_${fileKey}${ext}`);
-                            await downloadFile(assetUrl, tempVariantFile);
+                const bucket = storage.bucket();
+                const file192 = bucket.file('branding/pwa-192x192.png');
+                const file512 = bucket.file('branding/pwa-512x512.png');
 
-                            if (fs.existsSync(tempVariantFile)) {
-                                for (const pubDir of [webPublicDir, adminPublicDir]) {
-                                    if (fs.existsSync(pubDir)) {
-                                        const brandingDir = path.join(pubDir, 'branding');
-                                        if (!fs.existsSync(brandingDir)) {
-                                            fs.mkdirSync(brandingDir, { recursive: true });
-                                        }
-                                        fs.copyFileSync(tempVariantFile, path.join(brandingDir, `master_${fileKey}${ext}`));
-                                        // Si se subió como .svg, asegurar que master_${fileKey}.svg esté actualizado
-                                        if (ext === '.svg') {
-                                            fs.copyFileSync(tempVariantFile, path.join(brandingDir, `master_${fileKey}.svg`));
-                                        }
-                                    }
-                                }
-                                fs.unlinkSync(tempVariantFile);
-                            }
-                        } catch (variantErr: any) {
-                            console.warn(`[DevOps] No se pudo sincronizar variante ${key} a filesystem:`, variantErr?.message);
-                        }
-                    }
+                await Promise.all([
+                    file192.save(png192, { contentType: 'image/png', resumable: false }),
+                    file512.save(png512, { contentType: 'image/png', resumable: false }),
+                ]);
+
+                generatedAssets.pwaIcon192Path = 'branding/pwa-192x192.png';
+                generatedAssets.pwaIcon512Path = 'branding/pwa-512x512.png';
+
+                // Si se habilita explícitamente sincronización de iconos Android en entorno local controlado
+                if (process.env.ENABLE_LOCAL_ANDROID_MIPMAP_SYNC === 'true') {
+                    const tmpOutDir = path.join(os.tmpdir(), 'minreport-android-icons');
+                    fs.mkdirSync(tmpOutDir, { recursive: true });
+                    const mipmapSizes = [48, 72, 96, 144, 192];
+                    await Promise.all(
+                        mipmapSizes.map(async (sz) => {
+                            const safePng = await renderSafeZonePngIcon(rawIconBuf, sz);
+                            fs.writeFileSync(path.join(tmpOutDir, `ic_launcher_${sz}.png`), safePng);
+                        })
+                    );
                 }
-
-                // 1. Sync PWA Icons (Web Browser)
-                const pwaIconUrl = settings.light?.pwaIcon || settings.dark?.pwaIcon || settings.light?.isotype;
-                if (pwaIconUrl) {
-                    console.log('[DevOps] Syncing PWA Icons...');
-                    const ext = pwaIconUrl.toLowerCase().includes('.svg') ? '.svg' : '.png';
-                    const tempIcon = path.join(rootDir, `temp_pwa_master${ext}`);
-                    await downloadFile(pwaIconUrl, tempIcon);
-
-                    // Sync to Web App
-                    if (fs.existsSync(webPublicDir)) {
-                        const brandingDir = path.join(webPublicDir, 'branding');
-                        if (!fs.existsSync(brandingDir)) {
-                            fs.mkdirSync(brandingDir, { recursive: true });
-                            console.log(`[DevOps] Created missing directory: ${brandingDir}`);
-                        }
-
-                        if (ext === '.svg') {
-                            // Direct copy for SVGs to maintain vector quality
-                            fs.copyFileSync(tempIcon, path.join(brandingDir, 'master_icon.svg'));
-                            console.log('[DevOps] SVG Master Icon updated in web/public/branding');
-                        } else {
-                            await execAsync(`sips -z 192 192 "${tempIcon}" --out "${path.join(webPublicDir, 'pwa-192x192.png')}"`);
-                            await execAsync(`sips -z 512 512 "${tempIcon}" --out "${path.join(webPublicDir, 'pwa-512x512.png')}"`);
-                            console.log('[DevOps] PNG PWA Icons updated in web/public');
-                        }
-                    }
-                    if (fs.existsSync(tempIcon)) fs.unlinkSync(tempIcon);
-                }
-
-                // 2. Sync Native Mobile Icons (Android)
-                // [BRANDING-AUTO] Safe-Zone Logic: Enforce 66% safe area to prevent clipping
-                const appIconUrl = settings.dark?.appIcon || settings.light?.appIcon;
-                console.log(`[DevOps] Mobile Icon Sync check. appIconUrl: ${appIconUrl ? 'PRESENT' : 'MISSING'}`);
-                if (appIconUrl && fs.existsSync(androidResDir)) {
-                    console.log('[DevOps] Syncing Native Mobile Icons with Safe Zone...');
-                    const ext = appIconUrl.toLowerCase().includes('.svg') ? '.svg' : '.png';
-                    const tempAppIcon = path.join(rootDir, `temp_app_master${ext}`);
-                    await downloadFile(appIconUrl, tempAppIcon);
-
-                    const mipmapConfigs = [
-                        { dir: 'mipmap-mdpi', size: 48, adaptive: 108 },
-                        { dir: 'mipmap-hdpi', size: 72, adaptive: 162 },
-                        { dir: 'mipmap-xhdpi', size: 96, adaptive: 216 },
-                        { dir: 'mipmap-xxhdpi', size: 144, adaptive: 324 },
-                        { dir: 'mipmap-xxxhdpi', size: 192, adaptive: 432 },
-                    ];
-
-                    for (const config of mipmapConfigs) {
-                        const targetDir = path.join(androidResDir, config.dir);
-                        if (fs.existsSync(targetDir)) {
-                            // [SAFE-ZONE] Resize to 66% of target and pad with transparency
-                            // For adaptive icons (108dp default), the safe zone is roughly 72px center
-                            const safeSize = Math.floor(config.size * 0.66);
-                            const adaptiveSafeSize = Math.floor(config.adaptive * 0.66);
-
-                            if (ext === '.svg') {
-                                // For SVGs on Mac, sips can still rasterize them to PNG for Android Res
-                                await execAsync(`sips -s format png -z ${safeSize} ${safeSize} "${tempAppIcon}" --out "${path.join(targetDir, 'ic_launcher.png')}"`);
-                                await execAsync(`sips -s format png -z ${adaptiveSafeSize} ${adaptiveSafeSize} "${tempAppIcon}" --out "${path.join(targetDir, 'ic_launcher_foreground.png')}"`);
-                            } else {
-                                await execAsync(`sips -z ${safeSize} ${safeSize} "${tempAppIcon}" --out "${path.join(targetDir, 'ic_launcher.png')}"`);
-                                await execAsync(`sips -z ${adaptiveSafeSize} ${adaptiveSafeSize} "${tempAppIcon}" --out "${path.join(targetDir, 'ic_launcher_foreground.png')}"`);
-                            }
-
-                            // Pad to original size (Centering)
-                            await execAsync(`sips --padToHeightWidth ${config.size} ${config.size} "${path.join(targetDir, 'ic_launcher.png')}"`);
-                            await execAsync(`sips --padToHeightWidth ${config.adaptive} ${config.adaptive} "${path.join(targetDir, 'ic_launcher_foreground.png')}"`);
-
-                            // Compatibility Round Icon
-                            fs.copyFileSync(path.join(targetDir, 'ic_launcher.png'), path.join(targetDir, 'ic_launcher_round.png'));
-                        }
-                    }
-                    if (fs.existsSync(tempAppIcon)) fs.unlinkSync(tempAppIcon);
-                }
-
-                // [PERSISTENCE-FIX] Force Database Export on local emulator.
-                if (process.env.FIRESTORE_EMULATOR_HOST) {
-                    console.log('[DevOps] Branding saved. Forcing Firebase Emulator data export to prevent data loss on forced exit...');
-                    try {
-                        await execAsync('firebase emulators:export ./data --force', { cwd: rootDir });
-                        console.log('[DevOps] Firebase Emulator data automatically exported to ./data.');
-                    } catch (exportErr: any) {
-                        console.warn('[DevOps Warning] Auto-export failed. Ensure firebase CLI is available:', exportErr.message);
-                    }
-                }
-
-            } catch (syncErr) {
-                console.error('[DevOps Error] Failed to sync assets to local filesystem:', syncErr);
+            } catch (iconErr: any) {
+                console.warn('[BRANDING] No se pudo procesar icono PWA remoto con sharp:', iconErr?.message || iconErr);
             }
+        }
+
+        const payloadToSave = {
+            ...settings,
+            ...(Object.keys(generatedAssets).length > 0 ? { generatedAssets } : {}),
+            updatedAt: new Date().toISOString(),
         };
 
-        syncAssets(); // Runs in background
+        await db.collection('settings').doc('branding').set(payloadToSave, { merge: true });
 
-        res.json({ success: true });
+        await recordAdminAudit(req, 'UPDATE_BRANDING_SETTINGS', 'settings/branding', {
+            updatedKeys: Object.keys(settings),
+            generatedPwaIcons: Object.keys(generatedAssets).length > 0,
+        });
+
+        return res.json({ success: true, generatedAssets });
     } catch (error) {
         console.error('Error updating branding settings:', error);
-        res.status(500).json({ message: 'Internal server error.' });
+        return res.status(500).json({ message: 'Internal server error.' });
     }
 };
 
-// [NEW] System Metrics Endpoint
-export const getSystemMetrics = async (req: express.Request, res: express.Response) => {
+/**
+ * Métricas reales verificables de Firestore (sin `activeSessions` inventadas ni estimaciones falsas).
+ */
+export const getSystemMetrics = async (_req: express.Request, res: express.Response) => {
     try {
-        const tenantsCount = (await db.collection('tenants').count().get()).data().count;
-        const usersCount = (await db.collection('users').count().get()).data().count;
-
-        // Calculate storage (approximate via aggregation or metadata)
-        // For now, mocking aggregated storage query for performance
-        const storageUsed = 0; // TODO: Implement proper aggregation
+        const [tenantsSnap, accountsSnap, usersSnap, ledgerSnap, passkeysSnap] = await Promise.all([
+            db.collection('tenants').count().get(),
+            db.collection('accounts').count().get(),
+            db.collection('users').count().get(),
+            db.collection('audit_ledger').count().get(),
+            db.collection('webauthn_credentials').count().get(),
+        ]);
 
         return res.status(200).json({
-            tenants: tenantsCount,
-            users: usersCount,
-            storageUsed,
-            activeSessions: Math.floor(usersCount * 0.2) // Mock estimation
+            tenants: tenantsSnap.data().count,
+            accounts: accountsSnap.data().count,
+            users: usersSnap.data().count,
+            auditLedgerEntries: ledgerSnap.data().count,
+            registeredPasskeys: passkeysSnap.data().count,
+            region: env.GCP_LOCATION || 'southamerica-west1',
+            measuredAt: new Date().toISOString(),
         });
     } catch (error) {
         console.error('Error fetching metrics:', error);
-        return res.status(500).json({ error: 'Failed to metrics' });
+        return res.status(500).json({ error: 'Failed to fetch metrics' });
     }
 };
 
-// [NEW] Audit Logs Endpoint
+/**
+ * Consulta el ledger inmutable `audit_ledger` (en lugar de `audit_logs` legacy).
+ */
 export const getAuditLogs = async (req: express.Request, res: express.Response) => {
     try {
-        const limit = parseInt(req.query.limit as string) || 50;
-        const snapshot = await db.collection('audit_logs')
+        const rawLimit = parseInt(String(req.query.limit || '50'), 10);
+        const safeLimit = Number.isFinite(rawLimit) ? Math.min(Math.max(1, rawLimit), 250) : 50;
+
+        let snapshot = await db
+            .collection('audit_ledger')
             .orderBy('timestamp', 'desc')
-            .limit(limit)
+            .limit(safeLimit)
             .get();
 
-        const logs = snapshot.docs.map(doc => ({
+        if (snapshot.empty) {
+            snapshot = await db.collection('audit_ledger').limit(safeLimit).get();
+        }
+
+        const logs = snapshot.docs.map((doc) => ({
             id: doc.id,
             ...doc.data(),
-            // Convert Timestamp to ISO string if needed, or send as is
-            // timestamp: doc.data().timestamp?.toDate().toISOString()
         }));
 
         return res.status(200).json(logs);
     } catch (error) {
-        console.error('Error fetching audit logs:', error);
-        return res.status(500).json({ error: 'Failed to fetch logs' });
+        console.error('Error fetching audit ledger:', error);
+        return res.status(500).json({ error: 'Failed to fetch audit ledger' });
     }
 };
-export const getUIAssetsSettings = async (req: express.Request, res: express.Response) => {
+
+/**
+ * GET /api/admin/audit-ledger/verify
+ * Verifica criptográficamente el encadenamiento SHA-256 de `audit_ledger`.
+ */
+export const verifyAuditLedgerChain = async (req: express.Request, res: express.Response) => {
+    try {
+        const rawLimit = parseInt(String(req.query.limit || '100'), 10);
+        const safeLimit = Number.isFinite(rawLimit) ? Math.min(Math.max(1, rawLimit), 1000) : 100;
+        const report = await AuditLedger.verifyChain(safeLimit);
+        return res.status(report.valid ? 200 : 409).json(report);
+    } catch (error) {
+        console.error('[ADMIN] Error verifying audit ledger chain:', error);
+        return res.status(500).json({ error: 'Failed to verify audit ledger chain' });
+    }
+};
+
+export const getUIAssetsSettings = async (_req: express.Request, res: express.Response) => {
     try {
         const doc = await db.collection('settings').doc('ui_assets').get();
         if (!doc.exists) {
@@ -933,50 +927,118 @@ export const getUIAssetsSettings = async (req: express.Request, res: express.Res
                 sidebar_bg: ''
             });
         }
-        res.json(doc.data());
+        return res.json(doc.data());
     } catch (error) {
         console.error('Error getting UI assets settings:', error);
-        res.status(500).json({ message: 'Internal server error.' });
+        return res.status(500).json({ message: 'Internal server error.' });
     }
 };
+
+const updateUIAssetsSettingsSchema = z.object({
+    login_bg: z.string().max(2048).optional(),
+    dashboard_bg: z.string().max(2048).optional(),
+    sidebar_bg: z.string().max(2048).optional(),
+}).strict();
 
 export const updateUIAssetsSettings = async (req: express.Request, res: express.Response) => {
     try {
-        const settings = req.body;
-        await db.collection('settings').doc('ui_assets').set(settings, { merge: true });
-
-        // [PERSISTENCE-FIX] Force Database Export on local emulator.
-        if (process.env.FIRESTORE_EMULATOR_HOST) {
-            console.log('[DevOps] UI Assets saved. Forcing Firebase Emulator data export to prevent data loss on forced exit...');
-            try {
-                // Determine root env path to execute firebase command successfully
-                const rootDir = path.resolve(__dirname, '../../..');
-                await execAsync('firebase emulators:export ./data --force', { cwd: rootDir });
-                console.log('[DevOps] Firebase Emulator data automatically exported to ./data.');
-            } catch (exportErr: any) {
-                console.warn('[DevOps Warning] Auto-export failed. Ensure firebase CLI is available:', exportErr.message);
-            }
+        const parsed = updateUIAssetsSettingsSchema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({ error: 'Configuración de activos UI inválida', details: parsed.error.format() });
         }
 
-        res.json({ success: true });
+        const settings = {
+            ...parsed.data,
+            updatedAt: new Date().toISOString(),
+        };
+
+        await db.collection('settings').doc('ui_assets').set(settings, { merge: true });
+        await recordAdminAudit(req, 'UPDATE_UI_ASSETS_SETTINGS', 'settings/ui_assets', {
+            updatedKeys: Object.keys(parsed.data),
+        });
+
+        return res.json({ success: true });
     } catch (error) {
         console.error('Error updating UI assets settings:', error);
-        res.status(500).json({ message: 'Internal server error.' });
+        return res.status(500).json({ message: 'Internal server error.' });
     }
 };
 
-// [SEC-SHIELD] Server-side safe account users fetch
+const updateModuleAvailabilitySchema = z.object({
+    moduleId: z.enum(['opermaq', 'stockpile']),
+    enabled: z.boolean(),
+    confirmationWord: z.literal('ACTUALIZAR'),
+});
+
+export const updateModuleAvailability = async (req: express.Request, res: express.Response) => {
+    try {
+        const parsed = updateModuleAvailabilitySchema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({
+                error: 'Payload inválido: se requiere moduleId ("opermaq" | "stockpile"), enabled booleano y confirmationWord === "ACTUALIZAR".',
+                details: parsed.error.format(),
+            });
+        }
+
+        const { moduleId, enabled } = parsed.data;
+        const nowIso = new Date().toISOString();
+        const actorEmail = (req as AuthRequest).user?.email || env.SUPER_ADMIN_EMAIL;
+
+        await Promise.all([
+            db.collection('modules_status').doc(moduleId).set(
+                {
+                    id: moduleId,
+                    enabled,
+                    updatedAt: nowIso,
+                    updatedBy: actorEmail,
+                },
+                { merge: true }
+            ),
+            db.collection('settings').doc('modules_status').set(
+                {
+                    [moduleId]: enabled,
+                    updatedAt: nowIso,
+                    updatedBy: actorEmail,
+                },
+                { merge: true }
+            ),
+        ]);
+
+        await recordAdminAudit(req, 'MODULE_AVAILABILITY_UPDATED', `modules_status/${moduleId}`, {
+            moduleId,
+            enabled,
+            hitlConfirmed: true,
+        });
+
+        return res.status(200).json({
+            success: true,
+            moduleId,
+            enabled,
+            updatedAt: nowIso,
+        });
+    } catch (error) {
+        console.error('[ADMIN] Error updating module availability:', error);
+        return res.status(500).json({ error: 'Failed to update module availability' });
+    }
+};
+
 export const getAccountUsers = async (req: express.Request, res: express.Response) => {
     try {
-        const { accountId } = req.params;
-        if (!accountId) {
+        const accountId = z.string().min(1).max(128).safeParse(req.params.accountId);
+        if (!accountId.success) {
             return res.status(400).json({ error: 'accountId is required' });
         }
 
         const snapshot = await db.collection('users').get();
         const accountUsers = snapshot.docs
-            .map(d => ({ uid: d.id, ...d.data() }))
-            .filter((u: any) => u.memberships?.some((m: any) => m.accountId === accountId));
+            .map((d) => {
+                const raw = d.data();
+                const sanitizedMemberships = Array.isArray(raw.memberships)
+                    ? raw.memberships.map(({ passwordHash: _ph, ...rest }: any) => rest)
+                    : [];
+                return { uid: d.id, ...raw, memberships: sanitizedMemberships };
+            })
+            .filter((u: any) => u.memberships?.some((m: any) => m.accountId === accountId.data));
 
         return res.status(200).json(accountUsers);
     } catch (error) {
@@ -985,38 +1047,69 @@ export const getAccountUsers = async (req: express.Request, res: express.Respons
     }
 };
 
-// [WEB 3.0] AI Swarm & x402 Telemetry Endpoint
-export const getAITelemetry = async (req: express.Request, res: express.Response) => {
+/**
+ * Telemetría verificable en tiempo real desde `ResilientAIClient`, `ai_telemetry` y `audit_ledger`
+ * (sin modelos inexistentes, sin latencias inventadas y sin wallets `.eth` ficticias).
+ */
+export const getAITelemetry = async (_req: express.Request, res: express.Response) => {
     try {
-        let aiLogs: any[] = [];
-        let m2mLogs: any[] = [];
-        
-        try {
-            const aiLogsSnapshot = await db.collection('audit_ledger')
+        const [swarmSnapshot, aiLogsSnap, m2mLogsSnap, receiptsCountSnap] = await Promise.all([
+            ResilientAIClient.getTelemetrySnapshot(),
+            db.collection('audit_ledger')
                 .where('action', '==', 'AI_INFERENCE_REQUEST')
                 .limit(50)
-                .get();
-            aiLogs = aiLogsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        } catch (e) {
-            console.warn('[ADMIN] Could not query audit_ledger for AI logs, using fallback.');
-        }
+                .get()
+                .catch(() => null),
+            db.collection('audit_ledger')
+                .where('module', '==', 'web3-m2m')
+                .limit(50)
+                .get()
+                .catch(() => null),
+            db.collection('x402_receipts')
+                .count()
+                .get()
+                .catch(() => null),
+        ]);
+
+        const aiLogs = aiLogsSnap ? aiLogsSnap.docs.map((d: any) => ({ id: d.id, ...d.data() })) : [];
+        const m2mLogs = m2mLogsSnap ? m2mLogsSnap.docs.map((d: any) => ({ id: d.id, ...d.data() })) : [];
+        const settledM2mReceipts = receiptsCountSnap ? receiptsCountSnap.data().count : 0;
+
+        const formatTierTelemetry = (tierKey: 'PRIMARY' | 'SECONDARY' | 'ANCHOR_HA', roleLabel: string) => {
+            const tierData = swarmSnapshot.tiers[tierKey];
+            return {
+                model: tierData?.model || SWARM_MODELS[tierKey],
+                status: tierData && tierData.calls > 0 ? 'VERIFIED' : 'STANDBY',
+                calls: tierData?.calls ?? 0,
+                errors: tierData?.errors ?? 0,
+                avgLatencyMs: tierData?.avgLatencyMs ?? null,
+                lastLatencyMs: tierData?.lastLatencyMs ?? null,
+                lastUsedAt: tierData?.lastUsedAt ?? null,
+                tier: roleLabel,
+            };
+        };
 
         return res.status(200).json({
             swarmStatus: {
-                pro: { model: 'gemini-2.5-pro', status: 'HEALTHY', latencyP95: '620ms', tier: 'Pro (Critical Reasoning)' },
-                flash: { model: 'gemini-2.5-flash', status: 'HEALTHY', latencyP95: '210ms', tier: 'Flash (Fast Operation)' },
-                flashLite: { model: 'gemini-2.5-flash-lite', status: 'HEALTHY', latencyP95: '120ms', tier: 'Flash-Lite (High Availability)' }
+                pro: formatTierTelemetry('PRIMARY', 'Pro (Razonamiento Crítico)'),
+                flash: formatTierTelemetry('SECONDARY', 'Flash (Operación Estándar)'),
+                flashLite: formatTierTelemetry('ANCHOR_HA', 'Flash-Lite (Alta Disponibilidad)'),
+            },
+            telemetrySummary: {
+                totalCalls: swarmSnapshot.totalCalls,
+                cacheHits: swarmSnapshot.cacheHits,
+                totalErrors: swarmSnapshot.totalErrors,
+                gatewayConfigured: swarmSnapshot.gatewayConfigured,
+                updatedAt: swarmSnapshot.updatedAt,
             },
             protocolX402: {
-                status: 'ACTIVE',
                 contractVersion: 'x402 Foundation v1.0',
-                gatewayFee: '$0.025 USD / call',
-                vaultWallet: 'minreport-vault.eth',
-                cluster: 'southamerica-west1'
+                settledReceiptsCount: settledM2mReceipts,
+                cluster: swarmSnapshot.region || 'southamerica-west1',
             },
-            clusterRegion: 'southamerica-west1',
+            clusterRegion: swarmSnapshot.region || 'southamerica-west1',
             recentInferences: aiLogs,
-            recentM2MTransactions: m2mLogs
+            recentM2MTransactions: m2mLogs,
         });
     } catch (error) {
         console.error('[ADMIN] Error fetching AI telemetry:', error);

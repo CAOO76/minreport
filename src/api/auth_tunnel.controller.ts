@@ -1,136 +1,173 @@
 import { Request, Response } from 'express';
+import { z } from 'zod';
 import { db, auth } from '../config/firebase';
 import { verifyPassword } from '../utils/security';
+import { getRutVariants, cleanRut } from '../utils/rut';
+import { extractClientIp } from '../middleware/rateLimiter';
+import { AuditLedger } from '../core/audit-ledger';
+
+const challengeSchema = z.object({
+    accountId: z.string().min(1).max(128),
+    taxId: z.string().min(3).max(64),
+    password: z.string().min(1).max(256),
+});
 
 /**
- * Normaliza un RUT/RUN chileno en todos los formatos posibles para búsqueda resiliente.
- * Ejemplo: '77.609.112-K' → ['77609112K', '77609112-K', '77.609.112-K']
+ * Resuelve el documento `/users/{uid}` priorizando el `uid` registrado en `/user_directory/{variant}`,
+ * luego `authEmail`, y manteniendo fallback de lectura a `/users/{cleanTaxId}` por retrocompatibilidad.
  */
-function getRutVariants(rawTaxId: string): string[] {
-    const variants = new Set<string>();
-
-    // 1. Completamente limpio (sin puntos, sin guión)
-    const clean = rawTaxId.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
-    variants.add(clean);
-
-    if (clean.length >= 2) {
-        const body = clean.slice(0, -1); // números
-        const dv = clean.slice(-1);     // dígito verificador
-
-        // 2. Con guión: XXXXXXXX-K
-        variants.add(`${body}-${dv}`);
-
-        // 3. Con puntos y guión (formato estándar chileno): XX.XXX.XXX-K
-        const formatted = body.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + '-' + dv;
-        variants.add(formatted);
+async function resolveChallengeUserSnapshot(params: {
+    variants: string[];
+    cleanTaxId: string;
+    accountId: string;
+    matchedDirData: Record<string, any> | null;
+    matchedAccountEntry: Record<string, any> | null;
+}): Promise<FirebaseFirestore.DocumentSnapshot | null> {
+    const candidateUid = params.matchedAccountEntry?.uid || params.matchedDirData?.uid;
+    if (typeof candidateUid === 'string' && candidateUid.trim()) {
+        const directUidSnap = await db.collection('users').doc(candidateUid.trim()).get();
+        if (directUidSnap.exists) return directUidSnap;
     }
 
-    // 4. El valor original también, por si el usuario lo ingresó con formato válido
-    const original = rawTaxId.trim().toUpperCase();
-    variants.add(original);
+    const authEmail = params.matchedAccountEntry?.authEmail;
+    if (typeof authEmail === 'string' && authEmail.trim()) {
+        const normalizedEmail = authEmail.trim().toLowerCase();
+        const byEmailSnap = await db
+            .collection('users')
+            .where('email', '==', normalizedEmail)
+            .limit(5)
+            .get();
+        if (!byEmailSnap.empty) {
+            const withAccount = byEmailSnap.docs.find((d) =>
+                (d.data()?.memberships || []).some((m: any) => m?.accountId === params.accountId)
+            );
+            if (withAccount) return withAccount;
+            return byEmailSnap.docs[0];
+        }
 
-    return Array.from(variants);
+        try {
+            const authUser = await auth.getUserByEmail(normalizedEmail);
+            const authDoc = await db.collection('users').doc(authUser.uid).get();
+            if (authDoc.exists) return authDoc;
+        } catch {
+            // Continuar fallback
+        }
+    }
+
+    const byTaxIdSnap = await db
+        .collection('users')
+        .where('taxId', 'in', params.variants.slice(0, 10))
+        .limit(5)
+        .get();
+    if (!byTaxIdSnap.empty) {
+        const withAccount = byTaxIdSnap.docs.find((d) =>
+            (d.data()?.memberships || []).some((m: any) => m?.accountId === params.accountId)
+        );
+        if (withAccount) return withAccount;
+    }
+
+    // Fallback retrocompatible: `/users/{cleanTaxId}`
+    const legacySnap = await db.collection('users').doc(params.cleanTaxId).get();
+    if (legacySnap.exists) return legacySnap;
+
+    return null;
 }
 
 /**
  * @route POST /api/auth/tunnel/challenge
- * @desc Autentica un usuario por RUT/RUN + clave para una cuenta específica
- * @access Public (Step 2 of Login)
- * 
- * Arquitectura "Pasillo de Puertas Blindadas":
- * - Identidad primaria: RUT/RUN del usuario (Chile) — NO el email
- * - El email es solo canal de contacto, no un identificador de acceso
- * - Resolución: user_directory (RUT/RUN) → /users (memberships) → verificar hash
+ * @desc Autentica un usuario por RUT/RUN + clave para una cuenta específica.
+ *       Lee credenciales desde `user_auth_credentials/{uid}` con fallback de solo lectura
+ *       a `memberships[].passwordHash` para datos anteriores, sin escribir hashes en `/users/{uid}`.
  */
 export const challengeAccountAccess = async (req: Request, res: Response) => {
     try {
-        const { accountId, taxId, password } = req.body;
-
-        if (!accountId || !taxId || !password) {
-            return res.status(400).json({ error: 'accountId, taxId (RUT/RUN) y password son requeridos.' });
+        const parsed = challengeSchema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({ error: 'accountId, taxId (RUT/RUN) y password válidos son requeridos.' });
         }
 
+        const { accountId, taxId, password } = parsed.data;
+        const cleanTaxId = cleanRut(taxId);
         const variants = getRutVariants(taxId);
-        console.log(`[AUTH-TUNNEL] Challenge: accountId=${accountId}, RUT/RUN variants=${JSON.stringify(variants)}`);
 
-        // ============================================================
-        // PASO 1: Resolver la identidad por RUT/RUN en user_directory
-        // ============================================================
-        let matchedDirEntry: any = null;
-        let foundVariant: string | null = null;
+        // PASO 1: Resolver en `/user_directory/{variant}`
+        let matchedDirEntry: Record<string, any> | null = null;
+        let matchedDirData: Record<string, any> | null = null;
 
         for (const variant of variants) {
             const dirSnap = await db.collection('user_directory').doc(variant).get();
             if (dirSnap.exists) {
-                const dirData = dirSnap.data();
-                const accountEntry = (dirData?.accounts || []).find((a: any) => a.accountId === accountId);
+                const dirData = dirSnap.data() || {};
+                const accountEntry = (Array.isArray(dirData.accounts) ? dirData.accounts : []).find(
+                    (a: any) => a?.accountId === accountId
+                );
                 if (accountEntry) {
                     matchedDirEntry = accountEntry;
-                    foundVariant = variant;
-                    console.log(`[AUTH-TUNNEL] ✅ Identidad resuelta: user_directory["${variant}"]`);
+                    matchedDirData = dirData;
                     break;
                 }
             }
         }
 
         if (!matchedDirEntry) {
-            console.warn(`[AUTH-TUNNEL] ❌ Identidad no encontrada para variants: ${JSON.stringify(variants)}`);
             return res.status(404).json({ error: 'RUT/RUN no registrado o sin acceso a esta cuenta.' });
         }
 
-        // El ID del documento en Firestore AHORA ES SIEMPRE la variante limpia (sin puntos ni guion)
-        const uid = taxId.replace(/[\.-]/g, '').trim().toUpperCase();
+        // PASO 2: Resolver el documento real `/users/{uid}`
+        const userDoc = await resolveChallengeUserSnapshot({
+            variants,
+            cleanTaxId,
+            accountId,
+            matchedDirData,
+            matchedAccountEntry: matchedDirEntry,
+        });
 
-        // ============================================================
-        // PASO 2: Buscar el perfil del usuario utilizando su UID fijo
-        // ============================================================
-        const userDocRef = db.collection('users').doc(uid);
-        const userDoc = await userDocRef.get();
-
-        if (!userDoc.exists) {
-            console.warn(`[AUTH-TUNNEL] ❌ No user document para UID (RUT/RUN): ${uid}`);
+        if (!userDoc || !userDoc.exists) {
             return res.status(404).json({ error: 'Cuenta no inicializada. Contacta a soporte.' });
         }
 
+        const resolvedUid = userDoc.id;
         const userData = userDoc.data()!;
-        const memberships: any[] = userData.memberships || [];
-
-        console.log(`[AUTH-TUNNEL] Usuario encontrado: UID=${userDoc.id}, memberships=${memberships.length}`);
-
-        // ============================================================
-        // PASO 3: Buscar el membership — priorizar el que tiene passwordHash
-        // ============================================================
-        const accountMemberships = memberships.filter((m: any) => m.accountId === accountId);
+        const memberships: any[] = Array.isArray(userData.memberships) ? userData.memberships : [];
+        const accountMemberships = memberships.filter((m: any) => m?.accountId === accountId);
 
         if (accountMemberships.length === 0) {
-            console.warn(`[AUTH-TUNNEL] ❌ UID ${userDoc.id} no tiene membership para ${accountId}. Cuentas: ${JSON.stringify(memberships.map((m: any) => m.accountId))}`);
             return res.status(403).json({ error: 'Sin acceso a esta cuenta.' });
         }
 
-        // Preferir el membership con passwordHash activo
         const membership = accountMemberships.find((m: any) => !!m.passwordHash) || accountMemberships[0];
-
-        // ============================================================
-        // PASO 4: Verificar contraseña
-        // ============================================================
-        if (!membership.passwordHash) {
-            console.warn(`[AUTH-TUNNEL] ❌ passwordHash ausente para account ${accountId}. UID: ${userDoc.id}`);
-            return res.status(401).json({ error: 'Cuenta no activada. Revisa tu email de bienvenida para crear tu clave de acceso.' });
+        if (String(membership?.status || '').toUpperCase() === 'SUSPENDED' || String(membership?.status || '').toUpperCase() === 'REVOKED') {
+            return res.status(403).json({ error: 'Membresía suspendida o revocada.' });
         }
 
-        console.log(`[AUTH-TUNNEL-DEBUG] Verificando clave: input_len=${password.length}, hash_len=${membership.passwordHash.length}`);
+        // PASO 3: Leer credencial desde colección exclusiva de servidor `user_auth_credentials/{uid}` (con fallback de lectura a `memberships` antiguos)
+        let storedHash: string | null = null;
+        const credsSnap = await db.collection('user_auth_credentials').doc(resolvedUid).get();
+        if (credsSnap.exists) {
+            const credsData = credsSnap.data() || {};
+            storedHash =
+                credsData?.accounts?.[accountId]?.passwordHash ||
+                credsData?.passwordHash ||
+                null;
+        }
 
-        const isValid = verifyPassword(password, membership.passwordHash);
+        if (!storedHash && typeof membership?.passwordHash === 'string' && membership.passwordHash) {
+            storedHash = membership.passwordHash;
+        }
 
+        if (!storedHash) {
+            return res.status(401).json({
+                error: 'Cuenta no activada. Revisa tu email de bienvenida para crear tu clave de acceso.'
+            });
+        }
+
+        const isValid = verifyPassword(password, storedHash);
         if (!isValid) {
-            console.warn(`[AUTH-TUNNEL] ❌ Contraseña incorrecta. account=${accountId}, UID=${userDoc.id}`);
             return res.status(401).json({ error: 'RUT/RUN o contraseña incorrectos.' });
         }
 
-        // ============================================================
-        // PASO 5: Emitir Custom Token con claims de sesión
-        // ============================================================
-        const customToken = await auth.createCustomToken(userDoc.id, {
+        // PASO 4: Emitir Custom Token con el UID real verificado
+        const customToken = await auth.createCustomToken(resolvedUid, {
             activeAccountId: accountId,
             role: membership.role,
             type: membership.type || 'BUSINESS'
@@ -141,18 +178,27 @@ export const challengeAccountAccess = async (req: Request, res: Response) => {
             lastLogin: new Date().toISOString()
         });
 
-        console.log(`[AUTH-TUNNEL] ✅ Login exitoso. UID=${userDoc.id}, account=${accountId}, role=${membership.role}`);
+        await AuditLedger.record({
+            tenantId: accountId,
+            actorUid: resolvedUid,
+            actorEmail: String(userData.email || `${resolvedUid}@minreport.local`),
+            action: 'AUTH_TUNNEL_LOGIN_SUCCESS',
+            module: 'auth',
+            targetEntity: accountId,
+            details: { role: membership.role },
+            ipAddress: extractClientIp(req),
+        }).catch(() => {});
 
         return res.status(200).json({
             success: true,
             firebaseToken: customToken,
             user: {
+                uid: resolvedUid,
                 displayName: userData.displayName || userData.fullName,
                 role: membership.role,
                 activeAccountId: accountId
             }
         });
-
     } catch (error) {
         console.error('[AUTH-TUNNEL] Challenge Error:', error);
         return res.status(500).json({ error: 'Error interno durante el challenge de autenticación.' });

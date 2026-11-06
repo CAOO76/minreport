@@ -3,12 +3,22 @@ node_modules/
 .pnp
 .pnp.js
 
-# Testing
+# Testing & Ephemeral Dumps
 coverage/
+/test-results/
+/playwright-report/
+/playwright/.cache/
+/tests/.auth/*.json
+testsprite_tests/
+web/testsprite_tests/
 
-# Production
+# Production & PWA Dev Bundles
 dist/
 build/
+web/dist/
+web/dev-dist/
+admin/dist/
+admin/dev-dist/
 
 # Misc
 .DS_Store
@@ -20,19 +30,24 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# Local env files
+# Environment & Cloud Credentials (Secret Manager Only)
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+service-account-key.json
+**/service-account*.json
 
-# Firebase logs and exports
+# Firebase Logs, Local Emulator Data & Auth Backups (Protected Locally, Never Committed)
 firebase-debug.log*
 firestore-debug.log*
 ui-debug.log*
 firebase-export-*
 /data/
+.firebase-emulator-data/
+_backups/
+firebase-data/
 
 # Editor directories and files
 .vscode/dist/
@@ -47,11 +62,3 @@ firebase-export-*
 *.njsproj
 *.sln
 *.sw?
-.env
-service-account-key.json
-
-# Playwright
-/test-results/
-/playwright-report/
-/playwright/.cache/
-/tests/.auth/*.json

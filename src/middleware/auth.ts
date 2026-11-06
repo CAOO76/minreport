@@ -12,11 +12,16 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
             return res.status(401).json({ error: 'Unauthorized: No token provided' });
         }
 
-        const token = authHeader.split('Bearer ')[1];
+        const token = authHeader.slice(7).trim();
+        if (!token) {
+            return res.status(401).json({ error: 'Unauthorized: Empty token' });
+        }
+
+        // Verificación criptográfica estricta (soporta Auth Emulator cuando FIREBASE_AUTH_EMULATOR_HOST está activo)
         const decodedToken = await auth.verifyIdToken(token);
 
         req.user = decodedToken;
-        next();
+        return next();
     } catch (error) {
         console.error('[SECURITY] Token verification failed:', error);
         return res.status(401).json({ error: 'Unauthorized: Invalid token' });

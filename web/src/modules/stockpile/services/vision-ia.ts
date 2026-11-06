@@ -1,24 +1,27 @@
 import { auth } from '../config/firebase.config';
 import { getApiUrl } from '../../../utils/network';
-import { idbStorage } from '../utils/indexedDB';
+import { idbStorage, sanitizeStockpileTenantPrefix } from '../utils/indexedDB';
+import { dataService } from './DataService';
 
 export type Granulometry = 'COLPAS' | 'GRANSA' | 'MIXTO' | 'FINOS';
 
 export interface VisionSuggestion {
-    granulometry: Granulometry;
-    confidence: number;
+    verified: boolean;
+    granulometry: Granulometry | null;
+    confidence: number | null;
     reasoning: string;
-    suggestedFactor: number;
+    suggestedFactor: number | null;
 }
 
 /**
  * VisionIAService - Motor Industrial de Análisis Granulométrico (Enjambre Resiliente Gemini AI — Capa 4 MINREPORT)
  * Procesa texturas pétreas, bordes de colpas y curvas granulométricas mediante `/api/ai/inference`
- * sin exponer llaves de API en el navegador y con respaldo local determinista.
+ * sin exponer llaves de API en el navegador y con tolerancia cero a datos inventados en modo offline.
  */
 export class VisionIAService {
     /**
-     * Comprime un DataURL de imagen antes de transmitirlo al endpoint de inferencia.
+     * Comprime un DataURL de imagen antes de transmitirlo al endpoint de inferencia,
+     * liberando explícitamente la memoria de `<canvas>` (`width = 0; height = 0`) en `finally`.
      */
     private async compressImageDataUrl(dataUrl: string, maxDim = 1024, quality = 0.75): Promise<{ base64: string; mimeType: string }> {
         if (typeof document === 'undefined' || !dataUrl.startsWith('data:image')) {
@@ -30,8 +33,8 @@ export class VisionIAService {
         return new Promise((resolve) => {
             const img = new Image();
             img.onload = () => {
+                const canvas = document.createElement('canvas');
                 try {
-                    const canvas = document.createElement('canvas');
                     let { width, height } = img;
                     if (width > maxDim || height > maxDim) {
                         if (width > height) {
@@ -55,6 +58,9 @@ export class VisionIAService {
                     }
                 } catch {
                     // Fallback al dataUrl original
+                } finally {
+                    canvas.width = 0;
+                    canvas.height = 0;
                 }
                 const parts = dataUrl.split(',');
                 const mime = parts[0]?.split(';')[0]?.replace('data:', '') || 'image/jpeg';
@@ -71,11 +77,9 @@ export class VisionIAService {
 
     /**
      * Analiza una imagen o fotograma de acopio utilizando el Enjambre Gemini AI (`/api/ai/inference`).
-     * @param imageData Referencia de imagen (Base64 data URL, Blob o HTMLCanvasElement)
+     * Si no hay red o falla el motor de inferencia, devuelve `verified: false` sin inventar valores.
      */
-    public async analyzeTexture(imageData: any): Promise<VisionSuggestion> {
-        console.log('[VisionIA] Procesando fotograma de acopio mediante Enjambre Gemini AI (/api/ai/inference)...');
-
+    public async analyzeTexture(imageData: string): Promise<VisionSuggestion> {
         if (typeof imageData === 'string' && imageData.startsWith('data:image') && navigator.onLine) {
             try {
                 const token = await auth?.currentUser?.getIdToken();
@@ -116,60 +120,63 @@ export class VisionIAService {
                     if (rawText) {
                         const cleanedJson = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
                         const parsed = JSON.parse(cleanedJson);
-                        if (parsed.granulometry && parsed.confidence) {
-                            console.log('[VisionIA] Inferencia exitosa desde Enjambre Backend:', parsed);
-                            const gran = (['COLPAS', 'GRANSA', 'MIXTO', 'FINOS'].includes(parsed.granulometry)
-                                ? parsed.granulometry
-                                : 'GRANSA') as Granulometry;
+                        if (
+                            parsed.granulometry &&
+                            ['COLPAS', 'GRANSA', 'MIXTO', 'FINOS'].includes(parsed.granulometry) &&
+                            typeof parsed.confidence === 'number'
+                        ) {
+                            const gran = parsed.granulometry as Granulometry;
+                            const factorNum = Number(parsed.suggestedFactor);
                             return {
+                                verified: true,
                                 granulometry: gran,
-                                confidence: Math.min(0.99, Math.max(0.70, Number(parsed.confidence))),
+                                confidence: Math.min(0.99, Math.max(0.01, Number(parsed.confidence))),
                                 reasoning: String(parsed.reasoning || 'Clasificación granulométrica verificada por inferencia multimodal.'),
-                                suggestedFactor: Number(
-                                    parsed.suggestedFactor ||
-                                    (gran === 'COLPAS' ? 1.66 : gran === 'GRANSA' ? 1.78 : gran === 'MIXTO' ? 1.85 : 2.05)
-                                )
+                                suggestedFactor: Number.isFinite(factorNum) && factorNum > 0 ? factorNum : null
                             };
                         }
                     }
                 }
             } catch (err) {
-                console.warn('[VisionIA] Servidor de inferencia no disponible; ejecutando motor analítico determinista local:', err);
+                console.warn('[VisionIA] Motor de inferencia no disponible:', err);
             }
         }
 
-        // Motor local determinista de respaldo (Cero Alucinación / Cero Math.random)
+        // Tolerancia cero a datos inventados (GEMINI.md §3.1)
         return {
-            granulometry: 'GRANSA',
-            confidence: 0.89,
-            reasoning: 'Clasificación granulométrica intermedia verificada por contraste de bordes en modo autónomo.',
-            suggestedFactor: 1.78
+            verified: false,
+            granulometry: null,
+            confidence: null,
+            reasoning: '[Información técnica no declarada en ficha — Sin conexión a motor de inferencia]',
+            suggestedFactor: null
         };
     }
 
     /**
-     * Registra el feedback del operador (HITL) para calibración continua del modelo en almacenamiento local.
+     * Registra el feedback del operador (HITL) particionado por tenant para calibración continua.
      */
     public async recordOperatorFeedback(
         suggestion: VisionSuggestion,
         accepted: boolean,
-        finalGranulometry: Granulometry,
-        _secureContext?: any
+        finalGranulometry: Granulometry
     ): Promise<void> {
+        if (!suggestion.verified || !suggestion.granulometry) return;
+
+        const safeTenant = sanitizeStockpileTenantPrefix(dataService.getTenantId());
+        const key = `sc:${safeTenant}:vision_feedback_loop`;
         const feedback = {
             timestamp: Date.now(),
             suggested: suggestion.granulometry,
-            accepted: accepted,
+            accepted,
             final: finalGranulometry,
             confidence: suggestion.confidence,
             isCorrection: !accepted
         };
 
         try {
-            const history = (await idbStorage.get<any[]>('vision_feedback_loop')) || [];
+            const history = (await idbStorage.get<unknown[]>(key)) || [];
             history.push(feedback);
-            await idbStorage.set('vision_feedback_loop', history.slice(-50));
-            console.log('[VisionIA] Feedback HITL registrado para calibración de modelo.');
+            await idbStorage.set(key, history.slice(-50));
         } catch (e) {
             console.warn('[VisionIA] Error persistiendo feedback loop:', e);
         }
