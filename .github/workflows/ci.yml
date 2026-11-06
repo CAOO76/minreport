@@ -1,4 +1,4 @@
-name: CI - Build, Verify & Deploy (southamerica-west1)
+name: CI - Build & Verify (southamerica-west1)
 
 on:
   push:
@@ -8,11 +8,8 @@ on:
 
 jobs:
   build-and-verify:
-    name: Typecheck, Unit Tests, Build & Deploy Hosting
+    name: Privacy Audit, Typecheck, Unit Tests & Build
     runs-on: ubuntu-latest
-    env:
-      FIREBASE_SERVICE_ACCOUNT_JSON: ${{ fromJSON(toJSON(secrets)).FIREBASE_SERVICE_ACCOUNT_MINREPORT_8F2A8 || '' }}
-      HAS_FIREBASE_SERVICE_ACCOUNT: ${{ (fromJSON(toJSON(secrets)).FIREBASE_SERVICE_ACCOUNT_MINREPORT_8F2A8 || '') != '' }}
 
     steps:
       - name: Checkout Code
@@ -31,7 +28,7 @@ jobs:
       - name: Install Backend Dependencies
         run: npm ci
 
-      - name: Verify & Build Backend Core (TypeScript Strict)
+      - name: Verify & Build Backend Core (TypeScript Strict & Ley 21.719)
         run: |
           npm run audit:privacy
           npx tsc --noEmit
@@ -45,12 +42,9 @@ jobs:
 
       - name: Install, Typecheck, Test & Build Unified Web PWA
         env:
-          VITE_FIREBASE_API_KEY: ${{ fromJSON(toJSON(secrets)).VITE_FIREBASE_API_KEY || '' }}
-          VITE_FIREBASE_AUTH_DOMAIN: ${{ fromJSON(toJSON(secrets)).VITE_FIREBASE_AUTH_DOMAIN || 'minreport-8f2a8.firebaseapp.com' }}
-          VITE_FIREBASE_PROJECT_ID: ${{ fromJSON(toJSON(secrets)).VITE_FIREBASE_PROJECT_ID || 'minreport-8f2a8' }}
-          VITE_FIREBASE_STORAGE_BUCKET: ${{ fromJSON(toJSON(secrets)).VITE_FIREBASE_STORAGE_BUCKET || 'minreport-8f2a8.firebasestorage.app' }}
-          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ fromJSON(toJSON(secrets)).VITE_FIREBASE_MESSAGING_SENDER_ID || '' }}
-          VITE_FIREBASE_APP_ID: ${{ fromJSON(toJSON(secrets)).VITE_FIREBASE_APP_ID || '' }}
+          VITE_FIREBASE_AUTH_DOMAIN: 'minreport-8f2a8.firebaseapp.com'
+          VITE_FIREBASE_PROJECT_ID: 'minreport-8f2a8'
+          VITE_FIREBASE_STORAGE_BUCKET: 'minreport-8f2a8.firebasestorage.app'
           VITE_USE_EMULATORS: 'false'
         run: |
           cd web
@@ -58,22 +52,3 @@ jobs:
           npx tsc --noEmit
           npx vitest run
           npm run build
-
-      - name: Deploy Preview Channel (Firebase Hosting minreport-web)
-        if: github.event_name == 'pull_request' && env.HAS_FIREBASE_SERVICE_ACCOUNT == 'true'
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: '${{ secrets.GITHUB_TOKEN }}'
-          firebaseServiceAccount: '${{ env.FIREBASE_SERVICE_ACCOUNT_JSON }}'
-          projectId: minreport-8f2a8
-          target: minreport-web
-
-      - name: Deploy Live Channel (Firebase Hosting minreport-web)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.HAS_FIREBASE_SERVICE_ACCOUNT == 'true'
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: '${{ secrets.GITHUB_TOKEN }}'
-          firebaseServiceAccount: '${{ env.FIREBASE_SERVICE_ACCOUNT_JSON }}'
-          channelId: live
-          projectId: minreport-8f2a8
-          target: minreport-web
