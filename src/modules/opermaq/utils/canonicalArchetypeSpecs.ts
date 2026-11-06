@@ -861,11 +861,13 @@ export function extractHomologousAxisValues(record: {
                 axis_key: item.axis_key,
                 label_es: item.label_es,
                 value_si: cleaned,
-                unit_si: item.unit_si,
+                ...(item.unit_si !== undefined ? { unit_si: item.unit_si } : {}),
                 mandatory: isMandatory,
-                is_differentiator: item.is_differentiator,
-                value_kind: item.value_kind,
-                allowed_enum_values: item.allowed_enum_values,
+                ...(typeof item.is_differentiator === 'boolean' ? { is_differentiator: item.is_differentiator } : {}),
+                ...(item.value_kind ? { value_kind: item.value_kind } : {}),
+                ...(Array.isArray(item.allowed_enum_values) && item.allowed_enum_values.length > 0
+                    ? { allowed_enum_values: item.allowed_enum_values }
+                    : {}),
                 source_url: cleaned ? item.source_url || null : null,
                 verbatim_evidence: cleaned ? item.verbatim_evidence || null : null,
             });

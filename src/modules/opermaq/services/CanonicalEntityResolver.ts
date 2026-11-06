@@ -3,6 +3,7 @@ import { db } from '../../../config/firebase';
 import { ResilientAIClient } from '../../../core/resilient-ai-client';
 import type { ResolvedAssetCandidate } from '../types/vault.types';
 import {
+    type CanonicalSpecSlot,
     extractHomologousAxisValues,
     MISSING_FULL_TECH_SPEC,
     serializeCanonicalSlotsToSpecsArray,
@@ -482,21 +483,21 @@ export function buildCatalogSearchMetadata(params: {
                 .split(/\s+/)
                 .filter((t) => t.length >= 2 && !GENERIC_EQUIPMENT_STOPWORDS.has(t))
         )
-    ).slice(0, 35);
+    );
 
     const embeddingSourceText = [
         `Fabricante: ${canonicalMake}`,
         `Modelo: ${canonicalModel} (${compactModel})`,
         `Tipo: ${params.tipo_equipo || ''}`,
         `Categoría: ${params.categoria_equipo || ''}`,
-        `Alias: ${Array.from(aliases).slice(0, 8).join(', ')}`,
+        `Alias: ${Array.from(aliases).slice(0, 12).join(', ')}`,
     ].join(' | ');
 
     return {
         canonicalMake,
         canonicalModel,
         model_designator: compactModel,
-        search_aliases: Array.from(aliases).slice(0, 40),
+        search_aliases: Array.from(aliases),
         search_tokens: tokens,
         embeddingSourceText,
     };
@@ -536,6 +537,34 @@ function mapDocToResolvedCandidate(id: string, data: Record<string, any>): Resol
     };
 }
 
+function extractPrimaryNumericToken(code: string): string {
+    const match = code.toUpperCase().match(/\d+/);
+    return match ? match[0] : '';
+}
+
+export function matchesDesignatorFamilyBoundary(
+    docDesignator: string,
+    docModelRaw: string,
+    requestedDesignator: string
+): boolean {
+    const docDes = docDesignator.toUpperCase();
+    const reqDes = requestedDesignator.toUpperCase();
+    if (!reqDes) return true;
+    if (docDes === reqDes) return true;
+    if (!docDes.startsWith(reqDes)) return false;
+
+    // Verificar frontera numérica del código base (ej. buscar "D1" jamás debe arrastrar "D10" ni "D11",
+    // mientras que buscar "D10" sí incluye "D10N", "D10R", "D10T", "D10T2", "D10 NEXT GEN",
+    // y buscar "PC200" sí incluye "PC200-8", "PC200LC-8", "PC200-11").
+    const reqPrimaryNum = extractPrimaryNumericToken(reqDes);
+    const docPrimaryNum = extractPrimaryNumericToken(docModelRaw || docDes);
+    if (reqPrimaryNum && docPrimaryNum && reqPrimaryNum !== docPrimaryNum) {
+        return false;
+    }
+
+    return true;
+}
+
 function matchesRequestedDesignatorAndMake(
     parsed: ParsedIndustrialQuery,
     docData: Record<string, any>,
@@ -553,10 +582,7 @@ function matchesRequestedDesignatorAndMake(
     }
 
     if (parsed.compactDesignator) {
-        // Si el usuario pidió "242D", aceptamos "242D" o sub-variantes directas de la misma familia ("242D2", "242D3"),
-        // pero NUNCA aceptamos "246D" ni "320D".
-        const reqDes = parsed.compactDesignator;
-        if (docDesignator !== reqDes && !docDesignator.startsWith(reqDes)) {
+        if (!matchesDesignatorFamilyBoundary(docDesignator, docModel, parsed.compactDesignator)) {
             return false;
         }
     }
@@ -838,7 +864,7 @@ export async function resolveFromLocalCommonsCatalog(
 }
 
 const LINEAGE_COLLECTION = 'global_asset_lineages';
-const LINEAGE_SCHEMA_VERSION = 'v4_dynamic_type_ontology';
+const LINEAGE_SCHEMA_VERSION = 'v5_exhaustive_union_lineage';
 
 export function buildCollaborativeLineageKey(rawQuery: string, isGeneric: boolean): string {
     const parsed = parseIndustrialSearchQuery(rawQuery, isGeneric);
@@ -851,6 +877,53 @@ export function buildCollaborativeLineageKey(rawQuery: string, isGeneric: boolea
     }
     const cleanSlug = parsed.normalizedAlias.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
     return `${scopePrefix}__${cleanSlug || 'query'}`;
+}
+
+function mergeTwoLineageCandidates(
+    existing: ResolvedAssetCandidate,
+    incoming: ResolvedAssetCandidate
+): ResolvedAssetCandidate {
+    const mergedVersions = Array.from(
+        new Set([
+            ...(existing.chassis_versions || []),
+            ...(existing.versions || []),
+            ...(incoming.chassis_versions || []),
+            ...(incoming.versions || []),
+        ])
+    ).filter(Boolean);
+
+    const existingSlots = Array.isArray(existing.canonical_specs) ? existing.canonical_specs : [];
+    const incomingSlots = Array.isArray(incoming.canonical_specs) ? incoming.canonical_specs : [];
+    const slotMap = new Map<string, CanonicalSpecSlot>();
+
+    for (const s of existingSlots) {
+        if (s && s.axis_key) slotMap.set(s.axis_key, s);
+    }
+    for (const s of incomingSlots) {
+        if (!s || !s.axis_key) continue;
+        const prev = slotMap.get(s.axis_key);
+        if (!prev || (!prev.value_si && s.value_si) || (!prev.source_url && s.source_url && s.value_si)) {
+            slotMap.set(s.axis_key, s);
+        }
+    }
+
+    const mergedSlots = Array.from(slotMap.values());
+    const mergedSpecs =
+        mergedSlots.length > 0
+            ? serializeCanonicalSlotsToSpecsArray(mergedSlots)
+            : (incoming.caracteristicas_principales?.length
+                  ? incoming.caracteristicas_principales
+                  : existing.caracteristicas_principales) || [];
+
+    return {
+        ...existing,
+        ...incoming,
+        canonical_specs: mergedSlots.length > 0 ? mergedSlots : incoming.canonical_specs || existing.canonical_specs,
+        caracteristicas_principales: mergedSpecs,
+        versions: mergedVersions.length > 0 ? mergedVersions : ['ESTÁNDAR'],
+        chassis_versions: mergedVersions.length > 0 ? mergedVersions : ['ESTÁNDAR'],
+        official_url: incoming.official_url || existing.official_url || '',
+    };
 }
 
 /**
@@ -933,31 +1006,91 @@ export async function readCollaborativeLineage(
     }
 }
 
+/**
+ * Persistencia Acumulativa Inmutable (`Union Merge`):
+ * Un linaje colaborativo jamás pierde candidatos previamente descubiertos en búsquedas posteriores;
+ * fusiona nuevas generaciones o ejes enriquecidos y devuelve el conjunto completo unificado (1..N).
+ */
 export async function saveCollaborativeLineage(
     rawQuery: string,
     isGeneric: boolean,
     candidates: ResolvedAssetCandidate[]
-): Promise<void> {
-    if (!Array.isArray(candidates) || candidates.length === 0) return;
+): Promise<ResolvedAssetCandidate[]> {
+    if (!Array.isArray(candidates) || candidates.length === 0) return [];
     try {
-        const lineageKey = buildCollaborativeLineageKey(rawQuery, isGeneric);
-        await db
-            .collection(LINEAGE_COLLECTION)
-            .doc(lineageKey)
-            .set(
-                {
-                    lineage_key: lineageKey,
-                    schema_version: LINEAGE_SCHEMA_VERSION,
-                    raw_query_sample: rawQuery.trim(),
-                    is_generic: isGeneric,
-                    total_candidates: candidates.length,
-                    candidates,
-                    updated_at: new Date().toISOString(),
-                },
-                { merge: true }
-            );
+        const parsed = parseIndustrialSearchQuery(rawQuery, isGeneric);
+        const primaryKey = buildCollaborativeLineageKey(rawQuery, isGeneric);
+        const targetKeys = new Set<string>([primaryKey]);
+
+        // Si el usuario buscó solo por código (ej. "D10") y todos los candidatos convergen en un fabricante único (ej. "CATERPILLAR"),
+        // sincronizar también con la llave canónica de fabricante + designador (`oem__caterpillar_d10`).
+        const uniqueMakes = Array.from(
+            new Set(candidates.map((c) => String(c.make_oficial || '').trim().toUpperCase()).filter(Boolean))
+        );
+        if (!isGeneric && uniqueMakes.length === 1 && parsed.compactDesignator) {
+            const canonicalKey = `oem__${normalizeCatalogKey(uniqueMakes[0], parsed.compactDesignator)}`;
+            targetKeys.add(canonicalKey);
+        }
+
+        const unionMap = new Map<string, ResolvedAssetCandidate>();
+
+        for (const k of targetKeys) {
+            const existingSnap = await db.collection(LINEAGE_COLLECTION).doc(k).get();
+            if (existingSnap.exists) {
+                const existingData = existingSnap.data() || {};
+                if (existingData.schema_version === LINEAGE_SCHEMA_VERSION && Array.isArray(existingData.candidates)) {
+                    for (const prev of existingData.candidates as ResolvedAssetCandidate[]) {
+                        const cKey = prev.catalog_key || normalizeCatalogKey(prev.make_oficial, prev.model_oficial);
+                        if (!cKey) continue;
+                        const current = unionMap.get(cKey);
+                        unionMap.set(cKey, current ? mergeTwoLineageCandidates(current, prev) : { ...prev, catalog_key: cKey });
+                    }
+                }
+            }
+        }
+
+        for (const inc of candidates) {
+            const cKey = inc.catalog_key || normalizeCatalogKey(inc.make_oficial, inc.model_oficial);
+            if (!cKey) continue;
+            const current = unionMap.get(cKey);
+            unionMap.set(cKey, current ? mergeTwoLineageCandidates(current, inc) : { ...inc, catalog_key: cKey });
+        }
+
+        const unifiedCandidates = Array.from(unionMap.values()).sort((a, b) => {
+            const byMake = String(a.make_oficial || '').localeCompare(String(b.make_oficial || ''), 'es', {
+                sensitivity: 'base',
+            });
+            if (byMake !== 0) return byMake;
+            return String(a.model_oficial || '').localeCompare(String(b.model_oficial || ''), 'es', {
+                numeric: true,
+                sensitivity: 'base',
+            });
+        });
+
+        await Promise.all(
+            Array.from(targetKeys).map((k) =>
+                db
+                    .collection(LINEAGE_COLLECTION)
+                    .doc(k)
+                    .set(
+                        {
+                            lineage_key: k,
+                            schema_version: LINEAGE_SCHEMA_VERSION,
+                            raw_query_sample: rawQuery.trim(),
+                            is_generic: isGeneric,
+                            total_candidates: unifiedCandidates.length,
+                            candidates: unifiedCandidates,
+                            updated_at: new Date().toISOString(),
+                        },
+                        { merge: true }
+                    )
+            )
+        );
+
+        return unifiedCandidates;
     } catch (err: any) {
         console.warn('[CANONICAL-RESOLVER] No se pudo persistir linaje colaborativo:', err?.message);
+        return candidates;
     }
 }
 

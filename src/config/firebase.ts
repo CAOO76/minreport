@@ -25,6 +25,11 @@ if (admin.apps.length === 0) {
 }
 
 export const db = admin.firestore();
+try {
+    db.settings({ ignoreUndefinedProperties: true });
+} catch {
+    // Ignorar si settings() ya fue invocado previamente en hot-reload
+}
 export const auth = admin.auth();
 export const storage = admin.storage();
 export const messaging = admin.messaging();

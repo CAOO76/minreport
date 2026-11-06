@@ -465,7 +465,7 @@ assetsRouter.get('/catalog-lookup', async (req: ScopedRequest, res: Response) =>
             .trim();
         const qTokens = qNorm.split(/\s+/).filter(Boolean);
 
-        const catalogSnap = await db.collection('global_asset_catalog').limit(300).get();
+        const catalogSnap = await db.collection('global_asset_catalog').get();
         for (const docSnap of catalogSnap.docs) {
             const d = docSnap.data();
             const make = String(d.make_oficial || d.make || '').trim();

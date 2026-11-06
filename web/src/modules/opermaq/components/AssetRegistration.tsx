@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { M3TextField } from './M3TextField';
 import { useOpermaqContext } from '../hooks/useOpermaqContext';
 import { API_BASE_URL, db } from '../firebase/config';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { authFetch } from '../utils/authFetch';
 import {
     buildEquipmentShortDescription,
@@ -334,27 +334,43 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
             const model = (c.model_oficial || jerga).toUpperCase();
 
             if (canCurateCatalog) {
-                const docRef = await addDoc(collection(db, 'global_asset_catalog'), {
-                    make_oficial: make,
-                    model_oficial: model,
-                    make_model: `${make} ${model}`,
-                    categoria_equipo: c.categoria_equipo || 'EQUIPAMIENTO INDUSTRIAL',
-                    tipo_equipo: c.tipo_equipo || t('registration.not_declared'),
-                    archetype_id: c.archetype_id || null,
-                    canonical_specs: c.canonical_specs || [],
-                    ambiente_operativo: c.ambiente_operativo || [],
-                    contexto_operativo: c.contexto_operativo || [],
-                    caracteristicas_principales: c.caracteristicas_principales || [],
-                    version: effectiveVersion,
-                    versions: allVersions,
-                    chassis_versions: allVersions,
-                    official_url: c.official_url || '',
-                    original_jargon: jerga,
-                    knowledge_vault: null,
-                    createdBy: userId || 'operador',
-                    createdAt: serverTimestamp(),
-                });
-                onSuccess(docRef.id);
+                const deterministicCatalogKey =
+                    c.catalog_key ||
+                    resolvedGlobalId ||
+                    `${make}_${model}`
+                        .normalize('NFD')
+                        .replace(/[\u0300-\u036f]/g, '')
+                        .toLowerCase()
+                        .replace(/[^a-z0-9]+/g, '_')
+                        .replace(/^_+|_+$/g, '');
+                const targetDocRef = doc(db, 'global_asset_catalog', deterministicCatalogKey);
+                await setDoc(
+                    targetDocRef,
+                    {
+                        catalog_key: deterministicCatalogKey,
+                        make_oficial: make,
+                        model_oficial: model,
+                        make_model: `${make} ${model}`,
+                        equipment_type_key: c.equipment_type_key || null,
+                        categoria_equipo: c.categoria_equipo || 'EQUIPAMIENTO INDUSTRIAL',
+                        tipo_equipo: c.tipo_equipo || t('registration.not_declared'),
+                        archetype_id: c.archetype_id || null,
+                        canonical_specs: c.canonical_specs || [],
+                        ambiente_operativo: c.ambiente_operativo || [],
+                        contexto_operativo: c.contexto_operativo || [],
+                        caracteristicas_principales: c.caracteristicas_principales || [],
+                        version: effectiveVersion,
+                        versions: allVersions,
+                        chassis_versions: allVersions,
+                        official_url: c.official_url || '',
+                        original_jargon: jerga,
+                        knowledge_vault: null,
+                        createdBy: userId || 'operador',
+                        createdAt: serverTimestamp(),
+                    },
+                    { merge: true }
+                );
+                onSuccess(deterministicCatalogKey);
                 return;
             }
 

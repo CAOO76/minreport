@@ -164,7 +164,7 @@ export const SWARM_MODELS: Record<SwarmTier, string> = {
 const SWARM_TIER_FALLBACK_CANDIDATES: Record<SwarmTier, string[]> = {
     PRIMARY: ['gemini-3.1-pro-preview', 'gemini-2.5-pro'],
     SECONDARY: ['gemini-3-flash-preview', 'gemini-2.5-flash'],
-    ANCHOR_HA: ['gemini-3.1-flash-lite', 'gemini-2.5-flash-lite'],
+    ANCHOR_HA: ['gemini-2.5-flash-lite', 'gemini-3.1-flash-lite'],
 };
 
 const IMAGE_GEN_MODELS = [
@@ -529,7 +529,7 @@ export class ResilientAIClient {
                             : 'high');
 
             const levelMap: Record<ThinkingLevel, string> = {
-                none: isPro ? 'LOW' : 'MINIMAL',
+                none: 'LOW',
                 low: 'LOW',
                 medium: 'MEDIUM',
                 high: 'HIGH',
@@ -806,6 +806,7 @@ export class ResilientAIClient {
 
         for (const tier of tiers) {
             let modelName = SWARM_MODELS[tier];
+            const triedModelsInTier = new Set<string>([modelName]);
 
             for (let attempt = 0; attempt <= this.MAX_RETRIES_PER_TIER; attempt++) {
                 try {
@@ -873,14 +874,15 @@ export class ResilientAIClient {
                         if (req.responseSchema) config.responseSchema = req.responseSchema;
                     }
 
-                    // En llamadas con googleSearch, evitar thinkingLevel 'low'/'none' porque suprime la invocación de herramientas en Gemini 3.x
+                    // En llamadas con googleSearch usar 'low' por defecto para evitar la latencia de 'HIGH' en Gemini 3.x;
+                    // en extracciones deterministas sin herramientas (temp <= 0.1) usar 'none' (MINIMAL) por defecto.
                     const effectiveThinkingLevel: ThinkingLevel | undefined = hasGroundingTools
                         ? hadUngroundedAttempt
                             ? 'medium'
-                            : req.thinkingLevel === 'low' || req.thinkingLevel === 'none'
-                            ? undefined
-                            : req.thinkingLevel
-                        : req.thinkingLevel;
+                            : req.thinkingLevel === 'none'
+                            ? 'low'
+                            : req.thinkingLevel || 'low'
+                        : req.thinkingLevel || ((req.temperature ?? 0.2) <= 0.1 ? 'none' : undefined);
 
                     const thinkingCfg = this.buildThinkingConfig(modelName, effectiveThinkingLevel, req.thinkingBudget);
                     if (thinkingCfg) {
@@ -1016,12 +1018,16 @@ export class ResilientAIClient {
                         msg.includes('"code":429')
                     ) {
                         const fallbacks = SWARM_TIER_FALLBACK_CANDIDATES[tier] || [];
-                        const nextCandidate = fallbacks.find((cand) => cand !== modelName);
+                        const nextCandidate = fallbacks.find((cand) => !triedModelsInTier.has(cand));
                         if (nextCandidate && attempt < this.MAX_RETRIES_PER_TIER) {
                             console.info(
                                 `[SWARM-IA] Conmutando dentro de ${tier}: ${modelName} -> ${nextCandidate}`
                             );
+                            if (msg.includes('NOT_FOUND') || msg.includes('is not found')) {
+                                SWARM_MODELS[tier] = nextCandidate;
+                            }
                             modelName = nextCandidate;
+                            triedModelsInTier.add(nextCandidate);
                             continue;
                         }
                         break;
