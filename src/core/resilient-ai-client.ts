@@ -156,23 +156,35 @@ export interface SwarmTelemetrySnapshot {
 }
 
 export const SWARM_MODELS: Record<SwarmTier, string> = {
-    PRIMARY: process.env.PREMIUM_GEMINI_MODEL || process.env.GEMINI_PRO_MODEL || 'gemini-3.1-pro-preview',
+    PRIMARY: process.env.PREMIUM_GEMINI_MODEL || process.env.GEMINI_PRO_MODEL || 'gemini-4-argon',
     SECONDARY: process.env.FALLBACK_GEMINI_MODEL || process.env.GEMINI_FLASH_MODEL || 'gemini-3.8-flash',
     ANCHOR_HA: process.env.LITE_GEMINI_MODEL || process.env.GEMINI_FLASH_LITE_MODEL || 'gemini-3.5-flash-lite',
 };
 
+const SWARM_TIER_FALLBACK_CANDIDATES: Record<SwarmTier, string[]> = {
+    PRIMARY: ['gemini-3.1-pro-preview', 'gemini-2.5-pro'],
+    SECONDARY: ['gemini-3-flash-preview', 'gemini-2.5-flash'],
+    ANCHOR_HA: ['gemini-3.1-flash-lite', 'gemini-2.5-flash-lite'],
+};
+
 const IMAGE_GEN_MODELS = [
-    process.env.IMAGEN_PRIMARY_MODEL || 'imagen-3.0-generate-002',
-    process.env.IMAGEN_FALLBACK_MODEL || 'imagen-4.0-generate-001',
+    process.env.IMAGEN_PRIMARY_MODEL || 'gemini-3-pro-image',
+    process.env.NANO_BANANA_PRO_MODEL || 'gemini-nano-banana-2.1',
+    'imagen-4.0-generate-001',
+    process.env.IMAGEN_FALLBACK_MODEL || 'imagen-3.0-generate-002',
 ];
 
 const EMBEDDING_MODELS = [
     process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001',
+    'gemini-embedding-2',
     'text-embedding-004',
 ];
 
 const memoryEmbeddingCache = new Map<string, number[]>();
 const MAX_MEMORY_EMBEDDINGS = 1500;
+
+const memoryTechnicalImageCache = new Map<string, TechnicalImageResponse>();
+const MAX_MEMORY_TECHNICAL_IMAGES = 60;
 
 interface CachedInferenceL1Entry {
     text: string;
@@ -501,7 +513,7 @@ export class ResilientAIClient {
         level?: ThinkingLevel,
         explicitBudget?: number
     ): Record<string, any> | undefined {
-        const isPro = model.includes('pro');
+        const isPro = model.includes('pro') || model.includes('argon');
         const isGemini3Plus = model.includes('gemini-3') || model.includes('gemini-4');
 
         if (isGemini3Plus) {
@@ -663,10 +675,35 @@ export class ResilientAIClient {
     }
 
     /**
+     * Esclusa Determinista Pre-Vuelo (Ley N° 19.628 y Nueva Ley N° 21.719 de Protección de Datos Personales de Chile):
+     * Purga identificadores sensibles chilenos (RUT, patentes PPU, teléfonos +56, correos, coordenadas GPS de faena
+     * y referencias contractuales OC/PO) antes de transmitir prompts de clientes o consultas de búsqueda externa.
+     */
+    public static sanitizePromptForLey21719(rawText: string): string {
+        let s = rawText || '';
+        s = s.replace(/\b\d{1,2}\.?\d{3}\.?\d{3}-[\dkK]\b/g, '[RUT_RESERVADO]');
+        s = s.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[EMAIL_RESERVADO]');
+        s = s.replace(/(?:\+?56\s*)?(?:9\s*\d{4}\s*\d{4}|2\s*\d{4}\s*\d{4})\b/g, '[TEL_RESERVADO]');
+        s = s.replace(/[-+]?\d{1,2}\.\d{4,}\s*,\s*[-+]?\d{1,3}\.\d{4,}/g, '[COORD_FAENA_RESERVADA]');
+        s = s.replace(/\b(?:OC|PO|CONTRATO|LICITACI[OÓ]N)\s*[-#:]?\s*[A-Z0-9-]{3,20}\b/gi, '[REF_CONTRACTUAL_RESERVADA]');
+        s = s.replace(/\b(?:patente|ppu)\s*[:#-]?\s*[A-Z]{2,4}[-\s]?\d{2,4}\b/gi, '[PATENTE_RESERVADA]');
+        return s;
+    }
+
+    /**
      * Ejecución central resiliente con fallback Pro -> Flash -> Flash-Lite
      */
-    public static async generate(req: AIInferenceRequest): Promise<AIInferenceResponse> {
+    public static async generate(rawReq: AIInferenceRequest): Promise<AIInferenceResponse> {
         const startTime = Date.now();
+        const shouldScrubLey21719 =
+            Boolean(rawReq.tenantId && rawReq.tenantId !== 'GLOBAL') || Boolean(rawReq.useGoogleSearch);
+        const req: AIInferenceRequest = shouldScrubLey21719
+            ? {
+                  ...rawReq,
+                  prompt: this.sanitizePromptForLey21719(rawReq.prompt),
+              }
+            : rawReq;
+
         const ai = await this.getSDKClient();
         const effectiveSystemInstruction = await this.enrichSystemInstructionWithPilotFeedback(
             req.module,
@@ -970,8 +1007,23 @@ export class ResilientAIClient {
                         continue;
                     }
 
-                    // Si el modelo puntual no está habilitado o no existe en este tier, saltar directo al siguiente nivel del enjambre
-                    if (msg.includes('PERMISSION_DENIED') || msg.includes('NOT_FOUND') || msg.includes('is not found')) {
+                    // Si el modelo puntual no está habilitado, no existe o agotó cuota puntual (429), probar candidato hermano del mismo tier o saltar al siguiente nivel
+                    if (
+                        msg.includes('PERMISSION_DENIED') ||
+                        msg.includes('NOT_FOUND') ||
+                        msg.includes('is not found') ||
+                        msg.includes('RESOURCE_EXHAUSTED') ||
+                        msg.includes('"code":429')
+                    ) {
+                        const fallbacks = SWARM_TIER_FALLBACK_CANDIDATES[tier] || [];
+                        const nextCandidate = fallbacks.find((cand) => cand !== modelName);
+                        if (nextCandidate && attempt < this.MAX_RETRIES_PER_TIER) {
+                            console.info(
+                                `[SWARM-IA] Conmutando dentro de ${tier}: ${modelName} -> ${nextCandidate}`
+                            );
+                            modelName = nextCandidate;
+                            continue;
+                        }
                         break;
                     }
 
@@ -1027,24 +1079,82 @@ export class ResilientAIClient {
     }
 
     /**
-     * Generación de iconografía ISO 7000 y diagramas técnicos limpios (Imagen 4.0 -> 3.0)
+     * Generación de iconografía ISO 7000 y diagramas técnicos limpios (Nano Banana Pro gemini-3-pro-image -> Imagen 4.0 -> 3.0)
+     * Incluye caché determinista SHA-256 en memoria L1 y Firestore L2 (`ai_inference_cache`) para evitar facturación duplicada.
      */
     public static async generateTechnicalImage(req: TechnicalImageRequest): Promise<TechnicalImageResponse> {
         const startTime = Date.now();
-        const ai = await this.getSDKClient();
+        const sanitizedPrompt = this.sanitizePromptForLey21719(req.prompt || '').trim();
         const outputMimeType = req.outputMimeType || 'image/png';
+        const aspectRatio = req.aspectRatio || '1:1';
+        const cacheKey = `img_${createHash('sha256')
+            .update(`${aspectRatio}|${outputMimeType}|${sanitizedPrompt}`)
+            .digest('hex')}`;
+
+        const memHit = memoryTechnicalImageCache.get(cacheKey);
+        if (memHit && memHit.base64Data) {
+            return {
+                ...memHit,
+                latencyMs: Date.now() - startTime,
+            };
+        }
+
+        try {
+            const snap = await db.collection(this.CACHE_COLLECTION).doc(cacheKey).get();
+            if (snap.exists) {
+                const d = snap.data() || {};
+                if (typeof d.base64Data === 'string' && d.base64Data.length > 0) {
+                    const hit: TechnicalImageResponse = {
+                        base64Data: d.base64Data,
+                        mimeType: d.mimeType || outputMimeType,
+                        modelUsed: d.modelUsed || IMAGE_GEN_MODELS[0],
+                        latencyMs: Date.now() - startTime,
+                    };
+                    if (memoryTechnicalImageCache.size >= MAX_MEMORY_TECHNICAL_IMAGES) {
+                        const oldest = memoryTechnicalImageCache.keys().next().value;
+                        if (oldest) memoryTechnicalImageCache.delete(oldest);
+                    }
+                    memoryTechnicalImageCache.set(cacheKey, hit);
+                    return hit;
+                }
+            }
+        } catch {
+            // Continuar hacia generación en vivo si la caché no responde
+        }
+
+        const ai = await this.getSDKClient();
         let lastErr: Error | null = null;
+
+        const persistGeneratedImage = (res: TechnicalImageResponse) => {
+            if (memoryTechnicalImageCache.size >= MAX_MEMORY_TECHNICAL_IMAGES) {
+                const oldest = memoryTechnicalImageCache.keys().next().value;
+                if (oldest) memoryTechnicalImageCache.delete(oldest);
+            }
+            memoryTechnicalImageCache.set(cacheKey, res);
+            db.collection(this.CACHE_COLLECTION)
+                .doc(cacheKey)
+                .set({
+                    cacheKey,
+                    module: 'opermaq',
+                    modelUsed: res.modelUsed,
+                    mimeType: res.mimeType,
+                    aspectRatio,
+                    base64Data: res.base64Data,
+                    createdAt: new Date().toISOString(),
+                })
+                .catch(() => { });
+        };
 
         for (const modelName of IMAGE_GEN_MODELS) {
             try {
                 if (modelName.startsWith('gemini-')) {
                     const response = await ai.models.generateContent({
                         model: modelName,
-                        contents: [{ role: 'user', parts: [{ text: req.prompt }] }],
+                        contents: [{ role: 'user', parts: [{ text: sanitizedPrompt }] }],
                         config: {
                             responseModalities: ['IMAGE'],
                             imageConfig: {
-                                aspectRatio: req.aspectRatio || '1:1',
+                                aspectRatio,
                             },
                         },
                     });
@@ -1054,21 +1164,23 @@ export class ResilientAIClient {
                     if (!imgPart?.inlineData?.data) {
                         throw new Error(`Sin bytes de imagen desde ${modelName}`);
                     }
-                    return {
+                    const result: TechnicalImageResponse = {
                         base64Data: imgPart.inlineData.data,
                         mimeType: imgPart.inlineData.mimeType || outputMimeType,
                         modelUsed: modelName,
                         latencyMs: Date.now() - startTime,
                     };
+                    persistGeneratedImage(result);
+                    return result;
                 }
 
                 const response = await ai.models.generateImages({
                     model: modelName,
-                    prompt: req.prompt,
+                    prompt: sanitizedPrompt,
                     config: {
                         numberOfImages: 1,
                         outputMimeType,
-                        aspectRatio: req.aspectRatio || '1:1',
+                        aspectRatio,
                     },
                 });
 
@@ -1077,12 +1189,14 @@ export class ResilientAIClient {
                     throw new Error(`Sin bytes de imagen desde ${modelName}`);
                 }
 
-                return {
+                const result: TechnicalImageResponse = {
                     base64Data: imageBytes,
                     mimeType: outputMimeType,
                     modelUsed: modelName,
                     latencyMs: Date.now() - startTime,
                 };
+                persistGeneratedImage(result);
+                return result;
             } catch (err: any) {
                 lastErr = err instanceof Error ? err : new Error(String(err));
                 console.warn(`[SWARM-IMAGEN] Fallo en ${modelName}: ${lastErr.message}`);

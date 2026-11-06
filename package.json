@@ -8,6 +8,7 @@
     "dev:server": "NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true MOCK_EMAILS=false FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9190 FIREBASE_STORAGE_EMULATOR_HOST=127.0.0.1:9195 FIRESTORE_TELEMETRY_DISABLED=1 nodemon --watch src src/index.ts",
     "dev:server:test": "NODE_ENV=test TS_NODE_TRANSPILE_ONLY=true MOCK_EMAILS=true FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9190 FIREBASE_STORAGE_EMULATOR_HOST=127.0.0.1:9195 FIRESTORE_TELEMETRY_DISABLED=1 nodemon --watch src src/index.ts",
     "build": "tsc",
+    "audit:privacy": "node scripts/compliance/verify-ley21719-compliance.mjs",
     "start": "node dist/index.js",
     "build:functions": "npm install --prefix services/functions && npm run build --prefix services/functions",
     "serve:emulators": "unset _JAVA_OPTIONS && unset GOOGLE_APPLICATION_CREDENTIALS && [ -d \"/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home\" ] && export JAVA_HOME=\"/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home\" && export PATH=\"$JAVA_HOME/bin:$PATH\"; npx firebase-tools emulators:start --only auth,firestore,storage --import=./data",

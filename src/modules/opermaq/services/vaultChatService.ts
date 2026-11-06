@@ -1,17 +1,29 @@
 import { db } from '../../../config/firebase';
+import { ConfidentialityAirlockService } from '../../../core/privacy/ConfidentialityAirlockService';
 import { ResilientAIClient, Type } from '../../../core/resilient-ai-client';
 import { ChatMessage, PillarId, PillarItem, ProposedUpdate } from '../types/vault.types';
 import { PILLAR_AGENTS } from './pillarAgents';
 
 /**
- * VAULT CHAT SERVICE — ASISTENTE CONVERSACIONAL CONTEXTUAL DE ÍTEM (Etapa 4)
+ * VAULT CHAT SERVICE — MOTOR SOBERANO SÍMIL NOTEBOOKLM (Ley N° 19.628 / Ley N° 21.719 Chile)
+ *
+ * Opera en modo `SOVEREIGN_VAULT_FIRST` (`useGoogleSearch: false` por defecto):
+ * - Las consultas e intervenciones sobre fuentes de información privada del ítem se resuelven
+ *   100% dentro del perímetro soberano de MINREPORT (`southamerica-west1`) sin exponer fragmentos
+ *   a buscadores externos.
+ * - Solo cuando el operador solicita explícitamente contrastar o investigar en la web OEM pública
+ *   (`allowExternalWebSearch: true` o intención explícita de búsqueda web), se ejecuta una consulta
+ *   sanitizada previamente por `ConfidentialityAirlockService.scrubDeterministicPii()`.
  *
  * Intenciones soportadas:
- * - CHAT: Dudas técnicas acotadas estrictamente al ítem.
+ * - CHAT: Dudas técnicas acotadas estrictamente al ítem y sus fuentes privadas en la Bóveda.
  * - EDIT_PROPOSAL: Propuesta de redacción en `draftContent` (requiere aprobación humana en UI).
- * - RESEARCH_WEB: Búsqueda en vivo con `useGoogleSearch: true` e inyección automática de `ProposedUpdate[]` en `pending_conflicts`.
+ * - RESEARCH_WEB: Búsqueda en vivo con `useGoogleSearch: true` (previa sanitización Ley 21.719) e inyección automática de `ProposedUpdate[]` en `pending_conflicts`.
  * - SEARCH_IMAGE: Generación de prompt técnico optimizado en `promptImage`.
  */
+
+const EXPLICIT_WEB_RESEARCH_REGEX =
+    /\b(busca(?:r)?\s+en\s+(?:la\s+)?web|investiga(?:r)?\s+en\s+(?:la\s+)?web|internet|google|fuentes?\s+externas?|contrasta(?:r)?\s+en\s+línea|buscar?\s+ficha\s+oficial\s+en\s+web)\b/i;
 
 export interface VaultChatOptions {
     globalAssetId: string;
@@ -21,6 +33,7 @@ export interface VaultChatOptions {
     history: ChatMessage[];
     selectedFragment?: string;
     userEmail: string;
+    allowExternalWebSearch?: boolean;
 }
 
 export interface VaultChatResponse {
@@ -55,9 +68,26 @@ const PROPOSALS_SCHEMA = {
 };
 
 export async function processVaultChat(options: VaultChatOptions): Promise<VaultChatResponse> {
-    const { globalAssetId, pillarId, itemId, userRequest, history, selectedFragment } = options;
+    const {
+        globalAssetId,
+        pillarId,
+        itemId,
+        userRequest,
+        history,
+        selectedFragment,
+        allowExternalWebSearch,
+    } = options;
 
     try {
+        // Esclusa Ley N° 19.628 / Ley N° 21.719: sanitización determinista de PII chilena y datos de faena
+        const safeUserRequest = ConfidentialityAirlockService.scrubDeterministicPii(userRequest || '').scrubbed;
+        const safeSelectedFragment = selectedFragment
+            ? ConfidentialityAirlockService.scrubDeterministicPii(selectedFragment).scrubbed
+            : undefined;
+        // Modo SOVEREIGN_VAULT_FIRST: useGoogleSearch es false por defecto para proteger las fuentes privadas de la Bóveda
+        const shouldUseExternalSearch =
+            Boolean(allowExternalWebSearch) || EXPLICIT_WEB_RESEARCH_REGEX.test(safeUserRequest);
+
         const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
         const snap = await docRef.get();
         if (!snap.exists) throw new Error(`Catálogo no encontrado: ${globalAssetId}`);
@@ -81,7 +111,10 @@ export async function processVaultChat(options: VaultChatOptions): Promise<Vault
             history.length > 0
                 ? history
                       .slice(-10)
-                      .map((msg) => `${msg.role === 'user' ? 'HUMANO' : 'ASISTENTE'}: ${msg.content}`)
+                      .map((msg) => {
+                          const cleanMsg = ConfidentialityAirlockService.scrubDeterministicPii(msg.content || '').scrubbed;
+                          return `${msg.role === 'user' ? 'HUMANO' : 'ASISTENTE'}: ${cleanMsg}`;
+                      })
                       .join('\n')
                 : '(Sin mensajes previos en esta sesión)';
 
@@ -97,20 +130,20 @@ CONTEXTO DEL ACTIVO:
 - Ambiente: ${ambientes} | Contexto: ${contextos}
 
 ${
-    selectedFragment
-        ? `FRAGMENTO SELECCIONADO POR EL HUMANO PARA INTERVENIR:\n"${selectedFragment}"\n`
+    safeSelectedFragment
+        ? `FRAGMENTO SELECCIONADO POR EL HUMANO PARA INTERVENIR:\n"${safeSelectedFragment}"\n`
         : ''
 }
 HISTORIAL RECIENTE:
 ${conversationHistoryText}
 
 INSTRUCCIÓN ACTUAL DEL OPERADOR HUMANO:
-"${userRequest}"
+"${safeUserRequest}"
 
-REGLAS ESTRICTAS DE INTENCIÓN:
-1. Limita tu respuesta EXCLUSIVAMENTE a "${item.title}" de "${make} ${model}". Si piden temas ajenos, usa "intent": "CHAT" e indícalo concisamente.
+REGLAS ESTRICTAS DE INTENCIÓN (MODO SOBERANO LEY 21.719):
+1. Limita tu respuesta EXCLUSIVAMENTE a "${item.title}" de "${make} ${model}" basándote en el contenido privado de la Bóveda. Si piden temas ajenos, usa "intent": "CHAT" e indícalo concisamente.
 2. Si solicitan editar, corregir o eliminar partes del texto, usa "intent": "EDIT_PROPOSAL", coloca el Markdown completo resultante en "draftContent" e indica en "message" el cambio proyectado.
-3. Si solicitan investigar en la web datos complementarios o contrastar valores OEM, usa "intent": "RESEARCH_WEB" (ejecutando Google Search) y resume los hallazgos verificados en "message".
+3. Solo si el usuario solicitó explícitamente investigar en la web datos complementarios o contrastar valores OEM (${shouldUseExternalSearch ? 'HABILITADO' : 'DESHABILITADO — RESPONDER SOLO CON FUENTES INTERNAS DE LA BÓVEDA'}), usa "intent": "RESEARCH_WEB" y resume los hallazgos verificados en "message".
 4. Si solicitan generar una ilustración o diagrama técnico para el ítem, usa "intent": "SEARCH_IMAGE" y entrega el prompt técnico en inglés en "promptImage".
 
 Responde estrictamente en JSON puro:
@@ -124,10 +157,10 @@ Responde estrictamente en JSON puro:
 
         const aiRes = await ResilientAIClient.generate({
             module: 'opermaq',
-            preferredTier: 'SECONDARY',
+            preferredTier: shouldUseExternalSearch ? 'SECONDARY' : 'ANCHOR_HA',
             systemInstruction: agent.systemPrompt,
             temperature: 0.1,
-            useGoogleSearch: true,
+            useGoogleSearch: shouldUseExternalSearch,
             prompt: assistPrompt,
         });
 

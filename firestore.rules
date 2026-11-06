@@ -412,7 +412,16 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (
         isAccountMember(accountId) ||
         isAdmin() ||
-        (resource != null && 'ownerId' in resource.data && resource.data.ownerId == request.auth.uid)
+        isSystemPrivileged() ||
+        (resource != null && 'ownerId' in resource.data && resource.data.ownerId == request.auth.uid) ||
+        (
+          resource != null &&
+          'primaryOperator' in resource.data &&
+          resource.data.primaryOperator is map &&
+          'email' in resource.data.primaryOperator &&
+          'email' in request.auth.token &&
+          resource.data.primaryOperator.email == request.auth.token.email
+        )
       );
 
       // Alta exclusiva por servidor (/api/auth/register Admin SDK) o Super Admin / DevRoot
@@ -451,6 +460,19 @@ service cloud.firestore {
             'operationalSettings',
             'updatedAt'
           ])
+        ) ||
+        (
+          resource != null &&
+          'primaryOperator' in resource.data &&
+          resource.data.primaryOperator is map &&
+          resource.data.primaryOperator.status == 'PENDING' &&
+          'email' in request.auth.token &&
+          resource.data.primaryOperator.email == request.auth.token.email &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['primaryOperator']) &&
+          'primaryOperator' in request.resource.data &&
+          request.resource.data.primaryOperator is map &&
+          request.resource.data.primaryOperator.uid == request.auth.uid &&
+          request.resource.data.primaryOperator.status == 'ACTIVE'
         )
       );
 

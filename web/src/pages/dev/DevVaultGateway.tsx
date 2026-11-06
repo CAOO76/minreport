@@ -111,8 +111,22 @@ export const DevVaultGateway: React.FC = () => {
 
         const savedToken = localStorage.getItem('dev_auth_token') || localStorage.getItem('dev_vault_token');
         if (savedToken) {
-            setDevToken(savedToken);
-            setIsAuthenticated(true);
+            (async () => {
+                try {
+                    if (typeof auth.authStateReady === 'function') {
+                        await auth.authStateReady();
+                    }
+                    if (auth.currentUser) {
+                        const fresh = await auth.currentUser.getIdToken();
+                        localStorage.setItem('dev_auth_token', fresh);
+                        setDevToken(fresh);
+                        setIsAuthenticated(true);
+                        return;
+                    }
+                } catch { }
+                setDevToken(savedToken);
+                setIsAuthenticated(true);
+            })();
             return;
         }
 
@@ -567,6 +581,11 @@ export const DevVaultGateway: React.FC = () => {
      * Renueva automáticamente el token ID de Firebase ante vencimiento o desincronización (401).
      */
     const fetchWithDevAuth = async (endpoint: string, options: RequestInit = {}): Promise<Response> => {
+        if (typeof auth.authStateReady === 'function') {
+            try {
+                await auth.authStateReady();
+            } catch { }
+        }
         let activeToken = devToken || localStorage.getItem('dev_auth_token') || '';
         if (auth.currentUser) {
             try {

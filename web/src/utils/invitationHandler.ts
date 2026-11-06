@@ -11,6 +11,15 @@ import { Firestore, collection, query, where, getDocs, writeBatch, doc, arrayUni
  */
 export const checkAndClaimInvitations = async (user: User, db: Firestore): Promise<number> => {
     if (!user.email) return 0;
+    const emailLower = user.email.toLowerCase().trim();
+    if (
+        user.uid === 'dev-master-root-uid' ||
+        user.uid === 'minreport-dev-root-superadmin-2026' ||
+        emailLower === 'dev@minreport.com' ||
+        emailLower === 'admin@minreport.com'
+    ) {
+        return 0;
+    }
 
     try {
         const accountsRef = collection(db, 'accounts');

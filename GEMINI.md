@@ -26,6 +26,11 @@
 - **Módulos Nativos Integrados (`OPERMAQ` y `STOCKPILE CONTROL`):** Operan 100% integrados en MINREPORT (dentro del espacio de trabajo `/dev` para `DEV` sin saltos de ruta, y en `/opermaq` y `/stockpile` para clientes), compartiendo siempre la **misma base de datos Cloud Firestore y Cloud Storage**, la misma autenticación/sesión, los mismos contratos Zod (`web/src/contracts/index.ts`), el mismo motor Offline-First (`SyncQueueEngine`) y el mismo diseño UI/UX. El desarrollo como aplicaciones independientes está pendiente para una fase posterior y no debe insertarse dentro de MINREPORT.
 - **Prohibición de Plugins/SDK Legacy:** Queda estrictamente prohibido el uso de `@minreport/sdk`, `MockSecureContext`, `core-sdk-shield` o bases de datos aisladas por módulo.
 
+### 1.3 Cumplimiento Ley Chilena de Protección de Datos (Ley N° 19.628 y Nueva Ley N° 21.719) y Motor Propio Símil NotebookLM
+- **Marco Legal Obligatorio:** Todo dato procesado, generado o almacenado se rige por la **Ley N° 19.628** y la **Nueva Ley N° 21.719** de Protección de Datos Personales de Chile (*Privacidad desde el Diseño y por Defecto*, *Minimización*, *Responsabilidad Proactiva* y residencia exclusiva en `southamerica-west1`).
+- **Exclusividad del Motor Propio Símil NotebookLM:** La ingesta, almacenamiento y consulta de fuentes de información privada se ejecuta **100% mediante código propio en `southamerica-west1`** (`CasStorageService.ts`, `SegmentedDocumentProcessorService.ts` y `vaultChatService.ts` en modo `SOVEREIGN_VAULT_FIRST` con `useGoogleSearch: false` por defecto). Queda **estrictamente prohibido** alojar o exponer documentos, manuales, planos o nubes de puntos de MINREPORT o sus clientes en servicios de consumo de terceros (`NotebookLM` externo, `Google Drive` personal o `Google Colab`).
+- **Esclusa Zero-Trust Pre-Inferencia (`ConfidentialityAirlockService`):** Toda inferencia IA debe pasar por `resilient-ai-client.ts` bajo facturación Cloud corporativa CDPA (*Zero-Training*) y purgar determinísticamente PII chilena (`RUT`, `PPU`, teléfonos `+56`, correos, coordenadas GPS de faena y contratos/OC) antes de salir del servidor.
+
 ---
 
 ## 2. Arquitectura Web 3.0 Híbrida (5 Capas MINREPORT)
@@ -142,3 +147,4 @@ Antes de generar o modificar cualquier componente, interfaz o estilo en MINREPOR
 8. [ ] **Iconos:** ¿Usa exclusivamente `material-symbols-outlined`, planos, sin texto adosado y sin marcos en caja?
 9. [ ] **Formularios:** ¿Incluye `autocomplete="off"` y `spellCheck={false}`?
 10. [ ] **Métricas:** ¿Los números y tablas usan `tabular-nums font-mono` y espaciado de Fibonacci (`fib-8` a `fib-89`)?
+11. [ ] **Protección de Datos (Ley N° 19.628 / Ley N° 21.719):** ¿Cumple residencia en `southamerica-west1`, cero exposición a servicios de consumo externos (`Drive`/`NotebookLM`/`Colab`), modo `SOVEREIGN_VAULT_FIRST` y sanitización previa por `ConfidentialityAirlockService`?

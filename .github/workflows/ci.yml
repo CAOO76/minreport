@@ -32,6 +32,7 @@ jobs:
 
       - name: Verify & Build Backend Core (TypeScript Strict)
         run: |
+          npm run audit:privacy
           npx tsc --noEmit
           npm run build
 
