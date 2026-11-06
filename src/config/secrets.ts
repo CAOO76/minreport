@@ -187,12 +187,43 @@ export async function hydrateCoreSecrets(): Promise<void> {
     );
 }
 
+export type GeminiKeyProfile =
+    | 'DEV_AI_ULTRA_DEDICATED'
+    | 'DEV_LOCAL_SHARED'
+    | 'PROD_SECRET_MANAGER_GCP'
+    | 'VERTEX_AI_ADC'
+    | 'UNCONFIGURED';
+
 export async function resolveGeminiApiKey(): Promise<string | null> {
+    // En desarrollo / emulador local priorizar GEMINI_DEV_API_KEY (cuenta Google AI Ultra carlos.a.ocayo@gmail.com)
+    // para aislar la cuota gratuita de 5.000 búsquedas Grounding/mes del proyecto productivo minreport-8f2a8.
+    if (env.NODE_ENV !== 'production' || isRunningAgainstLocalEmulator()) {
+        const devDedicated = readLocalEnvHot('GEMINI_DEV_API_KEY') || process.env.GEMINI_DEV_API_KEY?.trim();
+        if (devDedicated) return devDedicated;
+    }
+
     const primary = await getSecret('GEMINI_API_KEY');
     if (primary) return primary;
     const secondary = await getSecret('GOOGLE_API_KEY');
     if (secondary) return secondary;
     return null;
+}
+
+export async function resolveActiveGeminiKeyProfile(): Promise<GeminiKeyProfile> {
+    if (env.NODE_ENV !== 'production' || isRunningAgainstLocalEmulator()) {
+        const devDedicated = readLocalEnvHot('GEMINI_DEV_API_KEY') || process.env.GEMINI_DEV_API_KEY?.trim();
+        if (devDedicated) return 'DEV_AI_ULTRA_DEDICATED';
+        const localShared =
+            readLocalEnvHot('GEMINI_API_KEY') ||
+            process.env.GEMINI_API_KEY?.trim() ||
+            readLocalEnvHot('GOOGLE_API_KEY') ||
+            process.env.GOOGLE_API_KEY?.trim();
+        if (localShared) return 'DEV_LOCAL_SHARED';
+    }
+    const prodKey = await getSecret('GEMINI_API_KEY');
+    if (prodKey) return 'PROD_SECRET_MANAGER_GCP';
+    if (process.env.USE_VERTEX_AI === 'true') return 'VERTEX_AI_ADC';
+    return 'UNCONFIGURED';
 }
 
 export async function resolveResendApiKey(): Promise<string | null> {

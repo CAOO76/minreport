@@ -831,8 +831,8 @@ export function extractHomologousAxisValues(record: {
                 item.value_kind || Array.isArray(item.allowed_enum_values)
                     ? cleanDynamicAxisValue(item.value_si, item)
                     : knownStaticAxis
-                    ? cleanCanonicalAxisValue(item.value_si, knownStaticAxis)
-                    : cleanDynamicAxisValue(item.value_si, { value_kind: 'PHYSICAL_MAGNITUDE' });
+                        ? cleanCanonicalAxisValue(item.value_si, knownStaticAxis)
+                        : cleanDynamicAxisValue(item.value_si, { value_kind: 'PHYSICAL_MAGNITUDE' });
 
             if (!cleaned && legacyLines.length > 0) {
                 const escapedLabel = item.label_es.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

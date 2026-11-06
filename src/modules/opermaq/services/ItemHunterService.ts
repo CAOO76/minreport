@@ -276,14 +276,14 @@ export async function huntVaultItem(options: HuntItemOptions): Promise<HuntItemR
     const localCorpusContext =
         localChunks.length > 0
             ? `\nEVIDENCIA OFICIAL YA INGERIDA EN CORPUS LOCAL OEM (PRIORIDAD MÁXIMA DE VERACIDAD):\n${localChunks
-                  .map(
-                      (c) =>
-                          `--- [${c.sourceFilename} Págs. ${c.pages.join(',') || 'N/A'} | ${c.title}] ---\n${c.markdown.slice(
-                              0,
-                              2400
-                          )}`
-                  )
-                  .join('\n\n')}\n`
+                .map(
+                    (c) =>
+                        `--- [${c.sourceFilename} Págs. ${c.pages.join(',') || 'N/A'} | ${c.title}] ---\n${c.markdown.slice(
+                            0,
+                            2400
+                        )}`
+                )
+                .join('\n\n')}\n`
             : '';
 
     const existingConceptIds = new Set<string>();
@@ -294,9 +294,8 @@ export async function huntVaultItem(options: HuntItemOptions): Promise<HuntItemR
             const rows = symSnap.docs.map((d) => {
                 existingConceptIds.add(d.id);
                 const s = d.data();
-                return `- concept_id: "${d.id}" | ISO: "${s.iso_reference || s.iso_code || 'N/A'}" | Nombre: "${
-                    s.technical_name_es || s.name_es || d.id
-                }"`;
+                return `- concept_id: "${d.id}" | ISO: "${s.iso_reference || s.iso_code || 'N/A'}" | Nombre: "${s.technical_name_es || s.name_es || d.id
+                    }"`;
             });
             symbologyCatalogBlock = `\nCATÁLOGO DE SÍMBOLOS VECTORIALES DISPONIBLES (ISO 7010 / ISO 7000 / ISO 2575 / IEC 60417 / GHS):\n${rows.join(
                 '\n'
@@ -592,9 +591,8 @@ Redacta directamente el desarrollo técnico completo en Markdown puro con tablas
             let finalMarkdown = markdownContent;
             for (const fig of mergedFigures) {
                 if (!finalMarkdown.includes(fig.storage_url)) {
-                    finalMarkdown += `\n\n![${fig.title_es}](${fig.storage_url})\n*Figura técnica: ${fig.title_es}${
-                        fig.caption_es ? ` — ${fig.caption_es}` : ''
-                    }*`;
+                    finalMarkdown += `\n\n![${fig.title_es}](${fig.storage_url})\n*Figura técnica: ${fig.title_es}${fig.caption_es ? ` — ${fig.caption_es}` : ''
+                        }*`;
                 }
             }
 
@@ -640,7 +638,7 @@ Redacta directamente el desarrollo técnico completo en Markdown puro con tablas
         });
 
         // Actualizar paquete ad-hoc de simbología con los nuevos símbolos detectados
-        await buildAndPersistAssetSymbologyPack(globalAssetId).catch(() => {});
+        await buildAndPersistAssetSymbologyPack(globalAssetId).catch(() => { });
 
         await onProgress?.(100, 'Caza técnica multimodal finalizada exitosamente.');
 
@@ -673,7 +671,7 @@ Redacta directamente el desarrollo técnico completo en Markdown puro con tablas
                     });
                 }
             })
-            .catch(() => {});
+            .catch(() => { });
         throw err;
     }
 }

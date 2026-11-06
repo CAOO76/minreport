@@ -175,8 +175,8 @@ Redacta en texto técnico estructurado (entre ${minItems} y ${maxItems} capítul
                     rawPrio === 'CRÍTICO' || rawPrio === 'CRITICO'
                         ? 'CRÍTICO'
                         : rawPrio === 'COMPLEMENTARIO'
-                        ? 'COMPLEMENTARIO'
-                        : 'IMPORTANTE';
+                            ? 'COMPLEMENTARIO'
+                            : 'IMPORTANTE';
                 return {
                     item_id: slugifyItemId(pillarId, String(r.title), preservedItems.length + index),
                     order: preservedItems.length + index + 1,
@@ -232,7 +232,7 @@ Redacta en texto técnico estructurado (entre ${minItems} y ${maxItems} capítul
                 [`knowledge_vault.${pillarId}.itemize_error`]: err?.message || 'Error en itemización.',
                 updatedAt: Date.now(),
             })
-            .catch(() => {});
+            .catch(() => { });
         throw err;
     }
 }
@@ -321,22 +321,22 @@ Responde ESTRICTAMENTE en JSON puro:
                 section: String(s.section || 'GENERAL').trim().toUpperCase(),
                 source: s.source
                     ? {
-                          type:
-                              s.source.type === 'OEM' || s.source.type === 'YOUTUBE'
-                                  ? s.source.type
-                                  : 'EXTERNO',
-                          author: String(s.source.author || makeOficial),
-                          description: String(s.source.description || title),
-                          url: String(s.source.url || groundedUrl),
-                      }
+                        type:
+                            s.source.type === 'OEM' || s.source.type === 'YOUTUBE'
+                                ? s.source.type
+                                : 'EXTERNO',
+                        author: String(s.source.author || makeOficial),
+                        description: String(s.source.description || title),
+                        url: String(s.source.url || groundedUrl),
+                    }
                     : groundedUrl
-                    ? {
-                          type: 'EXTERNO',
-                          author: makeOficial,
-                          description: title,
-                          url: groundedUrl,
-                      }
-                    : undefined,
+                        ? {
+                            type: 'EXTERNO',
+                            author: makeOficial,
+                            description: title,
+                            url: groundedUrl,
+                        }
+                        : undefined,
             });
         }
     }

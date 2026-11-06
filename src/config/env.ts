@@ -7,6 +7,7 @@ dotenv.config();
 const envSchema = z.object({
     RESEND_API_KEY: z.string().optional().default(''),
     GEMINI_API_KEY: z.string().optional().default(''),
+    GEMINI_DEV_API_KEY: z.string().optional().default(''),
     GOOGLE_API_KEY: z.string().optional().default(''),
     PORT: z.string().default('8080'),
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),

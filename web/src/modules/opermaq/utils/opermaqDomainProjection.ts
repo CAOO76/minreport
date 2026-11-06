@@ -895,8 +895,8 @@ export function extractHomologousAxisValues(record: {
                 item.value_kind || Array.isArray(item.allowed_enum_values)
                     ? cleanDynamicAxisValue(item.value_si, item)
                     : knownStaticAxis
-                    ? cleanCanonicalAxisValue(item.value_si, knownStaticAxis)
-                    : cleanDynamicAxisValue(item.value_si, { value_kind: 'PHYSICAL_MAGNITUDE' });
+                        ? cleanCanonicalAxisValue(item.value_si, knownStaticAxis)
+                        : cleanDynamicAxisValue(item.value_si, { value_kind: 'PHYSICAL_MAGNITUDE' });
 
             if (!cleaned && legacyLines.length > 0) {
                 const escapedLabel = item.label_es.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -985,9 +985,9 @@ export function extractHomologousAxisValues(record: {
     // 2. Rescate determinista desde `caracteristicas_principales[]` y/o `short_description` previo
     const shortDescTokens = record.short_description
         ? String(record.short_description)
-              .split('·')
-              .map((t) => t.trim())
-              .filter(Boolean)
+            .split('·')
+            .map((t) => t.trim())
+            .filter(Boolean)
         : [];
 
     const legacyLines = [

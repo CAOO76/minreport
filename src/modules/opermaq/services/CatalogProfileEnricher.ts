@@ -220,7 +220,7 @@ async function resolveTargetEquipmentTypeForAsset(
             needs_web_identification: boolean;
         }>({
             module: 'opermaq',
-            preferredTier: 'SECONDARY',
+            preferredTier: 'ANCHOR_HA',
             temperature: 0,
             topP: 1,
             topK: 1,
@@ -368,7 +368,8 @@ REGLAS ESTRICTAS:
 1. NO busques ni reportes parámetros ajenos a "${typeDoc.canonical_type_es}".
 2. Reporta valores exactos en unidades métricas SI (convirtiendo o conservando equivalencia métrica si la fuente está en sistema imperial).
 3. Si alguno de los parámetros anteriores NO figura con cifra explícita en las fuentes web consultadas, escribe literalmente "NO DECLARADO EN FUENTE CONSULTADA".
-4. PROHIBIDO incluir eslóganes comerciales, adjetivos promocionales ("mayor alcance", "alta eficiencia") o períodos históricos de fabricación.`;
+4. PROHIBIDO incluir eslóganes comerciales, adjetivos promocionales ("mayor alcance", "alta eficiencia") o períodos históricos de fabricación.
+5. PRESUPUESTO DE BÚSQUEDA GROUNDING (OPTIMIZACIÓN GEMINI 3.x): Ejecuta máximo 1 a 2 consultas de búsqueda consolidadas que combinen marca, modelo y palabras clave de la ficha técnica en una misma consulta.`;
 
         try {
             const pass1Res = await ResilientAIClient.generate({

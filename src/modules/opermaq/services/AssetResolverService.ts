@@ -364,7 +364,9 @@ ${axesInstructions}
 3. CERO PARÁMETROS CRUZADOS Y CERO PROSA PUBLICITARIA:
    - NO busques parámetros que no correspondan a "${typeDoc.canonical_type_es}".
    - Convierte o incluye siempre la equivalencia en unidades métricas SI.
-   - Si algún parámetro no figura explícitamente en las páginas web consultadas, escribe literalmente "NO DECLARADO EN FUENTE" sin inventar cifras ni redactar eslóganes promocionales.`;
+   - Si algún parámetro no figura explícitamente en las páginas web consultadas, escribe literalmente "NO DECLARADO EN FUENTE" sin inventar cifras ni redactar eslóganes promocionales.
+4. PRESUPUESTO DE BÚSQUEDA GROUNDING (OPTIMIZACIÓN DE CUOTA GEMINI 3.x):
+   - Ejecuta máximo 1 a 2 consultas de búsqueda web consolidadas que combinen la marca, el modelo y los parámetros anteriores en una misma consulta, evitando disparar búsquedas individuales separadas por cada parámetro.`;
 }
 
 function buildTypeScopedPass2ExtractionPrompt(params: {
@@ -471,7 +473,7 @@ export async function resolveMachineryCandidates(
             needs_web_to_identify_type: boolean;
         }>({
             module: 'opermaq',
-            preferredTier: 'SECONDARY',
+            preferredTier: 'ANCHOR_HA',
             temperature: 0,
             topP: 1,
             topK: 1,

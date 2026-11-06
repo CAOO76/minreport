@@ -173,12 +173,12 @@ export const TestPilotWorkspace: React.FC = () => {
 
         const mod: 'core' | 'opermaq' | 'stockpile' =
             activeTab === 'SIM_OPERMAQ_CATALOG' ||
-            activeTab === 'SIM_OPERMAQ_FLEET' ||
-            activeTab === 'SIM_OPERMAQ_SYMBOLOGY'
+                activeTab === 'SIM_OPERMAQ_FLEET' ||
+                activeTab === 'SIM_OPERMAQ_SYMBOLOGY'
                 ? 'opermaq'
                 : activeTab === 'SIM_STOCKPILE'
-                ? 'stockpile'
-                : 'core';
+                    ? 'stockpile'
+                    : 'core';
 
         const payload = {
             tenantId: session.tenantId || 'pilot-sandbox',
@@ -291,11 +291,10 @@ export const TestPilotWorkspace: React.FC = () => {
                             setErrorMsg(null);
                             setStatusMsg(null);
                         }}
-                        className={`py-fib-13 px-fib-8 bg-transparent border-0 border-b-2 text-xs font-mono uppercase tracking-wider cursor-pointer flex items-center gap-fib-8 whitespace-nowrap ${
-                            activeTab === tab.id
-                                ? 'border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-bold'
-                                : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                        }`}
+                        className={`py-fib-13 px-fib-8 bg-transparent border-0 border-b-2 text-xs font-mono uppercase tracking-wider cursor-pointer flex items-center gap-fib-8 whitespace-nowrap ${activeTab === tab.id
+                            ? 'border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-bold'
+                            : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                            }`}
                     >
                         <span className="material-symbols-outlined text-[18px]">{tab.icon}</span>
                         <span>{tab.label}</span>
@@ -442,11 +441,10 @@ export const TestPilotWorkspace: React.FC = () => {
                                                 <tr
                                                     key={cand.id}
                                                     onClick={() => handleSelectCandidate(cand)}
-                                                    className={`cursor-pointer ${
-                                                        selectedCandidate?.id === cand.id
-                                                            ? 'bg-[#C68346]/10'
-                                                            : 'hover:bg-[#FFFFFF] dark:hover:bg-[#000000]'
-                                                    }`}
+                                                    className={`cursor-pointer ${selectedCandidate?.id === cand.id
+                                                        ? 'bg-[#C68346]/10'
+                                                        : 'hover:bg-[#FFFFFF] dark:hover:bg-[#000000]'
+                                                        }`}
                                                 >
                                                     <td className="py-fib-13 px-fib-8 select-text">{cand.id}</td>
                                                     <td className="py-fib-13 px-fib-8 uppercase text-[#C68346]">{cand.module || 'core'}</td>
@@ -484,7 +482,7 @@ export const TestPilotWorkspace: React.FC = () => {
                                     <div className="space-y-fib-8 text-xs font-mono">
                                         {Object.entries(
                                             selectedCandidate.suggestedValues ||
-                                                (selectedCandidate.field ? { [selectedCandidate.field]: selectedCandidate.suggestedValue } : {})
+                                            (selectedCandidate.field ? { [selectedCandidate.field]: selectedCandidate.suggestedValue } : {})
                                         ).map(([fieldKey, suggestedVal]) => {
                                             const currentVal =
                                                 selectedCandidate.currentValues?.[fieldKey] ??

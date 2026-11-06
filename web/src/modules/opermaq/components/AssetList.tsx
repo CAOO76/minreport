@@ -311,18 +311,18 @@ export const AssetList: React.FC<AssetListProps> = ({
         const filtered = !normalizedQuery
             ? catalogRows
             : catalogRows.filter((row) =>
-                  [
-                      row.make_oficial,
-                      row.model_oficial,
-                      row.tipo_equipo,
-                      row.categoria_equipo,
-                      row.short_description,
-                  ]
-                      .filter(Boolean)
-                      .join(' ')
-                      .toLowerCase()
-                      .includes(normalizedQuery)
-              );
+                [
+                    row.make_oficial,
+                    row.model_oficial,
+                    row.tipo_equipo,
+                    row.categoria_equipo,
+                    row.short_description,
+                ]
+                    .filter(Boolean)
+                    .join(' ')
+                    .toLowerCase()
+                    .includes(normalizedQuery)
+            );
         return groupEquipmentByBrandAndType(filtered);
     }, [catalogRows, normalizedQuery]);
 
@@ -330,20 +330,20 @@ export const AssetList: React.FC<AssetListProps> = ({
         const filtered = !normalizedQuery
             ? fleetRows
             : fleetRows.filter((row) =>
-                  [
-                      row.make_oficial,
-                      row.model_oficial,
-                      row.tipo_equipo,
-                      row.categoria_equipo,
-                      row.short_description,
-                      row.serial_number,
-                      row.identifier_value,
-                  ]
-                      .filter(Boolean)
-                      .join(' ')
-                      .toLowerCase()
-                      .includes(normalizedQuery)
-              );
+                [
+                    row.make_oficial,
+                    row.model_oficial,
+                    row.tipo_equipo,
+                    row.categoria_equipo,
+                    row.short_description,
+                    row.serial_number,
+                    row.identifier_value,
+                ]
+                    .filter(Boolean)
+                    .join(' ')
+                    .toLowerCase()
+                    .includes(normalizedQuery)
+            );
         return groupEquipmentByBrandAndType(filtered);
     }, [fleetRows, normalizedQuery]);
 
@@ -645,10 +645,10 @@ export const AssetList: React.FC<AssetListProps> = ({
                             prev.map((row) =>
                                 row.id === updated.id
                                     ? {
-                                          ...row,
-                                          tipo_equipo: updated.tipo_equipo || row.tipo_equipo,
-                                          short_description: updated.short_description,
-                                      }
+                                        ...row,
+                                        tipo_equipo: updated.tipo_equipo || row.tipo_equipo,
+                                        short_description: updated.short_description,
+                                    }
                                     : row
                             )
                         );

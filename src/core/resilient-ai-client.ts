@@ -2,7 +2,11 @@ import { createHash } from 'crypto';
 import { GoogleGenAI, Type } from '@google/genai';
 import { z } from 'zod';
 import { db } from '../config/firebase';
-import { resolveGeminiApiKey } from '../config/secrets';
+import {
+    resolveActiveGeminiKeyProfile,
+    resolveGeminiApiKey,
+    type GeminiKeyProfile,
+} from '../config/secrets';
 
 export { Type };
 
@@ -142,8 +146,10 @@ export interface SwarmTierTelemetry {
 export interface SwarmTelemetrySnapshot {
     totalCalls: number;
     cacheHits: number;
+    l1MemoryCacheHits: number;
     totalErrors: number;
     gatewayConfigured: boolean;
+    activeKeyProfile: GeminiKeyProfile;
     region: string;
     updatedAt: string;
     tiers: Record<SwarmTier, SwarmTierTelemetry>;
@@ -168,6 +174,19 @@ const EMBEDDING_MODELS = [
 const memoryEmbeddingCache = new Map<string, number[]>();
 const MAX_MEMORY_EMBEDDINGS = 1500;
 
+interface CachedInferenceL1Entry {
+    text: string;
+    model: string;
+    tierUsed: SwarmTier;
+    groundingSources: GroundingSource[];
+    webSearchQueries: string[];
+    expiresAt: number;
+}
+
+const memoryInferenceCache = new Map<string, CachedInferenceL1Entry>();
+const MAX_MEMORY_INFERENCE_ENTRIES = 400;
+const MEMORY_INFERENCE_TTL_MS = 30 * 60 * 1000;
+
 interface InternalTierStats {
     calls: number;
     errors: number;
@@ -179,11 +198,13 @@ interface InternalTierStats {
 const runtimeTelemetry: {
     totalCalls: number;
     cacheHits: number;
+    l1MemoryCacheHits: number;
     totalErrors: number;
     tiers: Record<SwarmTier, InternalTierStats>;
 } = {
     totalCalls: 0,
     cacheHits: 0,
+    l1MemoryCacheHits: 0,
     totalErrors: 0,
     tiers: {
         PRIMARY: { calls: 0, errors: 0, totalLatencyMs: 0, lastLatencyMs: null, lastUsedAt: null },
@@ -191,6 +212,12 @@ const runtimeTelemetry: {
         ANCHOR_HA: { calls: 0, errors: 0, totalLatencyMs: 0, lastLatencyMs: null, lastUsedAt: null },
     },
 };
+
+const TELEMETRY_FLUSH_INTERVAL_MS = 60_000;
+const TELEMETRY_FLUSH_BATCH_SIZE = 20;
+let pendingTelemetryOps = 0;
+let lastTelemetryFlushAt = 0;
+let telemetryFlushTimer: NodeJS.Timeout | null = null;
 
 let cachedGenAIClient: { key: string; client: GoogleGenAI } | null = null;
 const pilotRulesCache = new Map<string, { expiresAt: number; rulesBlock: string }>();
@@ -218,6 +245,8 @@ export class ResilientAIClient {
             // Usar contadores en memoria si el documento aún no existe o el emulador inicia
         }
 
+        const activeKeyProfile = await resolveActiveGeminiKeyProfile();
+
         const formatTier = (tier: SwarmTier): SwarmTierTelemetry => {
             const s = runtimeTelemetry.tiers[tier];
             return {
@@ -233,8 +262,10 @@ export class ResilientAIClient {
         return {
             totalCalls: Math.max(runtimeTelemetry.totalCalls, persistedTotalCalls),
             cacheHits: Math.max(runtimeTelemetry.cacheHits, persistedCacheHits),
+            l1MemoryCacheHits: runtimeTelemetry.l1MemoryCacheHits,
             totalErrors: Math.max(runtimeTelemetry.totalErrors, persistedErrors),
             gatewayConfigured: Boolean(process.env.AI_GATEWAY_BASE_URL),
+            activeKeyProfile,
             region: process.env.VERTEX_AI_LOCATION || process.env.GCP_LOCATION || 'southamerica-west1',
             updatedAt: new Date().toISOString(),
             tiers: {
@@ -245,18 +276,47 @@ export class ResilientAIClient {
         };
     }
 
+    private static flushTelemetryToFirestore(): void {
+        if (pendingTelemetryOps === 0) return;
+        pendingTelemetryOps = 0;
+        lastTelemetryFlushAt = Date.now();
+        if (telemetryFlushTimer) {
+            clearTimeout(telemetryFlushTimer);
+            telemetryFlushTimer = null;
+        }
+
+        db.collection(this.TELEMETRY_COLLECTION)
+            .doc('swarm_aggregate')
+            .set(
+                {
+                    totalCalls: runtimeTelemetry.totalCalls,
+                    cacheHits: runtimeTelemetry.cacheHits,
+                    l1MemoryCacheHits: runtimeTelemetry.l1MemoryCacheHits,
+                    totalErrors: runtimeTelemetry.totalErrors,
+                    region: process.env.VERTEX_AI_LOCATION || process.env.GCP_LOCATION || 'southamerica-west1',
+                    updatedAt: new Date().toISOString(),
+                },
+                { merge: true }
+            )
+            .catch(() => { });
+    }
+
     private static recordTelemetryEvent(params: {
         tier: SwarmTier;
         model: string;
         module: AIModuleScope;
         latencyMs: number;
         cached: boolean;
+        l1MemoryHit?: boolean;
         success: boolean;
         errorMsg?: string;
     }): void {
         const nowIso = new Date().toISOString();
         if (params.cached) {
             runtimeTelemetry.cacheHits += 1;
+            if (params.l1MemoryHit) {
+                runtimeTelemetry.l1MemoryCacheHits += 1;
+            }
             runtimeTelemetry.totalCalls += 1;
         } else if (params.success) {
             runtimeTelemetry.totalCalls += 1;
@@ -270,19 +330,21 @@ export class ResilientAIClient {
             runtimeTelemetry.tiers[params.tier].errors += 1;
         }
 
-        db.collection(this.TELEMETRY_COLLECTION)
-            .doc('swarm_aggregate')
-            .set(
-                {
-                    totalCalls: runtimeTelemetry.totalCalls,
-                    cacheHits: runtimeTelemetry.cacheHits,
-                    totalErrors: runtimeTelemetry.totalErrors,
-                    region: process.env.VERTEX_AI_LOCATION || process.env.GCP_LOCATION || 'southamerica-west1',
-                    updatedAt: nowIso,
-                },
-                { merge: true }
-            )
-            .catch(() => { });
+        // Batching de escrituras en Firestore (-95% escrituras en ai_telemetry/swarm_aggregate):
+        // solo persiste cada 20 operaciones o tras 60 segundos desde el último flush.
+        pendingTelemetryOps += 1;
+        const elapsedSinceLastFlush = Date.now() - lastTelemetryFlushAt;
+        if (pendingTelemetryOps >= TELEMETRY_FLUSH_BATCH_SIZE || elapsedSinceLastFlush >= TELEMETRY_FLUSH_INTERVAL_MS) {
+            this.flushTelemetryToFirestore();
+        } else if (!telemetryFlushTimer) {
+            telemetryFlushTimer = setTimeout(() => {
+                telemetryFlushTimer = null;
+                this.flushTelemetryToFirestore();
+            }, 15_000);
+            if (typeof telemetryFlushTimer.unref === 'function') {
+                telemetryFlushTimer.unref();
+            }
+        }
     }
 
     /**
@@ -376,17 +438,39 @@ export class ResilientAIClient {
         return `${baseInstruction || ''}${rulesBlock}`.trim();
     }
 
+    private static resolveEffectiveTier(req: AIInferenceRequest): SwarmTier {
+        if (req.preferredTier) return req.preferredTier;
+        // Optimización de costos: extracciones estructuradas deterministas (Temp <= 0.1) sin búsqueda web
+        // ni mutación HITL crítica se enrutan por defecto a SECONDARY (Flash) ahorrando ~80% de tokens frente a Pro.
+        const isDeterministicSchemaExtraction =
+            Boolean(req.responseSchema) &&
+            !req.useGoogleSearch &&
+            !req.useUrlContext &&
+            !req.useCodeExecution &&
+            (!req.media || req.media.length === 0) &&
+            (!req.fileParts || req.fileParts.length === 0) &&
+            (req.temperature ?? 0.2) <= 0.1 &&
+            !req.requireHITL;
+        return isDeterministicSchemaExtraction ? 'SECONDARY' : 'PRIMARY';
+    }
+
     private static computeCacheKey(req: AIInferenceRequest, effectiveSys?: string): string {
         const schemaSig = req.responseSchema ? JSON.stringify(req.responseSchema) : '';
-        const targetTier = req.preferredTier || 'PRIMARY';
+        const targetTier = this.resolveEffectiveTier(req);
+        const normalizedPrompt = req.prompt.replace(/\s+/g, ' ').trim();
+        // Consultas Grounded de catálogo maestro en OPERMAQ comparten caché global cross-tenant
+        const effectiveScope =
+            req.module === 'opermaq' && (req.useGoogleSearch || req.requireGroundedEvidence) && !req.tenantId
+                ? 'GLOBAL'
+                : req.tenantId || 'GLOBAL';
         const normalized = JSON.stringify({
             v: '4.0-fail-closed-grounded',
-            tenantId: req.tenantId || 'GLOBAL',
+            tenantId: effectiveScope,
             module: req.module,
             tier: targetTier,
             model: SWARM_MODELS[targetTier],
-            prompt: req.prompt.trim(),
-            sys: (effectiveSys || '').trim(),
+            prompt: normalizedPrompt,
+            sys: (effectiveSys || '').replace(/\s+/g, ' ').trim(),
             temp: req.temperature ?? 0.2,
             search: Boolean(req.useGoogleSearch),
             reqGrounded: Boolean(req.requireGroundedEvidence),
@@ -402,6 +486,14 @@ export class ResilientAIClient {
         if (preferred === 'ANCHOR_HA') return ['ANCHOR_HA', 'SECONDARY'];
         if (preferred === 'SECONDARY') return ['SECONDARY', 'ANCHOR_HA', 'PRIMARY'];
         return ['PRIMARY', 'SECONDARY', 'ANCHOR_HA'];
+    }
+
+    private static setMemoryInferenceCache(cacheKey: string, entry: CachedInferenceL1Entry): void {
+        if (memoryInferenceCache.size >= MAX_MEMORY_INFERENCE_ENTRIES) {
+            const oldestKey = memoryInferenceCache.keys().next().value;
+            if (oldestKey) memoryInferenceCache.delete(oldestKey);
+        }
+        memoryInferenceCache.set(cacheKey, entry);
     }
 
     private static buildThinkingConfig(
@@ -590,6 +682,36 @@ export class ResilientAIClient {
         const cacheKey = isCacheable ? this.computeCacheKey(req, effectiveSystemInstruction) : '';
 
         if (isCacheable && cacheKey) {
+            // 1. Nivel L1 RAM (< 1 ms, 0 lecturas Firestore, $0 tokens)
+            const l1Hit = memoryInferenceCache.get(cacheKey);
+            if (l1Hit && l1Hit.expiresAt > Date.now()) {
+                const violatesGroundingGate =
+                    (req.useGoogleSearch || req.requireGroundedEvidence) && l1Hit.groundingSources.length === 0;
+                if (!violatesGroundingGate && l1Hit.text.trim().length > 0) {
+                    const hitLatency = Date.now() - startTime;
+                    this.recordTelemetryEvent({
+                        tier: l1Hit.tierUsed,
+                        model: l1Hit.model,
+                        module: req.module,
+                        latencyMs: hitLatency,
+                        cached: true,
+                        l1MemoryHit: true,
+                        success: true,
+                    });
+                    return {
+                        text: l1Hit.text,
+                        model: l1Hit.model,
+                        tierUsed: l1Hit.tierUsed,
+                        latencyMs: hitLatency,
+                        requiresHumanApproval: Boolean(req.requireHITL),
+                        cached: true,
+                        groundingSources: l1Hit.groundingSources,
+                        webSearchQueries: l1Hit.webSearchQueries,
+                    };
+                }
+            }
+
+            // 2. Nivel L2 Firestore (ai_inference_cache)
             try {
                 const cachedSnap = await db.collection(this.CACHE_COLLECTION).doc(cacheKey).get();
                 if (cachedSnap.exists) {
@@ -605,10 +727,20 @@ export class ResilientAIClient {
                         cachedData.text.trim().length > 0
                     ) {
                         const hitTier = (cachedData.tierUsed as SwarmTier) || 'PRIMARY';
+                        const hitModel = cachedData.model || SWARM_MODELS[hitTier];
+                        const hitQueries = Array.isArray(cachedData.webSearchQueries) ? cachedData.webSearchQueries : [];
+                        this.setMemoryInferenceCache(cacheKey, {
+                            text: cachedData.text,
+                            model: hitModel,
+                            tierUsed: hitTier,
+                            groundingSources: cachedSources,
+                            webSearchQueries: hitQueries,
+                            expiresAt: Date.now() + MEMORY_INFERENCE_TTL_MS,
+                        });
                         const hitLatency = Date.now() - startTime;
                         this.recordTelemetryEvent({
                             tier: hitTier,
-                            model: cachedData.model || SWARM_MODELS[hitTier],
+                            model: hitModel,
                             module: req.module,
                             latencyMs: hitLatency,
                             cached: true,
@@ -616,13 +748,13 @@ export class ResilientAIClient {
                         });
                         return {
                             text: cachedData.text,
-                            model: cachedData.model,
+                            model: hitModel,
                             tierUsed: hitTier,
                             latencyMs: hitLatency,
                             requiresHumanApproval: Boolean(req.requireHITL),
                             cached: true,
                             groundingSources: cachedSources,
-                            webSearchQueries: Array.isArray(cachedData.webSearchQueries) ? cachedData.webSearchQueries : [],
+                            webSearchQueries: hitQueries,
                         };
                     }
                 }
@@ -631,7 +763,7 @@ export class ResilientAIClient {
             }
         }
 
-        const tiers = this.buildTierOrder(req.preferredTier);
+        const tiers = this.buildTierOrder(this.resolveEffectiveTier(req));
         let lastError: Error | null = null;
         let hadUngroundedAttempt = false;
 
@@ -755,6 +887,14 @@ export class ResilientAIClient {
                         isCacheable && cacheKey && !(req.useGoogleSearch && sources.length === 0);
 
                     if (canPersistCache) {
+                        this.setMemoryInferenceCache(cacheKey, {
+                            text,
+                            model: modelName,
+                            tierUsed: tier,
+                            groundingSources: sources,
+                            webSearchQueries: queries,
+                            expiresAt: Date.now() + MEMORY_INFERENCE_TTL_MS,
+                        });
                         db.collection(this.CACHE_COLLECTION)
                             .doc(cacheKey)
                             .set({
