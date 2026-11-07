@@ -82,7 +82,11 @@
     "error_select_tenant": "Select an active account to register fleet units.",
     "error_db_prefix": "Persistence error:",
     "offline_manual_fallback_notice": "Offline mode. You may manually queue the base identifier for later sync.",
-    "offline_manual_fallback_btn": "ENABLE OFFLINE REGISTRATION"
+    "offline_manual_fallback_btn": "ENABLE OFFLINE REGISTRATION",
+    "clarification_input_label": "Add technical precision to search",
+    "clarification_input_placeholder": "e.g. Chilean market version, 1.9L HDi 150 HP diesel engine, double cab, 4x4, year 2022...",
+    "clarification_apply_btn": "REFINE SEARCH",
+    "clarification_toggle_label": "Provide additional technical details if expected version is missing"
   },
   "admin": {
     "CONTROL_CENTER": "CONTROL_CENTER / ADMIN",

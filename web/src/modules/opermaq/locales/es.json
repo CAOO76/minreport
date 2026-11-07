@@ -82,7 +82,11 @@
     "error_select_tenant": "Seleccione una cuenta activa para registrar unidades en la flota.",
     "error_db_prefix": "Error de persistencia:",
     "offline_manual_fallback_notice": "Sin conexión a red. Puede encolar manualmente el identificador base para sincronización posterior.",
-    "offline_manual_fallback_btn": "HABILITAR REGISTRO OFFLINE"
+    "offline_manual_fallback_btn": "HABILITAR REGISTRO OFFLINE",
+    "clarification_input_label": "Aportar precisión técnica a la búsqueda",
+    "clarification_input_placeholder": "Ej: versión comercializada en Chile, motor 1.9L HDi 150 HP, doble cabina, tracción 4x4, año 2022...",
+    "clarification_apply_btn": "REFINAR BÚSQUEDA",
+    "clarification_toggle_label": "Aportar datos técnicos si el resultado esperado no figura en la lista"
   },
   "admin": {
     "CONTROL_CENTER": "CONTROL_CENTER / ADMIN",

@@ -743,7 +743,7 @@ export const DevVaultGateway: React.FC = () => {
     if (!isAuthenticated) {
         return (
             <div className="min-h-screen bg-white dark:bg-[#000000] text-slate-900 dark:text-[#F3F4F6] flex flex-col items-center justify-center p-6 antialiased select-none font-sans relative">
-                
+
                 {/* Controles Flotantes Superior */}
                 <div className="absolute top-6 right-6 flex items-center gap-3 z-50">
                     <LanguageSwitch />
@@ -802,7 +802,7 @@ export const DevVaultGateway: React.FC = () => {
                 {/* ESTADOS CON CAMPOS HABILITADOS: SOLO TRAS CONFIRMAR DESDE EL EMAIL */}
                 {(authState === 'OTP' || authState === 'USER' || authState === 'PASSWORD' || authState === 'PASSWORD_ROTATION') && (
                     <div className="w-full max-w-sm mx-auto space-y-6">
-                        
+
                         {/* Cabecera Discreta */}
                         <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#12151C] pb-3">
                             <div className="flex items-center gap-2">
@@ -1101,11 +1101,10 @@ export const DevVaultGateway: React.FC = () => {
                             onClick={() => setActiveSection('PILOTS')}
                             title="Pilotos & Accesos DEV"
                             aria-label="Pilotos"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                                activeSection === 'PILOTS'
-                                    ? 'text-[#C68346]'
-                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                            }`}
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'PILOTS'
+                                ? 'text-[#C68346]'
+                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                }`}
                         >
                             {activeSection === 'PILOTS' && (
                                 <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
@@ -1118,11 +1117,10 @@ export const DevVaultGateway: React.FC = () => {
                             onClick={() => setActiveSection('B2B_EMPRESA')}
                             title="Empresa B2B"
                             aria-label="Empresa"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                                activeSection === 'B2B_EMPRESA'
-                                    ? 'text-[#C68346]'
-                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                            }`}
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'B2B_EMPRESA'
+                                ? 'text-[#C68346]'
+                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                }`}
                         >
                             {activeSection === 'B2B_EMPRESA' && (
                                 <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
@@ -1135,11 +1133,10 @@ export const DevVaultGateway: React.FC = () => {
                             onClick={() => setActiveSection('STAFF')}
                             title="Staff Operativo"
                             aria-label="Staff"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                                activeSection === 'STAFF'
-                                    ? 'text-[#C68346]'
-                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                            }`}
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'STAFF'
+                                ? 'text-[#C68346]'
+                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                }`}
                         >
                             {activeSection === 'STAFF' && (
                                 <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
@@ -1152,11 +1149,10 @@ export const DevVaultGateway: React.FC = () => {
                             onClick={() => setActiveSection('JOB_PROFILES')}
                             title="Perfiles de Cargo"
                             aria-label="Perfiles"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                                activeSection === 'JOB_PROFILES'
-                                    ? 'text-[#C68346]'
-                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                            }`}
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'JOB_PROFILES'
+                                ? 'text-[#C68346]'
+                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                }`}
                         >
                             {activeSection === 'JOB_PROFILES' && (
                                 <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
@@ -1169,11 +1165,10 @@ export const DevVaultGateway: React.FC = () => {
                             onClick={() => setActiveSection('B2B_ADMINS')}
                             title="Gobernanza Administradores"
                             aria-label="Administradores"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                                activeSection === 'B2B_ADMINS'
-                                    ? 'text-[#C68346]'
-                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                            }`}
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'B2B_ADMINS'
+                                ? 'text-[#C68346]'
+                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                }`}
                         >
                             {activeSection === 'B2B_ADMINS' && (
                                 <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
@@ -1186,11 +1181,10 @@ export const DevVaultGateway: React.FC = () => {
                             onClick={() => setActiveSection('BRANDING')}
                             title="Gestor de Logos & Identidad"
                             aria-label="Gestor de Logos"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                                activeSection === 'BRANDING'
-                                    ? 'text-[#C68346]'
-                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                            }`}
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'BRANDING'
+                                ? 'text-[#C68346]'
+                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                }`}
                         >
                             {activeSection === 'BRANDING' && (
                                 <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
@@ -1203,11 +1197,10 @@ export const DevVaultGateway: React.FC = () => {
                             onClick={() => setActiveSection('B2B_METRICAS')}
                             title="Métricas & Auditoría"
                             aria-label="Métricas"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                                activeSection === 'B2B_METRICAS'
-                                    ? 'text-[#C68346]'
-                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                            }`}
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'B2B_METRICAS'
+                                ? 'text-[#C68346]'
+                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                }`}
                         >
                             {activeSection === 'B2B_METRICAS' && (
                                 <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
@@ -1226,11 +1219,10 @@ export const DevVaultGateway: React.FC = () => {
                             onClick={() => setActiveSection('MODULE_STOCKPILE')}
                             title="STOCKPILE"
                             aria-label="Stockpile"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                                activeSection === 'MODULE_STOCKPILE'
-                                    ? 'text-[#C68346]'
-                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                            }`}
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_STOCKPILE'
+                                ? 'text-[#C68346]'
+                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                }`}
                         >
                             {activeSection === 'MODULE_STOCKPILE' && (
                                 <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
@@ -1249,11 +1241,10 @@ export const DevVaultGateway: React.FC = () => {
                             onClick={() => setActiveSection('MODULE_OPERMAQ_CATALOG')}
                             title="CATÁLOGO"
                             aria-label="Catálogo"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                                activeSection === 'MODULE_OPERMAQ_CATALOG'
-                                    ? 'text-[#C68346]'
-                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                            }`}
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_CATALOG'
+                                ? 'text-[#C68346]'
+                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                }`}
                         >
                             {activeSection === 'MODULE_OPERMAQ_CATALOG' && (
                                 <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
@@ -1266,11 +1257,10 @@ export const DevVaultGateway: React.FC = () => {
                             onClick={() => setActiveSection('MODULE_OPERMAQ_FLEET')}
                             title="FLOTA"
                             aria-label="Flota"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                                activeSection === 'MODULE_OPERMAQ_FLEET'
-                                    ? 'text-[#C68346]'
-                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                            }`}
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_FLEET'
+                                ? 'text-[#C68346]'
+                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                }`}
                         >
                             {activeSection === 'MODULE_OPERMAQ_FLEET' && (
                                 <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
@@ -1283,11 +1273,10 @@ export const DevVaultGateway: React.FC = () => {
                             onClick={() => setActiveSection('MODULE_OPERMAQ_SYMBOLOGY')}
                             title="SIMBOLOGÍA"
                             aria-label="Simbología"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                                activeSection === 'MODULE_OPERMAQ_SYMBOLOGY'
-                                    ? 'text-[#C68346]'
-                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                            }`}
+                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_SYMBOLOGY'
+                                ? 'text-[#C68346]'
+                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                }`}
                         >
                             {activeSection === 'MODULE_OPERMAQ_SYMBOLOGY' && (
                                 <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
@@ -1301,7 +1290,7 @@ export const DevVaultGateway: React.FC = () => {
                     ÁREA DE TRABAJO PRINCIPAL (CAMBIA SEGÚN EL BOTÓN ACTIVO)
                     ========================================================================= */}
                 <main className={`flex-1 h-full ${isModuleSection ? 'p-0 overflow-hidden flex flex-col' : 'p-8 overflow-y-auto'}`}>
-                    
+
                     {/* Header Técnico Aséptico Superior (Oculto en módulos para visualización integrada a pantalla completa) */}
                     {!isModuleSection && (
                         <div className="mb-[21px] border-b border-slate-200 dark:border-[#12151C] pb-[13px] flex justify-between items-end">
@@ -1319,345 +1308,344 @@ export const DevVaultGateway: React.FC = () => {
                         </div>
                     )}
 
-                {/* CONTENIDO 1: GESTIÓN DE PILOTOS */}
-                {activeSection === 'PILOTS' && (
-                    <div className="space-y-8">
-                        {pilotError && (
-                            <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs font-mono rounded-none">
-                                {pilotError}
-                            </div>
-                        )}
-
-                        {/* Módulo Alta TEST-PILOT */}
-                        <div className="border border-slate-200 dark:border-[#12151C] p-6 rounded-none bg-[#F8FAFC] dark:bg-[#07090D]">
-                            <h2 className="text-xs font-mono font-bold uppercase tracking-wider mb-4 text-[#C68346]">
-                                ALTA DE PILOTO
-                            </h2>
-
-                            <form onSubmit={handleCreatePilot} autoComplete="off" spellCheck={false} className="flex flex-col lg:flex-row gap-4 items-end">
-                                <div className="flex-1 w-full">
-                                    <label className="block text-xs uppercase tracking-wider text-slate-500 dark:text-[#8A93A6] mb-1 font-mono">NOMBRE</label>
-                                    <input
-                                        required
-                                        type="text"
-                                        autoComplete="off"
-                                        spellCheck={false}
-                                        value={pilotName}
-                                        onChange={e => setPilotName(e.target.value)}
-                                        className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#C68346] rounded-none"
-                                    />
+                    {/* CONTENIDO 1: GESTIÓN DE PILOTOS */}
+                    {activeSection === 'PILOTS' && (
+                        <div className="space-y-8">
+                            {pilotError && (
+                                <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs font-mono rounded-none">
+                                    {pilotError}
                                 </div>
+                            )}
 
-                                <div className="flex-1 w-full">
-                                    <label className="block text-xs uppercase tracking-wider text-slate-500 dark:text-[#8A93A6] mb-1 font-mono">EMAIL</label>
-                                    <input
-                                        required
-                                        type="email"
-                                        autoComplete="off"
-                                        spellCheck={false}
-                                        value={pilotEmail}
-                                        onChange={e => setPilotEmail(e.target.value)}
-                                        className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#C68346] rounded-none select-text"
-                                    />
-                                </div>
-
-                                <div className="flex-1 w-full">
-                                    <label className="block text-xs uppercase tracking-wider text-slate-500 dark:text-[#8A93A6] mb-1 font-mono">ORGANIZACIÓN</label>
-                                    <input
-                                        type="text"
-                                        autoComplete="off"
-                                        spellCheck={false}
-                                        value={pilotOrg}
-                                        onChange={e => setPilotOrg(e.target.value)}
-                                        placeholder="Minera / Partner"
-                                        className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#C68346] rounded-none"
-                                    />
-                                </div>
-
-                                <div className="w-24">
-                                    <label className="block text-xs uppercase tracking-wider text-slate-500 dark:text-[#8A93A6] mb-1 font-mono">DÍAS</label>
-                                    <input
-                                        type="number"
-                                        min={7}
-                                        max={365}
-                                        autoComplete="off"
-                                        spellCheck={false}
-                                        value={pilotDays}
-                                        onChange={e => setPilotDays(Number(e.target.value))}
-                                        className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono tabular-nums focus:outline-none focus:border-[#C68346] rounded-none"
-                                    />
-                                </div>
-
-                                <div className="flex-1 w-full">
-                                    <label className="block text-xs uppercase tracking-wider text-slate-500 dark:text-[#8A93A6] mb-1 font-mono">PROPÓSITO</label>
-                                    <input
-                                        required
-                                        type="text"
-                                        autoComplete="off"
-                                        spellCheck={false}
-                                        value={pilotPurpose}
-                                        onChange={e => setPilotPurpose(e.target.value)}
-                                        placeholder="Pruebas de módulo"
-                                        className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#C68346] rounded-none"
-                                    />
-                                </div>
-
-                                <button
-                                    type="submit"
-                                    disabled={pilotSubmitting}
-                                    className="w-full lg:w-auto bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold uppercase tracking-wider text-xs py-2.5 px-6 transition-colors rounded-none disabled:opacity-50 cursor-pointer"
-                                >
-                                    {pilotSubmitting ? 'ACREDITANDO...' : 'ACREDITAR'}
-                                </button>
-                            </form>
-                        </div>
-
-                        {/* Módulo Tabla TEST-PILOT */}
-                        <div>
-                            <div className="flex justify-between items-center mb-4 border-b border-slate-200 dark:border-[#12151C] pb-2">
-                                <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-900 dark:text-[#F3F4F6]">
-                                    REGISTRO DE PILOTOS
+                            {/* Módulo Alta TEST-PILOT */}
+                            <div className="border border-slate-200 dark:border-[#12151C] p-6 rounded-none bg-[#F8FAFC] dark:bg-[#07090D]">
+                                <h2 className="text-xs font-mono font-bold uppercase tracking-wider mb-4 text-[#C68346]">
+                                    ALTA DE PILOTO
                                 </h2>
-                                <button
-                                    type="button"
-                                    onClick={fetchPilots}
-                                    title="Recargar pilotos"
-                                    className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
-                                >
-                                    <span className="material-symbols-outlined text-[18px]">refresh</span>
-                                </button>
+
+                                <form onSubmit={handleCreatePilot} autoComplete="off" spellCheck={false} className="flex flex-col lg:flex-row gap-4 items-end">
+                                    <div className="flex-1 w-full">
+                                        <label className="block text-xs uppercase tracking-wider text-slate-500 dark:text-[#8A93A6] mb-1 font-mono">NOMBRE</label>
+                                        <input
+                                            required
+                                            type="text"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={pilotName}
+                                            onChange={e => setPilotName(e.target.value)}
+                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#C68346] rounded-none"
+                                        />
+                                    </div>
+
+                                    <div className="flex-1 w-full">
+                                        <label className="block text-xs uppercase tracking-wider text-slate-500 dark:text-[#8A93A6] mb-1 font-mono">EMAIL</label>
+                                        <input
+                                            required
+                                            type="email"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={pilotEmail}
+                                            onChange={e => setPilotEmail(e.target.value)}
+                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#C68346] rounded-none select-text"
+                                        />
+                                    </div>
+
+                                    <div className="flex-1 w-full">
+                                        <label className="block text-xs uppercase tracking-wider text-slate-500 dark:text-[#8A93A6] mb-1 font-mono">ORGANIZACIÓN</label>
+                                        <input
+                                            type="text"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={pilotOrg}
+                                            onChange={e => setPilotOrg(e.target.value)}
+                                            placeholder="Minera / Partner"
+                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#C68346] rounded-none"
+                                        />
+                                    </div>
+
+                                    <div className="w-24">
+                                        <label className="block text-xs uppercase tracking-wider text-slate-500 dark:text-[#8A93A6] mb-1 font-mono">DÍAS</label>
+                                        <input
+                                            type="number"
+                                            min={7}
+                                            max={365}
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={pilotDays}
+                                            onChange={e => setPilotDays(Number(e.target.value))}
+                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono tabular-nums focus:outline-none focus:border-[#C68346] rounded-none"
+                                        />
+                                    </div>
+
+                                    <div className="flex-1 w-full">
+                                        <label className="block text-xs uppercase tracking-wider text-slate-500 dark:text-[#8A93A6] mb-1 font-mono">PROPÓSITO</label>
+                                        <input
+                                            required
+                                            type="text"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={pilotPurpose}
+                                            onChange={e => setPilotPurpose(e.target.value)}
+                                            placeholder="Pruebas de módulo"
+                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#C68346] rounded-none"
+                                        />
+                                    </div>
+
+                                    <button
+                                        type="submit"
+                                        disabled={pilotSubmitting}
+                                        className="w-full lg:w-auto bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold uppercase tracking-wider text-xs py-2.5 px-6 transition-colors rounded-none disabled:opacity-50 cursor-pointer"
+                                    >
+                                        {pilotSubmitting ? 'ACREDITANDO...' : 'ACREDITAR'}
+                                    </button>
+                                </form>
                             </div>
 
-                            <div className="border border-slate-200 dark:border-[#12151C] rounded-none overflow-hidden">
-                                <table className="w-full text-left border-collapse font-mono text-xs">
-                                    <thead>
-                                        <tr className="bg-slate-50 dark:bg-[#07090D] border-b border-slate-200 dark:border-[#12151C] text-slate-500 dark:text-[#8A93A6] uppercase tracking-wider text-[11px]">
-                                            <th className="py-3 px-4 font-normal">ID CUENTA</th>
-                                            <th className="py-3 px-4 font-normal">COLABORADOR</th>
-                                            <th className="py-3 px-4 font-normal">ORGANIZACIÓN</th>
-                                            <th className="py-3 px-4 font-normal">PROPÓSITO</th>
-                                            <th className="py-3 px-4 font-normal">ESTADO</th>
-                                            <th className="py-3 px-4 font-normal text-right">ACCIÓN</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-200 dark:divide-[#12151C] tabular-nums">
-                                        {pilotsLoading ? (
-                                            <tr>
-                                                <td colSpan={6} className="py-6 text-center text-slate-400 font-mono">[Cargando registros...]</td>
+                            {/* Módulo Tabla TEST-PILOT */}
+                            <div>
+                                <div className="flex justify-between items-center mb-4 border-b border-slate-200 dark:border-[#12151C] pb-2">
+                                    <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-900 dark:text-[#F3F4F6]">
+                                        REGISTRO DE PILOTOS
+                                    </h2>
+                                    <button
+                                        type="button"
+                                        onClick={fetchPilots}
+                                        title="Recargar pilotos"
+                                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                                    >
+                                        <span className="material-symbols-outlined text-[18px]">refresh</span>
+                                    </button>
+                                </div>
+
+                                <div className="border border-slate-200 dark:border-[#12151C] rounded-none overflow-hidden">
+                                    <table className="w-full text-left border-collapse font-mono text-xs">
+                                        <thead>
+                                            <tr className="bg-slate-50 dark:bg-[#07090D] border-b border-slate-200 dark:border-[#12151C] text-slate-500 dark:text-[#8A93A6] uppercase tracking-wider text-[11px]">
+                                                <th className="py-3 px-4 font-normal">ID CUENTA</th>
+                                                <th className="py-3 px-4 font-normal">COLABORADOR</th>
+                                                <th className="py-3 px-4 font-normal">ORGANIZACIÓN</th>
+                                                <th className="py-3 px-4 font-normal">PROPÓSITO</th>
+                                                <th className="py-3 px-4 font-normal">ESTADO</th>
+                                                <th className="py-3 px-4 font-normal text-right">ACCIÓN</th>
                                             </tr>
-                                        ) : pilots.length === 0 ? (
-                                            <tr>
-                                                <td colSpan={6} className="py-6 text-center text-slate-400 font-mono">[Sin cuentas piloto registradas]</td>
-                                            </tr>
-                                        ) : (
-                                            pilots.map((p) => (
-                                                <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.02]">
-                                                    <td className="py-3 px-4 text-[#00AEEF]">
-                                                        <span className="inline-flex items-center gap-1 select-text">
-                                                            <span>{p.id}</span>
-                                                            <CopyButton value={p.id} title="Copiar ID cuenta piloto" />
-                                                        </span>
-                                                    </td>
-                                                    <td className="py-3 px-4">
-                                                        <span className="block font-bold text-slate-900 dark:text-white">{p.collaboratorName}</span>
-                                                        <span className="inline-flex items-center gap-1 text-[11px] text-slate-500 dark:text-[#8A93A6] select-text">
-                                                            <span>{p.collaboratorEmail}</span>
-                                                            <CopyButton value={p.collaboratorEmail} title="Copiar correo colaborador" />
-                                                        </span>
-                                                    </td>
-                                                    <td className="py-3 px-4 text-slate-600 dark:text-slate-300">{p.organization || '[Información técnica no declarada en ficha]'}</td>
-                                                    <td className="py-3 px-4 text-slate-500 dark:text-[#8A93A6] max-w-xs truncate">{p.purpose}</td>
-                                                    <td className="py-3 px-4">
-                                                        <span className={`px-1.5 py-0.5 text-[10px] font-mono ${
-                                                            p.status === 'ACTIVE'
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-200 dark:divide-[#12151C] tabular-nums">
+                                            {pilotsLoading ? (
+                                                <tr>
+                                                    <td colSpan={6} className="py-6 text-center text-slate-400 font-mono">[Cargando registros...]</td>
+                                                </tr>
+                                            ) : pilots.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={6} className="py-6 text-center text-slate-400 font-mono">[Sin cuentas piloto registradas]</td>
+                                                </tr>
+                                            ) : (
+                                                pilots.map((p) => (
+                                                    <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.02]">
+                                                        <td className="py-3 px-4 text-[#00AEEF]">
+                                                            <span className="inline-flex items-center gap-1 select-text">
+                                                                <span>{p.id}</span>
+                                                                <CopyButton value={p.id} title="Copiar ID cuenta piloto" />
+                                                            </span>
+                                                        </td>
+                                                        <td className="py-3 px-4">
+                                                            <span className="block font-bold text-slate-900 dark:text-white">{p.collaboratorName}</span>
+                                                            <span className="inline-flex items-center gap-1 text-[11px] text-slate-500 dark:text-[#8A93A6] select-text">
+                                                                <span>{p.collaboratorEmail}</span>
+                                                                <CopyButton value={p.collaboratorEmail} title="Copiar correo colaborador" />
+                                                            </span>
+                                                        </td>
+                                                        <td className="py-3 px-4 text-slate-600 dark:text-slate-300">{p.organization || '[Información técnica no declarada en ficha]'}</td>
+                                                        <td className="py-3 px-4 text-slate-500 dark:text-[#8A93A6] max-w-xs truncate">{p.purpose}</td>
+                                                        <td className="py-3 px-4">
+                                                            <span className={`px-1.5 py-0.5 text-[10px] font-mono ${p.status === 'ACTIVE'
                                                                 ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
                                                                 : 'bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/30'
-                                                        }`}>
-                                                            {p.status}
-                                                        </span>
-                                                    </td>
-                                                    <td className="py-3 px-4 text-right">
-                                                        {p.status === 'ACTIVE' && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => handleRevokePilot(p.id)}
-                                                                className="bg-transparent border-0 text-red-500 hover:text-red-700 text-xs font-mono uppercase cursor-pointer"
-                                                            >
-                                                                REVOCAR
-                                                            </button>
-                                                        )}
-                                                    </td>
-                                                </tr>
-                                            ))
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        {/* Modal Industrial de Confirmacion HITL ("ACTUALIZAR") */}
-                        {pilotHitlModal && (
-                            <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-                                <div className="w-full max-w-md bg-[#FFFFFF] dark:bg-[#07090D] border border-[#C68346] p-6 space-y-4 rounded-none shadow-none">
-                                    <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-3">
-                                        <span className="text-xs font-mono font-bold uppercase tracking-wider text-[#C68346]">
-                                            {pilotHitlModal.mode === 'CREATE'
-                                                ? 'CONFIRMACION HITL · ACREDITAR TEST-PILOT'
-                                                : 'CONFIRMACION HITL · REVOCAR TEST-PILOT'}
-                                        </span>
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                setPilotHitlModal(null);
-                                                setPilotHitlKeyword('');
-                                            }}
-                                            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
-                                        >
-                                            <span className="material-symbols-outlined text-[18px]">close</span>
-                                        </button>
-                                    </div>
-
-                                    <p className="text-xs font-mono text-slate-600 dark:text-[#8A93A6] leading-relaxed">
-                                        {pilotHitlModal.mode === 'CREATE'
-                                            ? `Se acreditara acceso 3º TEST-PILOT para ${pilotName} (${pilotEmail}).`
-                                            : `Se revocara el acceso de la cuenta piloto ${pilotHitlModal.pilotId}.`}
-                                        {' '}Escriba obligatoriamente <strong className="text-[#C68346]">ACTUALIZAR</strong> para ejecutar:
-                                    </p>
-
-                                    <input
-                                        type="text"
-                                        autoFocus
-                                        autoComplete="off"
-                                        spellCheck={false}
-                                        value={pilotHitlKeyword}
-                                        onChange={(e) => setPilotHitlKeyword(e.target.value.toUpperCase())}
-                                        placeholder="ACTUALIZAR"
-                                        className="w-full bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] px-3 py-2 text-xs font-mono tracking-widest text-center text-[#0F172A] dark:text-[#F3F4F6] rounded-none outline-none"
-                                    />
-
-                                    <div className="flex justify-end gap-3 pt-2">
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                setPilotHitlModal(null);
-                                                setPilotHitlKeyword('');
-                                            }}
-                                            className="px-4 py-2 text-xs font-mono uppercase bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-slate-500 hover:text-slate-900 dark:hover:text-white rounded-none cursor-pointer"
-                                        >
-                                            Cancelar
-                                        </button>
-                                        <button
-                                            type="button"
-                                            disabled={pilotHitlKeyword.trim() !== 'ACTUALIZAR' || pilotSubmitting}
-                                            onClick={executeConfirmedPilotAction}
-                                            className="px-5 py-2 text-xs font-mono font-bold uppercase bg-[#C68346] hover:bg-[#B0743E] text-white rounded-none border-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                                        >
-                                            {pilotSubmitting ? 'EJECUTANDO...' : 'CONFIRMAR'}
-                                        </button>
-                                    </div>
+                                                                }`}>
+                                                                {p.status}
+                                                            </span>
+                                                        </td>
+                                                        <td className="py-3 px-4 text-right">
+                                                            {p.status === 'ACTIVE' && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleRevokePilot(p.id)}
+                                                                    className="bg-transparent border-0 text-red-500 hover:text-red-700 text-xs font-mono uppercase cursor-pointer"
+                                                                >
+                                                                    REVOCAR
+                                                                </button>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
                                 </div>
                             </div>
-                        )}
-                    </div>
-                )}
 
-                {/* CONTENIDO 2: CONFIGURACIÓN B2B EMPRESA (100% INTEGRADO EN DEV) */}
-                {activeSection === 'B2B_EMPRESA' && (
-                    <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Ficha de Empresa...]</div>}>
-                        <EmpresaPage />
-                    </Suspense>
-                )}
+                            {/* Modal Industrial de Confirmacion HITL ("ACTUALIZAR") */}
+                            {pilotHitlModal && (
+                                <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+                                    <div className="w-full max-w-md bg-[#FFFFFF] dark:bg-[#07090D] border border-[#C68346] p-6 space-y-4 rounded-none shadow-none">
+                                        <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-3">
+                                            <span className="text-xs font-mono font-bold uppercase tracking-wider text-[#C68346]">
+                                                {pilotHitlModal.mode === 'CREATE'
+                                                    ? 'CONFIRMACION HITL · ACREDITAR TEST-PILOT'
+                                                    : 'CONFIRMACION HITL · REVOCAR TEST-PILOT'}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setPilotHitlModal(null);
+                                                    setPilotHitlKeyword('');
+                                                }}
+                                                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                                            >
+                                                <span className="material-symbols-outlined text-[18px]">close</span>
+                                            </button>
+                                        </div>
 
-                {/* CONTENIDO 3: STAFF (100% INTEGRADO EN DEV) */}
-                {activeSection === 'STAFF' && (
-                    <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Personal Operativo...]</div>}>
-                        <StaffPage />
-                    </Suspense>
-                )}
+                                        <p className="text-xs font-mono text-slate-600 dark:text-[#8A93A6] leading-relaxed">
+                                            {pilotHitlModal.mode === 'CREATE'
+                                                ? `Se acreditara acceso 3º TEST-PILOT para ${pilotName} (${pilotEmail}).`
+                                                : `Se revocara el acceso de la cuenta piloto ${pilotHitlModal.pilotId}.`}
+                                            {' '}Escriba obligatoriamente <strong className="text-[#C68346]">ACTUALIZAR</strong> para ejecutar:
+                                        </p>
 
-                {/* CONTENIDO 4: PERFILES DE CARGO (100% INTEGRADO EN DEV) */}
-                {activeSection === 'JOB_PROFILES' && (
-                    <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Matriz de Cargos...]</div>}>
-                        <JobProfilesPage />
-                    </Suspense>
-                )}
+                                        <input
+                                            type="text"
+                                            autoFocus
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={pilotHitlKeyword}
+                                            onChange={(e) => setPilotHitlKeyword(e.target.value.toUpperCase())}
+                                            placeholder="ACTUALIZAR"
+                                            className="w-full bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] px-3 py-2 text-xs font-mono tracking-widest text-center text-[#0F172A] dark:text-[#F3F4F6] rounded-none outline-none"
+                                        />
 
-                {/* CONTENIDO 5: ADMINISTRADORES (100% INTEGRADO EN DEV) */}
-                {activeSection === 'B2B_ADMINS' && (
-                    <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Administradores...]</div>}>
-                        <AdminsPage />
-                    </Suspense>
-                )}
+                                        <div className="flex justify-end gap-3 pt-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setPilotHitlModal(null);
+                                                    setPilotHitlKeyword('');
+                                                }}
+                                                className="px-4 py-2 text-xs font-mono uppercase bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-slate-500 hover:text-slate-900 dark:hover:text-white rounded-none cursor-pointer"
+                                            >
+                                                Cancelar
+                                            </button>
+                                            <button
+                                                type="button"
+                                                disabled={pilotHitlKeyword.trim() !== 'ACTUALIZAR' || pilotSubmitting}
+                                                onClick={executeConfirmedPilotAction}
+                                                className="px-5 py-2 text-xs font-mono font-bold uppercase bg-[#C68346] hover:bg-[#B0743E] text-white rounded-none border-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                            >
+                                                {pilotSubmitting ? 'EJECUTANDO...' : 'CONFIRMAR'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
 
-                {/* CONTENIDO 6: GESTOR DE LOGOS & IDENTIDAD (100% INTEGRADO EN DEV) */}
-                {activeSection === 'BRANDING' && (
-                    <div className="max-w-5xl">
-                        <BrandingManager />
-                    </div>
-                )}
-
-                {/* CONTENIDO 7: MÉTRICAS (100% INTEGRADO EN DEV) */}
-                {activeSection === 'B2B_METRICAS' && (
-                    <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Métricas Operacionales...]</div>}>
-                        <MetricasPage />
-                    </Suspense>
-                )}
-
-                {/* MÓDULO INDUSTRIAL 1: STOCKPILE (NATIVO EN VIVO) */}
-                {activeSection === 'MODULE_STOCKPILE' && (
-                    <div className="w-full h-full flex-1 flex flex-col">
-                        <Suspense fallback={
-                            <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
-                                <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
-                                <span className="text-[10px] uppercase text-slate-400">Cargando Módulo Stockpile (Capa 2)...</span>
-                            </div>
-                        }>
-                            <StockpileModule />
+                    {/* CONTENIDO 2: CONFIGURACIÓN B2B EMPRESA (100% INTEGRADO EN DEV) */}
+                    {activeSection === 'B2B_EMPRESA' && (
+                        <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Ficha de Empresa...]</div>}>
+                            <EmpresaPage />
                         </Suspense>
-                    </div>
-                )}
+                    )}
 
-                {/* MÓDULO INDUSTRIAL 2A: CATÁLOGO MAESTRO ÚNICO (OPERMAQ CATALOG) */}
-                {activeSection === 'MODULE_OPERMAQ_CATALOG' && (
-                    <div className="w-full h-full flex-1 flex flex-col">
-                        <Suspense fallback={
-                            <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
-                                <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
-                                <span className="text-[10px] uppercase text-slate-400">CATÁLOGO</span>
-                            </div>
-                        }>
-                            <OpermaqModule key="dev-opermaq-catalog" domainMode="CATALOG" hostScope="DEV_GATEWAY" />
+                    {/* CONTENIDO 3: STAFF (100% INTEGRADO EN DEV) */}
+                    {activeSection === 'STAFF' && (
+                        <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Personal Operativo...]</div>}>
+                            <StaffPage />
                         </Suspense>
-                    </div>
-                )}
+                    )}
 
-                {/* MÓDULO INDUSTRIAL 2B: CONTROL DE FLOTA (OPERMAQ FLEET) */}
-                {activeSection === 'MODULE_OPERMAQ_FLEET' && (
-                    <div className="w-full h-full flex-1 flex flex-col">
-                        <Suspense fallback={
-                            <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
-                                <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
-                                <span className="text-[10px] uppercase text-slate-400">FLOTA</span>
-                            </div>
-                        }>
-                            <OpermaqModule key="dev-opermaq-fleet" domainMode="FLEET" hostScope="DEV_GATEWAY" />
+                    {/* CONTENIDO 4: PERFILES DE CARGO (100% INTEGRADO EN DEV) */}
+                    {activeSection === 'JOB_PROFILES' && (
+                        <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Matriz de Cargos...]</div>}>
+                            <JobProfilesPage />
                         </Suspense>
-                    </div>
-                )}
+                    )}
 
-                {/* MÓDULO INDUSTRIAL 2C: SIMBOLOGÍA TRANSVERSAL ISO 7000 (OPERMAQ SYMBOLOGY) */}
-                {activeSection === 'MODULE_OPERMAQ_SYMBOLOGY' && (
-                    <div className="w-full h-full flex-1 flex flex-col">
-                        <Suspense fallback={
-                            <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
-                                <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
-                                <span className="text-[10px] uppercase text-slate-400">SIMBOLOGÍA</span>
-                            </div>
-                        }>
-                            <OpermaqModule key="dev-opermaq-symbology" domainMode="SYMBOLOGY" hostScope="DEV_GATEWAY" />
+                    {/* CONTENIDO 5: ADMINISTRADORES (100% INTEGRADO EN DEV) */}
+                    {activeSection === 'B2B_ADMINS' && (
+                        <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Administradores...]</div>}>
+                            <AdminsPage />
                         </Suspense>
-                    </div>
-                )}
+                    )}
+
+                    {/* CONTENIDO 6: GESTOR DE LOGOS & IDENTIDAD (100% INTEGRADO EN DEV) */}
+                    {activeSection === 'BRANDING' && (
+                        <div className="max-w-5xl">
+                            <BrandingManager />
+                        </div>
+                    )}
+
+                    {/* CONTENIDO 7: MÉTRICAS (100% INTEGRADO EN DEV) */}
+                    {activeSection === 'B2B_METRICAS' && (
+                        <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Métricas Operacionales...]</div>}>
+                            <MetricasPage />
+                        </Suspense>
+                    )}
+
+                    {/* MÓDULO INDUSTRIAL 1: STOCKPILE (NATIVO EN VIVO) */}
+                    {activeSection === 'MODULE_STOCKPILE' && (
+                        <div className="w-full h-full flex-1 flex flex-col">
+                            <Suspense fallback={
+                                <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
+                                    <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
+                                    <span className="text-[10px] uppercase text-slate-400">Cargando Módulo Stockpile (Capa 2)...</span>
+                                </div>
+                            }>
+                                <StockpileModule />
+                            </Suspense>
+                        </div>
+                    )}
+
+                    {/* MÓDULO INDUSTRIAL 2A: CATÁLOGO MAESTRO ÚNICO (OPERMAQ CATALOG) */}
+                    {activeSection === 'MODULE_OPERMAQ_CATALOG' && (
+                        <div className="w-full h-full flex-1 flex flex-col">
+                            <Suspense fallback={
+                                <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
+                                    <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
+                                    <span className="text-[10px] uppercase text-slate-400">CATÁLOGO</span>
+                                </div>
+                            }>
+                                <OpermaqModule key="dev-opermaq-catalog" domainMode="CATALOG" hostScope="DEV_GATEWAY" />
+                            </Suspense>
+                        </div>
+                    )}
+
+                    {/* MÓDULO INDUSTRIAL 2B: CONTROL DE FLOTA (OPERMAQ FLEET) */}
+                    {activeSection === 'MODULE_OPERMAQ_FLEET' && (
+                        <div className="w-full h-full flex-1 flex flex-col">
+                            <Suspense fallback={
+                                <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
+                                    <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
+                                    <span className="text-[10px] uppercase text-slate-400">FLOTA</span>
+                                </div>
+                            }>
+                                <OpermaqModule key="dev-opermaq-fleet" domainMode="FLEET" hostScope="DEV_GATEWAY" />
+                            </Suspense>
+                        </div>
+                    )}
+
+                    {/* MÓDULO INDUSTRIAL 2C: SIMBOLOGÍA TRANSVERSAL ISO 7000 (OPERMAQ SYMBOLOGY) */}
+                    {activeSection === 'MODULE_OPERMAQ_SYMBOLOGY' && (
+                        <div className="w-full h-full flex-1 flex flex-col">
+                            <Suspense fallback={
+                                <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
+                                    <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
+                                    <span className="text-[10px] uppercase text-slate-400">SIMBOLOGÍA</span>
+                                </div>
+                            }>
+                                <OpermaqModule key="dev-opermaq-symbology" domainMode="SYMBOLOGY" hostScope="DEV_GATEWAY" />
+                            </Suspense>
+                        </div>
+                    )}
 
                 </main>
             </div>

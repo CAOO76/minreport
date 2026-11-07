@@ -57,6 +57,7 @@ import {
     syncDevFirebaseSession,
 } from './api/dev.controller';
 import { ensureDevRootAccount } from './services/bootstrap.service';
+import { DevEmulatorCheckpointService } from './core/dev-emulator-checkpoint';
 
 const app = express();
 
@@ -153,6 +154,7 @@ app.use(
 );
 
 app.use(express.json({ limit: '15mb' }));
+app.use(DevEmulatorCheckpointService.expressMutationMiddleware());
 
 // Global Request Logger
 app.use((req, _res, next) => {
@@ -405,6 +407,8 @@ async function startServer(): Promise<void> {
             );
             try {
                 await ensureDevRootAccount();
+                DevEmulatorCheckpointService.start();
+                DevEmulatorCheckpointService.scheduleCheckpoint('server-boot-sync');
             } catch (bootstrapErr) {
                 console.error('[CORE-API] Error durante bootstrapping inicial de DEV:', bootstrapErr);
             }
@@ -426,14 +430,16 @@ async function startServer(): Promise<void> {
         const gracefulShutdown = (signal: string) => {
             if (shuttingDown) return;
             shuttingDown = true;
-            server.close(() => {
-                if (signal === 'SIGUSR2') {
-                    process.kill(process.pid, 'SIGUSR2');
-                } else {
-                    process.exit(0);
-                }
+            void DevEmulatorCheckpointService.flushOnShutdown(signal).finally(() => {
+                server.close(() => {
+                    if (signal === 'SIGUSR2') {
+                        process.kill(process.pid, 'SIGUSR2');
+                    } else {
+                        process.exit(0);
+                    }
+                });
             });
-            setTimeout(() => process.exit(0), 1500).unref();
+            setTimeout(() => process.exit(0), 2500).unref();
         };
 
         process.once('SIGTERM', () => gracefulShutdown('SIGTERM'));

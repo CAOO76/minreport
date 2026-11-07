@@ -12,7 +12,6 @@ import {
     cleanMachineryTypeLabel,
 } from '../utils/opermaqDomainProjection';
 import { M3TextField } from './M3TextField';
-import { SecureCasThumbnail } from './SecureCasThumbnail';
 
 interface CatalogLookupItem {
     global_asset_id?: string;
@@ -54,6 +53,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
     const [step, setStep] = useState<'DETECT_OR_HUNT' | 'OWNERSHIP_SERIAL'>('DETECT_OR_HUNT');
 
     const [queryText, setQueryText] = useState('');
+    const [clarificationInput, setClarificationInput] = useState('');
     const [localMatches, setLocalMatches] = useState<CatalogLookupItem[]>([]);
     const [isCheckingLocal, setIsCheckingLocal] = useState(false);
     const [hasCheckedLocal, setHasCheckedLocal] = useState(false);
@@ -130,9 +130,14 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
         return merged.length > 0 ? merged : [t('registration.standard_version')];
     };
 
-    const triggerCandidateHunter = async (forceWebDiscovery: boolean = false) => {
+    const triggerCandidateHunter = async (
+        forceWebDiscovery: boolean = false,
+        explicitClarification?: string
+    ) => {
         const clean = queryText.trim();
         if (clean.length < 2) return;
+
+        const effectiveClarification = (explicitClarification ?? clarificationInput).trim();
 
         abortRef.current?.abort();
         const controller = new AbortController();
@@ -158,7 +163,8 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                     modelo: clean,
                     jerga: clean,
                     isGeneric: searchScope === 'generic',
-                    forceWebDiscovery,
+                    clarificationContext: effectiveClarification || undefined,
+                    forceWebDiscovery: forceWebDiscovery || Boolean(effectiveClarification),
                 }),
             });
 
@@ -407,13 +413,16 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
         'bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none shadow-none';
 
     const selectedVersions = selectedEquipment ? getEquipmentVersions(selectedEquipment) : ['ESTÁNDAR'];
+    const showClarificationSection = Boolean(
+        clarificationMsg || (huntedCandidates.length > 0 && huntedCandidates[0]?.is_pertinent !== false)
+    );
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 dark:bg-black/85 p-[13px] sm:p-[21px] select-none">
-            <div className="bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden rounded-none shadow-none">
-                {/* Cabecera Quirúrgica */}
-                <header className="px-[21px] py-[13px] flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] shrink-0">
-                    <div className="flex items-center gap-[8px] min-w-0">
+            <div className="bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] w-full max-w-5xl h-[85vh] max-h-[860px] flex flex-col overflow-hidden rounded-none shadow-none">
+                {/* Cabecera Quirúrgica con Selector Plano de Modo */}
+                <header className="px-[21px] h-[55px] flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] shrink-0 gap-[13px]">
+                    <div className="flex items-center gap-[21px] min-w-0 h-full">
                         {step === 'OWNERSHIP_SERIAL' && (
                             <button
                                 type="button"
@@ -433,6 +442,38 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                 ? t('opermaq_domains.step1_title')
                                 : t('opermaq_domains.step2_title')}
                         </span>
+                        {step === 'DETECT_OR_HUNT' && (
+                            <div className="flex items-center h-full">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setSearchScope('brand');
+                                        setHuntedCandidates([]);
+                                    }}
+                                    className={`h-full px-[13px] text-[11px] font-mono font-bold uppercase tracking-[0.05em] border-0 border-b-2 transition-colors cursor-pointer rounded-none shadow-none ${
+                                        searchScope === 'brand'
+                                            ? 'border-[#C68346] text-[#C68346] bg-transparent'
+                                            : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] bg-transparent'
+                                    }`}
+                                >
+                                    {t('registration.by_brand')}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setSearchScope('generic');
+                                        setHuntedCandidates([]);
+                                    }}
+                                    className={`h-full px-[13px] text-[11px] font-mono font-bold uppercase tracking-[0.05em] border-0 border-b-2 transition-colors cursor-pointer rounded-none shadow-none ${
+                                        searchScope === 'generic'
+                                            ? 'border-[#C68346] text-[#C68346] bg-transparent'
+                                            : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] bg-transparent'
+                                    }`}
+                                >
+                                    {t('registration.generic')}
+                                </button>
+                            </div>
+                        )}
                     </div>
                     <button
                         type="button"
@@ -448,9 +489,9 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                     </button>
                 </header>
 
-                <div className="flex-1 min-h-0 overflow-y-auto p-[21px] flex flex-col gap-[21px]">
+                <div className="flex-1 min-h-0 flex flex-col p-[21px] gap-[13px] overflow-hidden">
                     {errorMsg && (
-                        <div className="p-[13px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] flex items-start justify-between gap-[13px] rounded-none shadow-none">
+                        <div className="py-[8px] border-b border-[#C68346] flex items-start justify-between gap-[13px] shrink-0">
                             <p className="text-[13px] text-[#0F172A] dark:text-[#F3F4F6] leading-snug break-words">
                                 {errorMsg}
                             </p>
@@ -467,42 +508,12 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
 
                     {step === 'DETECT_OR_HUNT' && (
                         <>
-                            {/* Selector Compacto Marca vs Genérico */}
-                            <div className="grid grid-cols-2 border border-[#E2E8F0] dark:border-[#12151C] rounded-none">
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setSearchScope('brand');
-                                        setHuntedCandidates([]);
-                                    }}
-                                    className={`h-9 text-[11px] font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer rounded-none border-0 ${searchScope === 'brand'
-                                        ? 'bg-[#C68346] text-white'
-                                        : 'bg-[#F8FAFC] dark:bg-[#000000] text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                                        }`}
-                                >
-                                    {t('registration.by_brand')}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setSearchScope('generic');
-                                        setHuntedCandidates([]);
-                                    }}
-                                    className={`h-9 text-[11px] font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer rounded-none border-0 border-l border-[#E2E8F0] dark:border-[#12151C] ${searchScope === 'generic'
-                                        ? 'bg-[#C68346] text-white'
-                                        : 'bg-[#F8FAFC] dark:bg-[#000000] text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                                        }`}
-                                >
-                                    {t('registration.generic')}
-                                </button>
-                            </div>
-
                             {/* Buscador con Detección Instantánea en CATÁLOGO */}
                             <form
                                 onSubmit={handleSearchSubmit}
                                 autoComplete="off"
                                 spellCheck={false}
-                                className="relative w-full"
+                                className="relative w-full shrink-0"
                             >
                                 <M3TextField
                                     label={
@@ -521,7 +532,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                             : t('registration.jargon_input_placeholder')
                                     }
                                     className="!my-0"
-                                    inputClassName="pr-24"
+                                    inputClassName="pr-24 font-mono tabular-nums"
                                     autoComplete="off"
                                 />
                                 <div className="absolute right-[13px] top-1/2 -translate-y-1/2 flex items-center gap-[8px]">
@@ -535,6 +546,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                                     return;
                                                 }
                                                 setQueryText('');
+                                                setClarificationInput('');
                                                 setLocalMatches([]);
                                                 setHuntedCandidates([]);
                                                 setClarificationMsg(null);
@@ -566,209 +578,238 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                             </form>
 
                             {clarificationMsg && (
-                                <div className="p-[13px] border border-[#00AEEF] bg-[#F8FAFC] dark:bg-[#000000] text-[13px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none">
+                                <div className="py-[8px] border-b border-[#00AEEF] text-[13px] text-[#0F172A] dark:text-[#F3F4F6] shrink-0">
                                     {clarificationMsg}
                                 </div>
                             )}
 
-                            {/* CASO A: Resultados Existentes en CATÁLOGO */}
-                            {localMatches.length > 0 && (
-                                <div className="flex flex-col gap-[8px]">
-                                    <div className="flex items-center justify-between pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C]">
-                                        <span className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF]">
-                                            {t('opermaq_domains.catalog_match_found')} ({localMatches.length})
-                                        </span>
-                                        <button
-                                            type="button"
-                                            onClick={() => void triggerCandidateHunter(true)}
-                                            title={t('opermaq_domains.search_global_candidates')}
-                                            aria-label={t('opermaq_domains.search_global_candidates')}
-                                            className={flatIconBtnClass}
-                                        >
-                                            <span className="material-symbols-outlined text-[18px]">manage_search</span>
-                                        </button>
-                                    </div>
+                            {/* Área de Resultados Tabulares sin Tarjetas */}
+                            <div className="flex-1 min-h-0 flex flex-col gap-[13px] overflow-y-auto pr-1">
+                                {/* CASO A: Resultados Existentes en CATÁLOGO */}
+                                {localMatches.length > 0 && (
+                                    <div className="flex flex-col gap-[8px]">
+                                        <div className="flex items-center justify-between pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C]">
+                                            <span className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF] tabular-nums">
+                                                {t('opermaq_domains.catalog_match_found')} ({localMatches.length})
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => void triggerCandidateHunter(true)}
+                                                title={t('opermaq_domains.search_global_candidates')}
+                                                aria-label={t('opermaq_domains.search_global_candidates')}
+                                                className={flatIconBtnClass}
+                                            >
+                                                <span className="material-symbols-outlined text-[18px]">
+                                                    travel_explore
+                                                </span>
+                                            </button>
+                                        </div>
 
-                                    <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
-                                        {localMatches.map((item) => {
-                                            const itemVersions = getEquipmentVersions(item);
-                                            const officialName = `${item.make_oficial} ${item.model_oficial}`.trim();
-                                            const cleanType = cleanMachineryTypeLabel(item.tipo_equipo || item.categoria_equipo);
-                                            const operationalDesc = buildEquipmentShortDescription(item);
+                                        <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
+                                            {localMatches.map((item) => {
+                                                const itemVersions = getEquipmentVersions(item);
+                                                const officialName = `${item.make_oficial} ${item.model_oficial}`.trim();
+                                                const cleanType = cleanMachineryTypeLabel(
+                                                    item.tipo_equipo || item.categoria_equipo
+                                                );
+                                                const operationalDesc = buildEquipmentShortDescription(item);
 
-                                            return (
-                                                <div
-                                                    key={item.global_asset_id || officialName}
-                                                    onClick={() => handleSelectEquipment(item)}
-                                                    className="py-[13px] hover:bg-[#F8FAFC] dark:hover:bg-[#000000] flex items-center gap-[13px] cursor-pointer transition-colors"
-                                                >
-                                                    <SecureCasThumbnail
-                                                        src={item.foto_url}
-                                                        alt={officialName}
-                                                        fallbackIcon="front_loader"
-                                                        className="w-10 h-10"
-                                                    />
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="flex flex-wrap items-baseline gap-[8px] min-w-0">
-                                                            <span className="text-[15px] font-semibold text-[#0F172A] dark:text-[#F3F4F6] whitespace-normal break-words">
-                                                                {officialName}
-                                                            </span>
-                                                            <span className="text-[11px] text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
-                                                                {cleanType}
-                                                            </span>
-                                                        </div>
-                                                        <div className="text-[13px] font-mono tabular-nums leading-[1.35] text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
-                                                            {operationalDesc}
-                                                        </div>
-                                                        {itemVersions.length > 1 && (
-                                                            <div
-                                                                className="mt-[8px] flex flex-wrap gap-[8px]"
-                                                                onClick={(e) => e.stopPropagation()}
-                                                            >
-                                                                {itemVersions.map((ver) => (
-                                                                    <button
-                                                                        key={ver}
-                                                                        type="button"
-                                                                        onClick={() => handleSelectEquipment(item, ver)}
-                                                                        className="px-[8px] py-0.5 text-[11px] font-mono border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] bg-transparent cursor-pointer rounded-none"
-                                                                    >
-                                                                        {ver}
-                                                                    </button>
-                                                                ))}
+                                                return (
+                                                    <div
+                                                        key={item.global_asset_id || officialName}
+                                                        onClick={() => handleSelectEquipment(item)}
+                                                        className="py-[13px] px-[8px] hover:bg-[#F8FAFC] dark:hover:bg-[#000000] flex items-center justify-between gap-[21px] cursor-pointer transition-colors"
+                                                    >
+                                                        <div className="flex-1 min-w-0 space-y-[4px]">
+                                                            <div className="flex flex-wrap items-baseline gap-[13px] min-w-0">
+                                                                <span className="text-[15px] font-semibold font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] whitespace-normal break-words">
+                                                                    {officialName}
+                                                                </span>
+                                                                <span className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
+                                                                    {cleanType}
+                                                                </span>
                                                             </div>
-                                                        )}
+                                                            <div className="text-[13px] font-mono tabular-nums leading-[1.35] text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
+                                                                {operationalDesc}
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex items-center gap-[13px] shrink-0 text-[11px] font-mono tabular-nums uppercase tracking-[0.05em]">
+                                                            {itemVersions.length > 1 && (
+                                                                <span className="text-[#475569] dark:text-[#8A93A6]">
+                                                                    {t('registration.versions_count', {
+                                                                        count: itemVersions.length,
+                                                                    })}
+                                                                </span>
+                                                            )}
+                                                            <span className="text-[#C68346]">
+                                                                {t('registration.status_in_catalog')}
+                                                            </span>
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Aviso cuando no existe en CATÁLOGO y aún no se ha lanzado caza */}
-                            {hasCheckedLocal &&
-                                localMatches.length === 0 &&
-                                huntedCandidates.length === 0 &&
-                                !isHuntingWeb &&
-                                queryText.trim().length >= 2 && (
-                                    <div className="p-[13px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] flex items-center justify-between gap-[13px] rounded-none">
-                                        <span className="text-[13px] text-[#475569] dark:text-[#8A93A6]">
-                                            {t('opermaq_domains.catalog_no_match')}
-                                        </span>
-                                        <button
-                                            type="button"
-                                            onClick={() => void triggerCandidateHunter(false)}
-                                            className="px-[13px] py-[8px] bg-[#C68346] hover:bg-[#b0743e] text-white text-[11px] font-mono font-bold uppercase tracking-[0.05em] border-0 rounded-none cursor-pointer shrink-0"
-                                        >
-                                            {t('opermaq_domains.search_global_candidates')}
-                                        </button>
+                                                );
+                                            })}
+                                        </div>
                                     </div>
                                 )}
 
-                            {/* CASO B: Buscador de Candidatos del CATÁLOGO (`1..N` sin límite) */}
-                            {huntedCandidates.length > 0 && (
-                                <div className="flex flex-col gap-[13px]">
-                                    {huntedCandidates[0].is_pertinent === false ? (
-                                        <div className="p-[13px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] text-[13px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none">
-                                            {huntedCandidates[0].rejection_reason || t('registration.industrial_only')}
+                                {/* Aviso cuando no existe en CATÁLOGO y aún no se ha lanzado caza */}
+                                {hasCheckedLocal &&
+                                    localMatches.length === 0 &&
+                                    huntedCandidates.length === 0 &&
+                                    !isHuntingWeb &&
+                                    queryText.trim().length >= 2 && (
+                                        <div className="py-[13px] border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between gap-[13px]">
+                                            <span className="text-[13px] text-[#475569] dark:text-[#8A93A6]">
+                                                {t('opermaq_domains.catalog_no_match')}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => void triggerCandidateHunter(false)}
+                                                className="px-[13px] py-[8px] bg-[#C68346] hover:bg-[#b0743e] text-white text-[11px] font-mono font-bold uppercase tracking-[0.05em] border-0 rounded-none cursor-pointer shrink-0 shadow-none"
+                                            >
+                                                {t('opermaq_domains.search_global_candidates')}
+                                            </button>
                                         </div>
-                                    ) : (
-                                        <>
-                                            <div className="flex items-center justify-between pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C]">
-                                                <span className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#C68346] tabular-nums">
-                                                    {t('registration.matches_count', {
-                                                        count: filteredHuntedCandidates.length,
-                                                    })}
-                                                </span>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => void triggerCandidateHunter(true)}
-                                                    title={t('registration.refresh_oem_web')}
-                                                    aria-label={t('registration.refresh_oem_web')}
-                                                    className={flatIconBtnClass}
-                                                >
-                                                    <span className="material-symbols-outlined text-[18px]">refresh</span>
-                                                </button>
-                                            </div>
-
-                                            {huntedCandidates.length > 3 && (
-                                                <input
-                                                    type="text"
-                                                    value={candidateFilter}
-                                                    onChange={(e) => setCandidateFilter(e.target.value)}
-                                                    placeholder={t('registration.filter_versions_placeholder')}
-                                                    autoComplete="off"
-                                                    spellCheck={false}
-                                                    className="w-full h-9 px-[13px] bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[13px] text-[#0F172A] dark:text-[#F3F4F6] outline-none rounded-none"
-                                                />
-                                            )}
-
-                                            <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C] max-h-[340px] overflow-y-auto">
-                                                {filteredHuntedCandidates.map((cand, idx) => {
-                                                    const candVersions = getEquipmentVersions(cand);
-                                                    const fullName = `${cand.make_oficial} ${cand.model_oficial}`.trim();
-                                                    const cleanType = cleanMachineryTypeLabel(
-                                                        cand.tipo_equipo || cand.categoria_equipo
-                                                    );
-                                                    const operationalDesc = buildEquipmentShortDescription(cand);
-
-                                                    return (
-                                                        <div
-                                                            key={`${cand.catalog_key || fullName}_${idx}`}
-                                                            onClick={() => handleSelectEquipment(cand)}
-                                                            className="py-[13px] hover:bg-[#F8FAFC] dark:hover:bg-[#000000] flex items-center gap-[13px] cursor-pointer transition-colors"
-                                                        >
-                                                            <SecureCasThumbnail
-                                                                src={cand.foto_url}
-                                                                alt={fullName}
-                                                                fallbackIcon="front_loader"
-                                                                className="w-10 h-10"
-                                                            />
-                                                            <div className="flex-1 min-w-0">
-                                                                <div className="flex flex-wrap items-baseline gap-[8px] min-w-0">
-                                                                    <span className="text-[15px] font-semibold text-[#0F172A] dark:text-[#F3F4F6] whitespace-normal break-words">
-                                                                        {fullName}
-                                                                    </span>
-                                                                    <span className="text-[11px] text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
-                                                                        {cleanType}
-                                                                    </span>
-                                                                </div>
-                                                                <div className="text-[13px] font-mono tabular-nums leading-[1.35] text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
-                                                                    {operationalDesc}
-                                                                </div>
-                                                                {candVersions.length > 1 && (
-                                                                    <div
-                                                                        className="mt-[8px] flex flex-wrap gap-[8px]"
-                                                                        onClick={(e) => e.stopPropagation()}
-                                                                    >
-                                                                        {candVersions.map((ver) => (
-                                                                            <button
-                                                                                key={ver}
-                                                                                type="button"
-                                                                                onClick={() => handleSelectEquipment(cand, ver)}
-                                                                                className="px-[8px] py-0.5 text-[11px] font-mono border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] bg-transparent cursor-pointer rounded-none"
-                                                                            >
-                                                                                {ver}
-                                                                            </button>
-                                                                        ))}
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                            <span
-                                                                className={`text-[10px] font-mono uppercase tracking-[0.05em] shrink-0 ${cand.isNew ? 'text-[#00AEEF]' : 'text-[#C68346]'
-                                                                    }`}
-                                                            >
-                                                                {cand.isNew
-                                                                    ? t('registration.status_new_catalog')
-                                                                    : t('registration.status_in_catalog')}
-                                                            </span>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        </>
                                     )}
-                                </div>
+
+                                {/* CASO B: Buscador de Candidatos del CATÁLOGO (`1..N` sin límite) */}
+                                {huntedCandidates.length > 0 && (
+                                    <div className="flex flex-col gap-[13px]">
+                                        {huntedCandidates[0].is_pertinent === false ? (
+                                            <div className="py-[13px] border-b border-[#C68346] text-[13px] text-[#0F172A] dark:text-[#F3F4F6]">
+                                                {huntedCandidates[0].rejection_reason ||
+                                                    t('registration.industrial_only')}
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <div className="flex flex-wrap items-center justify-between pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C] gap-[13px]">
+                                                    <span className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#C68346] tabular-nums">
+                                                        {t('registration.matches_count', {
+                                                            count: filteredHuntedCandidates.length,
+                                                        })}
+                                                    </span>
+                                                    <div className="flex items-center gap-[13px] flex-1 sm:flex-initial justify-end">
+                                                        {huntedCandidates.length > 2 && (
+                                                            <input
+                                                                type="text"
+                                                                value={candidateFilter}
+                                                                onChange={(e) => setCandidateFilter(e.target.value)}
+                                                                placeholder={t(
+                                                                    'registration.filter_versions_placeholder'
+                                                                )}
+                                                                autoComplete="off"
+                                                                spellCheck={false}
+                                                                className="w-full sm:w-72 h-8 px-[13px] bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] text-[12px] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] outline-none rounded-none shadow-none select-text"
+                                                            />
+                                                        )}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => void triggerCandidateHunter(true)}
+                                                            title={t('registration.refresh_oem_web')}
+                                                            aria-label={t('registration.refresh_oem_web')}
+                                                            className={flatIconBtnClass}
+                                                        >
+                                                            <span className="material-symbols-outlined text-[18px]">
+                                                                refresh
+                                                            </span>
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
+                                                    {filteredHuntedCandidates.map((cand, idx) => {
+                                                        const candVersions = getEquipmentVersions(cand);
+                                                        const fullName =
+                                                            `${cand.make_oficial} ${cand.model_oficial}`.trim();
+                                                        const cleanType = cleanMachineryTypeLabel(
+                                                            cand.tipo_equipo || cand.categoria_equipo
+                                                        );
+                                                        const operationalDesc = buildEquipmentShortDescription(cand);
+
+                                                        return (
+                                                            <div
+                                                                key={`${cand.catalog_key || fullName}_${idx}`}
+                                                                onClick={() => handleSelectEquipment(cand)}
+                                                                className="py-[13px] px-[8px] hover:bg-[#F8FAFC] dark:hover:bg-[#000000] flex items-center justify-between gap-[21px] cursor-pointer transition-colors"
+                                                            >
+                                                                <div className="flex-1 min-w-0 space-y-[4px]">
+                                                                    <div className="flex flex-wrap items-baseline gap-[13px] min-w-0">
+                                                                        <span className="text-[15px] font-semibold font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] whitespace-normal break-words">
+                                                                            {fullName}
+                                                                        </span>
+                                                                        <span className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
+                                                                            {cleanType}
+                                                                        </span>
+                                                                    </div>
+                                                                    <div className="text-[13px] font-mono tabular-nums leading-[1.35] text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
+                                                                        {operationalDesc}
+                                                                    </div>
+                                                                </div>
+                                                                <div className="flex items-center gap-[13px] shrink-0 text-[11px] font-mono tabular-nums uppercase tracking-[0.05em]">
+                                                                    {candVersions.length > 1 && (
+                                                                        <span className="text-[#475569] dark:text-[#8A93A6]">
+                                                                            {t('registration.versions_count', {
+                                                                                count: candVersions.length,
+                                                                            })}
+                                                                        </span>
+                                                                    )}
+                                                                    <span
+                                                                        className={
+                                                                            cand.isNew
+                                                                                ? 'text-[#00AEEF]'
+                                                                                : 'text-[#C68346]'
+                                                                        }
+                                                                    >
+                                                                        {cand.isNew
+                                                                            ? t('registration.status_new_catalog')
+                                                                            : t('registration.status_in_catalog')}
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Campo Aclaratorio Progresivo */}
+                            {showClarificationSection && !isHuntingWeb && (
+                                <form
+                                    onSubmit={(e) => {
+                                        e.preventDefault();
+                                        if (clarificationInput.trim().length > 0) {
+                                            void triggerCandidateHunter(true, clarificationInput.trim());
+                                        }
+                                    }}
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    className="pt-[13px] border-t border-[#E2E8F0] dark:border-[#12151C] shrink-0 flex flex-col gap-[8px]"
+                                >
+                                    <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                                        {t('registration.clarification_toggle_label')}
+                                    </label>
+                                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-[13px]">
+                                        <input
+                                            type="text"
+                                            value={clarificationInput}
+                                            onChange={(e) => setClarificationInput(e.target.value)}
+                                            placeholder={t('registration.clarification_input_placeholder')}
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            className="flex-1 h-10 px-[13px] text-[13px] font-mono tabular-nums bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] text-[#0F172A] dark:text-[#F3F4F6] placeholder:text-[#94A3B8] dark:placeholder:text-[#5A6072] outline-none rounded-none shadow-none select-text"
+                                        />
+                                        <button
+                                            type="submit"
+                                            disabled={clarificationInput.trim().length < 2 || isHuntingWeb}
+                                            className="px-[21px] h-10 border border-[#00AEEF] bg-transparent hover:bg-[#00AEEF]/10 disabled:opacity-40 text-[#00AEEF] text-[11px] font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer disabled:cursor-not-allowed rounded-none shadow-none shrink-0"
+                                        >
+                                            {t('registration.clarification_apply_btn')}
+                                        </button>
+                                    </div>
+                                </form>
                             )}
                         </>
                     )}
@@ -779,158 +820,155 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                             onSubmit={handleEnrollFleetUnit}
                             autoComplete="off"
                             spellCheck={false}
-                            className="flex flex-col gap-[21px]"
+                            className="flex-1 min-h-0 overflow-y-auto flex flex-col justify-between gap-[21px]"
                         >
-                            {/* Ficha Resumen del Equipo Seleccionado */}
-                            <div className="pb-[13px] border-b border-[#E2E8F0] dark:border-[#12151C] flex items-start sm:items-center gap-[13px]">
-                                <SecureCasThumbnail
-                                    src={selectedEquipment.foto_url}
-                                    alt={`${selectedEquipment.make_oficial} ${selectedEquipment.model_oficial}`}
-                                    fallbackIcon="front_loader"
-                                    className="w-10 h-10 shrink-0"
-                                />
-                                <div className="flex-1 min-w-0">
-                                    <div className="text-[15px] font-semibold text-[#0F172A] dark:text-[#F3F4F6] whitespace-normal break-words">
+                            <div className="flex flex-col gap-[21px]">
+                                {/* Ficha Resumen del Equipo Seleccionado (Sin Cajas Decorativas) */}
+                                <div className="pb-[13px] border-b border-[#E2E8F0] dark:border-[#12151C] space-y-[4px]">
+                                    <div className="text-[17px] font-semibold font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] whitespace-normal break-words">
                                         {selectedEquipment.make_oficial} {selectedEquipment.model_oficial}
                                     </div>
                                     <div className="text-[13px] font-mono tabular-nums leading-[1.35] text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
                                         {buildEquipmentShortDescription(selectedEquipment)}
                                     </div>
                                 </div>
-                            </div>
 
-                            {/* Selector de Versión si tiene múltiples */}
-                            {selectedVersions.length > 1 && (
-                                <div className="flex flex-col gap-[8px]">
-                                    <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                                        {t('registration.design_versions', { count: selectedVersions.length })}
-                                    </label>
-                                    <div className="flex flex-wrap gap-[8px]">
-                                        {selectedVersions.map((ver) => (
-                                            <button
-                                                key={ver}
-                                                type="button"
-                                                onClick={() => setSelectedVersion(ver)}
-                                                className={`px-[13px] py-[8px] text-[12px] font-mono border rounded-none cursor-pointer transition-colors ${selectedVersion === ver
-                                                    ? 'bg-[#C68346] text-white border-[#C68346]'
-                                                    : 'bg-transparent border-[#E2E8F0] dark:border-[#12151C] text-[#0F172A] dark:text-[#F3F4F6] hover:border-[#C68346]'
+                                {/* Selector de Versión si tiene múltiples */}
+                                {selectedVersions.length > 1 && (
+                                    <div className="flex flex-col gap-[8px]">
+                                        <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] tabular-nums">
+                                            {t('registration.design_versions', { count: selectedVersions.length })}
+                                        </label>
+                                        <div className="flex flex-wrap gap-[8px]">
+                                            {selectedVersions.map((ver) => (
+                                                <button
+                                                    key={ver}
+                                                    type="button"
+                                                    onClick={() => setSelectedVersion(ver)}
+                                                    className={`px-[13px] py-[8px] text-[12px] font-mono tabular-nums border rounded-none shadow-none cursor-pointer transition-colors ${
+                                                        selectedVersion === ver
+                                                            ? 'bg-[#C68346] text-white border-[#C68346]'
+                                                            : 'bg-transparent border-[#E2E8F0] dark:border-[#12151C] text-[#0F172A] dark:text-[#F3F4F6] hover:border-[#C68346]'
                                                     }`}
-                                            >
-                                                {ver}
-                                            </button>
-                                        ))}
+                                                >
+                                                    {ver}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Identificador Único (Número de Serie / Patente / VIN / TAG) */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-[21px]">
+                                    <div className="flex flex-col gap-[8px]">
+                                        <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                                            {t('opermaq_domains.identifier_type_label')}
+                                        </label>
+                                        <select
+                                            value={identifierType}
+                                            onChange={(e) => setIdentifierType(e.target.value as FleetIdentifierType)}
+                                            className="h-10 px-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[13px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none"
+                                        >
+                                            <option value="SERIAL_NUMBER">{t('opermaq_domains.id_serial')}</option>
+                                            <option value="LICENSE_PLATE">{t('opermaq_domains.id_plate')}</option>
+                                            <option value="VIN">{t('opermaq_domains.id_vin')}</option>
+                                            <option value="ASSET_TAG">{t('opermaq_domains.id_tag')}</option>
+                                        </select>
+                                    </div>
+
+                                    <div className="flex flex-col gap-[8px]">
+                                        <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#C68346]">
+                                            {t('opermaq_domains.identifier_value_label')} *
+                                        </label>
+                                        <input
+                                            required
+                                            type="text"
+                                            autoFocus
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={identifierValue}
+                                            onChange={(e) => setIdentifierValue(e.target.value.toUpperCase())}
+                                            placeholder={t('opermaq_domains.identifier_value_placeholder')}
+                                            className="h-10 px-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[13px] font-mono tabular-nums uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none select-text"
+                                        />
                                     </div>
                                 </div>
-                            )}
 
-                            {/* Identificador Único (Número de Serie / Patente / VIN / TAG) */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-[13px]">
+                                {/* Régimen de Pertenencia + Horómetro */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-[21px]">
+                                    <div className="flex flex-col gap-[8px]">
+                                        <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                                            {t('opermaq_domains.ownership_label')}
+                                        </label>
+                                        <select
+                                            value={ownershipType}
+                                            onChange={(e) =>
+                                                setOwnershipType(e.target.value as FleetOwnershipCondition)
+                                            }
+                                            className="h-10 px-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[13px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none"
+                                        >
+                                            <option value="PROPIO">{t('opermaq_domains.own_owned')}</option>
+                                            <option value="ARRENDADO">{t('opermaq_domains.own_rented')}</option>
+                                            <option value="CONTRATISTA">{t('opermaq_domains.own_contractor')}</option>
+                                            <option value="COMODATO">{t('opermaq_domains.own_loan')}</option>
+                                        </select>
+                                    </div>
+
+                                    <div className="flex flex-col gap-[8px]">
+                                        <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                                            {t('opermaq_domains.horometer_label')}
+                                        </label>
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            step="1"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={horometer}
+                                            onChange={(e) => setHorometer(e.target.value)}
+                                            className="h-10 px-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[13px] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none select-text"
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Foto Privada Opcional */}
                                 <div className="flex flex-col gap-[8px]">
                                     <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                                        {t('opermaq_domains.identifier_type_label')}
+                                        {t('opermaq_domains.private_photo_optional')}
                                     </label>
-                                    <select
-                                        value={identifierType}
-                                        onChange={(e) => setIdentifierType(e.target.value as FleetIdentifierType)}
-                                        className="h-10 px-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[13px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none outline-none"
-                                    >
-                                        <option value="SERIAL_NUMBER">{t('opermaq_domains.id_serial')}</option>
-                                        <option value="LICENSE_PLATE">{t('opermaq_domains.id_plate')}</option>
-                                        <option value="VIN">{t('opermaq_domains.id_vin')}</option>
-                                        <option value="ASSET_TAG">{t('opermaq_domains.id_tag')}</option>
-                                    </select>
-                                </div>
-
-                                <div className="flex flex-col gap-[8px]">
-                                    <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#C68346]">
-                                        {t('opermaq_domains.identifier_value_label')} *
-                                    </label>
-                                    <input
-                                        required
-                                        type="text"
-                                        autoFocus
-                                        autoComplete="off"
-                                        spellCheck={false}
-                                        value={identifierValue}
-                                        onChange={(e) => setIdentifierValue(e.target.value.toUpperCase())}
-                                        placeholder={t('opermaq_domains.identifier_value_placeholder')}
-                                        className="h-10 px-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[13px] font-mono tabular-nums uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none outline-none select-text"
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Régimen de Pertenencia + Horómetro */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-[13px]">
-                                <div className="flex flex-col gap-[8px]">
-                                    <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                                        {t('opermaq_domains.ownership_label')}
-                                    </label>
-                                    <select
-                                        value={ownershipType}
-                                        onChange={(e) => setOwnershipType(e.target.value as FleetOwnershipCondition)}
-                                        className="h-10 px-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[13px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none outline-none"
-                                    >
-                                        <option value="PROPIO">{t('opermaq_domains.own_owned')}</option>
-                                        <option value="ARRENDADO">{t('opermaq_domains.own_rented')}</option>
-                                        <option value="CONTRATISTA">{t('opermaq_domains.own_contractor')}</option>
-                                        <option value="COMODATO">{t('opermaq_domains.own_loan')}</option>
-                                    </select>
-                                </div>
-
-                                <div className="flex flex-col gap-[8px]">
-                                    <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                                        {t('opermaq_domains.horometer_label')}
-                                    </label>
-                                    <input
-                                        type="number"
-                                        min={0}
-                                        step="1"
-                                        autoComplete="off"
-                                        spellCheck={false}
-                                        value={horometer}
-                                        onChange={(e) => setHorometer(e.target.value)}
-                                        className="h-10 px-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[13px] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none outline-none select-text"
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Foto Privada Opcional */}
-                            <div className="flex flex-col gap-[8px]">
-                                <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                                    {t('opermaq_domains.private_photo_optional')}
-                                </label>
-                                <div className="flex items-center gap-[13px]">
-                                    <input
-                                        ref={photoInputRef}
-                                        type="file"
-                                        accept="image/jpeg,image/png,image/webp"
-                                        onChange={(e) => setPrivatePhotoFile(e.target.files?.[0] || null)}
-                                        className="hidden"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => photoInputRef.current?.click()}
-                                        className="px-[13px] h-9 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] bg-transparent text-[11px] font-mono uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6] rounded-none cursor-pointer"
-                                    >
-                                        {privatePhotoFile
-                                            ? privatePhotoFile.name
-                                            : t('opermaq_domains.upload_private_photo')}
-                                    </button>
-                                    {privatePhotoFile && (
+                                    <div className="flex items-center gap-[13px]">
+                                        <input
+                                            ref={photoInputRef}
+                                            type="file"
+                                            accept="image/jpeg,image/png,image/webp"
+                                            onChange={(e) => setPrivatePhotoFile(e.target.files?.[0] || null)}
+                                            className="hidden"
+                                        />
                                         <button
                                             type="button"
-                                            onClick={() => setPrivatePhotoFile(null)}
-                                            aria-label={t('common.cancel')}
-                                            className={flatIconBtnClass}
+                                            onClick={() => photoInputRef.current?.click()}
+                                            className="px-[13px] h-9 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] bg-transparent text-[11px] font-mono uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer"
                                         >
-                                            <span className="material-symbols-outlined text-[16px]">close</span>
+                                            {privatePhotoFile
+                                                ? privatePhotoFile.name
+                                                : t('opermaq_domains.upload_private_photo')}
                                         </button>
-                                    )}
+                                        {privatePhotoFile && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setPrivatePhotoFile(null)}
+                                                aria-label={t('common.cancel')}
+                                                className={flatIconBtnClass}
+                                            >
+                                                <span className="material-symbols-outlined text-[16px]">close</span>
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
 
                             {/* Confirmación Quirúrgica por Palabra Clave "ACTUALIZAR" */}
-                            <div className="pt-[13px] border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-col gap-[13px]">
+                            <div className="pt-[13px] border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-col gap-[13px] shrink-0">
                                 <label className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                                     {t('opermaq_domains.confirm_keyword_prompt')}
                                 </label>
@@ -942,7 +980,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                         value={confirmKeyword}
                                         onChange={(e) => setConfirmKeyword(e.target.value.toUpperCase())}
                                         placeholder="ACTUALIZAR"
-                                        className="flex-1 h-10 px-[13px] bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[13px] font-mono tracking-widest uppercase text-center text-[#0F172A] dark:text-[#F3F4F6] rounded-none outline-none select-text"
+                                        className="flex-1 h-10 px-[13px] bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[13px] font-mono tracking-widest uppercase text-center text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none select-text"
                                     />
                                     <button
                                         type="submit"
@@ -951,7 +989,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                             identifierValue.trim().length < 2 ||
                                             confirmKeyword.trim().toUpperCase() !== 'ACTUALIZAR'
                                         }
-                                        className="px-[21px] h-10 bg-[#C68346] hover:bg-[#b0743e] disabled:opacity-40 text-white text-[11px] font-mono font-bold uppercase tracking-[0.05em] border-0 rounded-none cursor-pointer disabled:cursor-not-allowed"
+                                        className="px-[21px] h-10 bg-[#C68346] hover:bg-[#b0743e] disabled:opacity-40 text-white text-[11px] font-mono font-bold uppercase tracking-[0.05em] border-0 rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
                                     >
                                         {isSubmitting
                                             ? t('detail.registering')
@@ -968,4 +1006,3 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
 };
 
 export default FleetUnitRegistrationModal;
-

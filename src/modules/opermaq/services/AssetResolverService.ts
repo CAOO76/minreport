@@ -16,6 +16,7 @@ import {
     readCollaborativeLineage,
     resolveFromLocalCommonsCatalog,
     saveCollaborativeLineage,
+    stripTemporalAndHistoricalNoise,
 } from './CanonicalEntityResolver';
 import { enrichCatalogProfile } from './CatalogProfileEnricher';
 import { buildAndPersistAssetSymbologyPack } from './EquipmentSymbologyPackBuilder';
@@ -195,7 +196,7 @@ const PASS2_TYPE_SCOPED_CANDIDATE_SCHEMA = {
                     model_oficial: {
                         type: Type.STRING,
                         description:
-                            'Modelo o serie oficial limpio en MAYÚSCULAS sin años ni eslóganes (ej. "140M", "140M2", "140M3", "GD655-5", "LANDTREK", "XAS 185", "C120").',
+                            'Modelo, serie o versión comercial oficial limpia en MAYÚSCULAS SIN AÑOS NI RANGOS DE FECHAS (ej. "140M", "140M2", "140M3", "GD655-5", "LANDTREK ACTIVE 1.9D 4X4", "LANDTREK ACTION 1.9D 4X4", "LANDTREK 4ACTION 1.9D 4X4", "XAS 185", "C120"). Prohibido incluir "(desde 2020 a la actualidad)", "(2020-presente)" o años.',
                     },
                     ambiente_operativo: {
                         type: Type.ARRAY,
@@ -291,6 +292,124 @@ function isVagueDetectedType(raw?: string | null): boolean {
     );
 }
 
+export interface QueryTechnicalConstraints {
+    requestedYear: number | null;
+    requestedTraction: string | null;
+    requestedFuel: 'DIESEL' | 'GASOLINA' | 'ELECTRICO' | 'HIBRIDO' | null;
+    requestedDisplacement: string | null;
+    clarificationText: string | null;
+    hasExplicitConstraints: boolean;
+}
+
+export function extractQueryTechnicalConstraints(
+    rawInput: string,
+    clarificationContext?: string
+): QueryTechnicalConstraints {
+    const combined = `${rawInput || ''} ${clarificationContext || ''}`
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase();
+
+    const yearMatch = combined.match(/\b(19[6-9]\d|20[0-3]\d)\b/);
+    const requestedYear = yearMatch ? Number.parseInt(yearMatch[1], 10) : null;
+
+    const tractionMatch = combined.match(/\b(4X4|4X2|6X4|6X6|8X4|AWD|4WD|2WD)\b/);
+    let requestedTraction = tractionMatch ? tractionMatch[1] : null;
+    if (requestedTraction === '4WD') requestedTraction = '4X4';
+    if (requestedTraction === '2WD') requestedTraction = '4X2';
+
+    let requestedFuel: QueryTechnicalConstraints['requestedFuel'] = null;
+    if (/\b(DIESEL|TURBODIESEL|HDI|TDI|BLUEHDI|CRDI|DID)\b/.test(combined)) {
+        requestedFuel = 'DIESEL';
+    } else if (/\b(GASOLINA|BENCINA|BENCINERA|NAFTA|THP|TSI|ECOBOOST)\b/.test(combined)) {
+        requestedFuel = 'GASOLINA';
+    } else if (/\b(ELECTRICO|ELECTRICA|EV|BEV)\b/.test(combined)) {
+        requestedFuel = 'ELECTRICO';
+    } else if (/\b(HIBRIDO|HIBRIDA|HEV|PHEV)\b/.test(combined)) {
+        requestedFuel = 'HIBRIDO';
+    }
+
+    const dispMatch = combined.match(/\b(\d[.,]\d)\s*(?:L|LITROS?|D|HDI|TDI|THP)?\b/);
+    const requestedDisplacement = dispMatch ? `${dispMatch[1].replace(',', '.')}L` : null;
+
+    const clarificationText = clarificationContext?.trim() ? clarificationContext.trim() : null;
+    const hasExplicitConstraints = Boolean(
+        requestedYear || requestedTraction || requestedFuel || requestedDisplacement || clarificationText
+    );
+
+    return {
+        requestedYear,
+        requestedTraction,
+        requestedFuel,
+        requestedDisplacement,
+        clarificationText,
+        hasExplicitConstraints,
+    };
+}
+
+function formatConstraintsDirective(constraints: QueryTechnicalConstraints): string {
+    if (!constraints.hasExplicitConstraints) return '';
+    const rules: string[] = [];
+    if (constraints.requestedFuel === 'DIESEL') {
+        rules.push(
+            '- MOTORIZACIÓN OBLIGATORIA: DIÉSEL / TURBODIÉSEL. Queda ESTRICTAMENTE PROHIBIDO incluir versiones a Gasolina / Bencina / Nafta / THP.'
+        );
+    } else if (constraints.requestedFuel === 'GASOLINA') {
+        rules.push(
+            '- MOTORIZACIÓN OBLIGATORIA: GASOLINA / BENCINA. Queda ESTRICTAMENTE PROHIBIDO incluir versiones Diésel.'
+        );
+    }
+    if (constraints.requestedTraction) {
+        rules.push(
+            `- TRACCIÓN OBLIGATORIA: ${constraints.requestedTraction}. Queda ESTRICTAMENTE PROHIBIDO incluir configuraciones de tracción distinta (ej. si pidió 4X4, excluye 4X2/2WD).`
+        );
+    }
+    if (constraints.requestedYear) {
+        rules.push(
+            `- AÑO DE REFERENCIA TÉCNICA: ${constraints.requestedYear}. Incluye ÚNICAMENTE las versiones y motorizaciones vigentes y comercializadas en el año ${constraints.requestedYear} (excluye motores o restylings lanzados en años posteriores a ${constraints.requestedYear}). JAMÁS escribas el año ni frases como "desde 2020 a la actualidad" dentro del nombre del modelo.`
+        );
+    }
+    if (constraints.requestedDisplacement) {
+        rules.push(`- CILINDRADA / MOTOR SOLICITADO: ${constraints.requestedDisplacement}.`);
+    }
+    if (constraints.clarificationText) {
+        rules.push(
+            `- ACLARACIÓN TÉCNICA APORTADA POR EL USUARIO (PRIORIDAD MÁXIMA): "${constraints.clarificationText}".`
+        );
+    }
+    return `\nRESTRICCIONES TÉCNICAS EXPLÍCITAS DE LA CONSULTA (FILTRO DURO OBLIGATORIO):\n${rules.join('\n')}\n`;
+}
+
+function textViolatesConstraints(text: string, constraints: QueryTechnicalConstraints): boolean {
+    if (!constraints.hasExplicitConstraints) return false;
+    const norm = text
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase();
+
+    if (constraints.requestedFuel === 'DIESEL') {
+        if (/\b(GASOLINA|BENCINA|NAFTA|THP|2\.4\s*THP|2\.4L?\s*TURBO\s*GASOLINA)\b/.test(norm)) {
+            return true;
+        }
+    } else if (constraints.requestedFuel === 'GASOLINA') {
+        if (/\b(DIESEL|TURBODIESEL|HDI|BLUEHDI|1\.9\s*D|1\.9\s*HDI)\b/.test(norm)) {
+            return true;
+        }
+    }
+
+    if (constraints.requestedTraction === '4X4') {
+        if (/\b(4X2|2WD|TRACCION\s+SIMPLE)\b/.test(norm) && !/\b4X4\b/.test(norm)) {
+            return true;
+        }
+    } else if (constraints.requestedTraction === '4X2') {
+        if (/\b(4X4|4WD|AWD)\b/.test(norm) && !/\b4X2\b/.test(norm)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function buildTypeScopedGroundedResearchPrompt(params: {
     rawInput: string;
     correctedMake: string;
@@ -299,6 +418,7 @@ function buildTypeScopedGroundedResearchPrompt(params: {
     designator: string | null;
     typeDoc: GlobalEquipmentTypeDoc;
     clarificationContext?: string;
+    constraints: QueryTechnicalConstraints;
 }): string {
     const {
         rawInput,
@@ -308,6 +428,7 @@ function buildTypeScopedGroundedResearchPrompt(params: {
         designator,
         typeDoc,
         clarificationContext,
+        constraints,
     } = params;
 
     const axesInstructions = typeDoc.spec_schema
@@ -323,11 +444,13 @@ function buildTypeScopedGroundedResearchPrompt(params: {
         })
         .join('\n');
 
+    const constraintsDirective = formatConstraintsDirective(constraints);
+
     if (isGeneric && designator) {
         return `Usa Google Search para investigar en catálogos técnicos y fichas de ingeniería el activo correspondiente al código técnico "${designator}" (búsqueda original: "${rawInput}", TIPO CANÓNICO DETECTADO: "${typeDoc.canonical_type_es}"${clarificationContext ? `, aclaración: "${clarificationContext}"` : ''}).
-
+${constraintsDirective}
 Redacta un informe técnico conciso en español basado únicamente en las páginas web consultadas:
-1. Enumera todas las variantes mecánicas o generaciones reales asociadas exactamente al código "${designator}" (sin sustituir el código por modelos vecinos distintos).
+1. Enumera todas las variantes mecánicas o generaciones reales asociadas exactamente al código "${designator}" (sin sustituir el código por modelos vecinos distintos y sin añadir rangos de años al nombre del modelo).
 2. Dado que el activo corresponde al TIPO "${typeDoc.canonical_type_es}", busca y reporta EXCLUSIVAMENTE estos ${typeDoc.spec_schema.length} parámetros propios de su clase para cada variante:
 ${axesInstructions}
 3. NO reportes parámetros impropios de otros tipos de equipos. Si alguno de los parámetros anteriores no consta con cifra explícita en las fuentes consultadas, indícalo literalmente como "NO DECLARADO EN FUENTE".`;
@@ -335,7 +458,7 @@ ${axesInstructions}
 
     if (isGeneric) {
         return `Usa Google Search para investigar las configuraciones técnicas e industriales reales correspondientes a la búsqueda genérica "${rawInput}" (TIPO CANÓNICO DETECTADO: "${typeDoc.canonical_type_es}"${clarificationContext ? `, aclaración: "${clarificationContext}"` : ''}).
-
+${constraintsDirective}
 Redacta un informe técnico conciso en español basado en las fuentes consultadas:
 1. Desglosa las configuraciones estándar reales diferenciadas por escala operativa, energía motriz o configuración mecánica.
 2. Para cada configuración de "${typeDoc.canonical_type_es}", busca y reporta EXCLUSIVAMENTE estos ${typeDoc.spec_schema.length} parámetros propios de su clase en unidades SI:
@@ -354,17 +477,17 @@ ${canonicalTarget ? `- Identidad corregida objetivo: "${canonicalTarget}"` : ''}
 ${designator ? `- Designador alfanumérico detectado: "${designator}"` : ''}
 - TIPO CANÓNICO DE EQUIPO DETECTADO: "${typeDoc.canonical_type_es}" (${typeDoc.categoria_equipo})
 ${clarificationContext ? `- Contexto aclaratorio del usuario: "${clarificationContext}"` : ''}
-
+${constraintsDirective}
 INSTRUCCIONES DE INVESTIGACIÓN WEB FOCALIZADA POR TIPO (CENSO EXHAUSTIVO 1..N SIN LÍMITE DE CANTIDAD):
-1. CENSO GENEALÓGICO EXHAUSTIVO DE SERIES, GENERACIONES Y VERSIONES REALES (1..N, CERO OMISIONES):
-   - Identifica y lista el 100% de las generaciones, series, sub-series y evoluciones comerciales reales (históricas y actuales) que correspondan a la consulta, sin aplicar ningún límite de cantidad (ej. si buscó "CAT D10", debes incluir las 6 generaciones reales: "D10 (SERIE ORIGINAL)", "D10N", "D10R", "D10T", "D10T2" y "D10 NEXT GEN"; si buscó "CAT 140M", detalla "140M", "140M2", "140M3"; si buscó "KOMATSU PC200" o "JOHN DEERE 310", detalla todas sus series/generaciones comercializadas).
-   - REGLA UNIVERSAL DE DESAMBIGUACIÓN DE GENERACIONES HOMÓNIMAS: Cuando cualquier fabricante haya reutilizado el mismo código comercial base en dos épocas o generaciones distintas (ej. la serie clásica original de los años 70/80 frente a una generación moderna "NEXT GEN", "SERIE II", "G-TIER" o "P-TIER"), DEBES reportarlas como candidatos separados con su sufijo de generación explícito (ej. "D10 (SERIE ORIGINAL)" y "D10 NEXT GEN"), jamás fusionarlas en un solo ítem.
+1. CENSO EXHAUSTIVO DE VERSIONES COMERCIALES O GENERACIONES REALES QUE CUMPLEN LAS RESTRICCIONES (1..N, CERO OMISIONES):
+   - Si el usuario buscó un modelo específico con restricciones técnicas (ej. "PEUGEOT LANDTREK 4X4 DIESEL 2022"), identifica y lista por separado TODAS las versiones/equipamientos comerciales reales verificados que cumplan exactamente dichas restricciones (ej. "LANDTREK ACTIVE 1.9D 4X4", "LANDTREK ACTION 1.9D 4X4", "LANDTREK 4ACTION 1.9D 4X4", "LANDTREK ALLURE 1.9D 4X4", diferenciando transmisión MT6 / AT6 si aplica), EXCLUYENDO motorizaciones o tracciones que contradigan la consulta.
+   - Si el usuario buscó una familia o serie de maquinaria (ej. "CAT D10", "CAT 140M", "KOMATSU PC200"), identifica y lista el 100% de las generaciones y series reales ("D10", "D10N", "D10R", "D10T", "D10T2", "D10 NEXT GEN"; "140M", "140M2", "140M3").
+   - PROHIBICIÓN ABSOLUTA DE RANGOS TEMPORALES EN NOMBRES: Jamás agregues frases como "(desde 2020 a la actualidad)", "(2020-presente)" ni rangos de años a los nombres de modelos o versiones.
 2. BÚSQUEDA EXCLUSIVA DE LAS CARACTERÍSTICAS DE "${typeDoc.canonical_type_es}":
-   Para cada modelo, generación o serie identificada, busca en las fichas técnicas OEM ÚNICAMENTE estos ${typeDoc.spec_schema.length} parámetros principales y diferenciadores establecidos para "${typeDoc.canonical_type_es}":
+   Para cada versión, modelo o serie identificada, busca en las fichas técnicas OEM ÚNICAMENTE estos ${typeDoc.spec_schema.length} parámetros principales y diferenciadores establecidos para "${typeDoc.canonical_type_es}":
 ${axesInstructions}
 3. CERO PARÁMETROS CRUZADOS, FORMATO DENSO Y CERO PROSA PUBLICITARIA:
-   - Formato ultra-compacto: presenta máximo 2 a 3 líneas densas por cada generación/modelo con sus cifras SI y fuente. Prohibido redactar introducciones o párrafos extensos.
-   - Ejecuta 1 a 2 consultas de búsqueda web consolidadas para obtener el censo completo de generaciones (1..N) y sus datos clave.
+   - Formato ultra-compacto: presenta máximo 2 a 3 líneas densas por cada versión/generación con sus cifras SI y fuente. Prohibido redactar introducciones o párrafos extensos.
    - Si algún parámetro no figura explícitamente en las páginas web consultadas, escribe literalmente "NO DECLARADO EN FUENTE".`;
 }
 
@@ -375,8 +498,9 @@ function buildTypeScopedPass2ExtractionPrompt(params: {
     typeDoc: GlobalEquipmentTypeDoc;
     groundedReportText: string;
     sourcesManifest: string;
+    constraints: QueryTechnicalConstraints;
 }): string {
-    const { rawInput, isGeneric, designator, typeDoc, groundedReportText, sourcesManifest } = params;
+    const { rawInput, isGeneric, designator, typeDoc, groundedReportText, sourcesManifest, constraints } = params;
 
     const schemaLines = typeDoc.spec_schema
         .map((ax) => {
@@ -388,9 +512,11 @@ function buildTypeScopedPass2ExtractionPrompt(params: {
         })
         .join('\n');
 
+    const constraintsDirective = formatConstraintsDirective(constraints);
+
     return `Eres un Extractor Determinista de Catálogo Técnico OEM y Vehicular (Temperatura 0, Tolerancia Cero a la Alucinación, Cero Restricción de Cantidad 1..N).
 Convierte el INFORME DE INVESTIGACIÓN WEB VERIFICADA adjunto abajo en la estructura JSON requerida para la búsqueda "${rawInput}" (modo: ${isGeneric ? 'GENÉRICO' : 'MARCA/OEM'}${designator && isGeneric ? `, designador bloqueado: "${designator}"` : ''}).
-
+${constraintsDirective}
 TIPO CANÓNICO DEL EQUIPO: "${typeDoc.canonical_type_es}" (clave: "${typeDoc.type_key}")
 ESQUEMA OBLIGATORIO DE EJES A EXTRAER EN "extracted_axes" PARA CADA CANDIDATO:
 ${schemaLines}
@@ -405,16 +531,16 @@ ${groundedReportText.slice(0, 48000)}
 
 REGLAS ESTRICTAS FAIL-CLOSED (1..N SIN RESTRICCIÓN DE CANTIDAD):
 1. "is_pertinent": true para cualquier vehículo, maquinaria, compresor, generador, perforadora, chancador, bomba, grúa, equipo industrial o herramienta. Solo false para artículos domésticos/personales ajenos.
-2. EXTRACCIÓN EXHAUSTIVA 1..N Y DESAMBIGUACIÓN UNIVERSAL DE GENERACIONES:
-   - PROHIBIDO recortar, limitar o resumir la lista de candidatos: extrae el 100% de las generaciones, series y modelos identificados en el informe.
+2. DESGLOSE DE CANDIDATOS SELECCIONABLES (SERIES O VERSIONES COMERCIALES):
+   - PROHIBIDO recortar, limitar o resumir la lista de candidatos: extrae el 100% de las generaciones, series o versiones comerciales verificadas en el informe que cumplan las restricciones de la consulta.
+   - Si el informe describe múltiples versiones comerciales/equipamientos de un mismo modelo (ej. para "PEUGEOT LANDTREK 4X4 DIESEL 2022": "LANDTREK ACTIVE 1.9D 4X4", "LANDTREK ACTION 1.9D 4X4", "LANDTREK 4ACTION 1.9D 4X4", "LANDTREK ALLURE 1.9D 4X4"), DEBES emitir CADA VERSIÓN COMERCIAL como un candidato independiente en el arreglo "candidates" con su "model_oficial" específico, para que el usuario pueda seleccionar directamente la versión exacta que desea registrar.
+   - Si el informe describe múltiples series/generaciones de una familia de maquinaria (ej. "D10", "D10N", "D10R", "D10T", "D10T2", "D10 NEXT GEN" o "140M", "140M2", "140M3"), emite cada serie como un candidato independiente.
+   - PROHIBICIÓN ABSOLUTA DE RUIDO TEMPORAL: Jamás incluyas años, rangos de años ni frases como "(desde 2020 a la actualidad)" o "(2020-presente)" en "model_oficial" ni en "versions".
    - En modo OEM, normaliza "make_oficial" a la marca oficial corregida en MAYÚSCULAS (ej. "PEUGUEOT" -> "PEUGEOT", "CAT" -> "CATERPILLAR").
-   - Crea un candidato independiente por cada generación o serie distinta (ej. para "CAT D10" debes emitir los candidatos independientes de todas sus generaciones: "D10 (SERIE ORIGINAL)", "D10N", "D10R", "D10T", "D10T2", "D10 NEXT GEN"; para "140M": "140M", "140M2", "140M3").
-   - JAMÁS asignes el mismo "model_oficial" a dos generaciones distintas del mismo fabricante: cuando una generación histórica y una moderna compartan el código base, conserva el calificador de generación en "model_oficial" (ej. "D10 (SERIE ORIGINAL)" vs "D10 NEXT GEN", o "SERIE I" vs "NEXT GEN" / "P-TIER" / "G-TIER").
-   - Coloca las configuraciones de chasis/hoja/tracción de cada generación en su arreglo "versions".
 3. EXTRACCIÓN EXACTA DE "extracted_axes":
    - Devuelve en "extracted_axes" una entrada por cada "axis_key" del esquema de "${typeDoc.canonical_type_es}".
-   - En "value_si" escribe ÚNICAMENTE la cifra con su unidad métrica SI (ej. "136 kW (183 HP)", "3.700 mm", "5,2 m³/min", "7 bar", "15.800 kg") o el valor exacto del enum permitido. JAMÁS repitas el nombre de la etiqueta dentro de "value_si".
-   - Si un eje NO aparece con dato explícito en el informe verificado (o dice NO DECLARADO), devuelve "value_si": null, "source_url": null, "verbatim_evidence": null (pero NO descartes el candidato de la lista de generaciones).
+   - En "value_si" escribe ÚNICAMENTE la cifra con su unidad métrica SI (ej. "110 kW (150 HP)", "1.910 cm³", "350 Nm", "1.020 kg", "4x4") o el valor exacto del enum permitido. JAMÁS repitas el nombre de la etiqueta dentro de "value_si".
+   - Si un eje NO aparece con dato explícito en el informe verificado (o dice NO DECLARADO), devuelve "value_si": null, "source_url": null, "verbatim_evidence": null.
    - "source_url" y "official_url" DEBEN ser URLs literales tomadas de FUENTES WEB VERIFICADAS DISPONIBLES.`;
 }
 
@@ -426,6 +552,7 @@ export async function resolveMachineryCandidates(
 ): Promise<AssetResolutionResponse> {
     const cleanInput = jerga.trim();
     validateIndustrialDomain(cleanInput);
+    const constraints = extractQueryTechnicalConstraints(cleanInput, clarificationContext);
 
     // ── COMPUERTA COLABORATIVA DE LINAJE COMPLETO (< 30 ms, $0 IA, 0 Duplicados) ──
     if (!forceWebDiscovery && !clarificationContext) {
@@ -491,7 +618,7 @@ ${clarificationContext ? `- Aclaración adicional del usuario: "${clarificationC
 TAREA PRIMARIA (PASO 1):
 1. Valida pertinencia ("is_pertinent": true para cualquier vehículo liviano/pesado, maquinaria, compresor, generador, perforadora, chancador, grúa, bomba, equipo o herramienta; false solo para objetos domésticos/personales ajenos).
 2. Verifica si requiere aclaración ("requires_clarification": true solo si escribió únicamente una marca suelta sin modelo ni tipo, p. ej. solo "Caterpillar" o solo "Toyota", o una palabra vacía como "máquina").
-3. Corrige errores ortográficos de marca y modelo (ej. "PEUGUEOT LANDTRECK 4X4 2022" -> marca "PEUGEOT", modelo "LANDTREK"; "CAT 140M" -> marca "CATERPILLAR", modelo "140M").
+3. Corrige errores ortográficos de marca y modelo SIN INCLUIR AÑOS NI TRACCIÓN EN EL MODELO BASE (ej. "PEUGUEOT LANDTRECK 4X4 DIESEL 2022" -> marca "PEUGEOT", modelo "LANDTREK"; "CAT 140M" -> marca "CATERPILLAR", modelo "140M").
 4. Identifica en "detected_tipo_equipo" el TIPO canónico exacto de equipo en español singular MAYÚSCULAS (ej. "MOTONIVELADORA", "CAMIONETA PICK-UP", "COMPRESOR DE AIRE", "PERFORADORA NEUMÁTICA MANUAL", "CHANCADOR DE MANDÍBULAS", "EXCAVADORA HIDRÁULICA", "BULLDOZER SOBRE ORUGAS").`,
         });
 
@@ -516,7 +643,9 @@ TAREA PRIMARIA (PASO 1):
         correctedMake = isGeneric
             ? 'GENÉRICO'
             : BRAND_SYNONYM_TO_OFFICIAL[rawMakeUpper] || rawMakeUpper;
-        correctedModelOrFamily = String(step1.corrected_model_or_family || designator || cleanInput).trim();
+        correctedModelOrFamily = normalizeModelCode(
+            String(step1.corrected_model_or_family || designator || cleanInput).trim()
+        );
         if (!isVagueDetectedType(step1.detected_tipo_equipo)) {
             detectedTipoHint = step1.detected_tipo_equipo.trim();
         }
@@ -527,6 +656,23 @@ TAREA PRIMARIA (PASO 1):
             throw step1Err;
         }
         needsWebTypeIdentification = !detectedTipoHint;
+    }
+
+    // Segunda verificación de Linaje Colaborativo post-corrección ortográfica (ej. "landtreck" -> "LANDTREK")
+    if (!forceWebDiscovery && !clarificationContext && correctedMake && correctedModelOrFamily) {
+        const canonicalLineageHit = await readCollaborativeLineage(cleanInput, isGeneric, {
+            make: correctedMake,
+            model: correctedModelOrFamily,
+        });
+        if (canonicalLineageHit.matched && canonicalLineageHit.candidates.length > 0) {
+            return {
+                requires_clarification: false,
+                candidates: canonicalLineageHit.candidates,
+                resolved_from_commons: true,
+                resolution_tier: 'TIER_0_EXACT',
+                resolution_latency_ms: canonicalLineageHit.latencyMs,
+            };
+        }
     }
 
     // Si el código es poco conocido y requiere confirmación web para saber qué TIPO de máquina es antes de fijar sus ejes:
@@ -583,7 +729,7 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
                 correctedMake = BRAND_SYNONYM_TO_OFFICIAL[mk] || mk;
             }
             if (postWebType.corrected_model_or_family) {
-                correctedModelOrFamily = postWebType.corrected_model_or_family.trim();
+                correctedModelOrFamily = normalizeModelCode(postWebType.corrected_model_or_family.trim());
             }
         } catch (webIdErr) {
             if (webIdErr instanceof DomainRejectionError) throw webIdErr;
@@ -612,6 +758,7 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
         designator,
         typeDoc: activeTypeDoc,
         clarificationContext,
+        constraints,
     });
 
     let pass1Response;
@@ -624,7 +771,7 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
             useGoogleSearch: true,
             requireGroundedEvidence: true,
             maxOutputTokens: 8192,
-            bypassCache: forceWebDiscovery,
+            bypassCache: forceWebDiscovery || Boolean(clarificationContext),
             prompt: pass1Prompt,
         });
     } catch (aiErr) {
@@ -664,6 +811,7 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
         typeDoc: activeTypeDoc,
         groundedReportText: pass1Response.text,
         sourcesManifest,
+        constraints,
     });
 
     const { data: parsed } = await ResilientAIClient.generateStructured<{
@@ -694,7 +842,7 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
         topP: 1,
         topK: 1,
         maxOutputTokens: 32768,
-        bypassCache: forceWebDiscovery,
+        bypassCache: forceWebDiscovery || Boolean(clarificationContext),
         responseSchema: PASS2_TYPE_SCOPED_CANDIDATE_SCHEMA,
         prompt: pass2Prompt,
     });
@@ -738,11 +886,59 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
         }
     }
 
-    const rawCandidates = Array.isArray(parsed.candidates) ? parsed.candidates : [];
+    const initialRawCandidates = Array.isArray(parsed.candidates) ? parsed.candidates : [];
+
+    // Sanitización determinista de ruido temporal, filtro de restricciones duras y expansión de versiones empaquetadas
+    const sanitizedRawCandidates = initialRawCandidates
+        .map((c) => {
+            const cleanModel = normalizeModelCode(String(c.model_oficial || correctedModelOrFamily || cleanInput));
+            const cleanVersions = Array.isArray(c.versions)
+                ? c.versions
+                      .map((v) => stripTemporalAndHistoricalNoise(String(v || '')))
+                      .filter((v) => Boolean(v) && !textViolatesConstraints(v, constraints))
+                : [];
+            return {
+                ...c,
+                model_oficial: cleanModel,
+                versions: cleanVersions.length > 0 ? cleanVersions : ['ESTÁNDAR'],
+            };
+        })
+        .filter((c) => !textViolatesConstraints(c.model_oficial, constraints));
+
+    const effectiveRawCandidates =
+        sanitizedRawCandidates.length > 0 ? sanitizedRawCandidates : initialRawCandidates;
+
+    // Si Pass 2 devolvió 1 solo candidato base con múltiples versiones comerciales en `versions[]`, expandirlas en candidatos independientes seleccionables
+    let expandedRawCandidates = effectiveRawCandidates;
+    if (
+        effectiveRawCandidates.length === 1 &&
+        Array.isArray(effectiveRawCandidates[0].versions) &&
+        effectiveRawCandidates[0].versions.length > 1
+    ) {
+        const single = effectiveRawCandidates[0];
+        const baseModel = normalizeModelCode(single.model_oficial || correctedModelOrFamily || cleanInput);
+        const nonTrivialVersions = single.versions
+            .map((v) => stripTemporalAndHistoricalNoise(String(v || '')).trim())
+            .filter((v) => v.length > 1 && v.toUpperCase() !== 'ESTÁNDAR' && v.toUpperCase() !== baseModel);
+
+        if (nonTrivialVersions.length > 1) {
+            expandedRawCandidates = nonTrivialVersions.map((ver) => {
+                const verUpper = ver.toUpperCase();
+                const fullModel = verUpper.startsWith(baseModel)
+                    ? normalizeModelCode(verUpper)
+                    : normalizeModelCode(`${baseModel} ${verUpper}`);
+                return {
+                    ...single,
+                    model_oficial: fullModel,
+                    versions: [ver],
+                };
+            });
+        }
+    }
 
     // Procesar el 100% de los candidatos (concurrencia controlada = 4)
     const resolvedCandidates = await mapWithConcurrency(
-        rawCandidates,
+        expandedRawCandidates,
         4,
         async (raw, idx): Promise<ResolvedAssetCandidate> => {
             const rawMakeUpper = (isGeneric ? 'GENÉRICO' : String(raw.make_oficial || correctedMake || 'GENÉRICO'))
@@ -776,7 +972,7 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
             if (existingDocSnap && existingDocSnap.exists) {
                 const existingData = existingDocSnap.data()!;
                 const homologous = extractHomologousAxisValues(existingData);
-                const existingVersions =
+                const rawExistingVersions =
                     Array.isArray(existingData.chassis_versions) && existingData.chassis_versions.length > 0
                         ? existingData.chassis_versions
                         : Array.isArray(existingData.versions) && existingData.versions.length > 0
@@ -784,12 +980,19 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
                         : Array.isArray(raw.versions) && raw.versions.length > 0
                         ? raw.versions
                         : ['ESTÁNDAR'];
+                const existingVersions = rawExistingVersions
+                    .map((v: unknown) => stripTemporalAndHistoricalNoise(String(v || '')))
+                    .filter((v: string) => Boolean(v) && !textViolatesConstraints(v, constraints));
+                const cleanExistingModel = normalizeModelCode(
+                    String(existingData.model_oficial || existingData.model || safeModel)
+                );
+
                 return {
                     global_asset_id: existingDocSnap.id,
                     existing_catalog_id: existingDocSnap.id,
                     catalog_key: catalogKey,
                     make_oficial: existingData.make_oficial || existingData.make || safeMake,
-                    model_oficial: existingData.model_oficial || existingData.model || safeModel,
+                    model_oficial: cleanExistingModel || safeModel,
                     equipment_type_key: existingData.equipment_type_key || activeTypeDoc.type_key,
                     archetype_id: homologous.archetype.id,
                     tipo_equipo: existingData.tipo_equipo || activeTypeDoc.canonical_type_es,
@@ -803,13 +1006,9 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
                     contexto_operativo:
                         existingData.contexto_operativo || raw.contexto_operativo || ['Operación Industrial'],
                     caracteristicas_principales: serializeCanonicalSlotsToSpecsArray(homologous.slots),
-                    versions: existingVersions,
-                    chassis_versions: Array.from(
-                        new Set([
-                            ...existingVersions,
-                            ...(Array.isArray(raw.versions) ? raw.versions : []),
-                        ])
-                    ),
+                    versions: existingVersions.length > 0 ? existingVersions : ['ESTÁNDAR'],
+                    chassis_versions:
+                        existingVersions.length > 0 ? Array.from(new Set(existingVersions)) : ['ESTÁNDAR'],
                     official_url: existingData.official_url || groundedUrls[idx] || groundedUrls[0] || '',
                     isNew: false,
                     is_pertinent: true,
@@ -865,7 +1064,9 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
 
             const candidateVersions =
                 Array.isArray(raw.versions) && raw.versions.length > 0
-                    ? raw.versions.map((v) => String(v || '').trim()).filter(Boolean)
+                    ? raw.versions
+                          .map((v) => stripTemporalAndHistoricalNoise(String(v || '')).trim())
+                          .filter(Boolean)
                     : ['ESTÁNDAR'];
 
             return {
@@ -883,9 +1084,36 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
         }
     );
 
-    // Fusionar cualquier variante previamente existente en `global_asset_catalog` y deduplicar por `catalog_key`
+    // Fusionar cualquier variante previamente existente en `global_asset_catalog` que cumpla las restricciones y no sea un registro padre genérico redundante
     const localPreexisting = await localPreexistingPromise;
-    const combinedCandidates = [...resolvedCandidates, ...localPreexisting.candidates];
+    const hasSpecificSubmodels =
+        resolvedCandidates.length > 1 &&
+        Boolean(correctedModelOrFamily) &&
+        resolvedCandidates.some((c) => c.model_oficial.length > correctedModelOrFamily.length);
+
+    const compatibleLocalCandidates = localPreexisting.candidates
+        .map((c) => ({
+            ...c,
+            model_oficial: normalizeModelCode(c.model_oficial),
+            versions: Array.isArray(c.versions)
+                ? c.versions
+                      .map((v) => stripTemporalAndHistoricalNoise(String(v || '')))
+                      .filter((v) => Boolean(v) && !textViolatesConstraints(v, constraints))
+                : ['ESTÁNDAR'],
+        }))
+        .filter((c) => {
+            if (textViolatesConstraints(c.model_oficial, constraints)) return false;
+            if (
+                hasSpecificSubmodels &&
+                correctedModelOrFamily &&
+                c.model_oficial === normalizeModelCode(correctedModelOrFamily)
+            ) {
+                return false;
+            }
+            return true;
+        });
+
+    const combinedCandidates = [...resolvedCandidates, ...compatibleLocalCandidates];
 
     const seenKeys = new Set<string>();
     let uniqueCandidates = combinedCandidates.filter((c) => {
@@ -896,7 +1124,10 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
     });
 
     if (uniqueCandidates.length > 0 && !clarificationContext) {
-        uniqueCandidates = await saveCollaborativeLineage(cleanInput, isGeneric, uniqueCandidates);
+        uniqueCandidates = await saveCollaborativeLineage(cleanInput, isGeneric, uniqueCandidates, {
+            make: correctedMake,
+            model: correctedModelOrFamily,
+        });
     }
 
     return {

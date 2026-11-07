@@ -289,11 +289,51 @@ export function collapseSpacedModelDesignators(input: string): string {
     return s;
 }
 
+/**
+ * Sanitizador determinista que elimina leyendas cronológicas, rangos de años ("desde 2020 a la actualidad",
+ * "(2020–presente)", "(1977-1987)") y etiquetas enciclopédicas ("1ª Generación", "Año Modelo 2022")
+ * de `model_oficial` y `versions[]`.
+ */
+export function stripTemporalAndHistoricalNoise(raw: string): string {
+    if (!raw) return '';
+    let s = String(raw);
+
+    // 1. Paréntesis o corchetes que contengan rangos de años, "actualidad", "presente", "generación" o "año modelo"
+    s = s.replace(
+        /[\(\[][^\)\]]*(?:\b(?:19|20)\d{2}\b|actualidad|presente|present|vigente|generaci[oó]n|a[ñn]o\s+modelo|evoluci[oó]n|alternativa)[^\)\]]*[\)\]]/gi,
+        ' '
+    );
+
+    // 2. Expresiones cronológicas fuera de paréntesis ("desde 2020 a la actualidad", "2020–presente", "2020-2024", "2020+")
+    s = s.replace(
+        /\b(?:desde\s+(?:el\s+a[ñn]o\s+)?)?(?:19|20)\d{2}\s*(?:[-–—/]|a\s+la|al?|hasta(?:\s+la)?|to)\s*(?:la\s+actualidad|actualidad|el\s+presente|presente|present|hoy|(?:19|20)\d{2})\b/gi,
+        ' '
+    );
+    s = s.replace(/\bdesde\s+(?:el\s+a[ñn]o\s+)?(?:19|20)\d{2}(?:\s+a\s+la\s+actualidad)?\b/gi, ' ');
+    s = s.replace(/\b(?:19|20)\d{2}\s*\+/g, ' ');
+    s = s.replace(/\b\d+\s*(?:ª|º|a|ra|da|ta|st|nd|rd|th)?\s*generaci[oó]n\b/gi, ' ');
+    s = s.replace(/\ba[ñn]o\s+modelo\s+(?:19|20)\d{2}\b/gi, ' ');
+
+    // 3. Limpiar conectores residuales al inicio/final o dobles guiones
+    s = s
+        .replace(/\s+[—–-]\s+/g, ' ')
+        .replace(/^[\s\-–—,:;/|]+|[\s\-–—,:;/|]+$/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    return s;
+}
+
 export function normalizeModelCode(model: string): string {
-    return collapseSpacedModelDesignators(model)
+    const cleaned = stripTemporalAndHistoricalNoise(model);
+    let collapsed = collapseSpacedModelDesignators(cleaned)
         .toUpperCase()
         .replace(/\s+/g, ' ')
         .trim();
+
+    // Si termina en un año comercial suelto precedido de un nombre/código de modelo (ej. "LANDTREK 2022" -> "LANDTREK"), remover el año
+    collapsed = collapsed.replace(/^([A-Z0-9][A-Z0-9\s.\-/]{1,40}?)\s+\b(19[7-9]\d|20[0-3]\d)\b$/, '$1').trim();
+    return collapsed;
 }
 
 export function compactAlphanumericCode(code: string): string {
@@ -306,13 +346,17 @@ export function compactAlphanumericCode(code: string): string {
 
 /**
  * Descarta tokens técnicos transversales que NUNCA constituyen por sí solos el código de modelo de un equipo/vehículo
- * (ej. tracciones 4X4/6X4/AWD, años 1900-2099, configuraciones de cilindros V6/V8, voltajes 12V/24V/220V, normas EURO5/TIER4).
+ * (ej. tracciones 4X4/6X4/AWD, años 1900-2099, combustibles DIESEL/GASOLINA, configuraciones V6/V8, normas EURO5/TIER4).
  */
 export const NON_MODEL_ATTRIBUTE_TOKENS_REGEX =
-    /^(?:[2468]X[2468]|[24]WD|AWD|FWD|RWD|V(?:4|6|8|10|12)|(?:8|12|16|20|24|32)V|(?:12|24|48|110|220|380|400|440)V|EURO[3456]|STAGE[1-5]|TIER[1-4]|(?:19|20)\d{2}|(?:AT|MT)\d?|(?:4|5|6|7|8|9|10)(?:AT|MT)|TDI|HDI|CDI|CRDI|THP|VVT|DOHC|SOHC)$/i;
+    /^(?:[2468]X[2468]|[24]WD|AWD|FWD|RWD|V(?:4|6|8|10|12)|(?:8|12|16|20|24|32)V|(?:12|24|48|110|220|380|400|440)V|EURO[3456]|STAGE[1-5]|TIER[1-4]|(?:19|20)\d{2}|(?:AT|MT)\d?|(?:4|5|6|7|8|9|10)(?:AT|MT)|TDI|HDI|BLUEHDI|CDI|CRDI|THP|TSI|VVT|DOHC|SOHC|DIESEL|TURBODIESEL|GASOLINA|BENCINA|NAFTA|TURBONAFTA|PETROLERO|ELECTRICO|HIBRIDO|PICKUP|CAMIONETA|CAMION|DOBLE|CABINA|SIMPLE|CHASIS)$/i;
 
 export function isNonModelAttributeToken(token: string): boolean {
-    const clean = token.trim().toUpperCase();
+    const clean = token
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+        .toUpperCase();
     if (!clean) return true;
     if (/^(19|20)\d{2}$/.test(clean)) return true;
     return NON_MODEL_ATTRIBUTE_TOKENS_REGEX.test(clean);
@@ -320,13 +364,16 @@ export function isNonModelAttributeToken(token: string): boolean {
 
 export function extractCanonicalDesignator(collapsedInput: string): string | null {
     // Remover marcas conocidas primero para no capturar partes de marca (ej. JCB, MAN, BMW, JAC)
-    let stripped = ` ${collapsedInput.toUpperCase()} `;
+    let stripped = ` ${collapsedInput
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase()} `;
     for (const syn of Object.keys(BRAND_SYNONYM_TO_OFFICIAL).sort((a, b) => b.length - a.length)) {
         const escaped = syn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         stripped = stripped.replace(new RegExp(`\\b${escaped}\\b`, 'g'), ' ');
     }
 
-    // Patrones de designador industrial/vehicular (ej. 242D, 242D3, 320GC, D8, D8T, F-150, BT-50, L200, YT27, PC200-8, 3CX, S650)
+    // 1. Patrones de designador alfanumérico industrial/vehicular (ej. 242D, 242D3, 320GC, D8, D8T, F-150, BT-50, L200, YT27, PC200-8, 3CX, S650)
     const regex =
         /\b([A-Z]{0,4}\d{1,5}[A-Z]{1,4}\d{0,3}|[A-Z]{1,4}-?\d{1,5}[A-Z0-9-]{0,6}|\d{3,5}[A-Z0-9-]{0,5})\b/g;
 
@@ -335,6 +382,16 @@ export function extractCanonicalDesignator(collapsedInput: string): string | nul
         if (isNonModelAttributeToken(candidate)) continue;
         return candidate;
     }
+
+    // 2. Respaldo para modelos comerciales puramente alfabéticos (ej. LANDTREK, HILUX, RANGER, AMAROK, NAVARRA, SPRINTER, DAKAR)
+    const wordTokens = stripped
+        .split(/[^A-Z0-9]+/)
+        .map((t) => t.trim())
+        .filter((t) => t.length >= 3 && !isNonModelAttributeToken(t));
+    if (wordTokens.length > 0) {
+        return wordTokens[0];
+    }
+
     return null;
 }
 
@@ -864,36 +921,96 @@ export async function resolveFromLocalCommonsCatalog(
 }
 
 const LINEAGE_COLLECTION = 'global_asset_lineages';
-const LINEAGE_SCHEMA_VERSION = 'v5_exhaustive_union_lineage';
+const LINEAGE_SCHEMA_VERSION = 'v6_constraint_aware_clean_lineage';
 
-export function buildCollaborativeLineageKey(rawQuery: string, isGeneric: boolean): string {
+export function extractQueryConstraintSlug(rawQuery: string): string {
+    const upper = rawQuery
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase();
+    const parts: string[] = [];
+
+    const tractionMatch = upper.match(/\b([2468]X[2468]|AWD|4WD|2WD)\b/);
+    if (tractionMatch) parts.push(tractionMatch[1].toLowerCase());
+
+    if (/\b(DIESEL|TURBODIESEL|PETROLERO|HDI|BLUEHDI|TDI|CDI|CRDI|MULTIJET)\b/.test(upper)) {
+        parts.push('diesel');
+    } else if (/\b(GASOLINA|BENCINA|NAFTA|TURBONAFTA|THP|TSI|ECOBOOST)\b/.test(upper)) {
+        parts.push('gasolina');
+    } else if (/\b(ELECTRICO|EV|BEV)\b/.test(upper)) {
+        parts.push('electrico');
+    }
+
+    const yearMatch = upper.match(/\b(19[6-9]\d|20[0-3]\d)\b/);
+    if (yearMatch) parts.push(yearMatch[1]);
+
+    return parts.join('_');
+}
+
+export function buildCollaborativeLineageKey(
+    rawQuery: string,
+    isGeneric: boolean,
+    canonicalOverride?: { make?: string; model?: string }
+): string {
     const parsed = parseIndustrialSearchQuery(rawQuery, isGeneric);
     const scopePrefix = isGeneric ? 'gen' : 'oem';
-    if (parsed.canonicalMake && parsed.compactDesignator) {
-        return `${scopePrefix}__${normalizeCatalogKey(parsed.canonicalMake, parsed.compactDesignator)}`;
+    const constraintSlug = extractQueryConstraintSlug(rawQuery);
+    const suffix = constraintSlug ? `__${constraintSlug}` : '';
+
+    const effMake = canonicalOverride?.make?.trim() || parsed.canonicalMake;
+    const effModel = canonicalOverride?.model?.trim()
+        ? compactAlphanumericCode(normalizeModelCode(canonicalOverride.model))
+        : parsed.compactDesignator;
+
+    if (effMake && effModel) {
+        return `${scopePrefix}__${normalizeCatalogKey(effMake, effModel)}${suffix}`;
     }
-    if (parsed.compactDesignator && parsed.tokens.length <= 1) {
-        return `${scopePrefix}__des_${parsed.compactDesignator.toLowerCase()}`;
+    if (effModel && parsed.tokens.length <= 1) {
+        return `${scopePrefix}__des_${effModel.toLowerCase()}${suffix}`;
     }
     const cleanSlug = parsed.normalizedAlias.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
     return `${scopePrefix}__${cleanSlug || 'query'}`;
+}
+
+function sanitizeCandidateTemporalNoise(cand: ResolvedAssetCandidate): ResolvedAssetCandidate {
+    const cleanModel = normalizeModelCode(cand.model_oficial || '');
+    const rawVersions = Array.from(
+        new Set([...(cand.versions || []), ...(cand.chassis_versions || [])])
+    );
+    const cleanVersions = rawVersions
+        .map((v) => stripTemporalAndHistoricalNoise(String(v || '')).toUpperCase().trim())
+        .filter(Boolean);
+    const finalVersions = cleanVersions.length > 0 ? Array.from(new Set(cleanVersions)) : ['ESTÁNDAR'];
+    const makeClean = String(cand.make_oficial || 'GENÉRICO').trim().toUpperCase();
+    const modelFinal = cleanModel || String(cand.model_oficial || '').trim().toUpperCase();
+
+    return {
+        ...cand,
+        make_oficial: makeClean,
+        model_oficial: modelFinal,
+        catalog_key: normalizeCatalogKey(makeClean, modelFinal),
+        versions: finalVersions,
+        chassis_versions: finalVersions,
+    };
 }
 
 function mergeTwoLineageCandidates(
     existing: ResolvedAssetCandidate,
     incoming: ResolvedAssetCandidate
 ): ResolvedAssetCandidate {
+    const cleanExisting = sanitizeCandidateTemporalNoise(existing);
+    const cleanIncoming = sanitizeCandidateTemporalNoise(incoming);
     const mergedVersions = Array.from(
         new Set([
-            ...(existing.chassis_versions || []),
-            ...(existing.versions || []),
-            ...(incoming.chassis_versions || []),
-            ...(incoming.versions || []),
+            ...(cleanExisting.chassis_versions || []),
+            ...(cleanExisting.versions || []),
+            ...(cleanIncoming.chassis_versions || []),
+            ...(cleanIncoming.versions || []),
         ])
     ).filter(Boolean);
 
-    const existingSlots = Array.isArray(existing.canonical_specs) ? existing.canonical_specs : [];
-    const incomingSlots = Array.isArray(incoming.canonical_specs) ? incoming.canonical_specs : [];
+    const existingSlots = Array.isArray(cleanExisting.canonical_specs) ? cleanExisting.canonical_specs : [];
+    const incomingSlots = Array.isArray(cleanIncoming.canonical_specs) ? cleanIncoming.canonical_specs : [];
     const slotMap = new Map<string, CanonicalSpecSlot>();
 
     for (const s of existingSlots) {
@@ -911,18 +1028,21 @@ function mergeTwoLineageCandidates(
     const mergedSpecs =
         mergedSlots.length > 0
             ? serializeCanonicalSlotsToSpecsArray(mergedSlots)
-            : (incoming.caracteristicas_principales?.length
-                  ? incoming.caracteristicas_principales
-                  : existing.caracteristicas_principales) || [];
+            : (cleanIncoming.caracteristicas_principales?.length
+                  ? cleanIncoming.caracteristicas_principales
+                  : cleanExisting.caracteristicas_principales) || [];
 
     return {
-        ...existing,
-        ...incoming,
-        canonical_specs: mergedSlots.length > 0 ? mergedSlots : incoming.canonical_specs || existing.canonical_specs,
+        ...cleanExisting,
+        ...cleanIncoming,
+        canonical_specs:
+            mergedSlots.length > 0
+                ? mergedSlots
+                : cleanIncoming.canonical_specs || cleanExisting.canonical_specs,
         caracteristicas_principales: mergedSpecs,
         versions: mergedVersions.length > 0 ? mergedVersions : ['ESTÁNDAR'],
         chassis_versions: mergedVersions.length > 0 ? mergedVersions : ['ESTÁNDAR'],
-        official_url: incoming.official_url || existing.official_url || '',
+        official_url: cleanIncoming.official_url || cleanExisting.official_url || '',
     };
 }
 
@@ -933,11 +1053,12 @@ function mergeTwoLineageCandidates(
  */
 export async function readCollaborativeLineage(
     rawQuery: string,
-    isGeneric: boolean = false
+    isGeneric: boolean = false,
+    canonicalOverride?: { make?: string; model?: string }
 ): Promise<{ matched: boolean; latencyMs: number; candidates: ResolvedAssetCandidate[] }> {
     const start = Date.now();
     try {
-        const lineageKey = buildCollaborativeLineageKey(rawQuery, isGeneric);
+        const lineageKey = buildCollaborativeLineageKey(rawQuery, isGeneric, canonicalOverride);
         const snap = await db.collection(LINEAGE_COLLECTION).doc(lineageKey).get();
         if (!snap.exists) {
             return { matched: false, latencyMs: Date.now() - start, candidates: [] };
@@ -954,12 +1075,15 @@ export async function readCollaborativeLineage(
 
         // Hidratar estado en tiempo real contra `global_asset_catalog` para cada versión del linaje
         const hydrated = await Promise.all(
-            storedCandidates.map(async (cand): Promise<ResolvedAssetCandidate> => {
+            storedCandidates.map(async (rawCand): Promise<ResolvedAssetCandidate> => {
+                const cand = sanitizeCandidateTemporalNoise(rawCand);
                 const catalogKey =
                     cand.catalog_key || normalizeCatalogKey(cand.make_oficial, cand.model_oficial);
                 const directSnap = await db.collection('global_asset_catalog').doc(catalogKey).get();
                 if (directSnap.exists) {
-                    const liveDoc = mapDocToResolvedCandidate(directSnap.id, directSnap.data()!);
+                    const liveDoc = sanitizeCandidateTemporalNoise(
+                        mapDocToResolvedCandidate(directSnap.id, directSnap.data()!)
+                    );
                     const mergedVersions = Array.from(
                         new Set([
                             ...(liveDoc.chassis_versions || []),
@@ -985,13 +1109,20 @@ export async function readCollaborativeLineage(
         );
 
         // Incorporar también cualquier variante adicional registrada después manualmente en `global_asset_catalog`
-        const localCommons = await resolveFromLocalCommonsCatalog(rawQuery, isGeneric);
-        const seenKeys = new Set(hydrated.map((c) => c.catalog_key || normalizeCatalogKey(c.make_oficial, c.model_oficial)));
-        for (const extra of localCommons.candidates) {
-            const key = extra.catalog_key || normalizeCatalogKey(extra.make_oficial, extra.model_oficial);
-            if (!seenKeys.has(key)) {
-                seenKeys.add(key);
-                hydrated.push(extra);
+        if (!extractQueryConstraintSlug(rawQuery)) {
+            const localCommons = await resolveFromLocalCommonsCatalog(rawQuery, isGeneric);
+            const seenKeys = new Set(
+                hydrated.map((c) => c.catalog_key || normalizeCatalogKey(c.make_oficial, c.model_oficial))
+            );
+            for (const extra of localCommons.candidates) {
+                const cleanExtra = sanitizeCandidateTemporalNoise(extra);
+                const key =
+                    cleanExtra.catalog_key ||
+                    normalizeCatalogKey(cleanExtra.make_oficial, cleanExtra.model_oficial);
+                if (!seenKeys.has(key)) {
+                    seenKeys.add(key);
+                    hydrated.push(cleanExtra);
+                }
             }
         }
 
@@ -1014,7 +1145,8 @@ export async function readCollaborativeLineage(
 export async function saveCollaborativeLineage(
     rawQuery: string,
     isGeneric: boolean,
-    candidates: ResolvedAssetCandidate[]
+    candidates: ResolvedAssetCandidate[],
+    canonicalOverride?: { make?: string; model?: string }
 ): Promise<ResolvedAssetCandidate[]> {
     if (!Array.isArray(candidates) || candidates.length === 0) return [];
     try {
@@ -1022,13 +1154,22 @@ export async function saveCollaborativeLineage(
         const primaryKey = buildCollaborativeLineageKey(rawQuery, isGeneric);
         const targetKeys = new Set<string>([primaryKey]);
 
+        if (canonicalOverride?.make || canonicalOverride?.model) {
+            targetKeys.add(buildCollaborativeLineageKey(rawQuery, isGeneric, canonicalOverride));
+        }
+
         // Si el usuario buscó solo por código (ej. "D10") y todos los candidatos convergen en un fabricante único (ej. "CATERPILLAR"),
         // sincronizar también con la llave canónica de fabricante + designador (`oem__caterpillar_d10`).
         const uniqueMakes = Array.from(
             new Set(candidates.map((c) => String(c.make_oficial || '').trim().toUpperCase()).filter(Boolean))
         );
-        if (!isGeneric && uniqueMakes.length === 1 && parsed.compactDesignator) {
-            const canonicalKey = `oem__${normalizeCatalogKey(uniqueMakes[0], parsed.compactDesignator)}`;
+        const effDes = canonicalOverride?.model
+            ? compactAlphanumericCode(normalizeModelCode(canonicalOverride.model))
+            : parsed.compactDesignator;
+        if (!isGeneric && uniqueMakes.length === 1 && effDes) {
+            const constraintSlug = extractQueryConstraintSlug(rawQuery);
+            const suffix = constraintSlug ? `__${constraintSlug}` : '';
+            const canonicalKey = `oem__${normalizeCatalogKey(uniqueMakes[0], effDes)}${suffix}`;
             targetKeys.add(canonicalKey);
         }
 
@@ -1039,7 +1180,8 @@ export async function saveCollaborativeLineage(
             if (existingSnap.exists) {
                 const existingData = existingSnap.data() || {};
                 if (existingData.schema_version === LINEAGE_SCHEMA_VERSION && Array.isArray(existingData.candidates)) {
-                    for (const prev of existingData.candidates as ResolvedAssetCandidate[]) {
+                    for (const rawPrev of existingData.candidates as ResolvedAssetCandidate[]) {
+                        const prev = sanitizeCandidateTemporalNoise(rawPrev);
                         const cKey = prev.catalog_key || normalizeCatalogKey(prev.make_oficial, prev.model_oficial);
                         if (!cKey) continue;
                         const current = unionMap.get(cKey);
@@ -1049,7 +1191,8 @@ export async function saveCollaborativeLineage(
             }
         }
 
-        for (const inc of candidates) {
+        for (const rawInc of candidates) {
+            const inc = sanitizeCandidateTemporalNoise(rawInc);
             const cKey = inc.catalog_key || normalizeCatalogKey(inc.make_oficial, inc.model_oficial);
             if (!cKey) continue;
             const current = unionMap.get(cKey);
