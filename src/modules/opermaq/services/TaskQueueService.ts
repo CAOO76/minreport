@@ -28,6 +28,9 @@ export interface HuntTaskPayload {
 const oauthClient = new OAuth2Client();
 let tasksClient: CloudTasksClient | null = null;
 const activeLocalWorkerTasks = new Set<string>();
+const pendingLocalQueue: HuntTaskPayload[] = [];
+const MAX_CONCURRENT_LOCAL_HUNTS = 2;
+let runningLocalWorkersCount = 0;
 let watchdogStarted = false;
 let recoveryInFlight = false;
 
@@ -43,9 +46,9 @@ export function isHuntTaskActivelyRunning(taskId: string, taskData?: Record<stri
     const isCloudTasksProd =
         env.NODE_ENV === 'production' && Boolean(env.WORKER_SERVICE_URL) && Boolean(env.WORKER_SA_EMAIL);
     if (!isCloudTasksProd) {
-        return activeLocalWorkerTasks.has(taskId) && ageMs < 60_000;
+        return activeLocalWorkerTasks.has(taskId) && ageMs < 120_000;
     }
-    return ageMs < 90_000;
+    return ageMs < 120_000;
 }
 
 async function updateTaskStatus(taskId: string, patch: Record<string, any>): Promise<void> {
@@ -66,11 +69,16 @@ async function updateTaskStatus(taskId: string, patch: Record<string, any>): Pro
     }
 }
 
-export async function executeHuntWorkerTask(payload: HuntTaskPayload): Promise<void> {
-    const { taskId, globalAssetId, pillarId, itemId, humanCorrection } = payload;
-    if (activeLocalWorkerTasks.has(taskId)) return;
-    activeLocalWorkerTasks.add(taskId);
+function drainPendingLocalQueue(): void {
+    while (runningLocalWorkersCount < MAX_CONCURRENT_LOCAL_HUNTS && pendingLocalQueue.length > 0) {
+        const nextPayload = pendingLocalQueue.shift()!;
+        void runLocalWorkerSlot(nextPayload);
+    }
+}
 
+async function runLocalWorkerSlot(payload: HuntTaskPayload): Promise<void> {
+    const { taskId, globalAssetId, pillarId, itemId, humanCorrection, actorId } = payload;
+    runningLocalWorkersCount++;
     try {
         await updateTaskStatus(taskId, {
             status: 'PROCESSING',
@@ -83,6 +91,7 @@ export async function executeHuntWorkerTask(payload: HuntTaskPayload): Promise<v
             pillarId,
             itemId,
             humanCorrection,
+            actorId,
             onProgress: async (percent, message) => {
                 await updateTaskStatus(taskId, {
                     status: 'PROCESSING',
@@ -113,7 +122,27 @@ export async function executeHuntWorkerTask(payload: HuntTaskPayload): Promise<v
         });
     } finally {
         activeLocalWorkerTasks.delete(taskId);
+        runningLocalWorkersCount = Math.max(0, runningLocalWorkersCount - 1);
+        drainPendingLocalQueue();
     }
+}
+
+export async function executeHuntWorkerTask(payload: HuntTaskPayload): Promise<void> {
+    const { taskId } = payload;
+    if (activeLocalWorkerTasks.has(taskId)) return;
+    activeLocalWorkerTasks.add(taskId);
+
+    if (runningLocalWorkersCount >= MAX_CONCURRENT_LOCAL_HUNTS) {
+        pendingLocalQueue.push(payload);
+        await updateTaskStatus(taskId, {
+            status: 'PENDING',
+            progress_percent: 2,
+            progress_message: `En cola de ejecución controlada (${pendingLocalQueue.length} en espera)...`,
+        });
+        return;
+    }
+
+    await runLocalWorkerSlot(payload);
 }
 
 export async function enqueueItemHuntTask(
@@ -126,7 +155,7 @@ export async function enqueueItemHuntTask(
     const taskId = buildHuntTaskId(params.globalAssetId, params.pillarId, params.itemId);
     const existingDoc = await db.collection('task_status').doc(taskId).get();
 
-    if (existingDoc.exists && !params.forceRestart) {
+    if (existingDoc.exists) {
         const cur = existingDoc.data();
         if (isHuntTaskActivelyRunning(taskId, cur)) {
             return { taskId, alreadyRunning: true, dispatchMode: 'LOCAL_ASYNC_WORKER' };

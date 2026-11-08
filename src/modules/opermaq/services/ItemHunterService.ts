@@ -36,11 +36,23 @@ import {
     extractRowSourceUrlsFromGrounding,
 } from './TechnicalEvidenceVerifier';
 import { ensureUniversalSymbologySeeded } from './UniversalSymbologySeedService';
+import { extractConfirmedSpecsSummaryFromMarkdown } from './TextSimilarityUtils';
 import {
     filterFiguresReferencedInMarkdown,
     mergeDeduplicatedFigures,
     reconcileSectionFiguresAndPendingMarkers,
 } from './VaultReconciliationService';
+
+const symbologyPackRebuildTimers = new Map<string, NodeJS.Timeout>();
+function scheduleDebouncedAssetSymbologyPackRebuild(globalAssetId: string, delayMs = 3500): void {
+    const existing = symbologyPackRebuildTimers.get(globalAssetId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+        symbologyPackRebuildTimers.delete(globalAssetId);
+        void buildAndPersistAssetSymbologyPack(globalAssetId).catch(() => {});
+    }, delayMs);
+    symbologyPackRebuildTimers.set(globalAssetId, timer);
+}
 
 /**
  * ITEM HUNTER SERVICE v4.0 — ETAPA 3 CAZA TÉCNICA MULTIMODAL Y CORPUS-FIRST
@@ -65,6 +77,8 @@ export interface HuntItemOptions {
     humanCorrection?: string;
     forceOverwrite?: boolean;
     recordAdvisoryIfLocked?: boolean;
+    actorId?: string;
+    actorEmail?: string;
     onProgress?: (percent: number, message: string) => Promise<void> | void;
 }
 
@@ -103,48 +117,6 @@ const DIFF_SCHEMA = {
     },
     required: ['differences'],
 };
-
-/**
- * Valida en vivo contra Wikimedia Commons si existe un pictograma oficial ISO 7000 / IEC 60417
- * para bloquear códigos de símbolos inventados por el LLM.
- */
-export async function validateIsoReferenceExists(isoCode: string): Promise<{ exists: boolean; fileTitle?: string }> {
-    const cleanCode = isoCode
-        .trim()
-        .replace(/^(ISO\s*7000|IEC\s*60417|Ref-No\.?)\s*[-:]?\s*/gi, '')
-        .trim();
-    if (!cleanCode || !/^[0-9A-Za-z-]+$/.test(cleanCode)) {
-        return { exists: false };
-    }
-
-    const queries = [`ISO 7000 ${cleanCode}`, `IEC 60417 ${cleanCode}`];
-    for (const q of queries) {
-        try {
-            const url = `https://commons.wikimedia.org/w/api.php?action=query&list=search&srnamespace=6&srsearch=${encodeURIComponent(
-                q
-            )}&format=json&origin=*`;
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 4000);
-            const resp = await fetch(url, {
-                signal: controller.signal,
-                headers: { 'User-Agent': 'MINREPORT-OPERMAQ-ISOValidator/4.0' },
-            });
-            clearTimeout(timer);
-
-            if (resp.ok) {
-                const json: any = await resp.json();
-                const hits: any[] = json?.query?.search || [];
-                const exactHit = hits.find((h) => String(h.title || '').includes(cleanCode));
-                if (exactHit) {
-                    return { exists: true, fileTitle: exactHit.title };
-                }
-            }
-        } catch {
-            // Degradación limpia si no hay red hacia Wikimedia en entorno aislado
-        }
-    }
-    return { exists: false };
-}
 
 export async function detectContentDifferences(
     pillarId: PillarId,
@@ -237,7 +209,8 @@ ${newHuntedContent}`;
 function buildCrossPillarConfirmedSpecsAndSources(
     vault: Record<string, any> | undefined,
     targetPillarId: PillarId,
-    makeOficial: string
+    makeOficial: string,
+    assetData?: Record<string, any>
 ): {
     promptBlock: string;
     priorPillarEvidenceDocs: EvidenceDocument[];
@@ -255,6 +228,21 @@ function buildCrossPillarConfirmedSpecsAndSources(
     const priorPillarEvidenceDocs: EvidenceDocument[] = [];
     const priorPillarOemSources: ItemizedSource[] = [];
     const seenUrls = new Set<string>();
+
+    // CAD-03: Ancla nominal base desde la ficha estructurada del activo por si algún capítulo de `01 · Ficha Técnica` sigue en `PENDIENTE`
+    const baseMainChars: string[] = Array.isArray(assetData?.specifications?.mainCharacteristics)
+        ? assetData.specifications.mainCharacteristics
+        : Array.isArray(assetData?.caracteristicas_principales)
+        ? assetData.caracteristicas_principales
+        : [];
+    if (baseMainChars.length > 0) {
+        const cleanBaseChars = baseMainChars.map((c) => String(c || '').trim()).filter(Boolean);
+        if (cleanBaseChars.length > 0) {
+            sectionSummaries.push(
+                `ANCLA NOMINAL BASE DEL ACTIVO (FICHA MAESTRA):\n  - ${cleanBaseChars.join('\n  - ')}`
+            );
+        }
+    }
 
     for (let i = 0; i < targetIdx; i++) {
         const pid = SEQUENTIAL_PILLAR_ORDER[i];
@@ -411,6 +399,11 @@ function buildIntraPillarConsistencyAndScopeContext(
             .slice(0, 5);
         if (lines.length > 0) {
             verifiedFactsLines.push(`  * De "${sib.title}":\n    ${lines.join('\n    ')}`);
+        } else {
+            const summaryFallback = extractConfirmedSpecsSummaryFromMarkdown(sib.content || undefined, 220);
+            if (summaryFallback) {
+                verifiedFactsLines.push(`  * De "${sib.title}": ${summaryFallback}`);
+            }
         }
     }
 
@@ -442,6 +435,8 @@ export async function huntVaultItem(options: HuntItemOptions): Promise<HuntItemR
         humanCorrection,
         forceOverwrite = false,
         recordAdvisoryIfLocked = false,
+        actorId,
+        actorEmail,
         onProgress,
     } = options;
 
@@ -527,7 +522,12 @@ export async function huntVaultItem(options: HuntItemOptions): Promise<HuntItemR
         }
     }
 
-    const crossPillarContext = buildCrossPillarConfirmedSpecsAndSources(vault, pillarId, makeOficial);
+    const crossPillarContext = buildCrossPillarConfirmedSpecsAndSources(
+        vault,
+        pillarId,
+        makeOficial,
+        assetData
+    );
 
     const preAssignedSources: ItemizedSource[] = [
         ...(Array.isArray(currentItem.item_sources) ? currentItem.item_sources : []),
@@ -618,27 +618,57 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
     }
 
     try {
-        // CAPA IA AD-HOC 1: Agente Investigador Forense (`PRIMARY` Pro Grounded)
+        // CAPA IA AD-HOC 1: Agente Investigador Forense (`SOVEREIGN_VAULT_FIRST` + Fallback Grounded, `SEC-01`)
         let aiText = '';
         let groundingSources: Array<{ uri: string; title: string }> = [];
         let groundingCandidate: any = null;
 
+        const hasStrongSovereignLocalCorpus =
+            (localChunks.filter((c) => Number(c.score || 0) >= 0.45).length >= 2 ||
+                extraVaultDocSnippets.length >= 2) &&
+            !humanCorrection;
+
         try {
-            const aiResponse = await ResilientAIClient.generate({
-                module: 'opermaq',
-                preferredTier: 'PRIMARY',
-                systemInstruction: agent.systemPrompt,
-                temperature: 0.1,
-                maxOutputTokens: 8192,
-                useGoogleSearch: true,
-                requireGroundedEvidence: !hasSovereignOrPreverifiedEvidence,
-                useUrlContext: false,
-                thinkingLevel: 'low',
-                prompt: huntPrompt,
-            });
-            aiText = aiResponse.text;
-            groundingSources = aiResponse.groundingSources || [];
-            groundingCandidate = aiResponse.rawCandidate || null;
+            if (hasStrongSovereignLocalCorpus) {
+                try {
+                    const sovereignRes = await ResilientAIClient.generate({
+                        module: 'opermaq',
+                        preferredTier: 'PRIMARY',
+                        systemInstruction: agent.systemPrompt,
+                        temperature: 0.05,
+                        maxOutputTokens: 8192,
+                        useGoogleSearch: false,
+                        requireGroundedEvidence: false,
+                        useUrlContext: false,
+                        thinkingLevel: 'low',
+                        prompt: `${huntPrompt}\n\nMODO SOVEREIGN_VAULT_FIRST (southamerica-west1): Fundamenta el desarrollo prioritariamente en la EVIDENCIA OFICIAL YA INGERIDA EN EL CORPUS LOCAL SOBERANO y las ESPECIFICACIONES CONFIRMADAS DE PILARES PREVIOS.`,
+                    });
+                    if (sovereignRes.text && sovereignRes.text.trim().length >= 220 && sovereignRes.text.includes('|')) {
+                        aiText = sovereignRes.text;
+                    }
+                } catch {
+                    // Continuar de forma transparente a la búsqueda web fundamentada si la inferencia local no basta
+                    aiText = '';
+                }
+            }
+
+            if (!aiText.trim()) {
+                const aiResponse = await ResilientAIClient.generate({
+                    module: 'opermaq',
+                    preferredTier: 'PRIMARY',
+                    systemInstruction: agent.systemPrompt,
+                    temperature: 0.1,
+                    maxOutputTokens: 8192,
+                    useGoogleSearch: true,
+                    requireGroundedEvidence: !hasSovereignOrPreverifiedEvidence,
+                    useUrlContext: false,
+                    thinkingLevel: 'low',
+                    prompt: huntPrompt,
+                });
+                aiText = aiResponse.text;
+                groundingSources = aiResponse.groundingSources || [];
+                groundingCandidate = aiResponse.rawCandidate || null;
+            }
         } catch (err) {
             if (hasSovereignOrPreverifiedEvidence) {
                 const fallbackRes = await ResilientAIClient.generate({
@@ -720,6 +750,8 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                 }
             }, 3500);
         }
+        const harvestAbortController = new AbortController();
+        const harvestAbortTimer = setTimeout(() => harvestAbortController.abort(), 25_500);
         let harvestTimeoutHandle: NodeJS.Timeout | null = null;
         const [rawClassifiedSources, harvestedMedia] = await Promise.all([
             classifySourcesByAuthorship(groundingSources, makeOficial, modelOficial),
@@ -730,13 +762,19 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                     itemTitle: currentItem.title,
                     chapterExcerpt: sectionVisualSummary,
                     maxFigures: adaptiveMaxFigures,
+                    totalHarvestBudgetMs: 25_000,
+                    signal: harvestAbortController.signal,
                 }),
                 new Promise<typeof emptyHarvestFallback>((resolve) => {
-                    harvestTimeoutHandle = setTimeout(() => resolve(emptyHarvestFallback), 28_000);
+                    harvestTimeoutHandle = setTimeout(() => {
+                        harvestAbortController.abort();
+                        resolve(emptyHarvestFallback);
+                    }, 30_000);
                 }),
             ])
                 .catch(() => emptyHarvestFallback)
                 .finally(() => {
+                    clearTimeout(harvestAbortTimer);
                     if (harvestTimeoutHandle) clearTimeout(harvestTimeoutHandle);
                     if (harvestHeartbeatTimer) clearInterval(harvestHeartbeatTimer);
                 }),
@@ -827,6 +865,34 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
             allCandidateFigures
         );
 
+        // ARQ-02: Aplicar anotaciones de trazabilidad `[F#]` ANTES de `detectContentDifferences` para que también el flujo `CONFLICT_BUFFER` conserve sus citas verificadas
+        const preTxSourcesForAnnotations = [
+            ...classifiedSources,
+            ...preAssignedSources,
+            ...localDocSources,
+            ...crossPillarContext.priorPillarOemSources,
+        ];
+        const annotatedMarkdownForDiffs = applyTraceabilityAnnotations(
+            markdownContent,
+            traceAnalysis,
+            preTxSourcesForAnnotations
+        );
+
+        // VEL-04: Heartbeat activo durante `detectContentDifferences` (`88% ➔ 93%`) para evitar falso re-encolado por silencio > 65s
+        let diffHeartbeatTimer: NodeJS.Timeout | null = null;
+        let diffPct = 88;
+        if (hasExistingContentPreTx && onProgress) {
+            diffHeartbeatTimer = setInterval(() => {
+                if (diffPct < 94) {
+                    diffPct = Math.min(94, diffPct + 2);
+                    void onProgress(
+                        diffPct,
+                        'Analizando diferencias granulares [Actual] ➔ [Sugerido] para revisión HITL...'
+                    );
+                }
+            }, 5000);
+        }
+
         const preComputedDiffs = hasExistingContentPreTx
             ? await detectContentDifferences(
                   pillarId,
@@ -834,10 +900,12 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                   makeModel,
                   preTxItem!.title,
                   preTxItem!.content!,
-                  symbolizedMarkdown,
+                  annotatedMarkdownForDiffs,
                   classifiedSources[0] || preAssignedSources[0],
                   previewNewFigures
-              )
+              ).finally(() => {
+                  if (diffHeartbeatTimer) clearInterval(diffHeartbeatTimer);
+              })
             : [];
 
         const nowIso = new Date().toISOString();
@@ -968,16 +1036,18 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                     ? { ...mediaHarvestReport, corpus_figures: corpusFigures.length, table_chart: false, traceability: traceAnalysis.stats, evidence_docs: evidenceDocs.length, at: nowIso }
                     : { corpus_figures: corpusFigures.length, table_chart: false, traceability: traceAnalysis.stats, evidence_docs: evidenceDocs.length, at: nowIso };
                 targetItem.fact_fingerprints = Array.from(existingFingerprints);
+                // VEL-03: Acotar `historial_cambios` embebido a las últimas 5 entradas y `snapshot_anterior` a 8.000 chars para proteger el límite de 1 MiB de Firestore
+                const boundedPrevSnapshot = previousSnapshot ? previousSnapshot.slice(0, 8000) : undefined;
                 targetItem.historial_cambios = [
-                    ...(targetItem.historial_cambios || []),
+                    ...(targetItem.historial_cambios || []).slice(-4),
                     {
                         fecha: nowIso,
                         accion: 'GENERACION_INICIAL',
-                        actor: 'AGENTE_CAZADOR_IA_V5',
+                        actor: actorId || 'AGENTE_CAZADOR_IA_V5',
                         detalle: humanCorrection
                             ? `Re-caza dirigida por instrucción humana: "${humanCorrection.slice(0, 120)}"`
                             : `Caza técnica multimodal v5.0 (${targetItem.figures.length} recurso(s) gráfico(s) citado(s) en CAS, ${verifiedSymbologyRefs.length} símbolo(s) ad-hoc).`,
-                        ...(previousSnapshot ? { snapshot_anterior: previousSnapshot } : {}),
+                        ...(boundedPrevSnapshot ? { snapshot_anterior: boundedPrevSnapshot } : {}),
                     },
                 ];
             }
@@ -1007,14 +1077,14 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
             };
         });
 
-        // 5. Actualizar paquete ad-hoc de simbología del activo con los nuevos símbolos detectados/creados
-        await buildAndPersistAssetSymbologyPack(globalAssetId).catch(() => {});
+        // 5. Actualizar paquete ad-hoc de simbología del activo con debounce (`VEL-03`) para evitar contención en cazas concurrentes
+        scheduleDebouncedAssetSymbologyPackRebuild(globalAssetId);
 
-        // 6. Trazabilidad Criptográfica Inmutable en `AuditLedger`
+        // 6. Trazabilidad Criptográfica Inmutable en `AuditLedger` (`SEC-05`: preserva `actorId` humano)
         void AuditLedger.record({
             tenantId: 'GLOBAL_OEM',
-            actorUid: 'SYSTEM_HUNTER_V5',
-            actorEmail: 'system@minreport.com',
+            actorUid: actorId || 'SYSTEM_HUNTER_V5',
+            actorEmail: actorEmail || 'system@minreport.com',
             module: 'opermaq',
             action: txOutcome.mode === 'CONFLICT_BUFFER' ? 'VAULT_ITEM_REHUNTED_DIFF' : 'VAULT_ITEM_HUNTED',
             targetEntity: `global_asset_catalog/${globalAssetId}/knowledge_vault/${pillarId}/${itemId}`,

@@ -27,6 +27,11 @@ import {
 } from './EquipmentTypeRegistryService';
 import { createEmptyKnowledgeVault, PILLAR_AGENTS, PILLAR_LABELS } from './pillarAgents';
 import { classifySourcesByAuthorship } from './SourceClassifierService';
+import {
+    extractConfirmedSpecsSummaryFromMarkdown,
+    normalizeComparableTitle,
+    tokenJaccardSimilarity,
+} from './TextSimilarityUtils';
 
 /**
  * ITEMIZER SERVICE v9.1 — ETAPA 2 ON-DEMAND CON ONTOLOGÍA ELÁSTICA EN 2 ANILLOS (`TIPO`-FIRST)
@@ -58,34 +63,6 @@ function slugifyItemId(pillarId: PillarId, title: string, index: number): string
         .replace(/^_+|_+$/g, '')
         .slice(0, 48);
     return `${pillarId}_${clean || 'item'}_${index + 1}`;
-}
-
-function normalizeComparableTitle(str: string): string {
-    return String(str || '')
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-z0-9\s]+/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-function tokenJaccardSimilarity(a: string, b: string): number {
-    const tokensA = normalizeComparableTitle(a)
-        .split(' ')
-        .filter((w) => w.length > 2);
-    const tokensB = normalizeComparableTitle(b)
-        .split(' ')
-        .filter((w) => w.length > 2);
-    if (tokensA.length === 0 || tokensB.length === 0) return 0;
-
-    const setA = new Set(tokensA);
-    const setB = new Set(tokensB);
-    let inter = 0;
-    for (const t of setA) {
-        if (setB.has(t)) inter++;
-    }
-    return inter / (setA.size + setB.size - inter);
 }
 
 interface SovereignLocalCorpusContext {
@@ -168,9 +145,9 @@ async function loadSovereignLocalCorpusForPillar(
 }
 
 /**
- * Construye el contexto estructural acumulativo de los pilares previos ya itemizados
+ * Construye el contexto estructural y de contenidos confirmados acumulativo de los pilares previos ya itemizados/cazados
  * siguiendo la secuencia obligatoria: `01 Ficha Técnica ➔ 02 Manual de Operaciones ➔ 03 Pauta de Mantención ➔ 04 Matriz de Riesgos ➔ 05 Checklist Pre-Op`.
- * Incluye síntesis destacada de subsistemas especializados y críticos para garantizar trazabilidad 1 a 1 sin pérdida de atención.
+ * Incluye síntesis de parámetros reales cazados (`it.content`) y subsistemas especializados para trazabilidad 1 a 1 (`CAD-01`).
  */
 function buildCumulativePriorPillarsContext(
     vault: Record<string, any> | undefined,
@@ -182,6 +159,10 @@ function buildCumulativePriorPillarsContext(
 
     const blocks: string[] = [];
     const specializedAndCriticalHighlights: string[] = [];
+    const seenHighlights = new Set<string>();
+
+    const SPECIALIZED_CONTENT_KEYWORDS_REGEX =
+        /\b(XHP|HIGH\s*FLOW|ALTO\s*CAUDAL|SAHR|FRENO\s*H[ÚU]MEDO|AFEX|ANSUL|SUPRESI[ÓO]N\s*DE\s*INCENDIO|AUTOLUBE|LUBRICACI[ÓO]N\s*AUTOM[ÁA]TICA|VIMS|TPMS|PTO|TOMA\s*DE\s*FUERZA|LOCK[\s-]*UP|RETARDO\s*DIN[ÁA]MICO|ARC|ACUMULADOR\s*HIDR[ÁA]ULICO|RIDE\s*CONTROL|QUICK\s*COUPLER|ACOPLE\s*R[ÁA]PIDO|DPF|SCR|DEF|ADBLUE|QUINTA\s*RUEDA|ROPS|FOPS)\b/gi;
 
     for (let i = 0; i < targetIdx; i++) {
         const pid = SEQUENTIAL_PILLAR_ORDER[i];
@@ -193,28 +174,47 @@ function buildCumulativePriorPillarsContext(
 
         for (const it of pItems) {
             const sec = String(it.section || '').toUpperCase();
+            const contentStr = String(it.content || '');
+            const matchedSubsystems = Array.from(
+                new Set(
+                    (contentStr.match(SPECIALIZED_CONTENT_KEYWORDS_REGEX) || []).map((m) =>
+                        m.toUpperCase().replace(/\s+/g, ' ')
+                    )
+                )
+            );
+
             if (
                 it.priority === 'CRÍTICO' ||
-                /\b(ESPECIALIZADO|CONDICIONAL|SUBSISTEMA|ETAPA V|DOMINIO IV|ZONA III|FASE IV)\b/.test(sec)
+                /\b(ESPECIALIZADO|CONDICIONAL|SUBSISTEMA|ETAPA V|DOMINIO IV|ZONA III|FASE IV)\b/.test(sec) ||
+                matchedSubsystems.length > 0
             ) {
-                if (specializedAndCriticalHighlights.length < 18) {
-                    specializedAndCriticalHighlights.push(
-                        `  • [0${i + 1} · ${pLabel}] "${it.title}" (${it.section || 'GENERAL'})`
-                    );
+                const subTag =
+                    matchedSubsystems.length > 0
+                        ? ` [Subsistemas en contenido: ${matchedSubsystems.slice(0, 6).join(', ')}]`
+                        : '';
+                const highlightLine = `  • [0${i + 1} · ${pLabel}] "${it.title}" (${it.section || 'GENERAL'})${subTag}`;
+                if (specializedAndCriticalHighlights.length < 22 && !seenHighlights.has(highlightLine)) {
+                    seenHighlights.add(highlightLine);
+                    specializedAndCriticalHighlights.push(highlightLine);
                 }
             }
         }
 
-        const lines = pItems.map(
-            (it, idx) =>
-                `  ${idx + 1}. [${it.section || 'GENERAL'}] "${it.title}" (${it.priority}) — ${String(it.rationale || '').slice(0, 120)}`
+        const lines = pItems.map((it, idx) => {
+            const rationale = String(it.rationale || '').trim().slice(0, 120);
+            const confirmedSpecs = extractConfirmedSpecsSummaryFromMarkdown(it.content || undefined, 260);
+            return `  ${idx + 1}. [${it.section || 'GENERAL'}] "${it.title}" (${it.priority}) — ${rationale}${
+                confirmedSpecs ? ` | DATOS CAZADOS CONFIRMADOS: ${confirmedSpecs}` : ''
+            }`;
+        });
+        blocks.push(
+            `PILAR 0${i + 1} CONFIRMADO (${pLabel.toUpperCase()} — ${pItems.length} capítulos):\n${lines.join('\n')}`
         );
-        blocks.push(`PILAR 0${i + 1} CONFIRMADO (${pLabel.toUpperCase()} — ${pItems.length} capítulos):\n${lines.join('\n')}`);
     }
 
     if (specializedAndCriticalHighlights.length > 0) {
         blocks.unshift(
-            `MATRIZ DE SUBSISTEMAS ESPECIALIZADOS Y CRÍTICOS DETECTADOS EN PILARES PREVIOS (COBERTURA 1 A 1 OBLIGATORIA):\n${specializedAndCriticalHighlights.join('\n')}`
+            `MATRIZ DE SUBSISTEMAS ESPECIALIZADOS Y CRÍTICOS DETECTADOS EN PILARES Y CONTENIDOS PREVIOS (COBERTURA 1 A 1 OBLIGATORIA):\n${specializedAndCriticalHighlights.join('\n')}`
         );
     }
 
@@ -319,16 +319,116 @@ export function sortAndReindexPillarItems(pillarId: PillarId, items: PillarItem[
 
 /**
  * Calcula el Hash Criptográfico SHA-256 canónico de la estructura activa de un pilar (`Web 3.0 Merkle Chain`).
+ * Encadena opcionalmente `parentPillarDigestSha256` (`CAD-02`) para que cualquier evolución en un pilar ancestral
+ * invalide criptográficamente el digest de todos los pilares descendientes (`01 ➔ 02 ➔ 03 ➔ 04 ➔ 05`).
  */
-export function computePillarStructureDigestSha256(items: PillarItem[] | undefined): string | null {
+export function computePillarStructureDigestSha256(
+    items: PillarItem[] | undefined,
+    parentPillarDigestSha256?: string | null
+): string | null {
     const active = Array.isArray(items) ? items.filter((it) => !it?.is_discarded) : [];
     if (active.length === 0) return null;
-    const canonicalPayload = active.map((it, idx) => ({
+    const canonicalItems = active.map((it, idx) => ({
         order: idx + 1,
         title: normalizeComparableTitle(it.title),
         section: String(it.section || '').trim().toUpperCase(),
     }));
-    return createHash('sha256').update(JSON.stringify(canonicalPayload)).digest('hex');
+    const payload = parentPillarDigestSha256
+        ? { parent: parentPillarDigestSha256, items: canonicalItems }
+        : canonicalItems;
+    return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+}
+
+/**
+ * Calcula el digest Merkle acumulativo de todos los pilares ancestrales (`01..N-1`) previos a `targetPillarId` (`CAD-02`).
+ * Garantiza que un cambio en el Pilar `01` (abuelo) sea detectado instantáneamente por `03`, `04` y `05`.
+ */
+export function computeCumulativeAncestorDigestSha256(
+    vault: Record<string, any> | undefined,
+    targetPillarId: PillarId
+): string | null {
+    if (!vault || typeof vault !== 'object') return null;
+    const targetIdx = SEQUENTIAL_PILLAR_ORDER.indexOf(targetPillarId);
+    if (targetIdx <= 0) return null;
+
+    const immediateParentId = SEQUENTIAL_PILLAR_ORDER[targetIdx - 1];
+    const immediateParentDoc = vault[immediateParentId];
+    if (targetIdx === 1) {
+        return (
+            immediateParentDoc?.structure_digest_sha256 ||
+            computePillarStructureDigestSha256(immediateParentDoc?.items)
+        );
+    }
+
+    const ancestorChain: string[] = [];
+    for (let i = 0; i < targetIdx; i++) {
+        const pid = SEQUENTIAL_PILLAR_ORDER[i];
+        const pDoc = vault[pid];
+        const pDigest =
+            pDoc?.structure_digest_sha256 || computePillarStructureDigestSha256(pDoc?.items);
+        if (pDigest) {
+            ancestorChain.push(`${pid}:${pDigest}`);
+        }
+    }
+    if (ancestorChain.length === 0) return null;
+    return createHash('sha256').update(ancestorChain.join('|')).digest('hex');
+}
+
+/**
+ * Verifica si algún eslabón ancestral (`01..N`) de la cadena Merkle de pilares ha evolucionado (`CAD-02`).
+ */
+export function isPillarMerkleChainEvolved(
+    vault: Record<string, any> | undefined,
+    targetPillarId: PillarId
+): boolean {
+    if (!vault || typeof vault !== 'object') return false;
+    const targetIdx = SEQUENTIAL_PILLAR_ORDER.indexOf(targetPillarId);
+    if (targetIdx <= 0) return false;
+
+    const targetDoc = vault[targetPillarId];
+    const targetActiveCount = Array.isArray(targetDoc?.items)
+        ? targetDoc.items.filter((it: any) => !it?.is_discarded).length
+        : 0;
+    if (targetActiveCount === 0) return false;
+
+    // 1. Verificar contra el digest acumulativo de todos los ancestros (`01..N-1`)
+    const cumulativeAncestorDigest = computeCumulativeAncestorDigestSha256(vault, targetPillarId);
+    const immediateParentId = SEQUENTIAL_PILLAR_ORDER[targetIdx - 1];
+    const immediateParentDigest =
+        vault[immediateParentId]?.structure_digest_sha256 ||
+        computePillarStructureDigestSha256(vault[immediateParentId]?.items);
+
+    const recordedParentDigest = targetDoc?.parent_pillar_digest_sha256;
+    if (
+        recordedParentDigest &&
+        recordedParentDigest !== cumulativeAncestorDigest &&
+        recordedParentDigest !== immediateParentDigest
+    ) {
+        return true;
+    }
+
+    // 2. Verificar recursivamente si algún ancestro intermedio (`02..N-1`) está desincronizado respecto a su propio padre
+    for (let i = 1; i < targetIdx; i++) {
+        const ancId = SEQUENTIAL_PILLAR_ORDER[i];
+        const prevAncId = SEQUENTIAL_PILLAR_ORDER[i - 1];
+        const ancDoc = vault[ancId];
+        const prevAncDoc = vault[prevAncId];
+        const ancParentRecorded = ancDoc?.parent_pillar_digest_sha256;
+        const prevAncCurrent =
+            prevAncDoc?.structure_digest_sha256 ||
+            computePillarStructureDigestSha256(prevAncDoc?.items);
+        const prevCumulative = computeCumulativeAncestorDigestSha256(vault, ancId);
+        if (
+            ancParentRecorded &&
+            prevAncCurrent &&
+            ancParentRecorded !== prevAncCurrent &&
+            ancParentRecorded !== prevCumulative
+        ) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /**
@@ -741,11 +841,18 @@ Combina la evidencia local de la bóveda con Google Search (en español, inglés
             source_indices?: number[];
         }> = [];
 
-        // Optimización IA-01: Single-Pass Structured Synthesis en pilares derivados (02..05) cuando ya existen fuentes verificadas y contexto acumulativo
+        // Optimización VEL-01 & SEC-01 (`SOVEREIGN_VAULT_FIRST`):
+        // Single-Pass Structured Synthesis cuando:
+        // - Es un pilar derivado (02..05) con herencia acumulativa y fuentes verificadas, O
+        // - Es el Pilar 01 (`ficha_tecnica`) y ya posee manuales OEM ingeridos en la bóveda soberana (`southamerica-west1`).
+        const hasStrongSovereignLocalCorpus =
+            sovereignCorpus.sovereignSources.length >= 1 &&
+            sovereignCorpus.digestText.length >= 500;
         const canUseSinglePassSynthesis =
-            pillarId !== 'ficha_tecnica' &&
-            Boolean(cumulativePriorContext) &&
-            (sovereignCorpus.sovereignSources.length > 0 || initialSourcesPool.length >= 2);
+            (pillarId !== 'ficha_tecnica' &&
+                Boolean(cumulativePriorContext) &&
+                (sovereignCorpus.sovereignSources.length > 0 || initialSourcesPool.length >= 2)) ||
+            (pillarId === 'ficha_tecnica' && hasStrongSovereignLocalCorpus);
 
         if (canUseSinglePassSynthesis) {
             try {
@@ -973,12 +1080,12 @@ Combina la evidencia local de la bóveda con Google Search (en español, inglés
         // IC-01 & IC-02: Ordenamiento determinista para los 5 pilares (`01..05`)
         const mergedItems = sortAndReindexPillarItems(pillarId, rawMergedItems);
 
-        // W3-01: Cadena Criptográfica Merkle entre Pilares (`structure_digest_sha256` + `parent_pillar_digest_sha256`)
-        const structureDigestSha256 = computePillarStructureDigestSha256(mergedItems) || '';
+        // W3-01 & CAD-02: Cadena Criptográfica Merkle Acumulativa entre Pilares (`structure_digest_sha256` + `parent_pillar_digest_sha256`)
         const parentPillarDigestSha256 = prerequisitePillarId
-            ? vault[prerequisitePillarId]?.structure_digest_sha256 ||
-              computePillarStructureDigestSha256(vault[prerequisitePillarId]?.items)
+            ? computeCumulativeAncestorDigestSha256(vault, pillarId)
             : null;
+        const structureDigestSha256 =
+            computePillarStructureDigestSha256(mergedItems, parentPillarDigestSha256) || '';
 
         const finalPillar: PillarDocument = {
             ...(vault[pillarId] || createEmptyKnowledgeVault(makeModel)[pillarId]),

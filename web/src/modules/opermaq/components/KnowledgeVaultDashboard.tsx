@@ -2969,7 +2969,14 @@ interface PillarTabContentProps {
   onEvolveItemByType: (pillarId: PillarId, itemId: string, filterType: 'NUEVO' | 'CONFLICTO') => Promise<void>;
   resolveItemSymbology: (symbologyRefs?: string[]) => Array<{ concept_id: string; url: string; technical_name_es: string }>;
   onOpenStudio?: (tab: StudioTabId) => void;
-  prerequisitePillar?: { id: PillarId; stepCode: string; label: string; isItemized: boolean; currentDigest?: string | null } | null;
+  prerequisitePillar?: {
+    id: PillarId;
+    stepCode: string;
+    label: string;
+    isItemized: boolean;
+    currentDigest?: string | null;
+    hasAncestorChainEvolved?: boolean;
+  } | null;
   onNavigateToPillar?: (id: PillarId) => void;
 }
 
@@ -3070,9 +3077,10 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
   const isSequenceBlocked = Boolean(prerequisitePillar && !prerequisitePillar.isItemized);
   const isParentPillarEvolved = Boolean(
     hasItems &&
-      prerequisitePillar?.currentDigest &&
-      pillar?.parent_pillar_digest_sha256 &&
-      prerequisitePillar.currentDigest !== pillar.parent_pillar_digest_sha256
+      (prerequisitePillar?.hasAncestorChainEvolved ||
+        (prerequisitePillar?.currentDigest &&
+          pillar?.parent_pillar_digest_sha256 &&
+          prerequisitePillar.currentDigest !== pillar.parent_pillar_digest_sha256))
   );
 
   return (
@@ -3134,13 +3142,19 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
               disabled={isSealed || isComplementarySearching}
               onClick={handleTriggerComplementarySearch}
               title={t('vault_dashboard.actions.search_complementary_items', 'Buscar ítems complementarios con IA')}
-              className={`bg-transparent border-0 outline-none p-1 transition-colors cursor-pointer ${
-                isComplementarySearching
-                  ? 'animate-spin text-[#C68346]'
-                  : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
+              className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
             >
-              <span className="material-symbols-outlined !text-[18px]">autorenew</span>
+              {isComplementarySearching ? (
+                <M3CircularProgress
+                  size={16}
+                  strokeWidth={2.5}
+                  indeterminate
+                  tone="copper"
+                  ariaLabel="Buscando ítems complementarios"
+                />
+              ) : (
+                <span className="material-symbols-outlined !text-[18px]">autorenew</span>
+              )}
             </button>
           )}
 
@@ -4070,7 +4084,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
             setHuntProgressByItem((prev) => (prev[key] === pctVal ? prev : { ...prev, [key]: pctVal }));
 
             const updatedAtMs = Number(data.updatedAtMs || (data.updated_at ? Date.parse(String(data.updated_at)) : 0));
-            if (canCurateAI && updatedAtMs > 0 && Date.now() - updatedAtMs > 65_000) {
+            if (canCurateAI && updatedAtMs > 0 && Date.now() - updatedAtMs > 120_000) {
               void authFetch(`${API_BASE_URL}/vault/hunt-item-async`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -4162,20 +4176,23 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         updated_at: new Date().toISOString(),
       };
 
-      await updateDoc(doc(db, 'global_asset_catalog', catalogId), {
-        foto_url: downloadUrl,
-        foto_media_telemetry: fotoMediaTelemetry,
-        updatedAt: new Date(),
-      });
+      const imgRes = await authFetch(`${API_BASE_URL}/vault/asset-image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          globalAssetId: catalogId,
+          tenantAssetId: assetId !== catalogId ? assetId : undefined,
+          imageUrl: downloadUrl,
+          fotoMediaTelemetry,
+        }),
+      }).catch(() => null);
 
-      try {
-        await updateDoc(doc(db, 'tenant_assets', assetId), {
+      if (!imgRes || !imgRes.ok) {
+        await updateDoc(doc(db, 'global_asset_catalog', catalogId), {
           foto_url: downloadUrl,
           foto_media_telemetry: fotoMediaTelemetry,
-          updatedAt: new Date(),
+          updatedAt: Date.now(),
         });
-      } catch (_err) {
-        // Seguro de ignorar cuando assetId es el ID global
       }
 
       toast.update(toastId, {
@@ -4211,20 +4228,23 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     const toastId = toast.loading('Limpiando referencia fotográfica...');
 
     try {
-      await updateDoc(doc(db, 'global_asset_catalog', catalogId), {
-        foto_url: '',
-        foto_media_telemetry: null,
-        updatedAt: new Date()
-      });
+      const delRes = await authFetch(`${API_BASE_URL}/vault/asset-image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          globalAssetId: catalogId,
+          tenantAssetId: assetId !== catalogId ? assetId : undefined,
+          imageUrl: null,
+          fotoMediaTelemetry: null,
+        }),
+      }).catch(() => null);
 
-      try {
-        await updateDoc(doc(db, 'tenant_assets', assetId), {
+      if (!delRes || !delRes.ok) {
+        await updateDoc(doc(db, 'global_asset_catalog', catalogId), {
           foto_url: '',
           foto_media_telemetry: null,
-          updatedAt: new Date()
+          updatedAt: Date.now(),
         });
-      } catch (_err) {
-        // Seguro de ignorar cuando assetId corresponde al ID global
       }
 
       setShowPhotoDeleteConfirm(false);
@@ -4292,7 +4312,12 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       const json = await res.json();
       if (res.ok && json.success) {
         toast.update(toastId, { render: t('vault_dashboard.status.items_generated', { count: json.items?.length ?? 0 }), type: 'success', isLoading: false, autoClose: 3000 });
-      } else if (res.status === 422 && json.error === 'SECUENCIA_PILAR_BLOQUEADA') {
+      } else if (
+        (res.status === 422 || res.status === 409) &&
+        (json.error === 'SECUENCIA_PILAR_BLOQUEADA' ||
+          json.code === 'SECUENCIA_PILAR_BLOQUEADA' ||
+          json.error === 'PREREQUISITE_PILLAR_NOT_ITEMIZED')
+      ) {
         toast.update(toastId, { render: json.message || 'Debe itemizar el pilar precedente en la secuencia lógica.', type: 'warning', isLoading: false, autoClose: 6000 });
       } else if (res.status === 422 && json.error === 'PERFIL_INCOMPLETO') {
         toast.update(toastId, { render: `${t('vault_dashboard.status.incomplete_profile')}: ${(json.missingFields ?? []).join(', ')}`, type: 'warning', isLoading: false, autoClose: 6000 });
@@ -4902,16 +4927,14 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                 const isLockedInSequence = !isPrereqCompleted && !isItemized;
 
                 const statusColorClass = isFullyCaptured
-                  ? 'text-[#10B981]'
-                  : isItemized
                   ? 'text-[#00AEEF]'
+                  : isItemized
+                  ? 'text-[#C68346]'
                   : isActive
                   ? 'text-[#0F172A] dark:text-[#F3F4F6]'
                   : 'text-[#94A3B8] dark:text-[#5A6072]';
 
                 const activeBorderClass = isFullyCaptured
-                  ? '!border-[#10B981]'
-                  : isItemized
                   ? '!border-[#00AEEF]'
                   : '!border-[#C68346]';
 
@@ -4954,15 +4977,13 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                   liveHuntedSymbology.huntedItemsCount === liveHuntedSymbology.totalActiveItemsCount;
                 const someHunted = liveHuntedSymbology.huntedItemsCount > 0;
                 const infoColorClass = allHunted
-                  ? 'text-[#10B981]'
-                  : someHunted
                   ? 'text-[#00AEEF]'
+                  : someHunted
+                  ? 'text-[#C68346]'
                   : showSymbologyInfo
                   ? 'text-[#0F172A] dark:text-[#F3F4F6]'
                   : 'text-[#94A3B8] dark:text-[#5A6072]';
                 const infoBorderClass = allHunted
-                  ? '!border-b-[#10B981]'
-                  : someHunted
                   ? '!border-b-[#00AEEF]'
                   : '!border-b-[#C68346]';
 
@@ -5134,6 +5155,22 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
               const prereqId = PILLAR_PREREQUISITE_MAP[activeTab];
               const prereqMeta = prereqId ? PILLARS.find(x => x.id === prereqId) : null;
               const prereqDoc = prereqId ? catalog.knowledge_vault?.[prereqId] : null;
+              const activeTabIdx = PILLARS.findIndex(x => x.id === activeTab);
+              let hasAncestorChainEvolved = false;
+              for (let i = 1; i <= activeTabIdx; i++) {
+                const curPid = PILLARS[i].id;
+                const prevPid = PILLARS[i - 1].id;
+                const curDoc = catalog.knowledge_vault?.[curPid];
+                const prevDoc = catalog.knowledge_vault?.[prevPid];
+                if (
+                  curDoc?.parent_pillar_digest_sha256 &&
+                  prevDoc?.structure_digest_sha256 &&
+                  curDoc.parent_pillar_digest_sha256 !== prevDoc.structure_digest_sha256
+                ) {
+                  hasAncestorChainEvolved = true;
+                  break;
+                }
+              }
               const prerequisitePillar = prereqId && prereqMeta
                 ? {
                     id: prereqId,
@@ -5143,6 +5180,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                       prereqDoc?.itemize_status === 'COMPLETED' ||
                       (prereqDoc?.items ?? []).some((it: any) => !it?.is_discarded),
                     currentDigest: prereqDoc?.structure_digest_sha256 ?? null,
+                    hasAncestorChainEvolved,
                   }
                 : null;
 

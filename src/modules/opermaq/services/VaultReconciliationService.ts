@@ -38,6 +38,7 @@ import {
     verifyAndNormalizeTechnicalUnits,
     verifyAndResolveSymbologyRefs,
 } from './NeuroSymbolicVerifier';
+import { normalizeComparableTitle, tokenJaccardSimilarity } from './TextSimilarityUtils';
 
 /**
  * VAULT RECONCILIATION SERVICE v4.0 — Reconciliador Unificado de los 5 Pilares OPERMAQ
@@ -129,27 +130,6 @@ function stripUndefinedDeep<T>(value: T): T {
         return out as T;
     }
     return value;
-}
-
-function normalizeComparableTitle(str: string): string {
-    return str
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-z0-9\s]+/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-function tokenJaccardSimilarity(a: string, b: string): number {
-    const setA = new Set(normalizeComparableTitle(a).split(' ').filter((w) => w.length > 2));
-    const setB = new Set(normalizeComparableTitle(b).split(' ').filter((w) => w.length > 2));
-    if (setA.size === 0 || setB.size === 0) return 0;
-    let inter = 0;
-    for (const token of setA) {
-        if (setB.has(token)) inter++;
-    }
-    return inter / (setA.size + setB.size - inter);
 }
 
 function isObsoleteSyntheticBlueprint(fig?: ExtractedFigureRef | null): boolean {

@@ -685,6 +685,7 @@ export class ResilientAIClient {
         s = s.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[EMAIL_RESERVADO]');
         s = s.replace(/(?:\+?56\s*)?(?:9\s*\d{4}\s*\d{4}|2\s*\d{4}\s*\d{4})\b/g, '[TEL_RESERVADO]');
         s = s.replace(/[-+]?\d{1,2}\.\d{4,}\s*,\s*[-+]?\d{1,3}\.\d{4,}/g, '[COORD_FAENA_RESERVADA]');
+        s = s.replace(/\b(?:18|19)\s*[HJFG]\s+\d{6}\s+\d{7}\b/gi, '[UTM_FAENA_RESERVADA]');
         s = s.replace(/\b(?:OC|PO|CONTRATO|LICITACI[OÓ]N)\s*[-#:]?\s*[A-Z0-9-]{3,20}\b/gi, '[REF_CONTRACTUAL_RESERVADA]');
         s = s.replace(/\b(?:patente|ppu)\s*[:#-]?\s*[A-Z]{2,4}[-\s]?\d{2,4}\b/gi, '[PATENTE_RESERVADA]');
         return s;
@@ -692,17 +693,14 @@ export class ResilientAIClient {
 
     /**
      * Ejecución central resiliente con fallback Pro -> Flash -> Flash-Lite
+     * SEC-02: Sanitización determinista Ley N° 21.719 (`always-on`) para toda inferencia saliente.
      */
     public static async generate(rawReq: AIInferenceRequest): Promise<AIInferenceResponse> {
         const startTime = Date.now();
-        const shouldScrubLey21719 =
-            Boolean(rawReq.tenantId && rawReq.tenantId !== 'GLOBAL') || Boolean(rawReq.useGoogleSearch);
-        const req: AIInferenceRequest = shouldScrubLey21719
-            ? {
-                  ...rawReq,
-                  prompt: this.sanitizePromptForLey21719(rawReq.prompt),
-              }
-            : rawReq;
+        const req: AIInferenceRequest = {
+            ...rawReq,
+            prompt: this.sanitizePromptForLey21719(rawReq.prompt),
+        };
 
         const ai = await this.getSDKClient();
         const effectiveSystemInstruction = await this.enrichSystemInstructionWithPilotFeedback(

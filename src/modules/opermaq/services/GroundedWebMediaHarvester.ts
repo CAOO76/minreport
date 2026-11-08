@@ -609,8 +609,12 @@ Responde SOLO JSON:
         itemTitle: string;
         chapterExcerpt?: string;
         maxFigures?: number;
-        /** Presupuesto global de red para la fase de fuentes (OPT-F4.1). Por defecto 30 s. */
+        /** Presupuesto global de red para la fase de fuentes (OPT-F4.1). Por defecto 14 s. */
         sourceBudgetMs?: number;
+        /** Presupuesto total máximo incluyendo evaluación VLM (`VEL-02`). Por defecto 25 s. */
+        totalHarvestBudgetMs?: number;
+        /** Señal de aborto cooperativo (`VEL-02`) para detener VLM sin perder `resolvedSourceUrls` ni `sourceTexts`. */
+        signal?: AbortSignal;
     }): Promise<{
         figures: ExtractedFigureRef[];
         discoveredPdfUrls: string[];
@@ -641,8 +645,11 @@ Responde SOLO JSON:
         }
 
         const candidateImages: RawHtmlImageCandidate[] = [];
-        const budgetMs = params.sourceBudgetMs ?? 30_000;
+        const budgetMs = params.sourceBudgetMs ?? 14_000;
         const deadline = Date.now() + budgetMs;
+        const totalDeadline = Date.now() + (params.totalHarvestBudgetMs ?? 25_000);
+        const isHarvestExpired = (): boolean =>
+            Boolean(params.signal?.aborted) || Date.now() >= totalDeadline;
 
         // 1. Fuentes grounded en paralelo (concurrencia 3) con presupuesto global y URL FINAL tras redirecciones (OPT-F4.1)
         const eligibleSources = params.groundingSources
@@ -724,29 +731,31 @@ Responde SOLO JSON:
         report.image_candidates = candidateImages.length;
         candidateImages.sort((a, b) => b.priority - a.priority);
 
-        // 2. Evaluar candidatos HTML: geometría real (`sharp`) + Juez VLM tipado
-        for (const cand of candidateImages) {
-            if (figures.length >= maxFigures) break;
+        // 2. Evaluar candidatos HTML en paralelo acotado (concurrencia = 3, `VEL-02`): geometría real (`sharp`) + Juez VLM tipado
+        const evaluateImageCandidate = async (cand: RawHtmlImageCandidate): Promise<void> => {
+            if (figures.length >= maxFigures || isHarvestExpired()) return;
 
             const safeImgUrl = await assertSafePublicHttpsUrl(cand.imageUrl);
             if (!safeImgUrl) {
                 bumpRejection(report, 'URL_IMAGEN_NO_SEGURA');
-                continue;
+                return;
             }
+            if (figures.length >= maxFigures || isHarvestExpired()) return;
 
+            const remainingMs = Math.max(1500, Math.min(7000, totalDeadline - Date.now()));
             const imgData = await fetchBoundedBytes(
                 safeImgUrl,
                 MAX_IMAGE_BYTES,
                 'image/webp,image/png,image/jpeg,image/*;q=0.8',
-                8000
+                remainingMs
             );
             if ('error' in imgData) {
                 bumpRejection(report, `IMG_${imgData.error}`);
-                continue;
+                return;
             }
             if (!imgData.contentType.startsWith('image/') || imgData.contentType.includes('svg')) {
                 bumpRejection(report, 'IMG_TIPO_NO_SOPORTADO');
-                continue;
+                return;
             }
 
             let width = 0;
@@ -758,12 +767,12 @@ Responde SOLO JSON:
                 height = meta.height || 0;
                 if (width < 260 || height < 180) {
                     bumpRejection(report, 'IMG_RESOLUCION_INSUFICIENTE');
-                    continue;
+                    return;
                 }
                 const aspect = width / height;
                 if (aspect > 4.2 || aspect < 0.25) {
                     bumpRejection(report, 'IMG_PROPORCION_BANNER');
-                    continue;
+                    return;
                 }
                 previewWebp = await sharp(imgData.buffer)
                     .resize({ width: 768, height: 768, fit: 'inside', withoutEnlargement: true })
@@ -771,8 +780,10 @@ Responde SOLO JSON:
                     .toBuffer();
             } catch {
                 bumpRejection(report, 'IMG_DECODIFICACION_FALLIDA');
-                continue;
+                return;
             }
+
+            if (figures.length >= maxFigures || isHarvestExpired()) return;
 
             const verdict = await this.judgeImage({
                 previewWebp,
@@ -782,12 +793,13 @@ Responde SOLO JSON:
             });
             if (!verdict) {
                 bumpRejection(report, 'VLM_SIN_RESPUESTA');
-                continue;
+                return;
             }
             if (!verdict.is_valid || Number(verdict.relevance_score) < 0.72) {
                 bumpRejection(report, 'VLM_NO_PERTINENTE');
-                continue;
+                return;
             }
+            if (figures.length >= maxFigures) return;
 
             try {
                 const { descriptor } = await CasStorageService.digestAndStore(
@@ -801,31 +813,45 @@ Responde SOLO JSON:
                     }
                 );
 
-                figures.push({
-                    figure_id: `fig_web_${descriptor.sha256.slice(0, 12)}`,
-                    sha256: descriptor.sha256,
-                    phash_hex: descriptor.phashHex,
-                    storage_url: descriptor.downloadUrl,
-                    mime_type: 'image/webp',
-                    figure_type: normalizeFigureType(verdict.figure_type),
-                    title_es: String(verdict.title_es || cand.altOrCaption || params.itemTitle).slice(0, 120),
-                    caption_es: String(verdict.caption_es || '').slice(0, 220),
-                    source_url: cand.pageUrl,
-                    width: descriptor.width || width,
-                    height: descriptor.height || height,
-                    original_bytes: descriptor.originalBytes,
-                    optimized_bytes: descriptor.optimizedBytes,
-                    savings_pct: descriptor.savingsPct ?? Number((Number(descriptor.savingsRatio || 0) * 100).toFixed(1)),
-                });
-                report.figures_stored++;
+                if (figures.length < maxFigures) {
+                    figures.push({
+                        figure_id: `fig_web_${descriptor.sha256.slice(0, 12)}`,
+                        sha256: descriptor.sha256,
+                        phash_hex: descriptor.phashHex,
+                        storage_url: descriptor.downloadUrl,
+                        mime_type: 'image/webp',
+                        figure_type: normalizeFigureType(verdict.figure_type),
+                        title_es: String(verdict.title_es || cand.altOrCaption || params.itemTitle).slice(0, 120),
+                        caption_es: String(verdict.caption_es || '').slice(0, 220),
+                        source_url: cand.pageUrl,
+                        width: descriptor.width || width,
+                        height: descriptor.height || height,
+                        original_bytes: descriptor.originalBytes,
+                        optimized_bytes: descriptor.optimizedBytes,
+                        savings_pct:
+                            descriptor.savingsPct ??
+                            Number((Number(descriptor.savingsRatio || 0) * 100).toFixed(1)),
+                    });
+                    report.figures_stored++;
+                }
             } catch {
                 bumpRejection(report, 'CAS_ERROR');
             }
-        }
+        };
+
+        let imgCursor = 0;
+        const imgWorkers = Array.from({ length: Math.min(3, candidateImages.length) }, async () => {
+            while (imgCursor < candidateImages.length) {
+                if (figures.length >= maxFigures || isHarvestExpired()) break;
+                const cand = candidateImages[imgCursor++];
+                await evaluateImageCandidate(cand).catch(() => bumpRejection(report, 'IMG_WORKER_ERROR'));
+            }
+        });
+        await Promise.all(imgWorkers);
 
         // 3. PDF técnicos: primero los entregados directamente por grounding, luego los descubiertos en HTML.
-        //    Los PDF directos siempre se leen (aunque ya se alcanzó `maxFigures`) para aportar texto de evidencia.
         for (const pdf of directPdfBuffers) {
+            if (isHarvestExpired()) break;
             const pdfFigs = await this.harvestFiguresFromPdfBuffer({
                 pdfBuffer: pdf.buffer,
                 sourceUrl: pdf.url,
@@ -841,9 +867,9 @@ Responde SOLO JSON:
 
         const alreadyParsed = new Set(directPdfBuffers.map((p) => p.url));
         for (const pdfUrl of Array.from(discoveredPdfUrls).slice(0, 3)) {
-            if (figures.length >= maxFigures) break;
+            if (figures.length >= maxFigures || isHarvestExpired()) break;
             if (alreadyParsed.has(pdfUrl)) continue;
-            if (deadline + 15_000 - Date.now() < 2000) {
+            if (totalDeadline - Date.now() < 3000) {
                 bumpRejection(report, 'PRESUPUESTO_RED_AGOTADO');
                 break;
             }
@@ -852,7 +878,12 @@ Responde SOLO JSON:
                 bumpRejection(report, 'URL_PDF_NO_SEGURA');
                 continue;
             }
-            const pdfData = await fetchBoundedBytes(safePdf, MAX_PDF_BYTES, 'application/pdf,*/*;q=0.5', 12000);
+            const pdfData = await fetchBoundedBytes(
+                safePdf,
+                MAX_PDF_BYTES,
+                'application/pdf,*/*;q=0.5',
+                Math.min(10000, Math.max(2500, totalDeadline - Date.now()))
+            );
             if ('error' in pdfData) {
                 bumpRejection(report, `PDF_${pdfData.error}`);
                 continue;
@@ -861,6 +892,7 @@ Responde SOLO JSON:
                 bumpRejection(report, 'PDF_FIRMA_INVALIDA');
                 continue;
             }
+            if (isHarvestExpired()) break;
             const pdfFigs = await this.harvestFiguresFromPdfBuffer({
                 pdfBuffer: pdfData.buffer,
                 sourceUrl: pdfData.finalUrl.toString(),

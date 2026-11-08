@@ -325,7 +325,7 @@ export async function safeFetchExternal(
                     if (value) {
                         receivedBytes += value.byteLength;
                         if (receivedBytes > maxBytes) {
-                            await reader.cancel().catch(() => {});
+                            await reader.cancel().catch(() => { });
                             throw new SSRFBlockedError(
                                 `El flujo descargado superó el límite de seguridad (${maxBytes} bytes).`
                             );

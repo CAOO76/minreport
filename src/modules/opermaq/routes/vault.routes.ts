@@ -27,6 +27,7 @@ import { huntVaultItem } from '../services/ItemHunterService';
 import {
     computePillarStructureDigestSha256,
     computeVaultMerkleRootSha256,
+    isPillarMerkleChainEvolved,
     itemizeSinglePillar,
     sortAndReindexPillarItems,
     suggestComplementaryPillarItems,
@@ -278,18 +279,12 @@ vaultRouter.post('/itemize-pillar', requireCurateAI, checkVaultNotSealed, async 
                 const currentLabel = PILLAR_LABELS[pillarId] || pillarId;
                 return res.status(409).json({
                     error: 'PREREQUISITE_PILLAR_NOT_ITEMIZED',
+                    code: 'SECUENCIA_PILAR_BLOQUEADA',
                     prerequisitePillarId,
                     message: `Secuencia de 5 Pilares: Debe itemizar primero "${prereqLabel}" antes de itemizar "${currentLabel}".`,
                 });
             }
-            const currentParentDigest =
-                prereqPillar?.structure_digest_sha256 ||
-                computePillarStructureDigestSha256(prereqPillar?.items);
-            if (
-                currentParentDigest &&
-                pillar?.parent_pillar_digest_sha256 &&
-                currentParentDigest !== pillar.parent_pillar_digest_sha256
-            ) {
+            if (isPillarMerkleChainEvolved(data.knowledge_vault, pillarId)) {
                 isParentPillarEvolved = true;
             }
         }
@@ -328,6 +323,83 @@ vaultRouter.post('/itemize-pillar', requireCurateAI, checkVaultNotSealed, async 
         return handleVaultError(res, err, 'Error ejecutando itemizado del pilar.');
     }
 });
+
+vaultRouter.post(
+    '/asset-image',
+    requireCurateAI,
+    checkVaultNotSealed,
+    async (req: ScopedRequest, res: Response) => {
+        const ctx = req.opermaqContext!;
+        const schema = z.object({
+            globalAssetId: z.string().min(1),
+            tenantAssetId: z.string().optional(),
+            imageUrl: z.string().nullable(),
+            imagePath: z.string().nullable().optional(),
+            imageMetadata: z.record(z.string(), z.any()).nullable().optional(),
+            fotoMediaTelemetry: z.record(z.string(), z.any()).nullable().optional(),
+        });
+
+        const parsed = schema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({ error: 'Parámetros de imagen inválidos.' });
+        }
+
+        const { globalAssetId, tenantAssetId, imageUrl, imagePath, imageMetadata, fotoMediaTelemetry } = parsed.data;
+        try {
+            const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
+            const snap = await docRef.get();
+            if (!snap.exists) {
+                return res.status(404).json({ error: 'Activo no encontrado en catálogo.' });
+            }
+            const data = snap.data() || {};
+            const nextSpecs = {
+                ...(data.specifications || {}),
+                imageUrl: imageUrl ?? null,
+                imagePath: imagePath ?? null,
+                imageMetadata: imageMetadata ?? null,
+            };
+
+            const nowMs = Date.now();
+            await docRef.update({
+                foto_url: imageUrl ?? '',
+                foto_media_telemetry: fotoMediaTelemetry ?? imageMetadata ?? null,
+                specifications: nextSpecs,
+                updatedAt: nowMs,
+            });
+
+            if (tenantAssetId && tenantAssetId !== globalAssetId) {
+                await db
+                    .collection('tenant_assets')
+                    .doc(tenantAssetId)
+                    .update({
+                        foto_url: imageUrl ?? '',
+                        foto_media_telemetry: fotoMediaTelemetry ?? imageMetadata ?? null,
+                        updatedAt: nowMs,
+                    })
+                    .catch(() => undefined);
+            }
+
+            void AuditLedger.record({
+                tenantId: 'GLOBAL_OEM',
+                actorUid: ctx.actorId,
+                actorEmail: ctx.actorEmail,
+                module: 'opermaq',
+                action: imageUrl ? 'VAULT_ASSET_IMAGE_UPDATED' : 'VAULT_ASSET_IMAGE_REMOVED',
+                targetEntity: `global_asset_catalog/${globalAssetId}`,
+                details: {
+                    globalAssetId,
+                    hasImage: Boolean(imageUrl),
+                    imagePath: imagePath || null,
+                    telemetry: fotoMediaTelemetry || null,
+                },
+            }).catch(() => undefined);
+
+            return res.status(200).json({ success: true, specifications: nextSpecs });
+        } catch (err) {
+            return handleVaultError(res, err, 'Error actualizando fotografía oficial del activo.');
+        }
+    }
+);
 
 vaultRouter.post(
     '/suggest-complementary-items',
