@@ -281,16 +281,8 @@ export class OpermaqManualPublisher {
                 ? assetData.symbology_pack
                 : await buildAndPersistAssetSymbologyPack(input.globalAssetId, assetData);
 
-        // 2. Generar planos paramétricos vectoriales propios para garantizar soporte gráfico completo
+        // 2. Cero plantillas SVG genéricas (`FIX-01`): el manual compilado solo incluye figuras reales y gráficos de datos verificados
         const generatedBlueprints: Array<{ figure: ExtractedFigureRef; svgString: string }> = [];
-        for (const bpKind of cfg.blueprints) {
-            const bp = await OpermaqSvgBlueprintEngine.generateAndStoreAssetBlueprint({
-                globalAssetId: input.globalAssetId,
-                kind: bpKind,
-                actorUid: input.actorUid,
-            });
-            generatedBlueprints.push(bp);
-        }
 
         // 3. Cargar opcionalmente `tenant_custom_overrides` (aislado por tenant)
         let tenantOverrides: Record<string, any> | null = null;

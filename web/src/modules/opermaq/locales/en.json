@@ -721,6 +721,42 @@
       "pauta_mantencion": "Maintenance Guide",
       "matriz_riesgos": "Risk Matrix",
       "checklist_pre_op": "Pre-Op Checklist"
+    },
+    "pending_figure": {
+      "title": "Technical image pending in this section",
+      "description_label": "Required visual resource",
+      "link_label": "Source for manual retrieval",
+      "visit_source": "Visit source",
+      "alt_links": "Alternative verified links",
+      "no_source": "Source not declared",
+      "upload": "Upload image",
+      "paste": "Paste clipboard",
+      "consolidating": "Optimizing in CAS",
+      "offline_waiting": "Offline: the image will be processed when the connection returns.",
+      "preview_title": "Preview [Pending] ➔ [Image]",
+      "figure_type_label": "Figure type",
+      "confirm_helper": "Type \"ACTUALIZAR\" to insert the image into this section:",
+      "confirm": "Confirm",
+      "cancel": "Cancel",
+      "integrating": "Inserting image into section...",
+      "success": "Image inserted into section",
+      "locked_saved": "Image recorded as a proposal for the approved item.",
+      "locked_advisory": "Approved item: the image will remain a proposal until the item is unlocked.",
+      "error": "Error inserting the image.",
+      "unsupported_type": "Unsupported format (PNG, JPG, WebP or SVG).",
+      "clipboard_unsupported": "Focus the card and use Cmd/Ctrl+V, or Upload image.",
+      "no_clipboard_image": "The clipboard does not contain an image.",
+      "counter_title": "Pending technical images",
+      "approval_warning": "{{count}} pending technical image(s). After approval they can only be recorded as proposals.",
+      "figure_types": {
+        "ESQUEMA_HIDRAULICO_ELECTRICO": "Hydraulic / electrical schematic",
+        "DIAGRAMA_ACOTADO": "Dimensioned diagram",
+        "FOTO_COMPONENTE": "Component photograph",
+        "CURVA_RENDIMIENTO": "Performance curve",
+        "MAPA_LUBRICACION_PM": "Lubrication map",
+        "SIMBOLOGIA_SEGURIDAD": "Safety symbology",
+        "PLANO_VECTORIAL_SVG": "Vector drawing"
+      }
     }
   },
   "opermaq_domains": {

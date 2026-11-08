@@ -60,8 +60,6 @@ export interface AssetListProps {
     onSelectAsset?: (assetId: string) => void;
     onNew?: () => void;
     onAddNew?: () => void;
-    pendingContributionsCount?: number;
-    onOpenContributions?: () => void;
 }
 
 export const AssetList: React.FC<AssetListProps> = ({
@@ -71,8 +69,6 @@ export const AssetList: React.FC<AssetListProps> = ({
     onSelectAsset,
     onNew,
     onAddNew,
-    pendingContributionsCount = 0,
-    onOpenContributions,
 }) => {
     const handleAddNew = onNew || onAddNew;
     const { t } = useTranslation();
@@ -411,26 +407,6 @@ export const AssetList: React.FC<AssetListProps> = ({
                             </button>
                         )}
                     </div>
-
-                    {effectiveMode === 'CATALOG' && capabilities.canCurateAI && onOpenContributions && (
-                        <button
-                            id="nav-contributions-queue"
-                            type="button"
-                            onClick={onOpenContributions}
-                            title={t('opermaq_domains.hitl_queue_title')}
-                            aria-label={t('opermaq_domains.hitl_queue_title')}
-                            className={`${flatIconBtn} relative`}
-                        >
-                            <span className="material-symbols-outlined text-[20px]">
-                                fact_check
-                            </span>
-                            {pendingContributionsCount > 0 && (
-                                <span className="ml-0.5 text-[10px] font-mono tabular-nums font-bold text-[#00AEEF]">
-                                    {pendingContributionsCount}
-                                </span>
-                            )}
-                        </button>
-                    )}
 
                     {canRegister && handleAddNew && (
                         <button

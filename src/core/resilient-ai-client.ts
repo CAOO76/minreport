@@ -156,14 +156,14 @@ export interface SwarmTelemetrySnapshot {
 }
 
 export const SWARM_MODELS: Record<SwarmTier, string> = {
-    PRIMARY: process.env.PREMIUM_GEMINI_MODEL || process.env.GEMINI_PRO_MODEL || 'gemini-4-argon',
-    SECONDARY: process.env.FALLBACK_GEMINI_MODEL || process.env.GEMINI_FLASH_MODEL || 'gemini-3.8-flash',
-    ANCHOR_HA: process.env.LITE_GEMINI_MODEL || process.env.GEMINI_FLASH_LITE_MODEL || 'gemini-3.5-flash-lite',
+    PRIMARY: process.env.PREMIUM_GEMINI_MODEL || process.env.GEMINI_PRO_MODEL || 'gemini-2.5-pro',
+    SECONDARY: process.env.FALLBACK_GEMINI_MODEL || process.env.GEMINI_FLASH_MODEL || 'gemini-2.5-flash',
+    ANCHOR_HA: process.env.LITE_GEMINI_MODEL || process.env.GEMINI_FLASH_LITE_MODEL || 'gemini-2.5-flash-lite',
 };
 
 const SWARM_TIER_FALLBACK_CANDIDATES: Record<SwarmTier, string[]> = {
-    PRIMARY: ['gemini-3.1-pro-preview', 'gemini-2.5-pro'],
-    SECONDARY: ['gemini-3-flash-preview', 'gemini-2.5-flash'],
+    PRIMARY: ['gemini-2.5-pro', 'gemini-3.1-pro-preview'],
+    SECONDARY: ['gemini-2.5-flash', 'gemini-3-flash-preview'],
     ANCHOR_HA: ['gemini-2.5-flash-lite', 'gemini-3.1-flash-lite'],
 };
 
@@ -889,10 +889,31 @@ export class ResilientAIClient {
                         config.thinkingConfig = thinkingCfg;
                     }
 
-                    const response = await ai.models.generateContent({
-                        model: modelName,
-                        contents: [{ role: 'user', parts }],
-                        config,
+                    const attemptTimeoutMs = hasGroundingTools ? 45_000 : 40_000;
+                    const abortController = new AbortController();
+                    config.abortSignal = abortController.signal;
+
+                    let timeoutHandle: NodeJS.Timeout | null = null;
+                    const response = await Promise.race([
+                        ai.models.generateContent({
+                            model: modelName,
+                            contents: [{ role: 'user', parts }],
+                            config,
+                        }),
+                        new Promise<never>((_, reject) => {
+                            timeoutHandle = setTimeout(() => {
+                                abortController.abort();
+                                reject(
+                                    new Error(
+                                        `[INFERENCE_ATTEMPT_TIMEOUT] ${modelName} superó el presupuesto de ${Math.round(
+                                            attemptTimeoutMs / 1000
+                                        )}s.`
+                                    )
+                                );
+                            }, attemptTimeoutMs);
+                        }),
+                    ]).finally(() => {
+                        if (timeoutHandle) clearTimeout(timeoutHandle);
                     });
 
                     const text = (response.text || '').trim();
@@ -1009,13 +1030,15 @@ export class ResilientAIClient {
                         continue;
                     }
 
-                    // Si el modelo puntual no está habilitado, no existe o agotó cuota puntual (429), probar candidato hermano del mismo tier o saltar al siguiente nivel
+                    // Si el modelo puntual no está habilitado, no existe, agotó cuota puntual (429) o excedió timeout, probar candidato hermano del mismo tier o saltar al siguiente nivel
                     if (
                         msg.includes('PERMISSION_DENIED') ||
                         msg.includes('NOT_FOUND') ||
                         msg.includes('is not found') ||
                         msg.includes('RESOURCE_EXHAUSTED') ||
-                        msg.includes('"code":429')
+                        msg.includes('"code":429') ||
+                        msg.includes('INFERENCE_ATTEMPT_TIMEOUT') ||
+                        msg.includes('DEADLINE_EXCEEDED')
                     ) {
                         const fallbacks = SWARM_TIER_FALLBACK_CANDIDATES[tier] || [];
                         const nextCandidate = fallbacks.find((cand) => !triedModelsInTier.has(cand));

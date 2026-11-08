@@ -153,6 +153,7 @@ mediaRouter.post(
             const queryParsed = DigestUploadQuerySchema.safeParse({
                 profile: req.body?.profile || req.query?.profile,
                 scope: req.body?.scope || req.query?.scope,
+                clientOriginalBytes: req.body?.clientOriginalBytes ?? req.query?.clientOriginalBytes,
                 enableSelectivePdfRaster:
                     req.body?.enableSelectivePdfRaster ?? req.query?.enableSelectivePdfRaster ?? 'true',
             });
@@ -164,7 +165,7 @@ mediaRouter.post(
                 });
             }
 
-            const { profile, scope, enableSelectivePdfRaster } = queryParsed.data;
+            const { profile, scope, clientOriginalBytes, enableSelectivePdfRaster } = queryParsed.data;
 
             // Solo roles soberanos (DEV / ADMIN / TEST-PILOT) escriben directo en GLOBAL_OEM o SYMBOLOGY_MASTER;
             // clientes B2B/EDU escriben en TENANT_PRIVATE (y pasan por la esclusa Airlock para aportar al común).
@@ -182,6 +183,7 @@ mediaRouter.post(
                     tenantId: ctx.tenantId,
                     actorUid: ctx.actorId,
                     originalFilename: file.originalname,
+                    clientOriginalBytes,
                     enableSelectiveRaster: enableSelectivePdfRaster,
                 }
             );

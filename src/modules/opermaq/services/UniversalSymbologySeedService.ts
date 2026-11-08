@@ -643,6 +643,9 @@ export async function ensureUniversalSymbologySeeded(
                         standard_icon_url: cas.downloadUrl,
                         svg_inline: digested.buffer.toString('utf8'),
                         cas_sha256: cas.sha256,
+                        original_bytes: cas.originalBytes,
+                        optimized_bytes: cas.optimizedBytes,
+                        savings_pct: cas.savingsPct ?? Number((cas.savingsRatio * 100).toFixed(1)),
                         tags: item.tags,
                         created_at: nowIso,
                         created_by: 'MINREPORT UniversalSymbologySeed v4.0',
@@ -680,6 +683,9 @@ export async function ensureUniversalSymbologySeeded(
                 // para las restantes ~285 de ISO 7010 dejamos `svg_inline` + data URI/CAS bajo demanda para arranque instantáneo (< 600ms)
                 let iconUrl: string;
                 let cleanSvg = sign.svg;
+                let originalBytes = Buffer.byteLength(sign.svg, 'utf8');
+                let optimizedBytes = originalBytes;
+                let savingsPct = 0;
 
                 if (localized || forceFullIso7010) {
                     const digested = await MediaDigestorServer.digestSvg(sign.svg);
@@ -690,6 +696,9 @@ export async function ensureUniversalSymbologySeeded(
                         originalFilename: `ISO_7010_${codeUpper}.svg`,
                     });
                     iconUrl = cas.downloadUrl;
+                    originalBytes = cas.originalBytes;
+                    optimizedBytes = cas.optimizedBytes;
+                    savingsPct = cas.savingsPct ?? Number((cas.savingsRatio * 100).toFixed(1));
                 } else {
                     iconUrl = `data:image/svg+xml;utf8,${encodeURIComponent(sign.svg)}`;
                 }
@@ -711,6 +720,9 @@ export async function ensureUniversalSymbologySeeded(
                         critical_color: mapIso7010CriticalColor(sign.category),
                         standard_icon_status: 'encontrado',
                         standard_icon_url: iconUrl,
+                        original_bytes: originalBytes,
+                        optimized_bytes: optimizedBytes,
+                        savings_pct: savingsPct,
                         ...(cleanSvg.length <= 24000 ? { svg_inline: cleanSvg } : {}),
                         created_at: nowIso,
                         created_by: 'MINREPORT ISO-7010 Registry v4.0',

@@ -26,6 +26,7 @@ export interface PersistDigestedOptions {
     tenantId?: string;
     actorUid?: string;
     originalFilename?: string;
+    clientOriginalBytes?: number;
     nearDuplicateHammingThreshold?: number;
 }
 
@@ -107,6 +108,10 @@ export class CasStorageService {
             originalBytes: Number(data.originalBytes || data.optimizedBytes || 0),
             optimizedBytes: Number(data.optimizedBytes || 0),
             savingsRatio: Number(data.savingsRatio || 0),
+            savingsPct:
+                typeof data.savingsPct === 'number'
+                    ? Number(data.savingsPct)
+                    : Number((Number(data.savingsRatio || 0) * 100).toFixed(1)),
             width: data.width,
             height: data.height,
             pageCount: data.pageCount,
@@ -159,6 +164,10 @@ export class CasStorageService {
                         originalBytes: Number(d.originalBytes || 0),
                         optimizedBytes: Number(d.optimizedBytes || 0),
                         savingsRatio: Number(d.savingsRatio || 0),
+                        savingsPct:
+                            typeof d.savingsPct === 'number'
+                                ? Number(d.savingsPct)
+                                : Number((Number(d.savingsRatio || 0) * 100).toFixed(1)),
                         width: d.width,
                         height: d.height,
                         storagePath: d.storagePath,
@@ -251,6 +260,21 @@ export class CasStorageService {
         });
 
         const nowIso = new Date().toISOString();
+        const trueOriginalBytes = Math.max(
+            Number(options.clientOriginalBytes || 0),
+            Number(digested.originalBytes || 0),
+            Number(digested.optimizedBytes || 0)
+        );
+        const finalOptimizedBytes = Number(digested.optimizedBytes || 0);
+        const trueSavingsRatio =
+            trueOriginalBytes > 0
+                ? Math.max(
+                      0,
+                      Number(((trueOriginalBytes - finalOptimizedBytes) / trueOriginalBytes).toFixed(4))
+                  )
+                : Number(digested.savingsRatio || 0);
+        const trueSavingsPct = Number((trueSavingsRatio * 100).toFixed(1));
+
         const registryDoc: Record<string, any> = {
             sha256: digested.sha256,
             phashHex: digested.phashHex || null,
@@ -261,9 +285,10 @@ export class CasStorageService {
             mimeType: digested.mimeType,
             extension: digested.extension,
             originalFilename: (options.originalFilename || '').slice(0, 240),
-            originalBytes: digested.originalBytes,
-            optimizedBytes: digested.optimizedBytes,
-            savingsRatio: digested.savingsRatio,
+            originalBytes: trueOriginalBytes,
+            optimizedBytes: finalOptimizedBytes,
+            savingsRatio: trueSavingsRatio,
+            savingsPct: trueSavingsPct,
             width: digested.width || null,
             height: digested.height || null,
             pageCount: digested.pageCount || null,
@@ -288,9 +313,10 @@ export class CasStorageService {
             mimeType: digested.mimeType,
             extension: digested.extension,
             originalFilename: options.originalFilename,
-            originalBytes: digested.originalBytes,
-            optimizedBytes: digested.optimizedBytes,
-            savingsRatio: digested.savingsRatio,
+            originalBytes: trueOriginalBytes,
+            optimizedBytes: finalOptimizedBytes,
+            savingsRatio: trueSavingsRatio,
+            savingsPct: trueSavingsPct,
             width: digested.width,
             height: digested.height,
             pageCount: digested.pageCount,

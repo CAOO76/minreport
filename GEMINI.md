@@ -31,6 +31,10 @@
 - **Exclusividad del Motor Propio Símil NotebookLM:** La ingesta, almacenamiento y consulta de fuentes de información privada se ejecuta **100% mediante código propio en `southamerica-west1`** (`CasStorageService.ts`, `SegmentedDocumentProcessorService.ts` y `vaultChatService.ts` en modo `SOVEREIGN_VAULT_FIRST` con `useGoogleSearch: false` por defecto). Queda **estrictamente prohibido** alojar o exponer documentos, manuales, planos o nubes de puntos de MINREPORT o sus clientes en servicios de consumo de terceros (`NotebookLM` externo, `Google Drive` personal o `Google Colab`).
 - **Esclusa Zero-Trust Pre-Inferencia (`ConfidentialityAirlockService`):** Toda inferencia IA debe pasar por `resilient-ai-client.ts` bajo facturación Cloud corporativa CDPA (*Zero-Training*) y purgar determinísticamente PII chilena (`RUT`, `PPU`, teléfonos `+56`, correos, coordenadas GPS de faena y contratos/OC) antes de salir del servidor.
 
+### 1.4 Digestión Multimedia, Extracción de PDF y Consolidación Ligera CAS Automática (`MINREPORT-MEDIA-DIGESTOR-CAS`)
+- **Aplicación Automática de Oficio:** En **todo nuevo requerimiento** que involucre ingesta, extracción, recorte o almacenamiento de PDFs, imágenes, diagramas, simbología SVG o video, se aplica automáticamente la Skill `.agents/skills/MINREPORT-MEDIA-DIGESTOR-CAS/SKILL.md` sin necesidad de que el usuario vuelva a solicitarlo.
+- **Persistencia Exclusiva de la Versión Liviana y Trazabilidad de Peso (`Original ➔ CAS Optimizado + % Optimización`):** Prohibido almacenar buffers crudos sin optimizar o `base64` pesados en Firestore/Storage. Todo medio debe pasar por `MediaDigestorClient.ts` (pre-vuelo SHA-256 conservando `clientOriginalBytes`), `MediaDigestorServer.ts`, `SegmentedDocumentProcessorService.ts` y `CasStorageService.ts`, guardando en base de datos **únicamente** la versión liviana optimizada y registrando/presentando siempre en UI el **peso original (`originalBytes`), el peso procesado y guardado (`optimizedBytes`) y el `% de optimización` (`savingsPct`)** para trazabilidad auditable.
+
 ---
 
 ## 2. Arquitectura Web 3.0 Híbrida (5 Capas MINREPORT)
@@ -116,9 +120,13 @@ Inspirado en la ingeniería técnica de alta gama (*Coffee-Tech Engineering* y *
   - Prohibido encerrar iconos en cajas con fondos de color o bordes decorativos.
   - Prohibido adosar texto descriptivo redundante al lado del icono (ej. `[icono_lupa] Buscar`).
 
-### 3.7 Componente Switch Estándar
-- **Componente Obligatorio:** `M3Switch` (Material Design 3) o `SDKSwitch`.
-- **PROHIBIDO:** Usar `AdminSwitch` u otros switches con bordes redondeados cosméticos.
+### 3.7 Componentes M3 Estándar: Switch e Indicadores de Progreso
+- **Switch Obligatorio:** `M3Switch` (Material Design 3) o `SDKSwitch`. Prohibido usar `AdminSwitch` u otros switches con bordes redondeados cosméticos.
+- **Indicadores de Progreso Obligatorios (`https://m3.material.io/components/progress-indicators/overview`):**
+  - Se debe usar exclusivamente la especificación **Material Design 3 Progress Indicators** (`M3LinearProgress` y `M3CircularProgress`) adaptada a geometría `0px` (`rounded-none`):
+    - **Linear Progress Indicator (`M3LinearProgress`):** Altura `4px`, compuesto por `Active Indicator` (`#C68346` en curso / `#00AEEF` al 100%), separación M3 de `4px` (`gap-[4px]`), `Track` (`#E2E8F0` light / `#12151C` dark) y `Stop Indicator` de `4px × 4px` al extremo derecho.
+    - **Circular Progress Indicator (`M3CircularProgress`):** Trazo SVG vectorial (`strokeLinecap="butt"`, `strokeWidth: 3px–4px`) con pista e indicador activo.
+  - **PROHIBIDO:** Usar barras de progreso improvisadas sin `track gap` ni `stop indicator`, colocar números en cajas o flechas `chevron_right` entre pestañas de pilares, o usar iconos `progress_activity` con `animate-spin`.
 
 ### 3.8 Gobernanza de Datos: Modo Informe vs Edición Quirúrgica (HITL)
 - **Modo Informe Técnico por Defecto:** Las pantallas de fichas técnicas, normativas y administración se presentan estructuradas como informe oficial (solo lectura), nunca como formularios editables permanentes.
@@ -148,3 +156,4 @@ Antes de generar o modificar cualquier componente, interfaz o estilo en MINREPOR
 9. [ ] **Formularios:** ¿Incluye `autocomplete="off"` y `spellCheck={false}`?
 10. [ ] **Métricas:** ¿Los números y tablas usan `tabular-nums font-mono` y espaciado de Fibonacci (`fib-8` a `fib-89`)?
 11. [ ] **Protección de Datos (Ley N° 19.628 / Ley N° 21.719):** ¿Cumple residencia en `southamerica-west1`, cero exposición a servicios de consumo externos (`Drive`/`NotebookLM`/`Colab`), modo `SOVEREIGN_VAULT_FIRST` y sanitización previa por `ConfidentialityAirlockService`?
+12. [ ] **Digestor Multimedia y CAS Ligero (`MINREPORT-MEDIA-DIGESTOR-CAS`):** ¿Todo PDF, imagen, recorte `box_2d`, símbolo SVG o video pasa por `MediaDigestorClient` / `MediaDigestorServer` / `SegmentedDocumentProcessorService` y `CasStorageService` (SHA-256 + `dHash` 64-bit), guardando en las bases de datos únicamente la versión liviana optimizada?

@@ -290,6 +290,7 @@ export const TestPilotWorkspace: React.FC = () => {
                             setActiveTab(tab.id);
                             setErrorMsg(null);
                             setStatusMsg(null);
+                            window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
                         }}
                         className={`py-fib-13 px-fib-8 bg-transparent border-0 border-b-2 text-xs font-mono uppercase tracking-wider cursor-pointer flex items-center gap-fib-8 whitespace-nowrap ${activeTab === tab.id
                             ? 'border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-bold'
@@ -320,9 +321,9 @@ export const TestPilotWorkspace: React.FC = () => {
             {/* Macro-Layout Proporcion Aurea (61.8% / 38.2%) */}
             <main className="flex-1 flex flex-col lg:flex-row p-fib-21 gap-fib-21">
                 {/* AREA MAYOR (61.8%) */}
-                <section className="w-full lg:w-[61.8%] bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none overflow-hidden flex flex-col">
+                <section className="w-full lg:w-[61.8%] lg:h-[calc(100vh-140px)] min-h-[640px] bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none overflow-hidden flex flex-col">
                     {activeTab === 'SIM_OPERMAQ_CATALOG' && (
-                        <div className="flex-1 min-h-[600px] flex flex-col">
+                        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                             <Suspense fallback={<div className="p-fib-34 font-mono text-xs text-[#8A93A6]">CATÁLOGO...</div>}>
                                 <OpermaqModule key="pilot-opermaq-catalog" domainMode="CATALOG" hostScope="TEST_PILOT" />
                             </Suspense>
@@ -330,7 +331,7 @@ export const TestPilotWorkspace: React.FC = () => {
                     )}
 
                     {activeTab === 'SIM_OPERMAQ_FLEET' && (
-                        <div className="flex-1 min-h-[600px] flex flex-col">
+                        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                             <Suspense fallback={<div className="p-fib-34 font-mono text-xs text-[#8A93A6]">FLOTA...</div>}>
                                 <OpermaqModule key="pilot-opermaq-fleet" domainMode="FLEET" hostScope="TEST_PILOT" />
                             </Suspense>
@@ -338,7 +339,7 @@ export const TestPilotWorkspace: React.FC = () => {
                     )}
 
                     {activeTab === 'SIM_OPERMAQ_SYMBOLOGY' && (
-                        <div className="flex-1 min-h-[600px] flex flex-col">
+                        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                             <Suspense fallback={<div className="p-fib-34 font-mono text-xs text-[#8A93A6]">SIMBOLOGÍA...</div>}>
                                 <OpermaqModule key="pilot-opermaq-symbology" domainMode="SYMBOLOGY" hostScope="TEST_PILOT" />
                             </Suspense>

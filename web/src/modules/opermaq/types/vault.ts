@@ -22,6 +22,24 @@ export type PillarId =
   | 'matriz_riesgos'
   | 'checklist_pre_op';
 
+/** Secuencia lógica estricta y bloqueante de armado de los 5 pilares (01 ➔ 05). */
+export const SEQUENTIAL_PILLAR_ORDER: readonly PillarId[] = [
+  'ficha_tecnica',
+  'manual_operaciones',
+  'pauta_mantencion',
+  'matriz_riesgos',
+  'checklist_pre_op',
+] as const;
+
+/** Mapa de prerrequisito inmediato por pilar para habilitar su itemizado. */
+export const PILLAR_PREREQUISITE_MAP: Record<PillarId, PillarId | null> = {
+  ficha_tecnica: null,
+  manual_operaciones: 'ficha_tecnica',
+  pauta_mantencion: 'manual_operaciones',
+  matriz_riesgos: 'pauta_mantencion',
+  checklist_pre_op: 'matriz_riesgos',
+};
+
 /** Estado de generación del pilar. */
 export type PillarStatus = 'IDLE' | 'GENERATING' | 'COMPLETED' | 'ERROR';
 
@@ -119,6 +137,19 @@ export interface PillarItem {
   // ── Campo de enlace a la Simbología Global ───────────────────────────────
   /** Referencias a los concept_id de master_symbology_vault que ilustran este ítem */
   symbology_refs?: string[];
+  /** Telemetría de captura visual de la última caza (fuentes, candidatos, rechazos por motivo, figuras almacenadas). */
+  media_harvest_report?: {
+    sources_inspected?: number;
+    html_pages_parsed?: number;
+    pdf_documents_parsed?: number;
+    image_candidates?: number;
+    pdf_pages_inspected?: number;
+    figures_stored?: number;
+    corpus_figures?: number;
+    table_chart?: boolean;
+    rejections?: Record<string, number>;
+    at?: string;
+  };
 
   // ── v4.0: Figuras técnicas CAS, Huellas de hechos y Avisos HITL ──────────
   figures?: ExtractedFigureRef[];
@@ -155,6 +186,9 @@ export interface ExtractedFigureRef {
   box_2d?: [number, number, number, number];
   width?: number;
   height?: number;
+  original_bytes?: number;
+  optimized_bytes?: number;
+  savings_pct?: number;
   callouts?: FigureCallout[];
   is_parametric_svg?: boolean;
 }
@@ -170,6 +204,10 @@ export interface LockedItemAdvisory {
   acknowledged?: boolean;
   acknowledged_by?: string;
   acknowledged_at?: string;
+  /** Re-Auditoría v2 · OPT-F2.5: figura propuesta para una imagen pendiente en un ítem bloqueado. */
+  kind?: 'CONTENT' | 'PENDING_FIGURE';
+  figure?: ExtractedFigureRef;
+  pending_marker_line?: string;
 }
 
 export type SymbologyFunctionalGroup =
@@ -178,6 +216,14 @@ export type SymbologyFunctionalGroup =
   | 'CABIN_TELLTALES_CONTROLS'
   | 'MAINTENANCE_FLUIDS_ELECTRICAL';
 
+export interface SymbologyChapterApplicationRef {
+  pillar_id: PillarId;
+  pillar_label: string;
+  item_id: string;
+  item_title: string;
+  context_excerpt: string;
+}
+
 export interface SymbologyPackEntry {
   concept_id: string;
   standard_family: 'ISO_7010' | 'ISO_7000' | 'ISO_2575' | 'IEC_60417' | 'GHS' | 'OEM_CUSTOM';
@@ -185,10 +231,16 @@ export interface SymbologyPackEntry {
   group: SymbologyFunctionalGroup;
   technical_name_es: string;
   action_operator_es: string;
+  equipment_specific_application_es?: string;
+  applied_in_pillars?: string[];
+  applied_in_chapters?: SymbologyChapterApplicationRef[];
   critical_color: string;
   icon_url: string;
   svg_inline?: string;
   is_brand_specific?: boolean;
+  original_bytes?: number;
+  optimized_bytes?: number;
+  savings_pct?: number;
   source_layer: 'ARCHETYPE' | 'POWERTRAIN_TECH' | 'TENANT_FAENA' | 'OEM_MANUAL';
 }
 
@@ -197,6 +249,7 @@ export interface EquipmentSymbologyPack {
   archetype_key: string;
   powertrain_tags: string[];
   total_symbols: number;
+  compiled_entries?: SymbologyPackEntry[];
   groups: Record<SymbologyFunctionalGroup, SymbologyPackEntry[]>;
 }
 
@@ -252,13 +305,17 @@ export interface PillarDocument {
     source?: any;
   }>;
   /** Estado del proceso ITEMIZADO para este pilar. */
-  itemize_status?: 'IDLE' | 'GENERATING' | 'COMPLETED' | 'ERROR';
+  itemize_status?: 'IDLE' | 'GENERATING' | 'PARTIAL_FROM_INGESTION' | 'COMPLETED' | 'ERROR';
   /** Timestamp de inicio del proceso de itemización. */
   started_at?: any;
   /** Timestamp del último ITEMIZADO exitoso. */
   itemized_at?: string | null;
   /** Mensaje de error del ITEMIZADO si itemize_status === 'ERROR'. */
   itemize_error?: string | null;
+  /** Hash SHA-256 canónico de la estructura activa del pilar (Web 3.0 Merkle Chain). */
+  structure_digest_sha256?: string | null;
+  /** Hash SHA-256 del pilar padre inmediato al momento de itemizar este pilar. */
+  parent_pillar_digest_sha256?: string | null;
 }
 
 
@@ -333,6 +390,14 @@ export interface GlobalAssetCatalog {
   pending_conflicts?: Record<string, any>;
 
   thumbnail_url?: string;
+  foto_url?: string;
+  foto_media_telemetry?: {
+    original_bytes: number;
+    optimized_bytes: number;
+    savings_pct: number;
+    sha256?: string;
+    updated_at?: string;
+  };
   /** true = Bloqueado contra modificaciones. Protege la integridad de la bóveda y previene registros de nuevas unidades. */
   is_sealed?: boolean;
   createdAt: Date | any;

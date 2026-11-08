@@ -852,6 +852,42 @@
       "pauta_mantencion": "Pautas de Mantención",
       "matriz_riesgos": "Matriz de Riesgos",
       "checklist_pre_op": "Checklist Pre-operacional"
+    },
+    "pending_figure": {
+      "title": "Imagen técnica pendiente en esta sección",
+      "description_label": "Recurso visual requerido",
+      "link_label": "Fuente para obtención manual",
+      "visit_source": "Visitar fuente",
+      "alt_links": "Enlaces alternativos verificados",
+      "no_source": "Fuente no declarada",
+      "upload": "Subir imagen",
+      "paste": "Pegar portapapeles",
+      "consolidating": "Optimizando en CAS",
+      "offline_waiting": "Sin conexión: la imagen se procesará al recuperar la red.",
+      "preview_title": "Vista previa [Pendiente] ➔ [Imagen]",
+      "figure_type_label": "Tipo de figura",
+      "confirm_helper": "Escriba \"ACTUALIZAR\" para integrar la imagen en esta sección:",
+      "confirm": "Confirmar",
+      "cancel": "Cancelar",
+      "integrating": "Integrando imagen en la sección...",
+      "success": "Imagen integrada en la sección",
+      "locked_saved": "Imagen registrada como propuesta del ítem aprobado.",
+      "locked_advisory": "Ítem aprobado: la imagen quedará como propuesta hasta desbloquear el ítem.",
+      "error": "Error al integrar la imagen.",
+      "unsupported_type": "Formato no admitido (PNG, JPG, WebP o SVG).",
+      "clipboard_unsupported": "Enfoque la tarjeta y use Cmd/Ctrl+V, o Subir imagen.",
+      "no_clipboard_image": "El portapapeles no contiene una imagen.",
+      "counter_title": "Imágenes técnicas pendientes",
+      "approval_warning": "{{count}} imagen(es) técnica(s) pendiente(s). Tras aprobar, solo podrán registrarse como propuesta.",
+      "figure_types": {
+        "ESQUEMA_HIDRAULICO_ELECTRICO": "Esquema hidráulico / eléctrico",
+        "DIAGRAMA_ACOTADO": "Diagrama acotado",
+        "FOTO_COMPONENTE": "Fotografía de componente",
+        "CURVA_RENDIMIENTO": "Curva de rendimiento",
+        "MAPA_LUBRICACION_PM": "Mapa de lubricación",
+        "SIMBOLOGIA_SEGURIDAD": "Simbología de seguridad",
+        "PLANO_VECTORIAL_SVG": "Plano vectorial"
+      }
     }
   },
   "vault_manager": {

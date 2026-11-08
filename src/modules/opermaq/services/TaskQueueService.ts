@@ -4,7 +4,7 @@ import { Request, Response, NextFunction } from 'express';
 import { db } from '../../../config/firebase';
 import { env } from '../../../config/env';
 import { constantTimeEqualStrings } from '../../../utils/security';
-import { PillarId } from '../types/vault.types';
+import { PillarId, SEQUENTIAL_PILLAR_ORDER } from '../types/vault.types';
 import { huntVaultItem } from './ItemHunterService';
 
 /**
@@ -27,9 +27,25 @@ export interface HuntTaskPayload {
 
 const oauthClient = new OAuth2Client();
 let tasksClient: CloudTasksClient | null = null;
+const activeLocalWorkerTasks = new Set<string>();
+let watchdogStarted = false;
+let recoveryInFlight = false;
 
 export function buildHuntTaskId(globalAssetId: string, pillarId: string, itemId: string): string {
     return `${globalAssetId}_${pillarId}_${itemId}`;
+}
+
+export function isHuntTaskActivelyRunning(taskId: string, taskData?: Record<string, any>): boolean {
+    if (!taskData) return false;
+    const status = taskData.status;
+    if (status !== 'PENDING' && status !== 'PROCESSING') return false;
+    const ageMs = Date.now() - Number(taskData.updatedAtMs || 0);
+    const isCloudTasksProd =
+        env.NODE_ENV === 'production' && Boolean(env.WORKER_SERVICE_URL) && Boolean(env.WORKER_SA_EMAIL);
+    if (!isCloudTasksProd) {
+        return activeLocalWorkerTasks.has(taskId) && ageMs < 60_000;
+    }
+    return ageMs < 90_000;
 }
 
 async function updateTaskStatus(taskId: string, patch: Record<string, any>): Promise<void> {
@@ -52,6 +68,8 @@ async function updateTaskStatus(taskId: string, patch: Record<string, any>): Pro
 
 export async function executeHuntWorkerTask(payload: HuntTaskPayload): Promise<void> {
     const { taskId, globalAssetId, pillarId, itemId, humanCorrection } = payload;
+    if (activeLocalWorkerTasks.has(taskId)) return;
+    activeLocalWorkerTasks.add(taskId);
 
     try {
         await updateTaskStatus(taskId, {
@@ -93,10 +111,14 @@ export async function executeHuntWorkerTask(payload: HuntTaskPayload): Promise<v
             progress_message: `Error: ${err?.message || 'Fallo de inferencia'}`,
             failed_at: new Date().toISOString(),
         });
+    } finally {
+        activeLocalWorkerTasks.delete(taskId);
     }
 }
 
-export async function enqueueItemHuntTask(params: Omit<HuntTaskPayload, 'taskId'>): Promise<{
+export async function enqueueItemHuntTask(
+    params: Omit<HuntTaskPayload, 'taskId'> & { forceRestart?: boolean }
+): Promise<{
     taskId: string;
     alreadyRunning?: boolean;
     dispatchMode: 'CLOUD_TASKS_OIDC' | 'LOCAL_ASYNC_WORKER';
@@ -104,15 +126,22 @@ export async function enqueueItemHuntTask(params: Omit<HuntTaskPayload, 'taskId'
     const taskId = buildHuntTaskId(params.globalAssetId, params.pillarId, params.itemId);
     const existingDoc = await db.collection('task_status').doc(taskId).get();
 
-    if (existingDoc.exists) {
+    if (existingDoc.exists && !params.forceRestart) {
         const cur = existingDoc.data();
-        const ageMs = Date.now() - Number(cur?.updatedAtMs || 0);
-        if ((cur?.status === 'PENDING' || cur?.status === 'PROCESSING') && ageMs < 4 * 60 * 1000) {
+        if (isHuntTaskActivelyRunning(taskId, cur)) {
             return { taskId, alreadyRunning: true, dispatchMode: 'LOCAL_ASYNC_WORKER' };
         }
     }
 
-    const fullPayload: HuntTaskPayload = { ...params, taskId };
+    const fullPayload: HuntTaskPayload = {
+        taskId,
+        globalAssetId: params.globalAssetId,
+        pillarId: params.pillarId,
+        itemId: params.itemId,
+        humanCorrection: params.humanCorrection,
+        tenantId: params.tenantId,
+        actorId: params.actorId,
+    };
 
     await db.collection('task_status').doc(taskId).set({
         taskId,
@@ -169,6 +198,94 @@ export async function enqueueItemHuntTask(params: Omit<HuntTaskPayload, 'taskId'
     });
 
     return { taskId, dispatchMode: 'LOCAL_ASYNC_WORKER' };
+}
+
+/**
+ * Recupera y reanuda automáticamente tareas de caza que quedaron interrumpidas en `PENDING` / `PROCESSING`
+ * (p. ej. en `42%`) tras un reinicio de `nodemon` o timeout de red, así como ítems en `content_status === 'GENERANDO'`.
+ */
+export async function recoverAndResumeOrphanedHuntTasks(): Promise<number> {
+    if (recoveryInFlight) return 0;
+    recoveryInFlight = true;
+    let resumedCount = 0;
+
+    try {
+        const queuedPayloads = new Map<string, HuntTaskPayload>();
+
+        // 1. Revisar documentos en `task_status`
+        const taskSnap = await db.collection('task_status').limit(100).get().catch(() => null);
+        if (taskSnap && !taskSnap.empty) {
+            for (const docSnap of taskSnap.docs) {
+                const d = docSnap.data() || {};
+                if (d.type !== 'VAULT_ITEM_HUNT') continue;
+                if (d.status !== 'PENDING' && d.status !== 'PROCESSING') continue;
+                if (isHuntTaskActivelyRunning(docSnap.id, d)) continue;
+                if (d.globalAssetId && d.pillarId && d.itemId) {
+                    queuedPayloads.set(docSnap.id, {
+                        taskId: docSnap.id,
+                        globalAssetId: String(d.globalAssetId),
+                        pillarId: d.pillarId as PillarId,
+                        itemId: String(d.itemId),
+                        tenantId: String(d.tenantId || 'dev-master-sandbox'),
+                        actorId: String(d.actorId || 'dev-master-root-uid'),
+                    });
+                }
+            }
+        }
+
+        // 2. Revisar ítems en `global_asset_catalog` que hayan quedado en `content_status === 'GENERANDO'`
+        const assetsSnap = await db.collection('global_asset_catalog').limit(40).get().catch(() => null);
+        if (assetsSnap && !assetsSnap.empty) {
+            for (const assetDoc of assetsSnap.docs) {
+                const kv = assetDoc.data()?.knowledge_vault;
+                if (!kv) continue;
+                for (const pid of SEQUENTIAL_PILLAR_ORDER) {
+                    const items = kv[pid]?.items;
+                    if (!Array.isArray(items)) continue;
+                    for (const it of items) {
+                        if (!it || it.is_discarded || it.content_status !== 'GENERANDO') continue;
+                        const tId = buildHuntTaskId(assetDoc.id, pid, it.item_id);
+                        if (activeLocalWorkerTasks.has(tId) || queuedPayloads.has(tId)) continue;
+                        queuedPayloads.set(tId, {
+                            taskId: tId,
+                            globalAssetId: assetDoc.id,
+                            pillarId: pid,
+                            itemId: String(it.item_id),
+                            tenantId: 'dev-master-sandbox',
+                            actorId: 'dev-master-root-uid',
+                        });
+                    }
+                }
+            }
+        }
+
+        for (const payload of queuedPayloads.values()) {
+            resumedCount += 1;
+            console.info(
+                `[TaskQueueService] Reanudando automáticamente tarea de caza interrumpida: ${payload.taskId}`
+            );
+            await executeHuntWorkerTask(payload).catch((err) =>
+                console.warn(`[TaskQueueService] Error al reanudar ${payload.taskId}:`, err)
+            );
+        }
+    } catch (err) {
+        console.warn('[TaskQueueService] Error en barrido de recuperación de tareas huérfanas:', err);
+    } finally {
+        recoveryInFlight = false;
+    }
+
+    return resumedCount;
+}
+
+export function startHuntTaskWatchdog(): void {
+    if (watchdogStarted) return;
+    watchdogStarted = true;
+    setTimeout(() => {
+        void recoverAndResumeOrphanedHuntTasks();
+    }, 1500);
+    setInterval(() => {
+        void recoverAndResumeOrphanedHuntTasks();
+    }, 30_000).unref();
 }
 
 export async function verifyCloudTasksOidc(req: Request, res: Response, next: NextFunction) {

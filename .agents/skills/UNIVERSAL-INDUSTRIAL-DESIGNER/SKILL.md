@@ -25,4 +25,9 @@ description: Motor soberano de diseño paramétrico Minimalismo Industrial Puro 
 5. **Iconografía y Botones Planos:**
    - Exclusivamente `material-symbols-outlined` (prohibido `material-symbols-rounded` y prohibidos los emojis).
    - Botones de icono planos y transparentes: `bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer`.
+   - Prohibido adosar texto o etiquetas numéricas en caja al lado de los iconos en barras de navegación de pilares.
+6. **Indicadores de Progreso Material Design 3 (`M3LinearProgress` / `M3CircularProgress`):**
+   - Referencia normativa obligatoria: `https://m3.material.io/components/progress-indicators/overview`.
+   - **Progreso Lineal (`M3LinearProgress`):** Pista de `4px` de espesor (`rounded-none`), indicador activo (`#C68346` en curso / `#00AEEF` completado), separación M3 de `4px` entre indicador activo y pista (`#E2E8F0` / `dark:#12151C`), y `Stop Indicator` cuadrado de `4px × 4px` al final del track.
+   - **Progreso Circular (`M3CircularProgress`):** Trazo SVG vectorial (`strokeLinecap="butt"`, `strokeWidth: 3px–4px`) determinado o indeterminado. Prohibido usar iconos `progress_activity` rotando con `animate-spin` o conectores decorativos (`chevron_right`) entre pasos.
 

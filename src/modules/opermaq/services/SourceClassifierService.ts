@@ -45,42 +45,70 @@ function extractDomainLabel(uri: string): string {
     }
 }
 
-function heuristicClassify(src: GroundingSource, makeOficial: string): ItemizedSource {
+function heuristicClassify(
+    src: GroundingSource,
+    makeOficial: string
+): { item: ItemizedSource; highConfidence: boolean } {
     const lowerUrl = src.uri.toLowerCase();
     const lowerTitle = (src.title || '').toLowerCase();
-    const brandToken = makeOficial.toLowerCase().split(/\s+/)[0];
+    const brandToken = makeOficial
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .split(/\s+/)[0];
 
     if (lowerUrl.includes('youtube.com') || lowerUrl.includes('youtu.be')) {
         return {
-            type: 'YOUTUBE',
-            author: src.title || 'YouTube Técnico',
-            description: src.title || 'Video técnico de referencia operacional',
-            url: src.uri,
+            item: {
+                type: 'YOUTUBE',
+                author: src.title || 'YouTube Técnico',
+                description: src.title || 'Video técnico de referencia operacional',
+                url: src.uri,
+            },
+            highConfidence: true,
         };
     }
 
-    if (
-        (brandToken &&
-            brandToken !== 'generico' &&
-            brandToken !== 'genérico' &&
-            (lowerUrl.includes(brandToken) || (lowerTitle.includes('manual') && lowerTitle.includes(brandToken)))) ||
-        /\b(om&m|operation and maintenance|parts manual|service manual|cat\.com|komatsu|epiroc|sandvik|volvoce|johndeere|liebherr|bobcat)\b/.test(
+    const isBrandDomainOrTitle =
+        Boolean(brandToken) &&
+        brandToken.length >= 3 &&
+        brandToken !== 'generico' &&
+        (lowerUrl.includes(brandToken) ||
+            (lowerTitle.includes(brandToken) &&
+                /\b(ficha|spec|brochure|manual|catalog|catalogo|official|oficial|oem|data\s*sheet)\b/i.test(
+                    lowerTitle
+                )));
+
+    const isKnownOemCatalogPattern =
+        /\b(om&m|operation and maintenance|parts manual|service manual|specalog|cat\.com|caterpillar|komatsu|epiroc|sandvik|volvoce|volvotrucks|johndeere|liebherr|bobcat|hitachicm|jcb\.com|develon|doosan|xcmg|sany|metso|normet|kaeser|atlascopco|cummins|ford\.com|peugeot|fiat|toyota|mitsubishi|nissan|chevrolet|isuzu|scania|mercedes-benz|iveco)\b/i.test(
             `${lowerUrl} ${lowerTitle}`
-        )
-    ) {
+        );
+
+    if (isBrandDomainOrTitle || isKnownOemCatalogPattern) {
         return {
-            type: 'OEM',
-            author: makeOficial !== 'GENÉRICO' ? makeOficial : extractDomainLabel(src.uri),
-            description: src.title || `Documentación técnica OEM (${makeOficial})`,
-            url: src.uri,
+            item: {
+                type: 'OEM',
+                author: makeOficial && makeOficial !== 'GENÉRICO' ? makeOficial : extractDomainLabel(src.uri),
+                description: src.title || `Documentación técnica OEM (${makeOficial})`,
+                url: src.uri,
+            },
+            highConfidence: true,
         };
     }
+
+    const isKnownExternalAggregator =
+        /\b(lectura-specs|ritchiespecs|machinerytrader|autocosmos|km77|ultimatespecs|automobile-catalog|carfolio|tractorhouse|wikipedia|scribd|slideshare|coursehero|studocu)\b/i.test(
+            lowerUrl
+        );
 
     return {
-        type: 'EXTERNO',
-        author: extractDomainLabel(src.uri),
-        description: src.title || 'Ficha o referencia técnica externa verificada',
-        url: src.uri,
+        item: {
+            type: 'EXTERNO',
+            author: extractDomainLabel(src.uri),
+            description: src.title || 'Ficha o referencia técnica externa verificada',
+            url: src.uri,
+        },
+        highConfidence: isKnownExternalAggregator || Boolean(src.title && src.title.trim().length >= 8),
     };
 }
 
@@ -93,12 +121,27 @@ export async function classifySourcesByAuthorship(
 
     const uniqueMap = new Map<string, GroundingSource>();
     for (const s of rawSources) {
-        if (s?.uri && s.uri.startsWith('http') && !uniqueMap.has(s.uri)) {
+        if (s?.uri && (s.uri.startsWith('http') || s.uri.startsWith('/')) && !uniqueMap.has(s.uri)) {
             uniqueMap.set(s.uri, s);
         }
     }
     const deduped = Array.from(uniqueMap.values()).slice(0, 15);
     if (deduped.length === 0) return [];
+
+    // 1. Clasificación determinista rápida (0 ms, $0 costo LLM)
+    const heuristicEvaluations = deduped.map((s) => ({
+        raw: s,
+        ...heuristicClassify(s, makeOficial),
+    }));
+
+    const ambiguousSources = heuristicEvaluations.filter((e) => !e.highConfidence).map((e) => e.raw);
+
+    // Si todas las fuentes tienen autoría determinista clara, evitamos por completo la 3ª llamada LLM
+    if (ambiguousSources.length === 0) {
+        return heuristicEvaluations
+            .map((e) => e.item)
+            .sort((a, b) => CATEGORY_ORDER[a.type] - CATEGORY_ORDER[b.type]);
+    }
 
     try {
         const prompt = `${SOURCE_AUTHORSHIP_PROTOCOL}
@@ -106,7 +149,7 @@ export async function classifySourcesByAuthorship(
 Equipo auditado: "${makeOficial} ${modelOficial}"
 Clasifica las siguientes fuentes web reales según su AUTORÍA INTELECTUAL en "OEM", "EXTERNO" o "YOUTUBE".
 No inventes URLs ni modifiques las URLs entregadas:
-${JSON.stringify(deduped, null, 2)}`;
+${JSON.stringify(ambiguousSources, null, 2)}`;
 
         const { data } = await ResilientAIClient.generateStructured<{ classified: ItemizedSource[] }>({
             module: 'opermaq',
@@ -116,30 +159,30 @@ ${JSON.stringify(deduped, null, 2)}`;
             prompt,
         });
 
-        if (Array.isArray(data.classified) && data.classified.length > 0) {
-            const validUrls = new Set(deduped.map((d) => d.uri));
-            const normalized = data.classified
-                .filter((c) => validUrls.has(c.url))
-                .map((c): ItemizedSource => {
+        const llmByUrl = new Map<string, ItemizedSource>();
+        if (Array.isArray(data.classified)) {
+            const validUrls = new Set(ambiguousSources.map((d) => d.uri));
+            for (const c of data.classified) {
+                if (c?.url && validUrls.has(c.url)) {
                     const cat: SourceCategory =
                         c.type === 'OEM' || c.type === 'YOUTUBE' ? c.type : 'EXTERNO';
-                    return {
+                    llmByUrl.set(c.url, {
                         type: cat,
                         author: c.author || extractDomainLabel(c.url),
                         description: c.description || c.author || c.url,
                         url: c.url,
-                    };
-                });
-
-            if (normalized.length > 0) {
-                return normalized.sort((a, b) => CATEGORY_ORDER[a.type] - CATEGORY_ORDER[b.type]);
+                    });
+                }
             }
         }
+
+        return heuristicEvaluations
+            .map((e) => llmByUrl.get(e.raw.uri) || e.item)
+            .sort((a, b) => CATEGORY_ORDER[a.type] - CATEGORY_ORDER[b.type]);
     } catch {
         // Fallback heurístico determinista
+        return heuristicEvaluations
+            .map((e) => e.item)
+            .sort((a, b) => CATEGORY_ORDER[a.type] - CATEGORY_ORDER[b.type]);
     }
-
-    return deduped
-        .map((s) => heuristicClassify(s, makeOficial))
-        .sort((a, b) => CATEGORY_ORDER[a.type] - CATEGORY_ORDER[b.type]);
 }

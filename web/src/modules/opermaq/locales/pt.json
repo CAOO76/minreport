@@ -684,6 +684,42 @@
       "pauta_mantencion": "Pauta de Manutenção",
       "matriz_riesgos": "Matriz de Riscos",
       "checklist_pre_op": "Checklist Pré-Op"
+    },
+    "pending_figure": {
+      "title": "Imagem técnica pendente nesta seção",
+      "description_label": "Recurso visual necessário",
+      "link_label": "Fonte para obtenção manual",
+      "visit_source": "Visitar fonte",
+      "alt_links": "Links alternativos verificados",
+      "no_source": "Fonte não declarada",
+      "upload": "Enviar imagem",
+      "paste": "Colar da área de transferência",
+      "consolidating": "Otimizando no CAS",
+      "offline_waiting": "Sem conexão: a imagem será processada quando a rede voltar.",
+      "preview_title": "Pré-visualização [Pendente] ➔ [Imagem]",
+      "figure_type_label": "Tipo de figura",
+      "confirm_helper": "Digite \"ACTUALIZAR\" para inserir a imagem nesta seção:",
+      "confirm": "Confirmar",
+      "cancel": "Cancelar",
+      "integrating": "Inserindo imagem na seção...",
+      "success": "Imagem inserida na seção",
+      "locked_saved": "Imagem registrada como proposta do item aprovado.",
+      "locked_advisory": "Item aprovado: a imagem ficará como proposta até o item ser desbloqueado.",
+      "error": "Erro ao inserir a imagem.",
+      "unsupported_type": "Formato não suportado (PNG, JPG, WebP ou SVG).",
+      "clipboard_unsupported": "Foque o cartão e use Cmd/Ctrl+V, ou Enviar imagem.",
+      "no_clipboard_image": "A área de transferência não contém imagem.",
+      "counter_title": "Imagens técnicas pendentes",
+      "approval_warning": "{{count}} imagem(ns) técnica(s) pendente(s). Após aprovar, só poderão ser registradas como proposta.",
+      "figure_types": {
+        "ESQUEMA_HIDRAULICO_ELECTRICO": "Esquema hidráulico / elétrico",
+        "DIAGRAMA_ACOTADO": "Diagrama cotado",
+        "FOTO_COMPONENTE": "Fotografia de componente",
+        "CURVA_RENDIMIENTO": "Curva de desempenho",
+        "MAPA_LUBRICACION_PM": "Mapa de lubrificação",
+        "SIMBOLOGIA_SEGURIDAD": "Simbologia de segurança",
+        "PLANO_VECTORIAL_SVG": "Desenho vetorial"
+      }
     }
   },
   "opermaq_domains": {

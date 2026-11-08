@@ -1,14 +1,12 @@
-import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
-import { API_BASE_URL } from './firebase/config';
 import {
     OpermaqContextProvider,
     resolveEffectiveOpermaqDomain,
     useBuildOpermaqContext,
     type OpermaqHostScope,
 } from './hooks/useOpermaqContext';
-import { authFetch } from './utils/authFetch';
 import { AssetList, type OpermaqDomainMode } from './components/AssetList';
 
 // Carga diferida (Capa 2 MINREPORT — INP < 100ms, cero bloqueo en render path)
@@ -28,18 +26,13 @@ const KnowledgeVaultDashboard = lazy(() =>
         default: m.KnowledgeVaultDashboard,
     }))
 );
-const CatalogContributionsReviewPanel = lazy(() =>
-    import('./components/CatalogContributionsReviewPanel').then((m) => ({
-        default: m.CatalogContributionsReviewPanel,
-    }))
-);
 const GlobalSymbologyDashboard = lazy(() =>
     import('./components/GlobalSymbologyDashboard').then((m) => ({
         default: m.GlobalSymbologyDashboard,
     }))
 );
 
-type OpermaqView = 'list' | 'registration' | 'vault' | 'fleet_unit' | 'contributions';
+type OpermaqView = 'list' | 'registration' | 'vault' | 'fleet_unit';
 
 export interface OpermaqAppProps {
     embedded?: boolean;
@@ -48,6 +41,7 @@ export interface OpermaqAppProps {
     role?: string;
     userId?: string;
     tenantId?: string;
+    resetKey?: number;
     onTelemetryEvent?: (event: unknown) => void;
 }
 
@@ -62,6 +56,7 @@ function App({
     hostScope = 'CLIENT',
     userId: propUserId,
     tenantId: propTenantId,
+    resetKey,
     onTelemetryEvent,
 }: OpermaqAppProps = {}) {
     const ctx = useBuildOpermaqContext({
@@ -84,42 +79,30 @@ function App({
     } | null>(null);
     const [showFleetRegistrationModal, setShowFleetRegistrationModal] = useState<boolean>(false);
     const [fleetRefreshSeq, setFleetRefreshSeq] = useState<number>(0);
-    const [pendingContributionsCount, setPendingContributionsCount] = useState<number>(0);
 
-    // Al cambiar entre CATÁLOGO y FLOTA, restablecer vista limpia de ese dominio
+    // Al cambiar entre CATÁLOGO y FLOTA o al presionar nuevamente el icono del menú de sección, volver al home respectivo
     useEffect(() => {
         setCurrentView('list');
         setSelectedCatalogAssetId(null);
         setSelectedFleetUnit(null);
         setShowFleetRegistrationModal(false);
-    }, [effectiveDomain]);
+    }, [effectiveDomain, resetKey]);
+
+    useEffect(() => {
+        const handleNavigateSectionHome = () => {
+            setCurrentView('list');
+            setSelectedCatalogAssetId(null);
+            setSelectedFleetUnit(null);
+            setShowFleetRegistrationModal(false);
+        };
+        window.addEventListener('opermaq:navigate-home', handleNavigateSectionHome);
+        return () => window.removeEventListener('opermaq:navigate-home', handleNavigateSectionHome);
+    }, []);
 
     useEffect(() => {
         if (selectedCatalogAssetId) localStorage.setItem('opermaq_asset_id', selectedCatalogAssetId);
         else localStorage.removeItem('opermaq_asset_id');
     }, [selectedCatalogAssetId]);
-
-    const refreshPendingContributions = useCallback(async () => {
-        if (!ctx.capabilities.canCurateAI || effectiveDomain !== 'CATALOG') {
-            setPendingContributionsCount(0);
-            return;
-        }
-        try {
-            const res = await authFetch(
-                `${API_BASE_URL}/vault/contributions?status=PENDING_HUMAN_REVIEW`
-            );
-            if (res.ok) {
-                const data = await res.json().catch(() => ({}));
-                setPendingContributionsCount(Array.isArray(data?.items) ? data.items.length : 0);
-            }
-        } catch {
-            // Silencioso en barra curador
-        }
-    }, [ctx.capabilities.canCurateAI, effectiveDomain]);
-
-    useEffect(() => {
-        void refreshPendingContributions();
-    }, [refreshPendingContributions]);
 
     const handleSelectCatalogAsset = (globalAssetId: string) => {
         setSelectedCatalogAssetId(globalAssetId);
@@ -144,13 +127,6 @@ function App({
         });
     };
 
-    const handleCatalogNav = (target: 'list' | 'contributions') => {
-        if (target === 'list') {
-            setSelectedCatalogAssetId(null);
-        }
-        setCurrentView(target);
-    };
-
     if (!ctx.isLoaded) {
         return (
             <div className="h-full min-h-[calc(100vh-64px)] w-full flex items-center justify-center bg-[#FFFFFF] dark:bg-[#000000]">
@@ -161,9 +137,9 @@ function App({
 
     return (
         <OpermaqContextProvider value={ctx}>
-            <div className="w-full h-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-sans overflow-hidden select-none">
-                <main className="flex-1 overflow-hidden relative bg-[#FFFFFF] dark:bg-[#000000]">
-                    <div className="h-full w-full overflow-auto relative">
+            <div className="w-full h-full min-h-0 flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-sans overflow-hidden select-none">
+                <main className="flex-1 min-h-0 flex flex-col overflow-hidden relative bg-[#FFFFFF] dark:bg-[#000000]">
+                    <div className="h-full w-full flex-1 min-h-0 overflow-auto relative">
                         {/* DOMINIO 1: CATÁLOGO ÚNICO Y GENÉRICO (`1º DEV` / `3º TEST-PILOT`) */}
                         {effectiveDomain === 'CATALOG' &&
                             (currentView === 'list' || currentView === 'registration') && (
@@ -171,11 +147,6 @@ function App({
                                     domainMode="CATALOG"
                                     onSelectCatalogAsset={handleSelectCatalogAsset}
                                     onNew={() => setCurrentView('registration')}
-                                    pendingContributionsCount={pendingContributionsCount}
-                                    onOpenContributions={() => {
-                                        setSelectedCatalogAssetId(null);
-                                        handleCatalogNav('contributions');
-                                    }}
                                 />
                             )}
 
@@ -218,24 +189,6 @@ function App({
                                             setSelectedCatalogAssetId(null);
                                             setCurrentView('list');
                                         }}
-                                        onOpenContributions={(aid) => {
-                                            setSelectedCatalogAssetId(aid);
-                                            setCurrentView('contributions');
-                                        }}
-                                    />
-                                )}
-
-                            {effectiveDomain === 'CATALOG' &&
-                                currentView === 'contributions' &&
-                                ctx.capabilities.canCurateAI && (
-                                    <CatalogContributionsReviewPanel
-                                        filterGlobalAssetId={selectedCatalogAssetId}
-                                        onBack={() =>
-                                            selectedCatalogAssetId
-                                                ? setCurrentView('vault')
-                                                : handleCatalogNav('list')
-                                        }
-                                        onReviewed={() => void refreshPendingContributions()}
                                     />
                                 )}
 

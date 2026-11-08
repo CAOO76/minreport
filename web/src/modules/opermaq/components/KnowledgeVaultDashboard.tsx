@@ -3,26 +3,43 @@
  * Flujo: 1º ITEMIZADO por pilar → 2º CAZA on-demand por ítem.
  * Sin generación monolítica de pilares.
  */
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { doc, onSnapshot, updateDoc, collection } from 'firebase/firestore';
 import { db, auth, API_BASE_URL, storage } from '../firebase/config';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { authFetch } from '../utils/authFetch';
+import {
+  extractExplicitSymbolIds,
+  isTrustedMasterSymbol,
+  sanitizeSpeculativeSymbolMarkers,
+} from '../utils/symbologyExplicitMention';
+import {
+  buildSourceWhitelist,
+  countItemPendingFigures,
+  inferFigureTypeFromDescription,
+  injectLegacyPendingMarkers,
+  parsePendingMarker,
+  PENDING_FIGURE_TYPES,
+  type PendingFigureType,
+  resolveWhitelistedSource,
+  sourceLabel,
+} from '../utils/pendingFigureMarkers';
 import { toast } from 'react-toastify';
 import { M3IconButton } from './M3IconButton';
 import { M3Button } from './M3Button';
+import { M3LinearProgress, M3CircularProgress } from './M3ProgressIndicator';
 import { useTranslation } from 'react-i18next';
 import { mediaDigestorClient } from '../../../core/media/MediaDigestorClient';
 import { useOpermaqContext } from '../hooks/useOpermaqContext';
-import { ItemFiguresAndAdvisoriesBlock } from './ItemFiguresAndAdvisoriesBlock';
+import { ItemFiguresAndAdvisoriesBlock, resolveMediaSrc, formatByteWeight } from './ItemFiguresAndAdvisoriesBlock';
 import { OpermaqEngineeringStudioDrawer, type StudioTabId } from './OpermaqEngineeringStudioDrawer';
-import type { PillarId, PillarDocument, PillarItem, ItemizedSource, ProposedUpdate, EstadoAprobacion, HistorialAuditoria, ChatMessage } from '../types/vault';
+import type { PillarId, PillarDocument, PillarItem, ItemizedSource, ProposedUpdate, EstadoAprobacion, HistorialAuditoria, ChatMessage, ExtractedFigureRef } from '../types/vault';
+import { PILLAR_PREREQUISITE_MAP } from '../types/vault';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface VaultDashboardProps {
   assetId: string;
   onBack: () => void;
-  onOpenContributions?: (assetId: string) => void;
 }
 interface CatalogSnapshot {
   id: string; makeModel: string; make?: string; categoria_equipo?: string;
@@ -30,11 +47,38 @@ interface CatalogSnapshot {
   is_sealed?: boolean;
   official_url?: string;
   foto_url?: string;
+  foto_media_telemetry?: {
+    original_bytes: number;
+    optimized_bytes: number;
+    savings_pct: number;
+    sha256?: string;
+    updated_at?: string;
+  };
   ambiente_operativo?: string[];
   contexto_operativo?: string[];
   caracteristicas_principales?: string[];
   version?: string;
   knowledge_vault?: Partial<Record<PillarId, PillarDocument>>;
+  symbology_pack?: {
+    compiled_entries?: Array<{
+      concept_id: string;
+      iso_code?: string;
+      category?: string;
+      technical_name_es?: string;
+      description_es?: string;
+      icon_url?: string;
+      source_mode?: string;
+    }>;
+  };
+}
+
+function formatPhotoBytes(bytes?: number): string {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(2)} MB`;
 }
 
 interface AiAssistResponse {
@@ -49,12 +93,12 @@ interface AiAssistResponse {
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
-const PILLARS: Array<{ id: PillarId; icon: string; romanNumeral: string; label: string; color: string; accent: string }> = [
-  { id: 'ficha_tecnica',      icon: 'fact_check',  romanNumeral: '0',   label: 'Ficha Técnica',             color: 'text-[#C68346]', accent: '#C68346' },
-  { id: 'manual_operaciones', icon: 'settings',    romanNumeral: 'I',   label: 'Manual de Operaciones',     color: 'text-[#C68346]', accent: '#C68346' },
-  { id: 'pauta_mantencion',   icon: 'build',       romanNumeral: 'II',  label: 'Pauta de Mantención',       color: 'text-[#C68346]', accent: '#C68346' },
-  { id: 'matriz_riesgos',     icon: 'security',    romanNumeral: 'III', label: 'Matriz de Riesgos',         color: 'text-[#C68346]', accent: '#C68346' },
-  { id: 'checklist_pre_op',   icon: 'rule',        romanNumeral: 'IV',  label: 'Checklist Pre-Op',          color: 'text-[#C68346]', accent: '#C68346' },
+const PILLARS: Array<{ id: PillarId; stepCode: string; icon: string; romanNumeral: string; label: string; shortLabel: string; color: string; accent: string }> = [
+  { id: 'ficha_tecnica',      stepCode: '01', icon: 'fact_check',  romanNumeral: '0',   label: 'Ficha Técnica',         shortLabel: 'Ficha Técnica',      color: 'text-[#C68346]', accent: '#C68346' },
+  { id: 'manual_operaciones', stepCode: '02', icon: 'settings',    romanNumeral: 'I',   label: 'Manual de Operaciones', shortLabel: 'Manual Oper.',       color: 'text-[#C68346]', accent: '#C68346' },
+  { id: 'pauta_mantencion',   stepCode: '03', icon: 'build',       romanNumeral: 'II',  label: 'Pauta de Mantención',   shortLabel: 'Pauta Mant.',        color: 'text-[#C68346]', accent: '#C68346' },
+  { id: 'matriz_riesgos',     stepCode: '04', icon: 'security',    romanNumeral: 'III', label: 'Matriz de Riesgos',     shortLabel: 'Matriz Riesgos',     color: 'text-[#C68346]', accent: '#C68346' },
+  { id: 'checklist_pre_op',   stepCode: '05', icon: 'rule',        romanNumeral: 'IV',  label: 'Checklist Pre-Op',      shortLabel: 'Checklist Pre-Op',   color: 'text-[#C68346]', accent: '#C68346' },
 ];
 
 const SOURCE_ICONS: Record<string, string> = { OEM: 'precision_manufacturing', EXTERNO: 'school', YOUTUBE: 'smart_display', MANUAL: 'person' };
@@ -83,10 +127,15 @@ function sanitizeHtmlToMarkdown(raw: string): string {
   s = s.replace(/<div[^>]*>([\s\S]*?)<\/div>/gi, '\n$1\n');
   s = s.replace(/<tr[^>]*>/gi, '\n');
   s = s.replace(/<\/tr>/gi, '');
-  s = s.replace(/<th[^>]*>([\s\S]*?)<\/th>/gi, '| **$1** ');
-  s = s.replace(/<td[^>]*>([\s\S]*?)<\/td>/gi, '| $1 ');
+  s = s.replace(/<th[^>]*>([\s\S]*?)<\/th>/gi, (_, inner) => `| **${String(inner).replace(/<br[^>]*\/?>|\r?\n/gi, ' — ').trim()}** `);
+  s = s.replace(/<td[^>]*>([\s\S]*?)<\/td>/gi, (_, inner) => `| ${String(inner).replace(/<br[^>]*\/?>|\r?\n/gi, ' — ').trim()} `);
   s = s.replace(/<table[^>]*>|<\/table>|<thead[^>]*>|<\/thead>|<tbody[^>]*>|<\/tbody>/gi, '\n');
   s = s.replace(/<hr[^>]*\/?>/gi, '\n---\n');
+  // En líneas de tabla Markdown (con `|`), `<br>` debe convertirse en separador inline ` — ` y NUNCA en `\n` (para no partir la fila)
+  s = s
+    .split('\n')
+    .map((ln) => (ln.includes('|') ? ln.replace(/<br[^>]*\/?>/gi, ' — ') : ln))
+    .join('\n');
   s = s.replace(/<br[^>]*\/?>/gi, '\n');
 
   // Etiquetas de estilo en línea → Markdown
@@ -107,6 +156,111 @@ function sanitizeHtmlToMarkdown(raw: string): string {
   s = s.replace(/&quot;/g, '"');
   s = s.replace(/&#39;/g, "'");
   s = s.replace(/&nbsp;/g, ' ');
+
+  // Reconstruir determinísticamente tablas Markdown (`expectedCols` de 3 a 6 columnas en los 5 pilares)
+  const splitTableCells = (ln: string): string[] =>
+    ln
+      .trim()
+      .replace(/^\||\|$/g, '')
+      .split('|')
+      .map((c) => c.trim());
+  const isSeparatorLine = (ln: string): boolean => {
+    const t = ln.trim();
+    if (!t.startsWith('|')) return false;
+    const cs = splitTableCells(t);
+    return cs.length >= 2 && cs.every((c) => /^:?-{2,}:?$/.test(c));
+  };
+  const isBlockStarter = (t: string): boolean =>
+    /^(?:#{1,6}\s|[-*]\s|>\s|!\[|---|\*\*REGLA\s+DE\s+BLOQUEO|REGLA\s+DE\s+BLOQUEO)/i.test(t);
+
+  const rawLines = s.split('\n');
+  const rejoinedLines: string[] = [];
+  let expectedCols = 0;
+  let idx = 0;
+  while (idx < rawLines.length) {
+    let cur = rawLines[idx];
+    const trimmed = cur.trim();
+
+    if (!trimmed) {
+      if (expectedCols >= 2) {
+        let peek = idx + 1;
+        while (peek < rawLines.length && !rawLines[peek].trim()) peek++;
+        if (peek < rawLines.length) {
+          const nextNonEmpty = rawLines[peek].trim();
+          const lineAfterNext = peek + 1 < rawLines.length ? rawLines[peek + 1].trim() : '';
+          if (nextNonEmpty.startsWith('|') && !isSeparatorLine(lineAfterNext)) {
+            idx = peek;
+            continue;
+          }
+        }
+        expectedCols = 0;
+      }
+      rejoinedLines.push(cur);
+      idx++;
+      continue;
+    }
+
+    if (isBlockStarter(trimmed)) {
+      expectedCols = 0;
+      rejoinedLines.push(cur);
+      idx++;
+      continue;
+    }
+
+    if (trimmed.startsWith('|')) {
+      const nextLine = idx + 1 < rawLines.length ? rawLines[idx + 1].trim() : '';
+      if (isSeparatorLine(nextLine)) {
+        expectedCols = splitTableCells(trimmed).length;
+        rejoinedLines.push(cur);
+        rejoinedLines.push(rawLines[idx + 1]);
+        idx += 2;
+        continue;
+      }
+
+      while (idx + 1 < rawLines.length) {
+        const curCells = splitTableCells(cur).length;
+        const curEndsWithPipe = cur.trim().endsWith('|');
+        const needsMoreCells = expectedCols >= 2 ? curCells < expectedCols : !curEndsWithPipe;
+
+        let peek = idx + 1;
+        if (needsMoreCells) {
+          while (peek < rawLines.length && !rawLines[peek].trim()) peek++;
+        }
+        if (peek >= rawLines.length) break;
+
+        const nextTrimmed = rawLines[peek].trim();
+        if (!nextTrimmed || isBlockStarter(nextTrimmed) || isSeparatorLine(nextTrimmed)) break;
+
+        const nextStartsWithPipe = nextTrimmed.startsWith('|');
+        const nextHasPipe = nextTrimmed.includes('|');
+
+        if ((!nextStartsWithPipe && nextHasPipe) || (needsMoreCells && (nextHasPipe || !curEndsWithPipe))) {
+          if (curEndsWithPipe && nextStartsWithPipe) {
+            cur = `${cur.trimEnd()} ${nextTrimmed.replace(/^\|\s*/, '')}`;
+          } else if (curEndsWithPipe || nextStartsWithPipe) {
+            cur = `${cur.trimEnd()} ${nextTrimmed}`;
+          } else {
+            cur = `${cur.trimEnd()} — ${nextTrimmed}`;
+          }
+          idx = peek;
+        } else {
+          break;
+        }
+      }
+
+      if (!cur.trim().endsWith('|')) {
+        cur = `${cur.trimEnd()} |`;
+      }
+      rejoinedLines.push(cur);
+      idx++;
+      continue;
+    }
+
+    expectedCols = 0;
+    rejoinedLines.push(cur);
+    idx++;
+  }
+  s = rejoinedLines.join('\n');
 
   // Limpiar líneas vacías excesivas (más de 2 seguidas)
   s = s.replace(/\n{3,}/g, '\n\n');
@@ -182,11 +336,11 @@ function parseInlineStyles(
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) result.push(text.slice(last, m.index));
     if (m[1]) {
-      result.push(<strong key={m.index} className="font-black text-black/90 dark:text-white/90">{m[2]}</strong>);
+      result.push(<strong key={m.index} className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">{m[2]}</strong>);
     } else if (m[3]) {
-      result.push(<code key={m.index} className="bg-black/5 dark:bg-white/5 px-1 py-0.5 rounded-none text-[11px] font-mono text-copper">{m[4]}</code>);
+      result.push(<code key={m.index} className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] px-[4px] py-[1px] rounded-none text-[11px] font-mono tabular-nums text-[#C68346]">{m[4]}</code>);
     } else if (m[5]) {
-      result.push(<em key={m.index} className="italic text-black/80 dark:text-white/80">{m[6]}</em>);
+      result.push(<em key={m.index} className="italic text-[#475569] dark:text-[#8A93A6]">{m[6]}</em>);
     } else if (m[7]) {
       const conceptId = m[8].trim();
       const sym = resolvedSymbology?.find(s => s.concept_id === conceptId);
@@ -209,18 +363,8 @@ function parseInlineStyles(
             <span className="text-[9px] font-bold text-[#0F172A] dark:text-[#F3F4F6] font-mono">{conceptId}</span>
           </span>
         );
-      } else {
-        result.push(
-          <span 
-            key={m.index} 
-            className="inline-flex items-center gap-1 bg-[#C68346]/10 border border-[#C68346]/30 text-[#C68346] px-1.5 py-0.5 rounded-none align-middle mx-0.5 select-none cursor-help"
-            title="Símbolo pendiente de dibujo o confirmación en el catálogo global"
-          >
-            <span className="material-symbols-outlined !text-[11px]">warning</span>
-            <span className="text-[9px] font-bold font-mono">{conceptId}</span>
-          </span>
-        );
       }
+      // Marcador no verificado o especulativo: se elimina limpiamente (Strict Explicit Mention Only, `SB-04`).
     }
     last = m.index + m[0].length;
   }
@@ -251,22 +395,404 @@ function cleanFuentesFromMarkdown(text: string): string {
   return text;
 }
 
+export interface PendingFigureCasPreview {
+  sha256: string;
+  downloadUrl: string;
+  previewSrc: string;
+  originalBytes: number;
+  optimizedBytes: number;
+  savingsPct: number;
+}
+
+export interface ConfirmPendingFigurePayload {
+  description: string;
+  sourceUrl?: string;
+  pendingMarkerLine: string;
+  figureType: PendingFigureType;
+  confirmWord: string;
+  cas: PendingFigureCasPreview;
+}
+
+class PendingFigureOfflineError extends Error {
+  constructor() {
+    super('OFFLINE');
+    this.name = 'PendingFigureOfflineError';
+  }
+}
+
+function PendingSectionFigureCard({
+  description,
+  sourceUrl,
+  allSources,
+  rawMarkerLine,
+  canCurateAI,
+  isSealed,
+  isItemLocked,
+  onUploadToCas,
+  onConfirm,
+}: {
+  description: string;
+  sourceUrl?: string;
+  allSources?: ItemizedSource[];
+  rawMarkerLine: string;
+  canCurateAI?: boolean;
+  isSealed?: boolean;
+  isItemLocked?: boolean;
+  onUploadToCas?: (file: File | Blob) => Promise<PendingFigureCasPreview>;
+  onConfirm?: (payload: ConfirmPendingFigurePayload) => Promise<boolean>;
+}) {
+  const { t } = useTranslation();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const heldFileRef = useRef<File | Blob | null>(null);
+  const [stage, setStage] = useState<'IDLE' | 'UPLOADING' | 'WAITING_ONLINE' | 'PREVIEW' | 'CONFIRMING'>('IDLE');
+  const [preview, setPreview] = useState<PendingFigureCasPreview | null>(null);
+  const [figureType, setFigureType] = useState<PendingFigureType>(() => inferFigureTypeFromDescription(description));
+  const [confirmInput, setConfirmInput] = useState('');
+
+  const whitelist = useMemo(() => buildSourceWhitelist(allSources || []), [allSources]);
+  const primarySource = useMemo(
+    () => resolveWhitelistedSource(sourceUrl || '', whitelist, description),
+    [sourceUrl, whitelist, description]
+  );
+  const alternativeSources = whitelist.filter((s) => s.url !== primarySource?.url);
+  const canAct = Boolean(canCurateAI && !isSealed && onUploadToCas && onConfirm);
+
+  const runUpload = useCallback(
+    async (file: File | Blob) => {
+      if (!onUploadToCas) return;
+      heldFileRef.current = file;
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        setStage('WAITING_ONLINE');
+        return;
+      }
+      setStage('UPLOADING');
+      try {
+        const res = await onUploadToCas(file);
+        heldFileRef.current = null;
+        setPreview(res);
+        setStage('PREVIEW');
+      } catch (err) {
+        if (err instanceof PendingFigureOfflineError) {
+          setStage('WAITING_ONLINE');
+          return;
+        }
+        heldFileRef.current = null;
+        setStage('IDLE');
+        toast.error((err as Error)?.message || t('vault_dashboard.pending_figure.error', 'Error al optimizar la imagen.'));
+      }
+    },
+    [onUploadToCas, t]
+  );
+
+  // OPT-F2.3: la imagen capturada sin red se retiene y se procesa automáticamente al recuperar la conexión
+  useEffect(() => {
+    if (stage !== 'WAITING_ONLINE') return;
+    const handleOnline = () => {
+      if (heldFileRef.current) void runUpload(heldFileRef.current);
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [stage, runUpload]);
+
+  const acceptFile = (file: File | Blob | null | undefined) => {
+    if (!file || !canAct || stage === 'UPLOADING' || stage === 'CONFIRMING') return;
+    if (!/^image\/(png|jpe?g|webp|svg\+xml)$/i.test(file.type || '')) {
+      toast.warning(t('vault_dashboard.pending_figure.unsupported_type', 'Formato no admitido (PNG, JPG, WebP o SVG).'));
+      return;
+    }
+    void runUpload(file);
+  };
+
+  // OPT-F4.2: pegado nativo Cmd/Ctrl+V sobre la tarjeta enfocada
+  const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    if (!canAct) return;
+    const items = Array.from(e.clipboardData?.items || []);
+    const imgItem = items.find((it) => it.kind === 'file' && it.type.startsWith('image/'));
+    if (imgItem) {
+      e.preventDefault();
+      acceptFile(imgItem.getAsFile());
+    }
+  };
+
+  const handleClipboardButton = async () => {
+    if (!canAct) return;
+    try {
+      if (!navigator.clipboard?.read) {
+        toast.info(t('vault_dashboard.pending_figure.clipboard_unsupported', 'Enfoque la tarjeta y use Cmd/Ctrl+V, o SUBIR IMAGEN.'));
+        return;
+      }
+      const clipItems = await navigator.clipboard.read();
+      for (const item of clipItems) {
+        const imgType = item.types.find((ty) => ty.startsWith('image/'));
+        if (imgType) {
+          const blob = await item.getType(imgType);
+          acceptFile(new File([blob], `captura_seccion_${Date.now()}.${imgType.split('/')[1] || 'png'}`, { type: imgType }));
+          return;
+        }
+      }
+      toast.warning(t('vault_dashboard.pending_figure.no_clipboard_image', 'El portapapeles no contiene una imagen.'));
+    } catch {
+      toast.info(t('vault_dashboard.pending_figure.clipboard_unsupported', 'Enfoque la tarjeta y use Cmd/Ctrl+V, o SUBIR IMAGEN.'));
+    }
+  };
+
+  const resetFlow = () => {
+    heldFileRef.current = null;
+    setPreview(null);
+    setConfirmInput('');
+    setStage('IDLE');
+  };
+
+  const handleConfirm = async () => {
+    if (!onConfirm || !preview || confirmInput.trim() !== 'ACTUALIZAR') return;
+    setStage('CONFIRMING');
+    const ok = await onConfirm({
+      description,
+      sourceUrl: primarySource?.url,
+      pendingMarkerLine: rawMarkerLine,
+      figureType,
+      confirmWord: confirmInput.trim(),
+      cas: preview,
+    });
+    if (ok) resetFlow();
+    else setStage('PREVIEW');
+  };
+
+  return (
+    <div
+      tabIndex={canAct ? 0 : -1}
+      onPaste={handlePaste}
+      className="my-[21px] border border-[#E2E8F0] dark:border-[#12151C] border-l-2 border-l-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D] p-[13px] rounded-none shadow-none select-none outline-none focus:border-[#00AEEF] dark:focus:border-[#00AEEF]"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-[8px] pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C]">
+        <div className="flex items-center gap-[8px]">
+          <span className="material-symbols-outlined !text-[16px] text-[#C68346]">image_search</span>
+          <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-[#C68346]">
+            {t('vault_dashboard.pending_figure.title', 'Imagen técnica pendiente en esta sección')}
+          </span>
+        </div>
+
+        {canAct && (stage === 'IDLE' || stage === 'WAITING_ONLINE') && (
+          <div className="flex items-center gap-[8px]">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/svg+xml"
+              autoComplete="off"
+              spellCheck={false}
+              className="hidden"
+              onChange={(e) => {
+                acceptFile(e.target.files?.[0]);
+                e.target.value = '';
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="px-[8px] py-[4px] bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[10px] font-mono font-bold uppercase tracking-wider rounded-none shadow-none border-0 cursor-pointer transition-colors"
+            >
+              {t('vault_dashboard.pending_figure.upload', 'Subir imagen')}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleClipboardButton()}
+              className="px-[8px] py-[4px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#0F172A] dark:text-[#F3F4F6] text-[10px] font-mono font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer transition-colors"
+            >
+              {t('vault_dashboard.pending_figure.paste', 'Pegar portapapeles')}
+            </button>
+          </div>
+        )}
+        {stage === 'UPLOADING' && (
+          <div className="flex items-center gap-[8px] text-[10px] font-mono text-[#C68346]">
+            <M3CircularProgress size={14} strokeWidth={2} indeterminate tone="copper" ariaLabel={t('vault_dashboard.pending_figure.consolidating', 'Optimizando en CAS')} />
+            <span className="uppercase">{t('vault_dashboard.pending_figure.consolidating', 'Optimizando en CAS')}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-[8px] space-y-[8px]">
+        <div>
+          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] block">
+            {t('vault_dashboard.pending_figure.description_label', 'Recurso visual requerido')}
+          </span>
+          <p className="text-[13px] text-[#0F172A] dark:text-[#F3F4F6] leading-relaxed mt-0.5 select-text">{description}</p>
+        </div>
+
+        <div className="pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-col gap-[4px]">
+          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
+            {t('vault_dashboard.pending_figure.link_label', 'Fuente para obtención manual')}
+          </span>
+          {primarySource ? (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-[8px]">
+                <span className="text-[11px] font-semibold text-[#0F172A] dark:text-[#F3F4F6] select-text">{sourceLabel(primarySource)}</span>
+                <a
+                  href={primarySource.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-[4px] text-[11px] font-mono font-bold text-[#00AEEF] hover:underline uppercase"
+                >
+                  <span className="material-symbols-outlined !text-[14px]">open_in_new</span>
+                  <span>{t('vault_dashboard.pending_figure.visit_source', 'Visitar fuente')}</span>
+                </a>
+              </div>
+              <a
+                href={primarySource.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] font-mono text-[#00AEEF]/80 hover:text-[#00AEEF] hover:underline break-all select-text"
+              >
+                {primarySource.url}
+              </a>
+              {alternativeSources.length > 0 && (
+                <details className="mt-[4px]">
+                  <summary className="text-[10px] font-mono text-[#475569] dark:text-[#8A93A6] cursor-pointer hover:text-[#0F172A] dark:hover:text-[#F3F4F6]">
+                    {t('vault_dashboard.pending_figure.alt_links', 'Enlaces alternativos verificados')} ({alternativeSources.length})
+                  </summary>
+                  <ul className="mt-[4px] space-y-[4px] pl-[8px] border-l border-[#E2E8F0] dark:border-[#12151C]">
+                    {alternativeSources.map((src, sIdx) => (
+                      <li key={sIdx} className="text-[10px] font-mono">
+                        <span className="text-[#475569] dark:text-[#8A93A6]">[{src.type}] {src.author}: </span>
+                        <a href={src.url} target="_blank" rel="noopener noreferrer" className="text-[#00AEEF] hover:underline break-all">
+                          {src.description || src.url}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </>
+          ) : (
+            <span className="text-[11px] font-mono text-[#94A3B8] dark:text-[#5A6072]">
+              [{t('vault_dashboard.pending_figure.no_source', 'Fuente no declarada')}]
+            </span>
+          )}
+        </div>
+
+        {stage === 'WAITING_ONLINE' && (
+          <div className="pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] flex items-center gap-[8px] text-[11px] font-mono text-[#C68346]">
+            <span className="material-symbols-outlined !text-[14px]">cloud_off</span>
+            <span>{t('vault_dashboard.pending_figure.offline_waiting', 'Sin conexión: la imagen se procesará al recuperar la red.')}</span>
+          </div>
+        )}
+
+        {canAct && preview && (stage === 'PREVIEW' || stage === 'CONFIRMING') && (
+          <div className="pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-col gap-[8px]">
+            <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#00AEEF]">
+              {t('vault_dashboard.pending_figure.preview_title', 'Vista previa [Pendiente] ➔ [Imagen]')}
+            </span>
+            <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] p-[8px]">
+              <img
+                src={preview.previewSrc}
+                alt={description}
+                draggable={false}
+                onContextMenu={(e) => e.preventDefault()}
+                className="max-h-[260px] w-auto mx-auto object-contain select-none pointer-events-none"
+                style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
+              />
+            </div>
+            <span className="text-[11px] font-mono tabular-nums text-[#00AEEF]">
+              ORIG: {formatPhotoBytes(preview.originalBytes)} ➔ CAS: {formatPhotoBytes(preview.optimizedBytes)} (-{preview.savingsPct}%) · SHA-256 {preview.sha256.slice(0, 12)}
+            </span>
+            <label className="flex flex-col gap-[4px]">
+              <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
+                {t('vault_dashboard.pending_figure.figure_type_label', 'Tipo de figura')}
+              </span>
+              <select
+                value={figureType}
+                onChange={(e) => setFigureType(e.target.value as PendingFigureType)}
+                autoComplete="off"
+                className="px-[8px] py-[4px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
+              >
+                {PENDING_FIGURE_TYPES.map((ft) => (
+                  <option key={ft} value={ft}>
+                    {t(`vault_dashboard.pending_figure.figure_types.${ft}`, ft)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {isItemLocked && (
+              <p className="text-[11px] text-[#C68346]">
+                {t('vault_dashboard.pending_figure.locked_advisory', 'Ítem aprobado: la imagen quedará como propuesta hasta desbloquear el ítem.')}
+              </p>
+            )}
+            <p className="text-[10px] text-[#475569] dark:text-[#8A93A6]">
+              {t('vault_dashboard.pending_figure.confirm_helper', 'Escriba "ACTUALIZAR" para integrar la imagen en esta sección:')}
+            </p>
+            <div className="flex gap-[8px]">
+              <input
+                type="text"
+                value={confirmInput}
+                onChange={(e) => setConfirmInput(e.target.value)}
+                placeholder="ACTUALIZAR"
+                autoComplete="off"
+                spellCheck={false}
+                disabled={stage === 'CONFIRMING'}
+                className="px-[8px] py-[4px] flex-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
+              />
+              <button
+                type="button"
+                disabled={confirmInput.trim() !== 'ACTUALIZAR' || stage === 'CONFIRMING'}
+                onClick={() => void handleConfirm()}
+                className="px-[13px] py-[4px] bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[10px] font-mono font-bold uppercase disabled:opacity-40 rounded-none border-0 cursor-pointer"
+              >
+                {t('vault_dashboard.pending_figure.confirm', 'Confirmar')}
+              </button>
+              <button
+                type="button"
+                disabled={stage === 'CONFIRMING'}
+                onClick={resetFlow}
+                className="px-[13px] py-[4px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[10px] font-mono uppercase rounded-none cursor-pointer"
+              >
+                {t('vault_dashboard.pending_figure.cancel', 'Cancelar')}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function MarkdownRenderer({ 
   content, 
   activeHighlightText, 
   onFragmentClick,
-  resolvedSymbology
+  resolvedSymbology,
+  itemTitle,
+  itemSources,
+  galleryFigures,
+  canCurateAI,
+  isSealed,
+  isItemLocked,
+  onUploadPendingFigure,
+  onConfirmPendingFigure,
 }: { 
   content: string; 
   activeHighlightText?: string; 
   onFragmentClick?: (text: string, e: React.MouseEvent) => void; 
   resolvedSymbology?: Array<{ concept_id: string; url: string; technical_name_es: string }>;
+  itemTitle?: string;
+  itemSources?: ItemizedSource[];
+  galleryFigures?: ExtractedFigureRef[];
+  canCurateAI?: boolean;
+  isSealed?: boolean;
+  isItemLocked?: boolean;
+  onUploadPendingFigure?: (file: File | Blob) => Promise<PendingFigureCasPreview>;
+  onConfirmPendingFigure?: (payload: ConfirmPendingFigurePayload) => Promise<boolean>;
 }) {
 
   if (!content) return null;
   const rawClean = cleanFuentesFromMarkdown(content);
   // Sanitizar HTML crudo antes de parsear (retrocompatibilidad con contenido ya guardado)
-  const cleanContent = sanitizeHtmlToMarkdown(rawClean);
+  const sanitizedMarkdown = sanitizeHtmlToMarkdown(rawClean);
+  // Normalizar marcadores rotos, filtrar imágenes no citadas y garantizar tarjeta de imagen pendiente por sección
+  const cleanContent = injectLegacyPendingMarkers(
+    sanitizedMarkdown,
+    itemTitle || '',
+    itemSources || [],
+    galleryFigures || []
+  );
   const nodes: React.ReactNode[] = [];
   const lines = cleanContent.split('\n');
 
@@ -277,25 +803,25 @@ function MarkdownRenderer({
     if (!line) { i++; continue; }
     if (line.startsWith('#### ')) { 
       const currentRaw = raw;
-      nodes.push(<h4 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[12px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mt-5 mb-2 ${interactiveCls} rounded-none px-1 -mx-1 transition-colors duration-150`}>{parseInlineStyles(line.replace('#### ', ''), activeHighlightText, resolvedSymbology)}</h4>); 
+      nodes.push(<h4 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[12px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mt-[21px] mb-[8px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(line.replace('#### ', ''), activeHighlightText, resolvedSymbology)}</h4>); 
       i++; 
       continue; 
     }
     if (line.startsWith('### ')) { 
       const currentRaw = raw;
-      nodes.push(<h3 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[13px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6] mt-6 mb-2 border-b border-[#E2E8F0] dark:border-[#12151C] pb-1 ${interactiveCls} rounded-none px-1 -mx-1 transition-colors duration-150`}>{parseInlineStyles(line.replace('### ', ''), activeHighlightText, resolvedSymbology)}</h3>); 
+      nodes.push(<h3 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[13px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6] mt-[21px] mb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C] pb-[8px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(line.replace('### ', ''), activeHighlightText, resolvedSymbology)}</h3>); 
       i++; 
       continue; 
     }
     if (line.startsWith('## ')) { 
       const currentRaw = raw;
-      nodes.push(<h2 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[15px] font-bold uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6] mt-8 mb-3 ${interactiveCls} rounded-none px-1 -mx-1 transition-colors duration-150`}>{parseInlineStyles(line.replace('## ', ''), activeHighlightText, resolvedSymbology)}</h2>); 
+      nodes.push(<h2 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[15px] font-bold uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6] mt-[34px] mb-[13px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(line.replace('## ', ''), activeHighlightText, resolvedSymbology)}</h2>); 
       i++; 
       continue; 
     }
     if (line.startsWith('# ')) { 
       const currentRaw = raw;
-      nodes.push(<h1 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[17px] font-bold uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6] mt-8 mb-4 ${interactiveCls} rounded-none px-1 -mx-1 transition-colors duration-150`}>{parseInlineStyles(line.replace('# ', ''), activeHighlightText, resolvedSymbology)}</h1>); 
+      nodes.push(<h1 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[17px] font-bold uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6] mt-[34px] mb-[13px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(line.replace('# ', ''), activeHighlightText, resolvedSymbology)}</h1>); 
       i++; 
       continue; 
     }
@@ -304,7 +830,7 @@ function MarkdownRenderer({
       while (i < lines.length && (lines[i].trim().startsWith('- ') || lines[i].trim().startsWith('* '))) {
         items.push({ rawText: lines[i], cleanText: lines[i].trim().replace(/^[-*] /, '') }); i++;
       }
-      nodes.push(<ul key={`ul-${i}`} className="list-none space-y-1.5 my-3 ml-0">{items.map((it, idx) => <li key={idx} onClick={(e) => onFragmentClick?.(it.rawText, e)} className={`flex items-start gap-2 text-[13px] text-[#0F172A] dark:text-[#F3F4F6] ${interactiveCls} rounded-none px-1 -mx-1 transition-colors duration-150`}><span className="text-[#C68346] mt-0.5 shrink-0">›</span><span>{parseInlineStyles(it.cleanText, activeHighlightText, resolvedSymbology)}</span></li>)}</ul>);
+      nodes.push(<ul key={`ul-${i}`} className="list-none space-y-[8px] my-[13px] ml-0">{items.map((it, idx) => <li key={idx} onClick={(e) => onFragmentClick?.(it.rawText, e)} className={`flex items-start gap-[8px] text-[13px] text-[#0F172A] dark:text-[#F3F4F6] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}><span className="text-[#C68346] mt-0.5 shrink-0">›</span><span>{parseInlineStyles(it.cleanText, activeHighlightText, resolvedSymbology)}</span></li>)}</ul>);
       continue;
     }
     if (/^\|/.test(line)) {
@@ -315,13 +841,192 @@ function MarkdownRenderer({
         i++;
       }
       if (rows.length > 0) {
-        const [header, ...body] = rows;
-        nodes.push(<div key={`tbl-${i}`} className="overflow-x-auto my-4"><table className="w-full text-[12px] border-collapse tabular-nums font-mono"><thead><tr>{header.map((h, ci) => <th key={ci} className="text-left px-3 py-2 bg-[#F8FAFC] dark:bg-[#07090D] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] border border-[#E2E8F0] dark:border-[#12151C]">{parseInlineStyles(h, activeHighlightText, resolvedSymbology)}</th>)}</tr></thead><tbody>{body.map((row, ri) => <tr key={ri} className="border-b border-[#E2E8F0] dark:border-[#12151C]">{row.map((cell, ci) => <td key={ci} onClick={(e) => onFragmentClick?.(cell, e)} className={`px-3 py-2 text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] ${interactiveCls} transition-colors duration-150`}>{parseInlineStyles(cell, activeHighlightText, resolvedSymbology)}</td>)}</tr>)}</tbody></table></div>);
+        const [header, ...rawBody] = rows;
+        const colCount = header.length;
+        const body = rawBody.map((r) => {
+          if (r.length === colCount) return r;
+          if (r.length < colCount) {
+            return [...r, ...Array.from({ length: colCount - r.length }, () => '')];
+          }
+          return [...r.slice(0, colCount - 1), r.slice(colCount - 1).join(' — ')];
+        });
+        const normHeader = header.map((h) => h.toUpperCase().replace(/\s+/g, ' ').trim());
+        const isChecklistTable =
+          normHeader.some((h) => h === 'CUMPLE' || h === 'PASA') &&
+          normHeader.some((h) => h === 'NO CUMPLE' || h === 'NO PASA');
+        const indexColIdx = normHeader.findIndex((h) => h === 'N°' || h === 'Nº' || h === 'NRO' || h === '#');
+        const cumpleColIdx = normHeader.findIndex((h) => h === 'CUMPLE' || h === 'PASA');
+        const noCumpleColIdx = normHeader.findIndex((h) => h === 'NO CUMPLE' || h === 'NO PASA');
+        const obsColIdx = normHeader.findIndex((h) => h.startsWith('OBSERVACION'));
+
+        nodes.push(
+          <div key={`tbl-${i}`} className="overflow-x-auto my-[21px]">
+            <table className="w-full text-[12px] border-collapse tabular-nums font-mono">
+              <thead>
+                <tr>
+                  {header.map((h, ci) => {
+                    const isCenterCol = ci === indexColIdx || ci === cumpleColIdx || ci === noCumpleColIdx;
+                    return (
+                      <th
+                        key={ci}
+                        className={`${isCenterCol ? 'text-center whitespace-nowrap' : 'text-left'} px-[13px] py-[8px] bg-[#F8FAFC] dark:bg-[#07090D] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] border border-[#E2E8F0] dark:border-[#12151C]`}
+                      >
+                        {parseInlineStyles(h, activeHighlightText, resolvedSymbology)}
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {body.map((row, ri) => (
+                  <tr key={ri} className="border-b border-[#E2E8F0] dark:border-[#12151C]">
+                    {row.map((cell, ci) => {
+                      const trimmedCell = cell.trim();
+                      const isCheckboxCol = isChecklistTable && (ci === cumpleColIdx || ci === noCumpleColIdx);
+                      const isCheckboxToken = /^(\[\s*\]|\[x\]|\[X\]|☐|☑)$/.test(trimmedCell);
+                      const isObsCol = isChecklistTable && ci === obsColIdx;
+                      const isIndexCol = ci === indexColIdx;
+
+                      if (isCheckboxCol || isCheckboxToken) {
+                        const isChecked = /^(\[x\]|\[X\]|☑)$/.test(trimmedCell);
+                        return (
+                          <td
+                            key={ci}
+                            onClick={(e) => onFragmentClick?.(cell, e)}
+                            className={`px-[13px] py-[8px] text-center align-middle border border-[#E2E8F0] dark:border-[#12151C] ${interactiveCls} transition-colors duration-150`}
+                          >
+                            <span
+                              aria-label={ci === noCumpleColIdx ? 'Casillero No Cumple' : 'Casillero Cumple'}
+                              className="inline-flex items-center justify-center w-[14px] h-[14px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#0F172A] dark:border-[#F3F4F6] rounded-none shadow-none select-none"
+                            >
+                              {isChecked && <span className="w-[8px] h-[8px] bg-[#C68346] block rounded-none" />}
+                            </span>
+                          </td>
+                        );
+                      }
+
+                      if (isObsCol && (!trimmedCell || /^[-—_]+$/.test(trimmedCell) || trimmedCell === '[ ]')) {
+                        return (
+                          <td
+                            key={ci}
+                            onClick={(e) => onFragmentClick?.(cell, e)}
+                            className={`px-[13px] py-[8px] min-w-[140px] align-middle border border-[#E2E8F0] dark:border-[#12151C] ${interactiveCls} transition-colors duration-150`}
+                          >
+                            <div className="w-full h-[16px] border-b border-dashed border-[#94A3B8] dark:border-[#5A6072]" />
+                          </td>
+                        );
+                      }
+
+                      if (isIndexCol) {
+                        return (
+                          <td
+                            key={ci}
+                            onClick={(e) => onFragmentClick?.(cell, e)}
+                            className={`px-[13px] py-[8px] text-center font-bold text-[#C68346] whitespace-nowrap border border-[#E2E8F0] dark:border-[#12151C] ${interactiveCls} transition-colors duration-150`}
+                          >
+                            {trimmedCell.replace(/^\*\*|\*\*$/g, '')}
+                          </td>
+                        );
+                      }
+
+                      return (
+                        <td
+                          key={ci}
+                          onClick={(e) => onFragmentClick?.(cell, e)}
+                          className={`px-[13px] py-[8px] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] ${interactiveCls} transition-colors duration-150`}
+                        >
+                          {parseInlineStyles(cell, activeHighlightText, resolvedSymbology)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
       }
       continue;
     }
+    const pendingParsed = parsePendingMarker(line);
+    if (pendingParsed) {
+      nodes.push(
+        <PendingSectionFigureCard
+          key={`pending-img-${i}`}
+          description={pendingParsed.description}
+          sourceUrl={pendingParsed.url}
+          allSources={itemSources}
+          rawMarkerLine={line}
+          canCurateAI={canCurateAI}
+          isSealed={isSealed}
+          isItemLocked={isItemLocked}
+          onUploadToCas={onUploadPendingFigure}
+          onConfirm={onConfirmPendingFigure}
+        />
+      );
+      i++;
+      continue;
+    }
+
+    const imgMatch = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    if (imgMatch) {
+      const [, altText, rawImgUrl] = imgMatch;
+      const safeImgUrl = rawImgUrl.trim();
+      // Siluetas sintéticas o gráficos de tablas obsoletos (`FIX-01` / `Punto 4º`): nunca se renderizan
+      if (/Plano Dimensional Acotado|Plano Dimensional y Par[aá]metros|Mapa de Inspecci[oó]n 360|Matriz Cronol[oó]gica PM|Comparativa\s+de\s+magnitudes|Comparativa\s+Param[eé]trica\s+SI/i.test(altText)) {
+        i++;
+        if (i < lines.length && /^\*Figura\s+(?:t[eé]cnica|\d+):/i.test(lines[i].trim())) i++;
+        continue;
+      }
+      if (/^(https?:\/\/|\/api\/|data:image\/)/i.test(safeImgUrl)) {
+        let captionDetail = '';
+        if (i + 1 < lines.length && /^\*Figura\s+(?:t[eé]cnica|\d+):/i.test(lines[i + 1].trim())) {
+          captionDetail = lines[i + 1].trim().replace(/^\*+|\*+$/g, '').trim();
+          i++;
+        }
+        const matchedFig = (galleryFigures || []).find((gf) => gf?.storage_url === safeImgUrl);
+        nodes.push(
+          <figure key={`img-${i}`} className="my-[21px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] p-[13px] rounded-none shadow-none">
+            <img
+              src={resolveMediaSrc(safeImgUrl)}
+              alt={altText || 'Figura técnica'}
+              loading="lazy"
+              draggable={false}
+              onContextMenu={(e) => e.preventDefault()}
+              className="max-h-[420px] w-auto mx-auto object-contain bg-[#FFFFFF] select-none pointer-events-none"
+              style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
+            />
+            {(captionDetail || altText || matchedFig) && (
+              <figcaption className="mt-[8px] pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-col gap-[4px]">
+                <span className="text-[11px] font-mono font-bold text-[#0F172A] dark:text-[#F3F4F6] uppercase tracking-wider">
+                  {altText || 'Figura técnica'}
+                </span>
+                {captionDetail && captionDetail !== altText && (
+                  <span className="text-[12px] text-[#475569] dark:text-[#8A93A6]">
+                    {captionDetail}
+                  </span>
+                )}
+                {matchedFig && typeof matchedFig.original_bytes === 'number' && typeof matchedFig.optimized_bytes === 'number' && (
+                  <span className="text-[10px] font-mono tabular-nums text-[#00AEEF]">
+                    ORIG: {formatByteWeight(matchedFig.original_bytes)} ➔ CAS: {formatByteWeight(matchedFig.optimized_bytes)} (
+                    {typeof matchedFig.savings_pct === 'number'
+                      ? `-${matchedFig.savings_pct.toFixed(1)}%`
+                      : matchedFig.original_bytes > 0
+                      ? `-${Math.max(0, ((matchedFig.original_bytes - matchedFig.optimized_bytes) / matchedFig.original_bytes) * 100).toFixed(1)}%`
+                      : '0%'}
+                    )
+                  </span>
+                )}
+              </figcaption>
+            )}
+          </figure>
+        );
+        i++;
+        continue;
+      }
+    }
     const currentRaw = raw;
-    nodes.push(<p key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[13px] text-[#0F172A] dark:text-[#F3F4F6] leading-relaxed mb-2 ${interactiveCls} rounded-none px-1 -mx-1 transition-colors duration-150`}>{parseInlineStyles(raw, activeHighlightText, resolvedSymbology)}</p>);
+    nodes.push(<p key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[13px] text-[#0F172A] dark:text-[#F3F4F6] leading-relaxed mb-[8px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(raw, activeHighlightText, resolvedSymbology)}</p>);
     i++;
   }
   return <div className="font-atkinson">{nodes}</div>;
@@ -332,29 +1037,32 @@ function ItemizedSourcesBlock({ sources }: { sources: ItemizedSource[] }) {
   if (!sources?.length) return null;
   const groups = ['OEM', 'EXTERNO', 'YOUTUBE', 'MANUAL'] as const;
   return (
-    <details className="mt-8 pt-6 group">
-      <summary className="text-[9px] font-black uppercase tracking-[0.25em] text-black/30 dark:text-white/30 mb-4 cursor-pointer hover:text-black/50 dark:hover:text-white/50 transition-colors list-none flex items-center gap-2">
+    <details className="mt-[34px] pt-[21px] border-t border-[#E2E8F0] dark:border-[#12151C] group">
+      <summary className="text-[11px] font-bold uppercase tracking-wider text-[#5A6072] dark:text-[#8A93A6] mb-[13px] cursor-pointer hover:text-[#0F172A] dark:hover:text-[#F3F4F6] transition-colors list-none flex items-center gap-[8px]">
         <span className="material-symbols-outlined !text-[14px] transition-transform group-open:rotate-90">chevron_right</span>
-        FUENTES
+        FUENTES VERIFICADAS ({sources.length})
       </summary>
-      <div className="space-y-5 pl-5">
+      <div className="space-y-[21px] pl-[21px]">
         {groups.map(g => {
           const items = sources.filter(s => s.type === g);
+          const refIndex = (src: ItemizedSource) => sources.indexOf(src) + 1;
           if (!items.length) return null;
           return (
             <div key={g}>
-              <div className={`flex items-center gap-1.5 mb-2 text-[9px] font-black uppercase tracking-widest ${SOURCE_COLORS[g]}`}>
+              <div className={`flex items-center gap-[8px] mb-[8px] text-[11px] font-bold uppercase tracking-wider font-mono tabular-nums ${SOURCE_COLORS[g]}`}>
                 <span className="material-symbols-outlined !text-[13px]">{SOURCE_ICONS[g]}</span>
                 {g} ({items.length})
               </div>
-              <ul className="space-y-2">
+              <ul className="space-y-[8px]">
                 {items.map((src, idx) => (
-                  <li key={idx} className="flex items-start gap-2">
-                    <span className={`material-symbols-outlined !text-[11px] mt-0.5 shrink-0 ${SOURCE_COLORS[g]}`}>link</span>
+                  <li key={idx} className="flex items-start gap-[8px]">
+                    <span className="text-[10px] font-mono tabular-nums font-bold text-[#475569] dark:text-[#8A93A6] mt-0.5 shrink-0 w-[26px]">F{refIndex(src)}</span>
                     <div className="min-w-0">
-                      <p className="text-[11px] font-bold text-black/70 dark:text-white/70">{src.author}</p>
-                      <p className="text-[10px] text-black/50 dark:text-white/50">{src.description}</p>
-                      <a href={src.url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-copper hover:underline break-all">{src.url}</a>
+                      <p className="text-[12px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">{src.author}</p>
+                      <p className="text-[11px] text-[#475569] dark:text-[#8A93A6]">{src.description}</p>
+                      {src.url && (
+                        <a href={src.url} target="_blank" rel="noopener noreferrer" className="text-[11px] font-mono text-[#00AEEF] hover:underline break-all">{src.url}</a>
+                      )}
                     </div>
                   </li>
                 ))}
@@ -372,7 +1080,6 @@ interface ItemContentBlockProps {
   item: PillarItem; 
   canCurateAI: boolean;
   isHunting: boolean;
-  huntStatusMessage?: string;
   assistingItemId: string | null;
   onAiAssist: (userRequest: string) => Promise<AiAssistResponse | null>;
   onApplyAssist: (finalContent: string, intent: string) => Promise<void>;
@@ -1011,9 +1718,108 @@ function ItemContentBlock({
     }
   };
 
+  // Figuras reales de galería (sin siluetas obsoletas ni gráficos de tabla) para no duplicar marcadores pendientes
+  const galleryFigures = useMemo(
+    () =>
+      (item.figures || []).filter(
+        (f) =>
+          f?.storage_url &&
+          !String(f.figure_id || '').startsWith('bp_') &&
+          !String(f.figure_id || '').startsWith('fig_tbl_') &&
+          !/Plano Dimensional Acotado|Plano Dimensional y Par[aá]metros|Mapa de Inspecci[oó]n 360|Matriz Cronol[oó]gica PM/i.test(
+            `${f.title_es || ''} ${f.caption_es || ''}`
+          )
+      ),
+    [item.figures]
+  );
+
+  const pendingFiguresCount = useMemo(
+    () => countItemPendingFigures(item.content, item.title, item.item_sources, item.figures),
+    [item.content, item.title, item.item_sources, item.figures]
+  );
+
+  // OPT-F2.1 / F2.3: digestión CAS (SHA-256 + dHash, WebP) sin persistir URLs `blob:` en el contenido oficial
+  const handleUploadPendingFigure = useCallback(
+    async (file: File | Blob): Promise<PendingFigureCasPreview> => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) throw new PendingFigureOfflineError();
+      const { descriptor, digested } = await mediaDigestorClient.digestAndUploadCas(file, {
+        profile: 'IMAGE_TECHNICAL_HD',
+        scope: 'GLOBAL_OEM',
+      });
+      if (!descriptor?.downloadUrl || /^(?:blob:|data:)/i.test(descriptor.downloadUrl)) {
+        throw new PendingFigureOfflineError();
+      }
+      const originalBytes = descriptor.originalBytes || digested.originalBytes;
+      const optimizedBytes = descriptor.optimizedBytes || digested.optimizedBytes;
+      return {
+        sha256: descriptor.sha256,
+        downloadUrl: descriptor.downloadUrl,
+        previewSrc: resolveMediaSrc(descriptor.downloadUrl),
+        originalBytes,
+        optimizedBytes,
+        savingsPct: Number(((descriptor.savingsRatio || digested.savingsRatio || 0) * 100).toFixed(1)),
+      };
+    },
+    []
+  );
+
+  // OPT-F2.2: integración solo con confirmación "ACTUALIZAR"; el servidor valida contra el registro CAS
+  const handleConfirmPendingFigure = useCallback(
+    async (payload: ConfirmPendingFigurePayload): Promise<boolean> => {
+      const toastId = toast.loading(t('vault_dashboard.pending_figure.integrating', 'Integrando imagen en la sección...'));
+      try {
+        const res = await authFetch(`${API_BASE_URL}/vault/resolve-pending-figure`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            globalAssetId: catalogId,
+            pillarId,
+            itemId: item.item_id,
+            confirmWord: payload.confirmWord,
+            pendingMarkerLine: payload.pendingMarkerLine,
+            pendingDescription: payload.description,
+            figure: {
+              sha256: payload.cas.sha256,
+              storage_url: payload.cas.downloadUrl,
+              figure_type: payload.figureType,
+              title_es: payload.description.slice(0, 380),
+              caption_es: payload.sourceUrl ? `Fuente: ${payload.sourceUrl}`.slice(0, 380) : undefined,
+              source_url: payload.sourceUrl,
+            },
+          }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json.success) {
+          throw new Error(json.error || json.message || `HTTP ${res.status}`);
+        }
+        toast.update(toastId, {
+          render:
+            json.mode === 'LOCKED_ADVISORY'
+              ? t('vault_dashboard.pending_figure.locked_saved', 'Imagen registrada como propuesta del ítem aprobado.')
+              : `${t('vault_dashboard.pending_figure.success', 'Imagen integrada en la sección')} (${formatPhotoBytes(
+                  payload.cas.originalBytes
+                )} ➔ ${formatPhotoBytes(payload.cas.optimizedBytes)}, -${payload.cas.savingsPct}%).`,
+          type: 'success',
+          isLoading: false,
+          autoClose: 3500,
+        });
+        return true;
+      } catch (err: any) {
+        toast.update(toastId, {
+          render: err?.message || t('vault_dashboard.pending_figure.error', 'Error al integrar la imagen.'),
+          type: 'error',
+          isLoading: false,
+          autoClose: 5000,
+        });
+        return false;
+      }
+    },
+    [catalogId, pillarId, item.item_id, t]
+  );
+
   return (
-    <div className="flex-1 flex flex-row min-h-0 w-full gap-4 font-atkinson relative">
-      <div className="flex-1 flex flex-col min-h-0 overflow-y-auto hide-scrollbar pr-4 select-text">
+    <div className="flex-1 flex flex-row min-h-0 h-full w-full gap-4 font-atkinson relative overflow-hidden">
+      <div className="flex-1 h-full min-h-0 overflow-y-auto custom-scrollbar pr-4 pb-6 select-text">
         {canCurateAI && activeProposalView?.itemId === item.item_id ? (
           activeProposalView.view === 'nuevos' ? (
             <NuevosHallazgosView
@@ -1037,10 +1843,18 @@ function ItemContentBlock({
             <div className="space-y-6">
               <>
                 <MarkdownRenderer 
-                  content={item.content} 
+                  content={sanitizeSpeculativeSymbolMarkers(item.content, pillarId)} 
                   activeHighlightText={canCurateAI ? activeHighlightText : undefined}
                   onFragmentClick={canCurateAI ? handleFragmentClick : undefined}
                   resolvedSymbology={resolvedSymbology}
+                  itemTitle={item.title}
+                  itemSources={item.item_sources || []}
+                  galleryFigures={galleryFigures}
+                  canCurateAI={canCurateAI}
+                  isSealed={isSealed}
+                  isItemLocked={Boolean(item.is_human_locked)}
+                  onUploadPendingFigure={handleUploadPendingFigure}
+                  onConfirmPendingFigure={handleConfirmPendingFigure}
                 />
                 <ItemFiguresAndAdvisoriesBlock
                   catalogId={catalogId}
@@ -1049,7 +1863,7 @@ function ItemContentBlock({
                   canCurateAI={canCurateAI}
                   isHumanLocked={item.is_human_locked}
                   isSealed={isSealed}
-                  figures={item.figures}
+                  figures={[]}
                   advisories={item.locked_item_advisories}
                 />
                 {item.item_sources?.length ? (
@@ -1076,8 +1890,8 @@ function ItemContentBlock({
         <div className="flex-1 flex flex-col min-h-0 pb-4 gap-4 overflow-hidden">
           <div className="flex items-center justify-between mb-1 shrink-0">
             <span className="text-[10px] font-bold uppercase tracking-widest text-[#475569] dark:text-[#8A93A6]">OPERMAQ IA</span>
-            {isGenerating && (
-              <span className="material-symbols-outlined !text-[12px] text-[#C68346] animate-spin">progress_activity</span>
+            {isSearching && (
+              <M3CircularProgress size={12} strokeWidth={2} indeterminate tone="copper" ariaLabel="Generando respuesta IA" />
             )}
           </div>
 
@@ -1205,7 +2019,7 @@ function ItemContentBlock({
 
             {isSending && (
               <div className="flex items-center gap-1.5 py-1 justify-start text-[10px] text-[#C68346] shrink-0">
-                <span className="material-symbols-outlined !text-[14px] animate-spin">progress_activity</span>
+                <M3CircularProgress size={14} strokeWidth={2} indeterminate tone="copper" ariaLabel="Procesando consulta" />
                 <span>Procesando consulta...</span>
               </div>
             )}
@@ -1281,7 +2095,7 @@ function ItemContentBlock({
           )}
 
           {!item.is_human_locked && (
-            <div className="flex justify-start py-2 px-2 border-t border-[#E2E8F0] dark:border-[#12151C]">
+            <div className="flex items-center justify-start gap-2 py-2 px-2 border-t border-[#E2E8F0] dark:border-[#12151C]">
               <button
                 type="button"
                 onClick={() => onOpenStudio ? onOpenStudio('INGESTION') : toast.info('Ingesta documental no disponible.')}
@@ -1289,7 +2103,16 @@ function ItemContentBlock({
                 className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none"
                 disabled={isSending || isGenerating || isSealed}
               >
-                <span className="material-symbols-outlined !text-[20px]">add_photo_alternate</span>
+                <span className="material-symbols-outlined !text-[20px]">upload_file</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpenStudio ? onOpenStudio('MANUAL_PUBLISHER') : toast.info('Exportación PDF no disponible.')}
+                title="Manuales ilustrados y diagramación vectorial"
+                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none"
+                disabled={isSending || isGenerating}
+              >
+                <span className="material-symbols-outlined !text-[20px]">draw</span>
               </button>
             </div>
           )}
@@ -1390,14 +2213,6 @@ function ItemContentBlock({
           <div className="flex flex-col gap-2 pt-3 mt-2 border-t border-[#E2E8F0] dark:border-[#12151C]">
             <button
               type="button"
-              onClick={() => onOpenStudio ? onOpenStudio('MANUAL_PUBLISHER') : toast.info('Exportación PDF no disponible.')}
-              className="w-full text-left px-3 py-2 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] text-[10px] font-bold uppercase tracking-wider rounded-none cursor-pointer"
-            >
-              Manuales Ilustrados PDF
-            </button>
-
-            <button
-              type="button"
               onClick={() => setShowHistoryModal(true)}
               className="w-full text-left px-3 py-2 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] text-[10px] font-bold uppercase tracking-wider rounded-none cursor-pointer"
             >
@@ -1465,6 +2280,15 @@ function ItemContentBlock({
               </button>
               {showApprovalConfirm && (
                 <div className="p-2 border border-[#00AEEF]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-2 rounded-none">
+                  {pendingFiguresCount > 0 && (
+                    <p className="text-[10px] text-[#C68346] font-bold flex items-center gap-[4px]">
+                      <span className="material-symbols-outlined !text-[14px]">image_search</span>
+                      {t('vault_dashboard.pending_figure.approval_warning', {
+                        count: pendingFiguresCount,
+                        defaultValue: '{{count}} imagen(es) técnica(s) pendiente(s). Tras aprobar, solo podrán registrarse como propuesta.',
+                      })}
+                    </p>
+                  )}
                   <p className="text-[10px] text-[#00AEEF] font-bold">Escribe "ACTUALIZAR" para confirmar la aprobación:</p>
                   <input
                     type="text"
@@ -1647,12 +2471,11 @@ function ItemContentBlock({
 interface ItemizedItemsListProps {
   items: PillarItem[];
   canCurateAI: boolean;
-  onHunt: (itemId: string, correction?: string) => void;
+  onHunt: (itemId: string, correction?: string, forceRestart?: boolean) => void;
   onAiAssist: (itemId: string, userRequest: string) => Promise<AiAssistResponse | null>;
   onApplyAssist: (itemId: string, finalContent: string, intent: string) => Promise<void>;
   isAssistingItemId: string | null;
-  huntingItemId: string | null;
-  huntStatusMessage?: string;
+  huntProgressByItem?: Record<string, number>;
   expandedItems: Set<string>;
   onToggleExpand: (id: string) => void;
   onDiscard: (itemId: string) => void;
@@ -1676,7 +2499,7 @@ interface ItemizedItemsListProps {
 
 
 function ItemizedItemsList({ 
-  items, canCurateAI, onHunt, onAiAssist, onApplyAssist, isAssistingItemId: assistingItemId, huntingItemId, huntStatusMessage,
+  items, canCurateAI, onHunt, onAiAssist, onApplyAssist, isAssistingItemId: assistingItemId, huntProgressByItem,
   expandedItems, onToggleExpand, onDiscard: _onDiscard, onReactivate, isArchive, isSealed,
   onUnlockItem, onUpdateApprovalState, onRollbackVersion, catalogId,
   pillarId, activeProposalView, onSetProposalView, onDecideProposal, onEvolveItemByType,
@@ -1695,18 +2518,21 @@ function ItemizedItemsList({
   const hasExpanded = expandedItems.size > 0;
 
   return (
-    <div className={`mt-4 ${isArchive ? 'opacity-60' : ''} ${hasExpanded ? 'flex-1 flex flex-col h-full min-h-0' : 'space-y-5'}`}>
+    <div className={`mt-4 ${isArchive ? 'opacity-60' : ''} ${hasExpanded ? 'flex-1 flex flex-col h-full min-h-0 overflow-hidden' : 'space-y-5'}`}>
       {sections.map(sec => {
         const secItems = items.filter(it => it.section === sec);
         if (hasExpanded && !secItems.some(it => expandedItems.has(it.item_id))) return null;
         return (
-          <div key={sec} className={hasExpanded ? 'flex-1 flex flex-col h-full min-h-0' : ''}>
+          <div key={sec} className={hasExpanded ? 'flex-1 flex flex-col h-full min-h-0 overflow-hidden' : ''}>
             {!hasExpanded && <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#475569] dark:text-[#8A93A6] mb-2">{sec}</p>}
-            <div className={hasExpanded ? 'flex-1 flex flex-col h-full min-h-0' : 'space-y-3'}>
+            <div className={hasExpanded ? 'flex-1 flex flex-col h-full min-h-0 overflow-hidden' : 'space-y-3'}>
               {secItems.map(item => {
-                const isCompleted = item.content_status === 'COMPLETADO';
-                const isError     = item.content_status === 'ERROR';
-                const isGenerating = item.content_status === 'GENERANDO' || huntingItemId === item.item_id;
+                const itemHuntKey = `${pillarId}:${item.item_id}`;
+                const itemHuntPct = huntProgressByItem?.[itemHuntKey];
+                const isCompleted = item.content_status === 'COMPLETADO' && itemHuntPct === undefined;
+                const isError     = item.content_status === 'ERROR' && itemHuntPct === undefined;
+                const isGenerating = item.content_status === 'GENERANDO' || itemHuntPct !== undefined;
+                const displayPct = Math.max(0, Math.min(100, Math.round(itemHuntPct ?? 0)));
                 const isExpanded = expandedItems.has(item.item_id);
                 const hasContent = !!(item.content && item.content.trim());
 
@@ -1721,11 +2547,22 @@ function ItemizedItemsList({
                       isError     ? 'border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D]' :
                       isGenerating? 'border-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D]' :
                       'border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D]'
-                    } ${isExpanded ? 'flex-1 h-full min-h-0 border-[#C68346]' : ''}`}
+                    } ${isExpanded ? 'flex-1 h-full min-h-0 overflow-hidden border-[#C68346]' : ''}`}
                   >
                     {/* Cabecera del ítem */}
-                    <div className="flex items-start gap-3">
-                      <div className="flex flex-col items-center gap-1 shrink-0 mt-0.5">
+                    <div className="flex items-start gap-3 shrink-0">
+                      <div className="flex items-center gap-2 shrink-0 mt-0.5">
+                        {isExpanded && (
+                          <button
+                            type="button"
+                            onClick={() => onToggleExpand(item.item_id)}
+                            title="Volver al listado de ítems"
+                            aria-label="Volver al listado de ítems"
+                            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none"
+                          >
+                            <span className="material-symbols-outlined !text-[20px]">arrow_back</span>
+                          </button>
+                        )}
                         <span className="text-[11px] font-mono tabular-nums text-[#5A6072]">{String(item.order).padStart(2,'0')}</span>
                       </div>
 
@@ -1747,11 +2584,41 @@ function ItemizedItemsList({
                       <div className="flex flex-col items-end gap-1.5 shrink-0">
                         {!isArchive && (
                           <div className="flex items-center gap-1">
+                            {isGenerating && (isExpanded || hasContent) && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (canCurateAI && !isSealed) onHunt(item.item_id, undefined, true);
+                                }}
+                                title={
+                                  canCurateAI
+                                    ? 'Caza en curso — Clic para reanudar o reiniciar si se detuvo'
+                                    : 'Caza en curso'
+                                }
+                                className="flex items-center justify-center h-8 px-1.5 text-[12px] font-mono tabular-nums font-bold text-[#C68346] bg-transparent border-0 outline-none select-none cursor-pointer"
+                                aria-live="polite"
+                              >
+                                {displayPct}%
+                              </button>
+                            )}
                             {canCurateAI && item.pending_conflicts && item.pending_conflicts.length > 0 && (
                               <span className="flex items-center justify-center w-8 h-8 shrink-0">
                                 <span className="material-symbols-outlined !text-[20px] text-[#00AEEF]" title="Nuevos hallazgos o conflictos pendientes">release_alert</span>
                               </span>
                             )}
+                            {(() => {
+                              const pendingCount = countItemPendingFigures(item.content, item.title, item.item_sources, item.figures);
+                              return pendingCount > 0 ? (
+                                <span
+                                  className="flex items-center gap-[4px] h-8 px-1 shrink-0 text-[#C68346]"
+                                  title={t('vault_dashboard.pending_figure.counter_title', 'Imágenes técnicas pendientes')}
+                                >
+                                  <span className="material-symbols-outlined !text-[18px]">image_search</span>
+                                  <span className="text-[11px] font-mono tabular-nums font-bold">{pendingCount}</span>
+                                </span>
+                              ) : null;
+                            })()}
                             {item.is_human_locked ? (
                               <span className="flex items-center justify-center w-8 h-8 shrink-0">
                                 <span className="material-symbols-outlined !text-[20px] text-[#00AEEF]" title="Verificado">verified</span>
@@ -1768,24 +2635,39 @@ function ItemizedItemsList({
                           <div className="flex items-center gap-1">
                             {!isArchive ? (
                               !hasContent && (
-                                <>
-                                  <M3IconButton
-                                    icon="travel_explore"
-                                    onClick={(e) => { e.stopPropagation(); onHunt(item.item_id); }}
-                                    variant="ghost"
-                                    title="Cazar contenido"
-                                    className={`text-[#C68346] ${isSealed || isGenerating ? 'opacity-20 cursor-not-allowed' : ''}`}
-                                    disabled={isSealed || isGenerating || item.is_human_locked}
-                                  />
-                                  <M3IconButton
-                                    icon="text_ad_off"
-                                    onClick={(e) => { e.stopPropagation(); if (!isSealed) setConfirmDiscardId(item.item_id); }}
-                                    variant="ghost"
-                                    title="Descartar ítem"
-                                    className={`text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] ${isSealed ? 'opacity-20 cursor-not-allowed' : ''}`}
-                                    disabled={isSealed || isGenerating || item.is_human_locked}
-                                  />
-                                </>
+                                isGenerating ? (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (!isSealed) onHunt(item.item_id, undefined, true);
+                                    }}
+                                    title="Caza en curso — Clic para reanudar o reiniciar si se detuvo"
+                                    className="flex items-center justify-center h-8 px-1.5 text-[12px] font-mono tabular-nums font-bold text-[#C68346] bg-transparent border-0 outline-none select-none cursor-pointer"
+                                    aria-live="polite"
+                                  >
+                                    {displayPct}%
+                                  </button>
+                                ) : (
+                                  <>
+                                    <M3IconButton
+                                      icon="travel_explore"
+                                      onClick={(e) => { e.stopPropagation(); onHunt(item.item_id); }}
+                                      variant="ghost"
+                                      title="Cazar contenido"
+                                      className={`text-[#C68346] ${isSealed ? 'opacity-20 cursor-not-allowed' : ''}`}
+                                      disabled={isSealed || item.is_human_locked}
+                                    />
+                                    <M3IconButton
+                                      icon="text_ad_off"
+                                      onClick={(e) => { e.stopPropagation(); if (!isSealed) setConfirmDiscardId(item.item_id); }}
+                                      variant="ghost"
+                                      title="Descartar ítem"
+                                      className={`text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] ${isSealed ? 'opacity-20 cursor-not-allowed' : ''}`}
+                                      disabled={isSealed || item.is_human_locked}
+                                    />
+                                  </>
+                                )
                               )
                             ) : (
                               <M3Button
@@ -1889,15 +2771,14 @@ function ItemizedItemsList({
 
                     {/* Contenido del ítem */}
                     {isExpanded && (
-                      <div className="mt-4 flex-1 flex flex-row min-h-0 border-t border-[#E2E8F0] dark:border-[#12151C] pt-4 h-full">
+                      <div className="mt-4 flex-1 flex flex-row min-h-0 border-t border-[#E2E8F0] dark:border-[#12151C] pt-4 h-full overflow-hidden">
                         <ItemContentBlock
                           item={item}
                           canCurateAI={canCurateAI}
-                          isHunting={huntingItemId === item.item_id}
+                          isHunting={isGenerating}
                           onAiAssist={(req) => onAiAssist(item.item_id, req)}
                           onApplyAssist={(final, intent) => onApplyAssist(item.item_id, final, intent)}
                           assistingItemId={assistingItemId}
-                          huntStatusMessage={huntStatusMessage}
                           isSealed={isSealed}
                           onHunt={() => onHunt(item.item_id)}
                           onDiscard={() => setConfirmDiscardId(item.item_id)}
@@ -1926,103 +2807,132 @@ function ItemizedItemsList({
   );
 }
 
-// ─── Complementary Suggestion Card ───────────────────────────────────────────
+// ─── Complementary Suggestion Row (Formato de Lista Homologado a ItemizedItemsList) ───
 interface ComplementarySuggestionCardProps {
+  index: number;
   suggestion: { title: string; rationale: string; section: string; source?: Record<string, unknown> };
   onConfirm: (title: string, section: string, rationale: string) => Promise<void>;
   onIgnore: () => void;
 }
 
 const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = ({
-  suggestion, onConfirm, onIgnore
+  index, suggestion, onConfirm, onIgnore
 }) => {
+  const [showConfirmBar, setShowConfirmBar] = useState(false);
   const [confirmInput, setConfirmInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const source = suggestion.source as ItemizedSource | undefined;
 
   return (
-    <div className="p-3 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#00AEEF]/30 hover:border-[#00AEEF] transition-colors space-y-3 flex flex-col justify-between rounded-none shadow-none">
-      <div className="space-y-2">
-        <div className="flex justify-between items-start gap-4">
-          <div className="min-w-0 flex-1">
-            <p className="text-[12px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">{suggestion.title}</p>
-            <p className="text-[10px] text-[#475569] dark:text-[#8A93A6] mt-0.5 leading-relaxed">{suggestion.rationale}</p>
-            <p className="text-[9px] font-mono text-[#00AEEF] uppercase tracking-widest mt-1">Sugerencia IA · Sección: {suggestion.section}</p>
-          </div>
-          <button
-            type="button"
-            onClick={onIgnore}
-            title="Ignorar sugerencia"
-            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer shrink-0"
-          >
-            <span className="material-symbols-outlined !text-[16px]">close</span>
-          </button>
+    <div className="p-3 border border-[#00AEEF]/30 hover:border-[#00AEEF] bg-[#FFFFFF] dark:bg-[#07090D] transition-colors duration-200 flex flex-col rounded-none shadow-none">
+      {/* Cabecera de fila idéntica a ItemizedItemsList */}
+      <div className="flex items-start gap-3">
+        <div className="flex flex-col items-center gap-1 shrink-0 mt-0.5">
+          <span className="text-[11px] font-mono tabular-nums text-[#00AEEF]">
+            +{String(index + 1).padStart(2, '0')}
+          </span>
         </div>
 
-        {/* Bloque de Fuente real asociada */}
-        {source && (source.author || source.url) && (
-          <div className="p-2 bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] text-[10px] font-atkinson text-[#475569] dark:text-[#8A93A6] space-y-1">
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-bold flex items-center gap-1">
-                <span className="material-symbols-outlined !text-[11px] text-[#C68346]">verified</span>
-                {source.author || 'Fuente'} 
-                <span className="px-1.5 py-0.5 text-[8px] bg-[#C68346]/10 text-[#C68346] font-mono uppercase rounded-none ml-1">
-                  {source.type || 'EXTERNO'}
-                </span>
+        <div className="flex-1 min-w-0">
+          <p className="text-[13px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+            {suggestion.title}
+          </p>
+          <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] mt-0.5">
+            {suggestion.rationale}
+          </p>
+          <div className="flex flex-wrap items-center gap-2 mt-1">
+            <span className="text-[10px] font-mono text-[#00AEEF] uppercase">
+              {suggestion.section}
+            </span>
+            {source && (source.author || source.url) && (
+              <span className="text-[10px] font-mono text-[#5A6072] flex items-center gap-1">
+                <span>· {source.author || 'Fuente'}</span>
+                {source.description && (
+                  <span className="truncate max-w-[360px]">"{source.description}"</span>
+                )}
+                {source.url && (
+                  <a
+                    href={source.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[#00AEEF] hover:underline font-bold ml-1"
+                  >
+                    [Fuente]
+                  </a>
+                )}
               </span>
-              {source.url && (
-                <a
-                  href={source.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[#00AEEF] hover:underline font-bold"
-                >
-                  Ver enlace
-                </a>
-              )}
-            </div>
-            {source.description && (
-              <p className="text-[#5A6072] leading-tight">
-                "{source.description}"
-              </p>
             )}
           </div>
-        )}
-      </div>
+        </div>
 
-      <div className="flex flex-col sm:flex-row sm:items-center gap-2 pt-2 border-t border-[#E2E8F0] dark:border-[#12151C] justify-between">
-        <p className="text-[10px] text-[#475569] dark:text-[#8A93A6]">
-          Escriba <span className="font-mono text-[#C68346] font-bold">"ACTUALIZAR"</span> para confirmar:
-        </p>
-        <div className="flex gap-1.5 flex-1 max-w-full sm:max-w-[220px]">
-          <input
-            type="text"
-            value={confirmInput}
-            onChange={(e) => setConfirmInput(e.target.value)}
-            placeholder="ACTUALIZAR"
-            autoComplete="off"
-            spellCheck={false}
+        <div className="flex items-center gap-1 shrink-0">
+          <M3IconButton
+            icon="add_circle"
+            onClick={() => setShowConfirmBar((prev) => !prev)}
+            variant="ghost"
+            title="Incorporar ítem complementario al pilar"
+            className="text-[#00AEEF] hover:text-[#C68346]"
             disabled={isSubmitting}
-            className="px-2 h-7 text-[11px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[#0F172A] dark:text-[#F3F4F6] font-mono flex-1 min-w-[60px] rounded-none"
           />
-          <button
-            type="button"
-            disabled={confirmInput.trim() !== 'ACTUALIZAR' || isSubmitting}
-            onClick={async () => {
-              setIsSubmitting(true);
-              try {
-                await onConfirm(suggestion.title, suggestion.section, suggestion.rationale);
-              } finally {
-                setIsSubmitting(false);
-              }
-            }}
-            className="px-3 h-7 bg-[#C68346] hover:bg-[#b0743e] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 transition-colors shrink-0 rounded-none border-0 cursor-pointer"
-          >
-            {isSubmitting ? 'Actualizando...' : 'Confirmar'}
-          </button>
+          <M3IconButton
+            icon="text_ad_off"
+            onClick={onIgnore}
+            variant="ghost"
+            title="Descartar sugerencia"
+            className="text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]"
+            disabled={isSubmitting}
+          />
         </div>
       </div>
+
+      {/* Confirmación Inline idéntica a ItemizedItemsList */}
+      {showConfirmBar && (
+        <div className="mt-3 p-3 bg-[#F8FAFC] dark:bg-[#000000] border border-[#C68346] space-y-2 w-full text-left rounded-none">
+          <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+            ¿Incorporar este ítem complementario al listado del pilar? Escribe <span className="font-mono text-[#C68346]">"ACTUALIZAR"</span> para confirmar:
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={confirmInput}
+              onChange={(e) => setConfirmInput(e.target.value)}
+              placeholder="ACTUALIZAR"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={isSubmitting}
+              className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[11px] font-mono flex-1 text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
+            />
+            <button
+              type="button"
+              disabled={confirmInput.trim() !== 'ACTUALIZAR' || isSubmitting}
+              onClick={async () => {
+                setIsSubmitting(true);
+                try {
+                  await onConfirm(suggestion.title, suggestion.section, suggestion.rationale);
+                  setShowConfirmBar(false);
+                  setConfirmInput('');
+                } finally {
+                  setIsSubmitting(false);
+                }
+              }}
+              className="px-3 py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold disabled:opacity-40 text-[11px] rounded-none border-0 cursor-pointer"
+            >
+              {isSubmitting ? 'Actualizando...' : 'Confirmar'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowConfirmBar(false);
+                setConfirmInput('');
+              }}
+              className="px-3 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[11px] rounded-none cursor-pointer"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -2036,13 +2946,12 @@ interface PillarTabContentProps {
   catalogId:   string;
   canCurateAI: boolean;
   onItemize:   (pillarId: PillarId) => void;
-  onHuntItem:  (pillarId: PillarId, itemId: string, correction?: string) => void;
+  onHuntItem:  (pillarId: PillarId, itemId: string, correction?: string, forceRestart?: boolean) => void;
   onAiAssistItem: (pillarId: PillarId, itemId: string, userRequest: string) => Promise<AiAssistResponse | null>;
   onApplyAssistItem: (pillarId: PillarId, itemId: string, finalContent: string, intent: string) => Promise<void>;
   onCreateItem: (pillarId: PillarId, title: string, section: string, rationale?: string, itemSource?: Record<string, unknown>) => Promise<void>;
   itemizing:    boolean;
-  huntingItemId: string | null;
-  huntStatusMessage?: string;
+  huntProgressByItem: Record<string, number>;
   assistingItemId: string | null;
   expandedItems: Set<string>;
   onToggleExpand: (id: string) => void;
@@ -2060,13 +2969,15 @@ interface PillarTabContentProps {
   onEvolveItemByType: (pillarId: PillarId, itemId: string, filterType: 'NUEVO' | 'CONFLICTO') => Promise<void>;
   resolveItemSymbology: (symbologyRefs?: string[]) => Array<{ concept_id: string; url: string; technical_name_es: string }>;
   onOpenStudio?: (tab: StudioTabId) => void;
+  prerequisitePillar?: { id: PillarId; stepCode: string; label: string; isItemized: boolean; currentDigest?: string | null } | null;
+  onNavigateToPillar?: (id: PillarId) => void;
 }
 
 const PillarTabContent: React.FC<PillarTabContentProps> = ({
-  pillarMeta, pillar, catalogId, canCurateAI, onItemize, onHuntItem, onAiAssistItem, onApplyAssistItem, onCreateItem, itemizing, huntingItemId, huntStatusMessage, assistingItemId, expandedItems, onToggleExpand, onDiscardItem, onReactivateItem,
+  pillarMeta, pillar, catalogId, canCurateAI, onItemize, onHuntItem, onAiAssistItem, onApplyAssistItem, onCreateItem, itemizing, huntProgressByItem, assistingItemId, expandedItems, onToggleExpand, onDiscardItem, onReactivateItem,
   isSealed, onUnlockItem, onUpdateApprovalState, onRollbackVersion,
   activeProposalView, onSetProposalView, onDecideProposal, onEvolveItemByType,
-  resolveItemSymbology, onOpenStudio
+  resolveItemSymbology, onOpenStudio, prerequisitePillar, onNavigateToPillar
 }) => {
   const { t } = useTranslation();
   const [showArchive, setShowArchive] = useState(false);
@@ -2077,7 +2988,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
   const [createFormTitle, setCreateFormTitle] = useState('');
   const [createFormRationale, setCreateFormRationale] = useState('');
   const [isCorrecting, setIsCorrecting] = useState(false);
-  const [correctionResult, setCorrectionResult] = useState<{ title: string; rationale: string } | null>(null);
+  const [correctionResult, setCorrectionResult] = useState<{ title: string; rationale: string; section: string } | null>(null);
   const [registerConfirmation, setRegisterConfirmation] = useState('');
 
   // Estados para búsqueda complementaria
@@ -2149,22 +3060,75 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
   const hasItems = activeItems.length > 0;
   const startedAt = pillar?.started_at;
   const startedTime = startedAt?.toDate ? startedAt.toDate().getTime() : (startedAt ? new Date(startedAt).getTime() : 0);
-  const isStuck = itemizeStatus === 'GENERATING' && startedTime > 0 && (Date.now() - startedTime > 5 * 60 * 1000);
-  const isItemizing = (itemizeStatus === 'GENERATING' && !isStuck) || itemizing;
+  const isStuck = itemizeStatus === 'GENERATING' && (startedTime <= 0 || Date.now() - startedTime > 45 * 1000);
+  const isItemizing = itemizing || (itemizeStatus === 'GENERATING' && !isStuck);
   const completedItems = activeItems.filter(it => it.content_status === 'COMPLETADO').length;
   const totalItems = activeItems.length;
+  const activeHuntsCount = activeItems.filter(
+    (it) => it.content_status === 'GENERANDO' || huntProgressByItem[`${pillarMeta.id}:${it.item_id}`] !== undefined
+  ).length;
+  const isSequenceBlocked = Boolean(prerequisitePillar && !prerequisitePillar.isItemized);
+  const isParentPillarEvolved = Boolean(
+    hasItems &&
+      prerequisitePillar?.currentDigest &&
+      pillar?.parent_pillar_digest_sha256 &&
+      prerequisitePillar.currentDigest !== pillar.parent_pillar_digest_sha256
+  );
 
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Toolbar */}
       <div className="shrink-0 flex flex-wrap items-center justify-between gap-4 px-5 py-3 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
-        {/* Izquierda: Nombre del pilar + Controles exclusivos de curación */}
-        <div className="flex flex-wrap items-center gap-4 flex-1 min-w-0">
+        {/* Izquierda: Icono volver (si hay ítem expandido) + Nombre del pilar + Controles exclusivos de curación */}
+        <div className="flex flex-wrap items-center gap-3 flex-1 min-w-0">
+          {expandedItems.size > 0 && (
+            <button
+              type="button"
+              onClick={() => expandedItems.forEach((id) => onToggleExpand(id))}
+              title="Volver al listado de ítems"
+              aria-label="Volver al listado de ítems"
+              className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none"
+            >
+              <span className="material-symbols-outlined !text-[20px]">arrow_back</span>
+            </button>
+          )}
           <h1 className="text-[13px] font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6] leading-none whitespace-nowrap">
             {t(`vault_dashboard.pillars.${pillarMeta.id}`, pillarMeta.label)}
           </h1>
 
-          {canCurateAI && itemizeStatus === 'COMPLETED' && expandedItems.size === 0 && (
+          {canCurateAI && itemizeStatus === 'PARTIAL_FROM_INGESTION' && expandedItems.size === 0 && (
+            <button
+              type="button"
+              disabled={isSealed || isItemizing || isSequenceBlocked}
+              onClick={() => onItemize(pillarMeta.id)}
+              title={
+                isSequenceBlocked && prerequisitePillar
+                  ? `Debe itemizar primero ${prerequisitePillar.stepCode} ${prerequisitePillar.label}`
+                  : 'Completar estructura elástica del pilar conservando los capítulos ya ingeridos'
+              }
+              className="px-[13px] py-[8px] border border-[#C68346] bg-transparent hover:bg-[#C68346] text-[#C68346] hover:text-[#FFFFFF] text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Completar Estructura del Pilar
+            </button>
+          )}
+
+          {canCurateAI && isParentPillarEvolved && itemizeStatus !== 'PARTIAL_FROM_INGESTION' && expandedItems.size === 0 && (
+            <button
+              type="button"
+              disabled={isSealed || isItemizing || isSequenceBlocked}
+              onClick={() => onItemize(pillarMeta.id)}
+              title={
+                prerequisitePillar
+                  ? `El pilar precedente (${prerequisitePillar.stepCode} ${prerequisitePillar.label}) evolucionó estructuralmente. Sincronizar capítulos faltantes sin perder avances.`
+                  : 'Sincronizar estructura con pilar precedente'
+              }
+              className="px-[13px] py-[8px] border border-[#00AEEF] bg-transparent hover:bg-[#00AEEF] text-[#00AEEF] hover:text-[#FFFFFF] text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Sincronizar con Pilar Precedente
+            </button>
+          )}
+
+          {canCurateAI && (itemizeStatus === 'COMPLETED' || itemizeStatus === 'PARTIAL_FROM_INGESTION') && expandedItems.size === 0 && (
             <button
               type="button"
               disabled={isSealed || isComplementarySearching}
@@ -2181,7 +3145,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
           )}
 
           {/* Campo de creación manual de ítem (exclusivo curación) */}
-          {canCurateAI && itemizeStatus === 'COMPLETED' && expandedItems.size === 0 && (
+          {canCurateAI && (itemizeStatus === 'COMPLETED' || itemizeStatus === 'PARTIAL_FROM_INGESTION') && expandedItems.size === 0 && (
             <div className="flex items-center gap-1.5 flex-1 max-w-lg min-w-[200px]">
               <input
                 type="text"
@@ -2217,14 +3181,26 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
           )}
         </div>
 
-        {/* Derecha: Progreso + Timestamp */}
-        <div className="flex items-center gap-3 shrink-0 ml-auto">
+        {/* Derecha: Estado asíncrono no bloqueante + Progreso M3 Linear Progress Indicator + Timestamp */}
+        <div className="flex items-center gap-[13px] shrink-0 ml-auto">
+          {activeHuntsCount > 0 && (
+            <span className="text-[10px] font-mono tabular-nums font-bold uppercase tracking-wider text-[#C68346] border border-[#C68346]/40 px-[8px] py-[4px] select-none">
+              SEGUNDO PLANO ({activeHuntsCount}) · NAVEGACIÓN Y BÚSQUEDAS HABILITADAS
+            </span>
+          )}
           {hasItems && totalItems > 0 && (
-            <div className="flex items-center gap-2" title={t('vault_dashboard.labels.items_progress', { completed: completedItems, total: totalItems })}>
-              <div className="w-12 h-1 bg-[#E2E8F0] dark:bg-[#12151C] overflow-hidden">
-                <div className="h-full bg-[#00AEEF] transition-all duration-700" style={{ width: `${Math.round((completedItems / totalItems) * 100)}%` }} />
-              </div>
-              <span className="text-[10px] font-bold font-mono tabular-nums text-[#00AEEF]">{completedItems}/{totalItems}</span>
+            <div className="flex items-center gap-[8px]" title={t('vault_dashboard.labels.items_progress', { completed: completedItems, total: totalItems })}>
+              <M3LinearProgress
+                value={Math.round((completedItems / totalItems) * 100)}
+                tone={completedItems === totalItems ? 'cyan' : 'copper'}
+                className="w-[89px]"
+                ariaLabel={t('vault_dashboard.labels.items_progress', { completed: completedItems, total: totalItems })}
+              />
+              <span className={`text-[10px] font-bold font-mono tabular-nums ${
+                completedItems === totalItems ? 'text-[#00AEEF]' : 'text-[#C68346]'
+              }`}>
+                {completedItems}/{totalItems}
+              </span>
             </div>
           )}
           {pillar?.itemized_at && (
@@ -2235,30 +3211,44 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
         </div>
       </div>
 
+      {/* M3 Linear Progress Indeterminate durante itemización */}
+      {isItemizing && (
+        <M3LinearProgress
+          indeterminate
+          tone="copper"
+          className="w-full shrink-0"
+          ariaLabel="Itemizando estructura del pilar"
+        />
+      )}
+
       {/* Body scrollable */}
-      <div className={`flex-1 min-h-0 px-5 py-5 ${expandedItems.size > 0 ? 'overflow-hidden flex flex-col' : 'overflow-y-auto hide-scrollbar'}`}>
+      <div className={`flex-1 min-h-0 px-5 py-5 ${expandedItems.size > 0 ? 'overflow-hidden flex flex-col' : 'overflow-y-auto custom-scrollbar'}`}>
         <>
-          {/* Sugerencias de ítems complementarios (exclusivo curación) */}
-          {canCurateAI && (pillar?.suggested_items_pending || []).length > 0 && (
-            <div className="mb-6 p-4 border border-[#00AEEF]/30 bg-[#F8FAFC] dark:bg-[#07090D] space-y-4 rounded-none shadow-none">
+          {/* Sugerencias de ítems complementarios en formato de lista homologado (exclusivo curación) */}
+          {canCurateAI && expandedItems.size === 0 && (pillar?.suggested_items_pending || []).length > 0 && (
+            <div className="mb-5 space-y-3 rounded-none shadow-none">
               <div className="flex items-center justify-between">
-                <h3 className="text-[12px] font-bold uppercase tracking-wider text-[#00AEEF] flex items-center gap-1.5 font-atkinson">
-                  {t('vault_dashboard.suggestions.title', 'Ítems Complementarios Sugeridos por IA')} (<span className="font-mono tabular-nums">{(pillar?.suggested_items_pending || []).length}</span> {t('vault_dashboard.suggestions.pending', 'pendientes')})
-                </h3>
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#00AEEF]">
+                  {t('vault_dashboard.suggestions.title', 'Ítems Complementarios Sugeridos por IA')} (<span className="font-mono tabular-nums">{(pillar?.suggested_items_pending || []).length}</span>)
+                </p>
                 <button
                   type="button"
                   onClick={() => setSuggestionsCollapsed(!suggestionsCollapsed)}
-                  className="text-[10px] uppercase font-bold tracking-wider text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] transition-colors bg-transparent border-0 cursor-pointer"
+                  title={suggestionsCollapsed ? t('vault_dashboard.actions.expand', 'Expandir') : t('vault_dashboard.actions.collapse', 'Contraer')}
+                  className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                 >
-                  {suggestionsCollapsed ? t('vault_dashboard.actions.expand', 'Expandir') : t('vault_dashboard.actions.collapse', 'Contraer')}
+                  <span className="material-symbols-outlined !text-[18px]">
+                    {suggestionsCollapsed ? 'expand_more' : 'expand_less'}
+                  </span>
                 </button>
               </div>
               
               {!suggestionsCollapsed && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {(pillar?.suggested_items_pending || []).map((sug) => (
+                <div className="space-y-3">
+                  {(pillar?.suggested_items_pending || []).map((sug, idx) => (
                     <ComplementarySuggestionCard
                       key={sug.title}
+                      index={idx}
                       suggestion={sug}
                       onConfirm={async (title, section, rationale) => {
                         await onCreateItem(pillarMeta.id, title, section, rationale, sug.source);
@@ -2333,20 +3323,29 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                           const response = await authFetch(`${API_BASE_URL}/vault/correct-manual-item`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ title: createFormTitle, rationale: createFormRationale })
+                            body: JSON.stringify({
+                              title: createFormTitle,
+                              rationale: createFormRationale,
+                              globalAssetId: catalogId,
+                              pillarId: pillarMeta.id,
+                            })
                           });
                           if (response.ok) {
                             const data = await response.json();
                             if (data.corrected) {
-                              setCorrectionResult(data.corrected);
+                              setCorrectionResult({
+                                title: data.corrected.title || createFormTitle,
+                                rationale: data.corrected.rationale || createFormRationale,
+                                section: data.corrected.section || 'ESPECIFICACIÓN TÉCNICA',
+                              });
                             } else {
-                              setCorrectionResult({ title: createFormTitle, rationale: createFormRationale });
+                              setCorrectionResult({ title: createFormTitle, rationale: createFormRationale, section: 'ESPECIFICACIÓN TÉCNICA' });
                             }
                           } else {
-                            setCorrectionResult({ title: createFormTitle, rationale: createFormRationale });
+                            setCorrectionResult({ title: createFormTitle, rationale: createFormRationale, section: 'ESPECIFICACIÓN TÉCNICA' });
                           }
                         } catch (_err) {
-                          setCorrectionResult({ title: createFormTitle, rationale: createFormRationale });
+                          setCorrectionResult({ title: createFormTitle, rationale: createFormRationale, section: 'ESPECIFICACIÓN TÉCNICA' });
                         } finally {
                           setIsCorrecting(false);
                         }
@@ -2368,6 +3367,8 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                         <p className="text-[11px] line-through text-[#475569] dark:text-[#8A93A6]">{createFormTitle}</p>
                         <p className="text-[9px] font-bold text-[#00AEEF] uppercase mt-2">Título Sugerido</p>
                         <p className="text-[12px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">{correctionResult.title}</p>
+                        <p className="text-[9px] font-bold text-[#00AEEF] uppercase mt-2">Sección Técnica Asignada</p>
+                        <p className="text-[11px] font-mono font-bold text-[#C68346]">{correctionResult.section}</p>
                       </div>
                       
                       <div className="space-y-1">
@@ -2397,7 +3398,12 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                         type="button"
                         disabled={registerConfirmation.trim() !== 'ACTUALIZAR'}
                         onClick={async () => {
-                          await onCreateItem(pillarMeta.id, correctionResult.title, 'GENERAL', correctionResult.rationale);
+                          await onCreateItem(
+                            pillarMeta.id,
+                            correctionResult.title,
+                            correctionResult.section || 'ESPECIFICACIÓN TÉCNICA',
+                            correctionResult.rationale
+                          );
                           setShowCreateForm(false);
                           setCreateFormTitle('');
                           setCreateFormRationale('');
@@ -2432,12 +3438,11 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                 items={activeItems}
                 canCurateAI={canCurateAI}
                 catalogId={catalogId}
-                onHunt={(itemId, correction) => onHuntItem(pillarMeta.id, itemId, correction)}
+                onHunt={(itemId, correction, forceRestart) => onHuntItem(pillarMeta.id, itemId, correction, forceRestart)}
                 onAiAssist={(itemId, req) => onAiAssistItem(pillarMeta.id, itemId, req)}
                 onApplyAssist={(itemId, final, intent) => onApplyAssistItem(pillarMeta.id, itemId, final, intent)}
                 isAssistingItemId={assistingItemId}
-                huntingItemId={huntingItemId}
-                huntStatusMessage={huntStatusMessage}
+                huntProgressByItem={huntProgressByItem}
                 expandedItems={expandedItems}
                 onToggleExpand={onToggleExpand}
                 onDiscard={onDiscardItem}
@@ -2481,7 +3486,6 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                   onAiAssist={async () => null}
                   onApplyAssist={async () => {}}
                   isAssistingItemId={null}
-                  huntingItemId={null}
                   expandedItems={expandedItems}
                   onToggleExpand={onToggleExpand}
                   onDiscard={onDiscardItem}
@@ -2503,51 +3507,97 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
           </div>
         )}
 
-        {/* Empty state — IDLE, ERROR, o proceso ATASCADO */}
-        {(!hasItems && !isItemizing) && (
+        {/* Empty state — IDLE, GENERATING, ERROR, o proceso ATASCADO */}
+        {!hasItems && (
           <div className="flex-1 flex flex-col items-center justify-center py-16 gap-6">
-            {canCurateAI ? (
-              <>
-                {pillar?.itemize_status === 'ERROR' && pillar?.itemize_error && (
-                  <div className="flex flex-col items-center max-w-md px-6 text-center">
-                    <span className="material-symbols-outlined !text-xl text-[#C68346] mb-1">error</span>
-                    <p className="text-[10px] font-bold text-[#C68346] uppercase tracking-widest mb-1">
-                      {t('vault_dashboard.labels.itemize_error')}
-                    </p>
-                    <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] leading-relaxed font-medium">
-                      {pillar.itemize_error}
-                    </p>
-                  </div>
+            {isItemizing ? (
+              <div className="flex flex-col items-center max-w-md w-full p-[21px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-center gap-[13px] rounded-none shadow-none">
+                <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6] uppercase tracking-widest font-mono">
+                  SINTETIZANDO ESTRUCTURA DEL PILAR
+                </p>
+                <div className="w-full">
+                  <M3LinearProgress indeterminate ariaLabel="Procesando estructura del pilar" />
+                </div>
+                <p className="text-[12px] text-[#475569] dark:text-[#8A93A6] leading-relaxed">
+                  Resolviendo ontología en 2 anillos y herencia acumulativa de subsistemas confirmados...
+                </p>
+                {canCurateAI && !itemizing && (
+                  <button
+                    type="button"
+                    disabled={isSealed}
+                    onClick={() => onItemize(pillarMeta.id)}
+                    className="mt-[8px] bg-transparent border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-[#FFFFFF] px-[21px] py-[8px] text-[10px] font-bold uppercase tracking-wider font-mono transition-colors rounded-none shadow-none cursor-pointer"
+                  >
+                    Reintentar Itemización del Pilar
+                  </button>
                 )}
+              </div>
+            ) : canCurateAI ? (
+              isSequenceBlocked && prerequisitePillar ? (
+                <div className="flex flex-col items-center max-w-lg p-[21px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-center gap-[13px] rounded-none shadow-none">
+                  <span className="material-symbols-outlined !text-[24px] text-[#5A6072]">lock</span>
+                  <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6] uppercase tracking-widest font-mono">
+                    SECUENCIA LÓGICA DE 5 PILARES BLOQUEADA
+                  </p>
+                  <p className="text-[12px] text-[#475569] dark:text-[#8A93A6] leading-relaxed">
+                    Para evitar estructuras vacías y heredar la ontología confirmada del activo, debe itemizar primero el pilar precedente:{' '}
+                    <span className="font-bold font-mono text-[#C68346]">
+                      [{prerequisitePillar.stepCode} · {prerequisitePillar.label}]
+                    </span>.
+                  </p>
+                  {onNavigateToPillar && (
+                    <button
+                      type="button"
+                      onClick={() => onNavigateToPillar(prerequisitePillar.id)}
+                      className="px-[21px] py-[8px] border border-[#C68346] bg-transparent hover:bg-[#C68346] text-[#C68346] hover:text-[#FFFFFF] text-[10px] font-bold uppercase tracking-wider font-mono rounded-none shadow-none transition-colors cursor-pointer"
+                    >
+                      IR A {prerequisitePillar.stepCode} · {prerequisitePillar.label.toUpperCase()}
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <>
+                  {pillar?.itemize_status === 'ERROR' && pillar?.itemize_error && (
+                    <div className="flex flex-col items-center max-w-md px-6 text-center">
+                      <span className="material-symbols-outlined !text-xl text-[#C68346] mb-1">error</span>
+                      <p className="text-[10px] font-bold text-[#C68346] uppercase tracking-widest mb-1">
+                        {t('vault_dashboard.labels.itemize_error')}
+                      </p>
+                      <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] leading-relaxed font-medium">
+                        {pillar.itemize_error}
+                      </p>
+                    </div>
+                  )}
 
-                {isStuck && (
-                  <div className="flex flex-col items-center max-w-md px-6 text-center">
-                    <span className="material-symbols-outlined !text-xl text-[#C68346] mb-1">warning</span>
-                    <p className="text-[10px] font-bold text-[#C68346] uppercase tracking-widest mb-1">
-                      Proceso interrumpido
-                    </p>
-                    <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] leading-relaxed font-medium">
-                      El proceso de itemización anterior falló o se interrumpió. Puedes reiniciarlo.
-                    </p>
-                  </div>
-                )}
+                  {isStuck && (
+                    <div className="flex flex-col items-center max-w-md px-6 text-center">
+                      <span className="material-symbols-outlined !text-xl text-[#C68346] mb-1">warning</span>
+                      <p className="text-[10px] font-bold text-[#C68346] uppercase tracking-widest mb-1">
+                        Proceso interrumpido
+                      </p>
+                      <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] leading-relaxed font-medium">
+                        El proceso de itemización anterior falló o se interrumpió. Puedes reiniciarlo.
+                      </p>
+                    </div>
+                  )}
 
-                <button
-                  type="button"
-                  disabled={isSealed}
-                  onClick={() => onItemize(pillarMeta.id)}
-                  className="bg-transparent border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-[#FFFFFF] px-[21px] py-[13px] text-[11px] font-bold uppercase tracking-wider transition-colors rounded-none shadow-none cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
-                  title={
-                    isStuck
-                      ? 'Proceso interrumpido — Reiniciar itemización'
-                      : pillar?.itemize_status === 'ERROR'
-                      ? 'Reintentar itemización'
-                      : 'Iniciar itemización del pilar'
-                  }
-                >
-                  {isStuck ? 'Reiniciar Itemización del Pilar' : 'Itemizar Estructura del Pilar'}
-                </button>
-              </>
+                  <button
+                    type="button"
+                    disabled={isSealed}
+                    onClick={() => onItemize(pillarMeta.id)}
+                    className="bg-transparent border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-[#FFFFFF] px-[21px] py-[13px] text-[11px] font-bold uppercase tracking-wider transition-colors rounded-none shadow-none cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
+                    title={
+                      isStuck
+                        ? 'Proceso interrumpido — Reiniciar itemización'
+                        : pillar?.itemize_status === 'ERROR'
+                        ? 'Reintentar itemización'
+                        : 'Iniciar itemización del pilar'
+                    }
+                  >
+                    {isStuck ? 'Reiniciar Itemización del Pilar' : 'Itemizar Estructura del Pilar'}
+                  </button>
+                </>
+              )
             ) : (
               <p className="text-[13px] text-[#5A6072]">
                 [Información técnica no declarada en ficha]
@@ -2564,7 +3614,6 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
 export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
   assetId,
   onBack,
-  onOpenContributions,
 }) => {
   const { t } = useTranslation();
   const { tenantId, capabilities } = useOpermaqContext();
@@ -2574,8 +3623,8 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
   const [activeTab, setActiveTab] = useState<PillarId>('ficha_tecnica');
   const [masterSymbols, setMasterSymbols] = useState<Record<string, any>>({});
   const [itemizingPillar, setItemizingPillar] = useState<PillarId | null>(null);
-  const [huntingItem, setHuntingItem] = useState<{ pillarId: PillarId; itemId: string } | null>(null);
-  const [huntStatusMessage, setHuntStatusMessage] = useState<string>('');
+  const [huntProgressByItem, setHuntProgressByItem] = useState<Record<string, number>>({});
+  const huntListenersRef = useRef<Record<string, () => void>>({});
   const [assistingItemId, setAssistingItemId] = useState<string | null>(null);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
@@ -2583,9 +3632,14 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
   const [showPhotoDeleteConfirm, setShowPhotoDeleteConfirm] = useState(false);
   const [photoDeleteConfirmText, setPhotoDeleteConfirmText] = useState('');
   const [studioOpen, setStudioOpen] = useState(false);
-  const [studioTab, setStudioTab] = useState<StudioTabId>(canCurateAI ? 'INGESTION' : 'SYMBOLOGY_PACK');
+  const [studioTab, setStudioTab] = useState<StudioTabId>(canCurateAI ? 'INGESTION' : 'MANUAL_PUBLISHER');
+  const [showSymbologyInfo, setShowSymbologyInfo] = useState<boolean>(false);
   const openStudio = useCallback((tab: StudioTabId) => {
-    const safeTab: StudioTabId = !canCurateAI && tab === 'INGESTION' ? 'SYMBOLOGY_PACK' : tab;
+    if (tab === 'SYMBOLOGY_PACK') {
+      setShowSymbologyInfo(true);
+      return;
+    }
+    const safeTab: StudioTabId = !canCurateAI && tab === 'INGESTION' ? 'MANUAL_PUBLISHER' : tab;
     setStudioTab(safeTab);
     setStudioOpen(true);
   }, [canCurateAI]);
@@ -2597,6 +3651,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
 
   useEffect(() => {
     setActiveProposalView(null);
+    setExpandedItems(new Set());
   }, [activeTab]);
 
   useEffect(() => {
@@ -2635,28 +3690,191 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
   const resolveItemSymbology = useCallback((symbologyRefs?: string[]) => {
     if (!symbologyRefs || !Array.isArray(symbologyRefs)) return [];
     const make = (catalog?.make || '').toLowerCase().trim();
+    const packEntries = catalog?.symbology_pack?.compiled_entries || [];
+    // Si la bóveda maestra ya cargó, un `concept_id` ausente (p. ej. símbolo sintético purgado) no se resuelve desde el pack.
+    const masterLoaded = Object.keys(masterSymbols || {}).length > 0;
     
     return symbologyRefs.map(cid => {
       const symData = masterSymbols[cid];
-      if (!symData) return null;
-      
-      const brandVariant = symData.brands_variants?.[make];
-      if (brandVariant && brandVariant.verified_by_human === true && brandVariant.asset_storage_url) {
+      if (symData && !isTrustedMasterSymbol(symData)) return null;
+      if (symData) {
+        const brandVariant = symData.brands_variants?.[make];
+        if (brandVariant && brandVariant.verified_by_human === true && brandVariant.asset_storage_url) {
+          return {
+            concept_id: cid,
+            url: brandVariant.asset_storage_url,
+            technical_name_es: symData.technical_name_es || cid
+          };
+        } else if (symData.standard_icon_url) {
+          return {
+            concept_id: cid,
+            url: symData.standard_icon_url,
+            technical_name_es: symData.technical_name_es || cid
+          };
+        }
+      }
+      const fallbackEntry = masterLoaded ? undefined : packEntries.find((e) => e.concept_id === cid);
+      if (fallbackEntry?.icon_url) {
         return {
           concept_id: cid,
-          url: brandVariant.asset_storage_url,
-          technical_name_es: symData.technical_name_es || cid
-        };
-      } else if (symData.standard_icon_url) {
-        return {
-          concept_id: cid,
-          url: symData.standard_icon_url,
-          technical_name_es: symData.technical_name_es || cid
+          url: fallbackEntry.icon_url,
+          technical_name_es: fallbackEntry.technical_name_es || cid,
         };
       }
       return null;
     }).filter(Boolean) as Array<{ concept_id: string; url: string; technical_name_es: string }>;
-  }, [catalog?.make, masterSymbols]);
+  }, [catalog?.make, catalog?.symbology_pack?.compiled_entries, masterSymbols]);
+
+  // Compilado Reactivo en Tiempo Real (Solo Lectura) derivado EXCLUSIVAMENTE de la caza de contenidos (nunca de títulos de itemizado)
+  const liveHuntedSymbology = useMemo(() => {
+    const vault = catalog?.knowledge_vault;
+    const makeKey = (catalog?.make || '').toLowerCase().trim();
+    let huntedItemsCount = 0;
+    let totalActiveItemsCount = 0;
+
+    interface CompiledHuntedSymbolEntry {
+      concept_id: string;
+      iso_code?: string;
+      category: string;
+      technical_name_es: string;
+      description_es: string;
+      icon_url: string;
+      source_mode: string;
+      applications: Array<{
+        pillar_id: PillarId;
+        pillar_label: string;
+        item_id: string;
+        item_title: string;
+        context_excerpt: string;
+      }>;
+    }
+
+    const byConcept = new Map<string, CompiledHuntedSymbolEntry>();
+
+    const extractExcerptForMarker = (content: string, needle: string, fallbackTitle: string, pillarLabel: string): string => {
+      const lines = content
+        .split(/\n+/)
+        .map((l) => l.replace(/^[#>*\-\d.)\s|]+/, '').trim())
+        .filter((l) => l.length > 8);
+      const lowerNeedle = needle.toLowerCase();
+      const matchedLine = lines.find((l) => l.toLowerCase().includes(lowerNeedle));
+      const cleanLine = (matchedLine || lines[0] || `Aplicado en contenido técnico de "${fallbackTitle}" (${pillarLabel})`)
+        .replace(/\[[sS][íÍiI][mM][bB][oO][lL][oO]:\s*[a-zA-Z0-9_-]+\]/g, '')
+        .replace(/\*\*|\*|`/g, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+      return cleanLine.length > 210 ? `${cleanLine.slice(0, 207)}...` : cleanLine;
+    };
+
+    const registerSymbolFromHuntedItem = (
+      cid: string,
+      pillarMeta: { id: PillarId; label: string },
+      item: PillarItem,
+      needleForExcerpt: string
+    ) => {
+      const symData = masterSymbols[cid];
+      if (symData && !isTrustedMasterSymbol(symData)) return;
+      const masterLoaded = Object.keys(masterSymbols || {}).length > 0;
+      const packFallback = masterLoaded
+        ? undefined
+        : catalog?.symbology_pack?.compiled_entries?.find((e) => e.concept_id === cid);
+      if (!symData && !packFallback) return;
+
+      const brandVariant = symData?.brands_variants?.[makeKey];
+      const hasBrandUrl = Boolean(brandVariant?.verified_by_human && brandVariant?.asset_storage_url);
+      const iconUrl: string = hasBrandUrl
+        ? brandVariant.asset_storage_url
+        : symData?.standard_icon_url || packFallback?.icon_url || '';
+      if (!iconUrl) return;
+
+      const excerpt = extractExcerptForMarker(
+        String(item.content || ''),
+        needleForExcerpt,
+        item.title,
+        pillarMeta.label
+      );
+
+      const existing = byConcept.get(cid);
+      if (existing) {
+        if (!existing.applications.some((a) => a.pillar_id === pillarMeta.id && a.item_id === item.item_id)) {
+          existing.applications.push({
+            pillar_id: pillarMeta.id,
+            pillar_label: pillarMeta.label,
+            item_id: item.item_id,
+            item_title: item.title,
+            context_excerpt: excerpt,
+          });
+        }
+        return;
+      }
+
+      byConcept.set(cid, {
+        concept_id: cid,
+        iso_code: symData?.iso_code || packFallback?.iso_code || undefined,
+        category: symData?.category || packFallback?.category || 'ISO_7000',
+        technical_name_es: symData?.technical_name_es || packFallback?.technical_name_es || cid,
+        description_es:
+          brandVariant?.brand_specific_meaning_es ||
+          symData?.action_operator_es ||
+          symData?.description_es ||
+          packFallback?.description_es ||
+          '[Información técnica no declarada en ficha]',
+        icon_url: iconUrl,
+        source_mode: hasBrandUrl ? 'BRAND_VARIANT' : 'STANDARD_ISO_FALLBACK',
+        applications: [
+          {
+            pillar_id: pillarMeta.id,
+            pillar_label: pillarMeta.label,
+            item_id: item.item_id,
+            item_title: item.title,
+            context_excerpt: excerpt,
+          },
+        ],
+      });
+    };
+
+    if (vault) {
+      for (const pMeta of PILLARS) {
+        const items = vault[pMeta.id]?.items ?? [];
+        for (const item of items) {
+          if (!item || item.is_discarded) continue;
+          totalActiveItemsCount += 1;
+
+          const huntedContent = typeof item.content === 'string' ? item.content.trim() : '';
+          // REGLA ESTRICTA: Ignorar ítems que solo están itemizados (solo títulos).
+          // Solo procesar ítems cuyo contenido ya fue cazado.
+          if (item.content_status !== 'COMPLETADO' || !huntedContent) continue;
+          huntedItemsCount += 1;
+
+          // 1. Marcadores inline [SÍMBOLO: concept_id] con mención explícita verificada
+          //    (en `ficha_tecnica` solo con código normativo literal en la misma línea).
+          const explicitIds = extractExplicitSymbolIds(huntedContent, pMeta.id);
+          for (const cid of explicitIds) {
+            registerSymbolFromHuntedItem(cid, pMeta, item, `[SÍMBOLO: ${cid}]`);
+          }
+
+          // 2. `symbology_refs` heredados: solo si su mención explícita existe en el contenido cazado
+          //    (descarta refs especulativos de versiones anteriores del cazador).
+          if (Array.isArray(item.symbology_refs)) {
+            const explicitSet = new Set(explicitIds);
+            for (const refId of item.symbology_refs) {
+              const cid = typeof refId === 'string' ? refId.trim() : '';
+              if (cid && explicitSet.has(cid)) {
+                const symName = masterSymbols[cid]?.technical_name_es || cid;
+                registerSymbolFromHuntedItem(cid, pMeta, item, symName);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return {
+      entries: Array.from(byConcept.values()),
+      huntedItemsCount,
+      totalActiveItemsCount,
+    };
+  }, [catalog?.knowledge_vault, catalog?.make, catalog?.symbology_pack?.compiled_entries, masterSymbols]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -2707,8 +3925,10 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         version: tenantOverrides?.version || data?.version || 'ESTÁNDAR',
         official_url: tenantOverrides?.official_url || data?.official_url || '',
         foto_url: tenantOverrides?.foto_url || data?.foto_url || '',
+        foto_media_telemetry: tenantOverrides?.foto_media_telemetry || data?.foto_media_telemetry,
         is_sealed: data?.is_sealed,
         knowledge_vault: data?.knowledge_vault,
+        symbology_pack: data?.symbology_pack,
       });
       setLoading(false);
       const hasPillars = PILLARS.some((p) => !!(data?.knowledge_vault)?.[p.id]);
@@ -2802,6 +4022,104 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
   // ID estable derivado del catálogo — evita que los callbacks se recreen en cada snapshot de Firestore
   const catalogId = catalog?.id;
 
+  const activeHuntKeys = useMemo(() => {
+    const keys = new Set<string>(Object.keys(huntProgressByItem));
+    const kv = catalog?.knowledge_vault;
+    if (kv) {
+      for (const pMeta of PILLARS) {
+        const items = kv[pMeta.id]?.items || [];
+        for (const it of items) {
+          if (!it.is_discarded && it.content_status === 'GENERANDO') {
+            keys.add(`${pMeta.id}:${it.item_id}`);
+          }
+        }
+      }
+    }
+    return Array.from(keys);
+  }, [catalog?.knowledge_vault, huntProgressByItem]);
+
+  useEffect(() => {
+    if (!catalogId) return;
+    const activeSet = new Set(activeHuntKeys);
+
+    // Limpiar listeners de ítems que ya no están en curso
+    for (const existingKey of Object.keys(huntListenersRef.current)) {
+      if (!activeSet.has(existingKey)) {
+        huntListenersRef.current[existingKey]?.();
+        delete huntListenersRef.current[existingKey];
+      }
+    }
+
+    // Suscribir cada ítem en curso a su documento task_status independiente
+    for (const key of activeHuntKeys) {
+      if (huntListenersRef.current[key]) continue;
+      const [pillarId, itemId] = key.split(':');
+      if (!pillarId || !itemId) continue;
+      const taskId = `${catalogId}_${pillarId}_${itemId}`;
+
+      huntListenersRef.current[key] = onSnapshot(
+        doc(db, 'task_status', taskId),
+        (snap) => {
+          if (!snap.exists()) return;
+          const data = snap.data();
+          if (data.status === 'PENDING' || data.status === 'PROCESSING') {
+            const pctVal =
+              typeof data.progress_percent === 'number'
+                ? Math.max(0, Math.min(100, Math.round(data.progress_percent)))
+                : Math.max(0, Math.min(100, Number.parseInt(String(data.progress_percent ?? 0), 10) || 0));
+            setHuntProgressByItem((prev) => (prev[key] === pctVal ? prev : { ...prev, [key]: pctVal }));
+
+            const updatedAtMs = Number(data.updatedAtMs || (data.updated_at ? Date.parse(String(data.updated_at)) : 0));
+            if (canCurateAI && updatedAtMs > 0 && Date.now() - updatedAtMs > 65_000) {
+              void authFetch(`${API_BASE_URL}/vault/hunt-item-async`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  globalAssetId: catalogId,
+                  pillarId,
+                  itemId,
+                  forceRestart: true,
+                }),
+              }).catch(() => {});
+            }
+          } else if (data.status === 'COMPLETED') {
+            huntListenersRef.current[key]?.();
+            delete huntListenersRef.current[key];
+            setHuntProgressByItem((prev) => {
+              if (prev[key] === undefined) return prev;
+              const next = { ...prev };
+              delete next[key];
+              return next;
+            });
+          } else if (data.status === 'FAILED' || data.status === 'ERROR') {
+            const errMsg = data.error || t('vault_dashboard.status.async_research_failed');
+            toast.error(`Error: ${errMsg}`, { autoClose: 5000 });
+            huntListenersRef.current[key]?.();
+            delete huntListenersRef.current[key];
+            setHuntProgressByItem((prev) => {
+              if (prev[key] === undefined) return prev;
+              const next = { ...prev };
+              delete next[key];
+              return next;
+            });
+          }
+        },
+        () => {
+          // Silencioso en reconexión
+        }
+      );
+    }
+  }, [catalogId, activeHuntKeys, t]);
+
+  useEffect(() => {
+    return () => {
+      for (const unsub of Object.values(huntListenersRef.current)) {
+        unsub?.();
+      }
+      huntListenersRef.current = {};
+    };
+  }, [catalogId]);
+
   const uploadCatalogHeroPhotoCas = useCallback(async (file: File) => {
     if (!canCurateAI || !catalogId) return;
     setIsUploadingPhoto(true);
@@ -2810,6 +4128,9 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     try {
       let downloadUrl = '';
       let savingsPct = 0;
+      const originalBytes = file.size;
+      let optimizedBytes = file.size;
+      let photoSha256 = '';
 
       try {
         const { descriptor, digested } = await mediaDigestorClient.digestAndUploadCas(file, {
@@ -2819,24 +4140,38 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         });
         downloadUrl = descriptor.downloadUrl;
         savingsPct = Math.round(digested.savingsRatio * 100);
+        optimizedBytes = digested.optimizedBytes;
+        photoSha256 = digested.sha256;
       } catch (_casErr) {
         // Fallback Storage directo en ruta CAS autorizada cas_blobs/global_oem/
         const digested = await mediaDigestorClient.digestFile(file, 'IMAGE_TECHNICAL_HD');
         savingsPct = Math.round(digested.savingsRatio * 100);
+        optimizedBytes = digested.optimizedBytes;
+        photoSha256 = digested.sha256;
         const storagePath = `cas_blobs/global_oem/${digested.sha256}.${digested.extension}`;
         const storageRef = ref(storage, storagePath);
         await uploadBytes(storageRef, digested.blob, { contentType: digested.mimeType });
         downloadUrl = await getDownloadURL(storageRef);
       }
 
+      const fotoMediaTelemetry = {
+        original_bytes: originalBytes,
+        optimized_bytes: optimizedBytes,
+        savings_pct: savingsPct,
+        sha256: photoSha256,
+        updated_at: new Date().toISOString(),
+      };
+
       await updateDoc(doc(db, 'global_asset_catalog', catalogId), {
         foto_url: downloadUrl,
+        foto_media_telemetry: fotoMediaTelemetry,
         updatedAt: new Date(),
       });
 
       try {
         await updateDoc(doc(db, 'tenant_assets', assetId), {
           foto_url: downloadUrl,
+          foto_media_telemetry: fotoMediaTelemetry,
           updatedAt: new Date(),
         });
       } catch (_err) {
@@ -2844,7 +4179,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       }
 
       toast.update(toastId, {
-        render: `Foto optimizada registrada en CAS (-${savingsPct}% peso)`,
+        render: `Foto optimizada registrada en CAS (${formatPhotoBytes(originalBytes)} ➔ ${formatPhotoBytes(optimizedBytes)} · -${savingsPct}%)`,
         type: 'success',
         isLoading: false,
         autoClose: 3000,
@@ -2878,12 +4213,14 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     try {
       await updateDoc(doc(db, 'global_asset_catalog', catalogId), {
         foto_url: '',
+        foto_media_telemetry: null,
         updatedAt: new Date()
       });
 
       try {
         await updateDoc(doc(db, 'tenant_assets', assetId), {
           foto_url: '',
+          foto_media_telemetry: null,
           updatedAt: new Date()
         });
       } catch (_err) {
@@ -2955,6 +4292,8 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       const json = await res.json();
       if (res.ok && json.success) {
         toast.update(toastId, { render: t('vault_dashboard.status.items_generated', { count: json.items?.length ?? 0 }), type: 'success', isLoading: false, autoClose: 3000 });
+      } else if (res.status === 422 && json.error === 'SECUENCIA_PILAR_BLOQUEADA') {
+        toast.update(toastId, { render: json.message || 'Debe itemizar el pilar precedente en la secuencia lógica.', type: 'warning', isLoading: false, autoClose: 6000 });
       } else if (res.status === 422 && json.error === 'PERFIL_INCOMPLETO') {
         toast.update(toastId, { render: `${t('vault_dashboard.status.incomplete_profile')}: ${(json.missingFields ?? []).join(', ')}`, type: 'warning', isLoading: false, autoClose: 6000 });
       } else if (res.status === 429) {
@@ -2969,75 +4308,40 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     }
   }, [canCurateAI, catalogId, itemizingPillar, t]);
 
-  const handleHuntItem = useCallback(async (pillarId: PillarId, itemId: string, correction?: string) => {
-    if (!canCurateAI || !catalogId || huntingItem) return;
-    setHuntingItem({ pillarId, itemId });
-    const toastId = toast.loading(t('vault_dashboard.status.starting_async_research').concat('…'));
-    
-    const taskId = `${catalogId}_${pillarId}_${itemId}`;
-    let unsub: (() => void) | null = null;
+  const handleHuntItem = useCallback(async (pillarId: PillarId, itemId: string, correction?: string, forceRestart?: boolean) => {
+    const huntKey = `${pillarId}:${itemId}`;
+    if (!canCurateAI || !catalogId || (huntProgressByItem[huntKey] !== undefined && !forceRestart)) return;
+    setHuntProgressByItem((prev) => ({ ...prev, [huntKey]: 0 }));
 
     try {
       const res = await authFetch(`${API_BASE_URL}/vault/hunt-item-async`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, humanCorrection: correction }),
+        body: JSON.stringify({
+          globalAssetId: catalogId,
+          pillarId,
+          itemId,
+          humanCorrection: correction,
+          forceRestart: Boolean(forceRestart),
+        }),
       });
 
       if (!res.ok) {
-        const json = await res.json();
+        const json = await res.json().catch(() => ({}));
         throw new Error(json.error || t('vault_dashboard.status.could_not_enqueue_task'));
       }
-
-      toast.update(toastId, { render: t('vault_dashboard.status.task_enqueued') });
-      setHuntStatusMessage(t('vault_dashboard.status.pending_in_queue').concat('…'));
-
-      unsub = onSnapshot(doc(db, 'task_status', taskId), (snap) => {
-        if (!snap.exists()) return;
-        const data = snap.data();
-
-        if (data.status === 'PROCESSING') {
-          const msg = data.progress_message || t('vault_dashboard.status.investigating');
-          const pct = data.progress_percent ? ` (${data.progress_percent}%)` : '';
-          const fullMsg = `${msg}${pct}`;
-          
-          setHuntStatusMessage(fullMsg);
-          toast.update(toastId, { render: `${t('vault_dashboard.labels.progress')}: ${fullMsg}` });
-        } 
-        else if (data.status === 'COMPLETED') {
-          toast.update(toastId, { render: t('vault_dashboard.status.investigation_success'), type: 'success', isLoading: false, autoClose: 3000 });
-          setHuntingItem(null);
-          setHuntStatusMessage('');
-          if (unsub) unsub();
-          
-          setExpandedItems(prev => {
-            const next = new Set(prev);
-            next.add(itemId);
-            return next;
-          });
-        } 
-        else if (data.status === 'FAILED' || data.status === 'ERROR') {
-          const errMsg = data.error || t('vault_dashboard.status.async_research_failed');
-          toast.update(toastId, { render: `Error: ${errMsg}`, type: 'error', isLoading: false, autoClose: 5000 });
-          setHuntingItem(null);
-          setHuntStatusMessage('');
-          if (unsub) unsub();
-        }
-      }, (error) => {
-        console.error('[Vault] Error en listener de progreso:', error);
-        toast.update(toastId, { render: t('vault_dashboard.status.connection_error_progress'), type: 'error', isLoading: false, autoClose: 3000 });
-        setHuntingItem(null);
-        setHuntStatusMessage('');
-        if (unsub) unsub();
-      });
-
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      toast.update(toastId, { render: `Error: ${errorMessage}`, type: 'error', isLoading: false, autoClose: 5000 });
-      setHuntingItem(null);
-      if (unsub) unsub();
+      toast.error(`Error: ${errorMessage}`, { autoClose: 5000 });
+      huntListenersRef.current[huntKey]?.();
+      delete huntListenersRef.current[huntKey];
+      setHuntProgressByItem((prev) => {
+        const next = { ...prev };
+        delete next[huntKey];
+        return next;
+      });
     }
-  }, [canCurateAI, catalogId, huntingItem, t]);
+  }, [canCurateAI, catalogId, huntProgressByItem, t]);
 
   const handleAiAssistItem = useCallback(async (pillarId: PillarId, itemId: string, userRequest: string): Promise<AiAssistResponse | null> => {
     if (!canCurateAI || !catalogId || assistingItemId) return null;
@@ -3097,7 +4401,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       const res = await authFetch(`${API_BASE_URL}/vault/create-item`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ globalAssetId: catalogId, pillarId, title, section, rationale, itemSource }),
+        body: JSON.stringify({ globalAssetId: catalogId, pillarId, title, section, rationale, itemSource, confirmWord: 'ACTUALIZAR' }),
       });
       if (res.ok) {
         toast.update(toastId, { render: t('vault_dashboard.status.item_created_success'), type: 'success', isLoading: false, autoClose: 3000 });
@@ -3125,7 +4429,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       const res = await authFetch(`${API_BASE_URL}/vault/discard-item`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ globalAssetId: catalogId, pillarId: activeTab, itemId, userEmail }),
+        body: JSON.stringify({ globalAssetId: catalogId, pillarId: activeTab, itemId, userEmail, confirmWord: 'ACTUALIZAR' }),
       });
       if (res.ok) {
         toast.update(toastId, { render: t('vault_dashboard.status.item_discarded_success'), type: 'success', isLoading: false, autoClose: 3000 });
@@ -3146,7 +4450,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       const res = await authFetch(`${API_BASE_URL}/vault/reactivate-item`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ globalAssetId: catalogId, pillarId: activeTab, itemId }),
+        body: JSON.stringify({ globalAssetId: catalogId, pillarId: activeTab, itemId, confirmWord: 'ACTUALIZAR' }),
       });
       if (res.ok) {
         toast.update(toastId, { render: t('vault_dashboard.status.item_reactivated_success'), type: 'success', isLoading: false, autoClose: 3000 });
@@ -3286,7 +4590,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
 
   if (loading) return (
     <div className="h-full w-full bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-center">
-      <span className="material-symbols-outlined animate-spin text-[#C68346] !text-4xl">progress_activity</span>
+      <M3CircularProgress size={40} strokeWidth={4} indeterminate tone="copper" ariaLabel="Cargando bóveda técnica" />
     </div>
   );
   if (!catalog) return (
@@ -3326,41 +4630,27 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
           )}
         </div>
 
-        {/* Acciones de Estudio de Ingeniería (Ingesta PDF/ETT solo curadores · Simbología Ad-Hoc · Manuales Ilustrados) */}
+        {/* Acciones de Estudio de Ingeniería (Iconos planos: upload_file para Ingesta PDF/ETT · draw para Manuales Ilustrados) */}
         <div className="flex items-center gap-[8px] shrink-0">
-          {canCurateAI && onOpenContributions && catalogId && (
-            <button
-              type="button"
-              onClick={() => onOpenContributions(catalogId)}
-              title={t('opermaq_domains.hitl_queue_title')}
-              aria-label={t('opermaq_domains.hitl_queue_title')}
-              className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none shadow-none"
-            >
-              <span className="material-symbols-outlined text-[20px]">fact_check</span>
-            </button>
-          )}
           {canCurateAI && (
             <button
               type="button"
               onClick={() => openStudio('INGESTION')}
-              className="px-[13px] py-[8px] border border-[#C68346] bg-transparent hover:bg-[#C68346]/10 text-[#C68346] text-[11px] font-bold uppercase tracking-wider font-mono tabular-nums rounded-none shadow-none transition-colors cursor-pointer"
+              title="Ingesta PDF / ETT"
+              aria-label="Ingesta PDF / ETT"
+              className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none shadow-none"
             >
-              INGESTA PDF / ETT
+              <span className="material-symbols-outlined text-[20px]">upload_file</span>
             </button>
           )}
           <button
             type="button"
-            onClick={() => openStudio('SYMBOLOGY_PACK')}
-            className="px-[13px] py-[8px] border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] bg-[#F8FAFC] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] hover:text-[#00AEEF] text-[11px] font-bold uppercase tracking-wider font-mono tabular-nums rounded-none shadow-none transition-colors cursor-pointer"
-          >
-            SIMBOLOGÍA AD-HOC
-          </button>
-          <button
-            type="button"
             onClick={() => openStudio('MANUAL_PUBLISHER')}
-            className="px-[13px] py-[8px] border border-[#00AEEF] bg-[#00AEEF]/10 hover:bg-[#00AEEF]/20 text-[#00AEEF] text-[11px] font-bold uppercase tracking-wider font-mono tabular-nums rounded-none shadow-none transition-colors cursor-pointer"
+            title="Manuales Ilustrados"
+            aria-label="Manuales Ilustrados"
+            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none shadow-none"
           >
-            MANUALES ILUSTRADOS
+            <span className="material-symbols-outlined text-[20px]">draw</span>
           </button>
         </div>
       </div>
@@ -3416,7 +4706,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                   }`}
                 >
                   {isUploadingPhoto ? (
-                    <span className="material-symbols-outlined animate-spin text-[#C68346] !text-xl">progress_activity</span>
+                    <M3CircularProgress size={24} strokeWidth={3} indeterminate tone="copper" ariaLabel="Optimizando fotografía en CAS" />
                   ) : (
                     <>
                       <span className="material-symbols-outlined !text-xl">
@@ -3436,6 +4726,17 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                 </div>
               )}
             </div>
+
+            {catalog.foto_url && catalog.foto_media_telemetry && (
+              <div className="mt-[8px] px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] flex items-center justify-between gap-[8px] font-mono tabular-nums text-[9px]">
+                <span className="text-[#475569] dark:text-[#8A93A6] truncate">
+                  ORIG: {formatPhotoBytes(catalog.foto_media_telemetry.original_bytes)} ➔ CAS: {formatPhotoBytes(catalog.foto_media_telemetry.optimized_bytes)}
+                </span>
+                <span className="font-bold text-[#00AEEF] shrink-0">
+                  -{catalog.foto_media_telemetry.savings_pct}%
+                </span>
+              </div>
+            )}
 
             {canCurateAI && catalog.foto_url && (
               <div className="flex flex-col gap-[8px] w-full mt-[8px]">
@@ -3580,71 +4881,308 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         {/* ── ÁREA DERECHA: Pilares + Items ─────────────────────────────────── */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
 
-          {/* Tabs de pilares */}
-          {expandedItems.size === 0 && (
-            <nav className="shrink-0 flex border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] overflow-x-auto hide-scrollbar">
-              {PILLARS.map(p => {
+          {/* Barra Minimalista de 5 Pilares + Icono INFO al final de la fila (Al presionar cualquiera vuelve al listado home de ese pilar) */}
+          <nav className="shrink-0 flex items-stretch border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] overflow-x-auto hide-scrollbar">
+              {PILLARS.map((p) => {
                 const pillar = catalog.knowledge_vault?.[p.id];
-                const isActive = activeTab === p.id;
-                const hasItems = !!(pillar?.items?.length);
-                const allCazados = hasItems && (pillar?.items ?? []).every(it => it.content_status === 'COMPLETADO');
-                const isCompleted = pillar?.itemize_status === 'COMPLETED' && allCazados;
+                const isActive = !showSymbologyInfo && activeTab === p.id;
+                const activeItems = (pillar?.items ?? []).filter((it) => !it.is_discarded);
+                const hasActiveItems = activeItems.length > 0;
+                const isItemized = pillar?.itemize_status === 'COMPLETED' || hasActiveItems;
+                const isFullyCaptured =
+                  isItemized &&
+                  hasActiveItems &&
+                  activeItems.every(
+                    (it) => it.content_status === 'COMPLETADO' && Boolean(it.content && it.content.trim())
+                  );
+
+                const prereqId = PILLAR_PREREQUISITE_MAP[p.id];
+                const prereqPillar = prereqId ? catalog.knowledge_vault?.[prereqId] : null;
+                const isPrereqCompleted = !prereqId || prereqPillar?.itemize_status === 'COMPLETED';
+                const isLockedInSequence = !isPrereqCompleted && !isItemized;
+
+                const statusColorClass = isFullyCaptured
+                  ? 'text-[#10B981]'
+                  : isItemized
+                  ? 'text-[#00AEEF]'
+                  : isActive
+                  ? 'text-[#0F172A] dark:text-[#F3F4F6]'
+                  : 'text-[#94A3B8] dark:text-[#5A6072]';
+
+                const activeBorderClass = isFullyCaptured
+                  ? '!border-[#10B981]'
+                  : isItemized
+                  ? '!border-[#00AEEF]'
+                  : '!border-[#C68346]';
+
                 return (
                   <M3Button
                     key={p.id}
-                    onClick={() => setActiveTab(p.id)}
-                    disabled={expandedItems.size > 0 && !isActive}
+                    onClick={() => {
+                      setShowSymbologyInfo(false);
+                      setExpandedItems(new Set());
+                      setActiveProposalView(null);
+                      setActiveTab(p.id);
+                    }}
                     variant="ghost"
                     className={`relative flex-1 min-w-0 flex items-center justify-center !px-2 !py-4 !h-auto transition-all border-b-2 !rounded-none ${
-                      expandedItems.size > 0 && !isActive ? 'opacity-30 pointer-events-none ' : ''
-                    }${
                       isActive
-                        ? `!border-current ${p.color} bg-[#F8FAFC] dark:bg-[#07090D]`
-                        : '!border-transparent text-[#94A3B8] dark:text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                        ? `${activeBorderClass} bg-[#F8FAFC] dark:bg-[#07090D]`
+                        : '!border-transparent hover:bg-[#F8FAFC]/50 dark:hover:bg-[#07090D]/50'
                     }`}
-                    title={t(`vault_dashboard.pillars.${p.id}`, p.label)}
+                    title={
+                      isFullyCaptured
+                        ? `${t(`vault_dashboard.pillars.${p.id}`, p.label)} — Contenidos 100% capturados`
+                        : isItemized
+                        ? `${t(`vault_dashboard.pillars.${p.id}`, p.label)} — Itemizado`
+                        : isLockedInSequence && prereqId
+                        ? `${t(`vault_dashboard.pillars.${p.id}`, p.label)} — Pendiente del pilar anterior`
+                        : t(`vault_dashboard.pillars.${p.id}`, p.label)
+                    }
                   >
-                    <span className={`material-symbols-outlined !text-[20px] ${isActive ? p.color : ''}`}>{p.icon}</span>
-                    {isCompleted && <span className="w-1.5 h-1.5 rounded-none bg-[#00AEEF] shrink-0 ml-1.5" />}
-                    {hasItems && !isCompleted && <span className="w-1.5 h-1.5 rounded-none bg-[#C68346] shrink-0 ml-1.5" />}
+                    <span className={`material-symbols-outlined !text-[20px] transition-colors ${statusColorClass}`}>
+                      {p.icon}
+                    </span>
                   </M3Button>
                 );
               })}
-            </nav>
-          )}
 
-          {/* Tab Content: Listado de ítems */}
+              {/* Icono INFO al final de la fila de pilares — Compilado Real de Simbología (Solo Lectura, derivado de caza de contenidos) */}
+              {(() => {
+                const allHunted =
+                  liveHuntedSymbology.totalActiveItemsCount > 0 &&
+                  liveHuntedSymbology.huntedItemsCount === liveHuntedSymbology.totalActiveItemsCount;
+                const someHunted = liveHuntedSymbology.huntedItemsCount > 0;
+                const infoColorClass = allHunted
+                  ? 'text-[#10B981]'
+                  : someHunted
+                  ? 'text-[#00AEEF]'
+                  : showSymbologyInfo
+                  ? 'text-[#0F172A] dark:text-[#F3F4F6]'
+                  : 'text-[#94A3B8] dark:text-[#5A6072]';
+                const infoBorderClass = allHunted
+                  ? '!border-b-[#10B981]'
+                  : someHunted
+                  ? '!border-b-[#00AEEF]'
+                  : '!border-b-[#C68346]';
+
+                return (
+                  <M3Button
+                    onClick={() => {
+                      setExpandedItems(new Set());
+                      setActiveProposalView(null);
+                      setShowSymbologyInfo(true);
+                    }}
+                    variant="ghost"
+                    className={`relative flex-1 min-w-0 flex items-center justify-center !px-2 !py-4 !h-auto transition-all border-b-2 border-l border-l-[#E2E8F0] dark:border-l-[#12151C] !rounded-none ${
+                      showSymbologyInfo
+                        ? `${infoBorderClass} bg-[#F8FAFC] dark:bg-[#07090D]`
+                        : '!border-b-transparent hover:bg-[#F8FAFC]/50 dark:hover:bg-[#07090D]/50'
+                    }`}
+                    title="Simbología técnica aplicada al equipo (compilada de contenidos cazados)"
+                  >
+                    <span className={`material-symbols-outlined !text-[20px] transition-colors ${infoColorClass}`}>
+                      info
+                    </span>
+                  </M3Button>
+                );
+              })()}
+            </nav>
+
+          {/* Tab Content: Sección INFO (Simbología Solo Lectura) o Listado de ítems del Pilar */}
           <section className="flex-1 min-h-0 flex flex-col overflow-hidden">
-            <PillarTabContent
-              key={activeTab}
-              pillarMeta={activePillarMeta}
-              pillar={catalog.knowledge_vault?.[activeTab]}
-              catalogId={catalog.id}
-              canCurateAI={canCurateAI}
-              onItemize={handleItemizePillar}
-              onHuntItem={handleHuntItem}
-              onAiAssistItem={handleAiAssistItem}
-              onApplyAssistItem={handleApplyAssistProposal}
-              onCreateItem={handleCreateManualItem}
-              itemizing={itemizingPillar === activeTab}
-              huntingItemId={huntingItem?.pillarId === activeTab ? huntingItem.itemId : null}
-              huntStatusMessage={huntStatusMessage}
-              assistingItemId={assistingItemId}
-              expandedItems={expandedItems}
-              onToggleExpand={toggleItemExpansion}
-              onDiscardItem={handleDiscardItem}
-              onReactivateItem={handleReactivateItem}
-              isSealed={catalog.is_sealed || false}
-              onUnlockItem={(itemId) => handleUnlockItem(activeTab, itemId)}
-              onUpdateApprovalState={(itemId, state, notes) => handleUpdateItemApprovalState(activeTab, itemId, state, notes)}
-              onRollbackVersion={(itemId, timestamp) => handleRollbackItemVersion(activeTab, itemId, timestamp)}
-              activeProposalView={activeProposalView}
-              onSetProposalView={setActiveProposalView}
-              onDecideProposal={handleDecideProposal}
-              onEvolveItemByType={handleEvolveItemByType}
-              resolveItemSymbology={resolveItemSymbology}
-              onOpenStudio={openStudio}
-            />
+            {showSymbologyInfo ? (
+              <div className="flex flex-col h-full min-h-0 select-none font-atkinson">
+                {/* Cabecera de Sección Solo Lectura */}
+                <div className="shrink-0 flex flex-wrap items-center justify-between gap-4 px-5 py-3 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+                  <div className="flex items-center gap-[13px] min-w-0">
+                    <h1 className="text-[13px] font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6] leading-none">
+                      SIMBOLOGÍA TÉCNICA APLICADA AL EQUIPO
+                    </h1>
+                    <span className="font-mono tabular-nums text-[10px] font-bold uppercase text-[#5A6072]">
+                      [SOLO LECTURA · ACTUALIZACIÓN AUTOMÁTICA POR CAZA DE CONTENIDOS]
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-[13px] shrink-0 ml-auto">
+                    <div
+                      className="flex items-center gap-[8px]"
+                      title={`Ítems con contenido cazado analizados: ${liveHuntedSymbology.huntedItemsCount}/${liveHuntedSymbology.totalActiveItemsCount}`}
+                    >
+                      <M3LinearProgress
+                        value={
+                          liveHuntedSymbology.totalActiveItemsCount > 0
+                            ? Math.round((liveHuntedSymbology.huntedItemsCount / liveHuntedSymbology.totalActiveItemsCount) * 100)
+                            : 0
+                        }
+                        tone={
+                          liveHuntedSymbology.totalActiveItemsCount > 0 &&
+                          liveHuntedSymbology.huntedItemsCount === liveHuntedSymbology.totalActiveItemsCount
+                            ? 'cyan'
+                            : 'copper'
+                        }
+                        className="w-[89px]"
+                        ariaLabel="Ítems cazados procesados"
+                      />
+                      <span className="text-[10px] font-bold font-mono tabular-nums text-[#00AEEF]">
+                        {liveHuntedSymbology.entries.length} SÍMBOLO(S) · {liveHuntedSymbology.huntedItemsCount}/{liveHuntedSymbology.totalActiveItemsCount} ÍTEMS CAZADOS
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Cuerpo Solo Lectura: Tabla Compilada Real */}
+                <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-5 py-5">
+                  {liveHuntedSymbology.huntedItemsCount === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center py-16 text-center max-w-lg mx-auto gap-[13px]">
+                      <span className="material-symbols-outlined !text-[24px] text-[#5A6072]">info</span>
+                      <p className="text-[12px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6] font-mono">
+                        [SIN CONTENIDOS CAZADOS REGISTRADOS]
+                      </p>
+                      <p className="text-[12px] text-[#475569] dark:text-[#8A93A6] leading-relaxed">
+                        Esta sección es de solo lectura y se actualiza automáticamente a medida que se ejecuta la caza de contenidos de cada ítem. Los títulos del itemizado no generan simbología.
+                      </p>
+                    </div>
+                  ) : liveHuntedSymbology.entries.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center py-16 text-center">
+                      <p className="text-[13px] text-[#5A6072]">
+                        [Información técnica no declarada en ficha]
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] overflow-x-auto rounded-none shadow-none">
+                      <table className="w-full border-collapse text-left">
+                        <thead>
+                          <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D]">
+                            <th className="p-[13px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] w-[89px]">
+                              SÍMBOLO
+                            </th>
+                            <th className="p-[13px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] w-[190px]">
+                              CÓDIGO / NORMA
+                            </th>
+                            <th className="p-[13px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] w-[260px]">
+                              SIGNIFICADO TÉCNICO
+                            </th>
+                            <th className="p-[13px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                              APLICACIÓN ESPECÍFICA EN EL EQUIPO (CAZA DE CONTENIDOS)
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {liveHuntedSymbology.entries.map((entry) => (
+                            <tr
+                              key={entry.concept_id}
+                              className="border-b border-[#E2E8F0] dark:border-[#12151C] last:border-b-0 align-top"
+                            >
+                              <td className="p-[13px]">
+                                <div className="w-[55px] h-[55px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] p-[8px] flex items-center justify-center rounded-none shadow-none">
+                                  <img
+                                    src={entry.icon_url}
+                                    alt={entry.technical_name_es}
+                                    draggable={false}
+                                    onContextMenu={(e) => e.preventDefault()}
+                                    style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
+                                    className="max-w-full max-h-full object-contain select-none pointer-events-none"
+                                  />
+                                </div>
+                              </td>
+                              <td className="p-[13px] font-mono tabular-nums">
+                                <p className="text-[12px] font-bold text-[#0F172A] dark:text-[#F3F4F6] select-text">
+                                  {entry.concept_id}
+                                </p>
+                                <p className="text-[11px] text-[#C68346] font-bold mt-[4px]">
+                                  {entry.iso_code || entry.category}
+                                </p>
+                                <p className="text-[10px] text-[#5A6072] mt-[4px]">
+                                  {entry.source_mode === 'BRAND_VARIANT' ? 'OEM VERIFICADO' : 'ESTÁNDAR ISO'}
+                                </p>
+                              </td>
+                              <td className="p-[13px]">
+                                <p className="text-[13px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                                  {entry.technical_name_es}
+                                </p>
+                                <p className="text-[12px] text-[#475569] dark:text-[#8A93A6] mt-[4px] leading-snug">
+                                  {entry.description_es}
+                                </p>
+                              </td>
+                              <td className="p-[13px]">
+                                <div className="flex flex-col gap-[8px]">
+                                  {entry.applications.map((ch, idx) => (
+                                    <div
+                                      key={`${entry.concept_id}-ch-${idx}`}
+                                      className="border-l-2 border-[#C68346] pl-[8px]"
+                                    >
+                                      <p className="font-mono tabular-nums text-[11px] font-bold text-[#00AEEF]">
+                                        [{ch.pillar_label}] {ch.item_title}
+                                      </p>
+                                      <p className="text-[12px] text-[#0F172A] dark:text-[#F3F4F6] mt-[2px] leading-snug">
+                                        {ch.context_excerpt}
+                                      </p>
+                                    </div>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (() => {
+              const prereqId = PILLAR_PREREQUISITE_MAP[activeTab];
+              const prereqMeta = prereqId ? PILLARS.find(x => x.id === prereqId) : null;
+              const prereqDoc = prereqId ? catalog.knowledge_vault?.[prereqId] : null;
+              const prerequisitePillar = prereqId && prereqMeta
+                ? {
+                    id: prereqId,
+                    stepCode: prereqMeta.stepCode,
+                    label: prereqMeta.label,
+                    isItemized:
+                      prereqDoc?.itemize_status === 'COMPLETED' ||
+                      (prereqDoc?.items ?? []).some((it: any) => !it?.is_discarded),
+                    currentDigest: prereqDoc?.structure_digest_sha256 ?? null,
+                  }
+                : null;
+
+              return (
+                <PillarTabContent
+                  key={activeTab}
+                  pillarMeta={activePillarMeta}
+                  pillar={catalog.knowledge_vault?.[activeTab]}
+                  catalogId={catalog.id}
+                  canCurateAI={canCurateAI}
+                  onItemize={handleItemizePillar}
+                  onHuntItem={handleHuntItem}
+                  onAiAssistItem={handleAiAssistItem}
+                  onApplyAssistItem={handleApplyAssistProposal}
+                  onCreateItem={handleCreateManualItem}
+                  itemizing={itemizingPillar === activeTab}
+                  huntProgressByItem={huntProgressByItem}
+                  assistingItemId={assistingItemId}
+                  expandedItems={expandedItems}
+                  onToggleExpand={toggleItemExpansion}
+                  onDiscardItem={handleDiscardItem}
+                  onReactivateItem={handleReactivateItem}
+                  isSealed={catalog.is_sealed || false}
+                  onUnlockItem={(itemId) => handleUnlockItem(activeTab, itemId)}
+                  onUpdateApprovalState={(itemId, state, notes) => handleUpdateItemApprovalState(activeTab, itemId, state, notes)}
+                  onRollbackVersion={(itemId, timestamp) => handleRollbackItemVersion(activeTab, itemId, timestamp)}
+                  activeProposalView={activeProposalView}
+                  onSetProposalView={setActiveProposalView}
+                  onDecideProposal={handleDecideProposal}
+                  onEvolveItemByType={handleEvolveItemByType}
+                  resolveItemSymbology={resolveItemSymbology}
+                  onOpenStudio={openStudio}
+                  prerequisitePillar={prerequisitePillar}
+                  onNavigateToPillar={(id) => {
+                    setShowSymbologyInfo(false);
+                    setActiveTab(id);
+                  }}
+                />
+              );
+            })()}
           </section>
         </div>
       </div>

@@ -48,6 +48,7 @@ export interface IngestDocumentInput {
     fileBuffer: Buffer;
     mimeType: string;
     originalFilename: string;
+    clientOriginalBytes?: number;
     documentCategory?: 'OEM_MANUAL' | 'CATALOG_BROCHURE' | 'ETT_SPEC_SHEET' | 'TECHNICAL_CHART_PHOTO';
     visibilityScope?: 'COMMONS_OEM' | 'TENANT_ONLY';
     tenantId?: string;
@@ -144,7 +145,7 @@ function computePageFastCdcFingerprint(pageText: string, visualDigestHex?: strin
  * Renderiza una página específica (0-based) de un buffer PDF a PNG usando `mupdf` WASM
  * liberando determinísticamente la memoria lineal WASM al finalizar.
  */
-async function renderPdfPageToPng(
+export async function renderPdfPageToPng(
     pdfBuffer: Buffer,
     zeroBasedPageIndex: number,
     dpi: number = 240
@@ -192,7 +193,7 @@ async function renderPdfPageToPng(
  * Recorta una región normalizada `box_2d` `[ymin, xmin, ymax, xmax]` (`0..1000`) desde una imagen de página
  * con margen óptico de seguridad del 1.5% para no amputar cotas ni números de callout.
  */
-async function cropBox2dFromImage(
+export async function cropBox2dFromImage(
     pageImageBuffer: Buffer,
     pageWidth: number,
     pageHeight: number,
@@ -223,6 +224,50 @@ async function cropBox2dFromImage(
         .toBuffer();
 }
 
+/**
+ * Extrae el texto plano por página (`mupdf` WASM) de un PDF, acotado a `maxPages`,
+ * para localizar las páginas pertinentes a un capítulo antes de renderizar/recortar figuras.
+ */
+export async function extractPdfPageTexts(
+    pdfBuffer: Buffer,
+    maxPages: number = 60
+): Promise<Array<{ pageIndex: number; text: string }>> {
+    return withMupdfSemaphore(async () => {
+        const mupdf = await importEsm<any>('mupdf');
+        let doc: any = null;
+        const out: Array<{ pageIndex: number; text: string }> = [];
+        try {
+            doc = mupdf.Document.openDocument(pdfBuffer, 'application/pdf');
+            const count = Math.min(doc.countPages(), maxPages);
+            for (let i = 0; i < count; i++) {
+                let page: any = null;
+                let sText: any = null;
+                try {
+                    page = doc.loadPage(i);
+                    sText = page.toStructuredText('preserve-whitespace');
+                    out.push({ pageIndex: i, text: String(sText.asText() || '') });
+                } catch {
+                    out.push({ pageIndex: i, text: '' });
+                } finally {
+                    try {
+                        sText?.destroy?.();
+                    } catch {}
+                    try {
+                        page?.destroy?.();
+                    } catch {}
+                }
+            }
+        } catch {
+            return out;
+        } finally {
+            try {
+                doc?.destroy?.();
+            } catch {}
+        }
+        return out;
+    });
+}
+
 export class SegmentedDocumentProcessorService {
     /**
      * Consulta semántica local (`768d`) sobre los fragmentos ya ingeridos de manuales/ETT del activo
@@ -232,7 +277,17 @@ export class SegmentedDocumentProcessorService {
         globalAssetId: string,
         queryText: string,
         topK: number = 5
-    ): Promise<Array<{ chunkId: string; title: string; markdown: string; sourceFilename: string; pages: number[]; score: number }>> {
+    ): Promise<
+        Array<{
+            chunkId: string;
+            title: string;
+            markdown: string;
+            sourceFilename: string;
+            pages: number[];
+            score: number;
+            figures: ExtractedFigureRef[];
+        }>
+    > {
         const chunksCol = db
             .collection('global_asset_catalog')
             .doc(globalAssetId)
@@ -317,6 +372,7 @@ export class SegmentedDocumentProcessorService {
                 sourceFilename: String(d.source_filename || 'Manual OEM'),
                 pages: Array.isArray(d.source_pages) ? d.source_pages : [],
                 score: combinedScore,
+                figures: Array.isArray(d.figures) ? (d.figures as ExtractedFigureRef[]) : [],
             };
         });
 
@@ -383,6 +439,7 @@ export class SegmentedDocumentProcessorService {
                 tenantId: input.tenantId,
                 actorUid: input.actorUid,
                 originalFilename: input.originalFilename,
+                clientOriginalBytes: input.clientOriginalBytes,
                 enableSelectiveRaster: true,
             }
         );
@@ -460,6 +517,11 @@ export class SegmentedDocumentProcessorService {
                     title_es: input.originalFilename.replace(/\.[^.]+$/, ''),
                     width: descriptor.width,
                     height: descriptor.height,
+                    original_bytes: descriptor.originalBytes,
+                    optimized_bytes: descriptor.optimizedBytes,
+                    savings_pct:
+                        descriptor.savingsPct ??
+                        Number((Number(descriptor.savingsRatio || 0) * 100).toFixed(1)),
                 };
 
                 const extracted = await this.analyzeVisualSheetWithSwarm(
@@ -486,6 +548,7 @@ export class SegmentedDocumentProcessorService {
                             pillarId: ch.pillar_id,
                             chapterTitle: ch.chapter_title,
                             markdownEs: scrubbed,
+                            figures: [baseFigure],
                         });
                         const rec = await VaultReconciliationService.reconcileContribution({
                             globalAssetId: input.globalAssetId,
@@ -626,6 +689,11 @@ export class SegmentedDocumentProcessorService {
                             box_2d: figSpec.box_2d,
                             width: figDesc.width,
                             height: figDesc.height,
+                            original_bytes: figDesc.originalBytes,
+                            optimized_bytes: figDesc.optimizedBytes,
+                            savings_pct:
+                                figDesc.savingsPct ??
+                                Number((Number(figDesc.savingsRatio || 0) * 100).toFixed(1)),
                             callouts: Array.isArray(figSpec.callouts) ? figSpec.callouts : undefined,
                         });
                         extractedFiguresCount++;
@@ -672,6 +740,13 @@ export class SegmentedDocumentProcessorService {
                                 .slice(0, 36);
                             const conceptId = `oem_${brandSlug}_${cleanSlug}`;
 
+                            const origSymBytes = croppedSym.length;
+                            const optSymBytes = Buffer.byteLength(vectorized.svgString || '', 'utf8');
+                            const symSavingsPct =
+                                origSymBytes > 0 && optSymBytes < origSymBytes
+                                    ? Number((((origSymBytes - optSymBytes) / origSymBytes) * 100).toFixed(1))
+                                    : 0;
+
                             await db
                                 .collection('master_symbology_vault')
                                 .doc(conceptId)
@@ -692,6 +767,9 @@ export class SegmentedDocumentProcessorService {
                                                 ? vectorized.svgString
                                                 : undefined,
                                         cas_sha256: vectorized.sha256,
+                                        original_bytes: origSymBytes,
+                                        optimized_bytes: optSymBytes,
+                                        savings_pct: symSavingsPct,
                                         created_at: nowIso,
                                         created_by: 'SegmentedDocumentProcessor vtracer WASM',
                                         updated_at: nowIso,
@@ -740,6 +818,7 @@ export class SegmentedDocumentProcessorService {
                                 pillarId: ch.pillar_id,
                                 chapterTitle: ch.chapter_title,
                                 markdownEs: scrubbedMarkdown,
+                                figures: chapterFigures,
                             });
 
                             const pageRangeLabel = `${input.originalFilename} (Págs. ${windowPageNumbers[0]}–${
@@ -809,6 +888,9 @@ export class SegmentedDocumentProcessorService {
                     originalBytes: descriptor.originalBytes,
                     optimizedBytes: descriptor.optimizedBytes,
                     savingsRatio: descriptor.savingsRatio,
+                    savingsPct:
+                        descriptor.savingsPct ??
+                        Number((Number(descriptor.savingsRatio || 0) * 100).toFixed(1)),
                     totalPages,
                     skippedUnchangedPages,
                     processedPages,
@@ -1158,6 +1240,7 @@ Responde ESTRICTAMENTE en JSON puro:
             pillarId: PillarId;
             chapterTitle: string;
             markdownEs: string;
+            figures?: ExtractedFigureRef[];
         }
     ): Promise<void> {
         let vectorField: any = null;
@@ -1182,6 +1265,7 @@ Responde ESTRICTAMENTE en JSON puro:
             pillar_id: params.pillarId,
             chapter_title: params.chapterTitle,
             markdown_es: params.markdownEs,
+            ...(Array.isArray(params.figures) && params.figures.length > 0 ? { figures: params.figures } : {}),
             ...(vectorField ? { embedding_768: vectorField } : {}),
             created_at: new Date().toISOString(),
         });
@@ -1201,6 +1285,7 @@ Responde ESTRICTAMENTE en JSON puro:
         fileBuffer: Buffer;
         mimeType: string;
         originalFilename: string;
+        clientOriginalBytes?: number;
         tenantId: string;
         actorUid: string;
         actorEmail: string;
@@ -1255,6 +1340,7 @@ Responde ESTRICTAMENTE en JSON puro:
                 tenantId: input.tenantId,
                 actorUid: input.actorUid,
                 originalFilename: input.originalFilename,
+                clientOriginalBytes: input.clientOriginalBytes,
                 enableSelectiveRaster: true,
             }
         );
@@ -1479,6 +1565,9 @@ Responde ESTRICTAMENTE en JSON puro:
                     source_doc_hash: descriptor.sha256,
                     width: figDesc.width,
                     height: figDesc.height,
+                    original_bytes: figDesc.originalBytes,
+                    optimized_bytes: figDesc.optimizedBytes,
+                    savings_pct: figDesc.savingsPct ?? Number((figDesc.savingsRatio * 100).toFixed(1)),
                     callouts: Array.isArray(figSpec.callouts) ? figSpec.callouts : undefined,
                 });
             }
@@ -1612,7 +1701,28 @@ Responde ESTRICTAMENTE en JSON puro:
             };
         }
 
-        // 5. Nivel 4 — Persistencia exclusiva en Cuarentena HITL (`knowledge_contributions`)
+        // 5. Enrutamiento directo a los 5 Pilares para Autorización Humana Ítem por Ítem
+        // Todo contenido entra como BORRADOR_IA / GENERADO_IA o propuesta comparativa [Actual] ➔ [Sugerido]
+        // dentro de cada ítem del pilar, exigiendo autorización humana ítem por ítem para ser publicado.
+        for (const prop of proposedItems) {
+            await VaultReconciliationService.reconcileContribution({
+                globalAssetId: input.globalAssetId,
+                pillarId: prop.pillar_id,
+                chapterTitle: prop.chapter_title,
+                section: prop.section,
+                priority: prop.priority,
+                markdownContent: prop.suggested_markdown,
+                structuredDeltas: prop.structured_deltas,
+                figures: prop.figures || [],
+                sourceLabel: `${sanitizedFilename} (Págs. ${prop.source_pages.join(', ')})`,
+                isOemSource: true,
+                actorEmail: 'APORTE_DOCUMENTAL_SANITIZADO',
+            }).catch((err) => {
+                console.warn('[SegmentedDocProcessor] Error reconciliando ítem hacia pilar:', err);
+            });
+        }
+
+        // Registro de trazabilidad auditable del documento aportado
         const contribRef = await db.collection('knowledge_contributions').add({
             global_asset_id: input.globalAssetId,
             make_model: makeModel,
@@ -1623,7 +1733,7 @@ Responde ESTRICTAMENTE en JSON puro:
             file_sha256: descriptor.sha256,
             sanitized_filename: sanitizedFilename,
             page_fingerprints_seen: pageFingerprintsSeen,
-            status: 'PENDING_HUMAN_REVIEW',
+            status: 'ROUTED_TO_PILLAR_ITEMS_HITL',
             estado_aprobacion: 'BORRADOR_IA',
             proposed_items: proposedItems,
             dedup_metrics: {
@@ -1736,6 +1846,7 @@ Responde ESTRICTAMENTE en JSON puro:
                                 scope: 'GLOBAL_OEM',
                                 actorUid: params.reviewerUid,
                                 originalFilename: `${prop.pillar_id}_${fig.figure_id}.webp`,
+                                clientOriginalBytes: fig.original_bytes,
                             }
                         );
 
@@ -1744,6 +1855,9 @@ Responde ESTRICTAMENTE en JSON puro:
                             sha256: pubDesc.sha256,
                             phash_hex: pubDesc.phashHex,
                             storage_url: pubDesc.downloadUrl,
+                            original_bytes: pubDesc.originalBytes,
+                            optimized_bytes: pubDesc.optimizedBytes,
+                            savings_pct: pubDesc.savingsPct ?? Number((pubDesc.savingsRatio * 100).toFixed(1)),
                             source_url: undefined,
                         });
                     } catch {

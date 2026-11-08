@@ -22,7 +22,66 @@ export type BlueprintKind =
     | 'PERFORMANCE_CURVE'
     | 'PM_HOROMETER_TIMELINE'
     | 'WALKAROUND_LOTO_MAP'
-    | 'ISO_SAFETY_PLAQUE';
+    | 'ISO_SAFETY_PLAQUE'
+    | 'TECHNICAL_SPEC_BAR_CHART';
+
+export interface TechnicalSpecBarEntry {
+    label: string;
+    value: number;
+    unit: string;
+    displayValue?: string;
+    isCriticalLimit?: boolean;
+}
+
+export interface TechnicalSpecBarChartInput {
+    makeModel: string;
+    chartTitle: string;
+    subtitle?: string;
+    unitLabel: string;
+    bars: TechnicalSpecBarEntry[];
+}
+
+export interface ChapterGraphicSynthesisInput {
+    globalAssetId: string;
+    makeModel: string;
+    equipmentType: string;
+    pillarId: PillarId;
+    itemId: string;
+    itemTitle: string;
+    verifiedMarkdown: string;
+    graphicSpec: {
+        should_generate_graphic: boolean;
+        kind?:
+            | 'TECHNICAL_SPEC_BAR_CHART'
+            | 'DIMENSION_SPEC_SHEET'
+            | 'PERFORMANCE_CURVE'
+            | 'PM_HOROMETER_TIMELINE'
+            | 'WALKAROUND_LOTO_MAP';
+        chart_title_es?: string;
+        subtitle_es?: string;
+        unit_label?: string;
+        bars?: Array<{
+            label: string;
+            value: number;
+            unit: string;
+            display_value?: string;
+            is_critical_limit?: boolean;
+        }>;
+        curve_points?: Array<{ x: number; y: number; label?: string }>;
+        x_axis_label?: string;
+        y_axis_label?: string;
+        limit_line_y?: { value: number; label: string };
+        dimensions?: {
+            lengthMm?: string;
+            widthMm?: string;
+            heightMm?: string;
+            operatingMassKg?: string;
+            enginePowerKw?: string;
+            hydraulicPressureBar?: string;
+            ratedCapacity?: string;
+        };
+    };
+}
 
 export interface DimensionSpecInput {
     makeModel: string;
@@ -86,6 +145,115 @@ function extractRegexMetric(corpus: string, patterns: RegExp[]): string | null {
         }
     }
     return null;
+}
+
+/**
+ * Detecta figuras sintéticas obsoletas (`bp_*`, `DIMENSION_SPEC_SHEET`, `WALKAROUND_LOTO_MAP`, `PM_HOROMETER_TIMELINE`)
+ * para purgarlas de `items[].figures` y no volver a mostrarlas en ningún capítulo.
+ */
+export function isDeprecatedSyntheticBlueprintFigure(fig?: ExtractedFigureRef | null): boolean {
+    if (!fig) return true;
+    const fid = String(fig.figure_id || '');
+    if (fid.startsWith('bp_') || fid.startsWith('fig_tbl_')) return true;
+    const combined = `${fig.title_es || ''} ${fig.caption_es || ''}`;
+    if (
+        /Plano Dimensional Acotado|Plano Dimensional y Par[aá]metros|Mapa de Inspecci[oó]n 360|Matriz Cronol[oó]gica PM|OpermaqSvgBlueprintEngine|Comparativa\s+de\s+magnitudes|Comparativa\s+Param[eé]trica\s+SI/i.test(
+            combined
+        )
+    ) {
+        return true;
+    }
+    if (fig.is_parametric_svg && fig.figure_type === 'DIAGRAMA_ACOTADO') {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Extrae determinísticamente barras comparables desde tablas Markdown reales del capítulo
+ * cuando existen al menos 2 filas que comparten exactamente la misma unidad SI (`L`, `L/min`, `bar`, `kPa`, `mm`, `kg`, `kW`, `N·m`, `km/h`).
+ */
+export function extractComparableBarsFromMarkdownTables(markdown: string): {
+    unitLabel: string;
+    bars: TechnicalSpecBarEntry[];
+} | null {
+    if (!markdown) return null;
+    const lines = markdown.split('\n');
+    const byUnit = new Map<string, TechnicalSpecBarEntry[]>();
+
+    const unitNormMap: Record<string, string> = {
+        l: 'L',
+        litro: 'L',
+        litros: 'L',
+        'l/min': 'L/min',
+        lpm: 'L/min',
+        bar: 'bar',
+        kpa: 'kPa',
+        mpa: 'MPa',
+        mm: 'mm',
+        kg: 'kg',
+        kw: 'kW',
+        'n·m': 'N·m',
+        nm: 'N·m',
+        'km/h': 'km/h',
+    };
+
+    for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line.startsWith('|') || !line.endsWith('|')) continue;
+        if (/^\|[\s:|-]+\|$/.test(line)) continue;
+
+        const cells = line
+            .slice(1, -1)
+            .split('|')
+            .map((c) => c.replace(/\*\*|\*|`/g, '').trim())
+            .filter(Boolean);
+        if (cells.length < 2) continue;
+
+        const label = cells[0];
+        if (!label || /^(par[aá]metro|componente|subsistema|sistema|[ií]tem|magnitud)$/i.test(label)) continue;
+        if (/no declarad|pendiente/i.test(cells.join(' '))) continue;
+
+        const valCell = cells.slice(1).join(' ');
+        const m = valCell.match(
+            /(?:^|[\s~≈≥≤:])([0-9]{1,3}(?:[.\s][0-9]{3})+|[0-9]+(?:[.,][0-9]+)?)\s*(L\/min|km\/h|N·m|Nm|kPa|MPa|bar|mm|kg|kW|L)\b/i
+        );
+        if (!m) continue;
+
+        const rawNumStr = m[1].replace(/\s+/g, '');
+        let numericVal: number;
+        if (/^\d{1,3}(\.\d{3})+$/.test(rawNumStr)) {
+            numericVal = Number(rawNumStr.replace(/\./g, ''));
+        } else {
+            numericVal = Number(rawNumStr.replace(',', '.'));
+        }
+        if (!Number.isFinite(numericVal) || numericVal <= 0) continue;
+
+        const normUnit = unitNormMap[m[2].toLowerCase()] || m[2];
+        const list = byUnit.get(normUnit) || [];
+        if (!list.some((x) => x.label.toLowerCase() === label.toLowerCase())) {
+            list.push({
+                label: label.slice(0, 44),
+                value: numericVal,
+                unit: normUnit,
+                displayValue: `${m[1]} ${normUnit}`,
+                isCriticalLimit: /alivio|m[aá]x|l[ií]mite|corte/i.test(label),
+            });
+            byUnit.set(normUnit, list);
+        }
+    }
+
+    let bestUnit = '';
+    let bestBars: TechnicalSpecBarEntry[] = [];
+    for (const [unit, bars] of byUnit.entries()) {
+        if (bars.length >= 2 && bars.length > bestBars.length) {
+            bestUnit = unit;
+            bestBars = bars.slice(0, 7);
+        }
+    }
+
+    if (bestBars.length < 2) return null;
+    return { unitLabel: bestUnit, bars: bestBars };
 }
 
 export class OpermaqSvgBlueprintEngine {
@@ -198,7 +366,7 @@ export class OpermaqSvgBlueprintEngine {
     }
 
     /**
-     * 2. Curva Técnica Vectorial (`PERFORMANCE_CURVE`)
+     * 2. Curva Técnica Vectorial (`PERFORMANCE_CURVE`) — Minimalismo Industrial Puro (`GEMINI.md` §3)
      */
     public static generatePerformanceCurveSvg(input: PerformanceCurveInput): string {
         const pts = input.points.length >= 2 ? input.points : [
@@ -213,31 +381,33 @@ export class OpermaqSvgBlueprintEngine {
         const minY = Math.min(0, ...ys);
         const maxY = Math.max(...ys, input.limitLineY?.value || 0, minY + 1) * 1.12;
 
-        const plotX = 110;
-        const plotY = 96;
-        const plotW = 790;
-        const plotH = 340;
+        const plotX = 96;
+        const plotY = 89;
+        const plotW = 810;
+        const plotH = 356;
 
         const mapX = (x: number) => plotX + ((x - minX) / (maxX - minX)) * plotW;
         const mapY = (y: number) => plotY + plotH - ((y - minY) / (maxY - minY)) * plotH;
 
         const polylinePoints = pts.map((p) => `${mapX(p.x).toFixed(1)},${mapY(p.y).toFixed(1)}`).join(' ');
 
-        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 520" width="960" height="520">
-  <rect x="0" y="0" width="960" height="520" fill="#FFFFFF"/>
-  <rect x="16" y="16" width="928" height="488" fill="#FFFFFF" stroke="#0F172A" stroke-width="2"/>
-  <rect x="16" y="16" width="928" height="52" fill="#0F172A"/>
-  <rect x="16" y="66" width="928" height="3" fill="#00AEEF"/>
-  <text x="34" y="40" fill="#F3F4F6" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="15" font-weight="700">${escapeXml(input.chartTitle.toUpperCase())}</text>
-  <text x="34" y="57" fill="#8A93A6" font-family="Atkinson Hyperlegible Mono, monospace" font-size="11">ACTIVO: ${escapeXml(input.makeModel.toUpperCase())} | CURVA PARAMÉTRICA VERIFICADA</text>
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 520" width="960" height="520" style="font-variant-numeric: tabular-nums;">
+  <rect x="0.5" y="0.5" width="959" height="519" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1"/>
+  <text x="34" y="36" fill="#0F172A" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="14" font-weight="700">${escapeXml(
+      truncateText(input.chartTitle, 88)
+  )}</text>
+  <text x="34" y="54" fill="#475569" font-family="Atkinson Hyperlegible Mono, monospace" font-size="11">${escapeXml(
+      truncateText(input.makeModel.toUpperCase(), 48)
+  )} · ${escapeXml(truncateText(input.xAxisLabel, 36))} / ${escapeXml(truncateText(input.yAxisLabel, 36))}</text>
+  <line x1="34" y1="68" x2="926" y2="68" stroke="#E2E8F0" stroke-width="1"/>
 
-  <rect x="${plotX}" y="${plotY}" width="${plotW}" height="${plotH}" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1"/>
+  <rect x="${plotX}" y="${plotY}" width="${plotW}" height="${plotH}" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1"/>
   ${[0, 0.25, 0.5, 0.75, 1]
       .map((ratio) => {
           const yPx = plotY + plotH - ratio * plotH;
           const valY = (minY + ratio * (maxY - minY)).toFixed(1);
-          return `<line x1="${plotX}" y1="${yPx}" x2="${plotX + plotW}" y2="${yPx}" stroke="#E2E8F0" stroke-width="1"/>
-  <text x="${plotX - 10}" y="${yPx + 4}" text-anchor="end" fill="#475569" font-family="Atkinson Hyperlegible Mono, monospace" font-size="11">${valY}</text>`;
+          return `<line x1="${plotX}" y1="${yPx.toFixed(1)}" x2="${plotX + plotW}" y2="${yPx.toFixed(1)}" stroke="#E2E8F0" stroke-width="1"/>
+  <text x="${plotX - 10}" y="${(yPx + 4).toFixed(1)}" text-anchor="end" fill="#475569" font-family="Atkinson Hyperlegible Mono, monospace" font-size="11">${valY}</text>`;
       })
       .join('\n  ')}
 
@@ -245,25 +415,30 @@ export class OpermaqSvgBlueprintEngine {
       input.limitLineY
           ? `<line x1="${plotX}" y1="${mapY(input.limitLineY.value).toFixed(1)}" x2="${plotX + plotW}" y2="${mapY(
                 input.limitLineY.value
-            ).toFixed(1)}" stroke="#DC2626" stroke-width="1.8" stroke-dasharray="6,4"/>
-  <text x="${plotX + plotW - 8}" y="${(mapY(input.limitLineY.value) - 6).toFixed(1)}" text-anchor="end" fill="#DC2626" font-family="Atkinson Hyperlegible Mono, monospace" font-size="11" font-weight="700">${escapeXml(
+            ).toFixed(1)}" stroke="#00AEEF" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <text x="${plotX + plotW - 8}" y="${(mapY(input.limitLineY.value) - 6).toFixed(1)}" text-anchor="end" fill="#00AEEF" font-family="Atkinson Hyperlegible Mono, monospace" font-size="10.5" font-weight="700">${escapeXml(
                 input.limitLineY.label
             )}</text>`
           : ''
   }
 
-  <polyline fill="none" stroke="#C68346" stroke-width="3" points="${polylinePoints}"/>
+  <polyline fill="none" stroke="#C68346" stroke-width="2" points="${polylinePoints}"/>
   ${pts
       .map(
-          (p) => `<rect x="${(mapX(p.x) - 4).toFixed(1)}" y="${(mapY(p.y) - 4).toFixed(1)}" width="8" height="8" fill="#0F172A" stroke="#C68346" stroke-width="2"/>
-  <text x="${mapX(p.x).toFixed(1)}" y="${(mapY(p.y) - 10).toFixed(1)}" text-anchor="middle" fill="#0F172A" font-family="Atkinson Hyperlegible Mono, monospace" font-size="10" font-weight="700">${p.y}</text>`
+          (p) => `<rect x="${(mapX(p.x) - 3).toFixed(1)}" y="${(mapY(p.y) - 3).toFixed(1)}" width="6" height="6" fill="#C68346"/>
+  <text x="${mapX(p.x).toFixed(1)}" y="${(mapY(p.y) - 9).toFixed(1)}" text-anchor="middle" fill="#0F172A" font-family="Atkinson Hyperlegible Mono, monospace" font-size="10.5" font-weight="700">${p.y}</text>
+  <text x="${mapX(p.x).toFixed(1)}" y="${plotY + plotH + 16}" text-anchor="middle" fill="#475569" font-family="Atkinson Hyperlegible Mono, monospace" font-size="10.5">${p.x}</text>`
       )
       .join('\n  ')}
 
-  <line x1="${plotX}" y1="${plotY}" x2="${plotX}" y2="${plotY + plotH}" stroke="#0F172A" stroke-width="2"/>
-  <line x1="${plotX}" y1="${plotY + plotH}" x2="${plotX + plotW}" y2="${plotY + plotH}" stroke="#0F172A" stroke-width="2"/>
-  <text x="${plotX + plotW / 2}" y="476" text-anchor="middle" fill="#0F172A" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="12" font-weight="700">${escapeXml(input.xAxisLabel)}</text>
-  <text x="38" y="${plotY + plotH / 2}" text-anchor="middle" transform="rotate(-90 38 ${plotY + plotH / 2})" fill="#0F172A" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="12" font-weight="700">${escapeXml(input.yAxisLabel)}</text>
+  <line x1="${plotX}" y1="${plotY}" x2="${plotX}" y2="${plotY + plotH}" stroke="#0F172A" stroke-width="1.5"/>
+  <line x1="${plotX}" y1="${plotY + plotH}" x2="${plotX + plotW}" y2="${plotY + plotH}" stroke="#0F172A" stroke-width="1.5"/>
+  <text x="${plotX + plotW / 2}" y="486" text-anchor="middle" fill="#475569" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="11.5" font-weight="600">${escapeXml(
+      input.xAxisLabel
+  )}</text>
+  <text x="34" y="${plotY + plotH / 2}" text-anchor="middle" transform="rotate(-90 34 ${plotY + plotH / 2})" fill="#475569" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="11.5" font-weight="600">${escapeXml(
+      input.yAxisLabel
+  )}</text>
 </svg>`;
     }
 
@@ -425,7 +600,7 @@ export class OpermaqSvgBlueprintEngine {
     }
 
     /**
-     * 5. Placa Normativa Combinada ISO 3864 / ANSI Z535 (`ISO_SAFETY_PLAQUE`)
+     * 5. Placa Normativa Combinada ISO 3864 / ISO 7010 (`ISO_SAFETY_PLAQUE`) — Minimalismo Industrial Puro (`GEMINI.md` §3)
      * Incrusta directamente los `.svg` vectoriales puros del paquete ad-hoc del equipo.
      */
     public static generateIsoSafetyPlaqueSvg(params: {
@@ -445,58 +620,56 @@ export class OpermaqSvgBlueprintEngine {
                     .replace(/<\/svg>\s*$/i, '');
                 return `<svg x="${x}" y="${y}" width="${size}" height="${size}" viewBox="${vb}">${inner}</svg>`;
             }
-            return `<rect x="${x}" y="${y}" width="${size}" height="${size}" fill="#F8FAFC" stroke="#0F172A" stroke-width="1.5"/>
+            return `<rect x="${x}" y="${y}" width="${size}" height="${size}" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
             <text x="${x + size / 2}" y="${y + size / 2 + 4}" text-anchor="middle" fill="#0F172A" font-family="Atkinson Hyperlegible Mono, monospace" font-size="10" font-weight="700">${escapeXml(
                 entry.iso_reference
             )}</text>`;
         };
 
-        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 520" width="960" height="520">
-  <rect x="0" y="0" width="960" height="520" fill="#FFFFFF"/>
-  <rect x="16" y="16" width="928" height="488" fill="#FFFFFF" stroke="#0F172A" stroke-width="3"/>
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 520" width="960" height="520" style="font-variant-numeric: tabular-nums;">
+  <rect x="0.5" y="0.5" width="959" height="519" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1"/>
+  <text x="34" y="36" fill="#0F172A" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="14" font-weight="700">SIMBOLOGÍA TÉCNICA ISO 7010 / ISO 3864</text>
+  <text x="34" y="54" fill="#475569" font-family="Atkinson Hyperlegible Mono, monospace" font-size="11">${escapeXml(params.makeModel.toUpperCase())}</text>
+  <line x1="34" y1="68" x2="926" y2="68" stroke="#E2E8F0" stroke-width="1"/>
 
-  <!-- Banda Superior ANSI Z535 / ISO 3864 ADVERTENCIA -->
-  <rect x="16" y="16" width="928" height="58" fill="#0F172A"/>
-  <rect x="16" y="72" width="928" height="4" fill="#DC2626"/>
-  <text x="480" y="44" text-anchor="middle" fill="#FFFFFF" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="20" font-weight="700" letter-spacing="2">PLACA DE SEGURIDAD OPERACIONAL ISO 3864 / ISO 7010</text>
-  <text x="480" y="63" text-anchor="middle" fill="#CBD5E1" font-family="Atkinson Hyperlegible Mono, monospace" font-size="11">ACTIVO: ${escapeXml(params.makeModel.toUpperCase())} | CUMPLIMIENTO OBLIGATORIO EN FAENA</text>
-
-  <!-- Mitad Izquierda: Peligros y Prohibiciones Críticas -->
-  <rect x="34" y="92" width="438" height="394" fill="#F8FAFC" stroke="#DC2626" stroke-width="1.5"/>
-  <rect x="34" y="92" width="438" height="32" fill="#DC2626"/>
-  <text x="253" y="113" text-anchor="middle" fill="#FFFFFF" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="12" font-weight="700">PELIGROS Y PROHIBICIONES ACTIVAS</text>
+  <!-- Panel Izquierdo: Peligros y Prohibiciones (ISO 7010 Serie W / P) -->
+  <rect x="34" y="84" width="435" height="402" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1"/>
+  <line x1="34" y1="84" x2="469" y2="84" stroke="#C68346" stroke-width="2"/>
+  <text x="48" y="108" fill="#0F172A" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="11.5" font-weight="700">ADVERTENCIAS Y PROHIBICIONES (ISO 7010 W / P)</text>
+  <line x1="34" y1="118" x2="469" y2="118" stroke="#E2E8F0" stroke-width="1"/>
 
   ${hazards
       .map((h, idx) => {
-          const y = 136 + idx * 56;
+          const y = 132 + idx * 56;
           return `
   <g>
-    ${embedInnerSvg(h, 46, y, 44)}
-    <text x="102" y="${y + 17}" fill="#0F172A" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="11.5" font-weight="700">${escapeXml(
+    ${embedInnerSvg(h, 48, y, 42)}
+    <text x="102" y="${y + 16}" fill="#0F172A" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="11.5" font-weight="600">${escapeXml(
               truncateText(h.technical_name_es, 46)
           )}</text>
-    <text x="102" y="${y + 34}" fill="#475569" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="10">${escapeXml(
+    <text x="102" y="${y + 33}" fill="#475569" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="10.5">${escapeXml(
               truncateText(h.action_operator_es, 56)
           )}</text>
   </g>`;
       })
       .join('')}
 
-  <!-- Mitad Derecha: Acciones Obligatorias y EPP (ISO 7010 Serie M) -->
-  <rect x="488" y="92" width="438" height="394" fill="#F8FAFC" stroke="#00AEEF" stroke-width="1.5"/>
-  <rect x="488" y="92" width="438" height="32" fill="#0F172A"/>
-  <text x="707" y="113" text-anchor="middle" fill="#FFFFFF" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="12" font-weight="700">EPP Y CONTROLES OBLIGATORIOS (ISO 7010)</text>
+  <!-- Panel Derecho: Controles y EPP (ISO 7010 Serie M) -->
+  <rect x="491" y="84" width="435" height="402" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1"/>
+  <line x1="491" y1="84" x2="926" y2="84" stroke="#00AEEF" stroke-width="2"/>
+  <text x="505" y="108" fill="#0F172A" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="11.5" font-weight="700">CONTROLES Y EPP (ISO 7010 M)</text>
+  <line x1="491" y1="118" x2="926" y2="118" stroke="#E2E8F0" stroke-width="1"/>
 
   ${ppe
       .map((m, idx) => {
-          const y = 136 + idx * 56;
+          const y = 132 + idx * 56;
           return `
   <g>
-    ${embedInnerSvg(m, 500, y, 44)}
-    <text x="556" y="${y + 17}" fill="#0F172A" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="11.5" font-weight="700">${escapeXml(
+    ${embedInnerSvg(m, 505, y, 42)}
+    <text x="559" y="${y + 16}" fill="#0F172A" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="11.5" font-weight="600">${escapeXml(
               truncateText(m.technical_name_es, 46)
           )}</text>
-    <text x="556" y="${y + 34}" fill="#475569" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="10">${escapeXml(
+    <text x="559" y="${y + 33}" fill="#475569" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="10.5">${escapeXml(
               truncateText(m.action_operator_es, 56)
           )}</text>
   </g>`;
@@ -517,6 +690,21 @@ export class OpermaqSvgBlueprintEngine {
         customPayload?: Record<string, any>;
         actorUid?: string;
     }): Promise<{ figure: ExtractedFigureRef; svgString: string }> {
+        // FIX-01: plantillas con silueta genérica o datos de relleno retiradas definitivamente
+        const requestedKind: string = params.kind;
+        if (
+            requestedKind === 'DIMENSION_SPEC_SHEET' ||
+            requestedKind === 'WALKAROUND_LOTO_MAP' ||
+            requestedKind === 'PM_HOROMETER_TIMELINE' ||
+            (requestedKind === 'PERFORMANCE_CURVE' &&
+                !(Array.isArray(params.customPayload?.points) && params.customPayload!.points.length >= 2))
+        ) {
+            const err: any = new Error(
+                `Plantilla "${params.kind}" retirada: no se generan esquemas sin datos técnicos verificados del equipo.`
+            );
+            err.statusCode = 410;
+            throw err;
+        }
         const assetRef = db.collection('global_asset_catalog').doc(params.globalAssetId);
         const snap = await assetRef.get();
         if (!snap.exists) {
@@ -635,6 +823,16 @@ export class OpermaqSvgBlueprintEngine {
                 points: Array.isArray(params.customPayload?.points) ? params.customPayload.points : [],
                 limitLineY: params.customPayload?.limitLineY,
             });
+        } else if (params.kind === 'TECHNICAL_SPEC_BAR_CHART') {
+            titleEs = params.customPayload?.chartTitle || `Comparativa Paramétrica SI — ${makeModel}`;
+            figureType = 'CURVA_RENDIMIENTO';
+            rawSvg = this.generateTechnicalSpecBarChartSvg({
+                makeModel,
+                chartTitle: titleEs,
+                subtitle: params.customPayload?.subtitle,
+                unitLabel: params.customPayload?.unitLabel || 'Magnitud SI',
+                bars: Array.isArray(params.customPayload?.bars) ? params.customPayload.bars : [],
+            });
         } else {
             titleEs = `Placa Normativa ISO 3864 / ISO 7010 — ${makeModel}`;
             figureType = 'SIMBOLOGIA_SEGURIDAD';
@@ -661,10 +859,14 @@ export class OpermaqSvgBlueprintEngine {
             mime_type: 'image/svg+xml',
             figure_type: figureType,
             title_es: titleEs,
-            caption_es: 'Esquema vectorial determinista generado por OpermaqSvgBlueprintEngine v4.0.',
+            caption_es: 'Gráfico vectorial derivado de magnitudes SI verificadas en el capítulo.',
             width: 960,
             height: 520,
             is_parametric_svg: true,
+            original_bytes: descriptor.originalBytes,
+            optimized_bytes: descriptor.optimizedBytes,
+            savings_pct:
+                descriptor.savingsPct ?? Number((Number(descriptor.savingsRatio || 0) * 100).toFixed(1)),
         };
 
         // Si se indicó un capítulo destino, adjuntar la figura sin duplicar
@@ -684,6 +886,224 @@ export class OpermaqSvgBlueprintEngine {
         return {
             figure,
             svgString: digested.buffer.toString('utf8'),
+        };
+    }
+
+    /**
+     * 6. Gráfico de Barras Paramétricas SI (`TECHNICAL_SPEC_BAR_CHART`) — Minimalismo Industrial Puro (`GEMINI.md` §3)
+     */
+    public static generateTechnicalSpecBarChartSvg(input: TechnicalSpecBarChartInput): string {
+        const validBars = (input.bars || [])
+            .filter((b) => b && b.label && Number.isFinite(Number(b.value)) && Number(b.value) > 0)
+            .slice(0, 8);
+
+        const maxVal = validBars.length > 0 ? Math.max(...validBars.map((b) => Number(b.value)), 1) * 1.15 : 100;
+        const plotX = 310;
+        const plotY = 89;
+        const plotW = 590;
+        const plotH = 356;
+        const rowH = validBars.length > 0 ? Math.floor(plotH / validBars.length) : 48;
+        const barH = Math.min(24, Math.max(14, rowH - 18));
+
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 520" width="960" height="520" style="font-variant-numeric: tabular-nums;">
+  <rect x="0.5" y="0.5" width="959" height="519" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1"/>
+  <text x="34" y="36" fill="#0F172A" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="14" font-weight="700">${escapeXml(
+      truncateText(input.chartTitle, 84)
+  )}</text>
+  <text x="34" y="54" fill="#475569" font-family="Atkinson Hyperlegible Mono, monospace" font-size="11">${escapeXml(
+      truncateText(input.makeModel.toUpperCase(), 48)
+  )} · UNIDAD: ${escapeXml(truncateText(input.unitLabel, 32))}</text>
+  <line x1="34" y1="68" x2="926" y2="68" stroke="#E2E8F0" stroke-width="1"/>
+
+  <rect x="${plotX}" y="${plotY}" width="${plotW}" height="${plotH}" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1"/>
+  ${[0, 0.25, 0.5, 0.75, 1]
+      .map((ratio) => {
+          const xPx = plotX + ratio * plotW;
+          const v = maxVal * ratio;
+          const vStr = v >= 100 ? Math.round(v).toString() : v.toFixed(1);
+          return `<line x1="${xPx.toFixed(1)}" y1="${plotY}" x2="${xPx.toFixed(1)}" y2="${plotY + plotH}" stroke="#E2E8F0" stroke-width="1"/>
+  <text x="${xPx.toFixed(1)}" y="${plotY + plotH + 18}" text-anchor="middle" fill="#475569" font-family="Atkinson Hyperlegible Mono, monospace" font-size="10.5">${vStr}</text>`;
+      })
+      .join('\n  ')}
+
+  ${validBars
+      .map((bar, idx) => {
+          const yCenter = plotY + idx * rowH + Math.floor(rowH / 2);
+          const yBar = yCenter - Math.floor(barH / 2);
+          const wBar = Math.max(4, Math.min(plotW - 96, (Number(bar.value) / maxVal) * plotW));
+          const fill = bar.isCriticalLimit ? '#00AEEF' : '#C68346';
+          const valText =
+              bar.displayValue && bar.displayValue.trim()
+                  ? bar.displayValue.trim()
+                  : `${bar.value} ${bar.unit || ''}`.trim();
+          return `
+  <g>
+    <text x="${plotX - 13}" y="${yCenter + 4}" text-anchor="end" fill="#0F172A" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="11.5" font-weight="500">${escapeXml(
+              truncateText(bar.label, 38)
+          )}</text>
+    <rect x="${plotX}" y="${yBar}" width="${wBar.toFixed(1)}" height="${barH}" fill="${fill}"/>
+    <text x="${(plotX + wBar + 8).toFixed(1)}" y="${yCenter + 4}" fill="#0F172A" font-family="Atkinson Hyperlegible Mono, monospace" font-size="11" font-weight="700">${escapeXml(
+              truncateText(valText, 26)
+          )}</text>
+  </g>`;
+      })
+      .join('')}
+
+  <line x1="${plotX}" y1="${plotY}" x2="${plotX}" y2="${plotY + plotH}" stroke="#0F172A" stroke-width="1.5"/>
+  <line x1="${plotX}" y1="${plotY + plotH}" x2="${plotX + plotW}" y2="${plotY + plotH}" stroke="#0F172A" stroke-width="1.5"/>
+  <text x="${plotX + plotW / 2}" y="488" text-anchor="middle" fill="#475569" font-family="Atkinson Hyperlegible Next, sans-serif" font-size="11.5" font-weight="600">${escapeXml(
+      input.subtitle || `Magnitudes en ${input.unitLabel}`
+  )}</text>
+</svg>`;
+    }
+
+    /**
+     * Retirado (`Punto 4º`): las tablas Markdown ya se renderizan en `font-mono tabular-nums`
+     * y no deben duplicarse con gráficos de barras automáticos no solicitados.
+     */
+    public static async synthesizeVerifiedTableChart(_input: {
+        globalAssetId: string;
+        makeModel: string;
+        pillarId: string;
+        itemId: string;
+        itemTitle: string;
+        verifiedMarkdown: string;
+    }): Promise<ExtractedFigureRef | null> {
+        return null;
+    }
+
+    /**
+     * Compuerta Neuro-Simbólica Cero-Alucinación para Síntesis Gráfica por Capítulo:
+     * Verifica que los valores numéricos propuestos para graficar existan realmente en el Markdown cazado
+     * antes de generar y persistir el SVG en CAS (`GLOBAL_OEM`).
+     */
+    public static async synthesizeChapterVerifiedGraphic(
+        input: ChapterGraphicSynthesisInput
+    ): Promise<ExtractedFigureRef | null> {
+        const spec = input.graphicSpec;
+        if (!spec || !spec.should_generate_graphic || !spec.kind) return null;
+
+        const cleanCorpus = input.verifiedMarkdown.replace(/\s+/g, ' ');
+
+        // Verificador determinista de anclaje numérico: comprueba que el número (o su versión con coma/punto/miles) aparezca en el texto
+        const isNumberGroundedInText = (num: number): boolean => {
+            if (!Number.isFinite(num) || num <= 0) return false;
+            const intPart = Math.trunc(num);
+            const rawCandidates = new Set<string>([
+                String(num),
+                String(num).replace('.', ','),
+                String(intPart),
+                intPart >= 1000 ? intPart.toLocaleString('es-CL') : String(intPart),
+                intPart >= 1000 ? intPart.toLocaleString('en-US') : String(intPart),
+            ]);
+            for (const cand of rawCandidates) {
+                if (cand && cleanCorpus.includes(cand)) return true;
+            }
+            return false;
+        };
+
+        let rawSvg = '';
+        let titleEs = spec.chart_title_es || `${input.itemTitle} — ${input.makeModel}`;
+        let captionEs =
+            spec.subtitle_es ||
+            `Gráfico vectorial determinista generado desde cifras OEM verificadas en "${input.itemTitle}".`;
+        let figureType: ExtractedFigureRef['figure_type'] = 'PLANO_VECTORIAL_SVG';
+
+        if (spec.kind === 'DIMENSION_SPEC_SHEET') {
+            // PROHIBIDO generar siluetas/planos dimensionales sintéticos (`FIX-01`).
+            // Si el capítulo contiene una tabla cuantitativa comparable, graficar solo sus barras reales.
+            const tableFallback = extractComparableBarsFromMarkdownTables(input.verifiedMarkdown);
+            if (!tableFallback) return null;
+            figureType = 'CURVA_RENDIMIENTO';
+            titleEs = `Comparativa Cuantitativa (${tableFallback.unitLabel}) — ${input.itemTitle}`;
+            captionEs = `Magnitudes verificadas en tabla técnica del capítulo (${tableFallback.unitLabel}).`;
+            rawSvg = this.generateTechnicalSpecBarChartSvg({
+                makeModel: input.makeModel,
+                chartTitle: titleEs,
+                subtitle: captionEs,
+                unitLabel: tableFallback.unitLabel,
+                bars: tableFallback.bars,
+            });
+        } else if (spec.kind === 'PERFORMANCE_CURVE') {
+            const groundedPoints = (spec.curve_points || []).filter(
+                (pt) =>
+                    Number.isFinite(Number(pt.x)) &&
+                    Number.isFinite(Number(pt.y)) &&
+                    isNumberGroundedInText(Number(pt.y))
+            );
+            if (groundedPoints.length < 2) return null;
+
+            figureType = 'CURVA_RENDIMIENTO';
+            rawSvg = this.generatePerformanceCurveSvg({
+                makeModel: input.makeModel,
+                chartTitle: titleEs,
+                xAxisLabel: spec.x_axis_label || 'Régimen / Parámetro X',
+                yAxisLabel: spec.y_axis_label || spec.unit_label || 'Magnitud SI',
+                points: groundedPoints.map((p) => ({
+                    x: Number(p.x),
+                    y: Number(p.y),
+                    label: p.label,
+                })),
+                limitLineY:
+                    spec.limit_line_y && isNumberGroundedInText(Number(spec.limit_line_y.value))
+                        ? { value: Number(spec.limit_line_y.value), label: spec.limit_line_y.label }
+                        : undefined,
+            });
+        } else {
+            // Por defecto: TECHNICAL_SPEC_BAR_CHART con filtro estricto de cifras respaldadas en el texto
+            const groundedBars: TechnicalSpecBarEntry[] = (spec.bars || [])
+                .filter(
+                    (b) =>
+                        b &&
+                        b.label &&
+                        Number.isFinite(Number(b.value)) &&
+                        Number(b.value) > 0 &&
+                        isNumberGroundedInText(Number(b.value))
+                )
+                .map((b) => ({
+                    label: String(b.label).trim(),
+                    value: Number(b.value),
+                    unit: String(b.unit || spec.unit_label || '').trim(),
+                    displayValue: b.display_value ? String(b.display_value).trim() : undefined,
+                    isCriticalLimit: Boolean(b.is_critical_limit),
+                }));
+
+            if (groundedBars.length < 2) return null;
+
+            figureType = 'CURVA_RENDIMIENTO';
+            rawSvg = this.generateTechnicalSpecBarChartSvg({
+                makeModel: input.makeModel,
+                chartTitle: titleEs,
+                subtitle: spec.subtitle_es,
+                unitLabel: spec.unit_label || groundedBars[0]?.unit || 'SI',
+                bars: groundedBars,
+            });
+        }
+
+        if (!rawSvg) return null;
+
+        const digested = await MediaDigestorServer.digestSvg(rawSvg);
+        const descriptor = await CasStorageService.persistDigestedBinary(digested, {
+            scope: 'GLOBAL_OEM',
+            actorUid: 'opermaq-chapter-svg-synthesizer',
+            originalFilename: `${input.globalAssetId}_${input.pillarId}_${input.itemId}_chart.svg`,
+        });
+
+        return {
+            figure_id: `fig_svg_${descriptor.sha256.slice(0, 12)}`,
+            sha256: descriptor.sha256,
+            storage_url: descriptor.downloadUrl,
+            mime_type: 'image/svg+xml',
+            figure_type: figureType,
+            title_es: titleEs.slice(0, 120),
+            caption_es: captionEs.slice(0, 220),
+            width: 960,
+            height: 520,
+            is_parametric_svg: true,
+            original_bytes: descriptor.originalBytes,
+            optimized_bytes: descriptor.optimizedBytes,
+            savings_pct:
+                descriptor.savingsPct ?? Number((Number(descriptor.savingsRatio || 0) * 100).toFixed(1)),
         };
     }
 }

@@ -5,6 +5,7 @@ import { MediaDigestorServer } from '../../../core/media/MediaDigestorServer';
 import { ResilientAIClient } from '../../../core/resilient-ai-client';
 import { safeFetchExternal } from '../../../utils/ssrfGuard';
 import { HITL_CONFIRM_KEYWORD, MasterSymbologyItem, MasterSymbologyVariant } from '../types/vault.types';
+import { purgeSyntheticAdHocSymbols, SYNTHETIC_ADHOC_SYMBOL_AUTHOR } from './NeuroSymbolicVerifier';
 import {
     ensureUniversalSymbologySeeded,
     vectorizeRasterSymbolToSvg,
@@ -61,10 +62,14 @@ export function isValidHitlSymbologyWord(word?: string): boolean {
 
 export async function getMasterSymbols(): Promise<MasterSymbologyItem[]> {
     await ensureUniversalSymbologySeeded(false);
+    await purgeSyntheticAdHocSymbols();
     const snap = await db.collection('master_symbology_vault').get();
     const items: MasterSymbologyItem[] = [];
     snap.forEach((doc) => {
-        items.push({ concept_id: doc.id, ...(doc.data() as Omit<MasterSymbologyItem, 'concept_id'>) });
+        const data = doc.data() as Omit<MasterSymbologyItem, 'concept_id'> & { created_by?: string };
+        // Símbolos sintéticos genéricos (motor ad-hoc retirado, `SB-01`) nunca se exponen.
+        if (data.created_by === SYNTHETIC_ADHOC_SYMBOL_AUTHOR) return;
+        items.push({ concept_id: doc.id, ...data });
     });
     items.sort((a, b) => (a.technical_name_es || '').localeCompare(b.technical_name_es || '', 'es'));
     return items;

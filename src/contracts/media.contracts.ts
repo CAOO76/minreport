@@ -33,6 +33,7 @@ export const DigestedMediaDescriptorSchema = z.object({
     originalBytes: z.number().int().nonnegative(),
     optimizedBytes: z.number().int().nonnegative(),
     savingsRatio: z.number().min(0).max(1),
+    savingsPct: z.number().min(0).max(100).optional(),
     width: z.number().int().positive().optional(),
     height: z.number().int().positive().optional(),
     pageCount: z.number().int().positive().optional(),
@@ -51,6 +52,7 @@ export type DigestedMediaDescriptor = z.infer<typeof DigestedMediaDescriptorSche
 export const DigestUploadQuerySchema = z.object({
     profile: MediaDigestionProfileSchema.optional().default('IMAGE_FIELD_EVIDENCE'),
     scope: CasStorageScopeSchema.optional().default('TENANT_PRIVATE'),
+    clientOriginalBytes: z.coerce.number().int().nonnegative().optional(),
     enableSelectivePdfRaster: z
         .union([z.boolean(), z.enum(['true', 'false'])])
         .optional()

@@ -1,3 +1,4 @@
+import fs from 'fs'
 import path from 'path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -15,6 +16,27 @@ export default defineConfig({
         dedupe: ['react', 'react-dom', 'firebase']
     },
     plugins: [
+        {
+            name: 'minreport-non-empty-tsx-guard',
+            enforce: 'pre',
+            async load(id) {
+                const cleanId = id.split('?')[0];
+                if (!cleanId.endsWith('.tsx') && !cleanId.endsWith('.ts')) return null;
+                if (cleanId.includes('node_modules')) return null;
+                try {
+                    let content = await fs.promises.readFile(cleanId, 'utf-8');
+                    let attempts = 0;
+                    while (content.trim().length === 0 && attempts < 5) {
+                        await new Promise((r) => setTimeout(r, 80));
+                        content = await fs.promises.readFile(cleanId, 'utf-8');
+                        attempts++;
+                    }
+                    return content;
+                } catch {
+                    return null;
+                }
+            }
+        },
         react(),
         {
             name: 'minreport-dev-url-banner',
@@ -122,7 +144,11 @@ export default defineConfig({
             ]
         },
         watch: {
-            ignored: ['**/android/**', '**/dist/**']
+            ignored: ['**/android/**', '**/dist/**'],
+            awaitWriteFinish: {
+                stabilityThreshold: 250,
+                pollInterval: 40
+            }
         }
     },
     build: {

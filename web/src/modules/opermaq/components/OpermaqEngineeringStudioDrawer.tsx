@@ -30,6 +30,7 @@ interface CorpusFileRecord {
   originalBytes: number;
   optimizedBytes: number;
   savingsRatio: number;
+  savingsPct?: number;
   totalPages: number;
   skippedUnchangedPages: number;
   extractedChaptersCount: number;
@@ -119,7 +120,7 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
   const { capabilities } = useOpermaqContext();
   const canCurateAI = capabilities.canCurateAI;
   const resolvedInitialTab: StudioTabId =
-    !canCurateAI && initialTab === 'INGESTION' ? 'SYMBOLOGY_PACK' : initialTab;
+    !canCurateAI && initialTab === 'INGESTION' ? 'MANUAL_PUBLISHER' : initialTab;
   const [activeTab, setActiveTab] = useState<StudioTabId>(resolvedInitialTab);
   const docInputRef = useRef<HTMLInputElement>(null);
 
@@ -243,6 +244,7 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
       form.append('globalAssetId', catalogId);
       form.append('documentCategory', docCategory);
       form.append('visibilityScope', privateTenantOnly ? 'TENANT_ONLY' : 'COMMONS_OEM');
+      form.append('clientOriginalBytes', String(rawFile.size));
 
       const res = await authFetch(`${API_BASE_URL}/vault/ingest-document`, {
         method: 'POST',
@@ -254,11 +256,11 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
       }
 
       // Conservar peso crudo original previo a la digestión cliente para reflejar ahorro extremo real
-      const trueOriginalBytes = rawFile.size;
+      const trueOriginalBytes = json.originalBytes || rawFile.size;
       const finalOptimizedBytes = json.optimizedBytes || clientDigested.optimizedBytes;
       const totalSavingsPct =
         trueOriginalBytes > 0
-          ? Math.max(0, Math.round((1 - finalOptimizedBytes / trueOriginalBytes) * 100))
+          ? Number(Math.max(0, (1 - finalOptimizedBytes / trueOriginalBytes) * 100).toFixed(1))
           : 0;
 
       setLastIngestionReport({
@@ -294,9 +296,9 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
         body: JSON.stringify({ globalAssetId: catalogId }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Error reconstruyendo paquete.');
+      if (!res.ok) throw new Error(json.error || 'Error compilando simbología real.');
       setSymbologyPack(json.pack);
-      toast.success(`Paquete ad-hoc actualizado (${json.pack?.total_symbols || 0} símbolos vectoriales).`);
+      toast.success(`Simbología compilada actualizada (${json.pack?.total_symbols || 0} símbolos verificados en el equipo).`);
     } catch (err: any) {
       toast.error(err?.message || 'Error actualizando simbología.');
     } finally {
@@ -361,7 +363,6 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                   ...(canCurateAI
                     ? ([['INGESTION', 'INGESTA PDF / ETT / MULTIMEDIA']] as Array<[StudioTabId, string]>)
                     : []),
-                  ['SYMBOLOGY_PACK', 'PAQUETE SIMBOLOGÍA AD-HOC (.SVG)'],
                   ['MANUAL_PUBLISHER', 'EDITORIAL MANUALES AD-HOC'],
                 ] as Array<[StudioTabId, string]>
               ).map(([tabId, label]) => (
@@ -510,38 +511,56 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                     <thead>
                       <tr className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C]">
                         <th className="p-[13px] text-left text-[11px] text-[#475569] dark:text-[#8A93A6]">DOCUMENTO</th>
-                        <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">OPTIMIZADO</th>
+                        <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">PESO ORIGINAL</th>
+                        <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">GUARDADO CAS</th>
+                        <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">% OPTIMIZACIÓN</th>
                         <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">PÁGS</th>
                         <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">CAPÍTULOS</th>
                         <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">FIGURAS</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {corpusFiles.map((f) => (
-                        <tr
-                          key={f.sha256}
-                          className="border border-[#E2E8F0] dark:border-[#12151C]"
-                        >
-                          <td className="p-[13px] font-atkinson text-[#0F172A] dark:text-[#F3F4F6]">
-                            <div className="font-semibold">{f.originalFilename}</div>
-                            <div className="font-mono text-[11px] text-[#5A6072] select-text">
-                              SHA-256: {f.sha256.slice(0, 14)}… · {f.documentCategory}
-                            </div>
-                          </td>
-                          <td className="p-[13px] text-right text-[#C68346] font-bold">
-                            {formatKbMb(f.optimizedBytes)}
-                          </td>
-                          <td className="p-[13px] text-right text-[#0F172A] dark:text-[#F3F4F6]">
-                            {f.totalPages}
-                          </td>
-                          <td className="p-[13px] text-right text-[#0F172A] dark:text-[#F3F4F6]">
-                            {f.extractedChaptersCount}
-                          </td>
-                          <td className="p-[13px] text-right text-[#00AEEF] font-bold">
-                            {f.extractedFiguresCount}
-                          </td>
-                        </tr>
-                      ))}
+                      {corpusFiles.map((f) => {
+                        const rowSavingsPct =
+                          typeof f.savingsPct === 'number'
+                            ? f.savingsPct
+                            : typeof f.savingsRatio === 'number'
+                            ? Number((f.savingsRatio * 100).toFixed(1))
+                            : f.originalBytes > 0
+                            ? Number(Math.max(0, (1 - f.optimizedBytes / f.originalBytes) * 100).toFixed(1))
+                            : 0;
+                        return (
+                          <tr
+                            key={f.sha256}
+                            className="border border-[#E2E8F0] dark:border-[#12151C]"
+                          >
+                            <td className="p-[13px] font-atkinson text-[#0F172A] dark:text-[#F3F4F6]">
+                              <div className="font-semibold">{f.originalFilename}</div>
+                              <div className="font-mono text-[11px] text-[#5A6072] select-text">
+                                SHA-256: {f.sha256.slice(0, 14)}… · {f.documentCategory}
+                              </div>
+                            </td>
+                            <td className="p-[13px] text-right text-[#475569] dark:text-[#8A93A6]">
+                              {formatKbMb(f.originalBytes || f.optimizedBytes)}
+                            </td>
+                            <td className="p-[13px] text-right text-[#C68346] font-bold">
+                              {formatKbMb(f.optimizedBytes)}
+                            </td>
+                            <td className="p-[13px] text-right text-[#00AEEF] font-bold">
+                              -{rowSavingsPct.toFixed(1)}%
+                            </td>
+                            <td className="p-[13px] text-right text-[#0F172A] dark:text-[#F3F4F6]">
+                              {f.totalPages}
+                            </td>
+                            <td className="p-[13px] text-right text-[#0F172A] dark:text-[#F3F4F6]">
+                              {f.extractedChaptersCount}
+                            </td>
+                            <td className="p-[13px] text-right text-[#00AEEF] font-bold">
+                              {f.extractedFiguresCount}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 )}
@@ -551,14 +570,14 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
 
           {activeTab === 'SYMBOLOGY_PACK' && (
             <>
-              {/* Área Menor (38.2%): Metadatos del Arquetipo y Capas Normativas */}
+              {/* Área Menor (38.2%): Gobernanza y Resumen de Simbología Compilada Real */}
               <aside className="lg:w-[38.2%] border-b lg:border-b-0 lg:border-r border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-[21px] overflow-y-auto flex flex-col gap-[21px]">
                 <div>
                   <h3 className="text-[15px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
-                    Paquete Normativo Ad-Hoc del Activo
+                    Compilado Real de Simbología del Equipo
                   </h3>
                   <p className="text-[13px] text-[#475569] dark:text-[#8A93A6] mt-[8px]">
-                    Ensamblado automático en 3 capas (`Arquetipo` + `Motorización/Tecnología` + `Contexto Faena`) sobre catálogo vectorial `.svg` (`ISO 7010`, `ISO 7000`, `ISO 2575`, `IEC 60417`, `GHS`).
+                    Cero especulación: esta tabla presenta únicamente los pictogramas vectoriales `.svg` (`ISO 7000`, `ISO 7010`, `ISO 2575`, `IEC 60417`, `GHS`) efectivamente aplicados en los textos de los 5 pilares o extraídos del manual PDF OEM del activo.
                   </p>
                 </div>
 
@@ -566,7 +585,7 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                   <div className="bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] p-[21px] flex flex-col gap-[13px]">
                     <div>
                       <span className="block text-[11px] font-bold uppercase text-[#475569] dark:text-[#8A93A6]">
-                        TOTAL SÍMBOLOS APLICABLES
+                        SÍMBOLOS REALES APLICADOS AL EQUIPO
                       </span>
                       <span className="text-[36px] font-bold font-mono tabular-nums text-[#C68346]">
                         {symbologyPack.total_symbols}
@@ -574,22 +593,24 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                     </div>
                     <div>
                       <span className="block text-[11px] font-bold uppercase text-[#475569] dark:text-[#8A93A6]">
-                        ARQUETIPO DETECTADO
+                        CLASE FÍSICA DEL EQUIPO
                       </span>
                       <span className="font-mono text-[13px] text-[#0F172A] dark:text-[#F3F4F6]">
                         {symbologyPack.archetype_key}
                       </span>
                     </div>
-                    <div className="flex flex-wrap gap-[8px]">
-                      {(symbologyPack.powertrain_tags || []).map((tag) => (
-                        <span
-                          key={tag}
-                          className="px-[8px] py-[4px] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-[11px] text-[#00AEEF]"
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
+                    {(symbologyPack.powertrain_tags || []).length > 0 && (
+                      <div className="flex flex-wrap gap-[8px]">
+                        {(symbologyPack.powertrain_tags || []).map((tag) => (
+                          <span
+                            key={tag}
+                            className="px-[8px] py-[4px] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-[11px] text-[#00AEEF]"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -600,31 +621,60 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                     onClick={handleRebuildSymbology}
                     className="py-[13px] px-[21px] border border-[#C68346] bg-[#FFFFFF] dark:bg-[#000000] hover:bg-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] hover:text-[#FFFFFF] text-[11px] font-bold uppercase tracking-[0.05em] rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                   >
-                    {loadingSymbology ? 'ACTUALIZANDO PAQUETE...' : 'RECONSTRUIR PAQUETE AD-HOC'}
+                    {loadingSymbology ? 'SINCRONIZANDO SIMBOLOGÍA...' : 'SINCRONIZAR SIMBOLOGÍA DESDE PILARES'}
                   </button>
                 )}
               </aside>
 
-              {/* Área Mayor (61.8%): Grilla Vectorial .SVG por Grupo Funcional */}
-              <section className="lg:w-[61.8%] p-[34px] overflow-y-auto bg-[#FFFFFF] dark:bg-[#000000] flex flex-col gap-[34px]">
+              {/* Área Mayor (61.8%): Tabla Compilada Real de Simbología (Significado + Aplicación Específica en el Equipo) */}
+              <section className="lg:w-[61.8%] p-[34px] overflow-y-auto bg-[#FFFFFF] dark:bg-[#000000] flex flex-col gap-[21px]">
+                <div className="flex items-center justify-between gap-[13px] pb-[13px] border-b border-[#E2E8F0] dark:border-[#12151C]">
+                  <div>
+                    <h4 className="text-[15px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                      Tabla Maestra de Simbología Aplicada a {makeModel}
+                    </h4>
+                    <p className="text-[13px] text-[#475569] dark:text-[#8A93A6]">
+                      Significado normativo oficial y trazabilidad de aplicación específica por pilar y capítulo del equipo.
+                    </p>
+                  </div>
+                </div>
+
                 {!symbologyPack ? (
-                  <p className="text-[13px] text-[#5A6072]">Cargando simbología normativa vectorial...</p>
-                ) : (
-                  (Object.keys(GROUP_LABELS_ES) as SymbologyFunctionalGroup[]).map((groupKey) => {
-                    const entries = symbologyPack.groups?.[groupKey] || [];
-                    if (entries.length === 0) return null;
+                  <p className="text-[13px] text-[#5A6072]">Cargando tabla de simbología del activo...</p>
+                ) : (() => {
+                  const flatList =
+                    Array.isArray(symbologyPack.compiled_entries) && symbologyPack.compiled_entries.length > 0
+                      ? symbologyPack.compiled_entries
+                      : (Object.keys(GROUP_LABELS_ES) as SymbologyFunctionalGroup[]).flatMap(
+                          (gk) => symbologyPack.groups?.[gk] || []
+                        );
+
+                  if (flatList.length === 0) {
                     return (
-                      <div key={groupKey} className="flex flex-col gap-[13px]">
-                        <h4 className="text-[13px] font-bold uppercase tracking-[0.04em] text-[#0F172A] dark:text-[#F3F4F6] pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C]">
-                          {GROUP_LABELS_ES[groupKey]} (<span className="font-mono tabular-nums">{entries.length}</span>)
-                        </h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-[13px]">
-                          {entries.map((sym) => (
-                            <div
-                              key={sym.concept_id}
-                              className="flex items-start gap-[13px] p-[13px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] rounded-none shadow-none"
-                            >
-                              <div className="w-[48px] h-[48px] shrink-0 bg-[#FFFFFF] border border-[#E2E8F0] p-[4px] flex items-center justify-center">
+                      <p className="text-[13px] text-[#5A6072]">
+                        [Información técnica no declarada en ficha] — Aún no se han registrado capítulos con simbología normativa ni pictogramas extraídos de manual PDF en este equipo.
+                      </p>
+                    );
+                  }
+
+                  return (
+                    <table className="w-full border-collapse text-[13px] border border-[#E2E8F0] dark:border-[#12151C]">
+                      <thead>
+                        <tr className="bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] font-mono tabular-nums text-[11px] uppercase text-[#475569] dark:text-[#8A93A6]">
+                          <th className="p-[13px] text-center w-[76px]">SÍMBOLO</th>
+                          <th className="p-[13px] text-left w-[155px]">CÓDIGO / NORMA</th>
+                          <th className="p-[13px] text-left w-[28%]">SIGNIFICADO TÉCNICO</th>
+                          <th className="p-[13px] text-left">APLICACIÓN ESPECÍFICA EN EL EQUIPO</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {flatList.map((sym) => (
+                          <tr
+                            key={sym.concept_id}
+                            className="border-b border-[#E2E8F0] dark:border-[#12151C] align-top"
+                          >
+                            <td className="p-[13px] text-center">
+                              <div className="w-[48px] h-[48px] mx-auto bg-[#FFFFFF] border border-[#E2E8F0] p-[4px] flex items-center justify-center">
                                 {sym.svg_inline ? (
                                   <div
                                     className="w-full h-full [&>svg]:w-full [&>svg]:h-full select-none pointer-events-none"
@@ -640,24 +690,60 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                                   />
                                 )}
                               </div>
-                              <div className="min-w-0 flex-1">
-                                <span className="font-mono tabular-nums text-[11px] font-bold text-[#C68346] select-text">
-                                  {sym.iso_reference}
-                                </span>
-                                <p className="text-[13px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
-                                  {sym.technical_name_es}
-                                </p>
-                                <p className="text-[12px] text-[#475569] dark:text-[#8A93A6] mt-[2px]">
-                                  {sym.action_operator_es}
-                                </p>
+                            </td>
+                            <td className="p-[13px] font-mono tabular-nums select-text">
+                              <div className="text-[12px] font-bold text-[#C68346]">
+                                {sym.iso_reference}
                               </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
+                              <div className="text-[11px] text-[#5A6072] mt-[4px]">
+                                {sym.standard_family}
+                              </div>
+                              {typeof sym.original_bytes === 'number' && typeof sym.optimized_bytes === 'number' && (
+                                <div className="text-[10px] text-[#00AEEF] mt-[4px]">
+                                  {formatKbMb(sym.original_bytes)} ➔ {formatKbMb(sym.optimized_bytes)}
+                                  {typeof sym.savings_pct === 'number' && sym.savings_pct > 0
+                                    ? ` (-${sym.savings_pct.toFixed(1)}%)`
+                                    : ''}
+                                </div>
+                              )}
+                            </td>
+                            <td className="p-[13px]">
+                              <div className="font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                                {sym.technical_name_es}
+                              </div>
+                              <div className="text-[12px] text-[#475569] dark:text-[#8A93A6] mt-[4px]">
+                                {sym.action_operator_es}
+                              </div>
+                            </td>
+                            <td className="p-[13px]">
+                              {Array.isArray(sym.applied_in_chapters) && sym.applied_in_chapters.length > 0 ? (
+                                <div className="flex flex-col gap-[8px]">
+                                  {sym.applied_in_chapters.map((app, idx) => (
+                                    <div
+                                      key={`${app.pillar_id}_${app.item_id}_${idx}`}
+                                      className="p-[8px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D]"
+                                    >
+                                      <div className="font-mono tabular-nums text-[11px] font-bold text-[#00AEEF]">
+                                        {app.pillar_label} · {app.item_title}
+                                      </div>
+                                      <div className="text-[12px] text-[#0F172A] dark:text-[#F3F4F6] mt-[2px]">
+                                        {app.context_excerpt}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-[12px] text-[#0F172A] dark:text-[#F3F4F6]">
+                                  {sym.equipment_specific_application_es || sym.action_operator_es || '[Información técnica no declarada en ficha]'}
+                                </p>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  );
+                })()}
               </section>
             </>
           )}
@@ -794,4 +880,7 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
     </div>
   );
 };
+
+export default OpermaqEngineeringStudioDrawer;
+
 

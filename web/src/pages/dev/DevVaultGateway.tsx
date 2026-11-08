@@ -1078,7 +1078,7 @@ export const DevVaultGateway: React.FC = () => {
             {/* =========================================================================
                 CONTENEDOR INFERIOR: COLUMNA DE MENÚ + ÁREA DE TRABAJO PRINCIPAL
                 ========================================================================= */}
-            <div className="flex flex-1 overflow-hidden">
+            <div className="flex flex-1 min-h-0 overflow-hidden">
                 <aside className="w-14 sm:w-16 h-full flex flex-col items-center py-4 border-r border-slate-200 dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] z-40 select-none shrink-0">
 
                     {/* CABECERA COLUMNA MENÚ: ISOTIPO OFICIAL */}
@@ -1238,7 +1238,10 @@ export const DevVaultGateway: React.FC = () => {
                     <div className="flex flex-col items-center gap-1 w-full">
                         <button
                             type="button"
-                            onClick={() => setActiveSection('MODULE_OPERMAQ_CATALOG')}
+                            onClick={() => {
+                                setActiveSection('MODULE_OPERMAQ_CATALOG');
+                                window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
+                            }}
                             title="CATÁLOGO"
                             aria-label="Catálogo"
                             className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_CATALOG'
@@ -1254,7 +1257,10 @@ export const DevVaultGateway: React.FC = () => {
 
                         <button
                             type="button"
-                            onClick={() => setActiveSection('MODULE_OPERMAQ_FLEET')}
+                            onClick={() => {
+                                setActiveSection('MODULE_OPERMAQ_FLEET');
+                                window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
+                            }}
                             title="FLOTA"
                             aria-label="Flota"
                             className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_FLEET'
@@ -1270,7 +1276,10 @@ export const DevVaultGateway: React.FC = () => {
 
                         <button
                             type="button"
-                            onClick={() => setActiveSection('MODULE_OPERMAQ_SYMBOLOGY')}
+                            onClick={() => {
+                                setActiveSection('MODULE_OPERMAQ_SYMBOLOGY');
+                                window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
+                            }}
                             title="SIMBOLOGÍA"
                             aria-label="Simbología"
                             className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_SYMBOLOGY'
@@ -1289,7 +1298,7 @@ export const DevVaultGateway: React.FC = () => {
                 {/* =========================================================================
                     ÁREA DE TRABAJO PRINCIPAL (CAMBIA SEGÚN EL BOTÓN ACTIVO)
                     ========================================================================= */}
-                <main className={`flex-1 h-full ${isModuleSection ? 'p-0 overflow-hidden flex flex-col' : 'p-8 overflow-y-auto'}`}>
+                <main className={`flex-1 h-full min-h-0 ${isModuleSection ? 'p-0 overflow-hidden flex flex-col' : 'p-8 overflow-y-auto'}`}>
 
                     {/* Header Técnico Aséptico Superior (Oculto en módulos para visualización integrada a pantalla completa) */}
                     {!isModuleSection && (
@@ -1593,7 +1602,7 @@ export const DevVaultGateway: React.FC = () => {
 
                     {/* MÓDULO INDUSTRIAL 1: STOCKPILE (NATIVO EN VIVO) */}
                     {activeSection === 'MODULE_STOCKPILE' && (
-                        <div className="w-full h-full flex-1 flex flex-col">
+                        <div className="w-full h-full min-h-0 overflow-hidden flex-1 flex flex-col">
                             <Suspense fallback={
                                 <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
                                     <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
@@ -1607,7 +1616,7 @@ export const DevVaultGateway: React.FC = () => {
 
                     {/* MÓDULO INDUSTRIAL 2A: CATÁLOGO MAESTRO ÚNICO (OPERMAQ CATALOG) */}
                     {activeSection === 'MODULE_OPERMAQ_CATALOG' && (
-                        <div className="w-full h-full flex-1 flex flex-col">
+                        <div className="w-full h-full min-h-0 overflow-hidden flex-1 flex flex-col">
                             <Suspense fallback={
                                 <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
                                     <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
@@ -1621,7 +1630,7 @@ export const DevVaultGateway: React.FC = () => {
 
                     {/* MÓDULO INDUSTRIAL 2B: CONTROL DE FLOTA (OPERMAQ FLEET) */}
                     {activeSection === 'MODULE_OPERMAQ_FLEET' && (
-                        <div className="w-full h-full flex-1 flex flex-col">
+                        <div className="w-full h-full min-h-0 overflow-hidden flex-1 flex flex-col">
                             <Suspense fallback={
                                 <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
                                     <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
@@ -1635,7 +1644,7 @@ export const DevVaultGateway: React.FC = () => {
 
                     {/* MÓDULO INDUSTRIAL 2C: SIMBOLOGÍA TRANSVERSAL ISO 7000 (OPERMAQ SYMBOLOGY) */}
                     {activeSection === 'MODULE_OPERMAQ_SYMBOLOGY' && (
-                        <div className="w-full h-full flex-1 flex flex-col">
+                        <div className="w-full h-full min-h-0 overflow-hidden flex-1 flex flex-col">
                             <Suspense fallback={
                                 <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
                                     <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>

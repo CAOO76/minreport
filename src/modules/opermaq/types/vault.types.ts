@@ -15,6 +15,31 @@ export type {
 
 export type EquipmentTypeOrigin = 'SEEDED_ISO_BASE' | 'AI_DISCOVERED' | 'HUMAN_CURATED_HITL';
 
+export interface EquipmentTypeCoreChapterItem {
+    chapter_key: string;
+    title_es: string;
+    section_es: string;
+    rationale_es: string;
+    priority: 'CRÍTICO' | 'IMPORTANTE' | 'COMPLEMENTARIO';
+}
+
+export interface EquipmentTypeConditionalSubsystemItem {
+    subsystem_key: string;
+    title_es: string;
+    section_es: string;
+    rationale_es: string;
+    trigger_keywords: string[];
+    activation_rule: 'EVIDENCE_PRESENT';
+    discovered_from_model?: string;
+    discovered_at?: string;
+}
+
+export interface EquipmentTypePillarBlueprint {
+    core_chapters: EquipmentTypeCoreChapterItem[];
+    conditional_subsystems: EquipmentTypeConditionalSubsystemItem[];
+    updated_at?: string;
+}
+
 export interface GlobalEquipmentTypeDoc {
     type_key: string;
     canonical_type_es: string;
@@ -24,6 +49,7 @@ export interface GlobalEquipmentTypeDoc {
     search_tokens: string[];
     embedding_768_raw?: number[];
     spec_schema: EquipmentTypeAxisSchemaItem[];
+    pillar_blueprints?: Partial<Record<PillarId, EquipmentTypePillarBlueprint>>;
     schema_version: number;
     origin: EquipmentTypeOrigin;
     is_human_locked: boolean;
@@ -54,6 +80,26 @@ export const VALID_PILLAR_IDS: PillarId[] = [
     'matriz_riesgos',
     'checklist_pre_op',
 ];
+
+/**
+ * SECUENCIA LÓGICA BLOQUEANTE DE LOS 5 PILARES (01 -> 02 -> 03 -> 04 -> 05)
+ * Ningún pilar posterior puede itemizarse sin haber completado el pilar anterior.
+ */
+export const SEQUENTIAL_PILLAR_ORDER: PillarId[] = [
+    'ficha_tecnica',
+    'manual_operaciones',
+    'pauta_mantencion',
+    'matriz_riesgos',
+    'checklist_pre_op',
+];
+
+export const PILLAR_PREREQUISITE_MAP: Record<PillarId, PillarId | null> = {
+    ficha_tecnica: null,
+    manual_operaciones: 'ficha_tecnica',
+    pauta_mantencion: 'manual_operaciones',
+    matriz_riesgos: 'pauta_mantencion',
+    checklist_pre_op: 'matriz_riesgos',
+};
 
 export type SourceCategory = 'OEM' | 'EXTERNO' | 'YOUTUBE' | 'MANUAL';
 
@@ -95,6 +141,9 @@ export interface ExtractedFigureRef {
     box_2d?: [number, number, number, number];
     width?: number;
     height?: number;
+    original_bytes?: number;
+    optimized_bytes?: number;
+    savings_pct?: number;
     callouts?: FigureCallout[];
     is_parametric_svg?: boolean;
 }
@@ -110,6 +159,10 @@ export interface LockedItemAdvisory {
     acknowledged?: boolean;
     acknowledged_by?: string;
     acknowledged_at?: string;
+    /** Re-Auditoría v2 · OPT-F2.5: figura propuesta para una imagen pendiente en un ítem bloqueado. */
+    kind?: 'CONTENT' | 'PENDING_FIGURE';
+    figure?: ExtractedFigureRef;
+    pending_marker_line?: string;
 }
 
 export interface ProposedUpdate {
@@ -175,6 +228,8 @@ export interface PillarItem {
     figures?: ExtractedFigureRef[];
     fact_fingerprints?: string[];
     symbology_refs?: string[];
+    /** Telemetría de captura visual de la última caza (fuentes, candidatos, rechazos por motivo, figuras almacenadas). */
+    media_harvest_report?: Record<string, any>;
     last_edit_by?: string;
 }
 
@@ -200,10 +255,12 @@ export interface PillarDocument {
         section: string;
         source?: ItemizedSource;
     }>;
-    itemize_status: 'IDLE' | 'GENERATING' | 'COMPLETED' | 'ERROR';
+    itemize_status: 'IDLE' | 'GENERATING' | 'PARTIAL_FROM_INGESTION' | 'COMPLETED' | 'ERROR';
     started_at?: string | null;
     itemized_at?: string | null;
     itemize_error?: string | null;
+    structure_digest_sha256?: string | null;
+    parent_pillar_digest_sha256?: string | null;
     indices?: Record<string, any>;
 }
 
@@ -212,6 +269,7 @@ export type KnowledgeVault = Record<PillarId, PillarDocument> & {
     sealed_at?: string | null;
     sealed_by?: string | null;
     unseal_reason?: string | null;
+    vault_merkle_root_sha256?: string | null;
 };
 
 export interface MasterSymbologyVariant {
@@ -303,6 +361,14 @@ export type SymbologyFunctionalGroup =
     | 'CABIN_TELLTALES_CONTROLS'
     | 'MAINTENANCE_FLUIDS_ELECTRICAL';
 
+export interface SymbologyChapterApplicationRef {
+    pillar_id: PillarId;
+    pillar_label: string;
+    item_id: string;
+    item_title: string;
+    context_excerpt: string;
+}
+
 export interface SymbologyPackEntry {
     concept_id: string;
     standard_family: SymbologyStandardFamily;
@@ -310,10 +376,16 @@ export interface SymbologyPackEntry {
     group: SymbologyFunctionalGroup;
     technical_name_es: string;
     action_operator_es: string;
+    equipment_specific_application_es?: string;
+    applied_in_pillars?: string[];
+    applied_in_chapters?: SymbologyChapterApplicationRef[];
     critical_color: 'RED' | 'AMBER' | 'GREEN' | 'BLUE' | 'NONE' | string;
     icon_url: string;
     svg_inline?: string;
     is_brand_specific?: boolean;
+    original_bytes?: number;
+    optimized_bytes?: number;
+    savings_pct?: number;
     source_layer: 'ARCHETYPE' | 'POWERTRAIN_TECH' | 'TENANT_FAENA' | 'OEM_MANUAL';
 }
 
@@ -322,6 +394,7 @@ export interface EquipmentSymbologyPack {
     archetype_key: string;
     powertrain_tags: string[];
     total_symbols: number;
+    compiled_entries?: SymbologyPackEntry[];
     groups: Record<SymbologyFunctionalGroup, SymbologyPackEntry[]>;
 }
 

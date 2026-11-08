@@ -6,6 +6,7 @@ import { db, storage } from '../../../config/firebase';
 import { env } from '../../../config/env';
 import { AuditLedger } from '../../../core/audit-ledger';
 import { CasStorageService } from '../../../core/media/CasStorageService';
+import { ConfidentialityAirlockService } from '../../../core/privacy/ConfidentialityAirlockService';
 import { AISwarmUnavailableError } from '../../../core/resilient-ai-client';
 import type { ScopedRequest } from '../../../middleware/sessionScope';
 import { safeFetchExternal, SSRFBlockedError } from '../../../utils/ssrfGuard';
@@ -24,7 +25,10 @@ import {
 import { buildAndPersistAssetSymbologyPack } from '../services/EquipmentSymbologyPackBuilder';
 import { huntVaultItem } from '../services/ItemHunterService';
 import {
+    computePillarStructureDigestSha256,
+    computeVaultMerkleRootSha256,
     itemizeSinglePillar,
+    sortAndReindexPillarItems,
     suggestComplementaryPillarItems,
 } from '../services/ItemizerService';
 import { OpermaqManualPublisher } from '../services/OpermaqManualPublisher';
@@ -32,7 +36,7 @@ import {
     type BlueprintKind,
     OpermaqSvgBlueprintEngine,
 } from '../services/OpermaqSvgBlueprintEngine';
-import { createEmptyKnowledgeVault } from '../services/pillarAgents';
+import { createEmptyKnowledgeVault, PILLAR_LABELS } from '../services/pillarAgents';
 import { SegmentedDocumentProcessorService } from '../services/SegmentedDocumentProcessorService';
 import {
     drawStandardIcon,
@@ -46,13 +50,29 @@ import {
     uploadManualVariant,
     uploadStandardIcon,
 } from '../services/SymbologyService';
-import { buildHuntTaskId, enqueueItemHuntTask } from '../services/TaskQueueService';
+import { buildHuntTaskId, enqueueItemHuntTask, isHuntTaskActivelyRunning } from '../services/TaskQueueService';
 import { ensureUniversalSymbologySeeded } from '../services/UniversalSymbologySeedService';
+import {
+    injectExplicitFigureCitationInSection,
+    parsePendingMarker,
+    sanitizeMarkdownFiguresAndBrokenMarkers,
+    sanitizeMarkdownLabel,
+    splitMarkdownSections,
+    tokenContainment,
+} from '../services/PendingFigureMarkers';
+import {
+    filterFiguresReferencedInMarkdown,
+    formatFigureMarkdownBlock,
+    mergeDeduplicatedFigures,
+    reconcileSectionFiguresAndPendingMarkers,
+} from '../services/VaultReconciliationService';
 import { processVaultChat } from '../services/vaultChatService';
 import {
     type AdHocManualProfileId,
     type ChatMessage,
+    type ExtractedFigureRef,
     HITL_CONFIRM_KEYWORD,
+    PILLAR_PREREQUISITE_MAP,
     type PillarId,
     ReviewContributionBodySchema,
     VALID_PILLAR_IDS,
@@ -204,6 +224,7 @@ vaultRouter.post('/initialize-vault', requireCurateAI, checkVaultNotSealed, asyn
 });
 
 vaultRouter.post('/itemize-pillar', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
+    const ctx = req.opermaqContext!;
     const schema = z.object({
         globalAssetId: z.string().min(1),
         pillarId: z.enum([
@@ -213,6 +234,8 @@ vaultRouter.post('/itemize-pillar', requireCurateAI, checkVaultNotSealed, async 
             'matriz_riesgos',
             'checklist_pre_op',
         ]),
+        forceSmartMerge: z.boolean().optional(),
+        confirmWord: z.string().optional(),
     });
 
     const parsed = schema.safeParse(req.body);
@@ -220,7 +243,7 @@ vaultRouter.post('/itemize-pillar', requireCurateAI, checkVaultNotSealed, async 
         return res.status(400).json({ error: 'Parámetros inválidos (globalAssetId, pillarId).' });
     }
 
-    const { globalAssetId, pillarId } = parsed.data;
+    const { globalAssetId, pillarId, forceSmartMerge, confirmWord } = parsed.data;
 
     try {
         const snap = await db.collection('global_asset_catalog').doc(globalAssetId).get();
@@ -238,15 +261,49 @@ vaultRouter.post('/itemize-pillar', requireCurateAI, checkVaultNotSealed, async 
         }
 
         const pillar = data.knowledge_vault?.[pillarId];
-        if (pillar?.itemize_status === 'COMPLETED') {
+        const isAuthorizedSmartMerge =
+            forceSmartMerge === true &&
+            String(confirmWord || '').trim().toUpperCase() === HITL_CONFIRM_KEYWORD;
+
+        // Compuerta de secuencia lógica de 5 pilares (`01 ➔ 02 ➔ 03 ➔ 04 ➔ 05`)
+        const prerequisitePillarId = PILLAR_PREREQUISITE_MAP[pillarId];
+        let isParentPillarEvolved = false;
+        if (prerequisitePillarId) {
+            const prereqPillar = data.knowledge_vault?.[prerequisitePillarId];
+            const prereqActiveItems = Array.isArray(prereqPillar?.items)
+                ? prereqPillar.items.filter((it: any) => !it?.is_discarded)
+                : [];
+            if (prereqActiveItems.length === 0) {
+                const prereqLabel = PILLAR_LABELS[prerequisitePillarId] || prerequisitePillarId;
+                const currentLabel = PILLAR_LABELS[pillarId] || pillarId;
+                return res.status(409).json({
+                    error: 'PREREQUISITE_PILLAR_NOT_ITEMIZED',
+                    prerequisitePillarId,
+                    message: `Secuencia de 5 Pilares: Debe itemizar primero "${prereqLabel}" antes de itemizar "${currentLabel}".`,
+                });
+            }
+            const currentParentDigest =
+                prereqPillar?.structure_digest_sha256 ||
+                computePillarStructureDigestSha256(prereqPillar?.items);
+            if (
+                currentParentDigest &&
+                pillar?.parent_pillar_digest_sha256 &&
+                currentParentDigest !== pillar.parent_pillar_digest_sha256
+            ) {
+                isParentPillarEvolved = true;
+            }
+        }
+
+        if (pillar?.itemize_status === 'COMPLETED' && !isAuthorizedSmartMerge && !isParentPillarEvolved) {
             return res.status(409).json({
                 error: 'ALREADY_ITEMIZED',
-                message: 'El pilar ya fue itemizado.',
+                message:
+                    'El pilar ya fue itemizado. Para sincronizar y fusionar nuevos subsistemas sin borrar datos existentes, autorice con "ACTUALIZAR".',
             });
         }
         if (pillar?.itemize_status === 'GENERATING') {
             const startedMs = pillar.started_at ? new Date(pillar.started_at).getTime() : 0;
-            if (startedMs > 0 && Date.now() - startedMs < 5 * 60 * 1000) {
+            if (startedMs > 0 && Date.now() - startedMs < 45 * 1000) {
                 return res.status(409).json({
                     error: 'ALREADY_ITEMIZED',
                     message: 'El pilar se encuentra en itemización activa.',
@@ -254,12 +311,18 @@ vaultRouter.post('/itemize-pillar', requireCurateAI, checkVaultNotSealed, async 
             }
         }
 
-        const result = await itemizeSinglePillar(globalAssetId, pillarId);
+        const result = await itemizeSinglePillar(globalAssetId, pillarId, {
+            actorId: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            forceSmartMerge: isAuthorizedSmartMerge,
+        });
         return res.status(200).json({
             success: true,
             items: result.items,
             classified_sources: result.classified_sources,
-            message: `Pilar ${pillarId} itemizado (${result.totalItems} ítems).`,
+            preservedItemsCount: result.preservedItemsCount ?? 0,
+            addedItemsCount: result.addedItemsCount ?? result.totalItems,
+            message: `Pilar ${pillarId} itemizado (${result.totalItems} ítems activos).`,
         });
     } catch (err) {
         return handleVaultError(res, err, 'Error ejecutando itemizado del pilar.');
@@ -335,7 +398,7 @@ vaultRouter.post('/hunt-item', requireCurateAI, checkVaultNotSealed, async (req:
 
 vaultRouter.post('/hunt-item-async', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const { globalAssetId, pillarId, itemId, humanCorrection } = req.body || {};
+    const { globalAssetId, pillarId, itemId, humanCorrection, forceRestart } = req.body || {};
 
     if (!globalAssetId || !VALID_PILLAR_IDS.includes(pillarId) || !itemId) {
         return res.status(400).json({ error: 'Parámetros requeridos: globalAssetId, pillarId, itemId.' });
@@ -345,9 +408,9 @@ vaultRouter.post('/hunt-item-async', requireCurateAI, checkVaultNotSealed, async
 
     try {
         const taskDoc = await db.collection('task_status').doc(taskId).get();
-        if (taskDoc.exists) {
+        if (taskDoc.exists && !forceRestart) {
             const current = taskDoc.data();
-            if (current?.status === 'PENDING' || current?.status === 'PROCESSING') {
+            if (isHuntTaskActivelyRunning(taskId, current)) {
                 return res.status(200).json({
                     success: true,
                     taskId,
@@ -357,21 +420,26 @@ vaultRouter.post('/hunt-item-async', requireCurateAI, checkVaultNotSealed, async
             }
         }
 
-        // Marcar ítem en GENERANDO de inmediato para respuesta visual reactiva
+        // Marcar ítem en GENERANDO mediante transacción atómica para permitir cazas concurrentes sin condiciones de carrera
         const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
-        const snap = await docRef.get();
-        if (snap.exists) {
+        const lockedTitle = await db.runTransaction(async (tx) => {
+            const snap = await tx.get(docRef);
+            if (!snap.exists) return null;
             const items = [...(snap.data()?.knowledge_vault?.[pillarId]?.items || [])];
             const idx = items.findIndex((it: any) => it.item_id === itemId);
-            if (idx > -1) {
-                if (items[idx].is_human_locked === true) {
-                    return res.status(403).json({
-                        error: `El ítem "${items[idx].title}" está bloqueado por autoridad humana.`,
-                    });
-                }
-                items[idx] = { ...items[idx], content_status: 'GENERANDO', hunt_error: null };
-                await docRef.update({ [`knowledge_vault.${pillarId}.items`]: items });
+            if (idx === -1) return null;
+            if (items[idx].is_human_locked === true) {
+                return String(items[idx].title || itemId);
             }
+            items[idx] = { ...items[idx], content_status: 'GENERANDO', hunt_error: null };
+            tx.update(docRef, { [`knowledge_vault.${pillarId}.items`]: items });
+            return null;
+        });
+
+        if (lockedTitle) {
+            return res.status(403).json({
+                error: `El ítem "${lockedTitle}" está bloqueado por autoridad humana.`,
+            });
         }
 
         const enqueued = await enqueueItemHuntTask({
@@ -381,6 +449,7 @@ vaultRouter.post('/hunt-item-async', requireCurateAI, checkVaultNotSealed, async
             tenantId: ctx.tenantId,
             actorId: ctx.actorId,
             humanCorrection,
+            forceRestart: Boolean(forceRestart),
         });
 
         return res.status(202).json({
@@ -689,27 +758,325 @@ vaultRouter.post('/apply-assist-proposal', requireCurateAI, checkVaultNotSealed,
     }
 });
 
+// Resolución in-situ de una imagen técnica pendiente en la sección exacta del capítulo
+// (Re-Auditoría v2 · F2: validación CAS en servidor, confirmación "ACTUALIZAR", anclaje determinista y advisory si está bloqueado)
+const PENDING_FIGURE_TYPES = [
+    'DIAGRAMA_ACOTADO',
+    'CURVA_RENDIMIENTO',
+    'ESQUEMA_HIDRAULICO_ELECTRICO',
+    'FOTO_COMPONENTE',
+    'MAPA_LUBRICACION_PM',
+    'SIMBOLOGIA_SEGURIDAD',
+    'PLANO_VECTORIAL_SVG',
+] as const;
+
+const ResolvePendingFigureSchema = z.object({
+    globalAssetId: z.string().min(1),
+    pillarId: z.enum(['ficha_tecnica', 'manual_operaciones', 'pauta_mantencion', 'matriz_riesgos', 'checklist_pre_op']),
+    itemId: z.string().min(1),
+    confirmWord: z.string().refine((w) => w.trim().toUpperCase() === HITL_CONFIRM_KEYWORD, {
+        message: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".`,
+    }),
+    pendingMarkerLine: z.string().max(1200).optional(),
+    pendingDescription: z.string().max(600).optional(),
+    figure: z.object({
+        sha256: z.string().regex(/^[a-f0-9]{64}$/i),
+        storage_url: z
+            .string()
+            .min(1)
+            .refine((u) => !/^(?:blob:|data:|javascript:)/i.test(u.trim()), {
+                message: 'URL no CAS rechazada (blob:/data: no se persisten).',
+            }),
+        figure_type: z.enum(PENDING_FIGURE_TYPES),
+        title_es: z.string().min(1).max(400),
+        caption_es: z.string().max(400).optional(),
+        source_url: z.string().max(2000).optional(),
+    }),
+});
+
+vaultRouter.post(
+    '/resolve-pending-figure',
+    requireCurateAI,
+    checkVaultNotSealed,
+    async (req: ScopedRequest, res: Response) => {
+        const ctx = req.opermaqContext!;
+        const parsed = ResolvePendingFigureSchema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({
+                error: parsed.error.issues[0]?.message || 'Parámetros inválidos para resolución de figura pendiente.',
+                details: parsed.error.issues,
+            });
+        }
+
+        const { globalAssetId, pillarId, itemId, pendingMarkerLine, pendingDescription, figure } = parsed.data;
+
+        // OPT-F2.1: el binario debe existir en el registro CAS y la URL debe ser exactamente la del registro
+        const casDescriptor = await CasStorageService.preflightCheck(figure.sha256, 'GLOBAL_OEM').catch(() => null);
+        if (!casDescriptor) {
+            return res.status(422).json({ error: 'El SHA-256 informado no existe en el registro CAS (GLOBAL_OEM).' });
+        }
+        const expectedGateway = CasStorageService.buildGatewayUrl('GLOBAL_OEM', casDescriptor.sha256, casDescriptor.extension);
+        const clientUrl = figure.storage_url.trim();
+        if (clientUrl !== casDescriptor.downloadUrl && clientUrl !== expectedGateway) {
+            return res.status(422).json({ error: 'La URL de la figura no coincide con el registro CAS.' });
+        }
+
+        const cleanTitle = sanitizeMarkdownLabel(
+            ConfidentialityAirlockService.scrubDeterministicPii(figure.title_es).scrubbed,
+            160
+        );
+        const cleanCaption = figure.caption_es
+            ? sanitizeMarkdownLabel(ConfidentialityAirlockService.scrubDeterministicPii(figure.caption_es).scrubbed, 220)
+            : '';
+        const safeSourceUrl =
+            figure.source_url && /^https:\/\//i.test(figure.source_url.trim()) ? figure.source_url.trim() : undefined;
+        const mime: ExtractedFigureRef['mime_type'] =
+            casDescriptor.mimeType === 'image/svg+xml'
+                ? 'image/svg+xml'
+                : casDescriptor.mimeType === 'image/png'
+                ? 'image/png'
+                : 'image/webp';
+
+        const newFigureRef: ExtractedFigureRef = {
+            figure_id: `fig_manual_${casDescriptor.sha256.slice(0, 12)}`,
+            sha256: casDescriptor.sha256,
+            ...(casDescriptor.phashHex ? { phash_hex: casDescriptor.phashHex } : {}),
+            storage_url: casDescriptor.downloadUrl,
+            mime_type: mime,
+            figure_type: figure.figure_type,
+            title_es: cleanTitle,
+            ...(cleanCaption ? { caption_es: cleanCaption } : {}),
+            ...(safeSourceUrl ? { source_url: safeSourceUrl } : {}),
+            ...(casDescriptor.width ? { width: casDescriptor.width } : {}),
+            ...(casDescriptor.height ? { height: casDescriptor.height } : {}),
+            original_bytes: casDescriptor.originalBytes,
+            optimized_bytes: casDescriptor.optimizedBytes,
+            savings_pct: casDescriptor.savingsPct ?? Number((Number(casDescriptor.savingsRatio || 0) * 100).toFixed(1)),
+        };
+        const figureBlock = formatFigureMarkdownBlock(newFigureRef);
+
+        try {
+            const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
+            const outcome = await db.runTransaction(async (tx) => {
+                const snap = await tx.get(docRef);
+                if (!snap.exists) {
+                    const err: any = new Error('Catálogo no encontrado.');
+                    err.statusCode = 404;
+                    throw err;
+                }
+                const pillar = snap.data()?.knowledge_vault?.[pillarId];
+                if (!pillar || !Array.isArray(pillar.items)) {
+                    const err: any = new Error('Pilar no encontrado.');
+                    err.statusCode = 404;
+                    throw err;
+                }
+                const items = [...pillar.items];
+                const idx = items.findIndex((it: any) => it.item_id === itemId);
+                if (idx === -1) {
+                    const err: any = new Error('Ítem no encontrado.');
+                    err.statusCode = 404;
+                    throw err;
+                }
+                const nowIso = new Date().toISOString();
+
+                // OPT-F2.5: ítem aprobado/bloqueado → la figura queda como propuesta (advisory) sin tocar el contenido
+                if (items[idx].is_human_locked === true) {
+                    const advisories = [...(items[idx].locked_item_advisories || [])];
+                    if (!advisories.some((a: any) => a?.figure?.sha256 === newFigureRef.sha256)) {
+                        advisories.push({
+                            advisory_id: `adv_fig_${Date.now()}`,
+                            kind: 'PENDING_FIGURE',
+                            detected_at: nowIso,
+                            source_label: `Imagen técnica aportada por ${ctx.actorEmail}`,
+                            ...(safeSourceUrl ? { source_url: safeSourceUrl } : {}),
+                            summary: `Imagen propuesta para sección pendiente: "${cleanTitle}". Requiere desbloqueo del ítem para integrarla.`,
+                            proposed_value: figureBlock,
+                            figure: newFigureRef,
+                            ...(pendingMarkerLine ? { pending_marker_line: pendingMarkerLine.slice(0, 1200) } : {}),
+                            acknowledged: false,
+                        });
+                        items[idx] = { ...items[idx], locked_item_advisories: advisories };
+                        tx.update(docRef, { [`knowledge_vault.${pillarId}.items`]: items });
+                    }
+                    return { mode: 'LOCKED_ADVISORY' as const };
+                }
+
+                const currentContent = String(items[idx].content || '');
+                const sanitizedCurrent = sanitizeMarkdownFiguresAndBrokenMarkers(
+                    currentContent,
+                    items[idx].title || '',
+                    items[idx].item_sources || [],
+                    items[idx].figures || []
+                );
+                const existingFigCount = (
+                    sanitizedCurrent.match(/!\[(?!IMAGEN[_\s-]PENDIENTE)[^\]]*\]\([^)]+\)/gi) || []
+                ).length;
+                const nextFigNum = existingFigCount + 1;
+                const numberedFigureBlock = formatFigureMarkdownBlock(newFigureRef, nextFigNum);
+
+                const replaceMarkerInSections = (markdownInput: string, targetLine: string): string | null => {
+                    if (!targetLine || !markdownInput.includes(targetLine)) return null;
+                    const sections = splitMarkdownSections(markdownInput);
+                    let replaced = false;
+                    const outSections = sections.map((sec) => {
+                        const lineIdx = sec.lines.findIndex((l) => l.trim() === targetLine.trim() || l.includes(targetLine));
+                        if (lineIdx === -1 || replaced) return sec.lines.join('\n');
+                        replaced = true;
+                        const beforeMarker = sec.lines.slice(0, lineIdx);
+                        const afterMarker = sec.lines.slice(lineIdx + 1);
+                        const citedBefore = injectExplicitFigureCitationInSection(beforeMarker, nextFigNum, cleanTitle);
+                        return [...citedBefore, '', numberedFigureBlock, '', ...afterMarker].join('\n');
+                    });
+                    return replaced ? outSections.join('\n').replace(/\n{4,}/g, '\n\n\n') : null;
+                };
+
+                let nextContent: string | null = null;
+
+                // 1. Marcador persistido exacto (sobre contenido original o sanitizado)
+                if (pendingMarkerLine) {
+                    nextContent =
+                        replaceMarkerInSections(sanitizedCurrent, pendingMarkerLine) ??
+                        replaceMarkerInSections(currentContent, pendingMarkerLine);
+                }
+
+                // 2. OPT-F2.6: marcadores deterministas o reparados en servidor sobre el texto guardado
+                //    y elección del más afín a la descripción enviada por el cliente
+                if (nextContent === null) {
+                    const normalized = reconcileSectionFiguresAndPendingMarkers(
+                        sanitizedCurrent,
+                        [],
+                        items[idx].item_sources || [],
+                        items[idx].title || ''
+                    );
+                    const markerLines = normalized
+                        .split('\n')
+                        .filter((l) => parsePendingMarker(l) !== null);
+                    const reference = `${pendingDescription || ''} ${pendingMarkerLine || ''}`;
+                    let bestLine: string | null = null;
+                    let bestScore = 0;
+                    for (const ml of markerLines) {
+                        const desc = parsePendingMarker(ml)?.description || '';
+                        const score = markerLines.length === 1 ? 1 : tokenContainment(desc, reference);
+                        if (score > bestScore) {
+                            bestScore = score;
+                            bestLine = ml;
+                        }
+                    }
+                    if (bestLine && bestScore >= 0.35) {
+                        nextContent = replaceMarkerInSections(normalized, bestLine);
+                    }
+                }
+
+                if (nextContent === null) {
+                    const err: any = new Error(
+                        'No se localizó la sección de la imagen pendiente en el contenido guardado. Recargue el ítem e intente nuevamente.'
+                    );
+                    err.statusCode = 409;
+                    throw err;
+                }
+
+                const { merged: mergedFigures } = mergeDeduplicatedFigures(items[idx].figures || [], [newFigureRef]);
+                const referencedFigures = filterFiguresReferencedInMarkdown(nextContent, mergedFigures);
+
+                items[idx] = {
+                    ...items[idx],
+                    content: nextContent,
+                    figures: referencedFigures,
+                    last_edit_by: ctx.actorEmail,
+                    historial_cambios: [
+                        ...(items[idx].historial_cambios || []),
+                        {
+                            fecha: nowIso,
+                            accion: 'RESOLUCION_IMAGEN_PENDIENTE_CAS',
+                            actor: ctx.actorEmail,
+                            detalle: `Imagen técnica integrada en sección: "${cleanTitle}" (SHA-256 ${newFigureRef.sha256.slice(
+                                0,
+                                12
+                            )}, ${newFigureRef.original_bytes || 0} B ➔ ${newFigureRef.optimized_bytes || 0} B, -${
+                                newFigureRef.savings_pct || 0
+                            }%).`,
+                            snapshot_anterior: currentContent,
+                        },
+                    ],
+                };
+
+                tx.update(docRef, { [`knowledge_vault.${pillarId}.items`]: items });
+                return { mode: 'INTEGRATED' as const };
+            });
+
+            await AuditLedger.record({
+                module: 'opermaq',
+                tenantId: ctx.tenantId,
+                actorUid: ctx.actorId,
+                actorEmail: ctx.actorEmail,
+                action:
+                    outcome.mode === 'LOCKED_ADVISORY'
+                        ? 'VAULT_PENDING_FIGURE_PROPOSED_LOCKED'
+                        : 'VAULT_PENDING_FIGURE_RESOLVED_CAS',
+                targetEntity: `global_asset_catalog/${globalAssetId}/knowledge_vault/${pillarId}/${itemId}`,
+                details: {
+                    sha256: newFigureRef.sha256,
+                    figure_type: newFigureRef.figure_type,
+                    title_es: cleanTitle,
+                    original_bytes: newFigureRef.original_bytes,
+                    optimized_bytes: newFigureRef.optimized_bytes,
+                    savings_pct: newFigureRef.savings_pct,
+                },
+            }).catch(() => undefined);
+
+            return res.status(200).json({ success: true, mode: outcome.mode, figure: newFigureRef });
+        } catch (err) {
+            return handleVaultError(res, err, 'Error integrando imagen técnica en la sección del capítulo.');
+        }
+    }
+);
+
 vaultRouter.post('/correct-manual-item', requireCurateAI, async (req: ScopedRequest, res: Response) => {
-    const { title, rationale } = req.body || {};
+    const { title, rationale, globalAssetId, pillarId } = req.body || {};
     if (!title || !rationale) {
         return res.status(400).json({ error: 'title y rationale son requeridos.' });
     }
 
     try {
-        const corrected = await correctManualItemText(String(title), String(rationale));
+        let makeModel: string | undefined;
+        let tipoEquipo: string | undefined;
+        if (globalAssetId) {
+            const snap = await db.collection('global_asset_catalog').doc(String(globalAssetId)).get();
+            if (snap.exists) {
+                const d = snap.data() || {};
+                makeModel = d.make_model || `${d.make_oficial || d.make || ''} ${d.model_oficial || d.model || ''}`.trim();
+                tipoEquipo = d.tipo_equipo;
+            }
+        }
+        const corrected = await correctManualItemText(String(title), String(rationale), {
+            makeModel,
+            tipoEquipo,
+            pillarId: VALID_PILLAR_IDS.includes(pillarId) ? (pillarId as PillarId) : undefined,
+        });
         return res.status(200).json({ corrected });
     } catch {
-        return res.status(200).json({ corrected: { title, rationale } });
+        return res.status(200).json({
+            corrected: {
+                title: String(title),
+                rationale: String(rationale),
+                section: 'ESPECIFICACIÓN TÉCNICA',
+            },
+        });
     }
 });
 
 vaultRouter.post('/create-item', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const { globalAssetId, pillarId, title, section, rationale, priority, itemSource } = req.body || {};
+    const { globalAssetId, pillarId, title, section, rationale, priority, itemSource, confirmWord } = req.body || {};
 
     if (!globalAssetId || !pillarId || !title || !section) {
         return res.status(400).json({
             error: 'Parámetros requeridos: globalAssetId, pillarId, title, section.',
+        });
+    }
+    if (confirmWord !== undefined && String(confirmWord).trim().toUpperCase() !== HITL_CONFIRM_KEYWORD) {
+        return res.status(400).json({
+            error: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".`,
         });
     }
 
@@ -721,14 +1088,21 @@ vaultRouter.post('/create-item', requireCurateAI, checkVaultNotSealed, async (re
         const pillar = snap.data()?.knowledge_vault?.[pillarId];
         if (!pillar) return res.status(404).json({ error: 'Pilar no encontrado.' });
 
+        // Sanitización determinista PII (Ley N° 21.719)
+        const cleanTitle = ConfidentialityAirlockService.scrubDeterministicPii(String(title)).scrubbed.trim();
+        const cleanSection = ConfidentialityAirlockService.scrubDeterministicPii(String(section)).scrubbed.trim().toUpperCase();
+        const cleanRationale = rationale
+            ? ConfidentialityAirlockService.scrubDeterministicPii(String(rationale)).scrubbed.trim()
+            : 'Registrado manualmente.';
+
         const items = [...(pillar.items || [])];
         const newId = `manual_${randomUUID().substring(0, 8)}`;
 
         const newItem = {
             item_id: newId,
-            title,
-            section,
-            rationale: rationale || 'Registrado manualmente.',
+            title: cleanTitle,
+            section: cleanSection || 'ESPECIFICACIÓN TÉCNICA',
+            rationale: cleanRationale,
             priority: priority || 'IMPORTANTE',
             order: items.filter((it: any) => !it.is_discarded).length + 1,
             content_status: 'PENDIENTE',
@@ -741,7 +1115,7 @@ vaultRouter.post('/create-item', requireCurateAI, checkVaultNotSealed, async (re
                     fecha: new Date().toISOString(),
                     accion: itemSource ? 'CREACION_IA_COMPLEMENTARIA' : 'CREACION_MANUAL',
                     actor: ctx.actorEmail,
-                    detalle: `Ítem inscrito: "${title}".`,
+                    detalle: `Ítem inscrito: "${cleanTitle}".`,
                 },
             ],
             item_sources: [
@@ -755,23 +1129,52 @@ vaultRouter.post('/create-item', requireCurateAI, checkVaultNotSealed, async (re
                     : {
                           type: 'MANUAL',
                           author: ctx.actorEmail,
-                          description: rationale || title,
+                          description: cleanRationale || cleanTitle,
                           url: '',
                       },
             ],
         };
 
-        const finalItems = reindexPillarItems([...items, newItem]);
+        const finalItems = sortAndReindexPillarItems(pillarId as PillarId, [...items, newItem]);
+        const newStructureDigest = computePillarStructureDigestSha256(finalItems);
         const pillarSources = [...(pillar.classified_sources_itemized || []), newItem.item_sources[0]];
         const updatedPending = (pillar.suggested_items_pending || []).filter(
             (it: any) => String(it.title || '').toLowerCase().trim() !== String(title).toLowerCase().trim()
         );
 
+        const nextVault = {
+            ...(snap.data()?.knowledge_vault || {}),
+            [pillarId]: {
+                ...pillar,
+                items: finalItems,
+                structure_digest_sha256: newStructureDigest,
+            },
+        };
+        const newMerkleRoot = computeVaultMerkleRootSha256(nextVault);
+
         await docRef.update({
             [`knowledge_vault.${pillarId}.items`]: finalItems,
+            [`knowledge_vault.${pillarId}.structure_digest_sha256`]: newStructureDigest,
             [`knowledge_vault.${pillarId}.classified_sources_itemized`]: pillarSources,
             [`knowledge_vault.${pillarId}.suggested_items_pending`]: updatedPending,
+            [`knowledge_vault.vault_merkle_root_sha256`]: newMerkleRoot,
         });
+
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: itemSource ? 'VAULT_ITEM_CREATED_FROM_SUGGESTION' : 'VAULT_ITEM_CREATED_MANUAL',
+            targetEntity: `global_asset_catalog/${globalAssetId}/knowledge_vault/${pillarId}/${newId}`,
+            details: {
+                pillarId,
+                itemId: newId,
+                title: cleanTitle,
+                section: cleanSection,
+                actorEmail: ctx.actorEmail,
+            },
+        }).catch(() => undefined);
 
         return res.status(200).json({ success: true, item: newItem });
     } catch (err) {
@@ -781,10 +1184,13 @@ vaultRouter.post('/create-item', requireCurateAI, checkVaultNotSealed, async (re
 
 vaultRouter.post('/discard-item', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const { globalAssetId, pillarId, itemId } = req.body || {};
+    const { globalAssetId, pillarId, itemId, confirmWord } = req.body || {};
 
     if (!globalAssetId || !pillarId || !itemId) {
         return res.status(400).json({ error: 'Parámetros requeridos: globalAssetId, pillarId, itemId.' });
+    }
+    if (confirmWord !== undefined && String(confirmWord).trim().toUpperCase() !== HITL_CONFIRM_KEYWORD) {
+        return res.status(400).json({ error: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".` });
     }
 
     try {
@@ -806,8 +1212,38 @@ vaultRouter.post('/discard-item', requireCurateAI, checkVaultNotSealed, async (r
             discarded_by: ctx.actorEmail,
         };
 
-        const finalItems = reindexPillarItems(items);
-        await docRef.update({ [`knowledge_vault.${pillarId}.items`]: finalItems });
+        const finalItems = sortAndReindexPillarItems(pillarId as PillarId, items);
+        const newStructureDigest = computePillarStructureDigestSha256(finalItems);
+        const nextVault = {
+            ...(snap.data()?.knowledge_vault || {}),
+            [pillarId]: {
+                ...pillar,
+                items: finalItems,
+                structure_digest_sha256: newStructureDigest,
+            },
+        };
+        const newMerkleRoot = computeVaultMerkleRootSha256(nextVault);
+
+        await docRef.update({
+            [`knowledge_vault.${pillarId}.items`]: finalItems,
+            [`knowledge_vault.${pillarId}.structure_digest_sha256`]: newStructureDigest,
+            [`knowledge_vault.vault_merkle_root_sha256`]: newMerkleRoot,
+        });
+
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_ITEM_DISCARDED',
+            targetEntity: `global_asset_catalog/${globalAssetId}/knowledge_vault/${pillarId}/${itemId}`,
+            details: {
+                pillarId,
+                itemId,
+                title: items[idx].title,
+                actorEmail: ctx.actorEmail,
+            },
+        }).catch(() => undefined);
 
         return res.status(200).json({ success: true });
     } catch (err) {
@@ -868,6 +1304,20 @@ vaultRouter.post('/discard-suggested-item', requireCurateAI, checkVaultNotSealed
             [`knowledge_vault.${pillarId}.suggested_items_pending`]: updatedPending,
         });
 
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_SUGGESTION_DISCARDED',
+            targetEntity: `global_asset_catalog/${globalAssetId}/knowledge_vault/${pillarId}/${newItem.item_id}`,
+            details: {
+                pillarId,
+                title,
+                actorEmail: ctx.actorEmail,
+            },
+        }).catch(() => undefined);
+
         return res.status(200).json({ success: true });
     } catch (err) {
         return handleVaultError(res, err, 'Error descartando sugerencia.');
@@ -875,9 +1325,13 @@ vaultRouter.post('/discard-suggested-item', requireCurateAI, checkVaultNotSealed
 });
 
 vaultRouter.post('/reactivate-item', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
-    const { globalAssetId, pillarId, itemId } = req.body || {};
+    const ctx = req.opermaqContext!;
+    const { globalAssetId, pillarId, itemId, confirmWord } = req.body || {};
     if (!globalAssetId || !pillarId || !itemId) {
         return res.status(400).json({ error: 'Parámetros requeridos: globalAssetId, pillarId, itemId.' });
+    }
+    if (confirmWord !== undefined && String(confirmWord).trim().toUpperCase() !== HITL_CONFIRM_KEYWORD) {
+        return res.status(400).json({ error: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".` });
     }
 
     try {
@@ -898,8 +1352,38 @@ vaultRouter.post('/reactivate-item', requireCurateAI, checkVaultNotSealed, async
             reactivated_at: new Date().toISOString(),
         };
 
-        const finalItems = reindexPillarItems(items);
-        await docRef.update({ [`knowledge_vault.${pillarId}.items`]: finalItems });
+        const finalItems = sortAndReindexPillarItems(pillarId as PillarId, items);
+        const newStructureDigest = computePillarStructureDigestSha256(finalItems);
+        const nextVault = {
+            ...(snap.data()?.knowledge_vault || {}),
+            [pillarId]: {
+                ...pillar,
+                items: finalItems,
+                structure_digest_sha256: newStructureDigest,
+            },
+        };
+        const newMerkleRoot = computeVaultMerkleRootSha256(nextVault);
+
+        await docRef.update({
+            [`knowledge_vault.${pillarId}.items`]: finalItems,
+            [`knowledge_vault.${pillarId}.structure_digest_sha256`]: newStructureDigest,
+            [`knowledge_vault.vault_merkle_root_sha256`]: newMerkleRoot,
+        });
+
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_ITEM_REACTIVATED',
+            targetEntity: `global_asset_catalog/${globalAssetId}/knowledge_vault/${pillarId}/${itemId}`,
+            details: {
+                pillarId,
+                itemId,
+                title: items[idx].title,
+                actorEmail: ctx.actorEmail,
+            },
+        }).catch(() => undefined);
 
         return res.status(200).json({ success: true });
     } catch (err) {
@@ -970,7 +1454,10 @@ vaultRouter.post(
                 success: true,
                 imageUrl: descriptor.downloadUrl,
                 sha256: descriptor.sha256,
+                originalBytes: descriptor.originalBytes,
+                optimizedBytes: descriptor.optimizedBytes,
                 savingsRatio: descriptor.savingsRatio,
+                savingsPct: descriptor.savingsPct ?? Number((descriptor.savingsRatio * 100).toFixed(1)),
                 deduplicatedHit: descriptor.deduplicatedHit,
             });
         } catch (err) {
@@ -1951,6 +2438,10 @@ vaultRouter.post(
         const maxWindowsPerRun = req.body?.maxWindowsPerRun
             ? Math.max(1, Math.min(30, Number(req.body.maxWindowsPerRun)))
             : undefined;
+        const clientOriginalBytes =
+            req.body?.clientOriginalBytes && Number(req.body.clientOriginalBytes) > 0
+                ? Math.round(Number(req.body.clientOriginalBytes))
+                : undefined;
 
         try {
             const result = await withDocumentIngestSemaphore(() =>
@@ -1959,6 +2450,7 @@ vaultRouter.post(
                     fileBuffer: file.buffer,
                     mimeType: file.mimetype || 'application/octet-stream',
                     originalFilename: file.originalname || 'documento_oem.pdf',
+                    clientOriginalBytes,
                     documentCategory,
                     visibilityScope,
                     tenantId: ctx.tenantId,
@@ -2145,6 +2637,10 @@ vaultRouter.post(
         }
 
         try {
+            const clientOriginalBytes =
+                req.body?.clientOriginalBytes && Number(req.body.clientOriginalBytes) > 0
+                    ? Math.round(Number(req.body.clientOriginalBytes))
+                    : undefined;
             const result = await withDocumentIngestSemaphore(() =>
                 SegmentedDocumentProcessorService.ingestClientPdfToQuarantine({
                     globalAssetId,
@@ -2152,6 +2648,7 @@ vaultRouter.post(
                     fileBuffer: file.buffer,
                     mimeType: file.mimetype || 'application/pdf',
                     originalFilename: file.originalname || 'aporte_tecnico.pdf',
+                    clientOriginalBytes,
                     tenantId: ctx.tenantId,
                     actorUid: ctx.actorId,
                     actorEmail: ctx.actorEmail,

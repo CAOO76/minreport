@@ -28,7 +28,16 @@ class ErrorBoundary extends Component<Props, State> {
     }
 
     private handleReset = () => {
-        window.location.href = Capacitor.isNativePlatform() ? '/mobile/login' : '/login';
+        try {
+            localStorage.removeItem('opermaq_asset_id');
+        } catch {
+            // Ignorar errores de almacenamiento restringido
+        }
+        if (Capacitor.isNativePlatform()) {
+            window.location.href = '/mobile/login';
+            return;
+        }
+        window.location.reload();
     };
 
     public render() {

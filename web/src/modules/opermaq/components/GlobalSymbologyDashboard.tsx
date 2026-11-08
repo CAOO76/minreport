@@ -42,6 +42,14 @@ export const GlobalSymbologyDashboard: React.FC = () => {
 
   useEffect(() => {
     fetchConcepts();
+    const handleNavigateHome = () => {
+      setSearchQuery('');
+      setSelectedCandidateIdx({});
+      setDrawConfirmText({});
+      setRegisterConfirmText({});
+    };
+    window.addEventListener('opermaq:navigate-home', handleNavigateHome);
+    return () => window.removeEventListener('opermaq:navigate-home', handleNavigateHome);
   }, []);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {

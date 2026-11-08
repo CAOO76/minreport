@@ -1,26 +1,33 @@
 import { db } from '../../../config/firebase';
 import type {
     EquipmentSymbologyPack,
+    PillarId,
+    SymbologyChapterApplicationRef,
     SymbologyFunctionalGroup,
     SymbologyPackEntry,
     SymbologyStandardFamily,
 } from '../types/vault.types';
+import { SEQUENTIAL_PILLAR_ORDER } from '../types/vault.types';
+import {
+    injectVerifiedInlineSymbology,
+    purgeSyntheticAdHocSymbols,
+    SYNTHETIC_ADHOC_SYMBOL_AUTHOR,
+} from './NeuroSymbolicVerifier';
+import { PILLAR_LABELS } from './pillarAgents';
 import { ensureUniversalSymbologySeeded } from './UniversalSymbologySeedService';
 
 /**
- * EQUIPMENT SYMBOLOGY PACK BUILDER v4.0
+ * EQUIPMENT SYMBOLOGY COMPILER v9.3 (CERO ESPECULACIÓN IA — SOLO COMPILADO REAL VERIFICADO)
  *
- * Ensambla automáticamente el paquete completo de simbología normativa aplicable
- * a CUALQUIER maquinaria, vehículo, herramienta o instrumento cargado en MINREPORT,
- * sin requerir carga manual.
+ * Compila determinísticamente la tabla real de simbología que aplica verdaderamente al equipo,
+ * extrayendo únicamente:
+ * 1. Los símbolos normativos (`ISO 7000`, `ISO 7010`, `ISO 2575`, `IEC 60417`, `GHS`) efectivamente
+ *    referenciados o inyectados en los textos y capítulos reales de los 5 pilares del equipo (`knowledge_vault`).
+ * 2. Los pictogramas vectorizados directamente desde los manuales PDF OEM cargados para este equipo
+ *    (`master_symbology_vault` con `source_asset_id === assetId`).
  *
- * Modelo de Ensamblaje en 3 Capas + Símbolos OEM Descubiertos:
- * - Capa 1: Arquetipo Físico del Equipo (Movimiento de Tierra, Perforación Subterránea,
- *   Camioneta/Camión, Levante/Izaje, Herramienta Eléctrica, Compresor/Generador/Soldadora).
- * - Capa 2: Delta Tecnológico y Motorización (Diésel Tier 4 DPF/DEF, Hidráulica High-Flow,
- *   Neumática, Clase II Doble Aislamiento, Cabina ROPS/FOPS, Acoplador Rápido).
- * - Capa 3: Contexto Operativo de Faena (Subterránea, Rajo/Gran Altitud, Taller, Hidrometalurgia)
- *   + todos los `symbology_refs` vinculados en los 5 pilares del activo.
+ * Cada entrada compilada registra su significado técnico normativo, la aplicación específica real
+ * dentro del equipo (pilar, capítulo y extracto técnico exacto) y la telemetría de optimización CAS.
  */
 
 export type EquipmentArchetype =
@@ -31,204 +38,6 @@ export type EquipmentArchetype =
     | 'ROTARY_PERCUSSIVE_POWER_TOOL'
     | 'STATIONARY_GENSET_COMPRESSOR_WELDER'
     | 'INDUSTRIAL_GENERAL';
-
-const ARCHETYPE_BASE_CONCEPTS: Record<EquipmentArchetype, string[]> = {
-    EARTHMOVING_HEAVY: [
-        // EPP Mandatorio
-        'iso_7010_m002',
-        'iso_7010_m014',
-        'iso_7010_m015',
-        'iso_7010_m008',
-        'iso_7010_m003',
-        'iso_7010_m004',
-        'iso_7010_m009',
-        'iso_7010_m020',
-        'iso_7010_m021',
-        // Riesgos, Emergencia y Prohibiciones
-        'iso_7010_w014',
-        'iso_7010_w019',
-        'iso_7010_w008',
-        'iso_7010_w011',
-        'iso_7010_w017',
-        'iso_7010_w024',
-        'iso_7010_w029',
-        'iso_7010_p004',
-        'iso_7010_p015',
-        'iso_7010_p031',
-        'iso_7010_f001',
-        'iso_7010_e001',
-        // Cabina, Testigos y Controles
-        'iso_7000_0248_engine_oil_pressure',
-        'iso_7000_0246_coolant_temperature',
-        'iso_7000_0247_battery_charging',
-        'iso_7000_0238_parking_brake',
-        'iso_7000_0239_brake_system_failure',
-        'iso_7000_0249_seatbelt_reminder',
-        'iso_7000_1409_hydraulic_oil_pressure',
-        'iso_7000_1411_hydraulic_oil_temp',
-        'iso_7000_1156_transmission_oil_temp',
-        'iso_7000_1371_two_speed_rabbit_turtle',
-        'iso_7000_0029_horn_audible_warning',
-        'iso_7000_1141_beacon_strobe_light',
-        // Mantención, Fluidos y Bloqueo
-        'iso_7000_0639_master_battery_disconnect',
-        'iso_7000_0245_fuel_level',
-        'iso_7000_1410_hydraulic_oil_level',
-        'iso_7000_1412_hydraulic_oil_filter',
-        'iso_7000_1168_engine_air_filter',
-        'iso_7000_0791_grease_lubrication_point',
-        'ghs_02_flammable_liquids',
-        'ghs_07_irritant_sensitizer',
-        'ghs_09_environmental_spill_hazard',
-    ],
-    UNDERGROUND_DRILL_JUMBO: [
-        'iso_7010_m002',
-        'iso_7010_m014',
-        'iso_7010_m015',
-        'iso_7010_m003',
-        'iso_7010_m004',
-        'iso_7010_m008',
-        'iso_7010_m009',
-        'iso_7010_m017',
-        'iso_7010_m021',
-        'iso_7010_w019',
-        'iso_7010_w024',
-        'iso_7010_w029',
-        'iso_7010_w011',
-        'iso_7010_p015',
-        'iso_7010_p031',
-        'iso_7010_f001',
-        'iso_7000_pneumatic_air_pressure',
-        'iso_7000_1409_hydraulic_oil_pressure',
-        'iso_7000_1410_hydraulic_oil_level',
-        'iso_7000_0791_grease_lubrication_point',
-        'iso_7000_0639_master_battery_disconnect',
-        'ghs_04_compressed_gas',
-        'ghs_07_irritant_sensitizer',
-        'ghs_08_health_hazard_silica_fumes',
-    ],
-    ROAD_MINING_VEHICLE: [
-        'iso_7010_m002',
-        'iso_7010_m020',
-        'iso_7010_m014',
-        'iso_7010_m015',
-        'iso_7010_m008',
-        'iso_7010_w001',
-        'iso_7010_w011',
-        'iso_7010_w017',
-        'iso_7010_p002',
-        'iso_7010_f001',
-        'iso_7010_e003',
-        'iso_7000_0248_engine_oil_pressure',
-        'iso_7000_0246_coolant_temperature',
-        'iso_7000_0247_battery_charging',
-        'iso_7000_0238_parking_brake',
-        'iso_7000_0239_brake_system_failure',
-        'iso_7000_0249_seatbelt_reminder',
-        'iso_2575_check_engine_mil',
-        'iso_2575_four_wheel_drive_4wd',
-        'iso_2575_tpms_tire_pressure',
-        'iso_7000_0029_horn_audible_warning',
-        'iso_7000_1141_beacon_strobe_light',
-        'iso_7000_0639_master_battery_disconnect',
-        'iso_7000_0245_fuel_level',
-        'iso_7000_1168_engine_air_filter',
-        'ghs_02_flammable_liquids',
-        'ghs_05_corrosive_battery_acid',
-    ],
-    LIFTING_CRANE_TELEHANDLER: [
-        'iso_7010_m002',
-        'iso_7010_m014',
-        'iso_7010_m015',
-        'iso_7010_m008',
-        'iso_7010_m009',
-        'iso_7010_m018',
-        'iso_7010_m020',
-        'iso_7010_m021',
-        'iso_7010_w015',
-        'iso_7010_w012',
-        'iso_7010_w019',
-        'iso_7010_w008',
-        'iso_7010_w029',
-        'iso_7010_p004',
-        'iso_7010_p031',
-        'iso_7010_f001',
-        'iso_7000_1409_hydraulic_oil_pressure',
-        'iso_7000_1411_hydraulic_oil_temp',
-        'iso_7000_1410_hydraulic_oil_level',
-        'iso_7000_1658_quick_coupler_lock',
-        'iso_7000_0238_parking_brake',
-        'iso_7000_1371_two_speed_rabbit_turtle',
-        'iso_7000_0029_horn_audible_warning',
-        'iso_7000_1141_beacon_strobe_light',
-        'iso_7000_0639_master_battery_disconnect',
-        'iso_7000_0791_grease_lubrication_point',
-    ],
-    ROTARY_PERCUSSIVE_POWER_TOOL: [
-        'iso_7010_m002',
-        'iso_7010_m003',
-        'iso_7010_m004',
-        'iso_7010_m013',
-        'iso_7010_m009',
-        'iso_7010_m008',
-        'iso_7010_m017',
-        'iso_7010_m006',
-        'iso_7010_w012',
-        'iso_7010_w024',
-        'iso_7010_w025',
-        'iso_7010_w017',
-        'iso_7010_w021',
-        'iso_7010_p010',
-        'iso_7010_p015',
-        'iso_7010_p031',
-        'iec_60417_5172_class_ii_double_insulation',
-        'iec_60417_5032_alternating_current_ac',
-        'iec_60417_5031_direct_current_dc',
-        'iso_7000_0791_grease_lubrication_point',
-        'ghs_08_health_hazard_silica_fumes',
-    ],
-    STATIONARY_GENSET_COMPRESSOR_WELDER: [
-        'iso_7010_m002',
-        'iso_7010_m003',
-        'iso_7010_m004',
-        'iso_7010_m005',
-        'iso_7010_m009',
-        'iso_7010_m021',
-        'iso_7010_w012',
-        'iso_7010_w018',
-        'iso_7010_w017',
-        'iso_7010_w029',
-        'iso_7010_p002',
-        'iso_7010_p011',
-        'iso_7010_p031',
-        'iso_7010_f001',
-        'iec_60417_5019_protective_earth',
-        'iec_60417_5032_alternating_current_ac',
-        'iec_60417_5036_dangerous_voltage',
-        'iso_7000_0248_engine_oil_pressure',
-        'iso_7000_0246_coolant_temperature',
-        'iso_7000_0247_battery_charging',
-        'iso_7000_0639_master_battery_disconnect',
-        'iso_7000_0245_fuel_level',
-        'iso_7000_1168_engine_air_filter',
-        'ghs_02_flammable_liquids',
-    ],
-    INDUSTRIAL_GENERAL: [
-        'iso_7010_m002',
-        'iso_7010_m014',
-        'iso_7010_m004',
-        'iso_7010_m008',
-        'iso_7010_m009',
-        'iso_7010_m021',
-        'iso_7010_w001',
-        'iso_7010_w012',
-        'iso_7010_w024',
-        'iso_7010_p031',
-        'iso_7010_f001',
-        'iec_60417_5019_protective_earth',
-        'iso_7000_0639_master_battery_disconnect',
-    ],
-};
 
 export function inferEquipmentArchetypeAndTags(assetData: Record<string, any>): {
     archetype: EquipmentArchetype;
@@ -261,10 +70,10 @@ export function inferEquipmentArchetypeAndTags(assetData: Record<string, any>): 
         archetype = 'LIFTING_CRANE_TELEHANDLER';
     } else if (/(generador|grupo electr[oó]geno|compresor|soldadora|bomba estacionaria|tablero|subestaci[oó]n)/.test(hay)) {
         archetype = 'STATIONARY_GENSET_COMPRESSOR_WELDER';
-    } else if (/(camioneta|pickup|hilux|l200|ranger|navara|furg[oó]n|bus|tracto|cami[oó]n aljibe|cami[oó]n pluma|veh[ií]culo liviano)/.test(hay)) {
+    } else if (/(camioneta|pickup|hilux|l200|ranger|navara|furg[oó]n|fiorino|f-?350|bus|tracto|cami[oó]n aljibe|cami[oó]n pluma|veh[ií]culo liviano)/.test(hay)) {
         archetype = 'ROAD_MINING_VEHICLE';
     } else if (
-        /(minicargador|skid steer|excavadora|retroexcavadora|cargador|bulldozer|tractor|motoniveladora|rodillo|compactador|dumper|cami[oó]n minero|palas|movimiento de tierra|242d|320|d8t)/.test(
+        /(minicargador|skid steer|excavadora|retroexcavadora|cargador|bulldozer|tractor|motoniveladora|rodillo|compactador|dumper|cami[oó]n minero|caex|797f|palas|movimiento de tierra|242d|320|d8t)/.test(
             hay
         )
     ) {
@@ -272,13 +81,13 @@ export function inferEquipmentArchetypeAndTags(assetData: Record<string, any>): 
     }
 
     const tags = new Set<string>();
-    if (/(di[eé]sel|c3\.3|cummins|perkins|cat c|motor t[eé]rmico|petr[oó]leo)/.test(hay) || archetype === 'EARTHMOVING_HEAVY') {
+    if (/(di[eé]sel|c3\.3|cummins|perkins|cat c|power stroke|motor t[eé]rmico|petr[oó]leo)/.test(hay)) {
         tags.add('DIESEL');
     }
-    if (/(tier 4|stage v|dpf|adblue|scr|def|common rail)/.test(hay)) {
+    if (/(tier 4|stage v|dpf|adblue|scr|def|common rail|euro 5|euro 6)/.test(hay)) {
         tags.add('TIER4_DPF_DEF');
     }
-    if (/(high flow|xps|hidr[aá]ulic|caudal|acople|aditamento|martillo hidr)/.test(hay) || archetype === 'EARTHMOVING_HEAVY') {
+    if (/(high flow|xps|hidr[aá]ulic|caudal|acople|aditamento|martillo hidr)/.test(hay)) {
         tags.add('HIGH_FLOW_COUPLED_HYDRAULICS');
     }
     if (/(neum[aá]tic|aire comprimido|mpa|bar|psi|compresor|yt27|yt28)/.test(hay)) {
@@ -310,10 +119,7 @@ function classifySymbolIntoGroup(docData: Record<string, any>): SymbologyFunctio
         }
         return 'HAZARD_PROHIBITION';
     }
-    if (family === 'GHS') {
-        return 'MAINTENANCE_FLUIDS_ELECTRICAL';
-    }
-    if (family === 'IEC_60417') {
+    if (family === 'GHS' || family === 'IEC_60417') {
         return 'MAINTENANCE_FLUIDS_ELECTRICAL';
     }
 
@@ -333,83 +139,126 @@ function classifySymbolIntoGroup(docData: Record<string, any>): SymbologyFunctio
 }
 
 /**
- * Construye y persiste el paquete completo de simbología ad-hoc en `global_asset_catalog/{assetId}.symbology_pack`
+ * Compila y persiste el paquete real de simbología verificada en `global_asset_catalog/{assetId}.symbology_pack`
+ * sin especulación por arquetipo: solo incluye los símbolos efectivamente aplicados en los capítulos del activo
+ * o vectorizados desde sus manuales PDF OEM.
  */
 export async function buildAndPersistAssetSymbologyPack(
     assetId: string,
     existingAssetData?: Record<string, any>
 ): Promise<EquipmentSymbologyPack> {
     await ensureUniversalSymbologySeeded(false);
+    await purgeSyntheticAdHocSymbols();
 
     const docRef = db.collection('global_asset_catalog').doc(assetId);
     const assetData = existingAssetData || (await docRef.get()).data() || {};
     const makeLower = String(assetData.make_oficial || assetData.make || '')
         .trim()
         .toLowerCase();
+    const makeModel =
+        assetData.make_model ||
+        `${assetData.make_oficial || assetData.make || ''} ${assetData.model_oficial || assetData.model || assetId}`.trim();
 
     const { archetype, powertrainTags } = inferEquipmentArchetypeAndTags(assetData);
 
-    const conceptSources = new Map<string, SymbologyPackEntry['source_layer']>();
+    const chapterApplicationsByConcept = new Map<string, SymbologyChapterApplicationRef[]>();
+    const pillarLabelsByConcept = new Map<string, Set<string>>();
 
-    // Capa 1: Arquetipo base
-    for (const cid of ARCHETYPE_BASE_CONCEPTS[archetype]) {
-        conceptSources.set(cid, 'ARCHETYPE');
-    }
-
-    // Capa 2: Delta de motorización y acoplamientos
-    if (powertrainTags.includes('DIESEL')) {
-        conceptSources.set('iso_7000_1393_water_in_fuel', 'POWERTRAIN_TECH');
-        conceptSources.set('iso_7000_0457_glow_plug_preheat', 'POWERTRAIN_TECH');
-        conceptSources.set('iso_2575_check_engine_mil', 'POWERTRAIN_TECH');
-        conceptSources.set('ghs_05_corrosive_battery_acid', 'POWERTRAIN_TECH');
-        conceptSources.set('iso_7010_w026', 'POWERTRAIN_TECH');
-    }
-    if (powertrainTags.includes('TIER4_DPF_DEF')) {
-        conceptSources.set('iso_7000_2433_dpf_regeneration', 'POWERTRAIN_TECH');
-        conceptSources.set('iso_7000_2946_def_adblue', 'POWERTRAIN_TECH');
-    }
-    if (powertrainTags.includes('HIGH_FLOW_COUPLED_HYDRAULICS')) {
-        conceptSources.set('iso_7000_1658_quick_coupler_lock', 'POWERTRAIN_TECH');
-        conceptSources.set('iso_7000_1665_auxiliary_hydraulics_high_flow', 'POWERTRAIN_TECH');
-    }
-    if (powertrainTags.includes('PNEUMATIC')) {
-        conceptSources.set('iso_7000_pneumatic_air_pressure', 'POWERTRAIN_TECH');
-        conceptSources.set('ghs_04_compressed_gas', 'POWERTRAIN_TECH');
-    }
-    if (powertrainTags.includes('BATTERY_ELECTRIC')) {
-        conceptSources.set('iec_60417_5031_direct_current_dc', 'POWERTRAIN_TECH');
-        conceptSources.set('iec_60417_5036_dangerous_voltage', 'POWERTRAIN_TECH');
-        conceptSources.set('iso_7010_w026', 'POWERTRAIN_TECH');
-    }
-
-    // Capa 3: Contexto operativo de faena + Símbolos referenciados en la Bóveda de 5 Pilares
-    if (powertrainTags.includes('UNDERGROUND_FAENA')) {
-        conceptSources.set('iso_7010_m017', 'TENANT_FAENA');
-        conceptSources.set('ghs_08_health_hazard_silica_fumes', 'TENANT_FAENA');
-        conceptSources.set('iso_7010_e001', 'TENANT_FAENA');
-    }
-    if (powertrainTags.includes('HIGH_ALTITUDE_COLD')) {
-        conceptSources.set('iso_7010_w010', 'TENANT_FAENA');
-        conceptSources.set('iso_7000_0457_glow_plug_preheat', 'TENANT_FAENA');
-    }
+    const addConceptApplication = (
+        cid: string,
+        app: SymbologyChapterApplicationRef
+    ) => {
+        const cleanCid = String(cid || '').trim();
+        if (!cleanCid) return;
+        const list = chapterApplicationsByConcept.get(cleanCid) || [];
+        if (!list.some((x) => x.pillar_id === app.pillar_id && x.item_id === app.item_id)) {
+            list.push(app);
+            chapterApplicationsByConcept.set(cleanCid, list);
+        }
+        const pSet = pillarLabelsByConcept.get(cleanCid) || new Set<string>();
+        pSet.add(app.pillar_label);
+        pillarLabelsByConcept.set(cleanCid, pSet);
+    };
 
     const vault = assetData.knowledge_vault;
     if (vault && typeof vault === 'object') {
-        for (const pillarKey of Object.keys(vault)) {
-            const items = vault[pillarKey]?.items;
-            if (Array.isArray(items)) {
-                for (const item of items) {
-                    if (Array.isArray(item?.symbology_refs)) {
-                        for (const ref of item.symbology_refs) {
-                            const cid = typeof ref === 'string' ? ref : ref?.concept_id;
-                            if (cid && !conceptSources.has(cid)) {
-                                conceptSources.set(String(cid), 'OEM_MANUAL');
-                            }
-                        }
+        for (const pillarId of SEQUENTIAL_PILLAR_ORDER) {
+            const pillarLabel = PILLAR_LABELS[pillarId as PillarId] || pillarId;
+            const items = vault[pillarId]?.items;
+            if (!Array.isArray(items)) continue;
+
+            for (const item of items) {
+                if (item?.is_discarded) continue;
+                const contentStr = String(item?.content || '').trim();
+                // REGLA SOBERANA: La simbología se alimenta exclusivamente de la caza de contenidos
+                // de cada ítem (nunca de los títulos o rationale generados en el itemizado).
+                if (item?.content_status !== 'COMPLETADO' || !contentStr) continue;
+
+                const itemId = String(item?.item_id || '');
+                const chapterTitle = String(item?.title || 'Capítulo Técnico');
+
+                // 1. Escanear determinísticamente únicamente el cuerpo técnico cazado del capítulo
+                //    (Strict Explicit Mention Only; en `ficha_tecnica` solo códigos normativos literales).
+                const inlineAnalysis = await injectVerifiedInlineSymbology(contentStr, { pillarId });
+                const explicitlyDetected = new Set(inlineAnalysis.detectedConceptIds);
+
+                for (const cid of inlineAnalysis.detectedConceptIds) {
+                    const excerpt =
+                        inlineAnalysis.applicationsByConcept[cid] ||
+                        `Aplicado en el contenido técnico de "${chapterTitle}" (${pillarLabel})`;
+                    addConceptApplication(cid, {
+                        pillar_id: pillarId,
+                        pillar_label: pillarLabel,
+                        item_id: itemId,
+                        item_title: chapterTitle,
+                        context_excerpt: excerpt,
+                    });
+                }
+
+                // 2. `symbology_refs` heredados solo se aceptan si su mención explícita fue verificada en el texto
+                //    (descarta refs especulativos de versiones anteriores del cazador).
+                if (Array.isArray(item?.symbology_refs)) {
+                    for (const ref of item.symbology_refs) {
+                        const cid = typeof ref === 'string' ? ref : ref?.concept_id;
+                        if (!cid || !explicitlyDetected.has(String(cid))) continue;
+                        const excerpt =
+                            inlineAnalysis.applicationsByConcept[cid] ||
+                            `Aplicado en el contenido técnico de "${chapterTitle}" (${pillarLabel})`;
+                        addConceptApplication(String(cid), {
+                            pillar_id: pillarId,
+                            pillar_label: pillarLabel,
+                            item_id: itemId,
+                            item_title: chapterTitle,
+                            context_excerpt: excerpt,
+                        });
                     }
                 }
             }
         }
+    }
+
+    // 3. Incluir símbolos OEM extraídos y vectorizados directamente desde los PDFs de este equipo (`source_asset_id == assetId`)
+    try {
+        const oemSymSnap = await db
+            .collection('master_symbology_vault')
+            .where('source_asset_id', '==', assetId)
+            .limit(40)
+            .get();
+        for (const doc of oemSymSnap.docs) {
+            const d = doc.data();
+            addConceptApplication(doc.id, {
+                pillar_id: 'manual_operaciones',
+                pillar_label: 'Manual OEM Vectorizado',
+                item_id: `oem_pdf_p${d.source_page || 1}`,
+                item_title: `Pictograma OEM Pág. ${d.source_page || 1}`,
+                context_excerpt:
+                    d.action_operator_es ||
+                    d.description_es ||
+                    `Extraído directamente del manual PDF oficial de ${makeModel}.`,
+            });
+        }
+    } catch {
+        // Ignorar si no hay índice o colección vacía
     }
 
     const groups: Record<SymbologyFunctionalGroup, SymbologyPackEntry[]> = {
@@ -418,8 +267,9 @@ export async function buildAndPersistAssetSymbologyPack(
         CABIN_TELLTALES_CONTROLS: [],
         MAINTENANCE_FLUIDS_ELECTRICAL: [],
     };
+    const compiledEntries: SymbologyPackEntry[] = [];
 
-    const conceptIds = Array.from(conceptSources.keys());
+    const conceptIds = Array.from(chapterApplicationsByConcept.keys());
     const snaps = await Promise.all(
         conceptIds.map((cid) => db.collection('master_symbology_vault').doc(cid).get())
     );
@@ -429,7 +279,8 @@ export async function buildAndPersistAssetSymbologyPack(
         if (!snap.exists) continue;
         const d = snap.data()!;
         const cid = snap.id;
-        const layer = conceptSources.get(cid) || 'ARCHETYPE';
+        // Excluir símbolos sintéticos genéricos del motor ad-hoc retirado (`SB-01`).
+        if (d.created_by === SYNTHETIC_ADHOC_SYMBOL_AUTHOR) continue;
 
         const brandVariant =
             (makeLower && d.brands_variants?.[makeLower]) ||
@@ -456,26 +307,41 @@ export async function buildAndPersistAssetSymbologyPack(
                 ? 'GHS'
                 : 'ISO_7000');
 
-        groups[group].push({
+        const chapterApps = chapterApplicationsByConcept.get(cid) || [];
+        const pillarList = Array.from(pillarLabelsByConcept.get(cid) || []);
+        const specificApplicationSummary =
+            chapterApps.length > 0
+                ? chapterApps
+                      .slice(0, 3)
+                      .map((ca) => `[${ca.pillar_label} ➔ ${ca.item_title}]: ${ca.context_excerpt}`)
+                      .join(' | ')
+                : d.action_operator_es || d.description_es || '';
+
+        const entry: SymbologyPackEntry = {
             concept_id: cid,
             standard_family: family,
             iso_reference: d.iso_reference || cid.toUpperCase(),
             group,
             technical_name_es: d.technical_name_es || cid,
             action_operator_es: d.action_operator_es || d.description_es || '',
+            equipment_specific_application_es: specificApplicationSummary,
+            applied_in_pillars: pillarList,
+            applied_in_chapters: chapterApps,
             critical_color: d.critical_color || 'NONE',
             icon_url: iconUrl,
             ...(!isBrandVerified && d.svg_inline ? { svg_inline: d.svg_inline } : {}),
             is_brand_specific: isBrandVerified,
-            source_layer: layer,
-        });
+            source_layer: 'OEM_MANUAL',
+            ...(typeof d.original_bytes === 'number' ? { original_bytes: d.original_bytes } : {}),
+            ...(typeof d.optimized_bytes === 'number' ? { optimized_bytes: d.optimized_bytes } : {}),
+            ...(typeof d.savings_pct === 'number' ? { savings_pct: d.savings_pct } : {}),
+        };
+
+        groups[group].push(entry);
+        compiledEntries.push(entry);
     }
 
-    const totalSymbols =
-        groups.MANDATORY_PPE.length +
-        groups.HAZARD_PROHIBITION.length +
-        groups.CABIN_TELLTALES_CONTROLS.length +
-        groups.MAINTENANCE_FLUIDS_ELECTRICAL.length;
+    const totalSymbols = compiledEntries.length;
 
     const pack: EquipmentSymbologyPack = {
         generated_at: new Date().toISOString(),
@@ -483,6 +349,7 @@ export async function buildAndPersistAssetSymbologyPack(
         powertrain_tags: powertrainTags,
         total_symbols: totalSymbols,
         groups,
+        compiled_entries: compiledEntries,
     };
 
     await docRef
@@ -497,3 +364,4 @@ export async function buildAndPersistAssetSymbologyPack(
 
     return pack;
 }
+

@@ -1,4 +1,5 @@
 import { db } from '../../../config/firebase';
+import { ConfidentialityAirlockService } from '../../../core/privacy/ConfidentialityAirlockService';
 import { ResilientAIClient, Type } from '../../../core/resilient-ai-client';
 import { PillarId, PillarItem, ProposedUpdate } from '../types/vault.types';
 import { verifyAndNormalizeTechnicalUnits } from './NeuroSymbolicVerifier';
@@ -223,34 +224,52 @@ REGLAS ESTRICTAS:
 
 export async function correctManualItemText(
     title: string,
-    rationale: string
-): Promise<{ title: string; rationale: string }> {
+    rationale: string,
+    context?: { makeModel?: string; tipoEquipo?: string; pillarId?: PillarId }
+): Promise<{ title: string; rationale: string; section: string }> {
+    const cleanTitle = ConfidentialityAirlockService.scrubDeterministicPii(String(title || '')).scrubbed.trim();
+    const cleanRationale = ConfidentialityAirlockService.scrubDeterministicPii(String(rationale || '')).scrubbed.trim();
+
     const schema = {
         type: Type.OBJECT,
         properties: {
             title: { type: Type.STRING },
             rationale: { type: Type.STRING },
+            section: { type: Type.STRING },
         },
-        required: ['title', 'rationale'],
+        required: ['title', 'rationale', 'section'],
     };
 
+    const assetCtx = context?.makeModel
+        ? `Equipo: "${context.makeModel}" (${context.tipoEquipo || 'Equipamiento Técnico'}) | Pilar: "${context.pillarId || 'ficha_tecnica'}".\n`
+        : '';
+
     try {
-        const { data } = await ResilientAIClient.generateStructured<{ title: string; rationale: string }>({
+        const { data } = await ResilientAIClient.generateStructured<{
+            title: string;
+            rationale: string;
+            section: string;
+        }>({
             module: 'opermaq',
             preferredTier: 'ANCHOR_HA',
             temperature: 0,
             responseSchema: schema,
-            prompt: `Corrige únicamente errores ortográficos, de digitación y puntuación en el siguiente título y descripción de ítem técnico de maquinaria industrial, sin alterar su sentido ni agregar adornos:
-- Título original: "${title}"
-- Descripción original: "${rationale}"`,
+            prompt: `${assetCtx}Corrige únicamente errores ortográficos, de digitación y puntuación en el siguiente título y descripción de ítem técnico de maquinaria industrial, sin alterar su sentido ni agregar adornos. Además asigna en "section" una sección técnica corta en MAYÚSCULAS acorde al subsistema (ej. "PLANTA MOTRIZ", "TREN DE POTENCIA", "HIDRÁULICA E IMPLEMENTOS", "CHASIS Y RODADO", "GEOMETRÍA Y MASAS", "SERVICIO Y ELECTRICIDAD", "SEGURIDAD Y CONTROL"):
+- Título original: "${cleanTitle}"
+- Descripción original: "${cleanRationale}"`,
         });
 
         return {
-            title: data.title?.trim() || title,
-            rationale: data.rationale?.trim() || rationale,
+            title: data.title?.trim() || cleanTitle,
+            rationale: data.rationale?.trim() || cleanRationale,
+            section: (data.section?.trim() || 'ESPECIFICACIÓN TÉCNICA').toUpperCase(),
         };
     } catch {
-        return { title, rationale };
+        return {
+            title: cleanTitle,
+            rationale: cleanRationale,
+            section: 'ESPECIFICACIÓN TÉCNICA',
+        };
     }
 }
 

@@ -703,6 +703,7 @@ class MinreportMediaDigestorEngine {
         form.append('file', digested.blob, filename);
         form.append('profile', digested.profile);
         form.append('scope', scope);
+        form.append('clientOriginalBytes', String(digested.originalBytes));
 
         const uploadRes = await fetch(`${apiBase}/media/digest-upload`, {
             method: 'POST',

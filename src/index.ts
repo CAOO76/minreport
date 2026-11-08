@@ -39,6 +39,9 @@ import pilotRoutes from './api/pilot.controller';
 import mediaRoutes from './api/media.routes';
 import { webauthnRouter } from './api/webauthn.controller';
 import { registerOpermaqModuleRoutes } from './modules/opermaq';
+import { computePillarStructureDigestSha256, computeVaultMerkleRootSha256 } from './modules/opermaq/services/ItemizerService';
+import { startHuntTaskWatchdog } from './modules/opermaq/services/TaskQueueService';
+import { PILLAR_PREREQUISITE_MAP, PillarId } from './modules/opermaq/types/vault.types';
 import { requireSuperAdmin } from './middleware/admin';
 import { requireAuth } from './middleware/auth';
 import {
@@ -272,6 +275,109 @@ app.get(
     }
 );
 
+app.get(
+    '/api/m2m/opermaq/vault-blueprint/:assetId',
+    x402Gatekeeper({ priceMicroUSD: 35000, resourceId: 'opermaq-vault-merkle-blueprint' }),
+    async (req: X402AuthenticatedRequest, res) => {
+        try {
+            const x402Ctx = req.x402Context;
+            const assetId = String(req.params.assetId || '').trim();
+            if (!assetId) {
+                return res.status(400).json({ error: 'Identificador de activo requerido.' });
+            }
+
+            const docSnap = await db.collection('global_asset_catalog').doc(assetId).get();
+            if (!docSnap.exists) {
+                return res.status(404).json({ error: 'Activo no encontrado en bóveda soberana OPERMAQ.' });
+            }
+
+            const data = docSnap.data() || {};
+            const vault = (data.knowledge_vault || {}) as Record<string, any>;
+            const orderedPillars: PillarId[] = [
+                'ficha_tecnica',
+                'manual_operaciones',
+                'pauta_mantencion',
+                'matriz_riesgos',
+                'checklist_pre_op',
+            ];
+
+            const pillarsBlueprint: Record<string, any> = {};
+            let isMerkleChainIntact = true;
+
+            for (const pId of orderedPillars) {
+                const pDoc = vault[pId];
+                const activeItems = Array.isArray(pDoc?.items)
+                    ? pDoc.items
+                          .filter((it: any) => !it?.is_discarded)
+                          .map((it: any) => ({
+                              item_id: it.item_id,
+                              order_index: it.order_index,
+                              section: it.section,
+                              title: it.title,
+                              criticality: it.criticality,
+                              content_status: it.content_status,
+                              estado_aprobacion: it.estado_aprobacion,
+                          }))
+                    : [];
+
+                const computedDigest =
+                    activeItems.length > 0 ? computePillarStructureDigestSha256(pDoc.items) : null;
+                const storedDigest = pDoc?.structure_digest_sha256 || computedDigest;
+
+                const prereqId = PILLAR_PREREQUISITE_MAP[pId];
+                const expectedParentDigest = prereqId
+                    ? pillarsBlueprint[prereqId]?.structure_digest_sha256 ?? null
+                    : null;
+                const storedParentDigest = pDoc?.parent_pillar_digest_sha256 ?? null;
+
+                const isSynchronizedWithParent =
+                    !prereqId ||
+                    !storedParentDigest ||
+                    !expectedParentDigest ||
+                    storedParentDigest === expectedParentDigest;
+
+                if (!isSynchronizedWithParent) {
+                    isMerkleChainIntact = false;
+                }
+
+                pillarsBlueprint[pId] = {
+                    itemize_status: pDoc?.itemize_status || 'IDLE',
+                    active_items_count: activeItems.length,
+                    structure_digest_sha256: storedDigest,
+                    parent_pillar_digest_sha256: storedParentDigest,
+                    is_synchronized_with_parent: isSynchronizedWithParent,
+                    chapters: activeItems,
+                };
+            }
+
+            const vaultMerkleRootSha256 =
+                vault.vault_merkle_root_sha256 || computeVaultMerkleRootSha256(vault);
+
+            return res.status(200).json({
+                success: true,
+                protocol: 'x402 Foundation v1.0',
+                region: 'southamerica-west1',
+                timestamp: new Date().toISOString(),
+                settlementMode: x402Ctx?.mode || 'VERIFIED',
+                blueprint: {
+                    assetId: docSnap.id,
+                    make: data.make_oficial || data.make || 'GENÉRICO',
+                    model: data.model_oficial || data.model || '',
+                    categoria_equipo: data.categoria_equipo || null,
+                    tipo_equipo: data.tipo_equipo || null,
+                    is_sealed: Boolean(data.is_sealed),
+                    vault_merkle_root_sha256: vaultMerkleRootSha256,
+                    is_merkle_chain_intact: isMerkleChainIntact,
+                    pillars: pillarsBlueprint,
+                },
+            });
+        } catch (err: any) {
+            console.error('[M2M-VAULT-BLUEPRINT] Error exportando blueprint criptográfico:', err);
+            return res.status(500).json({ error: 'Error consultando blueprint criptográfico de bóveda OPERMAQ.' });
+        }
+    }
+);
+
 const AIInferencePayloadSchema = z.object({
     prompt: z.string().min(1, 'El prompt no puede estar vacío').max(64000),
     systemInstruction: z.string().max(16000).optional(),
@@ -409,6 +515,7 @@ async function startServer(): Promise<void> {
                 await ensureDevRootAccount();
                 DevEmulatorCheckpointService.start();
                 DevEmulatorCheckpointService.scheduleCheckpoint('server-boot-sync');
+                startHuntTaskWatchdog();
             } catch (bootstrapErr) {
                 console.error('[CORE-API] Error durante bootstrapping inicial de DEV:', bootstrapErr);
             }

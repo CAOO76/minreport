@@ -31,6 +31,7 @@ export const DigestedMediaDescriptorSchema = z.object({
     originalBytes: z.number().int().nonnegative(),
     optimizedBytes: z.number().int().nonnegative(),
     savingsRatio: z.number().min(0).max(1),
+    savingsPct: z.number().min(0).max(100).optional(),
     width: z.number().int().positive().optional(),
     height: z.number().int().positive().optional(),
     pageCount: z.number().int().positive().optional(),

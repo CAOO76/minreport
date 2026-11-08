@@ -8,11 +8,13 @@ const OpermaqModuleView = lazy(() => import('./OpermaqModuleView'));
 export interface OpermaqModuleProps {
     domainMode?: OpermaqDomainMode;
     hostScope?: OpermaqHostScope;
+    resetKey?: number;
 }
 
 export const OpermaqModule: React.FC<OpermaqModuleProps> = ({
     domainMode = 'FLEET',
     hostScope = 'CLIENT',
+    resetKey,
 }) => {
     const { session } = useMinReportSession();
 
@@ -43,7 +45,7 @@ export const OpermaqModule: React.FC<OpermaqModuleProps> = ({
             : session?.uid || '';
 
     return (
-        <div className="w-full h-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] p-0 font-sans select-none">
+        <div className="w-full h-full min-h-0 overflow-hidden flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] p-0 font-sans select-none">
             <Suspense
                 fallback={
                     <div className="w-full h-96 flex flex-col items-center justify-center p-[34px] gap-[13px] font-mono text-[#475569] dark:text-[#8A93A6]">
@@ -65,6 +67,7 @@ export const OpermaqModule: React.FC<OpermaqModuleProps> = ({
                     hostScope={hostScope}
                     tenantId={resolvedTenantId}
                     userId={resolvedUserId}
+                    resetKey={resetKey}
                     embedded={true}
                     onTelemetryEvent={handleTelemetryEvent}
                 />

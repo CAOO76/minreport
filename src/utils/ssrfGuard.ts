@@ -335,14 +335,33 @@ export async function safeFetchExternal(
                 }
 
                 const fullBuffer = Buffer.concat(chunks);
-                return new Response(fullBuffer, {
+                const outHeaders = new Headers(response.headers);
+                outHeaders.set('x-final-url', currentUrl.toString());
+                const synthesized = new Response(fullBuffer, {
                     status: response.status,
                     statusText: response.statusText,
-                    headers: response.headers,
+                    headers: outHeaders,
                 });
+                try {
+                    Object.defineProperty(synthesized, 'url', {
+                        value: currentUrl.toString(),
+                        configurable: true,
+                    });
+                } catch {
+                    // `x-final-url` sigue disponible en cabeceras
+                }
+                return synthesized;
             }
         }
 
+        try {
+            Object.defineProperty(response, 'url', {
+                value: currentUrl.toString(),
+                configurable: true,
+            });
+        } catch {
+            // Ignorar si es de solo lectura
+        }
         return response;
     }
 

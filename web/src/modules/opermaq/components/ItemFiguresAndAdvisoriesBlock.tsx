@@ -1,3 +1,6 @@
+/**
+ * ItemFiguresAndAdvisoriesBlock — Galería CAS de Figuras Técnicas Reales y Avisos sobre Ítems con Candado Humano
+ */
 import React, { useState } from 'react';
 import { toast } from 'react-toastify';
 import { API_BASE_URL } from '../firebase/config';
@@ -19,33 +22,7 @@ interface ItemFiguresAndAdvisoriesBlockProps {
   advisories?: LockedItemAdvisory[];
 }
 
-const PILLAR_DEFAULT_BLUEPRINT: Record<
-  PillarId,
-  { kind: string; labelEs: string }
-> = {
-  ficha_tecnica: {
-    kind: 'DIMENSION_SPEC_SHEET',
-    labelEs: 'GENERAR PLANO DIMENSIONAL ACOTADO (SI)',
-  },
-  manual_operaciones: {
-    kind: 'PERFORMANCE_CURVE',
-    labelEs: 'GENERAR CURVA OPERACIONAL PARAMÉTRICA',
-  },
-  pauta_mantencion: {
-    kind: 'PM_HOROMETER_TIMELINE',
-    labelEs: 'GENERAR MATRIZ HOROMÉTRICA PM',
-  },
-  matriz_riesgos: {
-    kind: 'ISO_SAFETY_PLAQUE',
-    labelEs: 'GENERAR PLACA NORMATIVA ISO 3864 / 7010',
-  },
-  checklist_pre_op: {
-    kind: 'WALKAROUND_LOTO_MAP',
-    labelEs: 'GENERAR MAPA 360° PRE-OP Y LOTO',
-  },
-};
-
-function resolveMediaSrc(storageUrl: string): string {
+export function resolveMediaSrc(storageUrl: string): string {
   if (!storageUrl) return '';
   if (storageUrl.startsWith('http://') || storageUrl.startsWith('https://') || storageUrl.startsWith('data:')) {
     return storageUrl;
@@ -57,47 +34,50 @@ function resolveMediaSrc(storageUrl: string): string {
   return storageUrl;
 }
 
+export function formatByteWeight(bytes?: number): string {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) {
+    return '[No declarado]';
+  }
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  }
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+/**
+ * Filtra plantillas SVG genéricas obsoletas (`bp_*`, siluetas `DIMENSION_SPEC_SHEET`, `WALKAROUND_LOTO_MAP`, `PM_HOROMETER_TIMELINE`)
+ * para mostrar únicamente recortes reales de manuales/web OEM y gráficos estadísticos de datos tabulados verificados.
+ */
+export function isVerifiedTechnicalFigure(fig?: ExtractedFigureRef | null): fig is ExtractedFigureRef {
+  if (!fig || !fig.storage_url) return false;
+  const fid = String(fig.figure_id || '');
+  if (fid.startsWith('bp_') || fid.startsWith('fig_tbl_')) return false;
+  const titleAndCaption = `${fig.title_es || ''} ${fig.caption_es || ''}`;
+  if (
+    /Plano Dimensional Acotado|Plano Dimensional y Par[aá]metros|Mapa de Inspecci[oó]n 360|Matriz Cronol[oó]gica PM|OpermaqSvgBlueprintEngine|Comparativa\s+de\s+magnitudes|Comparativa\s+Param[eé]trica\s+SI|\b(?:conjunto\s+de\s+filtro|filtro\s+separador\s+de\s+agua|carcasa\s+de\s+(?:filtro|bomba)|con\s+arn[eé]s\s+y\s+herrajes|casquillos\s+met[aá]licos|aisladores)\b/i.test(
+      titleAndCaption
+    )
+  ) {
+    return false;
+  }
+  if (fig.is_parametric_svg && fig.figure_type === 'DIAGRAMA_ACOTADO') {
+    return false;
+  }
+  return true;
+}
+
 export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlockProps> = ({
   catalogId,
   pillarId,
   itemId,
   canCurateAI = true,
-  isHumanLocked = false,
-  isSealed = false,
   figures = [],
   advisories = [],
 }) => {
-  const [generatingBlueprint, setGeneratingBlueprint] = useState(false);
   const [acknowledgingId, setAcknowledgingId] = useState<string | null>(null);
 
   const pendingAdvisories = advisories.filter((a) => !a.acknowledged);
-  const bpSpec = PILLAR_DEFAULT_BLUEPRINT[pillarId];
-
-  const handleGenerateBlueprint = async () => {
-    if (!canCurateAI || isSealed || isHumanLocked || generatingBlueprint) return;
-    setGeneratingBlueprint(true);
-    try {
-      const res = await authFetch(`${API_BASE_URL}/vault/generate-blueprint`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          globalAssetId: catalogId,
-          kind: bpSpec.kind,
-          targetPillarId: pillarId,
-          targetItemId: itemId,
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        throw new Error(json.error || 'Error generando esquema vectorial.');
-      }
-      toast.success('Esquema vectorial paramétrico generado y anclado al capítulo.');
-    } catch (err: any) {
-      toast.error(err?.message || 'Error al generar esquema vectorial.');
-    } finally {
-      setGeneratingBlueprint(false);
-    }
-  };
+  const validFigures = (figures || []).filter(isVerifiedTechnicalFigure);
 
   const handleAcknowledgeAdvisory = async (advisoryId: string) => {
     if (!canCurateAI) return;
@@ -124,6 +104,10 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
       setAcknowledgingId(null);
     }
   };
+
+  if (validFigures.length === 0 && (!canCurateAI || pendingAdvisories.length === 0)) {
+    return null;
+  }
 
   return (
     <div className="flex flex-col gap-[21px] mt-[21px] select-none font-atkinson">
@@ -164,46 +148,48 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
                     <span className="material-symbols-outlined">done_all</span>
                   </button>
                 </div>
-                <p className="text-[13px] text-[#0F172A] dark:text-[#F3F4F6] mt-[8px] whitespace-pre-wrap select-text">
-                  {adv.proposed_value}
-                </p>
+                {adv.kind === 'PENDING_FIGURE' && adv.figure?.storage_url ? (
+                  <figure className="mt-[8px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] p-[8px] rounded-none shadow-none">
+                    <img
+                      src={resolveMediaSrc(adv.figure.storage_url)}
+                      alt={adv.figure.title_es}
+                      loading="lazy"
+                      draggable={false}
+                      onContextMenu={(e) => e.preventDefault()}
+                      className="max-h-[260px] w-auto mx-auto object-contain select-none pointer-events-none"
+                      style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
+                    />
+                    <figcaption className="mt-[8px] text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                      {adv.summary} · ORIG {adv.figure.original_bytes ?? 0} B ➔ CAS {adv.figure.optimized_bytes ?? 0} B (-{adv.figure.savings_pct ?? 0}%)
+                    </figcaption>
+                  </figure>
+                ) : (
+                  <p className="text-[13px] text-[#0F172A] dark:text-[#F3F4F6] mt-[8px] whitespace-pre-wrap select-text">
+                    {adv.proposed_value}
+                  </p>
+                )}
               </div>
             ))}
           </div>
         </section>
       )}
 
-      {/* 2. Galería de Figuras Técnicas CAS y Esquemas Vectoriales Paramétricos */}
-      <section className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-[21px] rounded-none shadow-none">
-        <div className="flex flex-wrap items-center justify-between gap-[13px] pb-[13px] border-b border-[#E2E8F0] dark:border-[#12151C]">
-          <div>
-            <h4 className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6]">
-              APOYO GRÁFICO, DIAGRAMAS RECORTADOS Y ESQUEMAS VECTORIALES (<span className="font-mono tabular-nums">{figures.length}</span>)
-            </h4>
-            <p className="text-[13px] text-[#475569] dark:text-[#8A93A6]">
-              Activos optimizados en almacenamiento CAS deduplicado (SHA-256 / pHash).
-            </p>
+      {/* 2. Galería de Figuras Técnicas Reales CAS (Recortes PDF OEM, Imágenes Técnicas Web y Gráficos de Tablas) */}
+      {validFigures.length > 0 && (
+        <section className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-[21px] rounded-none shadow-none">
+          <div className="flex flex-wrap items-center justify-between gap-[13px] pb-[13px] border-b border-[#E2E8F0] dark:border-[#12151C]">
+            <div>
+              <h4 className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6]">
+                FIGURAS TÉCNICAS OEM Y GRÁFICOS DE DATOS VERIFICADOS (<span className="font-mono tabular-nums">{validFigures.length}</span>)
+              </h4>
+              <p className="text-[13px] text-[#475569] dark:text-[#8A93A6]">
+                Activos extraídos de documentación técnica y optimizados en almacenamiento CAS deduplicado (SHA-256 / dHash).
+              </p>
+            </div>
           </div>
 
-          {canCurateAI && !isHumanLocked && !isSealed && (
-            <button
-              type="button"
-              disabled={generatingBlueprint}
-              onClick={handleGenerateBlueprint}
-              className="px-[13px] py-[8px] border border-[#C68346] bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] hover:bg-[#C68346] hover:text-[#FFFFFF] text-[11px] font-bold uppercase tracking-[0.05em] rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
-            >
-              {generatingBlueprint ? 'PROCESANDO ESQUEMA SVG...' : bpSpec.labelEs}
-            </button>
-          )}
-        </div>
-
-        {figures.length === 0 ? (
-          <p className="text-[13px] text-[#5A6072] dark:text-[#5A6072] mt-[13px]">
-            [Información técnica no declarada en ficha]
-          </p>
-        ) : (
           <div className="flex flex-col gap-[21px] mt-[21px]">
-            {figures.map((fig) => (
+            {validFigures.map((fig) => (
               <figure
                 key={fig.figure_id}
                 className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[21px] rounded-none shadow-none"
@@ -214,10 +200,11 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
                     <img
                       src={resolveMediaSrc(fig.storage_url)}
                       alt={fig.title_es}
+                      loading="lazy"
                       draggable={false}
                       onContextMenu={(e) => e.preventDefault()}
                       style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
-                      className="max-h-[360px] w-auto object-contain select-none pointer-events-none"
+                      className="max-h-[380px] w-auto object-contain select-none pointer-events-none"
                     />
                   </div>
 
@@ -271,17 +258,29 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
                       )}
                     </div>
 
-                    <div className="pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] font-mono tabular-nums text-[11px] text-[#5A6072] select-text">
-                      SHA-256: {fig.sha256.slice(0, 16)}…
+                    <div className="pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center justify-between gap-[8px] font-mono tabular-nums text-[11px] text-[#5A6072] select-text">
+                      <span>SHA-256: {fig.sha256.slice(0, 16)}…</span>
+                      {typeof fig.original_bytes === 'number' && typeof fig.optimized_bytes === 'number' && (
+                        <span className="text-[#00AEEF] font-bold">
+                          ORIG: {formatByteWeight(fig.original_bytes)} ➔ CAS: {formatByteWeight(fig.optimized_bytes)} (
+                          {typeof fig.savings_pct === 'number'
+                            ? `-${fig.savings_pct.toFixed(1)}%`
+                            : fig.original_bytes > 0
+                              ? `-${Math.max(0, ((fig.original_bytes - fig.optimized_bytes) / fig.original_bytes) * 100).toFixed(1)}%`
+                              : '0%'}
+                          )
+                        </span>
+                      )}
                     </div>
                   </figcaption>
                 </div>
               </figure>
             ))}
           </div>
-        )}
-      </section>
+        </section>
+      )}
     </div>
   );
 };
 
+export default ItemFiguresAndAdvisoriesBlock;

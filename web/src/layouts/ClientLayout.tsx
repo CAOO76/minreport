@@ -94,11 +94,22 @@ const ClientLayout = () => {
                                 {hasModuleAccess('opermaq') && (
                                     <>
                                         <div className="w-8 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[8px] mx-auto shrink-0" />
-                                        <NavLink to="/opermaq" end className={navLinkClasses} title="FLOTA">
+                                        <NavLink
+                                            to="/opermaq"
+                                            end
+                                            onClick={() => window.dispatchEvent(new CustomEvent('opermaq:navigate-home'))}
+                                            className={navLinkClasses}
+                                            title="FLOTA"
+                                        >
                                             <span className="material-symbols-outlined text-2xl">lists</span>
                                             <span className="sr-only">FLOTA</span>
                                         </NavLink>
-                                        <NavLink to="/opermaq/simbologia" className={navLinkClasses} title="SIMBOLOGÍA">
+                                        <NavLink
+                                            to="/opermaq/simbologia"
+                                            onClick={() => window.dispatchEvent(new CustomEvent('opermaq:navigate-home'))}
+                                            className={navLinkClasses}
+                                            title="SIMBOLOGÍA"
+                                        >
                                             <span className="material-symbols-outlined text-2xl">shapes</span>
                                             <span className="sr-only">SIMBOLOGÍA</span>
                                         </NavLink>
