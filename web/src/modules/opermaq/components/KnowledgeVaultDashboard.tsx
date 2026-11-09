@@ -5,8 +5,7 @@
  */
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { doc, onSnapshot, updateDoc, collection } from 'firebase/firestore';
-import { db, auth, API_BASE_URL, storage } from '../firebase/config';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db, auth, API_BASE_URL } from '../firebase/config';
 import { authFetch } from '../utils/authFetch';
 import {
   extractExplicitSymbolIds,
@@ -4552,7 +4551,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       }
       toast.update(toastId, {
         render: err?.message || 'Error en caza de fotos. Puede reintentar búsqueda IA o cargar manual.',
-        type: 'warn',
+        type: 'warning',
         isLoading: false,
         autoClose: 3500,
       });
@@ -4697,7 +4696,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         setManualAuditRejection(reasons);
         toast.update(toastId, {
           render: 'Fotografía rechazada por no ser oficial de la marca.',
-          type: 'warn',
+          type: 'warning',
           isLoading: false,
           autoClose: 4000,
         });
