@@ -1939,6 +1939,7 @@ function ItemContentBlock({
       }),
     [normalizedRenderedMarkdown, item.content, item.title, item.item_sources, galleryFigures, pillarId]
   );
+  const pendingFiguresCount = pendingContentSummary.pendingFiguresCount;
 
   const handleLocateNextPendingContent = useCallback(() => {
     if (activeProposalView?.itemId === item.item_id) {
