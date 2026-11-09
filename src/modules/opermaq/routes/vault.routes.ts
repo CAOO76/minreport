@@ -9,7 +9,7 @@ import { CasStorageService } from '../../../core/media/CasStorageService';
 import { ConfidentialityAirlockService } from '../../../core/privacy/ConfidentialityAirlockService';
 import { AISwarmUnavailableError } from '../../../core/resilient-ai-client';
 import type { ScopedRequest } from '../../../middleware/sessionScope';
-import { safeFetchExternal, SSRFBlockedError } from '../../../utils/ssrfGuard';
+import { assertSafeExternalUrl, safeFetchExternal, SSRFBlockedError } from '../../../utils/ssrfGuard';
 import {
     assistItemEdit,
     assistRejection,
@@ -38,6 +38,7 @@ import {
     OpermaqSvgBlueprintEngine,
 } from '../services/OpermaqSvgBlueprintEngine';
 import { createEmptyKnowledgeVault, PILLAR_LABELS } from '../services/pillarAgents';
+import { OfficialEquipmentPhotoService } from '../services/OfficialEquipmentPhotoService';
 import { SegmentedDocumentProcessorService } from '../services/SegmentedDocumentProcessorService';
 import {
     drawStandardIcon,
@@ -131,6 +132,7 @@ function requireCurateAI(req: ScopedRequest, res: Response, next: NextFunction) 
 }
 
 function handleVaultError(res: Response, err: unknown, fallbackMessage: string) {
+    console.error(`[VAULT-ROUTE-ERROR] ${fallbackMessage}:`, err);
     if (err instanceof SSRFBlockedError) {
         return res.status(400).json({
             error: err.code,
@@ -337,6 +339,7 @@ vaultRouter.post(
             imagePath: z.string().nullable().optional(),
             imageMetadata: z.record(z.string(), z.any()).nullable().optional(),
             fotoMediaTelemetry: z.record(z.string(), z.any()).nullable().optional(),
+            officialPhotoCandidates: z.array(z.record(z.string(), z.any())).optional(),
         });
 
         const parsed = schema.safeParse(req.body);
@@ -344,7 +347,15 @@ vaultRouter.post(
             return res.status(400).json({ error: 'Parámetros de imagen inválidos.' });
         }
 
-        const { globalAssetId, tenantAssetId, imageUrl, imagePath, imageMetadata, fotoMediaTelemetry } = parsed.data;
+        const {
+            globalAssetId,
+            tenantAssetId,
+            imageUrl,
+            imagePath,
+            imageMetadata,
+            fotoMediaTelemetry,
+            officialPhotoCandidates,
+        } = parsed.data;
         try {
             const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
             const snap = await docRef.get();
@@ -359,13 +370,32 @@ vaultRouter.post(
                 imageMetadata: imageMetadata ?? null,
             };
 
+            const existingPool = Array.isArray(data.official_photo_candidates)
+                ? data.official_photo_candidates
+                : [];
+            const incomingPool = Array.isArray(officialPhotoCandidates) ? officialPhotoCandidates : [];
+            const mergedCandidates: Record<string, any>[] = [];
+            const seenShas = new Set<string>();
+            for (const cand of [...incomingPool, ...existingPool]) {
+                const sha = String(cand?.sha256 || '').trim();
+                const preview = String(cand?.preview_url || '').trim();
+                if (sha && preview && !seenShas.has(sha) && mergedCandidates.length < 12) {
+                    seenShas.add(sha);
+                    mergedCandidates.push(cand);
+                }
+            }
+
             const nowMs = Date.now();
-            await docRef.update({
+            const updatePayload: Record<string, any> = {
                 foto_url: imageUrl ?? '',
                 foto_media_telemetry: fotoMediaTelemetry ?? imageMetadata ?? null,
                 specifications: nextSpecs,
                 updatedAt: nowMs,
-            });
+            };
+            if (mergedCandidates.length > 0) {
+                updatePayload.official_photo_candidates = mergedCandidates;
+            }
+            await docRef.update(updatePayload);
 
             if (tenantAssetId && tenantAssetId !== globalAssetId) {
                 await db
@@ -397,6 +427,204 @@ vaultRouter.post(
             return res.status(200).json({ success: true, specifications: nextSpecs });
         } catch (err) {
             return handleVaultError(res, err, 'Error actualizando fotografía oficial del activo.');
+        }
+    }
+);
+
+vaultRouter.post(
+    '/hunt-official-photo',
+    requireCurateAI,
+    checkVaultNotSealed,
+    async (req: ScopedRequest, res: Response) => {
+        const { globalAssetId, refreshAttempt, excludeSha256s } = req.body || {};
+        if (!globalAssetId || typeof globalAssetId !== 'string') {
+            return res.status(400).json({ error: 'globalAssetId es requerido.' });
+        }
+        try {
+            const candidates = await OfficialEquipmentPhotoService.huntOfficialEquipmentPhotos({
+                globalAssetId,
+                actorId: req.opermaqContext?.actorId,
+                actorEmail: req.opermaqContext?.actorEmail,
+                refreshAttempt: typeof refreshAttempt === 'number' ? refreshAttempt : 0,
+                excludeSha256s: Array.isArray(excludeSha256s) ? excludeSha256s : [],
+            });
+            return res.status(200).json({ success: true, candidates });
+        } catch (err) {
+            return handleVaultError(res, err, 'Error ejecutando caza asistida de fotografía oficial.');
+        }
+    }
+);
+
+vaultRouter.post(
+    '/verify-manual-official-photo',
+    requireCurateAI,
+    checkVaultNotSealed,
+    upload.single('file'),
+    async (req: ScopedRequest, res: Response) => {
+        const globalAssetId = (req.body?.globalAssetId || req.query?.globalAssetId) as string;
+        if (!globalAssetId) {
+            return res.status(400).json({ error: 'globalAssetId es requerido.' });
+        }
+
+        let fileBuffer: Buffer | null = null;
+        let mimeType = 'image/jpeg';
+        let fileName = 'manual_upload.webp';
+
+        if (req.file) {
+            fileBuffer = req.file.buffer;
+            mimeType = req.file.mimetype || 'image/jpeg';
+            fileName = req.file.originalname || 'manual_photo.webp';
+        } else if (req.body?.imageUrl && typeof req.body.imageUrl === 'string') {
+            const rawUrl = req.body.imageUrl.trim();
+            const safeUrl = await assertSafeExternalUrl(rawUrl).catch(() => null);
+            if (safeUrl) {
+                const fetched = await safeFetchExternal(safeUrl.toString(), {
+                    maxBytes: 12 * 1024 * 1024,
+                    headers: { 'User-Agent': 'MINREPORT-OfficialPhotoBot/1.0' },
+                }).catch(() => null);
+                if (fetched && fetched.ok) {
+                    const ab = await fetched.arrayBuffer();
+                    fileBuffer = Buffer.from(ab);
+                    mimeType = (fetched.headers.get('content-type') || '').split(';')[0].trim() || 'image/jpeg';
+                    fileName = safeUrl.pathname.split('/').pop() || 'remote_photo.webp';
+                }
+            }
+        }
+
+        if (!fileBuffer || fileBuffer.length < 50) {
+            return res.status(400).json({ error: 'Archivo de imagen requerido para verificación.' });
+        }
+
+        try {
+            const result = await OfficialEquipmentPhotoService.verifyManualOfficialEquipmentPhoto({
+                globalAssetId,
+                fileBuffer,
+                mimeType,
+                fileName,
+                actorId: req.opermaqContext?.actorId,
+            });
+            return res.status(200).json({ success: true, ...result });
+        } catch (err) {
+            return handleVaultError(res, err, 'Error auditando fotografía manual.');
+        }
+    }
+);
+
+vaultRouter.post(
+    '/reframe-official-photo',
+    requireCurateAI,
+    checkVaultNotSealed,
+    async (req: ScopedRequest, res: Response) => {
+        const { globalAssetId } = req.body || {};
+        if (!globalAssetId || typeof globalAssetId !== 'string') {
+            return res.status(400).json({ error: 'globalAssetId es requerido.' });
+        }
+
+        try {
+            const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
+            const snap = await docRef.get();
+            if (!snap.exists) {
+                return res.status(404).json({ error: 'Activo no encontrado.' });
+            }
+
+            const data = snap.data() || {};
+            const currentUrl = data.foto_url;
+            if (!currentUrl) {
+                return res.status(400).json({ error: 'El activo no tiene fotografía cargada para re-encuadrar.' });
+            }
+
+            // Descargar imagen actual (CAS o URL externa)
+            let imgBuffer: Buffer | null = null;
+            if (currentUrl.includes('/cas_blobs/')) {
+                const match = currentUrl.match(/(cas_blobs\/[^?#]+)/);
+                if (match) {
+                    const casBlob = await CasStorageService.readCasBlob(match[1]);
+                    if (casBlob) imgBuffer = casBlob.buffer;
+                }
+            }
+
+            if (!imgBuffer) {
+                const safeUrl = await assertSafeExternalUrl(currentUrl).catch(() => null);
+                if (safeUrl) {
+                    const fetched = await safeFetchExternal(safeUrl.toString(), {
+                        maxBytes: 12 * 1024 * 1024,
+                    }).catch(() => null);
+                    if (fetched && fetched.ok) {
+                        const ab = await fetched.arrayBuffer();
+                        imgBuffer = Buffer.from(ab);
+                    }
+                }
+            }
+
+            if (!imgBuffer) {
+                return res.status(422).json({ error: 'No se pudo obtener el binario de la imagen actual para re-encuadrar.' });
+            }
+
+            const framed = await OfficialEquipmentPhotoService.frameBufferToStudio4x3({
+                inputBuffer: imgBuffer,
+            });
+
+            const descriptor = await CasStorageService.persistDigestedBinary(
+                {
+                    buffer: framed.buffer,
+                    sha256: framed.sha256,
+                    mimeType: 'image/webp',
+                    extension: 'webp',
+                    profile: 'IMAGE_TECHNICAL_HD',
+                    originalBytes: imgBuffer.length,
+                    optimizedBytes: framed.buffer.length,
+                    savingsRatio: Number(
+                        ((imgBuffer.length - framed.buffer.length) / Math.max(1, imgBuffer.length)).toFixed(4)
+                    ),
+                    width: framed.width,
+                    height: framed.height,
+                },
+                {
+                    scope: 'GLOBAL_OEM',
+                    actorUid: req.opermaqContext?.actorId,
+                    originalFilename: 'reframed_photo_studio88.webp',
+                    clientOriginalBytes: imgBuffer.length,
+                }
+            );
+
+            const fotoMediaTelemetry = {
+                original_bytes: imgBuffer.length,
+                optimized_bytes: framed.buffer.length,
+                savings_pct: Math.max(
+                    0,
+                    Math.round(((imgBuffer.length - framed.buffer.length) / Math.max(1, imgBuffer.length)) * 100)
+                ),
+                sha256: framed.sha256,
+                updated_at: new Date().toISOString(),
+            };
+
+            await docRef.update({
+                foto_url: descriptor.downloadUrl,
+                foto_media_telemetry: fotoMediaTelemetry,
+                updatedAt: Date.now(),
+            });
+
+            void AuditLedger.record({
+                tenantId: 'GLOBAL_OEM',
+                actorUid: req.opermaqContext?.actorId || 'system',
+                actorEmail: req.opermaqContext?.actorEmail || 'curador@minreport.com',
+                module: 'opermaq',
+                action: 'VAULT_ASSET_IMAGE_REFRAMED_STUDIO_88',
+                targetEntity: `global_asset_catalog/${globalAssetId}`,
+                details: {
+                    globalAssetId,
+                    sha256: framed.sha256,
+                    telemetry: fotoMediaTelemetry,
+                },
+            }).catch(() => undefined);
+
+            return res.status(200).json({
+                success: true,
+                foto_url: descriptor.downloadUrl,
+                foto_media_telemetry: fotoMediaTelemetry,
+            });
+        } catch (err) {
+            return handleVaultError(res, err, 'Error re-encuadrando fotografía oficial.');
         }
     }
 );

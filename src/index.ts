@@ -40,6 +40,7 @@ import mediaRoutes from './api/media.routes';
 import { webauthnRouter } from './api/webauthn.controller';
 import { registerOpermaqModuleRoutes } from './modules/opermaq';
 import { computePillarStructureDigestSha256, computeVaultMerkleRootSha256 } from './modules/opermaq/services/ItemizerService';
+import { OfficialEquipmentPhotoService } from './modules/opermaq/services/OfficialEquipmentPhotoService';
 import { startHuntTaskWatchdog } from './modules/opermaq/services/TaskQueueService';
 import { PILLAR_PREREQUISITE_MAP, PillarId } from './modules/opermaq/types/vault.types';
 import { requireSuperAdmin } from './middleware/admin';
@@ -513,6 +514,7 @@ async function startServer(): Promise<void> {
             );
             try {
                 await ensureDevRootAccount();
+                await OfficialEquipmentPhotoService.ensureStoredPhotoAlternativesHydrated();
                 DevEmulatorCheckpointService.start();
                 DevEmulatorCheckpointService.scheduleCheckpoint('server-boot-sync');
                 startHuntTaskWatchdog();

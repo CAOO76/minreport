@@ -43,10 +43,31 @@ import { mediaDigestorClient } from '../../../core/media/MediaDigestorClient';
 import { useOpermaqContext } from '../hooks/useOpermaqContext';
 import { ItemFiguresAndAdvisoriesBlock, resolveMediaSrc, formatByteWeight } from './ItemFiguresAndAdvisoriesBlock';
 import { OpermaqEngineeringStudioDrawer, type StudioTabId } from './OpermaqEngineeringStudioDrawer';
+import {
+  frameEquipmentPhotoToStudio4x3,
+  reframeExistingEquipmentPhotoUrl,
+} from '../utils/equipmentPhotoFraming';
 import type { PillarId, PillarDocument, PillarItem, ItemizedSource, ProposedUpdate, EstadoAprobacion, HistorialAuditoria, ChatMessage, ExtractedFigureRef } from '../types/vault';
 import { PILLAR_PREREQUISITE_MAP } from '../types/vault';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
+interface OfficialPhotoCandidate {
+  candidate_id: string;
+  preview_url: string;
+  storage_path: string;
+  source_type: 'VAULT_PDF' | 'OEM_DOMAIN';
+  source_label: string;
+  authenticity_score: number;
+  subject_box_2d: [number, number, number, number] | null;
+  original_bytes: number;
+  optimized_bytes: number;
+  savings_pct: number;
+  sha256: string;
+  phash_hex?: string;
+  width: number;
+  height: number;
+  framing_mode: 'STUDIO_88' | 'VLM_BOX_4X3' | 'CENTER_4X3';
+}
 interface VaultDashboardProps {
   assetId: string;
   onBack: () => void;
@@ -64,6 +85,7 @@ interface CatalogSnapshot {
     sha256?: string;
     updated_at?: string;
   };
+  official_photo_candidates?: OfficialPhotoCandidate[];
   ambiente_operativo?: string[];
   contexto_operativo?: string[];
   caracteristicas_principales?: string[];
@@ -3905,6 +3927,16 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
   const [isDraggingPhoto, setIsDraggingPhoto] = useState(false);
   const [showPhotoDeleteConfirm, setShowPhotoDeleteConfirm] = useState(false);
   const [photoDeleteConfirmText, setPhotoDeleteConfirmText] = useState('');
+  const [isHuntingPhoto, setIsHuntingPhoto] = useState(false);
+  const [photoCandidates, setPhotoCandidates] = useState<OfficialPhotoCandidate[]>([]);
+  const [selectedCandidateIdx, setSelectedCandidateIdx] = useState(0);
+  const [candidateConfirmText, setCandidateConfirmText] = useState('');
+  const [isPublishingCandidate, setIsPublishingCandidate] = useState(false);
+  const [isManualFallbackActive, setIsManualFallbackActive] = useState(false);
+  const [manualAuditRejection, setManualAuditRejection] = useState<string | null>(null);
+  const [isReframingPhoto, setIsReframingPhoto] = useState(false);
+  const photoHuntAttemptRef = useRef<number>(0);
+  const photoHuntAbortRef = useRef<AbortController | null>(null);
   const [studioOpen, setStudioOpen] = useState(false);
   const [studioTab, setStudioTab] = useState<StudioTabId>(canCurateAI ? 'INGESTION' : 'MANUAL_PUBLISHER');
   const [showSymbologyInfo, setShowSymbologyInfo] = useState<boolean>(false);
@@ -4200,6 +4232,9 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         official_url: tenantOverrides?.official_url || data?.official_url || '',
         foto_url: tenantOverrides?.foto_url || data?.foto_url || '',
         foto_media_telemetry: tenantOverrides?.foto_media_telemetry || data?.foto_media_telemetry,
+        official_photo_candidates: Array.isArray(data?.official_photo_candidates)
+          ? data.official_photo_candidates
+          : undefined,
         is_sealed: data?.is_sealed,
         knowledge_vault: data?.knowledge_vault,
         symbology_pack: data?.symbology_pack,
@@ -4386,85 +4421,291 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
   }, [catalogId, activeHuntKeys, t]);
 
   useEffect(() => {
+    photoHuntAttemptRef.current = 0;
+    if (photoHuntAbortRef.current) {
+      photoHuntAbortRef.current.abort();
+      photoHuntAbortRef.current = null;
+    }
     return () => {
       for (const unsub of Object.values(huntListenersRef.current)) {
         unsub?.();
       }
       huntListenersRef.current = {};
+      if (photoHuntAbortRef.current) {
+        photoHuntAbortRef.current.abort();
+        photoHuntAbortRef.current = null;
+      }
     };
   }, [catalogId]);
 
-  const uploadCatalogHeroPhotoCas = useCallback(async (file: File) => {
+  const handleOpenStoredAlternatives = useCallback(() => {
+    const storedPool = catalog?.official_photo_candidates || [];
+    if (storedPool.length === 0) return;
+    setPhotoCandidates(storedPool);
+    setSelectedCandidateIdx(0);
+    setManualAuditRejection(null);
+    setIsManualFallbackActive(false);
+    setShowPhotoDeleteConfirm(false);
+  }, [catalog?.official_photo_candidates]);
+
+  const handleStartOfficialPhotoHunt = useCallback(async () => {
     if (!canCurateAI || !catalogId) return;
-    setIsUploadingPhoto(true);
-    const toastId = toast.loading('Digiriendo en WebP HD y registrando en bóveda CAS...');
 
+    // Permitir actualización on-demand inmediata: si había una petición previa en vuelo, abortarla y lanzar una nueva
+    if (photoHuntAbortRef.current) {
+      photoHuntAbortRef.current.abort();
+    }
+    const abortController = new AbortController();
+    photoHuntAbortRef.current = abortController;
+
+    const currentAttempt = photoHuntAttemptRef.current;
+    photoHuntAttemptRef.current += 1;
+
+    const previousPool: OfficialPhotoCandidate[] =
+      photoCandidates.length > 0 ? photoCandidates : catalog?.official_photo_candidates || [];
+    const previousShas = new Set(previousPool.map((c) => c.sha256));
+
+    setIsHuntingPhoto(true);
+    setManualAuditRejection(null);
+    setShowPhotoDeleteConfirm(false);
+
+    const toastId = toast.loading(
+      currentAttempt > 0
+        ? `Actualizando búsqueda IA de fotografía oficial OEM (intento #${currentAttempt + 1})...`
+        : 'Cazando fotografía oficial OEM en bóveda y fuentes oficiales...'
+    );
     try {
-      let downloadUrl = '';
-      let savingsPct = 0;
-      const originalBytes = file.size;
-      let optimizedBytes = file.size;
-      let photoSha256 = '';
-
-      try {
-        const { descriptor, digested } = await mediaDigestorClient.digestAndUploadCas(file, {
-          profile: 'IMAGE_TECHNICAL_HD',
-          scope: 'GLOBAL_OEM',
-          filename: file.name,
-        });
-        downloadUrl = descriptor.downloadUrl;
-        savingsPct = Math.round(digested.savingsRatio * 100);
-        optimizedBytes = digested.optimizedBytes;
-        photoSha256 = digested.sha256;
-      } catch (_casErr) {
-        // Fallback Storage directo en ruta CAS autorizada cas_blobs/global_oem/
-        const digested = await mediaDigestorClient.digestFile(file, 'IMAGE_TECHNICAL_HD');
-        savingsPct = Math.round(digested.savingsRatio * 100);
-        optimizedBytes = digested.optimizedBytes;
-        photoSha256 = digested.sha256;
-        const storagePath = `cas_blobs/global_oem/${digested.sha256}.${digested.extension}`;
-        const storageRef = ref(storage, storagePath);
-        await uploadBytes(storageRef, digested.blob, { contentType: digested.mimeType });
-        downloadUrl = await getDownloadURL(storageRef);
+      const res = await authFetch(`${API_BASE_URL}/vault/hunt-official-photo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          globalAssetId: catalogId,
+          refreshAttempt: currentAttempt,
+        }),
+        signal: abortController.signal,
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.error || data?.message || 'Error al cazar fotografía oficial');
       }
 
+      const returnedCandidates: OfficialPhotoCandidate[] = Array.isArray(data?.candidates)
+        ? data.candidates
+        : [];
+
+      // Fusionar sin bloquear ningún candidato previo (visto, aceptado o rechazado)
+      const mergedCandidates: OfficialPhotoCandidate[] = [];
+      const seenShas = new Set<string>();
+      for (const item of [...returnedCandidates, ...previousPool]) {
+        if (item && item.preview_url && item.sha256 && !seenShas.has(item.sha256)) {
+          seenShas.add(item.sha256);
+          mergedCandidates.push(item);
+        }
+      }
+
+      if (mergedCandidates.length > 0) {
+        const firstNewIdx = mergedCandidates.findIndex((c) => !previousShas.has(c.sha256));
+        const nextIdx =
+          firstNewIdx >= 0
+            ? firstNewIdx
+            : mergedCandidates.length > 1
+            ? (selectedCandidateIdx + 1) % mergedCandidates.length
+            : 0;
+
+        setPhotoCandidates(mergedCandidates);
+        setSelectedCandidateIdx(nextIdx);
+        setCatalog((prev) =>
+          prev
+            ? {
+                ...prev,
+                official_photo_candidates: mergedCandidates,
+              }
+            : prev
+        );
+        setIsManualFallbackActive(false);
+        toast.update(toastId, {
+          render: `${mergedCandidates.length} alternativa(s) de fotografía oficial OEM disponible(s) para elegir`,
+          type: 'success',
+          isLoading: false,
+          autoClose: 3000,
+        });
+      } else {
+        setPhotoCandidates([]);
+        setIsManualFallbackActive(true);
+        toast.update(toastId, {
+          render: 'Sin fotografías oficiales en este barrido. Puede actualizar búsqueda IA o cargar archivo manual.',
+          type: 'info',
+          isLoading: false,
+          autoClose: 3500,
+        });
+      }
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        toast.dismiss(toastId);
+        return;
+      }
+      console.error('[KnowledgeVaultDashboard] Error cazando foto:', err);
+      if (previousPool.length > 0) {
+        setPhotoCandidates(previousPool);
+      } else {
+        setIsManualFallbackActive(true);
+      }
+      toast.update(toastId, {
+        render: err?.message || 'Error en caza de fotos. Puede reintentar búsqueda IA o cargar manual.',
+        type: 'warn',
+        isLoading: false,
+        autoClose: 3500,
+      });
+    } finally {
+      if (photoHuntAbortRef.current === abortController) {
+        setIsHuntingPhoto(false);
+        photoHuntAbortRef.current = null;
+      }
+    }
+  }, [canCurateAI, catalogId, photoCandidates, catalog?.official_photo_candidates, selectedCandidateIdx]);
+
+  const handleConfirmCandidate = useCallback(async () => {
+    if (!canCurateAI || !catalogId || candidateConfirmText.trim().toUpperCase() !== 'ACTUALIZAR') return;
+    const candidate = photoCandidates[selectedCandidateIdx];
+    if (!candidate) return;
+
+    setIsPublishingCandidate(true);
+    const toastId = toast.loading('Publicando fotografía oficial en bóveda CAS...');
+    try {
       const fotoMediaTelemetry = {
-        original_bytes: originalBytes,
-        optimized_bytes: optimizedBytes,
-        savings_pct: savingsPct,
-        sha256: photoSha256,
+        original_bytes: candidate.original_bytes,
+        optimized_bytes: candidate.optimized_bytes,
+        savings_pct: candidate.savings_pct,
+        sha256: candidate.sha256,
         updated_at: new Date().toISOString(),
       };
 
-      const imgRes = await authFetch(`${API_BASE_URL}/vault/asset-image`, {
+      const res = await authFetch(`${API_BASE_URL}/vault/asset-image`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           globalAssetId: catalogId,
           tenantAssetId: assetId !== catalogId ? assetId : undefined,
-          imageUrl: downloadUrl,
+          imageUrl: candidate.preview_url,
           fotoMediaTelemetry,
+          officialPhotoCandidates: photoCandidates,
         }),
-      }).catch(() => null);
+      });
 
-      if (!imgRes || !imgRes.ok) {
+      if (!res.ok) {
         await updateDoc(doc(db, 'global_asset_catalog', catalogId), {
-          foto_url: downloadUrl,
+          foto_url: candidate.preview_url,
           foto_media_telemetry: fotoMediaTelemetry,
+          official_photo_candidates: photoCandidates,
           updatedAt: Date.now(),
         });
       }
 
+      setCatalog((prev) => prev ? {
+        ...prev,
+        foto_url: candidate.preview_url,
+        foto_media_telemetry: fotoMediaTelemetry,
+        official_photo_candidates: photoCandidates,
+      } : prev);
+
+      setPhotoCandidates([]);
+      setSelectedCandidateIdx(0);
+      setCandidateConfirmText('');
+      setIsManualFallbackActive(false);
+
       toast.update(toastId, {
-        render: `Foto optimizada registrada en CAS (${formatPhotoBytes(originalBytes)} ➔ ${formatPhotoBytes(optimizedBytes)} · -${savingsPct}%)`,
+        render: `Fotografía oficial OEM aprobada y publicada (-${candidate.savings_pct}%)`,
         type: 'success',
         isLoading: false,
         autoClose: 3000,
       });
-    } catch (error: unknown) {
-      console.error('Error uploading photo:', error);
+    } catch (err: any) {
+      console.error('[KnowledgeVaultDashboard] Error confirmando candidato:', err);
       toast.update(toastId, {
-        render: 'Error al optimizar o subir fotografía',
+        render: err?.message || 'Error al publicar fotografía oficial',
+        type: 'error',
+        isLoading: false,
+        autoClose: 3000,
+      });
+    } finally {
+      setIsPublishingCandidate(false);
+    }
+  }, [canCurateAI, catalogId, candidateConfirmText, photoCandidates, selectedCandidateIdx, assetId]);
+
+  const handleDiscardCandidates = useCallback(() => {
+    // Cerrar modo revisión pero conservar las alternativas en catalog.official_photo_candidates para poder reasignarlas cuando se desee
+    setPhotoCandidates([]);
+    setSelectedCandidateIdx(0);
+    setCandidateConfirmText('');
+    setIsManualFallbackActive(true);
+    toast.info('Panel de revisión cerrado. Todas las candidatas permanecen disponibles para asignación.');
+  }, []);
+
+  const processManualPhotoUpload = useCallback(async (file: File) => {
+    if (!canCurateAI || !catalogId || !file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Selecciona un archivo de imagen válido.');
+      return;
+    }
+
+    setIsUploadingPhoto(true);
+    setManualAuditRejection(null);
+    const toastId = toast.loading('Auditando encuadre y autenticidad OEM con VLM...');
+
+    try {
+      // 1. Auto-Encuadre óptico al 88% en cliente
+      const framed = await frameEquipmentPhotoToStudio4x3(file);
+
+      // 2. Verificación VLM en servidor
+      const formData = new FormData();
+      formData.append('globalAssetId', catalogId);
+      formData.append('file', framed.framedFile);
+
+      const res = await authFetch(`${API_BASE_URL}/vault/verify-manual-official-photo`, {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json().catch(() => null);
+
+      if (res.ok && data?.approved && data?.candidate) {
+        const basePool = photoCandidates.length > 0 ? photoCandidates : catalog?.official_photo_candidates || [];
+        const updatedPool = [
+          data.candidate,
+          ...basePool.filter((c) => c.sha256 !== data.candidate.sha256),
+        ];
+        setPhotoCandidates(updatedPool);
+        setSelectedCandidateIdx(0);
+        setCatalog((prev) =>
+          prev
+            ? {
+                ...prev,
+                official_photo_candidates: updatedPool,
+              }
+            : prev
+        );
+        setIsManualFallbackActive(false);
+        toast.update(toastId, {
+          render: 'Fotografía aprobada por el auditor OEM. Escriba ACTUALIZAR para publicar.',
+          type: 'success',
+          isLoading: false,
+          autoClose: 3500,
+        });
+      } else {
+        const reasons = Array.isArray(data?.rejection_reasons) && data.rejection_reasons.length > 0
+          ? data.rejection_reasons.join('. ')
+          : 'La fotografía no cumple el estándar oficial OEM (se detectó equipo propio de faena, patentes o marcas de terceros).';
+        setManualAuditRejection(reasons);
+        toast.update(toastId, {
+          render: 'Fotografía rechazada por no ser oficial de la marca.',
+          type: 'warn',
+          isLoading: false,
+          autoClose: 4000,
+        });
+      }
+    } catch (err: any) {
+      console.error('[KnowledgeVaultDashboard] Error en verificación manual:', err);
+      toast.update(toastId, {
+        render: err?.message || 'Error al procesar y auditar la fotografía.',
         type: 'error',
         isLoading: false,
         autoClose: 3000,
@@ -4473,16 +4714,92 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       setIsUploadingPhoto(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
-  }, [canCurateAI, catalogId, assetId]);
+  }, [canCurateAI, catalogId, photoCandidates, catalog?.official_photo_candidates]);
 
-  const handlePhotoUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoFileSelected = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!canCurateAI || !file || !catalogId) return;
-    await uploadCatalogHeroPhotoCas(file);
-  }, [canCurateAI, catalogId, uploadCatalogHeroPhotoCas]);
+    await processManualPhotoUpload(file);
+  }, [canCurateAI, catalogId, processManualPhotoUpload]);
+
+  const handleReframeCurrentPhoto = useCallback(async () => {
+    if (!canCurateAI || !catalogId || !catalog?.foto_url || isReframingPhoto) return;
+    setIsReframingPhoto(true);
+    const toastId = toast.loading('Re-encuadrando fotografía oficial al 88% sobre lienzo 4:3...');
+    try {
+      const res = await authFetch(`${API_BASE_URL}/vault/reframe-official-photo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ globalAssetId: catalogId }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success && data?.foto_url) {
+        setCatalog((prev) => prev ? {
+          ...prev,
+          foto_url: data.foto_url,
+          foto_media_telemetry: data.foto_media_telemetry || prev.foto_media_telemetry,
+        } : prev);
+        toast.update(toastId, {
+          render: 'Fotografía oficial re-encuadrada al 88% en estudio 4:3',
+          type: 'success',
+          isLoading: false,
+          autoClose: 3000,
+        });
+      } else {
+        throw new Error(data?.error || 'Fallo en re-encuadre de servidor');
+      }
+    } catch (err: unknown) {
+      console.warn('[KnowledgeVaultDashboard] Error en re-encuadre server, ejecutando cliente:', err);
+      try {
+        const framed = await reframeExistingEquipmentPhotoUrl(catalog.foto_url);
+        const { descriptor, digested } = await mediaDigestorClient.digestAndUploadCas(framed.framedFile, {
+          profile: 'IMAGE_TECHNICAL_HD',
+          scope: 'GLOBAL_OEM',
+          filename: `reframed_${catalogId}.webp`,
+        });
+        const telemetry = {
+          original_bytes: framed.originalBytes,
+          optimized_bytes: digested.optimizedBytes,
+          savings_pct: Math.round(digested.savingsRatio * 100),
+          sha256: digested.sha256,
+          updated_at: new Date().toISOString(),
+        };
+        await authFetch(`${API_BASE_URL}/vault/asset-image`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            globalAssetId: catalogId,
+            tenantAssetId: assetId !== catalogId ? assetId : undefined,
+            imageUrl: descriptor.downloadUrl,
+            fotoMediaTelemetry: telemetry,
+          }),
+        });
+        setCatalog((prev) => prev ? {
+          ...prev,
+          foto_url: descriptor.downloadUrl,
+          foto_media_telemetry: telemetry,
+        } : prev);
+        toast.update(toastId, {
+          render: 'Fotografía re-encuadrada al 88% mediante motor óptico cliente',
+          type: 'success',
+          isLoading: false,
+          autoClose: 3000,
+        });
+      } catch (clientErr: any) {
+        toast.update(toastId, {
+          render: clientErr?.message || 'Error al re-encuadrar fotografía',
+          type: 'error',
+          isLoading: false,
+          autoClose: 3000,
+        });
+      }
+    } finally {
+      setIsReframingPhoto(false);
+    }
+  }, [canCurateAI, catalogId, catalog?.foto_url, isReframingPhoto, assetId]);
 
   const handlePhotoDelete = useCallback(async () => {
-    if (!canCurateAI || !catalogId || photoDeleteConfirmText.trim() !== 'ACTUALIZAR') return;
+    if (!canCurateAI || !catalogId || photoDeleteConfirmText.trim().toUpperCase() !== 'ACTUALIZAR') return;
 
     setIsUploadingPhoto(true);
     const toastId = toast.loading('Limpiando referencia fotográfica...');
@@ -4507,8 +4824,16 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         });
       }
 
+      setCatalog((prev) => prev ? {
+        ...prev,
+        foto_url: '',
+        foto_media_telemetry: undefined,
+      } : prev);
+
       setShowPhotoDeleteConfirm(false);
       setPhotoDeleteConfirmText('');
+      setPhotoCandidates([]);
+      setIsManualFallbackActive(false);
 
       toast.update(toastId, {
         render: 'Referencia fotográfica eliminada',
@@ -4552,13 +4877,13 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     const file = e.dataTransfer.files?.[0];
     if (!file || !catalogId) return;
 
-    if (!file.type.startsWith('image/')) {
-      toast.error('Selecciona un archivo de imagen válido.');
+    if (!isManualFallbackActive && !catalog?.foto_url) {
+      toast.info('Haga clic en CAZAR FOTO OFICIAL para búsqueda asistida por IA.');
       return;
     }
 
-    await uploadCatalogHeroPhotoCas(file);
-  }, [canCurateAI, catalogId, uploadCatalogHeroPhotoCas]);
+    await processManualPhotoUpload(file);
+  }, [canCurateAI, catalogId, isManualFallbackActive, catalog?.foto_url, processManualPhotoUpload]);
 
   const handleItemizePillar = useCallback(async (pillarId: PillarId) => {
     if (!canCurateAI || !catalogId || itemizingPillar) return;
@@ -4972,50 +5297,71 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                   : 'border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000]'
               }`}
             >
-              {catalog.foto_url ? (
-                <>
+              {/* ESTADO 2: Indicador rotatorio durante Caza IA, Re-encuadre o Auditoría VLM */}
+              {isHuntingPhoto || isUploadingPhoto || isReframingPhoto ? (
+                <div className="w-full h-full flex flex-col items-center justify-center gap-[8px] p-2 bg-[#F8FAFC] dark:bg-[#000000]">
+                  <M3CircularProgress
+                    size={24}
+                    strokeWidth={3}
+                    indeterminate
+                    tone="copper"
+                    ariaLabel={
+                      isHuntingPhoto
+                        ? t('vault_dashboard.hunting_official_photo', 'Cazando fotografía oficial OEM…')
+                        : isReframingPhoto
+                        ? t('vault_dashboard.reframe_88', 'ENCUADRAR 88%')
+                        : 'Auditando fotografía'
+                    }
+                  />
+                  <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] text-center">
+                    {isHuntingPhoto
+                      ? 'BUSCANDO FOTO OFICIAL OEM…'
+                      : isReframingPhoto
+                      ? 'ENCUADRANDO 88% STUDIO…'
+                      : 'AUDITANDO VLM…'}
+                  </span>
+                </div>
+              ) : photoCandidates.length > 0 ? (
+                /* ESTADO 3: Candidata Oficial OEM encontrada en revisión */
+                <div className="relative w-full h-full bg-[#FFFFFF] flex items-center justify-center">
+                  <img
+                    src={photoCandidates[selectedCandidateIdx]?.preview_url}
+                    alt={`Candidata OEM ${selectedCandidateIdx + 1}`}
+                    draggable={false}
+                    onContextMenu={(e) => e.preventDefault()}
+                    className="w-full h-full object-contain select-none pointer-events-none"
+                  />
+                  <div className="absolute top-1.5 right-1.5 px-1.5 py-0.5 bg-[#000000]/80 text-[8px] font-mono font-bold text-[#00AEEF] uppercase tracking-wider tabular-nums select-none pointer-events-none">
+                    {photoCandidates[selectedCandidateIdx]?.framing_mode === 'STUDIO_88' ? 'OEM · 88% STUDIO' : 'OEM · 4:3'}
+                  </div>
+                </div>
+              ) : catalog.foto_url ? (
+                /* ESTADO 5: Foto Oficial Publicada */
+                <div className="relative w-full h-full bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-center">
                   <img
                     src={catalog.foto_url}
                     alt={catalog.makeModel}
                     draggable={false}
                     onContextMenu={(e) => e.preventDefault()}
-                    className="w-full h-full object-cover select-none pointer-events-none"
+                    className="w-full h-full object-contain select-none pointer-events-none"
                   />
-                  {canCurateAI && (
-                    <div
-                      onClick={() => fileInputRef.current?.click()}
-                      className={`absolute inset-0 bg-[#000000]/70 flex flex-col items-center justify-center gap-1 text-[#FFFFFF] text-[9px] font-bold uppercase tracking-widest cursor-pointer transition-all duration-200 ${
-                        isDraggingPhoto ? 'opacity-100 bg-[#C68346]/85' : 'opacity-0 group-hover:opacity-100'
-                      }`}
-                    >
-                      <span className="material-symbols-outlined !text-lg">
-                        {isDraggingPhoto ? 'download' : 'photo_camera'}
-                      </span>
-                      {isDraggingPhoto ? 'SOLTAR' : 'REEMPLAZAR'}
-                    </div>
-                  )}
-                </>
+                </div>
               ) : canCurateAI ? (
+                /* ESTADO 1 / 4: Activación On-Demand de Caza Asistida por IA */
                 <div
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={handleStartOfficialPhotoHunt}
                   className={`w-full h-full flex flex-col items-center justify-center gap-[8px] cursor-pointer transition-all border border-dashed rounded-none ${
                     isDraggingPhoto
                       ? 'border-[#C68346] text-[#C68346]'
                       : 'border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] hover:border-[#C68346]'
                   }`}
                 >
-                  {isUploadingPhoto ? (
-                    <M3CircularProgress size={24} strokeWidth={3} indeterminate tone="copper" ariaLabel="Optimizando fotografía en CAS" />
-                  ) : (
-                    <>
-                      <span className="material-symbols-outlined !text-xl">
-                        {isDraggingPhoto ? 'download' : 'photo_camera'}
-                      </span>
-                      <span className="text-[9px] font-bold uppercase tracking-widest text-center px-2">
-                        {isDraggingPhoto ? 'SOLTAR FOTO' : 'CARGAR FOTO'}
-                      </span>
-                    </>
-                  )}
+                  <span className="material-symbols-outlined !text-xl">image_search</span>
+                  <span className="text-[9px] font-bold uppercase tracking-widest text-center px-2">
+                    {isManualFallbackActive
+                      ? 'SIN CANDIDATAS · CLIC PARA ACTUALIZAR BÚSQUEDA IA'
+                      : t('vault_dashboard.hunt_official_photo', 'CAZAR FOTO OFICIAL')}
+                  </span>
                 </div>
               ) : (
                 <div className="w-full h-full flex items-center justify-center p-[13px] text-center">
@@ -5026,90 +5372,326 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
               )}
             </div>
 
-            {catalog.foto_url && catalog.foto_media_telemetry && (
-              <div className="mt-[8px] px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] flex items-center justify-between gap-[8px] font-mono tabular-nums text-[9px]">
-                <span className="text-[#475569] dark:text-[#8A93A6] truncate">
-                  ORIG: {formatPhotoBytes(catalog.foto_media_telemetry.original_bytes)} ➔ CAS: {formatPhotoBytes(catalog.foto_media_telemetry.optimized_bytes)}
-                </span>
-                <span className="font-bold text-[#00AEEF] shrink-0">
-                  -{catalog.foto_media_telemetry.savings_pct}%
-                </span>
-              </div>
-            )}
+            {/* BARRA INFERIOR DE ACCIONES INMEDIATAS ON-DEMAND */}
 
-            {canCurateAI && catalog.foto_url && (
-              <div className="flex flex-col gap-[8px] w-full mt-[8px]">
-                <div className="flex gap-[8px] w-full">
+            {/* Controles permanentes On-Demand cuando no hay foto publicada ni candidatas en revisión */}
+            {canCurateAI && photoCandidates.length === 0 && !catalog.foto_url && (
+              <div className="flex flex-col gap-[6px] w-full mt-[8px]">
+                <div className="flex gap-[6px] w-full">
+                  <button
+                    type="button"
+                    onClick={handleStartOfficialPhotoHunt}
+                    disabled={isUploadingPhoto || isReframingPhoto}
+                    className="flex-1 py-1.5 px-2 border border-[#C68346] bg-[#C68346]/10 hover:bg-[#C68346] text-[#C68346] hover:text-[#000000] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                  >
+                    {isHuntingPhoto
+                      ? 'ACTUALIZAR AHORA'
+                      : isManualFallbackActive
+                      ? 'ACTUALIZAR BÚSQUEDA IA'
+                      : 'CAZAR FOTO IA'}
+                  </button>
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer"
-                    disabled={isUploadingPhoto}
+                    disabled={isHuntingPhoto || isUploadingPhoto || isReframingPhoto}
+                    className="py-1.5 px-2 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                   >
-                    REEMPLAZAR
+                    CARGAR MANUAL
                   </button>
+                </div>
+                {(catalog.official_photo_candidates?.length || 0) > 0 && (
                   <button
                     type="button"
-                    onClick={() => {
-                      setShowPhotoDeleteConfirm((prev) => !prev);
-                      setPhotoDeleteConfirmText('');
-                    }}
-                    className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer"
-                    disabled={isUploadingPhoto}
+                    onClick={handleOpenStoredAlternatives}
+                    disabled={isHuntingPhoto || isUploadingPhoto || isReframingPhoto}
+                    className="w-full py-1 px-2 border border-[#00AEEF] text-[#00AEEF] hover:bg-[#00AEEF] hover:text-[#000000] text-[9px] font-mono font-bold uppercase tracking-wider tabular-nums rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                   >
-                    ELIMINAR
+                    VER ALTERNATIVAS GUARDADAS ({catalog.official_photo_candidates!.length})
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* A) Modo Revisión de Candidatas Oficiales (Multi-Alternativa + Tira de Miniaturas + Navegación Circular) */}
+            {photoCandidates.length > 0 && (
+              <div className="flex flex-col gap-[8px] w-full mt-[8px]">
+                {/* Selector Circular de Candidatas */}
+                <div className="flex items-center justify-between px-[6px] py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-[9px] font-mono tabular-nums">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSelectedCandidateIdx(
+                        (prev) => (prev - 1 + photoCandidates.length) % photoCandidates.length
+                      )
+                    }
+                    disabled={photoCandidates.length <= 1}
+                    className="bg-transparent border-0 outline-none p-0 text-slate-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined !text-[16px]">chevron_left</span>
+                  </button>
+                  <span className="text-[#475569] dark:text-[#8A93A6] font-bold tracking-wider">
+                    CANDIDATA {selectedCandidateIdx + 1} / {photoCandidates.length}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSelectedCandidateIdx((prev) => (prev + 1) % photoCandidates.length)
+                    }
+                    disabled={photoCandidates.length <= 1}
+                    className="bg-transparent border-0 outline-none p-0 text-slate-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined !text-[16px]">chevron_right</span>
                   </button>
                 </div>
 
-                {showPhotoDeleteConfirm && (
-                  <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] rounded-none">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
-                      Escriba ACTUALIZAR para confirmar baja fotográfica:
+                {/* Tira de Miniaturas Clicables (1..N) para selección directa */}
+                {photoCandidates.length > 1 && (
+                  <div className="grid grid-cols-4 gap-[6px] w-full">
+                    {photoCandidates.map((cand, idx) => {
+                      const isSelected = idx === selectedCandidateIdx;
+                      const isPublished =
+                        Boolean(catalog.foto_url) &&
+                        (cand.preview_url === catalog.foto_url ||
+                          (Boolean(catalog.foto_media_telemetry?.sha256) &&
+                            cand.sha256 === catalog.foto_media_telemetry?.sha256));
+                      return (
+                        <button
+                          key={cand.candidate_id || `${cand.sha256}_${idx}`}
+                          type="button"
+                          onClick={() => setSelectedCandidateIdx(idx)}
+                          title={`Alternativa #${idx + 1} (${cand.source_label})`}
+                          className={`relative aspect-[4/3] w-full bg-[#FFFFFF] border rounded-none shadow-none overflow-hidden cursor-pointer transition-colors p-0 ${
+                            isSelected
+                              ? 'border-2 border-[#C68346]'
+                              : 'border-[#E2E8F0] dark:border-[#12151C] opacity-75 hover:opacity-100 hover:border-[#00AEEF]'
+                          }`}
+                        >
+                          <img
+                            src={cand.preview_url}
+                            alt={`Alternativa ${idx + 1}`}
+                            draggable={false}
+                            onContextMenu={(e) => e.preventDefault()}
+                            className="w-full h-full object-contain select-none pointer-events-none"
+                          />
+                          <span className="absolute bottom-0 left-0 px-1 bg-[#000000]/80 text-[8px] font-mono font-bold text-[#F3F4F6] tabular-nums select-none pointer-events-none">
+                            #{idx + 1}
+                          </span>
+                          {isPublished && (
+                            <span className="absolute top-0 right-0 px-1 bg-[#00AEEF] text-[7px] font-mono font-bold text-[#000000] uppercase select-none pointer-events-none">
+                              ACT
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Botón On-Demand de actualización de búsqueda o carga manual directa */}
+                <div className="flex gap-[6px] w-full">
+                  <button
+                    type="button"
+                    onClick={handleStartOfficialPhotoHunt}
+                    disabled={isPublishingCandidate}
+                    className="flex-1 py-1 border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-[#000000] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                  >
+                    {isHuntingPhoto ? 'ACTUALIZANDO…' : 'ACTUALIZAR BÚSQUEDA IA'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isPublishingCandidate}
+                    className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                  >
+                    MANUAL
+                  </button>
+                </div>
+
+                {/* Telemetría CAS */}
+                <div className="px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] flex items-center justify-between gap-[8px] font-mono tabular-nums text-[9px]">
+                  <span className="text-[#475569] dark:text-[#8A93A6] truncate">
+                    ORIG: {formatPhotoBytes(photoCandidates[selectedCandidateIdx]?.original_bytes)} ➔ CAS: {formatPhotoBytes(photoCandidates[selectedCandidateIdx]?.optimized_bytes)}
+                  </span>
+                  <span className="font-bold text-[#00AEEF] shrink-0">
+                    -{photoCandidates[selectedCandidateIdx]?.savings_pct}%
+                  </span>
+                </div>
+
+                {/* HITL: Confirmación con ACTUALIZAR (insensible a mayúsculas/minúsculas y persistente al cambiar de alternativa) */}
+                <div className="flex flex-col gap-[6px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] rounded-none">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
+                    Escriba ACTUALIZAR para publicar:
+                  </span>
+                  <input
+                    type="text"
+                    value={candidateConfirmText}
+                    onChange={(e) => setCandidateConfirmText(e.target.value.toUpperCase())}
+                    onKeyDown={(e) => {
+                      if (
+                        e.key === 'Enter' &&
+                        !isPublishingCandidate &&
+                        candidateConfirmText.trim().toUpperCase() === 'ACTUALIZAR'
+                      ) {
+                        e.preventDefault();
+                        void handleConfirmCandidate();
+                      }
+                    }}
+                    placeholder="ACTUALIZAR"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="w-full px-[8px] py-1 text-[11px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                  />
+                  <div className="flex gap-[8px]">
+                    <button
+                      type="button"
+                      onClick={handleConfirmCandidate}
+                      disabled={
+                        isPublishingCandidate ||
+                        candidateConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'
+                      }
+                      className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      CONFIRMAR
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDiscardCandidates}
+                      className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                    >
+                      CERRAR
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* B) Alerta de Rechazo VLM en Carga Manual */}
+            {photoCandidates.length === 0 && manualAuditRejection && (
+              <div className="mt-[8px] p-[8px] border border-[#C68346] bg-[#C68346]/10 flex flex-col gap-[6px]">
+                <div className="flex items-center gap-1 text-[#C68346] text-[9px] font-bold uppercase tracking-wider">
+                  <span className="material-symbols-outlined !text-[14px]">warning</span>
+                  <span>Rechazo Auditor OEM</span>
+                </div>
+                <p className="text-[10px] text-[#0F172A] dark:text-[#F3F4F6] font-mono leading-tight">
+                  {manualAuditRejection}
+                </p>
+              </div>
+            )}
+
+            {/* C) Modo Foto Publicada */}
+            {photoCandidates.length === 0 && catalog.foto_url && (
+              <>
+                {catalog.foto_media_telemetry && (
+                  <div className="mt-[8px] px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] flex items-center justify-between gap-[8px] font-mono tabular-nums text-[9px]">
+                    <span className="text-[#475569] dark:text-[#8A93A6] truncate">
+                      ORIG: {formatPhotoBytes(catalog.foto_media_telemetry.original_bytes)} ➔ CAS: {formatPhotoBytes(catalog.foto_media_telemetry.optimized_bytes)}
                     </span>
-                    <input
-                      type="text"
-                      value={photoDeleteConfirmText}
-                      onChange={(e) => setPhotoDeleteConfirmText(e.target.value)}
-                      placeholder="ACTUALIZAR"
-                      autoComplete="off"
-                      spellCheck={false}
-                      className="w-full px-[8px] py-1 text-[11px] font-mono bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
-                    />
-                    <div className="flex gap-[8px]">
+                    <span className="font-bold text-[#00AEEF] shrink-0">
+                      -{catalog.foto_media_telemetry.savings_pct}%
+                    </span>
+                  </div>
+                )}
+
+                {canCurateAI && (
+                  <div className="flex flex-col gap-[8px] w-full mt-[8px]">
+                    <div className="flex gap-[6px] w-full">
                       <button
                         type="button"
-                        onClick={handlePhotoDelete}
-                        disabled={isUploadingPhoto || photoDeleteConfirmText.trim() !== 'ACTUALIZAR'}
-                        className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
+                        onClick={handleStartOfficialPhotoHunt}
+                        disabled={isReframingPhoto || isUploadingPhoto}
+                        title="Actualizar búsqueda IA de fotografía oficial"
+                        className="flex-1 py-1 border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-[#000000] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                       >
-                        CONFIRMAR
+                        {isHuntingPhoto ? 'ACTUALIZANDO…' : 'ACTUALIZAR IA'}
+                      </button>
+                      {(catalog.official_photo_candidates?.length || 0) > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleOpenStoredAlternatives}
+                          disabled={isHuntingPhoto || isReframingPhoto || isUploadingPhoto}
+                          title="Elegir entre todas las candidatas encontradas"
+                          className="flex-1 py-1 border border-[#00AEEF] text-[#00AEEF] hover:bg-[#00AEEF] hover:text-[#000000] text-[9px] font-mono font-bold uppercase tracking-wider tabular-nums rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                        >
+                          ALTERNATIVAS ({catalog.official_photo_candidates!.length})
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleReframeCurrentPhoto}
+                        disabled={isHuntingPhoto || isReframingPhoto || isUploadingPhoto}
+                        title={t('vault_dashboard.reframe_88', 'ENCUADRAR 88%')}
+                        className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                      >
+                        {t('vault_dashboard.reframe_88', 'ENCUADRAR 88%')}
                       </button>
                       <button
                         type="button"
                         onClick={() => {
-                          setShowPhotoDeleteConfirm(false);
+                          setShowPhotoDeleteConfirm((prev) => !prev);
                           setPhotoDeleteConfirmText('');
                         }}
-                        className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                        disabled={isHuntingPhoto || isReframingPhoto || isUploadingPhoto}
+                        title="Dar de baja fotografía"
+                        className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                       >
-                        CANCELAR
+                        ELIMINAR
                       </button>
                     </div>
+
+                    {showPhotoDeleteConfirm && (
+                      <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] rounded-none">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
+                          Escriba ACTUALIZAR para confirmar baja:
+                        </span>
+                        <input
+                          type="text"
+                          value={photoDeleteConfirmText}
+                          onChange={(e) => setPhotoDeleteConfirmText(e.target.value.toUpperCase())}
+                          placeholder="ACTUALIZAR"
+                          autoComplete="off"
+                          spellCheck={false}
+                          className="w-full px-[8px] py-1 text-[11px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                        />
+                        <div className="flex gap-[8px]">
+                          <button
+                            type="button"
+                            onClick={handlePhotoDelete}
+                            disabled={
+                              isUploadingPhoto ||
+                              photoDeleteConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'
+                            }
+                            className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
+                          >
+                            CONFIRMAR
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowPhotoDeleteConfirm(false);
+                              setPhotoDeleteConfirmText('');
+                            }}
+                            className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                          >
+                            CANCELAR
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
+              </>
             )}
 
             {canCurateAI && (
               <input
                 type="file"
                 ref={fileInputRef}
-                onChange={handlePhotoUpload}
+                onChange={handlePhotoFileSelected}
                 accept="image/*"
                 autoComplete="off"
                 spellCheck={false}
                 className="hidden"
-                disabled={isUploadingPhoto}
+                disabled={isUploadingPhoto || isHuntingPhoto || isReframingPhoto}
               />
             )}
           </div>

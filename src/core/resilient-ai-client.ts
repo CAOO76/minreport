@@ -155,16 +155,34 @@ export interface SwarmTelemetrySnapshot {
     tiers: Record<SwarmTier, SwarmTierTelemetry>;
 }
 
+function normalizeSwarmModelSlug(rawSlug: string | undefined, fallback: string): string {
+    const clean = (rawSlug || '').trim().replace(/^models\//i, '');
+    if (!clean) return fallback;
+    if (clean === 'gemini-2.5-pro' || clean === 'gemini-2.5-pro-preview') {
+        return 'gemini-3.1-pro-preview';
+    }
+    return clean;
+}
+
 export const SWARM_MODELS: Record<SwarmTier, string> = {
-    PRIMARY: process.env.PREMIUM_GEMINI_MODEL || process.env.GEMINI_PRO_MODEL || 'gemini-2.5-pro',
-    SECONDARY: process.env.FALLBACK_GEMINI_MODEL || process.env.GEMINI_FLASH_MODEL || 'gemini-2.5-flash',
-    ANCHOR_HA: process.env.LITE_GEMINI_MODEL || process.env.GEMINI_FLASH_LITE_MODEL || 'gemini-2.5-flash-lite',
+    PRIMARY: normalizeSwarmModelSlug(
+        process.env.PREMIUM_GEMINI_MODEL || process.env.GEMINI_PRO_MODEL,
+        'gemini-3.1-pro-preview'
+    ),
+    SECONDARY: normalizeSwarmModelSlug(
+        process.env.FALLBACK_GEMINI_MODEL || process.env.GEMINI_FLASH_MODEL,
+        'gemini-3-flash-preview'
+    ),
+    ANCHOR_HA: normalizeSwarmModelSlug(
+        process.env.LITE_GEMINI_MODEL || process.env.GEMINI_FLASH_LITE_MODEL,
+        'gemini-3.1-flash-lite-preview'
+    ),
 };
 
 const SWARM_TIER_FALLBACK_CANDIDATES: Record<SwarmTier, string[]> = {
-    PRIMARY: ['gemini-2.5-pro', 'gemini-3.1-pro-preview'],
-    SECONDARY: ['gemini-2.5-flash', 'gemini-3-flash-preview'],
-    ANCHOR_HA: ['gemini-2.5-flash-lite', 'gemini-3.1-flash-lite'],
+    PRIMARY: ['gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-flash'],
+    SECONDARY: ['gemini-3-flash-preview', 'gemini-2.5-flash'],
+    ANCHOR_HA: ['gemini-3.1-flash-lite-preview', 'gemini-2.5-flash-lite', 'gemini-3-flash-preview'],
 };
 
 const IMAGE_GEN_MODELS = [

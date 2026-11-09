@@ -678,6 +678,12 @@
     "error_fetch_files": "Erro ao carregar os arquivos do corpus."
   },
   "vault_dashboard": {
+    "hunt_official_photo": "CAÇAR FOTO OFICIAL",
+    "hunting_official_photo": "Caçando foto oficial OEM…",
+    "no_candidates_manual_upload": "SEM CANDIDATAS · CARREGAR FOTO",
+    "reframe_88": "ENQUADRAR 88%",
+    "hunt_another": "CAÇAR OUTRA",
+    "confirm_photo_update": "Confirmar foto oficial",
     "pillars": {
       "ficha_tecnica": "Ficha Técnica",
       "manual_operaciones": "Manual de Operações",

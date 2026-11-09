@@ -845,6 +845,12 @@
     "premium_ai": "Asistencia IA",
     "load_error": "No se pudo cargar el activo.",
     "cazar": "CAZAR",
+    "hunt_official_photo": "CAZAR FOTO OFICIAL",
+    "hunting_official_photo": "Cazando fotografía oficial OEM…",
+    "no_candidates_manual_upload": "SIN CANDIDATAS · CARGAR FOTO",
+    "reframe_88": "ENCUADRAR 88%",
+    "hunt_another": "CAZAR OTRA",
+    "confirm_photo_update": "Confirmar fotografía oficial",
     "bloqueado": "BLOQUEADO",
     "pillars": {
       "ficha_tecnica": "Ficha Técnica",

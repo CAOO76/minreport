@@ -715,6 +715,12 @@
     "error_fetch_files": "Error loading corpus files."
   },
   "vault_dashboard": {
+    "hunt_official_photo": "HUNT OFFICIAL PHOTO",
+    "hunting_official_photo": "Hunting official OEM photo…",
+    "no_candidates_manual_upload": "NO CANDIDATES · MANUAL UPLOAD",
+    "reframe_88": "REFRAME 88%",
+    "hunt_another": "HUNT ANOTHER",
+    "confirm_photo_update": "Confirm official photo",
     "pillars": {
       "ficha_tecnica": "Technical Sheet",
       "manual_operaciones": "Operations Manual",
