@@ -853,6 +853,23 @@
       "matriz_riesgos": "Matriz de Riesgos",
       "checklist_pre_op": "Checklist Pre-operacional"
     },
+    "status": {
+      "itemizing_pillar": "",
+      "items_generated": "{{count}} ítems generados",
+      "incomplete_profile": "Perfil incompleto",
+      "ia_limit_reached": "Límite de cuota IA alcanzado. Reintente en unos segundos.",
+      "unknown_failure": "Fallo desconocido",
+      "network_error_itemize": "Error de red durante la itemización"
+    },
+    "labels": {
+      "itemize_error": "Error de itemización",
+      "items_progress": "{{completed}} de {{total}} ítems completados"
+    },
+    "pending_content": {
+      "label": "Contenido Pendiente",
+      "tooltip": "Contenido Pendiente",
+      "completed_tooltip": "Sin contenido pendiente en este ítem"
+    },
     "pending_figure": {
       "title": "Imagen técnica pendiente en esta sección",
       "description_label": "Recurso visual requerido",

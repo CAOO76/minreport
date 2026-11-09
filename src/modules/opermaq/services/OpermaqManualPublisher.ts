@@ -13,6 +13,7 @@ import type {
     SymbologyPackEntry,
 } from '../types/vault.types';
 import { buildAndPersistAssetSymbologyPack } from './EquipmentSymbologyPackBuilder';
+import { normalizeProceduralStepsToMarkdownTable } from './NeuroSymbolicVerifier';
 import { type BlueprintKind, OpermaqSvgBlueprintEngine } from './OpermaqSvgBlueprintEngine';
 
 /**
@@ -162,7 +163,8 @@ function escapeHtml(str: string): string {
 }
 
 function renderSimpleMarkdownToHtml(md: string): string {
-    const lines = String(md || '').split('\n');
+    const normalizedMd = normalizeProceduralStepsToMarkdownTable(String(md || ''));
+    const lines = normalizedMd.split('\n');
     const out: string[] = [];
     let inTable = false;
 

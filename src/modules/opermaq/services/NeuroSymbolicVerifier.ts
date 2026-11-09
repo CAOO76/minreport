@@ -186,7 +186,242 @@ export function normalizeMarkdownTableRows(markdown: string): string {
         idx++;
     }
 
-    return out.join('\n');
+    return normalizeProceduralStepsToMarkdownTable(out.join('\n'));
+}
+
+function capitalizeFirstChar(str: string): string {
+    const s = str.trim();
+    if (!s) return s;
+    return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function escapeProceduralCell(text: string): string {
+    return text
+        .replace(/\r?\n/g, ' ')
+        .replace(/\|/g, '/')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+const BACKEND_NUMBERED_STEP_RE = /^\s*(?:\*\*\s*)?(?:paso\s+)?(\d{1,2})[.):-]\s*(.+)$/i;
+const BACKEND_PROCEDURAL_HEADING_RE =
+    /\b(?:secuencia|procedimiento|protocolo|paso\s+a\s+paso|aislamiento|bloqueo|loto|energ[ií]a\s+cero|actuaci[oó]n|respuesta|emergencia|evacuaci[oó]n|purga|despresurizaci[oó]n|maniobra|verificaci[oó]n)\b/i;
+
+function isStructuralLineBackend(trimmed: string): boolean {
+    if (!trimmed) return true;
+    if (/^#{1,6}\s/.test(trimmed)) return true;
+    if (trimmed.startsWith('|')) return true;
+    if (trimmed.startsWith('![') || /^\[IMAGEN[_\s-]PENDIENTE:/i.test(trimmed)) return true;
+    if (/^\*Figura\s+(?:t[eé]cnica|\d+):/i.test(trimmed)) return true;
+    if (/^---+$/.test(trimmed)) return true;
+    if (/^(?:\*\*)?REGLA\s+DE\s+BLOQUEO/i.test(trimmed)) return true;
+    if (/^\s*[-*•]\s+\*\*\[\d+\]\*\*/.test(trimmed)) return true;
+    if (/^\*\*([A-ZÁÉÍÓÚÑ0-9\s—–()/.,:-]{10,})\*\*:?$/.test(trimmed)) return true;
+    return false;
+}
+
+export function parseProceduralStepToColumnsBackend(
+    stepNumber: number,
+    rawStepText: string
+): [string, string, string, string] {
+    const pasoCol = String(stepNumber).padStart(2, '0');
+    const trimmedRaw = rawStepText.trim();
+    const normalized =
+        !trimmedRaw.startsWith('**') && /^[^*]{2,80}\*\*/.test(trimmedRaw)
+            ? `**${trimmedRaw}`
+            : trimmedRaw;
+
+    if (normalized.includes('|')) {
+        const parts = normalized
+            .split('|')
+            .map((p) => escapeProceduralCell(p))
+            .filter(Boolean);
+        if (parts.length >= 3) {
+            return [
+                pasoCol,
+                parts[0].startsWith('**') ? parts[0] : `**${parts[0].replace(/\*\*/g, '')}**`,
+                parts[1],
+                parts.slice(2).join(' — '),
+            ];
+        }
+    }
+
+    let stageLabel = 'Maniobra Operativa';
+    let contentRest = normalized;
+
+    const boldPrefixMatch = normalized.match(/^\*\*([^*]+)\*\*\s*[:.—–-]?\s*([\s\S]+)$/);
+    if (boldPrefixMatch) {
+        stageLabel = boldPrefixMatch[1].replace(/[:.—–-]+$/, '').trim();
+        contentRest = boldPrefixMatch[2].trim();
+    } else {
+        const colonPrefixMatch = normalized.match(/^([^:.]{3,70}):\s*([\s\S]+)$/);
+        if (colonPrefixMatch) {
+            stageLabel = colonPrefixMatch[1].replace(/\*\*/g, '').replace(/[:.—–-]+$/, '').trim();
+            contentRest = colonPrefixMatch[2].trim();
+        }
+    }
+
+    const formattedStage = `**${escapeProceduralCell(stageLabel.replace(/\*\*/g, ''))}**`;
+    let actionCol = contentRest;
+    let verificationCol = '';
+
+    const confirmRe =
+        /\b(?:para\s+(?:confirmar|verificar|comprobar|asegurar)|confirmando|verificando)\s+([^.;]+?)(?=(?:\s+y\s+[a-záéíóúñ0-9]+\s+para\s+(?:confirmar|verificar|comprobar))|[.;]|$)/gi;
+    const confirmCriteria: string[] = [];
+    let cm: RegExpExecArray | null;
+    while ((cm = confirmRe.exec(contentRest)) !== null) {
+        const crit = cm[1].trim();
+        if (crit) confirmCriteria.push(capitalizeFirstChar(crit));
+    }
+
+    if (confirmCriteria.length > 0) {
+        verificationCol = confirmCriteria.join(' — ');
+        const strippedAction = contentRest
+            .replace(
+                /\s*\b(?:para\s+(?:confirmar|verificar|comprobar|asegurar)|confirmando|verificando)\s+[^.;]+?(?=(?:\s+y\s+[a-záéíóúñ0-9]+\s+para\s+(?:confirmar|verificar|comprobar))|[.;]|$)/gi,
+                ''
+            )
+            .replace(/\s+\./g, '.')
+            .replace(/\s{2,}/g, ' ')
+            .trim();
+        if (strippedAction.length >= 15) {
+            actionCol = strippedAction;
+        }
+    } else {
+        const hastaQueMatch = contentRest.match(/^([\s\S]+?)\s+hasta\s+que\s+([^.]+)\.?$/i);
+        if (hastaQueMatch && hastaQueMatch[1].trim().length >= 15) {
+            actionCol = `${hastaQueMatch[1].trim().replace(/\.$/, '')}.`;
+            verificationCol = `${capitalizeFirstChar(hastaQueMatch[2].trim().replace(/\.$/, ''))}.`;
+        } else {
+            const sentences = contentRest
+                .split(/(?<=[.?!])\s+(?=[A-ZÁÉÍÓÚÑ0-9])/)
+                .map((s) => s.trim())
+                .filter(Boolean);
+
+            const trailingParenMatch =
+                sentences.length === 1
+                    ? contentRest.match(
+                          /^([\s\S]+?)\s*\(([^)]*(?:\d|OFF|ON|CERO|BLOQUEADO|RPM|bar|psi|kPa|MPa|V|A|°C|°F|mm|N·m|kg|L)[^)]*)\)\.?$/i
+                      )
+                    : null;
+
+            if (trailingParenMatch && trailingParenMatch[1].trim().length >= 10) {
+                actionCol = `${trailingParenMatch[1].trim().replace(/\.$/, '')}.`;
+                verificationCol = trailingParenMatch[2].trim();
+            } else if (sentences.length >= 2) {
+                actionCol = sentences.slice(0, -1).join(' ');
+                verificationCol = sentences[sentences.length - 1];
+            } else {
+                actionCol = contentRest;
+                const metricMatches = contentRest.match(
+                    /\b\d+(?:[.,]\d+)?\s*(?:bar|psi|kPa|MPa|V|VDC|RPM|°C|°F|N·m|lb[-·]ft|mm|cm|m|kg|lb|L|gal|dB\(A\)|m\/s²)\b|[<>]\s*\d+(?:[.,]\d+)?\s*(?:°[CF]|bar|psi|V|RPM)|\bISO\s+\d+(?:[-:]\d+)?(?:\s+[A-Z]\d{3})?\b|\bDS\s+\d+\b|\bEN\s+\d+\b/gi
+                );
+                if (metricMatches && metricMatches.length > 0) {
+                    verificationCol = Array.from(new Set(metricMatches.map((m) => m.trim()))).join(' / ');
+                } else {
+                    verificationCol = 'Verificación operativa en el equipo';
+                }
+            }
+        }
+    }
+
+    return [
+        pasoCol,
+        formattedStage,
+        escapeProceduralCell(actionCol),
+        escapeProceduralCell(verificationCol || 'Verificación operativa en el equipo'),
+    ];
+}
+
+export function normalizeProceduralStepsToMarkdownTable(markdown: string): string {
+    if (!markdown) return '';
+    const rawLines = markdown.replace(/\r\n/g, '\n').split('\n');
+    const out: string[] = [];
+    let lastHeadingText = '';
+    let i = 0;
+
+    while (i < rawLines.length) {
+        const rawLine = rawLines[i];
+        const trimmed = rawLine.trim();
+
+        const standaloneUpperBold = trimmed.match(/^\*\*([A-ZÁÉÍÓÚÑ0-9\s—–()/.,:-]{10,})\*\*:?$/);
+        if (standaloneUpperBold && !/^REGLA\s+DE\s+BLOQUEO/i.test(standaloneUpperBold[1].trim())) {
+            const cleanHeading = standaloneUpperBold[1].replace(/:$/, '').trim();
+            lastHeadingText = cleanHeading;
+            out.push(`#### ${cleanHeading}`);
+            i++;
+            continue;
+        }
+
+        if (/^#{1,6}\s+/.test(trimmed)) {
+            lastHeadingText = trimmed.replace(/^#{1,6}\s+/, '').trim();
+            out.push(rawLine);
+            i++;
+            continue;
+        }
+
+        const stepMatch = trimmed.match(BACKEND_NUMBERED_STEP_RE);
+        if (stepMatch) {
+            const collectedSteps: Array<{ stepNum: number; text: string }> = [];
+            let cursor = i;
+
+            while (cursor < rawLines.length) {
+                const curTrimmed = rawLines[cursor].trim();
+                const m = curTrimmed.match(BACKEND_NUMBERED_STEP_RE);
+                if (!m) break;
+
+                let stepText = m[2].trim();
+                const parsedNum = parseInt(m[1], 10);
+                cursor++;
+
+                while (cursor < rawLines.length) {
+                    const contTrimmed = rawLines[cursor].trim();
+                    if (!contTrimmed) break;
+                    if (BACKEND_NUMBERED_STEP_RE.test(contTrimmed) || isStructuralLineBackend(contTrimmed)) {
+                        break;
+                    }
+                    stepText += ` ${contTrimmed}`;
+                    cursor++;
+                }
+
+                collectedSteps.push({
+                    stepNum: Number.isFinite(parsedNum) ? parsedNum : collectedSteps.length + 1,
+                    text: stepText,
+                });
+
+                let peek = cursor;
+                while (peek < rawLines.length && !rawLines[peek].trim()) peek++;
+                if (peek < rawLines.length && BACKEND_NUMBERED_STEP_RE.test(rawLines[peek].trim())) {
+                    cursor = peek;
+                } else {
+                    break;
+                }
+            }
+
+            if (collectedSteps.length >= 2 || (collectedSteps.length === 1 && BACKEND_PROCEDURAL_HEADING_RE.test(lastHeadingText))) {
+                out.push(
+                    '',
+                    '| Paso | Etapa / Punto de Intervención | Procedimiento Operativo de Control / Maniobra | Criterio de Verificación / Magnitud Nominal (SI) |',
+                    '| :---: | :--- | :--- | :--- |'
+                );
+                for (let sIdx = 0; sIdx < collectedSteps.length; sIdx++) {
+                    const [paso, stage, action, verification] = parseProceduralStepToColumnsBackend(
+                        sIdx + 1,
+                        collectedSteps[sIdx].text
+                    );
+                    out.push(`| ${paso} | ${stage} | ${action} | ${verification} |`);
+                }
+                out.push('');
+                i = cursor;
+                continue;
+            }
+        }
+
+        out.push(rawLine);
+        i++;
+    }
+
+    return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 /**
@@ -843,6 +1078,31 @@ function getLineAt(text: string, index: number): string {
     return text.slice(start, endNl === -1 ? text.length : endNl);
 }
 
+function isHeadingOrTableHeaderLineAt(text: string, index: number): boolean {
+    const start = Math.max(0, text.lastIndexOf('\n', Math.max(0, index - 1)) + 1);
+    const endNl = text.indexOf('\n', index);
+    const currentLine = text.slice(start, endNl === -1 ? text.length : endNl).trim();
+    if (!currentLine) return false;
+    if (currentLine.startsWith('#')) return true;
+    if (isMarkdownTableSeparatorLine(currentLine)) return true;
+    if (currentLine.startsWith('|') && endNl !== -1) {
+        let nextStart = endNl + 1;
+        while (nextStart < text.length) {
+            const nextEnd = text.indexOf('\n', nextStart);
+            const nextLine = text.slice(nextStart, nextEnd === -1 ? text.length : nextEnd).trim();
+            if (nextLine) {
+                if (isMarkdownTableSeparatorLine(nextLine)) {
+                    return true;
+                }
+                break;
+            }
+            if (nextEnd === -1) break;
+            nextStart = nextEnd + 1;
+        }
+    }
+    return false;
+}
+
 function isMatchExplicitlyContextualized(params: {
     conceptId: string;
     matchedText: string;
@@ -925,10 +1185,13 @@ export async function injectVerifiedInlineSymbology(
     const applicationsByConcept: Record<string, string> = {};
     const pillarId = options.pillarId;
 
-    // 1. Validar marcadores preexistentes: código inexistente, sintético o fuera de contexto => se elimina limpiamente.
+    // 1. Validar marcadores preexistentes: código inexistente, sintético, en cabecera/thead o fuera de contexto => se elimina limpiamente.
     let text = markdown.replace(
         /\s*\[S[IÍ]MBOLO:\s*([^\]]+)\]/gi,
         (fullMatch, rawCode: string, offset: number, sourceStr: string) => {
+            if (isHeadingOrTableHeaderLineAt(sourceStr, offset)) {
+                return '';
+            }
             const cleanCid = rawCode
                 .toLowerCase()
                 .trim()
@@ -977,7 +1240,7 @@ export async function injectVerifiedInlineSymbology(
         }
     );
 
-    // 2. Inyección determinista solo en la primera mención EXPLÍCITA (fuera de cabeceras `#` y separadores de tabla).
+    // 2. Inyección determinista solo en la primera mención EXPLÍCITA (fuera de cabeceras `#`, `<thead>` y separadores de tabla).
     for (const rule of DETERMINISTIC_INLINE_SYMBOL_RULES) {
         if (!verifiedIds.has(rule.conceptId)) continue;
         if (detectedSet.has(rule.conceptId)) continue;
@@ -991,9 +1254,7 @@ export async function injectVerifiedInlineSymbology(
                 globalPattern.lastIndex++;
                 continue;
             }
-            const lineStart = Math.max(0, text.lastIndexOf('\n', mIdx) + 1);
-            const linePrefix = text.slice(lineStart, mIdx).trimStart();
-            if (linePrefix.startsWith('#') || /^\|[\s:-]+\|/.test(linePrefix)) continue;
+            if (isHeadingOrTableHeaderLineAt(text, mIdx)) continue;
 
             const lineText = getLineAt(text, mIdx);
             if (

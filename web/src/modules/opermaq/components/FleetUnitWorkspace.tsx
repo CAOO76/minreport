@@ -6,6 +6,14 @@ import { useOpermaqContext } from '../hooks/useOpermaqContext';
 import type { PillarId } from '../types/vault';
 import { authFetch } from '../utils/authFetch';
 import { cleanMachineryTypeLabel } from '../utils/opermaqDomainProjection';
+import {
+    createUndeclaredContentRegex,
+    PENDING_CONTENT_HIGHLIGHT_CLASS,
+} from '../utils/pendingContentDetector';
+import {
+    normalizeProceduralStepsToMarkdownTable,
+    stripRedundantNarrativeInTabularPillar,
+} from '../utils/proceduralTableNormalizer';
 import { SecureCasThumbnail } from './SecureCasThumbnail';
 
 interface FleetUnitWorkspaceProps {
@@ -102,21 +110,54 @@ const PILLAR_TABS: Array<{ id: PillarId; icon: string; labelKey: string }> = [
     { id: 'checklist_pre_op', icon: 'rule', labelKey: 'vault_dashboard.pillars.checklist_pre_op' },
 ];
 
+function highlightUndeclaredInFleetText(text: string, baseKey: string): React.ReactNode[] {
+    const regex = createUndeclaredContentRegex();
+    let match: RegExpExecArray | null = regex.exec(text);
+    if (!match) return [text];
+
+    const out: React.ReactNode[] = [];
+    let last = 0;
+    let seq = 0;
+    while (match !== null) {
+        if (match.index > last) {
+            out.push(text.slice(last, match.index));
+        }
+        const mText = match[0];
+        out.push(
+            <mark key={`${baseKey}-u-${seq++}`} className={PENDING_CONTENT_HIGHLIGHT_CLASS}>
+                {mText}
+            </mark>
+        );
+        last = match.index + mText.length;
+        match = regex.exec(text);
+    }
+    if (last < text.length) {
+        out.push(text.slice(last));
+    }
+    return out;
+}
+
 function renderInlineMarkdown(text: string): React.ReactNode[] {
+    const cleanText = text
+        .replace(/\[[sS][íÍiI][mM][bB][oO][lL][oO]:\s*[a-zA-Z0-9_-]+\]/g, '')
+        .replace(/\s+([.,;:?!)\]])/g, '$1')
+        .replace(/([(\[])\s+/g, '$1')
+        .replace(/[ \t]{2,}/g, ' ')
+        .trim();
     const nodes: React.ReactNode[] = [];
     const regex = /(\*\*([^*]+)\*\*)|(`([^`]+)`)/g;
     let lastIdx = 0;
     let match: RegExpExecArray | null;
     let keySeq = 0;
 
-    while ((match = regex.exec(text)) !== null) {
+    while ((match = regex.exec(cleanText)) !== null) {
         if (match.index > lastIdx) {
-            nodes.push(text.slice(lastIdx, match.index));
+            nodes.push(...highlightUndeclaredInFleetText(cleanText.slice(lastIdx, match.index), `p-${keySeq++}`));
         }
         if (match[1]) {
             nodes.push(
                 <strong key={`b-${keySeq++}`} className="font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
-                    {match[2]}
+                    {highlightUndeclaredInFleetText(match[2], `b-u-${keySeq}`)}
                 </strong>
             );
         } else if (match[3]) {
@@ -125,22 +166,26 @@ function renderInlineMarkdown(text: string): React.ReactNode[] {
                     key={`c-${keySeq++}`}
                     className="px-[8px] py-0.5 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] font-mono tabular-nums text-[12px] text-[#0F172A] dark:text-[#F3F4F6] select-text"
                 >
-                    {match[4]}
+                    {highlightUndeclaredInFleetText(match[4], `c-u-${keySeq}`)}
                 </code>
             );
         }
         lastIdx = regex.lastIndex;
     }
 
-    if (lastIdx < text.length) {
-        nodes.push(text.slice(lastIdx));
+    if (lastIdx < cleanText.length) {
+        nodes.push(...highlightUndeclaredInFleetText(cleanText.slice(lastIdx), `end-${keySeq}`));
     }
 
     return nodes;
 }
 
-function renderPublishedMarkdown(raw: string): React.ReactNode {
-    const lines = raw.replace(/\r\n/g, '\n').split('\n');
+function renderPublishedMarkdown(raw: string, pillarId?: PillarId): React.ReactNode {
+    const normalizedTables = normalizeProceduralStepsToMarkdownTable(raw.replace(/\r\n/g, '\n'), {
+        pillarId,
+    });
+    const cleanText = stripRedundantNarrativeInTabularPillar(normalizedTables, pillarId);
+    const lines = cleanText.split('\n');
     const blocks: React.ReactNode[] = [];
     let i = 0;
 
@@ -170,6 +215,10 @@ function renderPublishedMarkdown(raw: string): React.ReactNode {
 
             if (parsedRows.length > 0) {
                 const [headerRow, ...bodyRows] = parsedRows;
+                const normHeader = headerRow.map((h) => h.toUpperCase().replace(/\s+/g, ' ').trim());
+                const indexColIdx = normHeader.findIndex(
+                    (h) => h === 'N°' || h === 'Nº' || h === 'NRO' || h === '#' || h === 'PASO'
+                );
                 blocks.push(
                     <div
                         key={`tbl-${i}`}
@@ -181,7 +230,9 @@ function renderPublishedMarkdown(raw: string): React.ReactNode {
                                     {headerRow.map((h, hIdx) => (
                                         <th
                                             key={hIdx}
-                                            className="px-[13px] py-[8px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]"
+                                            className={`px-[13px] py-[8px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] ${
+                                                hIdx === indexColIdx ? 'text-center whitespace-nowrap' : 'text-left'
+                                            }`}
                                         >
                                             {renderInlineMarkdown(h)}
                                         </th>
@@ -194,9 +245,15 @@ function renderPublishedMarkdown(raw: string): React.ReactNode {
                                         {r.map((c, cIdx) => (
                                             <td
                                                 key={cIdx}
-                                                className="px-[13px] py-[8px] text-[#0F172A] dark:text-[#F3F4F6] align-top"
+                                                className={`px-[13px] py-[8px] align-top ${
+                                                    cIdx === indexColIdx
+                                                        ? 'text-center font-bold text-[#C68346] whitespace-nowrap'
+                                                        : 'text-[#0F172A] dark:text-[#F3F4F6]'
+                                                }`}
                                             >
-                                                {renderInlineMarkdown(c)}
+                                                {cIdx === indexColIdx
+                                                    ? c.replace(/^\*\*|\*\*$/g, '')
+                                                    : renderInlineMarkdown(c)}
                                             </td>
                                         ))}
                                     </tr>
@@ -210,6 +267,18 @@ function renderPublishedMarkdown(raw: string): React.ReactNode {
         }
 
         // Encabezados
+        if (line.startsWith('#### ')) {
+            blocks.push(
+                <h5
+                    key={`h4-${i}`}
+                    className="text-[12px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] pt-[8px]"
+                >
+                    {renderInlineMarkdown(line.slice(5))}
+                </h5>
+            );
+            i++;
+            continue;
+        }
         if (line.startsWith('### ')) {
             blocks.push(
                 <h4
@@ -684,7 +753,7 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                                             </span>
                                         </header>
 
-                                        {renderPublishedMarkdown(item.content)}
+                                        {renderPublishedMarkdown(item.content, activePillar)}
 
                                         {Array.isArray(item.figures) && item.figures.length > 0 && (
                                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-[13px] pt-[8px]">

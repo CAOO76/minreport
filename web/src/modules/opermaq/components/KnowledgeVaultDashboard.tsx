@@ -24,6 +24,16 @@ import {
   resolveWhitelistedSource,
   sourceLabel,
 } from '../utils/pendingFigureMarkers';
+import {
+  normalizeProceduralStepsToMarkdownTable,
+  stripRedundantNarrativeInTabularPillar,
+} from '../utils/proceduralTableNormalizer';
+import {
+  computeItemPendingContentSummary,
+  countUndeclaredTextInMarkdown,
+  createUndeclaredContentRegex,
+  PENDING_CONTENT_HIGHLIGHT_CLASS,
+} from '../utils/pendingContentDetector';
 import { toast } from 'react-toastify';
 import { M3IconButton } from './M3IconButton';
 import { M3Button } from './M3Button';
@@ -109,7 +119,7 @@ const SOURCE_COLORS: Record<string, string> = { OEM: 'text-[#00AEEF]', EXTERNO: 
  * Sanitizador defensivo: convierte HTML crudo en Markdown limpio.
  * Protege contra contenido generado antes de la restricción de formato.
  */
-function sanitizeHtmlToMarkdown(raw: string): string {
+function sanitizeHtmlToMarkdown(raw: string, pillarId?: PillarId): string {
   if (!raw) return '';
   let s = raw;
 
@@ -146,8 +156,8 @@ function sanitizeHtmlToMarkdown(raw: string): string {
   s = s.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '`$1`');
   s = s.replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)');
 
-  // Eliminar cualquier otra etiqueta HTML que no se haya mapeado
-  s = s.replace(/<[^>]+>/g, '');
+  // Eliminar únicamente etiquetas HTML reales en una sola línea (preservando operadores matemáticos `< 50 °C` y `> 600 °C`)
+  s = s.replace(/<\/?[a-zA-Z][a-zA-Z0-9:-]*(?:\s+[^>\n]*)?>/g, '');
 
   // Decodificar entidades HTML comunes
   s = s.replace(/&amp;/g, '&');
@@ -262,6 +272,9 @@ function sanitizeHtmlToMarkdown(raw: string): string {
   }
   s = rejoinedLines.join('\n');
 
+  // Estandarizar secuencias procedimentales numeradas / etiquetadas en Tablas Operativas de 4 columnas
+  s = normalizeProceduralStepsToMarkdownTable(s, { pillarId });
+
   // Limpiar líneas vacías excesivas (más de 2 seguidas)
   s = s.replace(/\n{3,}/g, '\n\n');
 
@@ -322,6 +335,100 @@ function highlightInNode(node: React.ReactNode, activeHighlightText?: string): R
   return node;
 }
 
+function highlightUndeclaredInNode(node: React.ReactNode): React.ReactNode {
+  if (Array.isArray(node)) {
+    return node.map((n, idx) => <React.Fragment key={`und-arr-${idx}`}>{highlightUndeclaredInNode(n)}</React.Fragment>);
+  }
+
+  if (typeof node === 'string') {
+    const regex = createUndeclaredContentRegex();
+    let match: RegExpExecArray | null = regex.exec(node);
+    if (!match) return node;
+
+    const parts: React.ReactNode[] = [];
+    let lastIndex = 0;
+    let seq = 0;
+    while (match !== null) {
+      if (match.index > lastIndex) {
+        parts.push(<React.Fragment key={`und-pre-${seq++}`}>{node.slice(lastIndex, match.index)}</React.Fragment>);
+      }
+      const matchedText = match[0];
+      parts.push(
+        <mark
+          key={`und-mark-${seq++}`}
+          data-pending-content-slot="true"
+          data-pending-fragment={matchedText}
+          className={PENDING_CONTENT_HIGHLIGHT_CLASS}
+          title="Contenido pendiente de declaración — Clic para seleccionar y completar con OPERMAQ IA"
+        >
+          {matchedText}
+        </mark>
+      );
+      lastIndex = match.index + matchedText.length;
+      match = regex.exec(node);
+    }
+    if (lastIndex < node.length) {
+      parts.push(<React.Fragment key={`und-end-${seq}`}>{node.slice(lastIndex)}</React.Fragment>);
+    }
+    return <React.Fragment>{parts}</React.Fragment>;
+  }
+
+  if (React.isValidElement(node)) {
+    const element = node as React.ReactElement<{ children?: React.ReactNode; ['data-pending-content-slot']?: string }>;
+    if (element.props?.['data-pending-content-slot']) return node;
+    const children = element.props.children;
+    if (children) {
+      const highlightedChildren = React.Children.map(children, (child) => highlightUndeclaredInNode(child));
+      return React.cloneElement(element, { ...element.props, children: highlightedChildren });
+    }
+  }
+
+  return node;
+}
+
+const INLINE_SYMBOL_MARKER_REGEX = /\[[sS][íÍiI][mM][bB][oO][lL][oO]:\s*([a-zA-Z0-9_-]+)\]/g;
+
+function cleanSymbolMarkersFromText(rawText: string): string {
+  if (!rawText) return '';
+  return rawText
+    .replace(INLINE_SYMBOL_MARKER_REGEX, '')
+    .replace(/\s+([.,;:?!)\]])/g, '$1')
+    .replace(/([(\[])\s+/g, '$1')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+function extractCleanTextAndSymbols(
+  rawText: string,
+  resolvedSymbology?: Array<{ concept_id: string; url: string; technical_name_es: string }>
+): {
+  cleanText: string;
+  symbols: Array<{ concept_id: string; url: string; technical_name_es: string }>;
+} {
+  if (!rawText) return { cleanText: '', symbols: [] };
+  const symbols: Array<{ concept_id: string; url: string; technical_name_es: string }> = [];
+  const seenIds = new Set<string>();
+
+  if (resolvedSymbology && resolvedSymbology.length > 0) {
+    const re = new RegExp(INLINE_SYMBOL_MARKER_REGEX.source, 'g');
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(rawText)) !== null) {
+      const conceptId = m[1].trim();
+      if (!conceptId || seenIds.has(conceptId)) continue;
+      const sym = resolvedSymbology.find((s) => s.concept_id === conceptId);
+      if (sym && sym.url) {
+        seenIds.add(conceptId);
+        symbols.push(sym);
+      }
+    }
+  }
+
+  return {
+    cleanText: cleanSymbolMarkersFromText(rawText),
+    symbols,
+  };
+}
+
 function parseInlineStyles(
   text: string, 
   activeHighlightText?: string,
@@ -347,21 +454,16 @@ function parseInlineStyles(
       
       if (sym && sym.url) {
         result.push(
-          <span 
-            key={m.index} 
-            className="inline-flex items-center gap-1 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] px-1 py-0.5 rounded-none align-middle mx-0.5 group relative select-none cursor-help"
+          <img
+            key={m.index}
+            src={sym.url}
+            alt={sym.technical_name_es}
             title={sym.technical_name_es}
-          >
-            <img
-              src={sym.url}
-              alt={sym.technical_name_es}
-              draggable={false}
-              onContextMenu={(e) => e.preventDefault()}
-              style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
-              className="w-4 h-4 object-contain inline-block bg-[#FFFFFF] select-none pointer-events-none"
-            />
-            <span className="text-[9px] font-bold text-[#0F172A] dark:text-[#F3F4F6] font-mono">{conceptId}</span>
-          </span>
+            draggable={false}
+            onContextMenu={(e) => e.preventDefault()}
+            style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
+            className="w-7 h-7 object-contain inline-block align-middle mx-[6px] my-[2px] select-none pointer-events-none rounded-none shadow-none cursor-help"
+          />
         );
       }
       // Marcador no verificado o especulativo: se elimina limpiamente (Strict Explicit Mention Only, `SB-04`).
@@ -370,13 +472,44 @@ function parseInlineStyles(
   }
   if (last < text.length) result.push(text.slice(last));
 
+  const withUndeclaredHighlight = result.map((node) => highlightUndeclaredInNode(node));
+
   const processed = activeHighlightText
-    ? result.map(node => highlightInNode(node, activeHighlightText))
-    : result;
+    ? withUndeclaredHighlight.map(node => highlightInNode(node, activeHighlightText))
+    : withUndeclaredHighlight;
 
   return processed.map((node, idx) => (
     <React.Fragment key={`inline-${idx}`}>{node}</React.Fragment>
   ));
+}
+
+function renderBlockWithPictogramStrip(
+  rawText: string,
+  activeHighlightText?: string,
+  resolvedSymbology?: Array<{ concept_id: string; url: string; technical_name_es: string }>
+): React.ReactNode {
+  const { cleanText, symbols } = extractCleanTextAndSymbols(rawText, resolvedSymbology);
+  return (
+    <>
+      {parseInlineStyles(cleanText, activeHighlightText, resolvedSymbology)}
+      {symbols.length > 0 && (
+        <div className="mt-[8px] pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center gap-[8px] select-none">
+          {symbols.map((sym) => (
+            <img
+              key={sym.concept_id}
+              src={sym.url}
+              alt={sym.technical_name_es}
+              title={sym.technical_name_es}
+              draggable={false}
+              onContextMenu={(e) => e.preventDefault()}
+              style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
+              className="w-7 h-7 object-contain inline-block select-none pointer-events-none rounded-none shadow-none"
+            />
+          ))}
+        </div>
+      )}
+    </>
+  );
 }
 
 function cleanFuentesFromMarkdown(text: string): string {
@@ -562,7 +695,9 @@ function PendingSectionFigureCard({
     <div
       tabIndex={canAct ? 0 : -1}
       onPaste={handlePaste}
-      className="my-[21px] border border-[#E2E8F0] dark:border-[#12151C] border-l-2 border-l-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D] p-[13px] rounded-none shadow-none select-none outline-none focus:border-[#00AEEF] dark:focus:border-[#00AEEF]"
+      data-pending-content-slot="true"
+      data-pending-fragment={`[IMAGEN PENDIENTE] ${description}`}
+      className="my-[21px] border border-[#EAB308] dark:border-[#FACC15] border-l-2 border-l-[#C68346] bg-[#FEF08A]/20 dark:bg-[#FACC15]/10 p-[13px] rounded-none shadow-none select-none outline-none focus:border-[#00AEEF] dark:focus:border-[#00AEEF]"
     >
       <div className="flex flex-wrap items-center justify-between gap-[8px] pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C]">
         <div className="flex items-center gap-[8px]">
@@ -756,6 +891,7 @@ function PendingSectionFigureCard({
 
 function MarkdownRenderer({ 
   content, 
+  pillarId,
   activeHighlightText, 
   onFragmentClick,
   resolvedSymbology,
@@ -769,6 +905,7 @@ function MarkdownRenderer({
   onConfirmPendingFigure,
 }: { 
   content: string; 
+  pillarId?: PillarId;
   activeHighlightText?: string; 
   onFragmentClick?: (text: string, e: React.MouseEvent) => void; 
   resolvedSymbology?: Array<{ concept_id: string; url: string; technical_name_es: string }>;
@@ -784,15 +921,16 @@ function MarkdownRenderer({
 
   if (!content) return null;
   const rawClean = cleanFuentesFromMarkdown(content);
-  // Sanitizar HTML crudo antes de parsear (retrocompatibilidad con contenido ya guardado)
-  const sanitizedMarkdown = sanitizeHtmlToMarkdown(rawClean);
+  // Sanitizar HTML crudo y normalizar procedimientos numerados a tablas antes de parsear
+  const sanitizedMarkdown = sanitizeHtmlToMarkdown(rawClean, pillarId);
   // Normalizar marcadores rotos, filtrar imágenes no citadas y garantizar tarjeta de imagen pendiente por sección
-  const cleanContent = injectLegacyPendingMarkers(
+  const withPendingMarkers = injectLegacyPendingMarkers(
     sanitizedMarkdown,
     itemTitle || '',
     itemSources || [],
     galleryFigures || []
   );
+  const cleanContent = stripRedundantNarrativeInTabularPillar(withPendingMarkers, pillarId);
   const nodes: React.ReactNode[] = [];
   const lines = cleanContent.split('\n');
 
@@ -803,25 +941,25 @@ function MarkdownRenderer({
     if (!line) { i++; continue; }
     if (line.startsWith('#### ')) { 
       const currentRaw = raw;
-      nodes.push(<h4 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[12px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mt-[21px] mb-[8px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(line.replace('#### ', ''), activeHighlightText, resolvedSymbology)}</h4>); 
+      nodes.push(<h4 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[12px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mt-[21px] mb-[8px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(cleanSymbolMarkersFromText(line.replace('#### ', '')), activeHighlightText, resolvedSymbology)}</h4>); 
       i++; 
       continue; 
     }
     if (line.startsWith('### ')) { 
       const currentRaw = raw;
-      nodes.push(<h3 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[13px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6] mt-[21px] mb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C] pb-[8px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(line.replace('### ', ''), activeHighlightText, resolvedSymbology)}</h3>); 
+      nodes.push(<h3 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[13px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6] mt-[21px] mb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C] pb-[8px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(cleanSymbolMarkersFromText(line.replace('### ', '')), activeHighlightText, resolvedSymbology)}</h3>); 
       i++; 
       continue; 
     }
     if (line.startsWith('## ')) { 
       const currentRaw = raw;
-      nodes.push(<h2 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[15px] font-bold uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6] mt-[34px] mb-[13px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(line.replace('## ', ''), activeHighlightText, resolvedSymbology)}</h2>); 
+      nodes.push(<h2 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[15px] font-bold uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6] mt-[34px] mb-[13px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(cleanSymbolMarkersFromText(line.replace('## ', '')), activeHighlightText, resolvedSymbology)}</h2>); 
       i++; 
       continue; 
     }
     if (line.startsWith('# ')) { 
       const currentRaw = raw;
-      nodes.push(<h1 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[17px] font-bold uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6] mt-[34px] mb-[13px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(line.replace('# ', ''), activeHighlightText, resolvedSymbology)}</h1>); 
+      nodes.push(<h1 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[17px] font-bold uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6] mt-[34px] mb-[13px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(cleanSymbolMarkersFromText(line.replace('# ', '')), activeHighlightText, resolvedSymbology)}</h1>); 
       i++; 
       continue; 
     }
@@ -830,7 +968,22 @@ function MarkdownRenderer({
       while (i < lines.length && (lines[i].trim().startsWith('- ') || lines[i].trim().startsWith('* '))) {
         items.push({ rawText: lines[i], cleanText: lines[i].trim().replace(/^[-*] /, '') }); i++;
       }
-      nodes.push(<ul key={`ul-${i}`} className="list-none space-y-[8px] my-[13px] ml-0">{items.map((it, idx) => <li key={idx} onClick={(e) => onFragmentClick?.(it.rawText, e)} className={`flex items-start gap-[8px] text-[13px] text-[#0F172A] dark:text-[#F3F4F6] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}><span className="text-[#C68346] mt-0.5 shrink-0">›</span><span>{parseInlineStyles(it.cleanText, activeHighlightText, resolvedSymbology)}</span></li>)}</ul>);
+      nodes.push(
+        <ul key={`ul-${i}`} className="list-none space-y-[8px] my-[13px] ml-0">
+          {items.map((it, idx) => (
+            <li
+              key={idx}
+              onClick={(e) => onFragmentClick?.(it.rawText, e)}
+              className={`flex items-start gap-[8px] text-[13px] text-[#0F172A] dark:text-[#F3F4F6] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}
+            >
+              <span className="text-[#C68346] mt-0.5 shrink-0">›</span>
+              <div className="flex-1 min-w-0">
+                {renderBlockWithPictogramStrip(it.cleanText, activeHighlightText, resolvedSymbology)}
+              </div>
+            </li>
+          ))}
+        </ul>
+      );
       continue;
     }
     if (/^\|/.test(line)) {
@@ -844,17 +997,30 @@ function MarkdownRenderer({
         const [header, ...rawBody] = rows;
         const colCount = header.length;
         const body = rawBody.map((r) => {
-          if (r.length === colCount) return r;
+          if (r.length === colCount) return [...r];
           if (r.length < colCount) {
             return [...r, ...Array.from({ length: colCount - r.length }, () => '')];
           }
           return [...r.slice(0, colCount - 1), r.slice(colCount - 1).join(' — ')];
         });
-        const normHeader = header.map((h) => h.toUpperCase().replace(/\s+/g, ' ').trim());
+        const cleanedHeader = header.map((h, ci) => {
+          const headerMarkers = Array.from(
+            h.matchAll(new RegExp(INLINE_SYMBOL_MARKER_REGEX.source, 'g'))
+          ).map((m) => m[0]);
+          if (headerMarkers.length > 0 && body.length > 0) {
+            const colHasMarker = (marker: string) => body.some((r) => (r[ci] || '').includes(marker));
+            const missingMarkers = headerMarkers.filter((mk) => !colHasMarker(mk));
+            if (missingMarkers.length > 0) {
+              body[0][ci] = `${body[0][ci] || ''} ${missingMarkers.join(' ')}`.trim();
+            }
+          }
+          return cleanSymbolMarkersFromText(h);
+        });
+        const normHeader = cleanedHeader.map((h) => h.toUpperCase().replace(/\s+/g, ' ').trim());
         const isChecklistTable =
           normHeader.some((h) => h === 'CUMPLE' || h === 'PASA') &&
           normHeader.some((h) => h === 'NO CUMPLE' || h === 'NO PASA');
-        const indexColIdx = normHeader.findIndex((h) => h === 'N°' || h === 'Nº' || h === 'NRO' || h === '#');
+        const indexColIdx = normHeader.findIndex((h) => h === 'N°' || h === 'Nº' || h === 'NRO' || h === '#' || h === 'PASO');
         const cumpleColIdx = normHeader.findIndex((h) => h === 'CUMPLE' || h === 'PASA');
         const noCumpleColIdx = normHeader.findIndex((h) => h === 'NO CUMPLE' || h === 'NO PASA');
         const obsColIdx = normHeader.findIndex((h) => h.startsWith('OBSERVACION'));
@@ -864,7 +1030,7 @@ function MarkdownRenderer({
             <table className="w-full text-[12px] border-collapse tabular-nums font-mono">
               <thead>
                 <tr>
-                  {header.map((h, ci) => {
+                  {cleanedHeader.map((h, ci) => {
                     const isCenterCol = ci === indexColIdx || ci === cumpleColIdx || ci === noCumpleColIdx;
                     return (
                       <th
@@ -922,7 +1088,7 @@ function MarkdownRenderer({
                           <td
                             key={ci}
                             onClick={(e) => onFragmentClick?.(cell, e)}
-                            className={`px-[13px] py-[8px] text-center font-bold text-[#C68346] whitespace-nowrap border border-[#E2E8F0] dark:border-[#12151C] ${interactiveCls} transition-colors duration-150`}
+                            className={`px-[13px] py-[8px] text-center align-top font-bold text-[#C68346] whitespace-nowrap border border-[#E2E8F0] dark:border-[#12151C] ${interactiveCls} transition-colors duration-150`}
                           >
                             {trimmedCell.replace(/^\*\*|\*\*$/g, '')}
                           </td>
@@ -933,9 +1099,9 @@ function MarkdownRenderer({
                         <td
                           key={ci}
                           onClick={(e) => onFragmentClick?.(cell, e)}
-                          className={`px-[13px] py-[8px] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] ${interactiveCls} transition-colors duration-150`}
+                          className={`px-[13px] py-[8px] align-top text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] ${interactiveCls} transition-colors duration-150`}
                         >
-                          {parseInlineStyles(cell, activeHighlightText, resolvedSymbology)}
+                          {renderBlockWithPictogramStrip(cell, activeHighlightText, resolvedSymbology)}
                         </td>
                       );
                     })}
@@ -1026,7 +1192,15 @@ function MarkdownRenderer({
       }
     }
     const currentRaw = raw;
-    nodes.push(<p key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[13px] text-[#0F172A] dark:text-[#F3F4F6] leading-relaxed mb-[8px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(raw, activeHighlightText, resolvedSymbology)}</p>);
+    nodes.push(
+      <div
+        key={i}
+        onClick={(e) => onFragmentClick?.(currentRaw, e)}
+        className={`text-[13px] text-[#0F172A] dark:text-[#F3F4F6] leading-relaxed mb-[8px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}
+      >
+        {renderBlockWithPictogramStrip(raw, activeHighlightText, resolvedSymbology)}
+      </div>
+    );
     i++;
   }
   return <div className="font-atkinson">{nodes}</div>;
@@ -1523,7 +1697,11 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
                   <div className="space-y-1">
                     <span className="text-[9px] font-bold text-[#5A6072] uppercase tracking-wide">Contenido Actual</span>
                     <div className="p-2 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-[#475569] dark:text-[#8A93A6] leading-relaxed font-mono break-all max-h-32 overflow-y-auto custom-scrollbar">
-                      {prop.valor_actual || '[Información técnica no declarada en ficha]'}
+                      {prop.valor_actual ? (
+                        highlightUndeclaredInNode(prop.valor_actual)
+                      ) : (
+                        <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>[Información técnica no declarada en ficha]</mark>
+                      )}
                     </div>
                   </div>
                   <div className="space-y-1 md:border-l md:border-[#E2E8F0] md:dark:border-[#12151C] md:pl-3">
@@ -1587,6 +1765,8 @@ function ItemContentBlock({
   const [showHistoryModal, setShowHistoryModal] = useState(false);
 
   const chatFeedRef = useRef<HTMLDivElement>(null);
+  const contentContainerRef = useRef<HTMLDivElement>(null);
+  const pendingLocatorCursorRef = useRef<number>(0);
 
   const isGenerating = item.content_status === 'GENERANDO' || isHunting || isSearching;
 
@@ -1733,10 +1913,58 @@ function ItemContentBlock({
     [item.figures]
   );
 
-  const pendingFiguresCount = useMemo(
-    () => countItemPendingFigures(item.content, item.title, item.item_sources, item.figures),
-    [item.content, item.title, item.item_sources, item.figures]
+  const normalizedRenderedMarkdown = useMemo(() => {
+    if (!item.content) return '';
+    const specClean = sanitizeSpeculativeSymbolMarkers(item.content, pillarId);
+    const rawClean = cleanFuentesFromMarkdown(specClean);
+    const sanitized = sanitizeHtmlToMarkdown(rawClean, pillarId);
+    const withPending = injectLegacyPendingMarkers(
+      sanitized,
+      item.title || '',
+      item.item_sources || [],
+      galleryFigures || []
+    );
+    return stripRedundantNarrativeInTabularPillar(withPending, pillarId);
+  }, [item.content, pillarId, item.title, item.item_sources, galleryFigures]);
+
+  const pendingContentSummary = useMemo(
+    () =>
+      computeItemPendingContentSummary({
+        renderedMarkdown: normalizedRenderedMarkdown,
+        rawContent: item.content,
+        itemTitle: item.title,
+        itemSources: item.item_sources,
+        galleryFigures,
+        pillarId,
+      }),
+    [normalizedRenderedMarkdown, item.content, item.title, item.item_sources, galleryFigures, pillarId]
   );
+
+  const handleLocateNextPendingContent = useCallback(() => {
+    if (activeProposalView?.itemId === item.item_id) {
+      onSetProposalView(null);
+    }
+    setTimeout(() => {
+      const container = contentContainerRef.current;
+      if (!container) return;
+      const slots = Array.from(
+        container.querySelectorAll<HTMLElement>('[data-pending-content-slot="true"]')
+      );
+      if (slots.length === 0) return;
+      const targetIdx = pendingLocatorCursorRef.current % slots.length;
+      pendingLocatorCursorRef.current = targetIdx + 1;
+      const targetEl = slots[targetIdx];
+      targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const rowContext =
+        targetEl.closest('tr')?.innerText?.replace(/\s+/g, ' ').trim() ||
+        targetEl.closest('li, p')?.textContent?.trim() ||
+        targetEl.getAttribute('data-pending-fragment') ||
+        targetEl.textContent?.trim();
+      if (rowContext && canCurateAI) {
+        setSelectedFragment(rowContext.slice(0, 260));
+      }
+    }, 40);
+  }, [activeProposalView, item.item_id, onSetProposalView, canCurateAI]);
 
   // OPT-F2.1 / F2.3: digestión CAS (SHA-256 + dHash, WebP) sin persistir URLs `blob:` en el contenido oficial
   const handleUploadPendingFigure = useCallback(
@@ -1819,7 +2047,7 @@ function ItemContentBlock({
 
   return (
     <div className="flex-1 flex flex-row min-h-0 h-full w-full gap-4 font-atkinson relative overflow-hidden">
-      <div className="flex-1 h-full min-h-0 overflow-y-auto custom-scrollbar pr-4 pb-6 select-text">
+      <div ref={contentContainerRef} className="flex-1 h-full min-h-0 overflow-y-auto custom-scrollbar pr-4 pb-6 select-text">
         {canCurateAI && activeProposalView?.itemId === item.item_id ? (
           activeProposalView.view === 'nuevos' ? (
             <NuevosHallazgosView
@@ -1844,6 +2072,7 @@ function ItemContentBlock({
               <>
                 <MarkdownRenderer 
                   content={sanitizeSpeculativeSymbolMarkers(item.content, pillarId)} 
+                  pillarId={pillarId}
                   activeHighlightText={canCurateAI ? activeHighlightText : undefined}
                   onFragmentClick={canCurateAI ? handleFragmentClick : undefined}
                   resolvedSymbology={resolvedSymbology}
@@ -2164,6 +2393,34 @@ function ItemContentBlock({
                 </div>
               )}
             </div>
+
+            <button
+              type="button"
+              onClick={handleLocateNextPendingContent}
+              className={`w-full flex items-center justify-between px-3 py-2 transition-colors border rounded-none cursor-pointer ${
+                pendingContentSummary.total > 0
+                  ? 'bg-[#FEF08A]/45 dark:bg-[#FACC15]/15 border-[#EAB308] dark:border-[#FACC15] text-[#0F172A] dark:text-[#FEF08A] font-bold hover:bg-[#FEF08A]/70 dark:hover:bg-[#FACC15]/25'
+                  : 'bg-transparent text-[#475569] dark:text-[#8A93A6] border-[#E2E8F0] dark:border-[#12151C] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+              }`}
+              title={
+                pendingContentSummary.total > 0
+                  ? `${t('vault_dashboard.pending_content.tooltip', 'Contenido Pendiente')}: ${pendingContentSummary.undeclaredFieldsCount} dato(s) no declarado(s) · ${pendingContentSummary.pendingFiguresCount} imagen(es) pendiente(s). Clic para localizar en el documento.`
+                  : t('vault_dashboard.pending_content.completed_tooltip', 'Sin contenido pendiente en este ítem')
+              }
+            >
+              <span className="text-[10px] font-bold uppercase tracking-wider">
+                {t('vault_dashboard.pending_content.label', 'Contenido Pendiente')}
+              </span>
+              <span
+                className={`text-[10px] font-bold px-1.5 py-0.5 rounded-none font-mono tabular-nums ${
+                  pendingContentSummary.total > 0
+                    ? 'bg-[#FEF08A] dark:bg-[#FACC15]/30 text-[#0F172A] dark:text-[#FEF08A] border border-[#EAB308] dark:border-[#FACC15]'
+                    : 'text-[#475569] dark:text-[#8A93A6]'
+                }`}
+              >
+                {pendingContentSummary.total}
+              </span>
+            </button>
 
             <button
               type="button"
@@ -2571,7 +2828,9 @@ function ItemizedItemsList({
                           <p className="text-[13px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">{item.title}</p>
                           <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] mt-0.5">{item.rationale}</p>
                           {!hasContent && !canCurateAI && (
-                            <p className="text-[11px] text-[#5A6072] mt-1">[Información técnica no declarada en ficha]</p>
+                            <p className="mt-1">
+                              <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>[Información técnica no declarada en ficha]</mark>
+                            </p>
                           )}
                         </div>
                         {item.created_by ? (
@@ -2608,14 +2867,16 @@ function ItemizedItemsList({
                               </span>
                             )}
                             {(() => {
-                              const pendingCount = countItemPendingFigures(item.content, item.title, item.item_sources, item.figures);
-                              return pendingCount > 0 ? (
+                              const pendingFigCount = countItemPendingFigures(item.content, item.title, item.item_sources, item.figures);
+                              const pendingTextCount = countUndeclaredTextInMarkdown(item.content);
+                              const totalItemPending = pendingFigCount + pendingTextCount;
+                              return totalItemPending > 0 ? (
                                 <span
-                                  className="flex items-center gap-[4px] h-8 px-1 shrink-0 text-[#C68346]"
-                                  title={t('vault_dashboard.pending_figure.counter_title', 'Imágenes técnicas pendientes')}
+                                  className="flex items-center gap-[4px] h-6 px-[6px] shrink-0 bg-[#FEF08A] dark:bg-[#FACC15]/25 text-[#0F172A] dark:text-[#FEF08A] border border-[#EAB308] dark:border-[#FACC15] rounded-none"
+                                  title={`${t('vault_dashboard.pending_content.label', 'Contenido Pendiente')}: ${pendingTextCount} dato(s) no declarado(s) · ${pendingFigCount} imagen(es) pendiente(s)`}
                                 >
-                                  <span className="material-symbols-outlined !text-[18px]">image_search</span>
-                                  <span className="text-[11px] font-mono tabular-nums font-bold">{pendingCount}</span>
+                                  <span className="material-symbols-outlined !text-[14px]">pending_actions</span>
+                                  <span className="text-[11px] font-mono tabular-nums font-bold">{totalItemPending}</span>
                                 </span>
                               ) : null;
                             })()}
@@ -3522,19 +3783,17 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
         )}
 
         {/* Empty state — IDLE, GENERATING, ERROR, o proceso ATASCADO */}
-        {!hasItems && (
+        {(!hasItems || isItemizing) && (
           <div className="flex-1 flex flex-col items-center justify-center py-16 gap-6">
             {isItemizing ? (
-              <div className="flex flex-col items-center max-w-md w-full p-[21px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-center gap-[13px] rounded-none shadow-none">
-                <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6] uppercase tracking-widest font-mono">
-                  SINTETIZANDO ESTRUCTURA DEL PILAR
-                </p>
-                <div className="w-full">
-                  <M3LinearProgress indeterminate ariaLabel="Procesando estructura del pilar" />
-                </div>
-                <p className="text-[12px] text-[#475569] dark:text-[#8A93A6] leading-relaxed">
-                  Resolviendo ontología en 2 anillos y herencia acumulativa de subsistemas confirmados...
-                </p>
+              <div className="flex flex-col items-center justify-center p-[21px] gap-[13px] rounded-none shadow-none">
+                <M3CircularProgress
+                  size={28}
+                  strokeWidth={3}
+                  indeterminate
+                  tone="copper"
+                  ariaLabel="En proceso"
+                />
                 {canCurateAI && !itemizing && (
                   <button
                     type="button"
@@ -4303,7 +4562,21 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
   const handleItemizePillar = useCallback(async (pillarId: PillarId) => {
     if (!canCurateAI || !catalogId || itemizingPillar) return;
     setItemizingPillar(pillarId);
-    const toastId = toast.loading(t('vault_dashboard.status.itemizing_pillar', { pillar: t(`vault_dashboard.pillars.${pillarId}`) }));
+    const toastId = toast.loading('', {
+      className: '[&_.Toastify__toast-icon]:!m-0',
+      style: {
+        borderRadius: '0',
+        boxShadow: 'none',
+        width: 'auto',
+        minWidth: '0',
+        minHeight: '0',
+        padding: '13px',
+      },
+    });
+    const resetToastStyle = {
+      className: '',
+      style: { borderRadius: '0', boxShadow: 'none' },
+    };
     try {
       const res = await authFetch(`${API_BASE_URL}/vault/itemize-pillar`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -4311,23 +4584,23 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       });
       const json = await res.json();
       if (res.ok && json.success) {
-        toast.update(toastId, { render: t('vault_dashboard.status.items_generated', { count: json.items?.length ?? 0 }), type: 'success', isLoading: false, autoClose: 3000 });
+        toast.dismiss(toastId);
       } else if (
         (res.status === 422 || res.status === 409) &&
         (json.error === 'SECUENCIA_PILAR_BLOQUEADA' ||
           json.code === 'SECUENCIA_PILAR_BLOQUEADA' ||
           json.error === 'PREREQUISITE_PILLAR_NOT_ITEMIZED')
       ) {
-        toast.update(toastId, { render: json.message || 'Debe itemizar el pilar precedente en la secuencia lógica.', type: 'warning', isLoading: false, autoClose: 6000 });
+        toast.update(toastId, { ...resetToastStyle, render: json.message || 'Debe itemizar el pilar precedente en la secuencia lógica.', type: 'warning', isLoading: false, autoClose: 6000 });
       } else if (res.status === 422 && json.error === 'PERFIL_INCOMPLETO') {
-        toast.update(toastId, { render: `${t('vault_dashboard.status.incomplete_profile')}: ${(json.missingFields ?? []).join(', ')}`, type: 'warning', isLoading: false, autoClose: 6000 });
+        toast.update(toastId, { ...resetToastStyle, render: `${t('vault_dashboard.status.incomplete_profile', 'Perfil incompleto')}: ${(json.missingFields ?? []).join(', ')}`, type: 'warning', isLoading: false, autoClose: 6000 });
       } else if (res.status === 429) {
-        toast.update(toastId, { render: t('vault_dashboard.status.ia_limit_reached'), type: 'error', isLoading: false, autoClose: 7000 });
+        toast.update(toastId, { ...resetToastStyle, render: t('vault_dashboard.status.ia_limit_reached', 'Límite de cuota IA alcanzado. Reintente en unos segundos.'), type: 'error', isLoading: false, autoClose: 7000 });
       } else {
-        toast.update(toastId, { render: `${t('vault_dashboard.labels.itemize_error')}: ${json.error ?? t('vault_dashboard.status.unknown_failure')}`, type: 'error', isLoading: false, autoClose: 5000 });
+        toast.update(toastId, { ...resetToastStyle, render: `${t('vault_dashboard.labels.itemize_error', 'Error de itemización')}: ${json.error ?? t('vault_dashboard.status.unknown_failure', 'Fallo desconocido')}`, type: 'error', isLoading: false, autoClose: 5000 });
       }
     } catch (_err: unknown) {
-      toast.update(toastId, { render: t('vault_dashboard.status.network_error_itemize'), type: 'error', isLoading: false, autoClose: 5000 });
+      toast.update(toastId, { ...resetToastStyle, render: t('vault_dashboard.status.network_error_itemize', 'Error de red durante la itemización'), type: 'error', isLoading: false, autoClose: 5000 });
     } finally {
       setItemizingPillar(null);
     }
@@ -4853,11 +5126,13 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                   catalog.caracteristicas_principales.map((item, idx) => (
                     <li key={idx} className="flex items-start gap-1.5 leading-tight">
                       <span className="text-[#C68346] shrink-0 mt-px text-[10px]">•</span>
-                      <span>{item}</span>
+                      <span>{highlightUndeclaredInNode(item)}</span>
                     </li>
                   ))
                 ) : (
-                  <li className="text-[#94A3B8] dark:text-[#5A6072] text-[11px]">[Información técnica no declarada en ficha]</li>
+                  <li>
+                    <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>[Información técnica no declarada en ficha]</mark>
+                  </li>
                 )}
               </ul>
             </div>
@@ -4872,11 +5147,13 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                   catalog.ambiente_operativo.map((item, idx) => (
                     <li key={idx} className="flex items-start gap-1.5 leading-tight">
                       <span className="text-[#C68346] shrink-0 mt-px text-[10px]">•</span>
-                      <span>{item}</span>
+                      <span>{highlightUndeclaredInNode(item)}</span>
                     </li>
                   ))
                 ) : (
-                  <li className="text-[#94A3B8] dark:text-[#5A6072] text-[11px]">[Información técnica no declarada en ficha]</li>
+                  <li>
+                    <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>[Información técnica no declarada en ficha]</mark>
+                  </li>
                 )}
               </ul>
             </div>
@@ -4891,11 +5168,13 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                   catalog.contexto_operativo.map((item, idx) => (
                     <li key={idx} className="flex items-start gap-1.5 leading-tight">
                       <span className="text-[#C68346] shrink-0 mt-px text-[10px]">•</span>
-                      <span>{item}</span>
+                      <span>{highlightUndeclaredInNode(item)}</span>
                     </li>
                   ))
                 ) : (
-                  <li className="text-[#94A3B8] dark:text-[#5A6072] text-[11px]">[Información técnica no declarada en ficha]</li>
+                  <li>
+                    <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>[Información técnica no declarada en ficha]</mark>
+                  </li>
                 )}
               </ul>
             </div>

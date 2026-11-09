@@ -685,6 +685,18 @@
       "matriz_riesgos": "Matriz de Riscos",
       "checklist_pre_op": "Checklist Pré-Op"
     },
+    "status": {
+      "itemizing_pillar": "",
+      "items_generated": "{{count}} itens gerados",
+      "incomplete_profile": "Perfil incompleto",
+      "ia_limit_reached": "Limite de cota de IA atingido. Tente novamente em alguns segundos.",
+      "unknown_failure": "Falha desconhecida",
+      "network_error_itemize": "Erro de rede durante a itemização"
+    },
+    "labels": {
+      "itemize_error": "Erro de itemização",
+      "items_progress": "{{completed}} de {{total}} itens concluídos"
+    },
     "pending_figure": {
       "title": "Imagem técnica pendente nesta seção",
       "description_label": "Recurso visual necessário",
@@ -720,6 +732,11 @@
         "SIMBOLOGIA_SEGURIDAD": "Simbologia de segurança",
         "PLANO_VECTORIAL_SVG": "Desenho vetorial"
       }
+    },
+    "pending_content": {
+      "label": "Conteúdo Pendente",
+      "tooltip": "Conteúdo Pendente",
+      "completed_tooltip": "Sem conteúdo pendente neste item"
     }
   },
   "opermaq_domains": {
