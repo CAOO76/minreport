@@ -6,11 +6,14 @@ import type {
     ExtractedFigureRef,
     ItemizedSource,
     LockedItemAdvisory,
+    PillarDocument,
     PillarId,
     PillarItem,
     ProposedUpdate,
 } from '../types/vault.types';
+import { computePillarContentDigestSha256, computeVaultMerkleRootSha256 } from './ItemizerService';
 import { createEmptyKnowledgeVault } from './pillarAgents';
+import { VaultPersistenceService } from './VaultPersistenceService';
 import {
     buildDeterministicPendingDescription,
     buildPendingMarkerLine,
@@ -381,13 +384,12 @@ export class VaultReconciliationService {
     public static async reconcileContribution(
         input: ReconcilePillarContributionInput
     ): Promise<ReconcilePillarResult> {
-        const assetRef = db.collection('global_asset_catalog').doc(input.globalAssetId);
-        const snap = await assetRef.get();
-        if (!snap.exists) {
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(input.globalAssetId);
+        if (!hydrated.exists || !hydrated.data) {
             throw new Error(`Activo ${input.globalAssetId} no existe en global_asset_catalog.`);
         }
 
-        const assetData = snap.data()!;
+        const assetData = hydrated.data;
         const make = String(assetData.make_oficial || assetData.make || 'OEM');
         const model = String(assetData.model_oficial || assetData.model || input.globalAssetId);
         const makeModel = assetData.make_model || `${make} ${model}`.trim();
@@ -531,9 +533,15 @@ export class VaultReconciliationService {
             currentItem.locked_item_advisories = [...existingAdvisories, newAdvisory];
             items[itemIndex] = currentItem;
 
-            await assetRef.update({
-                [`knowledge_vault.${input.pillarId}.items`]: stripUndefinedDeep(items),
-                updatedAt: Date.now(),
+            await VaultPersistenceService.savePillarDocument({
+                globalAssetId: input.globalAssetId,
+                pillarId: input.pillarId,
+                pillarDoc: stripUndefinedDeep({
+                    ...pillarDoc,
+                    pillar_id: input.pillarId,
+                    items,
+                    updated_at: nowIso,
+                }) as PillarDocument,
             });
 
             return {
@@ -589,12 +597,16 @@ export class VaultReconciliationService {
                 pillarDoc.itemize_status = items.length >= 6 ? 'COMPLETED' : 'PARTIAL_FROM_INGESTION';
             }
             pillarDoc.items = items;
+            pillarDoc.content_digest_sha256 = computePillarContentDigestSha256(items);
             pillarDoc.updated_at = nowIso;
             vault[input.pillarId] = pillarDoc;
+            const vaultMerkleRootSha256 = computeVaultMerkleRootSha256(vault);
 
-            await assetRef.update({
-                knowledge_vault: stripUndefinedDeep(vault),
-                updatedAt: Date.now(),
+            await VaultPersistenceService.savePillarDocument({
+                globalAssetId: input.globalAssetId,
+                pillarId: input.pillarId,
+                pillarDoc: stripUndefinedDeep(pillarDoc) as PillarDocument,
+                vaultMerkleRootSha256,
             });
 
             return {
@@ -733,9 +745,15 @@ export class VaultReconciliationService {
         currentItem.fact_fingerprints = Array.from(existingFingerprints);
 
         items[itemIndex] = currentItem;
-        await assetRef.update({
-            [`knowledge_vault.${input.pillarId}.items`]: stripUndefinedDeep(items),
-            updatedAt: Date.now(),
+        await VaultPersistenceService.savePillarDocument({
+            globalAssetId: input.globalAssetId,
+            pillarId: input.pillarId,
+            pillarDoc: stripUndefinedDeep({
+                ...pillarDoc,
+                pillar_id: input.pillarId,
+                items,
+                updated_at: nowIso,
+            }) as PillarDocument,
         });
 
         return {

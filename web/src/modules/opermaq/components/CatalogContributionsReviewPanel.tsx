@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { API_BASE_URL } from '../firebase/config';
 import { useOpermaqContext } from '../hooks/useOpermaqContext';
 import { authFetch } from '../utils/authFetch';
+import { M3CircularProgress } from './M3ProgressIndicator';
 import { M3Switch } from './M3Switch';
 
 interface ProposedPillarDeltaItem {
@@ -265,9 +266,7 @@ export const CatalogContributionsReviewPanel: React.FC<CatalogContributionsRevie
 
             {loading ? (
                 <div className="flex-1 flex items-center justify-center p-[34px]">
-                    <span className="material-symbols-outlined animate-spin text-[26px] text-[#C68346]">
-                        progress_activity
-                    </span>
+                    <M3CircularProgress size={26} strokeWidth={3} tone="copper" />
                 </div>
             ) : items.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center p-[34px]">

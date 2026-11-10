@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { AssetPhysicalTraits } from '../../../contracts';
 import { mediaDigestorClient } from '../../../core/media/MediaDigestorClient';
 import { API_BASE_URL } from '../firebase/config';
 import { useOpermaqContext } from '../hooks/useOpermaqContext';
@@ -14,6 +15,7 @@ import {
     normalizeProceduralStepsToMarkdownTable,
     stripRedundantNarrativeInTabularPillar,
 } from '../utils/proceduralTableNormalizer';
+import { M3CircularProgress } from './M3ProgressIndicator';
 import { SecureCasThumbnail } from './SecureCasThumbnail';
 
 interface FleetUnitWorkspaceProps {
@@ -46,6 +48,10 @@ interface FleetUnitDetail {
     serial_number: string;
     ownership_type?: string;
     horometer?: number;
+    odometer_km?: number;
+    cycles_count?: number;
+    calibration_due_date?: string;
+    physical_traits?: AssetPhysicalTraits;
     tenant_id?: string;
     tenantId?: string;
     private_photos: PrivatePhotoRecord[];
@@ -594,15 +600,31 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
     if (loading) {
         return (
             <div className="h-full w-full flex flex-col items-center justify-center p-[34px] gap-[13px] bg-[#FFFFFF] dark:bg-[#000000]">
-                <span className="material-symbols-outlined animate-spin text-[28px] text-[#C68346]">
-                    progress_activity
-                </span>
+                <M3CircularProgress size={28} strokeWidth={3} tone="copper" />
                 <span className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                     {t('fleet.syncing')}
                 </span>
             </div>
         );
     }
+
+    const pmCadence = unit?.physical_traits?.pm_cadence_basis;
+    const requiresMetrology =
+        Boolean(unit?.physical_traits?.requires_metrology_calibration) ||
+        pmCadence === 'CALENDAR_AND_METROLOGY';
+    const showHorometer =
+        typeof unit?.horometer === 'number' ||
+        !pmCadence ||
+        pmCadence === 'HOROMETER_HOURS' ||
+        pmCadence === 'DUAL_KM_AND_HOURS';
+    const showOdometerKm =
+        typeof unit?.odometer_km === 'number' ||
+        pmCadence === 'ODOMETER_KM' ||
+        pmCadence === 'DUAL_KM_AND_HOURS';
+    const showCyclesCount =
+        typeof unit?.cycles_count === 'number' || pmCadence === 'CYCLES_OR_FLIGHTS';
+    const showCalibrationDueDate = Boolean(unit?.calibration_due_date) || requiresMetrology;
+    const assetFallbackIcon = unit?.physical_traits?.material_symbol_icon || 'precision_manufacturing';
 
     const officialTitle =
         unit?.make_model ||
@@ -667,8 +689,8 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                     <button
                         type="button"
                         onClick={() => void loadWorkspaceData()}
-                        title={t('vault.refresh')}
-                        aria-label={t('vault.refresh')}
+                        title={t('common.refresh', 'Actualizar')}
+                        aria-label={t('common.refresh', 'Actualizar')}
                         className={flatIconBtn}
                     >
                         <span className="material-symbols-outlined text-[18px]">refresh</span>
@@ -821,16 +843,52 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                                     {unit?.ownership_type || t('opermaq_domains.not_declared')}
                                 </dd>
                             </div>
-                            <div>
-                                <dt className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
-                                    {t('opermaq_domains.horometer_label')}
-                                </dt>
-                                <dd className="font-mono tabular-nums font-semibold text-[#0F172A] dark:text-[#F3F4F6] mt-0.5">
-                                    {typeof unit?.horometer === 'number'
-                                        ? `${unit.horometer.toLocaleString('es-CL')} hrs`
-                                        : t('opermaq_domains.pending_record')}
-                                </dd>
-                            </div>
+                            {showHorometer && (
+                                <div>
+                                    <dt className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
+                                        {t('opermaq_domains.horometer_label')}
+                                    </dt>
+                                    <dd className="font-mono tabular-nums font-semibold text-[#0F172A] dark:text-[#F3F4F6] mt-0.5">
+                                        {typeof unit?.horometer === 'number'
+                                            ? `${unit.horometer.toLocaleString('es-CL')} hrs`
+                                            : t('opermaq_domains.pending_record')}
+                                    </dd>
+                                </div>
+                            )}
+                            {showOdometerKm && (
+                                <div>
+                                    <dt className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
+                                        {t('opermaq_domains.odometer_km_label', 'ODÓMETRO (KM)')}
+                                    </dt>
+                                    <dd className="font-mono tabular-nums font-semibold text-[#0F172A] dark:text-[#F3F4F6] mt-0.5">
+                                        {typeof unit?.odometer_km === 'number'
+                                            ? `${unit.odometer_km.toLocaleString('es-CL')} km`
+                                            : t('opermaq_domains.pending_record')}
+                                    </dd>
+                                </div>
+                            )}
+                            {showCyclesCount && (
+                                <div>
+                                    <dt className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
+                                        {t('opermaq_domains.cycles_count_label', 'CICLOS / VUELOS')}
+                                    </dt>
+                                    <dd className="font-mono tabular-nums font-semibold text-[#0F172A] dark:text-[#F3F4F6] mt-0.5">
+                                        {typeof unit?.cycles_count === 'number'
+                                            ? `${unit.cycles_count.toLocaleString('es-CL')}`
+                                            : t('opermaq_domains.pending_record')}
+                                    </dd>
+                                </div>
+                            )}
+                            {showCalibrationDueDate && (
+                                <div>
+                                    <dt className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#00AEEF]">
+                                        {t('opermaq_domains.calibration_due_date_label', 'CALIBRACIÓN')}
+                                    </dt>
+                                    <dd className="font-mono tabular-nums font-semibold text-[#0F172A] dark:text-[#F3F4F6] mt-0.5">
+                                        {unit?.calibration_due_date || t('opermaq_domains.pending_record')}
+                                    </dd>
+                                </div>
+                            )}
                         </dl>
                     </section>
 
@@ -863,12 +921,13 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                                         aria-label={t('opermaq_domains.upload_private_photo')}
                                         className={flatIconBtn}
                                     >
-                                        <span
-                                            className={`material-symbols-outlined text-[20px] ${uploadingPhoto ? 'animate-spin text-[#C68346]' : ''
-                                                }`}
-                                        >
-                                            {uploadingPhoto ? 'progress_activity' : 'add_a_photo'}
-                                        </span>
+                                        {uploadingPhoto ? (
+                                            <M3CircularProgress size={18} strokeWidth={2.5} tone="copper" />
+                                        ) : (
+                                            <span className="material-symbols-outlined text-[20px]">
+                                                add_a_photo
+                                            </span>
+                                        )}
                                     </button>
                                 </>
                             )}
@@ -883,12 +942,13 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                                 {unit.private_photos.map((photo) => (
                                     <div
                                         key={photo.sha256}
-                                        className="relative group border border-[#E2E8F0] dark:border-[#12151C]"
+                                        className="relative group border border-[#E2E8F0] dark:border-[#12151C] rounded-none"
                                     >
                                         <SecureCasThumbnail
                                             src={photo.url}
                                             alt={officialTitle}
                                             tenantId={effectiveOwnerTenant}
+                                            fallbackIcon={assetFallbackIcon}
                                             className="w-full h-24 border-0"
                                         />
                                         {canMutateUnit && (
@@ -898,13 +958,15 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                                                 onClick={() => void handleDeletePrivatePhoto(photo.sha256)}
                                                 title={t('actions.delete')}
                                                 aria-label={t('actions.delete')}
-                                                className="absolute top-1 right-1 bg-[#FFFFFF]/90 dark:bg-[#000000]/90 border-0 outline-none p-1 text-slate-500 hover:text-red-600 dark:hover:text-red-400 transition-colors cursor-pointer"
+                                                className="absolute top-1 right-1 bg-[#FFFFFF]/90 dark:bg-[#000000]/90 border-0 outline-none p-1 text-slate-500 hover:text-[#C68346] dark:hover:text-[#C68346] transition-colors cursor-pointer rounded-none shadow-none"
                                             >
-                                                <span className="material-symbols-outlined text-[15px]">
-                                                    {deletingPhotoSha === photo.sha256
-                                                        ? 'progress_activity'
-                                                        : 'delete'}
-                                                </span>
+                                                {deletingPhotoSha === photo.sha256 ? (
+                                                    <M3CircularProgress size={14} strokeWidth={2} tone="copper" />
+                                                ) : (
+                                                    <span className="material-symbols-outlined text-[15px]">
+                                                        delete
+                                                    </span>
+                                                )}
                                             </button>
                                         )}
                                     </div>

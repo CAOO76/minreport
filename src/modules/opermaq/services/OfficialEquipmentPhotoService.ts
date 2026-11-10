@@ -1427,56 +1427,6 @@ export class OfficialEquipmentPhotoService {
         const recovered: OfficialPhotoCandidate[] = [];
         const prefix = `${globalAssetId}__`;
 
-        const knownVerifiedByAsset: Record<
-            string,
-            Array<{ sha256: string; label: string; score: number }>
-        > = {
-            caterpillar_272d_xhp: [
-                {
-                    sha256: 'df05f8c6bbc74f98ea1c898bb1bf0c05e3bf2dbe00c76b8257d483c027b8a9a4',
-                    label: 'Cat.com / Scene7 OEM (Lateral Izq. Balde)',
-                    score: 0.96,
-                },
-                {
-                    sha256: 'cb40c0cffbb455a1838eea15ffefbce50a692a6eba1465bc8efc7aa88226139d',
-                    label: 'Cat.com / Catálogo OEM (Frontal 3/4 Balde)',
-                    score: 0.94,
-                },
-                {
-                    sha256: 'cd9f7b1b84b1596296bb368548f3862bd40949e9b9322e357634e6cc516ca8f2',
-                    label: 'Ficha Técnica OEM (Estudio Lateral Der.)',
-                    score: 0.92,
-                },
-            ],
-        };
-
-        const curList = knownVerifiedByAsset[globalAssetId] || [];
-        for (const item of curList) {
-            const regSnap = await db.collection('media_registry').doc(item.sha256).get().catch(() => null);
-            if (!regSnap || !regSnap.exists) continue;
-            const reg = regSnap.data() || {};
-            const origBytes = Number(reg.originalBytes || reg.optimizedBytes || 85000);
-            const optBytes = Number(reg.optimizedBytes || 82732);
-            const savPct = Math.max(0, Math.round(((origBytes - optBytes) / Math.max(1, origBytes)) * 100));
-            recovered.push({
-                candidate_id: `cand_cas_${item.sha256.slice(0, 8)}`,
-                preview_url: String(reg.downloadUrl || `/api/media/blob/global_oem/${item.sha256}.webp`),
-                storage_path: String(reg.storagePath || `cas_blobs/global_oem/${item.sha256}.webp`),
-                source_type: 'OEM_DOMAIN',
-                source_label: item.label,
-                authenticity_score: item.score,
-                subject_box_2d: null,
-                original_bytes: origBytes,
-                optimized_bytes: optBytes,
-                savings_pct: savPct,
-                sha256: item.sha256,
-                phash_hex: reg.phashHex ? String(reg.phashHex) : undefined,
-                width: Number(reg.width || 1600),
-                height: Number(reg.height || 1200),
-                framing_mode: 'STUDIO_88',
-            });
-        }
-
         const taggedSnap = await db
             .collection('media_registry')
             .where('scope', '==', 'GLOBAL_OEM')
@@ -1518,50 +1468,6 @@ export class OfficialEquipmentPhotoService {
         }
 
         return recovered;
-    }
-
-    /**
-     * Hidrata en arranque las alternativas CAS verificadas en `global_asset_catalog` para que estén
-     * inmediatamente disponibles en el selector multi-candidato de la interfaz.
-     */
-    public static async ensureStoredPhotoAlternativesHydrated(): Promise<void> {
-        try {
-            const targetAssetId = 'caterpillar_272d_xhp';
-            const assetRef = db.collection('global_asset_catalog').doc(targetAssetId);
-            const snap = await assetRef.get();
-            if (!snap.exists) return;
-
-            const data = snap.data() || {};
-            const existing = Array.isArray(data.official_photo_candidates)
-                ? (data.official_photo_candidates as OfficialPhotoCandidate[])
-                : [];
-            const recovered = await this.recoverVerifiedCasAlternatives(targetAssetId);
-            if (recovered.length === 0) return;
-
-            const merged: OfficialPhotoCandidate[] = [];
-            const seen = new Set<string>();
-            for (const c of [...existing, ...recovered]) {
-                if (c && c.sha256 && c.preview_url && !seen.has(c.sha256) && merged.length < 12) {
-                    seen.add(c.sha256);
-                    merged.push(c);
-                }
-            }
-
-            if (merged.length > existing.length) {
-                await assetRef.set(
-                    {
-                        official_photo_candidates: merged,
-                        updatedAt: Date.now(),
-                    },
-                    { merge: true }
-                );
-                console.info(
-                    `[OfficialPhotoService] Pool de alternativas hidratado para "${targetAssetId}": ${merged.length} fotografías oficiales listas para selección.`
-                );
-            }
-        } catch (err) {
-            console.warn('[OfficialPhotoService] Advertencia hidratando alternativas en arranque:', err);
-        }
     }
 
     /**

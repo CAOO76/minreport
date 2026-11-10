@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { db } from '../../../config/firebase';
 import { AuditLedger } from '../../../core/audit-ledger';
 import {
@@ -15,6 +16,7 @@ import {
     SEQUENTIAL_PILLAR_ORDER,
 } from '../types/vault.types';
 import { buildAndPersistAssetSymbologyPack } from './EquipmentSymbologyPackBuilder';
+import { buildAndPersistEquipmentCostMatrix } from './EquipmentCostMatrixCompiler';
 import { GroundedWebMediaHarvester, type MediaHarvestReport } from './GroundedWebMediaHarvester';
 import {
     computeFactFingerprint,
@@ -44,6 +46,8 @@ import {
 } from './VaultReconciliationService';
 import { enrichCatalogProfile } from './CatalogProfileEnricher';
 import { resolveOrLearnEquipmentType } from './EquipmentTypeRegistryService';
+import { computePillarContentDigestSha256, computeVaultMerkleRootSha256 } from './ItemizerService';
+import { VaultPersistenceService } from './VaultPersistenceService';
 import {
     type CanonicalSpecSlot,
     deriveEnergyConsumptionProfile,
@@ -58,7 +62,7 @@ function scheduleDebouncedAssetSymbologyPackRebuild(globalAssetId: string, delay
     if (existing) clearTimeout(existing);
     const timer = setTimeout(() => {
         symbologyPackRebuildTimers.delete(globalAssetId);
-        void buildAndPersistAssetSymbologyPack(globalAssetId).catch(() => {});
+        void buildAndPersistAssetSymbologyPack(globalAssetId).catch(() => { });
     }, delayMs);
     symbologyPackRebuildTimers.set(globalAssetId, timer);
 }
@@ -80,10 +84,9 @@ export async function reconcileAssetSidebarProfileFromVault(
 } | null> {
     try {
         const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
-        const snap = await docRef.get();
-        if (!snap.exists) return null;
-        const data = snap.data();
-        if (!data) return null;
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);
+        if (!hydrated.exists || !hydrated.data) return null;
+        const data = hydrated.data;
 
         const makeOficial = String(data.make_oficial || data.make || 'GENÉRICO').trim();
         const modelOficial = String(data.model_oficial || data.model || globalAssetId).trim();
@@ -493,8 +496,8 @@ function buildCrossPillarConfirmedSpecsAndSources(
     const baseMainChars: string[] = Array.isArray(assetData?.specifications?.mainCharacteristics)
         ? assetData.specifications.mainCharacteristics
         : Array.isArray(assetData?.caracteristicas_principales)
-        ? assetData.caracteristicas_principales
-        : [];
+            ? assetData.caracteristicas_principales
+            : [];
     if (baseMainChars.length > 0) {
         const cleanBaseChars = baseMainChars.map((c) => String(c || '').trim()).filter(Boolean);
         if (cleanBaseChars.length > 0) {
@@ -615,8 +618,8 @@ function buildCrossPillarConfirmedSpecsAndSources(
     const promptBlock =
         sectionSummaries.length > 0
             ? `\nESPECIFICACIONES Y CIFRAS OFICIALES HEREDADAS DE PILARES PREVIOS (COHERENCIA INTER-PILAR OBLIGATORIA — PROHIBIDO CONTRADECIR ESTOS VALORES):\n${sectionSummaries
-                  .join('\n\n')
-                  .slice(0, 6200)}\n`
+                .join('\n\n')
+                .slice(0, 6200)}\n`
             : '';
 
     return { promptBlock, priorPillarEvidenceDocs, priorPillarOemSources };
@@ -670,8 +673,8 @@ function buildIntraPillarConsistencyAndScopeContext(
     const factsBlock =
         verifiedFactsLines.length > 0
             ? `\nCIFRAS OFICIALES YA CONFIRMADAS EN CAPÍTULOS HERMANOS DE ESTE PILAR (PROHIBIDO CONTRADECIR ESTOS VALORES):\n${verifiedFactsLines
-                  .join('\n')
-                  .slice(0, 2200)}\n`
+                .join('\n')
+                .slice(0, 2200)}\n`
             : '';
 
     return [
@@ -706,12 +709,13 @@ export async function huntVaultItem(options: HuntItemOptions): Promise<HuntItemR
     await onProgress?.(10, 'Cargando ficha maestra y verificando estado HITL...');
 
     const assetRef = db.collection('global_asset_catalog').doc(globalAssetId);
-    const assetSnap = await assetRef.get();
-    if (!assetSnap.exists) {
+    const pillarRef = assetRef.collection('pillars').doc(pillarId);
+    const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);
+    if (!hydrated.exists || !hydrated.data) {
         throw new Error(`Activo ${globalAssetId} no existe en global_asset_catalog.`);
     }
 
-    const assetData = assetSnap.data()!;
+    const assetData = hydrated.data;
     if (assetData.isSealed === true || assetData.is_sealed === true || assetData.knowledge_vault?.is_sealed === true) {
         const err: any = new Error('La bóveda está sellada (HTTP 403).');
         err.statusCode = 403;
@@ -749,38 +753,15 @@ export async function huntVaultItem(options: HuntItemOptions): Promise<HuntItemR
 
     await ensureUniversalSymbologySeeded(false);
 
-    // 1. Consulta Corpus-First en fragmentos locales `vault_corpus_chunks` (`768d`) + `vault_documents`
-    const [localChunks, vaultDocsSnap] = await Promise.all([
-        SegmentedDocumentProcessorService.searchLocalAssetCorpus(
-            globalAssetId,
-            `${currentItem.section || ''} ${currentItem.title} ${currentItem.rationale || ''}`,
-            5
-        ),
-        assetRef
-            .collection('vault_documents')
-            .limit(8)
-            .get()
-            .catch(() => null),
-    ]);
+    // 1. Consulta Corpus-First en fragmentos locales `vault_corpus_chunks` (`768d`)
+    const localChunks = await SegmentedDocumentProcessorService.searchLocalAssetCorpus(
+        globalAssetId,
+        `${currentItem.section || ''} ${currentItem.title} ${currentItem.rationale || ''}`,
+        5
+    );
 
     const extraVaultDocSnippets: string[] = [];
     const localDocSources: ItemizedSource[] = [];
-    if (vaultDocsSnap && !vaultDocsSnap.empty) {
-        for (const d of vaultDocsSnap.docs) {
-            const data = d.data();
-            const txt = String(data.extracted_text || data.markdown_es || data.summary || '').trim();
-            const title = String(data.filename || data.title || d.id);
-            if (txt.length > 40) {
-                extraVaultDocSnippets.push(`--- [Documento Local: ${title}] ---\n${txt.slice(0, 2000)}`);
-                localDocSources.push({
-                    type: 'OEM',
-                    author: makeOficial,
-                    description: `Documento en bóveda soberana: ${title}`,
-                    url: String(data.storage_url || data.download_url || `#vault-doc:${d.id}`),
-                });
-            }
-        }
-    }
 
     const crossPillarContext = buildCrossPillarConfirmedSpecsAndSources(
         vault,
@@ -806,23 +787,23 @@ export async function huntVaultItem(options: HuntItemOptions): Promise<HuntItemR
     const localCorpusContext =
         localChunks.length > 0 || extraVaultDocSnippets.length > 0
             ? `\nEVIDENCIA OFICIAL YA INGERIDA EN CORPUS LOCAL SOBERANO (PRIORIDAD MÁXIMA DE VERACIDAD):\n${[
-                  ...localChunks.map(
-                      (c) =>
-                          `--- [${c.sourceFilename} Págs. ${c.pages.join(',') || 'N/A'} | ${c.title}] ---\n${c.markdown.slice(
-                              0,
-                              2400
-                          )}`
-                  ),
-                  ...extraVaultDocSnippets,
-              ].join('\n\n')}\n`
+                ...localChunks.map(
+                    (c) =>
+                        `--- [${c.sourceFilename} Págs. ${c.pages.join(',') || 'N/A'} | ${c.title}] ---\n${c.markdown.slice(
+                            0,
+                            2400
+                        )}`
+                ),
+                ...extraVaultDocSnippets,
+            ].join('\n\n')}\n`
             : '';
 
     const preverifiedUrlsContext =
         preAssignedSources.length > 0
             ? `\nFUENTES TÉCNICAS PRE-VERIFICADAS PARA ESTE CAPÍTULO (PRIORIZAR CONSULTA):\n${preAssignedSources
-                  .slice(0, 6)
-                  .map((s) => `- [${s.type}] ${s.author}: ${s.description} (${s.url})`)
-                  .join('\n')}\n`
+                .slice(0, 6)
+                .map((s) => `- [${s.type}] ${s.author}: ${s.description} (${s.url})`)
+                .join('\n')}\n`
             : '';
 
     const intraPillarContext = buildIntraPillarConsistencyAndScopeContext(pillar, currentItem);
@@ -1051,15 +1032,6 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
         // 3c) OPT-F3.1 / OPT-F3.2 / MO-H02: trazabilidad por fila (groundingSupports + verificación numérica contra evidencia real + pilares previos)
         const evidenceDocs: EvidenceDocument[] = [
             ...localChunks.map((lc) => ({ url: `#corpus:${lc.chunkId}`, text: String(lc.markdown || '') })),
-            ...(vaultDocsSnap && !vaultDocsSnap.empty
-                ? vaultDocsSnap.docs.map((d) => {
-                      const data = d.data();
-                      return {
-                          url: String(data.storage_url || data.download_url || `#vault-doc:${d.id}`),
-                          text: String(data.extracted_text || data.markdown_es || data.summary || ''),
-                      };
-                  })
-                : []),
             ...crossPillarContext.priorPillarEvidenceDocs,
             ...(harvestedMedia.sourceTexts || []),
         ];
@@ -1111,9 +1083,8 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
         await onProgress?.(88, 'Ejecutando motor de compulsa transaccional y guardando resultados...');
 
         // Evaluar si existe contenido previo antes de entrar en la transacción para no ejecutar LLM dentro de `runTransaction`
-        const preTxSnap = await assetRef.get();
-        const preTxItem: PillarItem | undefined = preTxSnap
-            .data()
+        const preTxHydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);
+        const preTxItem: PillarItem | undefined = preTxHydrated.data
             ?.knowledge_vault?.[pillarId]?.items?.find((i: PillarItem) => i.item_id === itemId);
 
         const hasExistingContentPreTx =
@@ -1156,27 +1127,29 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
 
         const preComputedDiffs = hasExistingContentPreTx
             ? await detectContentDifferences(
-                  pillarId,
-                  itemId,
-                  makeModel,
-                  preTxItem!.title,
-                  preTxItem!.content!,
-                  annotatedMarkdownForDiffs,
-                  classifiedSources[0] || preAssignedSources[0],
-                  previewNewFigures
-              ).finally(() => {
-                  if (diffHeartbeatTimer) clearInterval(diffHeartbeatTimer);
-              })
+                pillarId,
+                itemId,
+                makeModel,
+                preTxItem!.title,
+                preTxItem!.content!,
+                annotatedMarkdownForDiffs,
+                classifiedSources[0] || preAssignedSources[0],
+                previewNewFigures
+            ).finally(() => {
+                if (diffHeartbeatTimer) clearInterval(diffHeartbeatTimer);
+            })
             : [];
 
         const nowIso = new Date().toISOString();
 
-        // 4. Transacción Atómica Firestore (`FT-H05`): impide que dos cazas 1 a 1 concurrentes se pisen el arreglo `items[]`
+        // 4. Transacción Atómica Firestore (`FT-H05` + Anti-1MiB): impide que dos cazas 1 a 1 concurrentes se pisen el arreglo `items[]`
         const txOutcome = await db.runTransaction(async (tx) => {
-            const freshSnap = await tx.get(assetRef);
+            const [freshSnap, freshPillarSnap] = await Promise.all([tx.get(assetRef), tx.get(pillarRef)]);
             const freshData = freshSnap.data() || assetData;
             const freshVault = freshData.knowledge_vault || vault;
-            const freshPillar = freshVault[pillarId];
+            const freshPillar: PillarDocument = freshPillarSnap.exists
+                ? ({ ...(freshVault[pillarId] || {}), ...(freshPillarSnap.data() as PillarDocument) } as PillarDocument)
+                : (freshVault[pillarId] as PillarDocument);
             const freshItems: PillarItem[] = [...(freshPillar?.items || [])];
             const freshIdx = freshItems.findIndex((i) => i.item_id === itemId);
             if (freshIdx === -1) throw new Error(`Ítem ${itemId} desapareció durante la caza.`);
@@ -1202,9 +1175,15 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                     });
                     targetItem.locked_item_advisories = advisories;
                     freshItems[freshIdx] = targetItem;
-                    tx.update(assetRef, {
-                        [`knowledge_vault.${pillarId}.items`]: freshItems,
-                        updatedAt: Date.now(),
+                    VaultPersistenceService.writePillarInTransaction(tx, {
+                        globalAssetId,
+                        pillarId,
+                        pillarDoc: {
+                            ...freshPillar,
+                            pillar_id: pillarId,
+                            items: freshItems,
+                            updated_at: nowIso,
+                        },
                     });
                 }
                 return {
@@ -1297,10 +1276,32 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                     ? { ...mediaHarvestReport, corpus_figures: corpusFigures.length, table_chart: false, traceability: traceAnalysis.stats, evidence_docs: evidenceDocs.length, at: nowIso }
                     : { corpus_figures: corpusFigures.length, table_chart: false, traceability: traceAnalysis.stats, evidence_docs: evidenceDocs.length, at: nowIso };
                 targetItem.fact_fingerprints = Array.from(existingFingerprints);
-                // VEL-03: Acotar `historial_cambios` embebido a las últimas 5 entradas y `snapshot_anterior` a 8.000 chars para proteger el límite de 1 MiB de Firestore
-                const boundedPrevSnapshot = previousSnapshot ? previousSnapshot.slice(0, 8000) : undefined;
+                // Anti-1MiB: Almacenar snapshot anterior en subcolección `item_revisions/{revId}` (cero `snapshot_anterior` inline)
+                let revisionId: string | undefined;
+                if (previousSnapshot && previousSnapshot.trim().length > 0) {
+                    revisionId = `rev_${Date.now()}_${randomUUID().slice(0, 8)}`;
+                    tx.set(assetRef.collection('item_revisions').doc(revisionId), {
+                        revision_id: revisionId,
+                        global_asset_id: globalAssetId,
+                        pillar_id: pillarId,
+                        item_id: itemId,
+                        accion: 'GENERACION_INICIAL',
+                        actor: actorId || 'AGENTE_CAZADOR_IA_V5',
+                        detalle: humanCorrection
+                            ? `Re-caza dirigida por instrucción humana: "${humanCorrection.slice(0, 120)}"`
+                            : `Caza técnica multimodal v5.0 (${targetItem.figures.length} recurso(s) gráfico(s) citado(s) en CAS, ${verifiedSymbologyRefs.length} símbolo(s) ad-hoc).`,
+                        snapshot_anterior: previousSnapshot,
+                        created_at: nowIso,
+                    });
+                }
+
+                const cleanHistory = (targetItem.historial_cambios || []).slice(-19).map((h) => {
+                    const { snapshot_anterior: _drop, ...rest } = h || ({} as any);
+                    return rest;
+                });
+
                 targetItem.historial_cambios = [
-                    ...(targetItem.historial_cambios || []).slice(-4),
+                    ...cleanHistory,
                     {
                         fecha: nowIso,
                         accion: 'GENERACION_INICIAL',
@@ -1308,7 +1309,7 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                         detalle: humanCorrection
                             ? `Re-caza dirigida por instrucción humana: "${humanCorrection.slice(0, 120)}"`
                             : `Caza técnica multimodal v5.0 (${targetItem.figures.length} recurso(s) gráfico(s) citado(s) en CAS, ${verifiedSymbologyRefs.length} símbolo(s) ad-hoc).`,
-                        ...(boundedPrevSnapshot ? { snapshot_anterior: boundedPrevSnapshot } : {}),
+                        ...(revisionId ? { revision_id: revisionId } : {}),
                     },
                 ];
             }
@@ -1322,11 +1323,26 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                 }
             }
 
-            tx.update(assetRef, {
-                [`knowledge_vault.${pillarId}.items`]: freshItems,
-                [`knowledge_vault.${pillarId}.classified_sources_itemized`]: pillarSources,
-                [`knowledge_vault.${pillarId}.updated_at`]: nowIso,
-                updatedAt: Date.now(),
+            const contentDigestSha256 = computePillarContentDigestSha256(freshItems);
+            const updatedPillarDoc: PillarDocument = {
+                ...freshPillar,
+                pillar_id: pillarId,
+                items: freshItems,
+                classified_sources_itemized: pillarSources,
+                content_digest_sha256: contentDigestSha256,
+                updated_at: nowIso,
+            };
+            const mergedVaultForMerkle = {
+                ...freshVault,
+                [pillarId]: updatedPillarDoc,
+            };
+            const vaultMerkleRootSha256 = computeVaultMerkleRootSha256(mergedVaultForMerkle);
+
+            VaultPersistenceService.writePillarInTransaction(tx, {
+                globalAssetId,
+                pillarId,
+                pillarDoc: updatedPillarDoc,
+                vaultMerkleRootSha256,
             });
 
             return {
@@ -1341,9 +1357,12 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
         // 5. Actualizar paquete ad-hoc de simbología del activo con debounce (`VEL-03`) para evitar contención en cazas concurrentes
         scheduleDebouncedAssetSymbologyPackRebuild(globalAssetId);
 
-        // 5b. Sincronizar perfil de consumos de energía y slots canónicos al cazar ficha técnica
+        // 5b. Sincronizar perfil de consumos de energía, slots canónicos y matriz automática de costos e insumos
         if (pillarId === 'ficha_tecnica') {
-            void syncEnergyProfileAndCanonicalSpecs(globalAssetId).catch(() => undefined);
+            await syncEnergyProfileAndCanonicalSpecs(globalAssetId).catch(() => undefined);
+        }
+        if (pillarId === 'ficha_tecnica' || pillarId === 'pauta_mantencion') {
+            await buildAndPersistEquipmentCostMatrix(globalAssetId).catch(() => null);
         }
 
         // 6. Trazabilidad Criptográfica Inmutable en `AuditLedger` (`SEC-05`: preserva `actorId` humano)
@@ -1388,10 +1407,13 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
     } catch (err: any) {
         await db
             .runTransaction(async (tx) => {
-                const s = await tx.get(assetRef);
+                const [s, pSnap] = await Promise.all([tx.get(assetRef), tx.get(pillarRef)]);
                 if (!s.exists) return;
                 const d = s.data() || {};
-                const items: PillarItem[] = [...(d?.knowledge_vault?.[pillarId]?.items || [])];
+                const pDoc: PillarDocument = pSnap.exists
+                    ? ({ ...(d?.knowledge_vault?.[pillarId] || {}), ...(pSnap.data() as PillarDocument) } as PillarDocument)
+                    : (d?.knowledge_vault?.[pillarId] as PillarDocument);
+                const items: PillarItem[] = [...(pDoc?.items || [])];
                 const idx = items.findIndex((i) => i.item_id === itemId);
                 if (idx !== -1) {
                     items[idx] = {
@@ -1399,12 +1421,19 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                         content_status: items[idx].content ? 'COMPLETADO' : 'ERROR',
                         hunt_error: err?.message || 'Error en caza técnica.',
                     };
-                    tx.update(assetRef, {
-                        [`knowledge_vault.${pillarId}.items`]: items,
+                    VaultPersistenceService.writePillarInTransaction(tx, {
+                        globalAssetId,
+                        pillarId,
+                        pillarDoc: {
+                            ...pDoc,
+                            pillar_id: pillarId,
+                            items,
+                            updated_at: new Date().toISOString(),
+                        },
                     });
                 }
             })
-            .catch(() => {});
+            .catch(() => { });
         throw err;
     }
 }

@@ -3,15 +3,12 @@ import { toast } from 'react-toastify';
 import { mediaDigestorClient } from '../../../core/media/MediaDigestorClient';
 import { API_BASE_URL } from '../firebase/config';
 import { authFetch } from '../utils/authFetch';
-import type {
-  AdHocManualProfileId,
-  EquipmentSymbologyPack,
-  SymbologyFunctionalGroup,
-} from '../types/vault';
+import type { AdHocManualProfileId } from '../types/vault';
 import { useOpermaqContext } from '../hooks/useOpermaqContext';
+import { CatalogContributionsReviewPanel } from './CatalogContributionsReviewPanel';
 import { M3Switch } from './M3Switch';
 
-export type StudioTabId = 'INGESTION' | 'SYMBOLOGY_PACK' | 'MANUAL_PUBLISHER';
+export type StudioTabId = 'INGESTION' | 'CONTRIBUTIONS_REVIEW' | 'SYMBOLOGY_PACK' | 'MANUAL_PUBLISHER';
 
 interface OpermaqEngineeringStudioDrawerProps {
   isOpen: boolean;
@@ -55,13 +52,6 @@ interface CompiledManualState {
   htmlEdition?: string;
   compiledAt: string;
 }
-
-const GROUP_LABELS_ES: Record<SymbologyFunctionalGroup, string> = {
-  MANDATORY_PPE: '1. EPP Y ACCIONES OBLIGATORIAS (ISO 7010 SERIE M)',
-  HAZARD_PROHIBITION: '2. PELIGROS, PROHIBICIONES Y EMERGENCIA (ISO 7010 W / P / F / E)',
-  CABIN_TELLTALES_CONTROLS: '3. TESTIGOS Y CONTROLES DE CABINA (ISO 7000 / ISO 2575)',
-  MAINTENANCE_FLUIDS_ELECTRICAL: '4. MANTENCIÓN, FLUIDOS, ELÉCTRICO Y SUSTANCIAS (ISO 7000 / IEC 60417 / GHS)',
-};
 
 const MANUAL_PROFILES: Array<{
   id: AdHocManualProfileId;
@@ -120,7 +110,11 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
   const { capabilities } = useOpermaqContext();
   const canCurateAI = capabilities.canCurateAI;
   const resolvedInitialTab: StudioTabId =
-    !canCurateAI && initialTab === 'INGESTION' ? 'MANUAL_PUBLISHER' : initialTab;
+    !canCurateAI && (initialTab === 'INGESTION' || initialTab === 'CONTRIBUTIONS_REVIEW')
+      ? 'MANUAL_PUBLISHER'
+      : initialTab === 'SYMBOLOGY_PACK'
+      ? 'MANUAL_PUBLISHER'
+      : initialTab;
   const [activeTab, setActiveTab] = useState<StudioTabId>(resolvedInitialTab);
   const docInputRef = useRef<HTMLInputElement>(null);
 
@@ -134,10 +128,6 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
   const [lastIngestionReport, setLastIngestionReport] = useState<any | null>(null);
   const [corpusFiles, setCorpusFiles] = useState<CorpusFileRecord[]>([]);
 
-  // Estado Pestaña 2: Paquete Ad-Hoc de Simbología Vectorial
-  const [symbologyPack, setSymbologyPack] = useState<EquipmentSymbologyPack | null>(null);
-  const [loadingSymbology, setLoadingSymbology] = useState(false);
-
   // Estado Pestaña 3: Editorial de Manuales Ad-Hoc
   const [selectedProfile, setSelectedProfile] = useState<AdHocManualProfileId>('MASTER_5_PILLARS');
   const [includeTenantOverrides, setIncludeTenantOverrides] = useState(false);
@@ -146,7 +136,13 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
   const [manualHistory, setManualHistory] = useState<CompiledManualState[]>([]);
 
   useEffect(() => {
-    setActiveTab(!canCurateAI && initialTab === 'INGESTION' ? 'SYMBOLOGY_PACK' : initialTab);
+    setActiveTab(
+      !canCurateAI && (initialTab === 'INGESTION' || initialTab === 'CONTRIBUTIONS_REVIEW')
+        ? 'MANUAL_PUBLISHER'
+        : initialTab === 'SYMBOLOGY_PACK'
+        ? 'MANUAL_PUBLISHER'
+        : initialTab
+    );
   }, [initialTab, canCurateAI]);
 
   const fetchCorpus = useCallback(async () => {
@@ -161,22 +157,6 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
       // Silencioso
     }
   }, [catalogId, canCurateAI]);
-
-  const fetchSymbologyPack = useCallback(async () => {
-    if (!catalogId) return;
-    setLoadingSymbology(true);
-    try {
-      const res = await authFetch(`${API_BASE_URL}/vault/symbology-pack/${catalogId}`);
-      if (res.ok) {
-        const pack = await res.json();
-        setSymbologyPack(pack);
-      }
-    } catch {
-      // Silencioso
-    } finally {
-      setLoadingSymbology(false);
-    }
-  }, [catalogId]);
 
   const fetchManuals = useCallback(async () => {
     if (!catalogId) return;
@@ -194,9 +174,8 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
   useEffect(() => {
     if (!isOpen || !catalogId) return;
     fetchCorpus();
-    fetchSymbologyPack();
     fetchManuals();
-  }, [isOpen, catalogId, fetchCorpus, fetchSymbologyPack, fetchManuals]);
+  }, [isOpen, catalogId, fetchCorpus, fetchManuals]);
 
   if (!isOpen) return null;
 
@@ -270,7 +249,7 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
         totalSavingsPct,
       });
 
-      await Promise.all([fetchCorpus(), fetchSymbologyPack()]);
+      await fetchCorpus();
 
       if (json.deduplicatedDocumentHit) {
         toast.info('Documento ya registrado en CAS: 0 duplicados y $0 re-procesamiento.');
@@ -284,25 +263,6 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
     } finally {
       setIsIngesting(false);
       setDigestStatusText('');
-    }
-  };
-
-  const handleRebuildSymbology = async () => {
-    setLoadingSymbology(true);
-    try {
-      const res = await authFetch(`${API_BASE_URL}/vault/symbology-pack/rebuild`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ globalAssetId: catalogId }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Error compilando simbología real.');
-      setSymbologyPack(json.pack);
-      toast.success(`Simbología compilada actualizada (${json.pack?.total_symbols || 0} símbolos verificados en el equipo).`);
-    } catch (err: any) {
-      toast.error(err?.message || 'Error actualizando simbología.');
-    } finally {
-      setLoadingSymbology(false);
     }
   };
 
@@ -361,7 +321,10 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
               {(
                 [
                   ...(canCurateAI
-                    ? ([['INGESTION', 'INGESTA PDF / ETT / MULTIMEDIA']] as Array<[StudioTabId, string]>)
+                    ? ([
+                        ['INGESTION', 'INGESTA PDF / ETT / MULTIMEDIA'],
+                        ['CONTRIBUTIONS_REVIEW', 'COLA ESCLUSA APORTES CLIENTES'],
+                      ] as Array<[StudioTabId, string]>)
                     : []),
                   ['MANUAL_PUBLISHER', 'EDITORIAL MANUALES AD-HOC'],
                 ] as Array<[StudioTabId, string]>
@@ -568,184 +531,13 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
             </>
           )}
 
-          {activeTab === 'SYMBOLOGY_PACK' && (
-            <>
-              {/* Área Menor (38.2%): Gobernanza y Resumen de Simbología Compilada Real */}
-              <aside className="lg:w-[38.2%] border-b lg:border-b-0 lg:border-r border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-[21px] overflow-y-auto flex flex-col gap-[21px]">
-                <div>
-                  <h3 className="text-[15px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
-                    Compilado Real de Simbología del Equipo
-                  </h3>
-                  <p className="text-[13px] text-[#475569] dark:text-[#8A93A6] mt-[8px]">
-                    Cero especulación: esta tabla presenta únicamente los pictogramas vectoriales `.svg` (`ISO 7000`, `ISO 7010`, `ISO 2575`, `IEC 60417`, `GHS`) efectivamente aplicados en los textos de los 5 pilares o extraídos del manual PDF OEM del activo.
-                  </p>
-                </div>
-
-                {symbologyPack && (
-                  <div className="bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] p-[21px] flex flex-col gap-[13px]">
-                    <div>
-                      <span className="block text-[11px] font-bold uppercase text-[#475569] dark:text-[#8A93A6]">
-                        SÍMBOLOS REALES APLICADOS AL EQUIPO
-                      </span>
-                      <span className="text-[36px] font-bold font-mono tabular-nums text-[#C68346]">
-                        {symbologyPack.total_symbols}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="block text-[11px] font-bold uppercase text-[#475569] dark:text-[#8A93A6]">
-                        CLASE FÍSICA DEL EQUIPO
-                      </span>
-                      <span className="font-mono text-[13px] text-[#0F172A] dark:text-[#F3F4F6]">
-                        {symbologyPack.archetype_key}
-                      </span>
-                    </div>
-                    {(symbologyPack.powertrain_tags || []).length > 0 && (
-                      <div className="flex flex-wrap gap-[8px]">
-                        {(symbologyPack.powertrain_tags || []).map((tag) => (
-                          <span
-                            key={tag}
-                            className="px-[8px] py-[4px] border border-[#E2E8F0] dark:border-[#12151C] font-mono text-[11px] text-[#00AEEF]"
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {canCurateAI && (
-                  <button
-                    type="button"
-                    disabled={loadingSymbology}
-                    onClick={handleRebuildSymbology}
-                    className="py-[13px] px-[21px] border border-[#C68346] bg-[#FFFFFF] dark:bg-[#000000] hover:bg-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] hover:text-[#FFFFFF] text-[11px] font-bold uppercase tracking-[0.05em] rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
-                  >
-                    {loadingSymbology ? 'SINCRONIZANDO SIMBOLOGÍA...' : 'SINCRONIZAR SIMBOLOGÍA DESDE PILARES'}
-                  </button>
-                )}
-              </aside>
-
-              {/* Área Mayor (61.8%): Tabla Compilada Real de Simbología (Significado + Aplicación Específica en el Equipo) */}
-              <section className="lg:w-[61.8%] p-[34px] overflow-y-auto bg-[#FFFFFF] dark:bg-[#000000] flex flex-col gap-[21px]">
-                <div className="flex items-center justify-between gap-[13px] pb-[13px] border-b border-[#E2E8F0] dark:border-[#12151C]">
-                  <div>
-                    <h4 className="text-[15px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
-                      Tabla Maestra de Simbología Aplicada a {makeModel}
-                    </h4>
-                    <p className="text-[13px] text-[#475569] dark:text-[#8A93A6]">
-                      Significado normativo oficial y trazabilidad de aplicación específica por pilar y capítulo del equipo.
-                    </p>
-                  </div>
-                </div>
-
-                {!symbologyPack ? (
-                  <p className="text-[13px] text-[#5A6072]">Cargando tabla de simbología del activo...</p>
-                ) : (() => {
-                  const flatList =
-                    Array.isArray(symbologyPack.compiled_entries) && symbologyPack.compiled_entries.length > 0
-                      ? symbologyPack.compiled_entries
-                      : (Object.keys(GROUP_LABELS_ES) as SymbologyFunctionalGroup[]).flatMap(
-                          (gk) => symbologyPack.groups?.[gk] || []
-                        );
-
-                  if (flatList.length === 0) {
-                    return (
-                      <p className="text-[13px] text-[#5A6072]">
-                        [Información técnica no declarada en ficha] — Aún no se han registrado capítulos con simbología normativa ni pictogramas extraídos de manual PDF en este equipo.
-                      </p>
-                    );
-                  }
-
-                  return (
-                    <table className="w-full border-collapse text-[13px] border border-[#E2E8F0] dark:border-[#12151C]">
-                      <thead>
-                        <tr className="bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] font-mono tabular-nums text-[11px] uppercase text-[#475569] dark:text-[#8A93A6]">
-                          <th className="p-[13px] text-center w-[76px]">SÍMBOLO</th>
-                          <th className="p-[13px] text-left w-[155px]">CÓDIGO / NORMA</th>
-                          <th className="p-[13px] text-left w-[28%]">SIGNIFICADO TÉCNICO</th>
-                          <th className="p-[13px] text-left">APLICACIÓN ESPECÍFICA EN EL EQUIPO</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {flatList.map((sym) => (
-                          <tr
-                            key={sym.concept_id}
-                            className="border-b border-[#E2E8F0] dark:border-[#12151C] align-top"
-                          >
-                            <td className="p-[13px] text-center">
-                              <div className="w-[48px] h-[48px] mx-auto bg-[#FFFFFF] border border-[#E2E8F0] p-[4px] flex items-center justify-center">
-                                {sym.svg_inline ? (
-                                  <div
-                                    className="w-full h-full [&>svg]:w-full [&>svg]:h-full select-none pointer-events-none"
-                                    dangerouslySetInnerHTML={{ __html: sym.svg_inline }}
-                                  />
-                                ) : (
-                                  <img
-                                    src={resolveDownloadHref(sym.icon_url)}
-                                    alt={sym.iso_reference}
-                                    draggable={false}
-                                    onContextMenu={(e) => e.preventDefault()}
-                                    className="w-full h-full object-contain select-none pointer-events-none"
-                                  />
-                                )}
-                              </div>
-                            </td>
-                            <td className="p-[13px] font-mono tabular-nums select-text">
-                              <div className="text-[12px] font-bold text-[#C68346]">
-                                {sym.iso_reference}
-                              </div>
-                              <div className="text-[11px] text-[#5A6072] mt-[4px]">
-                                {sym.standard_family}
-                              </div>
-                              {typeof sym.original_bytes === 'number' && typeof sym.optimized_bytes === 'number' && (
-                                <div className="text-[10px] text-[#00AEEF] mt-[4px]">
-                                  {formatKbMb(sym.original_bytes)} ➔ {formatKbMb(sym.optimized_bytes)}
-                                  {typeof sym.savings_pct === 'number' && sym.savings_pct > 0
-                                    ? ` (-${sym.savings_pct.toFixed(1)}%)`
-                                    : ''}
-                                </div>
-                              )}
-                            </td>
-                            <td className="p-[13px]">
-                              <div className="font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
-                                {sym.technical_name_es}
-                              </div>
-                              <div className="text-[12px] text-[#475569] dark:text-[#8A93A6] mt-[4px]">
-                                {sym.action_operator_es}
-                              </div>
-                            </td>
-                            <td className="p-[13px]">
-                              {Array.isArray(sym.applied_in_chapters) && sym.applied_in_chapters.length > 0 ? (
-                                <div className="flex flex-col gap-[8px]">
-                                  {sym.applied_in_chapters.map((app, idx) => (
-                                    <div
-                                      key={`${app.pillar_id}_${app.item_id}_${idx}`}
-                                      className="p-[8px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D]"
-                                    >
-                                      <div className="font-mono tabular-nums text-[11px] font-bold text-[#00AEEF]">
-                                        {app.pillar_label} · {app.item_title}
-                                      </div>
-                                      <div className="text-[12px] text-[#0F172A] dark:text-[#F3F4F6] mt-[2px]">
-                                        {app.context_excerpt}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <p className="text-[12px] text-[#0F172A] dark:text-[#F3F4F6]">
-                                  {sym.equipment_specific_application_es || sym.action_operator_es || '[Información técnica no declarada en ficha]'}
-                                </p>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  );
-                })()}
-              </section>
-            </>
+          {canCurateAI && activeTab === 'CONTRIBUTIONS_REVIEW' && (
+            <div className="flex-1 w-full h-full min-h-0 overflow-y-auto bg-[#FFFFFF] dark:bg-[#000000]">
+              <CatalogContributionsReviewPanel
+                filterGlobalAssetId={catalogId}
+                onReviewed={fetchCorpus}
+              />
+            </div>
           )}
 
           {activeTab === 'MANUAL_PUBLISHER' && (

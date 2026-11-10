@@ -1,6 +1,7 @@
 import React from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { M3CircularProgress } from './M3ProgressIndicator';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -43,7 +44,7 @@ export const M3Button: React.FC<M3ButtonProps> = ({
       {...props}
     >
       {loading ? (
-        <span className="material-symbols-outlined notranslate text-[18px] animate-spin">progress_activity</span>
+        <M3CircularProgress size={16} strokeWidth={2.5} tone={variant === 'primary' ? 'cyan' : 'copper'} />
       ) : !children && icon ? (
         <span className="material-symbols-outlined notranslate text-[18px]">{icon}</span>
       ) : null}

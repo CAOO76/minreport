@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { collection, getDocs, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import { useTranslation } from 'react-i18next';
+import type { AssetPhysicalTraits } from '../../../contracts';
+import { syncQueueEngine } from '../../../core/offline/SyncQueueEngine';
 import { API_BASE_URL, db } from '../firebase/config';
 import {
     type OpermaqDomainMode,
@@ -15,6 +17,7 @@ import {
     PENDING_RECORD_SPEC,
 } from '../utils/opermaqDomainProjection';
 import { CatalogHomologationHitlModal } from './CatalogHomologationHitlModal';
+import { M3CircularProgress } from './M3ProgressIndicator';
 import { SecureCasThumbnail } from './SecureCasThumbnail';
 
 export type { OpermaqDomainMode };
@@ -28,6 +31,7 @@ interface CatalogListRow {
     categoria_equipo?: string;
     short_description: string;
     foto_url?: string;
+    physical_traits?: AssetPhysicalTraits;
 }
 
 interface FleetListRow {
@@ -49,6 +53,10 @@ interface FleetListRow {
     primary_private_photo_url?: string | null;
     catalog_foto_url?: string | null;
     horometer?: number;
+    odometer_km?: number;
+    cycles_count?: number;
+    calibration_due_date?: string;
+    physical_traits?: AssetPhysicalTraits;
     archived?: boolean;
 }
 
@@ -72,9 +80,9 @@ export const AssetList: React.FC<AssetListProps> = ({
 }) => {
     const handleAddNew = onNew || onAddNew;
     const { t } = useTranslation();
-    const { tenantId, capabilities } = useOpermaqContext();
+    const { tenantId, capabilities, isEduSandbox } = useOpermaqContext();
 
-    // Regla Soberana: El CATÁLOGO maestro solo es accesible en `DEV` / `ADMIN` / `TEST-PILOT` (`canCurateAI`).
+    // Regla Soberana: El CATÁLOGO maestro es accesible en `1º DEV` / `2º ADMIN` / `3º TEST-PILOT`.
     const resolvedDomain = resolveEffectiveOpermaqDomain(domainMode, capabilities);
     const effectiveMode: AssetListDomainMode = resolvedDomain === 'CATALOG' ? 'CATALOG' : 'FLEET';
 
@@ -145,19 +153,25 @@ export const AssetList: React.FC<AssetListProps> = ({
                             item.catalog_foto_url ||
                             undefined,
                         horometer: typeof item.horometer === 'number' ? item.horometer : undefined,
+                        odometer_km: typeof item.odometer_km === 'number' ? item.odometer_km : undefined,
+                        cycles_count: typeof item.cycles_count === 'number' ? item.cycles_count : undefined,
+                        calibration_due_date: item.calibration_due_date ? String(item.calibration_due_date) : undefined,
+                        physical_traits: item.physical_traits || undefined,
                     }));
 
                 setFleetRows(scoped);
+                void syncQueueEngine.saveOfflineKnowledge(`opermaq_fleet_${activeTenantId}`, scoped);
                 setFleetLoading(false);
                 return;
             }
         } catch {
-            // Fallback directo a Cloud Firestore filtrado estrictamente por tenant_id
+            // Fallback Offline-First / Firestore filtrado estrictamente por tenant_id y sandbox EDU
         }
 
         try {
+            const fleetColName = isEduSandbox ? 'edu_sandbox_fleet' : 'tenant_assets';
             const bySnakeQ = query(
-                collection(db, 'tenant_assets'),
+                collection(db, fleetColName),
                 where('tenant_id', '==', activeTenantId)
             );
             const snapSnake = await getDocs(bySnakeQ);
@@ -184,6 +198,10 @@ export const AssetList: React.FC<AssetListProps> = ({
                     ownership_type: raw.ownership_type ? String(raw.ownership_type) : undefined,
                     foto_url: raw.primary_private_photo_url || raw.foto_url || undefined,
                     horometer: typeof raw.horometer === 'number' ? raw.horometer : undefined,
+                    odometer_km: typeof raw.odometer_km === 'number' ? raw.odometer_km : undefined,
+                    cycles_count: typeof raw.cycles_count === 'number' ? raw.cycles_count : undefined,
+                    calibration_due_date: raw.calibration_due_date ? String(raw.calibration_due_date) : undefined,
+                    physical_traits: raw.physical_traits || undefined,
                 });
             };
 
@@ -191,7 +209,7 @@ export const AssetList: React.FC<AssetListProps> = ({
 
             try {
                 const byCamelQ = query(
-                    collection(db, 'tenant_assets'),
+                    collection(db, fleetColName),
                     where('tenantId', '==', activeTenantId)
                 );
                 const snapCamel = await getDocs(byCamelQ);
@@ -200,16 +218,32 @@ export const AssetList: React.FC<AssetListProps> = ({
                 // Índice secundario camelCase opcional
             }
 
-            setFleetRows(Array.from(map.values()));
+            const resolvedRows = Array.from(map.values());
+            if (resolvedRows.length > 0) {
+                setFleetRows(resolvedRows);
+                void syncQueueEngine.saveOfflineKnowledge(`opermaq_fleet_${activeTenantId}`, resolvedRows);
+            } else {
+                const cachedOffline = await syncQueueEngine.getOfflineKnowledge<FleetListRow[]>(
+                    `opermaq_fleet_${activeTenantId}`
+                );
+                setFleetRows(Array.isArray(cachedOffline) ? cachedOffline : []);
+            }
         } catch (err: unknown) {
-            setFleetRows([]);
-            setFleetError(
-                err instanceof Error ? err.message : 'No fue posible consultar la flota activa.'
-            );
+            const cachedOffline = await syncQueueEngine
+                .getOfflineKnowledge<FleetListRow[]>(`opermaq_fleet_${activeTenantId}`)
+                .catch(() => null);
+            if (Array.isArray(cachedOffline) && cachedOffline.length > 0) {
+                setFleetRows(cachedOffline);
+            } else {
+                setFleetRows([]);
+                setFleetError(
+                    err instanceof Error ? err.message : 'No fue posible consultar la flota activa.'
+                );
+            }
         } finally {
             setFleetLoading(false);
         }
-    }, []);
+    }, [isEduSandbox]);
 
     useEffect(() => {
         if (effectiveMode === 'FLEET') {
@@ -217,7 +251,7 @@ export const AssetList: React.FC<AssetListProps> = ({
         }
     }, [effectiveMode, tenantId, loadTenantFleet]);
 
-    // Carga resiliente + suscripción en tiempo real al CATÁLOGO único (`global_asset_catalog`)
+    // Carga proyectada y en caché RAM del CATÁLOGO único (`GET /api/assets/catalog`) — cero lectura de colección completa en cliente
     useEffect(() => {
         if (effectiveMode !== 'CATALOG') {
             setCatalogRows([]);
@@ -226,7 +260,6 @@ export const AssetList: React.FC<AssetListProps> = ({
         }
 
         let cancelled = false;
-        let hasRealtimeSnapshot = false;
         setCatalogLoading(true);
 
         const loadCatalogFromApi = async () => {
@@ -234,70 +267,49 @@ export const AssetList: React.FC<AssetListProps> = ({
                 const res = await authFetch(`${API_BASE_URL}/assets/catalog`, {
                     method: 'GET',
                 });
-                if (!res.ok || cancelled || hasRealtimeSnapshot) return;
-                const payload = await res.json().catch(() => ({}));
-                const rawItems: any[] = Array.isArray(payload?.items) ? payload.items : [];
-                const mapped: CatalogListRow[] = rawItems.map((item) => ({
-                    id: String(item.id),
-                    make_oficial: String(item.make_oficial || item.make || MISSING_TECH_SPEC),
-                    model_oficial: String(item.model_oficial || item.model || ''),
-                    tipo_equipo: String(
-                        item.tipo_equipo || item.categoria_equipo || MISSING_TECH_SPEC
-                    ),
-                    categoria_equipo: item.categoria_equipo
-                        ? String(item.categoria_equipo)
-                        : undefined,
-                    short_description: buildEquipmentShortDescription(item),
-                    foto_url: item.foto_url ? String(item.foto_url) : undefined,
-                }));
-                if (!cancelled && !hasRealtimeSnapshot) {
-                    setCatalogRows(mapped);
-                    setCatalogLoading(false);
+                if (res.ok && !cancelled) {
+                    const payload = await res.json().catch(() => ({}));
+                    const rawItems: any[] = Array.isArray(payload?.items) ? payload.items : [];
+                    const mapped: CatalogListRow[] = rawItems.map((item) => ({
+                        id: String(item.id),
+                        make_oficial: String(item.make_oficial || item.make || MISSING_TECH_SPEC),
+                        model_oficial: String(item.model_oficial || item.model || ''),
+                        tipo_equipo: String(
+                            item.tipo_equipo || item.categoria_equipo || MISSING_TECH_SPEC
+                        ),
+                        categoria_equipo: item.categoria_equipo
+                            ? String(item.categoria_equipo)
+                            : undefined,
+                        short_description: buildEquipmentShortDescription(item),
+                        foto_url: item.foto_url ? String(item.foto_url) : undefined,
+                        physical_traits: item.physical_traits || undefined,
+                    }));
+                    if (!cancelled) {
+                        setCatalogRows(mapped);
+                        void syncQueueEngine.saveOfflineKnowledge('opermaq_catalog_index_v3', mapped);
+                        setCatalogLoading(false);
+                    }
+                    return;
                 }
             } catch {
-                // Silencioso: `onSnapshot` permanece como fuente primaria cuando Firebase Auth está activo
+                // Fallback a caché local IndexedDB si se encuentra sin conexión
+            }
+
+            if (!cancelled) {
+                const cachedCatalog = await syncQueueEngine
+                    .getOfflineKnowledge<CatalogListRow[]>('opermaq_catalog_index_v3')
+                    .catch(() => null);
+                if (!cancelled) {
+                    setCatalogRows(Array.isArray(cachedCatalog) ? cachedCatalog : []);
+                    setCatalogLoading(false);
+                }
             }
         };
 
         void loadCatalogFromApi();
 
-        const q = query(collection(db, 'global_asset_catalog'));
-        const unsubscribe = onSnapshot(
-            q,
-            (snapshot) => {
-                if (cancelled) return;
-                hasRealtimeSnapshot = true;
-                const list: CatalogListRow[] = [];
-                snapshot.forEach((docSnap) => {
-                    const data = docSnap.data();
-                    if (data.archived === true) return;
-                    const makeOficial = String(data.make_oficial || data.make || MISSING_TECH_SPEC);
-                    const modelOficial = String(data.model_oficial || data.model || '');
-                    list.push({
-                        id: docSnap.id,
-                        make_oficial: makeOficial,
-                        model_oficial: modelOficial,
-                        tipo_equipo: String(
-                            data.tipo_equipo || data.categoria_equipo || MISSING_TECH_SPEC
-                        ),
-                        categoria_equipo: data.categoria_equipo ? String(data.categoria_equipo) : undefined,
-                        short_description: buildEquipmentShortDescription(data),
-                        foto_url: data.foto_url ? String(data.foto_url) : undefined,
-                    });
-                });
-                setCatalogRows(list);
-                setCatalogLoading(false);
-            },
-            () => {
-                if (!cancelled) {
-                    setCatalogLoading(false);
-                }
-            }
-        );
-
         return () => {
             cancelled = true;
-            unsubscribe();
         };
     }, [effectiveMode]);
 
@@ -441,9 +453,7 @@ export const AssetList: React.FC<AssetListProps> = ({
 
                 {isLoading ? (
                     <div className="h-56 flex items-center justify-center">
-                        <span className="material-symbols-outlined animate-spin text-[24px] text-[#C68346]">
-                            progress_activity
-                        </span>
+                        <M3CircularProgress size={24} strokeWidth={3} tone="copper" />
                     </div>
                 ) : effectiveMode === 'FLEET' && !tenantId ? (
                     <div className="h-56 flex items-center justify-center text-[12px] font-mono text-[#475569] dark:text-[#8A93A6]">
@@ -482,7 +492,10 @@ export const AssetList: React.FC<AssetListProps> = ({
                                                 <SecureCasThumbnail
                                                     src={asset.foto_url}
                                                     alt={officialName}
-                                                    fallbackIcon="front_loader"
+                                                    fallbackIcon={
+                                                        asset.physical_traits?.material_symbol_icon ||
+                                                        'precision_manufacturing'
+                                                    }
                                                     className="w-10 h-10 shrink-0"
                                                 />
 
@@ -553,7 +566,10 @@ export const AssetList: React.FC<AssetListProps> = ({
                                                     src={unit.foto_url}
                                                     alt={officialName}
                                                     tenantId={ownerTenant}
-                                                    fallbackIcon="front_loader"
+                                                    fallbackIcon={
+                                                        unit.physical_traits?.material_symbol_icon ||
+                                                        'precision_manufacturing'
+                                                    }
                                                     className="w-10 h-10 shrink-0"
                                                 />
 

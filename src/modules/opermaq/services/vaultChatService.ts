@@ -1,10 +1,11 @@
 import { db } from '../../../config/firebase';
 import { ConfidentialityAirlockService } from '../../../core/privacy/ConfidentialityAirlockService';
 import { ResilientAIClient, Type } from '../../../core/resilient-ai-client';
-import { ChatMessage, PillarId, PillarItem, ProposedUpdate, SEQUENTIAL_PILLAR_ORDER } from '../types/vault.types';
+import { ChatMessage, PillarDocument, PillarId, PillarItem, ProposedUpdate, SEQUENTIAL_PILLAR_ORDER } from '../types/vault.types';
 import { computeFactFingerprint, verifyAndNormalizeTechnicalUnits } from './NeuroSymbolicVerifier';
 import { getPillarEditGovernancePrompt, PILLAR_AGENTS } from './pillarAgents';
 import { extractConfirmedSpecsSummaryFromMarkdown } from './TextSimilarityUtils';
+import { VaultPersistenceService } from './VaultPersistenceService';
 
 /**
  * VAULT CHAT SERVICE — MOTOR SOBERANO SÍMIL NOTEBOOKLM (Ley N° 19.628 / Ley N° 21.719 Chile)
@@ -154,7 +155,7 @@ async function loadSovereignContextForItemChat(
             : [];
         if (fichaItems.length > 0) {
             const fichaCombined = fichaItems
-                .map((it) => `### ${it.title}\n${ extractConfirmedSpecsSummaryFromMarkdown(it.content || '', 650) }`)
+                .map((it) => `### ${it.title}\n${extractConfirmedSpecsSummaryFromMarkdown(it.content || '', 650)}`)
                 .join('\n')
                 .slice(0, 2600);
             if (fichaCombined.trim()) {
@@ -217,11 +218,10 @@ export async function processVaultChat(options: VaultChatOptions): Promise<Vault
         const shouldUseExternalSearch =
             Boolean(allowExternalWebSearch) || EXPLICIT_WEB_RESEARCH_REGEX.test(safeUserRequest);
 
-        const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
-        const snap = await docRef.get();
-        if (!snap.exists) throw new Error(`Catálogo no encontrado: ${globalAssetId}`);
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);
+        if (!hydrated.exists || !hydrated.data) throw new Error(`Catálogo no encontrado: ${globalAssetId}`);
 
-        const catalogProfile = snap.data() || {};
+        const catalogProfile = hydrated.data;
         const items: PillarItem[] = catalogProfile?.knowledge_vault?.[pillarId]?.items ?? [];
         const item = items.find((it) => it.item_id === itemId);
         if (!item) throw new Error(`Ítem "${itemId}" no encontrado.`);
@@ -242,12 +242,12 @@ export async function processVaultChat(options: VaultChatOptions): Promise<Vault
         const conversationHistoryText =
             history.length > 0
                 ? history
-                      .slice(-8)
-                      .map((msg) => {
-                          const cleanMsg = ConfidentialityAirlockService.scrubDeterministicPii(msg.content || '').scrubbed;
-                          return `${msg.role === 'user' ? 'HUMANO' : 'ASISTENTE'}: ${cleanMsg}`;
-                      })
-                      .join('\n')
+                    .slice(-8)
+                    .map((msg) => {
+                        const cleanMsg = ConfidentialityAirlockService.scrubDeterministicPii(msg.content || '').scrubbed;
+                        return `${msg.role === 'user' ? 'HUMANO' : 'ASISTENTE'}: ${cleanMsg}`;
+                    })
+                    .join('\n')
                 : '(Sin mensajes previos en esta sesión)';
 
         const assistPrompt = `Actúa como "${agent.rolePersona}" del pilar "${agent.title}" exclusivo para el capítulo "${item.title}" (Sección: ${item.section}) del activo "${make} ${model}" (${tipoEquipo}).
@@ -263,16 +263,15 @@ CONTEXTO DEL ACTIVO:
 - Características: ${caracteristicas}
 - Ambiente: ${ambientes} | Contexto: ${contextos}
 ${sovereignContext ? `\n${sovereignContext}\n` : ''}
-${
-    safeSelectedFragment
-        ? `MODO CONFINAMIENTO QUIRÚRGICO DE FRAGMENTO ACTIVO:
+${safeSelectedFragment
+                ? `MODO CONFINAMIENTO QUIRÚRGICO DE FRAGMENTO ACTIVO:
 El operador seleccionó explícitamente este fragmento del capítulo para intervenir:
 """
 ${safeSelectedFragment}
 """
 Si tu respuesta es una edición ("intent": "EDIT_PROPOSAL"), entrega en "fragmentReplacement" ÚNICAMENTE el bloque Markdown reemplazante para ese fragmento seleccionado (conservando el formato tabular de la sección), sin necesidad de repetir el resto del capítulo.`
-        : ''
-}
+                : ''
+            }
 HISTORIAL RECIENTE:
 ${conversationHistoryText}
 
@@ -329,11 +328,11 @@ REGLAS ESTRICTAS DE INTENCIÓN (MODO SOBERANO LEY 21.719):
         const assembledDraft =
             resolvedIntent === 'EDIT_PROPOSAL'
                 ? applySurgicalFragmentSplice({
-                      currentContent: item.content,
-                      selectedFragment: safeSelectedFragment,
-                      fragmentReplacement: parsed.fragmentReplacement,
-                      fallbackFullDraft: parsed.draftContent,
-                  })
+                    currentContent: item.content,
+                    selectedFragment: safeSelectedFragment,
+                    fragmentReplacement: parsed.fragmentReplacement,
+                    fallbackFullDraft: parsed.draftContent,
+                })
                 : undefined;
 
         const finalResponse: VaultChatResponse = {
@@ -408,9 +407,10 @@ Extrae propuestas técnicas puntuales ("NUEVO" si agrega datos ausentes, "CONFLI
                 });
 
             if (newProposals.length > 0) {
-                const freshSnap = await docRef.get();
-                const freshData = freshSnap.data() || {};
-                const freshItems: PillarItem[] = [...(freshData?.knowledge_vault?.[pillarId]?.items ?? [])];
+                const freshHydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);
+                const freshData = freshHydrated.data || {};
+                const freshPillar = freshData?.knowledge_vault?.[pillarId] || {};
+                const freshItems: PillarItem[] = [...(freshPillar?.items ?? [])];
                 const freshIdx = freshItems.findIndex((it) => it.item_id === itemId);
 
                 if (freshIdx !== -1 && !freshItems[freshIdx].is_human_locked) {
@@ -432,8 +432,15 @@ Extrae propuestas técnicas puntuales ("NUEVO" si agrega datos ausentes, "CONFLI
                             pending_conflicts: [...existingConflicts, ...dedupedNewProposals],
                             fact_fingerprints: Array.from(existingFps),
                         };
-                        await docRef.update({
-                            [`knowledge_vault.${pillarId}.items`]: freshItems,
+                        await VaultPersistenceService.savePillarDocument({
+                            globalAssetId,
+                            pillarId,
+                            pillarDoc: {
+                                ...freshPillar,
+                                pillar_id: pillarId,
+                                items: freshItems,
+                                updated_at: new Date().toISOString(),
+                            } as PillarDocument,
                         });
 
                         const listSummary = dedupedNewProposals

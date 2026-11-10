@@ -27,6 +27,8 @@ export type MachineryArchetypeId =
     | 'GRUA_IZAJE_MANIPULADOR'
     | 'PERFORADORA_SONDAJE'
     | 'COMPRESOR_GENERADOR_BOMBA'
+    | 'PLANTA_MOVIL_CHANCADO_HARNERO'
+    | 'REMOLQUE_CARRO_ARRASTRE_IMPLEMENTO'
     | 'VEHICULO_LIVIANO_TRANSPORTE'
     | 'HERRAMIENTA_INDUSTRIAL_GENERAL';
 
@@ -94,9 +96,9 @@ const NUM_UNIT_ENERGY_CONSUMPTION =
 const NUM_UNIT_ENERGY_CAPACITY =
     /\b\d[\d.,]*\s*(?:l\b|litros?|gal|kwh|ah|m³|m3)\b/i;
 export const ENERGY_SOURCE_VALUE_REGEX =
-    /\b(di[eé]sel(?:\s+ulsd)?|gasolina|bencina|el[eé]ctric[oa](?:\s+(?:red\s+ac|trif[aá]sic[oa]|monof[aá]sic[oa]|bater[ií]a|bev))?|bater[ií]a(?:\s+bev|\s+li-?ion|\s+lfp)?|bev|h[ií]brid[oa](?:\s+di[eé]sel[- ]el[eé]ctric[oa])?|dual[- ]?fuel|glp|gnv|gnl|aire\s+comprimido|neum[aá]tic[oa]|electrohidr[aá]ulic[oa]|hidr[aá]ulic[oa])\b/i;
+    /\b(di[eé]sel(?:\s+ulsd)?|gasolina|bencina|el[eé]ctric[oa](?:\s+(?:red\s+ac|trif[aá]sic[oa]|monof[aá]sic[oa]|bater[ií]a|bev))?|bater[ií]a(?:\s+bev|\s+li-?ion|\s+lfp)?|bev|h[ií]brid[oa](?:\s+di[eé]sel[- ]el[eé]ctric[oa])?|dual[- ]?fuel|glp|gnv|gnl|aire\s+comprimido|neum[aá]tic[oa]|electrohidr[aá]ulic[oa]|hidr[aá]ulic[oa](?:\s+700\s*bar)?|manual(?:\s+mec[aá]nic[oa])?|remolcad[oa]|sin\s+propulsi[oó]n\s+propia|auxiliar\s+12\s*v|auxiliar\s+24\s*v)\b/i;
 export const ANY_ENGINEERING_METRIC_REGEX =
-    /\b(\d[\d.,]*\s*(?:l\/100\s*km|kwh\/100\s*km|km\/l|g\/kwh|lb\/hp[·.\s-]?h(?:r)?|kwh\/h|kwh\/t|l\/t|l\/ton|gal\/h|gph|mpg|m³\/min|m³\/h|m3\/min|m3\/h|l\/min|l\/s|l\/h|km\/h|m\/s|kn[·.\s-]?m|t[·.\s-]?m|n[·.\s-]?m|m\.?c\.?a\.?|m³|m²|cm³|yd³|°c|dba|db|kwh|kva|kw|mw|hp|cv|kgf|kg|toneladas?|ton|lbs?|mm|cm|km|pulg|ft|in|m3|m2|cm3|cc|yd3|litros?|gal|scfm|cfm|gpm|mbar|bar|mpa|kpa|psi|kn|kj|hz|khz|mhz|bpm|rpm|mah|ah|wh|kv|mv|volt|amp|[tgwvnajmlh%])\b|[2468]x[2468]|\b(?:awd|4wd|2wd|fwd|rwd|[bhnp]q)\b|\d[\d.,]*\s*°)/i;
+    /\b(\d[\d.,]*\s*(?:l\/100\s*km|kwh\/100\s*km|km\/l|g\/kwh|lb\/hp[·.\s-]?h(?:r)?|kwh\/h|kwh\/t|kwh\/ciclo|l\/t|l\/ton|gal\/h|gph|mpg|m³\/min|m³\/h|m3\/min|m3\/h|l\/min|l\/s|l\/h|km\/h|m\/s|kn[·.\s-]?m|t[·.\s-]?m|n[·.\s-]?m|m\.?c\.?a\.?|m³|m²|cm³|yd³|°c|dba|db|lm|lux|mpx|ghz|dbm|ppm|kwh|kva|kw|mw|hp|cv|kgf|kg|toneladas?|ton|lbs?|mm|cm|km|pulg|ft|in|m3|m2|cm3|cc|yd3|litros?|gal|scfm|cfm|gpm|mbar|bar|mpa|kpa|psi|kn|kj|hz|khz|mhz|bpm|rpm|mah|ah|wh|kv|mv|volt|amp|ciclos|vuelos|[tgwvnajmlh%])\b|[2468]x[2468]|\b(?:awd|4wd|2wd|fwd|rwd|[bhnp]q)\b|\d[\d.,]*\s*°)/i;
 
 const ANY_SI_METRIC = ANY_ENGINEERING_METRIC_REGEX;
 
@@ -110,7 +112,9 @@ export const UNIVERSAL_ENERGY_SOURCE_ENUM_VALUES: string[] = [
     'Dual-Fuel Diésel-Gas',
     'GLP / GNV',
     'Neumático (Aire Comprimido)',
-    'Electrohidráulico',
+    'Electrohidráulico / Hidráulico Auxiliar (incl. 700 bar)',
+    'Remolcado / Sin Propulsión Propia (Auxiliar 12V/24V)',
+    'Manual / Mecánico (Sin Energía Externa)',
 ];
 
 const ARCHETYPE_UNIVERSAL_ENERGY_AXES: ArchetypeAxisDefinition[] = [
@@ -633,6 +637,84 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
             ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
+    PLANTA_MOVIL_CHANCADO_HARNERO: {
+        id: 'PLANTA_MOVIL_CHANCADO_HARNERO',
+        name_es: 'Planta Móvil de Chancado / Harneado',
+        axes: [
+            {
+                axis_key: 'capacidad_procesamiento',
+                label_es: 'Capacidad procesamiento',
+                unit_hint: 't/h',
+                mandatory: true,
+                legacyKeyPattern: /\b(capacidad\s+(?:de\s+)?(?:procesamiento|producci[oó]n|chancado|harneado)|rendimiento\s+en\s+t\/h)\b/i,
+                validValuePattern: ANY_SI_METRIC,
+            },
+            {
+                axis_key: 'abertura_alimentacion_o_cribado',
+                label_es: 'Abertura / Área cribado',
+                unit_hint: 'mm / m²',
+                mandatory: true,
+                legacyKeyPattern: /\b(abertura\s+(?:de\s+)?alimentaci[oó]n|boca\s+de\s+alimentaci[oó]n|[aá]rea\s+de\s+cribado|superficie\s+de\s+harneado|css\b)\b/i,
+                validValuePattern: ANY_SI_METRIC,
+            },
+            {
+                axis_key: 'potencia_neta',
+                label_es: 'Potencia motriz',
+                unit_hint: 'kW (HP)',
+                mandatory: true,
+                legacyKeyPattern: /\b(potencia(\s+neta|\s+motor|\s+instalada)?)\b/i,
+                validValuePattern: NUM_UNIT_POWER,
+            },
+            {
+                axis_key: 'peso_operativo',
+                label_es: 'Peso operativo',
+                unit_hint: 'kg',
+                mandatory: true,
+                legacyKeyPattern: /\b(peso(\s+operativo|\s+de\s+transporte)?|masa)\b/i,
+                validValuePattern: NUM_UNIT_MASS,
+            },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
+        ],
+    },
+    REMOLQUE_CARRO_ARRASTRE_IMPLEMENTO: {
+        id: 'REMOLQUE_CARRO_ARRASTRE_IMPLEMENTO',
+        name_es: 'Remolque / Carro de Arrastre / Estanque Móvil',
+        axes: [
+            {
+                axis_key: 'capacidad_carga_o_volumen',
+                label_es: 'Capacidad útil / Estanque',
+                unit_hint: 'L / m³ / kg',
+                mandatory: true,
+                legacyKeyPattern: /\b(capacidad\s+(?:[uú]til|de\s+carga|estanque|tanque|volum[eé]trica)|volumen\s+nominal|carga\s+[uú]til)\b/i,
+                validValuePattern: ANY_SI_METRIC,
+            },
+            {
+                axis_key: 'peso_bruto_gvwr',
+                label_es: 'Peso bruto (GVWR) / Tara',
+                unit_hint: 'kg',
+                mandatory: true,
+                legacyKeyPattern: /\b(peso\s+(?:bruto|operativo|seco)|gvwr|pvb|tara|masa)\b/i,
+                validValuePattern: NUM_UNIT_MASS,
+            },
+            {
+                axis_key: 'configuracion_ejes_rodado',
+                label_es: 'Ejes y rodado',
+                unit_hint: 'N° ejes / Medida neumático',
+                mandatory: true,
+                legacyKeyPattern: /\b(ejes?|configuraci[oó]n\s+de\s+ejes|neum[aá]ticos?|rodado|t[aá]ndem)\b/i,
+                validValuePattern: ANY_SI_METRIC,
+            },
+            {
+                axis_key: 'caudal_bomba_o_servicio_aux',
+                label_es: 'Caudal trasvasije / Auxiliar',
+                unit_hint: 'L/min @ 12V/24V',
+                mandatory: false,
+                legacyKeyPattern: /\b(caudal\s+(?:de\s+)?(?:bomba|trasvasije|dispensador)|bomba\s+auxiliar|tensi[oó]n\s+auxiliar)\b/i,
+                validValuePattern: ANY_SI_METRIC,
+            },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
+        ],
+    },
     HERRAMIENTA_INDUSTRIAL_GENERAL: {
         id: 'HERRAMIENTA_INDUSTRIAL_GENERAL',
         name_es: 'Equipamiento / Herramienta Industrial',
@@ -675,6 +757,20 @@ export function resolveMachineryArchetype(
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '');
 
+    if (
+        /\b(carro\s+de\s+arrastre|remolque|semirremolque|cama\s+baja|lowboy|acoplado|estanque\s+(?:movil\s+)?remolcado|cisterna\s+remolcada|implemento\s+remolcado|dolly)\b/.test(
+            combined
+        )
+    ) {
+        return ARCHETYPE_DEFINITIONS.REMOLQUE_CARRO_ARRASTRE_IMPLEMENTO;
+    }
+    if (
+        /\b(chancador|trituradora|harnero|zaranda|apilador\s+movil|lokotrack|mobirex|mobicone|mobiscreen|planta\s+(?:movil\s+)?de\s+(?:chancado|harneado|trituracion|seleccion))\b/.test(
+            combined
+        )
+    ) {
+        return ARCHETYPE_DEFINITIONS.PLANTA_MOVIL_CHANCADO_HARNERO;
+    }
     if (/\b(minicargador|skid\s*steer|cargador\s+compacto|compact\s+track\s+loader|\bssl\b|\bctl\b)\b/.test(combined)) {
         return ARCHETYPE_DEFINITIONS.MINICARGADOR_SSL_CTL;
     }
@@ -729,6 +825,9 @@ function stripTextAccents(input: string): string {
 function normalizeCanonicalEnergyEnumLabel(rawVal: string): string | null {
     const norm = stripTextAccents(rawVal);
     if (!norm) return null;
+    if (/\b(remolcad[oa]|sin\s+propulsion\s+propia|arrastre\s+pasivo|auxiliar\s+12\s*v|auxiliar\s+24\s*v)\b/.test(norm)) {
+        return 'Remolcado / Sin Propulsión Propia (Auxiliar 12V/24V/Manual)';
+    }
     if (/\bdual[- ]?fuel\b/.test(norm)) return 'Dual-Fuel Diésel-Gas';
     if (/\bhibrid/.test(norm)) {
         return /\b(gasolina|bencina)\b/.test(norm)
@@ -1192,6 +1291,10 @@ export function validateCrossAxisPhysicalPlausibility(
  */
 export function buildUniversalEnergySpecAxesForType(typeContextText: string): EquipmentTypeAxisSchemaItem[] {
     const norm = stripTextAccents(typeContextText || '');
+    const isTowedNonSelfPropelled =
+        /\b(carro\s+de\s+arrastre|remolque|semirremolque|cama\s+baja|lowboy|acoplado|estanque\s+(?:movil\s+)?remolcado|cisterna\s+remolcada|implemento\s+remolcado|dolly|sin\s+propulsion\s+propia)\b/.test(
+            norm
+        ) && !/\b(autopropulsad|motor\s+diesel|tractocamion)\b/.test(norm);
     const isRoadOrDumpOrUtilityVehicle =
         /\b(camion\s+tolva|tractocamion|camioneta|pick\s*up|automovil|suv|furgon|van|bus|minibus|vehiculo|motocicleta|volquete)\b/.test(
             norm
@@ -1201,49 +1304,64 @@ export function buildUniversalEnergySpecAxesForType(typeContextText: string): Eq
             norm
         );
     const isStationaryPlantOrElectric =
-        /\b(grupo\s+electrogeno|generador|compresor|chancador|molino|harnero|bomba|motobomba|soldadora|planta)\b/.test(
+        /\b(grupo\s+electrogeno|generador|compresor|molino|bomba|motobomba|soldadora|planta\s+fija|planta\s+estacionaria)\b/.test(
             norm
         );
 
-    const consumptionUnitSi = isPneumaticOrHandTool
-        ? 'L/s (m³/min) / kWh/h'
-        : isRoadOrDumpOrUtilityVehicle
-            ? 'km/L (L/100 km) / L/h / kWh/100 km'
-            : isStationaryPlantOrElectric
-                ? 'L/h (50%/75%/100%) / kWh/h / g/kWh'
-                : 'L/h (Bajo/Medio/Alto) / g/kWh / kWh/h';
+    const consumptionUnitSi = isTowedNonSelfPropelled
+        ? '0 L/h tracción (Auxiliar L/min / W / A @ 12V-24V)'
+        : isPneumaticOrHandTool
+            ? 'L/s (m³/min) / kWh/h'
+            : isRoadOrDumpOrUtilityVehicle
+                ? 'km/L (L/100 km) / L/h / kWh/100 km'
+                : isStationaryPlantOrElectric
+                    ? 'L/h (50%/75%/100%) / kWh/h / g/kWh'
+                    : 'L/h (Bajo/Medio/Alto) / g/kWh / kWh/h';
 
-    const consumptionKeywords = isPneumaticOrHandTool
-        ? ['consumo de aire', 'air consumption', 'L/s', 'm³/min', 'cfm', 'potencia absorbida', 'kWh/h']
-        : isRoadOrDumpOrUtilityVehicle
-            ? [
-                  'consumo de combustible',
-                  'rendimiento de combustible',
-                  'fuel consumption',
-                  'km/L',
-                  'L/100 km',
-                  'L/h',
-                  'g/kWh',
-                  'kWh/100 km',
-                  'mpg',
-              ]
-            : [
-                  'consumo de combustible',
-                  'fuel consumption',
-                  'consumo horario',
-                  'L/h',
-                  'gal/h',
-                  'consumo específico',
-                  'BSFC',
-                  'g/kWh',
-                  'kWh/h',
-              ];
+    const consumptionKeywords = isTowedNonSelfPropelled
+        ? [
+            'bomba de trasvasije',
+            'consumo auxiliar',
+            'caudal dispensador',
+            'L/min',
+            '12V',
+            '24V',
+            'sin propulsión propia',
+            'remolcado',
+        ]
+        : isPneumaticOrHandTool
+            ? ['consumo de aire', 'air consumption', 'L/s', 'm³/min', 'cfm', 'potencia absorbida', 'kWh/h']
+            : isRoadOrDumpOrUtilityVehicle
+                ? [
+                    'consumo de combustible',
+                    'rendimiento de combustible',
+                    'fuel consumption',
+                    'km/L',
+                    'L/100 km',
+                    'L/h',
+                    'g/kWh',
+                    'kWh/100 km',
+                    'mpg',
+                ]
+                : [
+                    'consumo de combustible',
+                    'fuel consumption',
+                    'consumo horario',
+                    'L/h',
+                    'gal/h',
+                    'consumo específico',
+                    'BSFC',
+                    'g/kWh',
+                    'kWh/h',
+                ];
 
     return [
         {
             axis_key: 'fuente_energia',
             label_es: 'Fuente energía',
-            unit_si: 'Diésel | Gasolina | Eléctrico | Híbrido | GLP/GNV | Neumático',
+            unit_si: isTowedNonSelfPropelled
+                ? 'Remolcado / Auxiliar 12V-24V / Manual'
+                : 'Diésel | Gasolina | Eléctrico | Híbrido | GLP/GNV | Neumático',
             value_kind: 'CLOSED_ENUM',
             allowed_enum_values: UNIVERSAL_ENERGY_SOURCE_ENUM_VALUES,
             search_keywords: [
@@ -1257,23 +1375,25 @@ export function buildUniversalEnergySpecAxesForType(typeContextText: string): Eq
                 'híbrido',
                 'GLP',
                 'aire comprimido',
+                'remolcado',
+                'auxiliar 12V',
             ],
             mandatory: true,
             is_differentiator: false,
         },
         {
             axis_key: 'consumo_energetico_nominal',
-            label_es: 'Consumo nominal',
+            label_es: isTowedNonSelfPropelled ? 'Consumo auxiliar / Tracción' : 'Consumo nominal',
             unit_si: consumptionUnitSi,
             value_kind: 'PHYSICAL_MAGNITUDE',
             search_keywords: consumptionKeywords,
-            mandatory: true,
+            mandatory: !isTowedNonSelfPropelled,
             is_differentiator: true,
         },
         {
             axis_key: 'capacidad_energetica_autonomia',
-            label_es: 'Capacidad estanque / batería',
-            unit_si: 'L / kWh',
+            label_es: isTowedNonSelfPropelled ? 'Capacidad estanque / Carga útil' : 'Capacidad estanque / batería',
+            unit_si: isTowedNonSelfPropelled ? 'L / m³ / kg' : 'L / kWh',
             value_kind: 'PHYSICAL_MAGNITUDE',
             search_keywords: [
                 'capacidad tanque de combustible',
@@ -1370,19 +1490,32 @@ export function deriveEnergyConsumptionProfile(params: {
     existingProfile?: Record<string, any> | null;
 }): {
     energy_source:
-        | 'DIESEL'
-        | 'GASOLINA'
-        | 'ELECTRICO_RED_AC'
-        | 'ELECTRICO_BATERIA_BEV'
-        | 'HIBRIDO_DIESEL_ELECTRICO'
-        | 'HIBRIDO_GASOLINA_ELECTRICO'
-        | 'DUAL_FUEL_DIESEL_GAS'
-        | 'GLP_GNV'
-        | 'NEUMATICO_AIRE_COMPRIMIDO'
-        | 'HIDRAULICO_AUXILIAR'
-        | 'NO_DECLARADO';
+    | 'DIESEL'
+    | 'GASOLINA'
+    | 'ELECTRICO_RED_AC'
+    | 'ELECTRICO_BATERIA_BEV'
+    | 'HIBRIDO_DIESEL_ELECTRICO'
+    | 'HIBRIDO_GASOLINA_ELECTRICO'
+    | 'DUAL_FUEL_DIESEL_GAS'
+    | 'GLP_GNV'
+    | 'NEUMATICO_AIRE_COMPRIMIDO'
+    | 'HIDRAULICO_AUXILIAR'
+    | 'REMOLCADO_SIN_PROPULSION_PROPIA'
+    | 'MANUAL_MECANICO'
+    | 'NO_DECLARADO';
     energy_spec_label: string | null;
-    cost_driver_unit: 'L/h' | 'km/L' | 'L/100km' | 'kWh/h' | 'kWh/100km' | 'L/s';
+    cost_driver_unit:
+        | 'L/h'
+        | 'km/L'
+        | 'L/100km'
+        | 'kWh/h'
+        | 'kWh/100km'
+        | 'kWh/ciclo'
+        | 'L/s'
+        | 'L/min'
+        | 'bar (700 bar Hidr.)'
+        | '0 L/h (Remolcado)'
+        | '0 L/h (Manual)';
     hourly_consumption_by_load: {
         idle_or_pto: string | null;
         low_load_25_35pct: string | null;
@@ -1393,6 +1526,11 @@ export function deriveEnergyConsumptionProfile(params: {
         km_per_liter: string | null;
         liters_per_100km: string | null;
         kwh_per_100km: string | null;
+        highway_km_per_liter: string | null;
+        highway_liters_per_100km: string | null;
+        offroad_km_per_liter: string | null;
+        offroad_liters_per_100km: string | null;
+        estimated_range_km: string | null;
     };
     specific_consumption_bsfc_gkwh: string | null;
     pneumatic_or_hydraulic_flow: string | null;
@@ -1419,12 +1557,14 @@ export function deriveEnergyConsumptionProfile(params: {
         'consumo_combustible',
         'consumo_aire',
         'consumo_nominal',
+        'caudal_bomba_o_servicio_aux',
     ]);
     const capacitySlot = findSlot([
         'capacidad_energetica_autonomia',
         'capacidad_estanque',
         'capacidad_combustible',
         'capacidad_bateria',
+        'capacidad_carga_o_volumen',
     ]);
 
     const corpusText = [
@@ -1438,12 +1578,33 @@ export function deriveEnergyConsumptionProfile(params: {
 
     const normCorpus = stripTextAccents(corpusText);
     const normSourceSlot = stripTextAccents(sourceSlot?.value_si || '');
+    const normTypeAndCategory = stripTextAccents(`${params.tipo_equipo || ''} ${params.categoria_equipo || ''}`);
+
+    const isTowedNonSelfPropelled =
+        /\b(carro\s+de\s+arrastre|remolque|semirremolque|cama\s+baja|lowboy|acoplado|estanque\s+(?:movil\s+)?remolcado|cisterna\s+remolcada|implemento\s+remolcado|dolly|sin\s+propulsion\s+propia)\b/.test(
+            `${normTypeAndCategory} ${normSourceSlot}`
+        ) && !/\b(autopropulsad|motor\s+diesel|tractocamion)\b/.test(normTypeAndCategory);
 
     let energySource: ReturnType<typeof deriveEnergyConsumptionProfile>['energy_source'] =
         prev.energy_source && prev.energy_source !== 'NO_DECLARADO' ? prev.energy_source : 'NO_DECLARADO';
 
     const targetDetect = normSourceSlot || normCorpus;
-    if (/\bdual[- ]?fuel\b/.test(targetDetect)) {
+    const isHighPressure700BarTool =
+        /\b(llave\s+(?:de\s+)?torque\s+hidraulic|700\s*bar|10[.,]?000\s*psi|cilindro\s+hidraulico\s+portatil|tensor\s+hidraulico)\b/.test(
+            `${normTypeAndCategory} ${targetDetect}`
+        );
+    const isManualMechanicalTool =
+        /\b(torquimetro\s+manual|tecle\s+manual|polipasto\s+manual|gata\s+mecanica|herramienta\s+manual|sin\s+energia\s+externa)\b/.test(
+            `${normTypeAndCategory} ${targetDetect}`
+        ) && !/\b(diesel|electric|bateria|hidraulic|neumatic)\b/.test(targetDetect);
+
+    if (isManualMechanicalTool) {
+        energySource = 'MANUAL_MECANICO';
+    } else if (isHighPressure700BarTool) {
+        energySource = 'HIDRAULICO_AUXILIAR';
+    } else if (isTowedNonSelfPropelled && !/\b(motor\s+diesel\s+propio|autopropulsad)\b/.test(targetDetect)) {
+        energySource = 'REMOLCADO_SIN_PROPULSION_PROPIA';
+    } else if (/\bdual[- ]?fuel\b/.test(targetDetect)) {
         energySource = 'DUAL_FUEL_DIESEL_GAS';
     } else if (/\bhibrid/.test(targetDetect)) {
         energySource = /\b(gasolina|bencina)\b/.test(targetDetect)
@@ -1453,9 +1614,9 @@ export function deriveEnergyConsumptionProfile(params: {
         energySource = 'GLP_GNV';
     } else if (/\b(perforadora\s+neumatica|martillo\s+neumatico|aire\s+comprimido)\b/.test(targetDetect) && !/\b(motor\s+diesel|turbodiesel)\b/.test(targetDetect)) {
         energySource = 'NEUMATICO_AIRE_COMPRIMIDO';
-    } else if (/\b(bateria\s+bev|el[eé]ctrico\s+bater[ií]a|100%\s+el[eé]ctric|bev|bateria\s+li-?ion|bateria\s+lfp)\b/.test(targetDetect) && !/\b(motor\s+diesel|turbodiesel|alternador\s+24\s*v|baterias?\s+12\s*v)\b/.test(targetDetect)) {
+    } else if (/\b(bateria\s+bev|el[eé]ctrico\s+bater[ií]a|100%\s+el[eé]ctric|bev|bateria\s+li-?ion|bateria\s+lfp|dron|rpas|uav)\b/.test(`${normTypeAndCategory} ${targetDetect}`) && !/\b(motor\s+diesel|turbodiesel|alternador\s+24\s*v|baterias?\s+12\s*v)\b/.test(targetDetect)) {
         energySource = 'ELECTRICO_BATERIA_BEV';
-    } else if (/\b(el[eé]ctrico\s+red|red\s+trif[aá]sica|alimentaci[oó]n\s+el[eé]ctrica\s+ac)\b/.test(targetDetect) && !/\b(motor\s+diesel|turbodiesel)\b/.test(targetDetect)) {
+    } else if (/\b(el[eé]ctrico\s+red|red\s+trif[aá]sica|alimentaci[oó]n\s+el[eé]ctrica\s+ac|pala\s+electrica\s+de\s+cables|bomba\s+sumergible\s+trifasica)\b/.test(`${normTypeAndCategory} ${targetDetect}`) && !/\b(motor\s+diesel|turbodiesel)\b/.test(targetDetect)) {
         energySource = 'ELECTRICO_RED_AC';
     } else if (/\b(gasolina|bencina|nafta)\b/.test(targetDetect) && !/\b(diesel|turbodiesel|ulsd)\b/.test(targetDetect)) {
         energySource = 'GASOLINA';
@@ -1463,25 +1624,104 @@ export function deriveEnergyConsumptionProfile(params: {
         energySource = 'DIESEL';
     }
 
-    const isRoadOrTruck = /\b(camion\s+tolva|tractocamion|camioneta|pick\s*up|automovil|suv|furgon|van|bus)\b/.test(
-        stripTextAccents(`${params.tipo_equipo || ''} ${params.categoria_equipo || ''}`)
+    const isRoadOrTruck = /\b(camion|tolva|volquete|aljibe|lubricador|pluma|mixer|hormigonero|tractocamion|camioneta|pick\s*up|automovil|suv|furgon|utilitario|van|bus|minibus)\b/.test(
+        normTypeAndCategory
+    ) && !/\b(caex|camion\s+de\s+extraccion|ultra\s*class)\b/.test(normTypeAndCategory);
+    const isCyclicBatteryAsset = /\b(dron|rpas|uav|herramienta\s+inalambrica|llave\s+de\s+impacto\s+bateria)\b/.test(
+        normTypeAndCategory
     );
 
-    let costDriverUnit: 'L/h' | 'km/L' | 'L/100km' | 'kWh/h' | 'kWh/100km' | 'L/s' = 'L/h';
-    if (energySource === 'NEUMATICO_AIRE_COMPRIMIDO') {
+    let costDriverUnit: ReturnType<typeof deriveEnergyConsumptionProfile>['cost_driver_unit'] = 'L/h';
+    if (energySource === 'MANUAL_MECANICO') {
+        costDriverUnit = '0 L/h (Manual)';
+    } else if (energySource === 'REMOLCADO_SIN_PROPULSION_PROPIA') {
+        costDriverUnit = '0 L/h (Remolcado)';
+    } else if (energySource === 'NEUMATICO_AIRE_COMPRIMIDO') {
         costDriverUnit = 'L/s';
+    } else if (energySource === 'HIDRAULICO_AUXILIAR') {
+        costDriverUnit = isHighPressure700BarTool ? 'bar (700 bar Hidr.)' : 'L/min';
     } else if (energySource === 'ELECTRICO_RED_AC') {
         costDriverUnit = 'kWh/h';
     } else if (energySource === 'ELECTRICO_BATERIA_BEV') {
-        costDriverUnit = isRoadOrTruck ? 'kWh/100km' : 'kWh/h';
+        costDriverUnit = isRoadOrTruck ? 'kWh/100km' : isCyclicBatteryAsset ? 'kWh/ciclo' : 'kWh/h';
     } else if (isRoadOrTruck && /\b(km\/l|l\/100\s*km)\b/i.test(corpusText)) {
         costDriverUnit = 'km/L';
     }
 
-    const extractRegexMatch = (re: RegExp): string | null => {
-        const m = corpusText.match(re);
+    const extractRegexMatch = (re: RegExp, sourceStr: string = corpusText): string | null => {
+        const m = sourceStr.match(re);
         return m && m[1] ? m[1].replace(/\s+/g, ' ').trim() : null;
     };
+
+    const corpusLines = corpusText.split(/\r?\n/);
+
+    let highwayKmPerLiter: string | null = prev?.road_haul_efficiency?.highway_km_per_liter || null;
+    let highwayLitersPer100Km: string | null = prev?.road_haul_efficiency?.highway_liters_per_100km || null;
+    let offroadKmPerLiter: string | null = prev?.road_haul_efficiency?.offroad_km_per_liter || null;
+    let offroadLitersPer100Km: string | null = prev?.road_haul_efficiency?.offroad_liters_per_100km || null;
+    let estimatedRangeKm: string | null = prev?.road_haul_efficiency?.estimated_range_km || null;
+
+    let idleOrPtoLine: string | null = null;
+    let lowLoadLine: string | null = null;
+    let mediumLoadLine: string | null = null;
+    let highLoadLine: string | null = null;
+
+    let explicitNoDefInCorpus = false;
+
+    for (const rawLine of corpusLines) {
+        const line = rawLine.trim();
+        if (!line) continue;
+
+        const hasKmL = /\b\d{1,2}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,2}(?:[.,]\d+)?)?\s*km\/L\b/i.test(line);
+        const hasL100 = /\b\d{1,3}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,3}(?:[.,]\d+)?)?\s*L\/100\s*km\b/i.test(line);
+
+        if (hasKmL || hasL100) {
+            const kml = extractRegexMatch(/\b(\d{1,2}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,2}(?:[.,]\d+)?)?\s*km\/L)\b/i, line);
+            const l100 = extractRegexMatch(/\b(\d{1,3}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,3}(?:[.,]\d+)?)?\s*L\/100\s*km)\b/i, line);
+
+            if (/\b(fuera\s+de\s+carretera|off[- ]?road|faena|faenero|camino\s+minero|urbano|botadero|rampa|severo)\b/i.test(line) && !/\bcarretera\s*\/\s*traslado\b/i.test(line)) {
+                if (kml && !offroadKmPerLiter) offroadKmPerLiter = kml;
+                if (l100 && !offroadLitersPer100Km) offroadLitersPer100Km = l100;
+            } else if (/\b(carretera|ruta|pavimentad|homologad|traslado|autopista|interurban)\b/i.test(line)) {
+                if (kml && !highwayKmPerLiter) highwayKmPerLiter = kml;
+                if (l100 && !highwayLitersPer100Km) highwayLitersPer100Km = l100;
+            }
+        }
+
+        if (/\b(autonom[ií]a\s+vial|autonom[ií]a\s+en\s+ruta|alcance\s+vial|rango\s+vial)\b/i.test(line)) {
+            const rangeMatch = extractRegexMatch(
+                /\b(\d{2,4}(?:[.,]\d+)?(?:\s*km)?(?:\s*(?:[-–a]|to)\s*\d{2,4}(?:[.,]\d+)?)?\s*km\b)/i,
+                line
+            );
+            if (rangeMatch && !estimatedRangeKm) estimatedRangeKm = rangeMatch;
+        }
+
+        // Tasas horarias por factor de carga desde líneas/filas específicas
+        const lhInLine = extractRegexMatch(
+            /\b(\d{1,3}(?:[.,]\d+)?(?:\s*(?:L\/h|kWh\/h))?(?:\s*[-–a/]\s*\d{1,3}(?:[.,]\d+)?){0,2}\s*(?:L\/h|kWh\/h))\b/i,
+            line
+        );
+        if (lhInLine && !/\b(def|adblue|urea)\b/i.test(line)) {
+            if (/\b(ralent[ií]|idle|espera)\b/i.test(line) && !/\bcarga\s+baja\b/i.test(line)) {
+                if (!idleOrPtoLine) idleOrPtoLine = lhInLine;
+            } else if (/\b(carga\s+baja|factor\s+de\s+carga\s+bajo|25\s*[-–a]\s*35\s*%|pto\s+ligero|baja\s+demanda)\b/i.test(line)) {
+                if (!lowLoadLine) lowLoadLine = lhInLine;
+            } else if (/\b(carga\s+media|factor\s+de\s+carga\s+medio|50\s*[-–a]\s*65\s*%|nominal|ciclo\s+mixto|ciclo\s+t[ií]pico)\b/i.test(line)) {
+                if (!mediumLoadLine) mediumLoadLine = lhInLine;
+            } else if (/\b(carga\s+alta|factor\s+de\s+carga\s+alto|80\s*[-–a]\s*100\s*%|plena\s+carga|carga\s+severa)\b/i.test(line)) {
+                if (!highLoadLine) highLoadLine = lhInLine;
+            }
+        }
+
+        if (
+            /\b(def\b|adblue|urea|scr\b)\b/i.test(line) &&
+            /\b(no\s+aplica|sin\s+scr|sin\s+adblue|no\s+requiere|no\s+utiliza|sin\s+sistema\s+scr|export\s+euro\s*(?:3|iii)|tier\s*[23]\s+sin\s+scr)\b/i.test(
+                line
+            )
+        ) {
+            explicitNoDefInCorpus = true;
+        }
+    }
 
     const bsfcMatch =
         extractRegexMatch(/\b(\d{3}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{3}(?:[.,]\d+)?)?\s*g\/kWh)\b/i) ||
@@ -1489,12 +1729,16 @@ export function deriveEnergyConsumptionProfile(params: {
         null;
 
     const kmPerLiterMatch =
+        highwayKmPerLiter ||
         extractRegexMatch(/\b(\d{1,2}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,2}(?:[.,]\d+)?)?\s*km\/L)\b/i) ||
+        offroadKmPerLiter ||
         prev?.road_haul_efficiency?.km_per_liter ||
         null;
 
     const lPer100KmMatch =
-        extractRegexMatch(/\b(\d{1,2}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,2}(?:[.,]\d+)?)?\s*L\/100\s*km)\b/i) ||
+        highwayLitersPer100Km ||
+        extractRegexMatch(/\b(\d{1,3}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,3}(?:[.,]\d+)?)?\s*L\/100\s*km)\b/i) ||
+        offroadLitersPer100Km ||
         prev?.road_haul_efficiency?.liters_per_100km ||
         null;
 
@@ -1504,10 +1748,11 @@ export function deriveEnergyConsumptionProfile(params: {
         null;
 
     const lhRangeMatch =
-        extractRegexMatch(/\b(\d{1,3}(?:[.,]\d+)?(?:\s*[-–a/]\s*\d{1,3}(?:[.,]\d+)?){0,2}\s*(?:L\/h|kWh\/h))\b/i) ||
+        mediumLoadLine ||
         (consumptionSlot?.value_si && /\b(L\/h|kWh\/h)\b/i.test(consumptionSlot.value_si)
             ? consumptionSlot.value_si
             : null) ||
+        extractRegexMatch(/\b(\d{1,3}(?:[.,]\d+)?(?:\s*[-–a/]\s*\d{1,3}(?:[.,]\d+)?){0,2}\s*(?:L\/h|kWh\/h))\b/i) ||
         prev?.hourly_consumption_by_load?.medium_load_50_65pct ||
         null;
 
@@ -1517,30 +1762,54 @@ export function deriveEnergyConsumptionProfile(params: {
         prev.pneumatic_or_hydraulic_flow ||
         null;
 
-    const requiresDef =
-        /\b(def\b|adblue|scr\b|reducci[oó]n\s+catal[ií]tica)\b/i.test(corpusText) ||
-        Boolean(prev?.def_adblue_consumption?.requires_def);
+    const defPctRaw = extractRegexMatch(
+        /(?:def|adblue)[^\n]{0,65}?(\d{1,2}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,2}(?:[.,]\d+)?)?\s*%)/i
+    );
+    const defTankRaw = extractRegexMatch(
+        /(?:estanque|tanque|capacidad)[^\n]{0,35}?(?:def|adblue|urea)[^\n]{0,45}?(\d{1,3}(?:[.,]\d+)?\s*L\b)(?!\s*\/\s*(?:h|hr|min|s|100\s*km))/i
+    );
 
-    const defTankMatch =
-        extractRegexMatch(/(?:def|adblue|urea)[^\n]{0,50}?(\d{1,3}(?:[.,]\d+)?\s*L\b)/i) ||
-        prev?.def_adblue_consumption?.tank_capacity_liters ||
-        null;
+    const requiresDef = explicitNoDefInCorpus
+        ? false
+        : Boolean(
+              defPctRaw ||
+                  defTankRaw ||
+                  (/\b(adblue|reducci[oó]n\s+catal[ií]tica\s+selectiva\s+scr)\b/i.test(corpusText) &&
+                      !/\b(no\s+aplica|sin\s+scr|sin\s+adblue)\b/i.test(corpusText)) ||
+                  prev?.def_adblue_consumption?.requires_def
+          );
 
-    const defPctMatch =
-        extractRegexMatch(/(?:def|adblue)[^\n]{0,50}?(\d{1,2}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,2}(?:[.,]\d+)?)?\s*%)/i) ||
-        prev?.def_adblue_consumption?.consumption_pct_of_fuel ||
-        null;
+    const defTankMatch = requiresDef
+        ? defTankRaw ||
+          (prev?.def_adblue_consumption?.tank_capacity_liters &&
+          !/^1[.,]5\s*L$/i.test(prev.def_adblue_consumption.tank_capacity_liters)
+              ? prev.def_adblue_consumption.tank_capacity_liters
+              : null)
+        : null;
+
+    const defPctMatch = requiresDef
+        ? defPctRaw || prev?.def_adblue_consumption?.consumption_pct_of_fuel || null
+        : null;
 
     const tankCapMatch =
         extractRegexMatch(
-            /(?:estanque\s+de\s+combustible|tanque\s+de\s+combustible|capacidad\s+(?:de\s+)?(?:estanque|tanque|combustible|bater[ií]a))[^\n]{0,55}?(\d{1,4}(?:[.,]\d+)?\s*(?:L\b|litros?|kWh))/i
+            /(?:estanque\s+de\s+combustible|tanque\s+de\s+combustible|capacidad\s+(?:neta\s+)?(?:de\s+)?(?:estanque|tanque|combustible|bater[ií]a))[^\n]{0,65}?(\d{1,4}(?:[.,]\d+)?(?:\s*(?:a|-|–)\s*\d{1,4}(?:[.,]\d+)?)?\s*(?:L\b|litros?|kWh))(?!\s*\/)/i
         ) ||
         capacitySlot?.value_si ||
         prev?.storage_and_autonomy?.tank_or_battery_capacity ||
         null;
 
+    const autonomyHoursMatch = extractRegexMatch(
+        /autonom[ií]a(?:\s+operativa)?[^\n]{0,65}?(\d{1,4}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,4}(?:[.,]\d+)?)?\s*(?:h\b|horas))/i
+    );
+    const autonomyKmMatch =
+        estimatedRangeKm ||
+        extractRegexMatch(
+            /autonom[ií]a(?:\s+vial)?[^\n]{0,65}?(\d{2,4}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{2,4}(?:[.,]\d+)?)?\s*km\b)/i
+        );
+
     const autonomyMatch =
-        extractRegexMatch(/autonom[ií]a[^\n]{0,50}?(\d{1,4}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,4}(?:[.,]\d+)?)?\s*(?:h\b|horas|km\b))/i) ||
+        [autonomyKmMatch, autonomyHoursMatch].filter(Boolean).join(' · ') ||
         prev?.storage_and_autonomy?.estimated_autonomy ||
         null;
 
@@ -1549,15 +1818,20 @@ export function deriveEnergyConsumptionProfile(params: {
         energy_spec_label: sourceSlot?.value_si || prev.energy_spec_label || null,
         cost_driver_unit: costDriverUnit,
         hourly_consumption_by_load: {
-            idle_or_pto: prev?.hourly_consumption_by_load?.idle_or_pto || null,
-            low_load_25_35pct: prev?.hourly_consumption_by_load?.low_load_25_35pct || null,
+            idle_or_pto: idleOrPtoLine || prev?.hourly_consumption_by_load?.idle_or_pto || null,
+            low_load_25_35pct: lowLoadLine || prev?.hourly_consumption_by_load?.low_load_25_35pct || null,
             medium_load_50_65pct: lhRangeMatch,
-            high_load_80_100pct: prev?.hourly_consumption_by_load?.high_load_80_100pct || null,
+            high_load_80_100pct: highLoadLine || prev?.hourly_consumption_by_load?.high_load_80_100pct || null,
         },
         road_haul_efficiency: {
             km_per_liter: kmPerLiterMatch,
             liters_per_100km: lPer100KmMatch,
             kwh_per_100km: kwhPer100KmMatch,
+            highway_km_per_liter: highwayKmPerLiter || kmPerLiterMatch,
+            highway_liters_per_100km: highwayLitersPer100Km || lPer100KmMatch,
+            offroad_km_per_liter: offroadKmPerLiter,
+            offroad_liters_per_100km: offroadLitersPer100Km,
+            estimated_range_km: autonomyKmMatch,
         },
         specific_consumption_bsfc_gkwh: bsfcMatch,
         pneumatic_or_hydraulic_flow: pneumaticFlowMatch,
@@ -1753,6 +2027,66 @@ export function detectDeterministicEquipmentTypeFromBrandAndModel(
             type_key: 'excavadora_hidraulica',
             canonical_type_es: 'EXCAVADORA HIDRÁULICA',
             categoria_equipo: 'EXCAVACIÓN Y CARGUÍO',
+        };
+    }
+
+    // 7. Palas Eléctricas de Cables (Komatsu / P&H 4100XPC, CAT 7495)
+    const elecShovel = clean.match(/\b(?:KOMATSU|P&H|P\s+AND\s+H|CAT(?:ERPILLAR)?)\s+(4100\s*XPC|2800\s*XPC|7495[A-Z0-9]*)\b/);
+    if (elecShovel) {
+        return {
+            correctedMake: /7495/.test(elecShovel[1]) ? 'CATERPILLAR' : 'KOMATSU P&H',
+            correctedModel: elecShovel[1].replace(/\s+/g, ''),
+            type_key: 'pala_electrica_de_cables',
+            canonical_type_es: 'PALA ELÉCTRICA DE CABLES',
+            categoria_equipo: 'CARGUÍO MINERO GRAN MINERÍA',
+        };
+    }
+
+    // 8. Drones / RPAS Industriales (DJI Matrice, Mavic Enterprise)
+    const djiDrone = clean.match(/\bDJI\s+((?:MATRICE|MAVIC|PHANTOM|AGRAS)\s*[A-Z0-9-]+(?:\s+RTK|\s+ENTERPRISE)*)\b/);
+    if (djiDrone) {
+        return {
+            correctedMake: 'DJI',
+            correctedModel: djiDrone[1].trim(),
+            type_key: 'dron_rpas_topografico',
+            canonical_type_es: 'DRON RPAS TOPOGRÁFICO E INSPECCIÓN',
+            categoria_equipo: 'TOPOGRAFÍA, FOTOGRAMETRÍA Y TELEMETRÍA AÉREA',
+        };
+    }
+
+    // 9. Llaves de Torque Hidráulicas 700 bar (Hytorc, Enerpac)
+    const torqueWrench = clean.match(/\b(HYTORC|ENERPAC)\s+((?:AVANTI|MXT|STEALTH|ICE|S\d{3,4}|W\d{3,4})[A-Z0-9-]*)\b/);
+    if (torqueWrench) {
+        return {
+            correctedMake: torqueWrench[1],
+            correctedModel: torqueWrench[2].trim(),
+            type_key: 'llave_torque_hidraulica',
+            canonical_type_es: 'LLAVE DE TORQUE HIDRÁULICA',
+            categoria_equipo: 'HERRAMIENTAS DE TORQUE Y TENSIONADO INDUSTRIAL',
+        };
+    }
+
+    // 10. Bombas Sumergibles de Achique / Drenaje Minero (Grindex, Flygt)
+    const subPump = clean.match(/\b(GRINDEX|FLYGT)\s+((?:MAJOR|MASTER|MATADOR|MAXI|MINEX|MINETTE|BIBO|\d{4})[A-Z0-9-]*)\b/);
+    if (subPump) {
+        return {
+            correctedMake: subPump[1],
+            correctedModel: subPump[2].trim(),
+            type_key: 'bomba_sumergible_achique',
+            canonical_type_es: 'BOMBA SUMERGIBLE DE ACHIQUE TRIFÁSICA',
+            categoria_equipo: 'BOMBEO E IMPULSIÓN DE FLUIDOS',
+        };
+    }
+
+    // 11. Chancadores Móviles sobre Orugas (Metso Lokotrack, Sandvik QJ/QH)
+    const crusher = clean.match(/\b(METSO(?:\s+OUTOTEC)?|SANDVIK)\s+((?:LOKOTRACK\s+)?(?:LT\d{2,4}[A-Z0-9]*|QJ\d{3}[A-Z0-9]*|QH\d{3}[A-Z0-9]*))\b/);
+    if (crusher) {
+        return {
+            correctedMake: crusher[1].startsWith('METSO') ? 'METSO' : 'SANDVIK',
+            correctedModel: crusher[2].trim(),
+            type_key: 'chancador_movil_sobre_orugas',
+            canonical_type_es: 'CHANCADOR MÓVIL SOBRE ORUGAS',
+            categoria_equipo: 'CONMINUCIÓN Y PROCESAMIENTO DE MINERALES',
         };
     }
 

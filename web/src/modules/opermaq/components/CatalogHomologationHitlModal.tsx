@@ -8,6 +8,7 @@ import {
     type CanonicalSpecSlot,
     MISSING_AXIS_VALUE,
 } from '../utils/opermaqDomainProjection';
+import { M3CircularProgress } from './M3ProgressIndicator';
 import { M3Switch } from './M3Switch';
 
 interface HomologationAxisDiff {
@@ -274,9 +275,7 @@ export const CatalogHomologationHitlModal: React.FC<CatalogHomologationHitlModal
                 <div className="flex-1 min-h-0 overflow-y-auto p-[21px] flex flex-col gap-[21px]">
                     {isLoading ? (
                         <div className="py-[55px] flex flex-col items-center justify-center gap-[13px]">
-                            <span className="material-symbols-outlined animate-spin text-[24px] text-[#C68346]">
-                                progress_activity
-                            </span>
+                            <M3CircularProgress size={24} strokeWidth={3} tone="copper" />
                             <span className="text-[12px] font-mono text-[#475569] dark:text-[#8A93A6]">
                                 {t('opermaq_domains.homologate_loading')}
                             </span>

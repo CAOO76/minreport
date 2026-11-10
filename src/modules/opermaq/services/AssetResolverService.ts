@@ -1,6 +1,9 @@
+import { createHash } from 'crypto';
 import { db } from '../../../config/firebase';
 import { ResilientAIClient, Type } from '../../../core/resilient-ai-client';
 import type { GlobalEquipmentTypeDoc, ResolvedAssetCandidate } from '../types/vault.types';
+import { AssetOntologyEngine } from './AssetOntologyEngine';
+import { getCachedMasterSymbologyIndex } from './SymbologyService';
 import {
     detectDeterministicEquipmentTypeFromBrandAndModel,
     extractHomologousAxisValues,
@@ -646,7 +649,7 @@ TAREA PRIMARIA (PASO 1):
             if (step1.is_pertinent === false) {
                 throw new DomainRejectionError(
                     step1.rejection_reason ||
-                        `"${cleanInput}" corresponde a un artículo doméstico o de consumo personal ajeno a vehículos, maquinaria o equipamiento técnico.`
+                    `"${cleanInput}" corresponde a un artículo doméstico o de consumo personal ajeno a vehículos, maquinaria o equipamiento técnico.`
                 );
             }
 
@@ -737,7 +740,7 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
             if (postWebType.is_pertinent === false) {
                 throw new DomainRejectionError(
                     postWebType.rejection_reason ||
-                        `"${cleanInput}" no corresponde a un vehículo, maquinaria ni equipo técnico.`
+                    `"${cleanInput}" no corresponde a un vehículo, maquinaria ni equipo técnico.`
                 );
             }
             if (!isVagueDetectedType(postWebType.detected_tipo_equipo)) {
@@ -771,7 +774,7 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
         `[OPERMAQ-TYPE-ONTOLOGY] TIPO="${activeTypeDoc.canonical_type_es}" (key=${activeTypeDoc.type_key}, source=${typeResolution.resolutionSource}, reused=${typeResolution.reusedExistingSchema}, ${typeResolution.latencyMs}ms) -> Ejes: [${activeTypeDoc.spec_schema.map((a) => a.axis_key).join(', ')}]`
     );
 
-    // ── PASO 3 (PASADA 1 GROUNDED): Búsqueda Web en Prosa Natural Dirigida Exclusivamente a los Ejes de `activeTypeDoc` ──
+    // ── PASO 3 (PASADA 1 GROUNDED): Búsqueda Web en Prosa Natural Dirigida Exclusivamente a los Ejes de `activeTypeDoc` + Caché Determinista SHA-256 (30 días) ──
     const pass1Prompt = buildTypeScopedGroundedResearchPrompt({
         rawInput: cleanInput,
         correctedMake,
@@ -783,39 +786,106 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
         constraints,
     });
 
-    let pass1Response;
-    try {
-        pass1Response = await ResilientAIClient.generate({
-            module: 'opermaq',
-            preferredTier: 'SECONDARY',
-            thinkingLevel: 'low',
-            temperature: 0,
-            useGoogleSearch: true,
-            requireGroundedEvidence: true,
-            maxOutputTokens: 8192,
-            bypassCache: forceWebDiscovery || Boolean(clarificationContext),
-            prompt: pass1Prompt,
-        });
-    } catch (aiErr) {
-        const localFallback = await localPreexistingPromise;
-        if (localFallback.matched && localFallback.candidates.length > 0) {
-            return {
-                requires_clarification: false,
-                candidates: localFallback.candidates,
-                resolved_from_commons: true,
-                resolution_tier: localFallback.tier === 'TIER_0_EXACT' ? 'TIER_0_EXACT' : 'TIER_1_HYBRID_RRF',
-                resolution_latency_ms: localFallback.latencyMs,
-                detected_equipment_type: {
-                    type_key: activeTypeDoc.type_key,
-                    canonical_type_es: activeTypeDoc.canonical_type_es,
-                    reused_existing_schema: typeResolution.reusedExistingSchema,
-                    resolution_source: typeResolution.resolutionSource,
-                    type_resolution_latency_ms: typeResolution.latencyMs,
-                    spec_axes: activeTypeDoc.spec_schema.map((a) => a.axis_key),
-                },
-            };
+    const groundedCacheKey = createHash('sha256')
+        .update(
+            JSON.stringify({
+                v: 3,
+                make: correctedMake.toUpperCase(),
+                model: correctedModelOrFamily.toUpperCase(),
+                typeKey: activeTypeDoc.type_key,
+                isGeneric,
+                query: cleanInput.toUpperCase().replace(/\s+/g, ' '),
+            })
+        )
+        .digest('hex');
+
+    const GROUNDED_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+    let pass1Response: {
+        text: string;
+        groundingSources: Array<{ title: string; uri: string }>;
+    } | null = null;
+
+    if (!forceWebDiscovery && !clarificationContext) {
+        try {
+            const cacheSnap = await db.collection('ai_grounded_discovery_cache').doc(groundedCacheKey).get();
+            if (cacheSnap.exists) {
+                const cData = cacheSnap.data()!;
+                const createdMs = Number(cData.createdAtMs || 0);
+                if (
+                    createdMs > 0 &&
+                    Date.now() - createdMs < GROUNDED_CACHE_TTL_MS &&
+                    typeof cData.text === 'string' &&
+                    cData.text.length > 50 &&
+                    Array.isArray(cData.groundingSources) &&
+                    cData.groundingSources.length > 0
+                ) {
+                    pass1Response = {
+                        text: cData.text,
+                        groundingSources: cData.groundingSources,
+                    };
+                }
+            }
+        } catch {
+            // Continuar a búsqueda web en vivo si el caché no está disponible
         }
-        throw aiErr;
+    }
+
+    if (!pass1Response) {
+        try {
+            const liveResponse = await ResilientAIClient.generate({
+                module: 'opermaq',
+                preferredTier: 'SECONDARY',
+                thinkingLevel: 'low',
+                temperature: 0,
+                useGoogleSearch: true,
+                requireGroundedEvidence: true,
+                maxOutputTokens: 8192,
+                bypassCache: forceWebDiscovery || Boolean(clarificationContext),
+                prompt: pass1Prompt,
+            });
+            pass1Response = {
+                text: liveResponse.text,
+                groundingSources: liveResponse.groundingSources,
+            };
+
+            if (!clarificationContext && liveResponse.groundingSources.length > 0) {
+                await db
+                    .collection('ai_grounded_discovery_cache')
+                    .doc(groundedCacheKey)
+                    .set({
+                        cacheKey: groundedCacheKey,
+                        normalizedQuery: cleanInput.toUpperCase(),
+                        make: correctedMake,
+                        model: correctedModelOrFamily,
+                        typeKey: activeTypeDoc.type_key,
+                        text: liveResponse.text,
+                        groundingSources: liveResponse.groundingSources,
+                        createdAtMs: Date.now(),
+                        expiresAtMs: Date.now() + GROUNDED_CACHE_TTL_MS,
+                    })
+                    .catch(() => { });
+            }
+        } catch (aiErr) {
+            const localFallback = await localPreexistingPromise;
+            if (localFallback.matched && localFallback.candidates.length > 0) {
+                return {
+                    requires_clarification: false,
+                    candidates: localFallback.candidates,
+                    resolved_from_commons: true,
+                    resolution_tier: localFallback.tier === 'TIER_0_EXACT' ? 'TIER_0_EXACT' : 'TIER_1_HYBRID_RRF',
+                    resolution_latency_ms: localFallback.latencyMs,
+                    detected_equipment_type: {
+                        type_key: activeTypeDoc.type_key,
+                        canonical_type_es: activeTypeDoc.canonical_type_es,
+                        reused_existing_schema: typeResolution.reusedExistingSchema,
+                        resolution_source: typeResolution.resolutionSource,
+                        type_resolution_latency_ms: typeResolution.latencyMs,
+                        spec_axes: activeTypeDoc.spec_schema.map((a) => a.axis_key),
+                    },
+                };
+            }
+            throw aiErr;
+        }
     }
 
     // ── PASO 4 (PASADA 2 ESTRUCTURADA): Extracción Determinista (`Temperature: 0`) sobre `activeTypeDoc.spec_schema` ──
@@ -872,7 +942,7 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
     if (parsed.is_pertinent === false) {
         throw new DomainRejectionError(
             parsed.rejection_reason ||
-                `"${cleanInput}" corresponde a un artículo doméstico o de consumo personal ajeno a vehículos, maquinaria o equipamiento técnico.`
+            `"${cleanInput}" corresponde a un artículo doméstico o de consumo personal ajeno a vehículos, maquinaria o equipamiento técnico.`
         );
     }
 
@@ -916,8 +986,8 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
             const cleanModel = normalizeModelCode(String(c.model_oficial || correctedModelOrFamily || cleanInput));
             const cleanVersions = Array.isArray(c.versions)
                 ? c.versions
-                      .map((v) => stripTemporalAndHistoricalNoise(String(v || '')))
-                      .filter((v) => Boolean(v) && !textViolatesConstraints(v, constraints))
+                    .map((v) => stripTemporalAndHistoricalNoise(String(v || '')))
+                    .filter((v) => Boolean(v) && !textViolatesConstraints(v, constraints))
                 : [];
             return {
                 ...c,
@@ -969,7 +1039,6 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
             const safeMake = BRAND_SYNONYM_TO_OFFICIAL[rawMakeUpper] || rawMakeUpper;
             let safeModel = normalizeModelCode(String(raw.model_oficial || cleanInput));
 
-            // Escudo Post-LLM estricto en modo genérico con designador real (ej. YT27 no puede mutar a YT28)
             if (isGeneric && designator && !safeModel.includes(designator)) {
                 safeModel = designator;
             }
@@ -998,16 +1067,28 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
                     Array.isArray(existingData.chassis_versions) && existingData.chassis_versions.length > 0
                         ? existingData.chassis_versions
                         : Array.isArray(existingData.versions) && existingData.versions.length > 0
-                        ? existingData.versions
-                        : Array.isArray(raw.versions) && raw.versions.length > 0
-                        ? raw.versions
-                        : ['ESTÁNDAR'];
+                            ? existingData.versions
+                            : Array.isArray(raw.versions) && raw.versions.length > 0
+                                ? raw.versions
+                                : ['ESTÁNDAR'];
                 const existingVersions = rawExistingVersions
                     .map((v: unknown) => stripTemporalAndHistoricalNoise(String(v || '')))
                     .filter((v: string) => Boolean(v) && !textViolatesConstraints(v, constraints));
                 const cleanExistingModel = normalizeModelCode(
                     String(existingData.model_oficial || existingData.model || safeModel)
                 );
+
+                const existingTraits =
+                    existingData.physical_traits ||
+                    activeTypeDoc.physical_traits ||
+                    AssetOntologyEngine.inferAssetPhysicalTraits({
+                        type_key: existingData.equipment_type_key || activeTypeDoc.type_key,
+                        canonical_type_es: existingData.tipo_equipo || activeTypeDoc.canonical_type_es,
+                        categoria_equipo: existingData.categoria_equipo || activeTypeDoc.categoria_equipo,
+                        canonical_specs: hasSelfDescribingTypeSchema(existingData)
+                            ? existingData.canonical_specs
+                            : homologous.slots,
+                    });
 
                 return {
                     global_asset_id: existingDocSnap.id,
@@ -1020,6 +1101,7 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
                     tipo_equipo: existingData.tipo_equipo || activeTypeDoc.canonical_type_es,
                     categoria_equipo:
                         existingData.categoria_equipo || activeTypeDoc.categoria_equipo || 'EQUIPAMIENTO INDUSTRIAL',
+                    physical_traits: existingTraits,
                     canonical_specs: hasSelfDescribingTypeSchema(existingData)
                         ? existingData.canonical_specs
                         : homologous.slots,
@@ -1055,44 +1137,54 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
 
             const profile = !typeMismatchDetected
                 ? {
-                      equipment_type_key: activeTypeDoc.type_key,
-                      archetype_id: activeTypeDoc.archetype_id || 'HERRAMIENTA_INDUSTRIAL_GENERAL',
-                      tipo_equipo: activeTypeDoc.canonical_type_es,
-                      categoria_equipo: activeTypeDoc.categoria_equipo,
-                      canonical_specs: verifiedSlots,
-                      ambiente_operativo: sanitizeDesignAndWorkContextItems(raw.ambiente_operativo),
-                      contexto_operativo: sanitizeDesignAndWorkContextItems(raw.contexto_operativo),
-                      caracteristicas_principales: serializeCanonicalSlotsToSpecsArray(verifiedSlots),
-                  }
+                    equipment_type_key: activeTypeDoc.type_key,
+                    archetype_id: activeTypeDoc.archetype_id || 'HERRAMIENTA_INDUSTRIAL_GENERAL',
+                    tipo_equipo: activeTypeDoc.canonical_type_es,
+                    categoria_equipo: activeTypeDoc.categoria_equipo,
+                    canonical_specs: verifiedSlots,
+                    ambiente_operativo: sanitizeDesignAndWorkContextItems(raw.ambiente_operativo),
+                    contexto_operativo: sanitizeDesignAndWorkContextItems(raw.contexto_operativo),
+                    caracteristicas_principales: serializeCanonicalSlotsToSpecsArray(verifiedSlots),
+                }
                 : await enrichCatalogProfile(
-                      safeMake,
-                      safeModel,
-                      {
-                          equipment_type_key: activeTypeDoc.type_key,
-                          tipo_equipo: activeTypeDoc.canonical_type_es,
-                          categoria_equipo: activeTypeDoc.categoria_equipo,
-                          ambiente_operativo: raw.ambiente_operativo,
-                          contexto_operativo: raw.contexto_operativo,
-                      },
-                      isGeneric,
-                      {
-                          preRetrievedEvidenceText: pass1Response.text,
-                          preRetrievedSources: groundedSources,
-                          preResolvedTypeDoc: activeTypeDoc,
-                      }
-                  );
+                    safeMake,
+                    safeModel,
+                    {
+                        equipment_type_key: activeTypeDoc.type_key,
+                        tipo_equipo: activeTypeDoc.canonical_type_es,
+                        categoria_equipo: activeTypeDoc.categoria_equipo,
+                        ambiente_operativo: raw.ambiente_operativo,
+                        contexto_operativo: raw.contexto_operativo,
+                    },
+                    isGeneric,
+                    {
+                        preRetrievedEvidenceText: pass1Response.text,
+                        preRetrievedSources: groundedSources,
+                        preResolvedTypeDoc: activeTypeDoc,
+                    }
+                );
+
+            const candidateTraits = AssetOntologyEngine.inferAssetPhysicalTraits({
+                type_key: profile.equipment_type_key || activeTypeDoc.type_key,
+                canonical_type_es: profile.tipo_equipo || activeTypeDoc.canonical_type_es,
+                categoria_equipo: profile.categoria_equipo || activeTypeDoc.categoria_equipo,
+                canonical_specs: profile.canonical_specs || verifiedSlots,
+                corpusText: `${safeMake} ${safeModel} ${(profile.ambiente_operativo || []).join(' ')} ${(profile.contexto_operativo || []).join(' ')}`,
+                existingTraits: activeTypeDoc.physical_traits || null,
+            });
 
             const candidateVersions =
                 Array.isArray(raw.versions) && raw.versions.length > 0
                     ? raw.versions
-                          .map((v) => stripTemporalAndHistoricalNoise(String(v || '')).trim())
-                          .filter(Boolean)
+                        .map((v) => stripTemporalAndHistoricalNoise(String(v || '')).trim())
+                        .filter(Boolean)
                     : ['ESTÁNDAR'];
 
             return {
                 make_oficial: safeMake,
                 model_oficial: safeModel,
                 ...profile,
+                physical_traits: candidateTraits,
                 versions: candidateVersions.length > 0 ? candidateVersions : ['ESTÁNDAR'],
                 chassis_versions: candidateVersions.length > 0 ? candidateVersions : ['ESTÁNDAR'],
                 official_url: assignedGroundedUrl,
@@ -1117,8 +1209,8 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
             model_oficial: normalizeModelCode(c.model_oficial),
             versions: Array.isArray(c.versions)
                 ? c.versions
-                      .map((v) => stripTemporalAndHistoricalNoise(String(v || '')))
-                      .filter((v) => Boolean(v) && !textViolatesConstraints(v, constraints))
+                    .map((v) => stripTemporalAndHistoricalNoise(String(v || '')))
+                    .filter((v) => Boolean(v) && !textViolatesConstraints(v, constraints))
                 : ['ESTÁNDAR'],
         }))
         .filter((c) => {
@@ -1207,36 +1299,30 @@ export async function resolveAssetSymbology(assetData: Record<string, any>): Pro
     const makeKey = String(assetData.make_oficial || assetData.make || '').trim().toLowerCase();
     const resolvedSymbology: Record<string, any> = {};
 
-    await Promise.all(
-        Array.from(conceptIds).map(async (conceptId) => {
-            try {
-                const snap = await db.collection('master_symbology_vault').doc(conceptId).get();
-                if (!snap.exists) return;
-                const sym = snap.data()!;
-                const brandVariant = sym.brands_variants?.[makeKey] || sym.brand_variants?.[makeKey.toUpperCase()];
-                const preferredUrl =
-                    brandVariant?.verified_by_human && brandVariant?.asset_storage_url
-                        ? brandVariant.asset_storage_url
-                        : brandVariant?.human_verified && brandVariant?.icon_url
-                        ? brandVariant.icon_url
-                        : sym.standard_icon_url || '';
+    const masterIndex = await getCachedMasterSymbologyIndex();
+    for (const conceptId of conceptIds) {
+        const sym = masterIndex.docsById.get(conceptId);
+        if (!sym) continue;
+        const brandVariant = sym.brands_variants?.[makeKey] || sym.brand_variants?.[makeKey.toUpperCase()];
+        const preferredUrl =
+            brandVariant?.verified_by_human && brandVariant?.asset_storage_url
+                ? brandVariant.asset_storage_url
+                : brandVariant?.human_verified && brandVariant?.icon_url
+                    ? brandVariant.icon_url
+                    : sym.standard_icon_url || '';
 
-                resolvedSymbology[conceptId] = {
-                    concept_id: conceptId,
-                    technical_name_es: sym.technical_name_es || sym.name_es || conceptId,
-                    iso_reference: sym.iso_reference || sym.iso_code || '',
-                    url: preferredUrl,
-                    icon_url: preferredUrl,
-                    is_brand_specific: Boolean(
-                        (brandVariant?.verified_by_human && brandVariant?.asset_storage_url) ||
-                            (brandVariant?.human_verified && brandVariant?.icon_url)
-                    ),
-                };
-            } catch {
-                // Ignorar error puntual de lectura de concepto
-            }
-        })
-    );
+        resolvedSymbology[conceptId] = {
+            concept_id: conceptId,
+            technical_name_es: sym.technical_name_es || sym.name_es || conceptId,
+            iso_reference: sym.iso_reference || sym.iso_code || '',
+            url: preferredUrl,
+            icon_url: preferredUrl,
+            is_brand_specific: Boolean(
+                (brandVariant?.verified_by_human && brandVariant?.asset_storage_url) ||
+                (brandVariant?.human_verified && brandVariant?.icon_url)
+            ),
+        };
+    }
 
     return {
         ...assetData,

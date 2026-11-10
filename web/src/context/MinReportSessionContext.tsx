@@ -291,15 +291,15 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
             permissions: {
                 opermaq: {
                     canInspect: true,
-                    canManageFleet: isAdminOrOwner || role === 'SUPERVISOR',
+                    canManageFleet: isAdminOrOwner || role === 'SUPERVISOR' || isEdu,
                     canViewVaults: true,
-                    canCurateAI: hasFullSuiteOverride
+                    canCurateAI: isDevRoot || isTestPilot
                 },
                 stockpile: {
                     canScan: hasFullSuiteOverride || !isEdu,
                     canCalculate: true,
                     canExportReport: isAdminOrOwner || role === 'SUPERVISOR',
-                    canTrainVisionAI: hasFullSuiteOverride
+                    canTrainVisionAI: isDevRoot || isTestPilot
                 },
                 pilot: {
                     canCommentAndRequestChanges: isDevRoot || isTestPilot || isSuperAdmin,

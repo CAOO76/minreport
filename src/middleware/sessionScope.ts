@@ -14,11 +14,15 @@ export interface OpermaqFunctionalContext {
     tenantId: string;
     actorId: string;
     actorEmail: string;
+    accountTier: 1 | 2 | 3 | 4 | 5;
+    isEduSandbox: boolean;
+    isTestPilot: boolean;
     dataScope: 'PRODUCTION' | 'SANDBOX';
     capabilities: {
         canInspect: boolean;
         canManageFleet: boolean;
         canViewVaults: boolean;
+        canViewMasterCatalog: boolean;
         canCurateAI: boolean;
     };
 }
@@ -191,7 +195,11 @@ export const resolveMinReportSessionScope = async (
 
         const isEduSandbox =
             !hasFullSuiteOverride &&
-            (accountType === 'EDUCATIONAL' || accountClass === 'edu' || claimClass === 'edu');
+            (accountType === 'EDUCATIONAL' ||
+                accountClass === 'edu' ||
+                claimClass === 'edu' ||
+                claimRole === 'STUDENT' ||
+                Boolean(accountData?.isEduSandbox));
 
         if (!hasFullSuiteOverride && accountData?.contract?.activeModules?.opermaq === false) {
             return res.status(403).json({
@@ -204,10 +212,26 @@ export const resolveMinReportSessionScope = async (
             memberDocRole ||
             (isAccountOwner ? 'OWNER' : '') ||
             (hasFullSuiteOverride ? claimRole : '') ||
-            'OPERATOR';
+            (isEduSandbox ? 'STUDENT' : 'OPERATOR');
 
+        const accountTier: 1 | 2 | 3 | 4 | 5 = isDevRoot
+            ? 1
+            : isSuperAdmin
+            ? 2
+            : isTestPilot
+            ? 3
+            : isEduSandbox
+            ? 5
+            : 4;
+
+        // Segregación estricta GEMINI.md §1.1:
+        // - 1º DEV y 3º TEST-PILOT curan ingeniería OEM / IA.
+        // - 2º ADMIN supervisa comercialmente en solo lectura sobre el Catálogo Maestro.
+        // - 5º EDU practica gestión de flota exclusivamente en su jaula aislada `edu_sandbox_fleet`.
+        const canCurateEngineering = isDevRoot || isTestPilot;
         const canManageFleet =
             hasFullSuiteOverride ||
+            isEduSandbox ||
             effectiveB2BRole === 'OWNER' ||
             effectiveB2BRole === 'ADMIN' ||
             effectiveB2BRole === 'SUPERVISOR';
@@ -216,12 +240,16 @@ export const resolveMinReportSessionScope = async (
             tenantId: resolvedTenantId,
             actorId: uid,
             actorEmail: emailLower || 'operador@minreport.local',
+            accountTier,
+            isEduSandbox,
+            isTestPilot,
             dataScope: isEduSandbox ? 'SANDBOX' : 'PRODUCTION',
             capabilities: {
                 canInspect: true,
                 canManageFleet,
                 canViewVaults: true,
-                canCurateAI: hasFullSuiteOverride,
+                canViewMasterCatalog: hasFullSuiteOverride,
+                canCurateAI: canCurateEngineering,
             },
         };
 

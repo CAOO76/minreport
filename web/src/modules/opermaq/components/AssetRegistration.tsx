@@ -1,16 +1,17 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { M3TextField } from './M3TextField';
+import type { AssetPhysicalTraits } from '../../../contracts';
+import { syncQueue } from '../../../core/offline/SyncQueueEngine';
+import { API_BASE_URL } from '../firebase/config';
 import { useOpermaqContext } from '../hooks/useOpermaqContext';
-import { API_BASE_URL, db } from '../firebase/config';
-import { collection, addDoc, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { authFetch } from '../utils/authFetch';
 import {
     buildEquipmentShortDescription,
     type CanonicalSpecSlot,
     cleanMachineryTypeLabel,
 } from '../utils/opermaqDomainProjection';
-import { syncQueue } from '../../../core/offline/SyncQueueEngine';
+import { M3CircularProgress } from './M3ProgressIndicator';
+import { M3TextField } from './M3TextField';
 
 interface ResolvedAsset {
     global_asset_id?: string;
@@ -23,6 +24,7 @@ interface ResolvedAsset {
     tipo_equipo?: string;
     archetype_id?: string;
     canonical_specs?: CanonicalSpecSlot[];
+    physical_traits?: AssetPhysicalTraits;
     ambiente_operativo?: string[];
     contexto_operativo?: string[];
     versions?: string[];
@@ -290,6 +292,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
             equipment_type_key: c.equipment_type_key,
             archetype_id: c.archetype_id,
             canonical_specs: c.canonical_specs,
+            physical_traits: c.physical_traits,
             ambiente_operativo: c.ambiente_operativo || [],
             contexto_operativo: c.contexto_operativo || [],
             caracteristicas_principales: c.caracteristicas_principales || [],
@@ -334,14 +337,13 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                 return;
             }
         } catch {
-            // Si el endpoint no responde por red caída, continuar a persistencia nativa Firestore / SyncQueue
+            // Si el endpoint no responde por red caída, encolar mutación transaccional en SyncQueueEngine (cero escritura cliente directa a global_asset_catalog)
         }
 
         try {
-            const make = (c.make_oficial || 'GENÉRICO').toUpperCase();
-            const model = (c.model_oficial || jerga).toUpperCase();
-
-            if (canCurateCatalog) {
+            if (!navigator.onLine) {
+                const make = (c.make_oficial || 'GENÉRICO').toUpperCase();
+                const model = (c.model_oficial || jerga).toUpperCase();
                 const deterministicCatalogKey =
                     c.catalog_key ||
                     resolvedGlobalId ||
@@ -351,79 +353,18 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                         .toLowerCase()
                         .replace(/[^a-z0-9]+/g, '_')
                         .replace(/^_+|_+$/g, '');
-                const targetDocRef = doc(db, 'global_asset_catalog', deterministicCatalogKey);
-                await setDoc(
-                    targetDocRef,
-                    {
-                        catalog_key: deterministicCatalogKey,
-                        make_oficial: make,
-                        model_oficial: model,
-                        make_model: `${make} ${model}`,
-                        equipment_type_key: c.equipment_type_key || null,
-                        categoria_equipo: c.categoria_equipo || 'EQUIPAMIENTO INDUSTRIAL',
-                        tipo_equipo: c.tipo_equipo || t('registration.not_declared'),
-                        archetype_id: c.archetype_id || null,
-                        canonical_specs: c.canonical_specs || [],
-                        ambiente_operativo: c.ambiente_operativo || [],
-                        contexto_operativo: c.contexto_operativo || [],
-                        caracteristicas_principales: c.caracteristicas_principales || [],
-                        version: effectiveVersion,
-                        versions: allVersions,
-                        chassis_versions: allVersions,
-                        official_url: c.official_url || '',
-                        original_jargon: jerga,
-                        knowledge_vault: null,
-                        createdBy: userId || 'operador',
-                        createdAt: serverTimestamp(),
-                    },
-                    { merge: true }
+
+                const queuedTaskId = await syncQueue.enqueueApiMutation(
+                    '/assets/add-tenant-catalog',
+                    payload,
+                    canCurateCatalog ? 'OPERMAQ_REGISTER_CATALOG' : 'OPERMAQ_REGISTER_TENANT_CATALOG',
+                    tenantId || 'dev-master-sandbox'
                 );
-                onSuccess(deterministicCatalogKey);
+                onSuccess(canCurateCatalog ? deterministicCatalogKey : queuedTaskId);
                 return;
             }
 
-            if (!tenantId) {
-                throw new Error(t('registration.error_select_tenant'));
-            }
-
-            const tenantPayload = {
-                tenant_id: tenantId,
-                tenantId,
-                global_asset_id: resolvedGlobalId || '',
-                make_oficial: make,
-                model_oficial: model,
-                make_model: `${make} ${model}`,
-                categoria_equipo: c.categoria_equipo || 'EQUIPAMIENTO INDUSTRIAL',
-                tipo_equipo: c.tipo_equipo || t('registration.not_declared'),
-                version: effectiveVersion,
-                ownership_type: 'PROPIO',
-                identifier_type: 'CODIGO_INTERNO',
-                identifier_value: `EQ-${Date.now().toString().slice(-6)}`,
-                status: 'ACTIVE',
-                horometer: 0,
-                archived: false,
-                registered_by: userId || 'operador',
-            };
-
-            if (!navigator.onLine) {
-                const queuedId = await syncQueue.enqueue({
-                    module: 'OPERMAQ',
-                    entityType: 'TENANT_ASSET',
-                    targetCollection: 'tenant_assets',
-                    operation: 'CREATE',
-                    tenantId,
-                    payload: tenantPayload,
-                });
-                onSuccess(queuedId);
-                return;
-            }
-
-            const docRef = await addDoc(collection(db, 'tenant_assets'), {
-                ...tenantPayload,
-                createdAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
-            });
-            onSuccess(docRef.id);
+            setErrorMsg(t('admin_catalog.error_connection'));
         } catch (dbErr: unknown) {
             const msg = dbErr instanceof Error ? dbErr.message : t('admin_catalog.error_connection');
             setErrorMsg(`${t('registration.error_db_prefix')} ${msg}`);
@@ -557,9 +498,9 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                 </button>
                             )}
                             {isResolving ? (
-                                <span className="material-symbols-outlined animate-spin text-[#C68346] text-[20px] p-1">
-                                    progress_activity
-                                </span>
+                                <div className="p-1 flex items-center justify-center">
+                                    <M3CircularProgress size={18} strokeWidth={2.5} tone="copper" />
+                                </div>
                             ) : (
                                 <button
                                     type="submit"
@@ -633,9 +574,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                     {/* Indicador de Consulta en Curso */}
                     {isResolving && (
                         <div className="flex-1 flex flex-col items-center justify-center gap-[13px]">
-                            <span className="material-symbols-outlined animate-spin text-[#C68346] text-[28px]">
-                                progress_activity
-                            </span>
+                            <M3CircularProgress size={28} strokeWidth={3} tone="copper" />
                             <span className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                                 {t('registration.analyzing')}
                             </span>
@@ -717,9 +656,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                     <div className="flex-1 min-h-0 overflow-y-auto pr-1 relative">
                                         {isRegistering && (
                                             <div className="absolute inset-0 z-20 bg-[#FFFFFF] dark:bg-[#07090D] flex flex-col items-center justify-center gap-[8px]">
-                                                <span className="material-symbols-outlined animate-spin text-[#C68346] text-[24px]">
-                                                    progress_activity
-                                                </span>
+                                                <M3CircularProgress size={24} strokeWidth={3} tone="copper" />
                                                 <span className="text-[11px] font-mono font-bold tracking-[0.05em] text-[#C68346] uppercase">
                                                     {t('registration.indexing_profile')}
                                                 </span>

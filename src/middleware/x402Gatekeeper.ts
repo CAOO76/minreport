@@ -129,17 +129,33 @@ async function verifyCorporateContractAccess(
         const emailVerifiedOk = decoded.email_verified !== false;
         const tokenRole = String(decoded.role || '').toUpperCase();
 
+        let serverRoleUpper = '';
+        let serverAccountDisabled = false;
+        if (!tokenRole) {
+            const uSnap = await db.collection('users').doc(uid).get().catch(() => null);
+            if (uSnap?.exists) {
+                const uData = uSnap.data() || {};
+                serverRoleUpper = String(uData.role || '').toUpperCase();
+                const st = String(uData.status || '').toUpperCase();
+                serverAccountDisabled = st === 'SUSPENDED' || st === 'REVOKED';
+            }
+        }
+        const effectiveRole = tokenRole || serverRoleUpper;
+
         const isGlobalSovereign =
-            decoded.isMasterDev === true ||
-            decoded.admin === true ||
-            tokenRole === 'DEV_ROOT' ||
-            tokenRole === 'SUPER_ADMIN' ||
-            uid === 'dev-master-root-uid' ||
-            uid === 'super-admin-uid' ||
-            (emailVerifiedOk &&
-                (emailLower === 'dev@minreport.com' ||
-                    emailLower === 'admin@minreport.com' ||
-                    emailLower === env.SUPER_ADMIN_EMAIL.toLowerCase()));
+            !serverAccountDisabled &&
+            (decoded.isMasterDev === true ||
+                decoded.admin === true ||
+                effectiveRole === 'DEV_ROOT' ||
+                effectiveRole === 'SUPER_ADMIN' ||
+                effectiveRole === 'TEST_PILOT' ||
+                effectiveRole === 'PILOT_LEAD' ||
+                uid === 'dev-master-root-uid' ||
+                uid === 'super-admin-uid' ||
+                (emailVerifiedOk &&
+                    (emailLower === 'dev@minreport.com' ||
+                        emailLower === 'admin@minreport.com' ||
+                        emailLower === env.SUPER_ADMIN_EMAIL.toLowerCase())));
 
         const requestedTenantId = (
             (req.headers['x-tenant-id'] as string) ||

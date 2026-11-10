@@ -233,6 +233,8 @@ export async function enqueueItemHuntTask(
  * Recupera y reanuda automáticamente tareas de caza que quedaron interrumpidas en `PENDING` / `PROCESSING`
  * (p. ej. en `42%`) tras un reinicio de `nodemon` o timeout de red, así como ítems en `content_status === 'GENERANDO'`.
  */
+let initialOrphanCatalogScanDone = false;
+
 export async function recoverAndResumeOrphanedHuntTasks(): Promise<number> {
     if (recoveryInFlight) return 0;
     recoveryInFlight = true;
@@ -241,13 +243,17 @@ export async function recoverAndResumeOrphanedHuntTasks(): Promise<number> {
     try {
         const queuedPayloads = new Map<string, HuntTaskPayload>();
 
-        // 1. Revisar documentos en `task_status`
-        const taskSnap = await db.collection('task_status').limit(100).get().catch(() => null);
+        // 1. Consultar únicamente tareas activas (`PENDING` / `PROCESSING`) — 0 lecturas ociosas cuando no hay caza activa
+        const taskSnap = await db
+            .collection('task_status')
+            .where('status', 'in', ['PENDING', 'PROCESSING'])
+            .limit(50)
+            .get()
+            .catch(() => null);
         if (taskSnap && !taskSnap.empty) {
             for (const docSnap of taskSnap.docs) {
                 const d = docSnap.data() || {};
                 if (d.type !== 'VAULT_ITEM_HUNT') continue;
-                if (d.status !== 'PENDING' && d.status !== 'PROCESSING') continue;
                 if (isHuntTaskActivelyRunning(docSnap.id, d)) continue;
                 if (d.globalAssetId && d.pillarId && d.itemId) {
                     queuedPayloads.set(docSnap.id, {
@@ -262,27 +268,30 @@ export async function recoverAndResumeOrphanedHuntTasks(): Promise<number> {
             }
         }
 
-        // 2. Revisar ítems en `global_asset_catalog` que hayan quedado en `content_status === 'GENERANDO'`
-        const assetsSnap = await db.collection('global_asset_catalog').limit(40).get().catch(() => null);
-        if (assetsSnap && !assetsSnap.empty) {
-            for (const assetDoc of assetsSnap.docs) {
-                const kv = assetDoc.data()?.knowledge_vault;
-                if (!kv) continue;
-                for (const pid of SEQUENTIAL_PILLAR_ORDER) {
-                    const items = kv[pid]?.items;
-                    if (!Array.isArray(items)) continue;
-                    for (const it of items) {
-                        if (!it || it.is_discarded || it.content_status !== 'GENERANDO') continue;
-                        const tId = buildHuntTaskId(assetDoc.id, pid, it.item_id);
-                        if (activeLocalWorkerTasks.has(tId) || queuedPayloads.has(tId)) continue;
-                        queuedPayloads.set(tId, {
-                            taskId: tId,
-                            globalAssetId: assetDoc.id,
-                            pillarId: pid,
-                            itemId: String(it.item_id),
-                            tenantId: 'dev-master-sandbox',
-                            actorId: 'dev-master-root-uid',
-                        });
+        // 2. Barrido único al arrancar el servidor para ítems huérfanos post-reinicio (elimina 115.200 lecturas/día en reposo)
+        if (!initialOrphanCatalogScanDone) {
+            initialOrphanCatalogScanDone = true;
+            const assetsSnap = await db.collection('global_asset_catalog').limit(40).get().catch(() => null);
+            if (assetsSnap && !assetsSnap.empty) {
+                for (const assetDoc of assetsSnap.docs) {
+                    const kv = assetDoc.data()?.knowledge_vault;
+                    if (!kv) continue;
+                    for (const pid of SEQUENTIAL_PILLAR_ORDER) {
+                        const items = kv[pid]?.items;
+                        if (!Array.isArray(items)) continue;
+                        for (const it of items) {
+                            if (!it || it.is_discarded || it.content_status !== 'GENERANDO') continue;
+                            const tId = buildHuntTaskId(assetDoc.id, pid, it.item_id);
+                            if (activeLocalWorkerTasks.has(tId) || queuedPayloads.has(tId)) continue;
+                            queuedPayloads.set(tId, {
+                                taskId: tId,
+                                globalAssetId: assetDoc.id,
+                                pillarId: pid,
+                                itemId: String(it.item_id),
+                                tenantId: 'dev-master-sandbox',
+                                actorId: 'dev-master-root-uid',
+                            });
+                        }
                     }
                 }
             }

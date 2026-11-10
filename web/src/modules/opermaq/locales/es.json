@@ -13,7 +13,8 @@
     "confirm": "CONFIRMAR",
     "back": "VOLVER",
     "register_action": "REGISTRAR",
-    "error": "ERROR"
+    "error": "ERROR",
+    "refresh": "Actualizar"
   },
   "registration": {
     "registration_title": "REGISTRO",
@@ -132,38 +133,6 @@
     "syncing": "Sincronizando Flota...",
     "empty_fleet": "Flota Vacía",
     "no_instances": "No tienes máquinas registradas en tu flota local."
-  },
-  "list": {
-    "fleet_management": "Gestión de Flota",
-    "search_placeholder": "Buscar por código, marca o modelo...",
-    "sort_by": "ORDENAR:",
-    "sort_recent": "Recientes",
-    "sort_alpha": "A-Z",
-    "total_results": "Res",
-    "empty": "Sin Resultados",
-    "filter": "Filtrar",
-    "register_equipment": "Registrar Equipo",
-    "start_onboarding": "Iniciar Primer Onboarding",
-    "validated_asset": "Activo Validado",
-    "synchronized": "Sincronizado",
-    "mvk_rules": "Reglas MVK",
-    "active": "Activas",
-    "view_vault": "Ver Bóveda Técnica",
-    "syncing": "Sincronizando Catálogo...",
-    "delete_title": "AUTORIZACIÓN REQUERIDA",
-    "delete_prompt": "PARA ARCHIVAR, ESCRIBA",
-    "delete_word": "ACTUALIZAR",
-    "db_error": "ERROR DE BASE DE DATOS",
-    "no_assets": "SIN ACTIVOS REGISTRADOS",
-    "no_results_desc": "Intenta con otro término de búsqueda",
-    "first_onboarding": "Registra el primer equipo de tu flota",
-    "archive_confirmation": "CONFIRMACIÓN DE ARCHIVADO",
-    "abort": "ABORTAR",
-    "confirm": "CONFIRMAR",
-    "unit": "ACTIVO",
-    "units": "ACTIVOS",
-    "catalogs": "CATÁLOGOS",
-    "industrial_intel": "ANALÍTICA OPERATIVA"
   },
   "detail": {
     "invoking_vault": "Invocando Bóveda Técnica...",
@@ -337,56 +306,6 @@
         "condition": "CONDICIÓN"
       }
     },
-    "integration": {
-      "title": "Integración Ecosistemas",
-      "subtitle": "{{model}} — F4.3 Export Gateway",
-      "status": {
-        "online": "Gateway Online"
-      },
-      "pillars_label": "Pilares a exportar",
-      "export": {
-        "json": {
-          "title": "JSON — CMMS",
-          "subtitle": "IBM Maximo · SAP PM",
-          "description": "Exporta todos los campos validados en formato estructurado compatible con sistemas CMMS estándar.",
-          "btn": "Descargar JSON",
-          "exporting": "Exportando...",
-          "success": "Exportación CMMS completada"
-        },
-        "csv": {
-          "title": "CSV — ERP",
-          "subtitle": "Excel · SAP · Sistemas legacy",
-          "description": "Exporta campos validados como tabla plana CSV para importación en ERP o análisis en hojas de cálculo.",
-          "btn": "Descargar CSV",
-          "exporting": "Exportando...",
-          "success": "Exportación CSV completada"
-        },
-        "common": {
-          "records": "{{count}} registros",
-          "records_plural": "{{count}} registros",
-          "error": "Error al exportar"
-        }
-      },
-      "webhook": {
-        "title": "Webhook — Anomalías Externas",
-        "subtitle": "DINGO Trakka · Sistemas CBM · SCADA",
-        "description": "Recibe anomalías de sistemas externos y devuelve el procedimiento OEM validado correspondiente desde la base de conocimiento.",
-        "type_label": "Tipo de Anomalía",
-        "severity_label": "Severidad",
-        "desc_label": "Descripción (opcional)",
-        "desc_placeholder": "Temperatura de motor superó 110°C...",
-        "btn": "Probar Webhook",
-        "analyzing": "Analizando...",
-        "error": "Error en test de anomalía"
-      },
-      "api_ref": {
-        "title": "Referencia de API — Integración Directa",
-        "json_desc": "JSON CMMS",
-        "csv_desc": "CSV ERP",
-        "webhook_desc": "Webhook anomalías",
-        "health_desc": "Healthcheck"
-      }
-    },
     "certainty": {
       "high_oem": "CERTEZA ALTA (OEM)",
       "mid_ext": "CERTEZA MEDIA (EXT)",
@@ -511,283 +430,6 @@
     "required_evidence": "Evidencia Requerida",
     "hunt_new_results": "HUNT: {{count}} NUEVOS RESULTADOS"
   },
-  "roles": {
-    "title": "ADMINISTRADOR DE ROLES",
-    "email_label": "EMAIL DEL USUARIO",
-    "secret_label": "SECRET MAESTRO",
-    "btn_assign": "ASIGNAR ROL",
-    "status_processing": "Procesando...",
-    "status_success": "Rol asignado exitosamente",
-    "status_conn_error": "Error de conexión",
-    "role_id": "IDENTIFICADOR DE ROL",
-    "dev_node": "NODO DESARROLLADOR",
-    "test_pilot": "TEST PILOT AUTH",
-    "standard_user": "USUARIO ESTÁNDAR"
-  },
-  "login": {
-    "title": "ACCESO RESTRINGIDO",
-    "subtitle": "Bóveda de Inteligencia Industrial",
-    "email_placeholder": "EMAIL CORPORATIVO",
-    "password_placeholder": "CONTRASEÑA",
-    "error_auth": "Error al iniciar sesión",
-    "loading": "INICIANDO...",
-    "btn_login": "ENTRAR AL SISTEMA",
-    "footer_note": "Acceso restringido a personal autorizado"
-  },
-  "checklist": {
-    "title": "Discovery Checklist",
-    "finish_inspection": "Finalizar Inspección",
-    "saving": "Guardando...",
-    "success_title": "Inspección Finalizada",
-    "success_desc": "Los datos han sido guardados en el historial del activo.",
-    "back_to_asset": "VOLVER AL ACTIVO",
-    "critical": "CRÍTICO",
-    "pass": "CUMPLE",
-    "fail": "NO CUMPLE",
-    "na": "N/A",
-    "observations": "Observaciones...",
-    "error_min_items": "Debe completar al menos un ítem.",
-    "error_save": "Error al guardar la inspección.",
-    "error_voice": "Tu navegador no soporta reconocimiento de voz.",
-    "listening": "Escuchando...",
-    "dictate": "Dictar observación",
-    "generator": {
-      "title": "Motor de Checklists — F4.1",
-      "type_label": "TIPO DE CHECKLIST",
-      "regimen_label": "RÉGIMEN (h/día)",
-      "profile_label": "PERFIL OPERACIONAL",
-      "generate_btn": "Generar Checklist",
-      "generating": "Generando checklist...",
-      "error_gen": "Error al generar",
-      "stats": {
-        "total": "Total Ítems",
-        "critical": "Críticos",
-        "oem": "Base OEM",
-        "ia": "Sin base doc"
-      },
-      "actions": {
-        "export": "Exportar JSON",
-        "inspect": "Iniciar Inspección de Terreno",
-        "norm": "Norma: {{norma}}"
-      },
-      "success": {
-        "title": "¡Inspección Guardada!"
-      },
-      "items": {
-        "critical": "CRÍTICO",
-        "pass": "Pasa",
-        "fail": "No pasa",
-        "action": "Acción",
-        "origin": {
-          "oem": "OEM",
-          "hsec": "RIESGOS",
-          "ia": "IA"
-        }
-      }
-    }
-  },
-  "brand": {
-    "title": "BRAND MANAGER",
-    "subtitle": "Centralización de identidad visual (Web, App y PDF)",
-    "sync_info_title": "Sincronización Industrial Automática",
-    "sync_info_desc": "Al actualizar un logo aquí, los cambios se reflejarán instantáneamente en todos los usuarios activos de la Web y en la próxima generación de reportes PDF.",
-    "uploading": "SUBIENDO...",
-    "change_image": "CAMBIAR IMAGEN",
-    "favicon_title": "Favicon",
-    "favicon_desc": "Ícono de pestaña del navegador y acceso directo móvil. (SVG o PNG cuadrado).",
-    "isotype_title": "Isotipo",
-    "isotype_desc": "Símbolo puro sin texto. Usado en encabezados de reportes y App móvil.",
-    "imagotype_title": "Imagotipo",
-    "imagotype_desc": "Logo completo: Símbolo + Nombre. Usado en portadas y landing pages.",
-    "logotype_title": "Logotype",
-    "logotype_desc": "Solo tipografía. Usado en pies de página y branding secundario.",
-    "delete_confirm": "¿Seguro que deseas eliminar este logo?"
-  },
-  "testPilot": {
-    "hud_title": "PILOT HUD",
-    "authorized": "AUTORIZADO",
-    "blocked": "BLOQUEADO",
-    "quarantine": "CUARENTENA",
-    "conflict": "CONFLICTO",
-    "vault": "VAULT",
-    "ai_proposal": "PROPUESTA IA",
-    "notes_dictation": "NOTAS / DICTADO",
-    "seal_authority": "AUTORIDAD DE SELLO",
-    "security": "SEGURIDAD",
-    "approved_placeholder": "ACTUALIZAR",
-    "voice_not_supported": "Tu navegador no soporta reconocimiento de voz.",
-    "tech_viewer": "VISOR TÉCNICO",
-    "inflation_pressure": "PRESIÓN INFLADO",
-    "source": "FUENTE: {{file}} [P.{{page}}]",
-    "source_validated": "Fuente Validada",
-    "voice_started": "Escuchando...",
-    "voice_error": "Error de reconocimiento de voz",
-    "approval_confirmed": "Cambio aprobado y sellado en bóveda",
-    "approved_word": "ACTUALIZAR",
-    "vault_sealed_desc": "Bóveda sellada. La información ha sido autorizada y bloqueada para edición.",
-    "resolve_pending_first": "Resuelva los conflictos pendientes antes de sellar.",
-    "ai_assist": "Asistente IA",
-    "comparative_view": "Vista Comparativa",
-    "history": "Historial de Sello",
-    "unseal_vault": "Des-sellar Bóveda",
-    "unseal_desc": "Esta acción permitirá editar la bóveda nuevamente. Solo para administradores.",
-    "unseal_confirm": "Escriba 'ACTUALIZAR' para confirmar",
-    "unseal_placeholder": "ACTUALIZAR",
-    "unseal_success": "Bóveda des-sellada correctamente.",
-    "unseal_error": "Error al des-sellar la bóveda."
-  },
-  "benchmark": {
-    "title": "Benchmarking Colectivo",
-    "subtitle": "Intervalos OEM vs. evidencia operacional real · Datos anónimos",
-    "pending": "pendiente",
-    "pendings": "pendientes",
-    "analyzing": "Analizando...",
-    "regenerate": "Regenerar análisis",
-    "tab_insights": "Insights",
-    "tab_register": "Registrar Evento",
-    "loading": "Cargando insights...",
-    "no_insights": "Sin insights aún.",
-    "no_insights_desc": "Registra al menos 3 eventos del mismo tipo para activar el análisis.",
-    "oem": "OEM",
-    "real": "Real",
-    "events_base": "Eventos base",
-    "pending_review": "PENDIENTE REVISIÓN",
-    "confidence": "Confianza",
-    "mediana": "Mediana",
-    "minimo": "Mínimo",
-    "maximo": "Máximo",
-    "std_dev": "Desv. Estándar",
-    "desvio_vs_oem": "Desvío vs OEM",
-    "condition_found": "CONDICIÓN ENCONTRADA",
-    "review_required": "Revisión especialista requerida",
-    "reject": "Rechazar",
-    "approve": "Aprobar",
-    "field_type": "TIPO DE INTERVENCIÓN",
-    "field_oem": "INTERVALO OEM (horas)",
-    "field_real": "HORAS REALES",
-    "field_condition": "CONDICIÓN ENCONTRADA",
-    "field_profile": "PERFIL OPERACIONAL",
-    "field_notes": "NOTAS (opcional)",
-    "notes_placeholder": "Sin datos identificatorios. Ej: filtro con suciedad excesiva.",
-    "anonymous_alert": "Tu identidad es 100% anónima. Solo se registra tipo de intervención, perfil y horas.",
-    "register_btn": "Registrar Evento de Mantención",
-    "registering": "Registrando...",
-    "success_msg": "Registrado",
-    "error_msg": "Error",
-    "conn_error": "Error de conexión",
-    "types": {
-      "CAMBIO_ACEITE_MOTOR": "Cambio Aceite Motor",
-      "CAMBIO_FILTRO_ACEITE": "Cambio Filtro Aceite",
-      "CAMBIO_FILTRO_AIRE": "Cambio Filtro Aire",
-      "CAMBIO_FILTRO_COMBUSTIBLE": "Cambio Filtro Combustible",
-      "CAMBIO_FLUIDO_HIDRAULICO": "Cambio Fluido Hidráulico",
-      "CAMBIO_FLUIDO_TRANSMISION": "Cambio Fluido Transmisión",
-      "INSPECCION_FRENOS": "Inspección Frenos",
-      "CAMBIO_PASTILLAS_FRENO": "Cambio Pastillas Freno",
-      "AJUSTE_TENSION_CADENA": "Ajuste Tensión Cadena",
-      "CAMBIO_DIENTES_BALDE": "Cambio Dientes Balde",
-      "REVISION_GENERAL_MOTOR": "Revisión General Motor",
-      "CALIBRACION_INYECTORES": "Calibración Inyectores",
-      "INSPECCION_ESTRUCTURA": "Inspección Estructura",
-      "OTRA": "Otra"
-    },
-    "conditions": {
-      "NORMAL": "Normal",
-      "DESGASTE_PREMATURO": "Desgaste Prematuro",
-      "FALLA": "Falla Detectada",
-      "EXCELENTE": "Excelente Estado"
-    },
-    "labels": {
-      "oem": "OEM",
-      "real": "Real",
-      "n": "n=",
-      "confidence": "Confianza",
-      "pending_review": "PENDIENTE REVISIÓN"
-    },
-    "tabs": {
-      "insights": "Insights",
-      "register": "Registrar Evento"
-    },
-    "stats": {
-      "median": "Mediana",
-      "min": "Mínimo",
-      "max": "Máximo",
-      "std_dev": "Desv. Estándar",
-      "deviation_vs_oem": "Desvío vs OEM",
-      "base_events": "Eventos base",
-      "condition_found": "CONDICIÓN ENCONTRADA"
-    },
-    "form": {
-      "type": "TIPO DE INTERVENCIÓN",
-      "oem_interval": "INTERVALO OEM (horas)",
-      "real_hours": "HORAS REALES",
-      "condition": "CONDICIÓN ENCONTRADA",
-      "operational_profile": "PERFIL OPERACIONAL",
-      "notes": "NOTAS (opcional)",
-      "notes_placeholder": "Sin datos identificatorios. Ej: filtro con suciedad excesiva.",
-      "anonymous_alert": "Tu identidad es 100% anónima. Solo se registra tipo de intervención, perfil y horas.",
-      "register_btn": "Registrar Evento de Mantención",
-      "registering": "Registrando...",
-      "success": "Registrado",
-      "error": "Error",
-      "conn_error": "Error de conexión"
-    }
-  },
-  "integration": {
-    "title": "Integración Ecosistemas",
-    "subtitle_suffix": "Export Gateway",
-    "gateway_online": "Gateway Online",
-    "pillars_to_export": "Pilares a exportar",
-    "json_cmms": "JSON — CMMS",
-    "json_desc": "IBM Maximo · SAP PM",
-    "json_info": "Exporta todos los campos validados en formato estructurado compatible con sistemas CMMS estándar.",
-    "download_json": "Descargar JSON",
-    "csv_erp": "CSV — ERP",
-    "csv_desc": "Excel · SAP · Sistemas legacy",
-    "csv_info": "Exporta campos validados como tabla plana CSV para importación en ERP o análisis en hojas de cálculo.",
-    "download_csv": "Descargar CSV",
-    "exporting": "Exportando...",
-    "export_success_json": "Exportación CMMS completada",
-    "export_success_csv": "Exportación CSV completada",
-    "records": "registros",
-    "webhook_title": "Webhook — Anomalías Externas",
-    "webhook_desc": "DINGO Trakka · Sistemas CBM · SCADA",
-    "webhook_info": "Recibe anomalías de sistemas externos y devuelve el procedimiento OEM validado correspondiente desde la base de conocimiento.",
-    "anomaly_type": "Tipo de Anomalía",
-    "severity": "Severidad",
-    "description": "Descripción (opcional)",
-    "description_placeholder": "Temperatura de motor superó 110°C...",
-    "test_webhook": "Probar Webhook",
-    "analyzing": "Analizando...",
-    "api_reference": "Referencia de API — Integración Directa"
-  },
-  "reports": {
-    "title": "Centro de Reportes",
-    "subtitle": "Intelligence System",
-    "generate_cta": "GENERAR REPORTE MENSUAL AHORA",
-    "generating": "PROCESANDO",
-    "service_status": "Estado del Servicio",
-    "scheduler_active": "Cloud Scheduler: ACTIVE",
-    "scheduler_desc": "Los reportes se generan automáticamente el primer día de cada mes a 00:00 UTC. Este panel permite disparos manuales para auditorías ad-hoc.",
-    "destinations_title": "Configuración Destinos",
-    "dest_whatsapp": "Supervisores vía WhatsApp",
-    "dest_storage": "Cloud Storage (Historial PDF)",
-    "ledger_title": "Historial de Auditoría (Event Ledger)",
-    "ledger_empty": "No hay registros de reportes en el ledger.",
-    "view_pdf": "VER PDF",
-    "error_connect": "Error crítico al conectar con el servicio de reportes.",
-    "error_generate": "Error: {{message}}",
-    "default_error": "No se pudo generar el reporte",
-    "success_generated": "Reporte generado y notificado exitosamente.",
-    "started_toast": "Iniciando generación de reporte ejecutivo...",
-    "event_col": "Evento",
-    "date_col": "Fecha/Hora",
-    "details_col": "Detalles",
-    "action_col": "Acción",
-    "generating_in_progress": "Generación en curso...",
-    "pdf_generated": "PDF Generado • URL: {{url}}...",
-    "generation_error": "Error: {{error}}"
-  },
   "vault_dashboard": {
     "status_idle": "No itemizado",
     "status_generating": "Itemizando…",
@@ -865,11 +507,42 @@
       "incomplete_profile": "Perfil incompleto",
       "ia_limit_reached": "Límite de cuota IA alcanzado. Reintente en unos segundos.",
       "unknown_failure": "Fallo desconocido",
-      "network_error_itemize": "Error de red durante la itemización"
+      "network_error_itemize": "Error de red durante la itemización",
+      "applying_changes": "Aplicando cambios…",
+      "assistant_failed": "No se pudo generar la propuesta del asistente.",
+      "async_research_failed": "Fallo en la investigación asíncrona.",
+      "changes_persisted_success": "Cambios aplicados y registrados.",
+      "complementary_items_found": "Sugerencias encontradas.",
+      "could_not_apply": "No se pudieron aplicar los cambios.",
+      "could_not_enqueue_task": "No se pudo encolar la tarea.",
+      "creating_item": "Creando ítem…",
+      "discarding_item": "Descartando ítem…",
+      "discarding_suggestion": "Descartando sugerencia…",
+      "failed_to_create": "No se pudo crear el ítem.",
+      "failed_to_discard_suggestion": "Error al descartar sugerencia.",
+      "failed_to_search_suggestions": "Error al obtener sugerencias.",
+      "ia_assistant_analyzing": "Analizando instrucción técnica con IA…",
+      "item_already_exists": "Ya existe un ítem con ese nombre.",
+      "item_created_success": "Ítem creado.",
+      "item_discarded_success": "Ítem descartado y archivado.",
+      "item_reactivated_success": "Ítem reactivado.",
+      "network_error": "Error de red.",
+      "network_error_discard_item": "Error de red al descartar ítem.",
+      "network_error_reactivate_item": "Error de red al reactivar ítem.",
+      "no_new_suggestions": "No se encontraron nuevos ítems complementarios para sugerir.",
+      "proposal_generated": "Propuesta generada para revisión HITL.",
+      "reactivating_item": "Reactivando ítem…",
+      "searching_complementary_items": "Buscando ítems complementarios…",
+      "suggestion_discarded": "Sugerencia descartada y archivada."
     },
     "labels": {
       "itemize_error": "Error de itemización",
-      "items_progress": "{{completed}} de {{total}} ítems completados"
+      "items_progress": "{{completed}} de {{total}} ítems completados",
+      "by": "por",
+      "could_not_load_asset": "No se pudo cargar el activo.",
+      "equipment_default": "EQUIPO",
+      "new_item_placeholder": "Nombre del nuevo ítem...",
+      "sealed": "SELLADO"
     },
     "pending_content": {
       "label": "Contenido Pendiente",
@@ -911,6 +584,15 @@
         "SIMBOLOGIA_SEGURIDAD": "Simbología de seguridad",
         "PLANO_VECTORIAL_SVG": "Plano vectorial"
       }
+    },
+    "actions": {
+      "collapse": "Contraer",
+      "expand": "Expandir",
+      "create_item": "Crear ítem",
+      "search_complementary_items": "Buscar ítems complementarios con IA"
+    },
+    "suggestions": {
+      "title": "Ítems Complementarios Sugeridos por IA"
     }
   },
   "vault_manager": {
@@ -1010,6 +692,9 @@
     "homologate_apply_btn": "CONSOLIDAR HOMOLOGACIÓN",
     "homologate_applying": "CONSOLIDANDO...",
     "homologate_error_load": "No fue posible generar la propuesta de homologación.",
-    "homologate_error_save": "No fue posible consolidar la homologación."
+    "homologate_error_save": "No fue posible consolidar la homologación.",
+    "odometer_km_label": "ODÓMETRO (KM)",
+    "cycles_count_label": "CICLOS ACUMULADOS",
+    "calibration_due_date_label": "PRÓXIMA CALIBRACIÓN"
   }
 }

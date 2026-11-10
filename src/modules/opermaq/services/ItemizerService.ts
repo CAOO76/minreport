@@ -13,8 +13,11 @@ import type {
 } from '../types/vault.types';
 import { PILLAR_PREREQUISITE_MAP, SEQUENTIAL_PILLAR_ORDER } from '../types/vault.types';
 import { validateCatalogProfileGate } from './CatalogUpsertService';
+import { buildAndPersistEquipmentCostMatrix } from './EquipmentCostMatrixCompiler';
 import {
+    buildDedicatedCapexCoreChapter,
     buildDedicatedConsumptionCoreChapter,
+    buildDedicatedWearAndRodadoCoreChapter,
     evolveEquipmentTypeChecklistPreOpBlueprint,
     evolveEquipmentTypeFichaTecnicaBlueprint,
     evolveEquipmentTypeManualOperacionesBlueprint,
@@ -34,6 +37,7 @@ import {
     normalizeComparableTitle,
     tokenJaccardSimilarity,
 } from './TextSimilarityUtils';
+import { VaultPersistenceService } from './VaultPersistenceService';
 
 /**
  * ITEMIZER SERVICE v9.1 — ETAPA 2 ON-DEMAND CON ONTOLOGÍA ELÁSTICA EN 2 ANILLOS (`TIPO`-FIRST)
@@ -226,10 +230,17 @@ function buildCumulativePriorPillarsContext(
 export const DEDICATED_CONSUMPTION_ITEM_REGEX =
     /\b(consumos?\s+de\s+combustible|consumos?\s+de\s+energ[ií]a|consumos?\s+por\s+factor\s+de\s+carga|consumos?\s+y\s+autonom[ií]a|rendimiento\s+de\s+combustible|matriz\s+energ[eé]tica|consumo\s+horario|consumo\s+espec[ií]fico|autonom[ií]a\s+operativa|autonom[ií]a\s+por\s+ciclo|demanda\s+de\s+potencia\s+y\s+factor\s+de\s+carga)\b/i;
 
+export const DEDICATED_CAPEX_ITEM_REGEX =
+    /\b(valorizaci[oó]n\s+referencial|valorizaci[oó]n\s+patrimonial|capex|costo\s+referencial\s+(?:de\s+)?(?:reposici[oó]n|equipo\s+nuevo)|vida\s+[uú]til\s+econ[oó]mica|base\s+de\s+depreciaci[oó]n|valor\s+residual\s+referencial)\b/i;
+
+export const DEDICATED_WEAR_RODADO_ITEM_REGEX =
+    /\b(recambio\s+de\s+elementos\s+de\s+desgaste|elementos\s+de\s+desgaste\s*\(?get\)?|recambio\s+de\s+aceros\s+de\s+perforaci[oó]n|recambio\s+de\s+neum[aá]ticos|recambio\s+de\s+piezas\s+de\s+desgaste|desgaste\s+de\s+ataque\s*\(?get|desgaste\s+de\s+conminuci[oó]n)\b/i;
+
 function getFichaTecnicaSectionRank(section?: string, title?: string): number {
     const s = `${section || ''} ${title || ''}`.toUpperCase();
     if (/\bDESEMPE[ÑN]O NOMINAL\b|\bEJES DIFERENCIADORES\b|\bPAR[ÁA]METROS CR[ÍI]TICOS\b|\bIDENTIFICACI[ÓO]N\b|\bARQUITECTURA GENERAL\b/.test(s)) return 1;
     if (DEDICATED_CONSUMPTION_ITEM_REGEX.test(s)) return 2.5;
+    if (DEDICATED_CAPEX_ITEM_REGEX.test(s)) return 6.5;
     if (
         (/\bPLANTA MOTRIZ\b|\bMOTOR(IZACI[ÓO]N)?\b|\bCILINDRADA\b|\bSOBREALIMENTACI[ÓO]N\b|\bCURVAS DE (PAR|POTENCIA|TORQUE)\b/.test(s)) &&
         !/\bTREN DE POTENCIA\b|\bFRENO MOTOR\b|\bFRENADO\b|\bRETARDO\b/.test(s)
@@ -260,6 +271,7 @@ function getPautaMantencionStageRank(section?: string, title?: string): number {
     if (/\bETAPA\s*II\b|\bDIARIO\b|\b10\s*H\b|\b50\s*H\b|\b5\.?000\s*KM\b|\bSEMANAL\b|\bPRE\/POST-JORNADA\b|\bPUNTOS DE ENGRASE\b/.test(s)) return 2;
     if (/\bETAPA\s*III\b|\b250\s*H\b|\b500\s*H\b|\bPM1\b|\bPM2\b|\b10\.?000\s*KM\b|\b20\.?000\s*KM\b|\bMENORES E INTERMEDIAS\b/.test(s)) return 3;
     if (/\bETAPA\s*IV\b|\b1\.?000\s*H\b|\b2\.?000\s*H\b|\b4\.?000\s*H\b|\bPM3\b|\bPM4\b|\b40\.?000\s*KM\b|\b60\.?000\s*KM\b|\b100\.?000\s*KM\b|\bOVERHAUL\b|\bMAYOR\b/.test(s)) return 4;
+    if (DEDICATED_WEAR_RODADO_ITEM_REGEX.test(s)) return 5.2;
     if (/\bETAPA\s*V\b|\bS·O·S\b|\bTRIBOL[ÓO]GICO\b|\bSUBSISTEMAS ESPECIALIZADOS\b|\bRAX\b|\bAUTOLUBE\b|\bACUMULADORES\b|\bDPF\b|\bQUINTA RUEDA\b|\bTRANSFERENCIA 4X4\b/.test(s)) return 5;
     if (/\bETAPA\s*VI\b|\bPARES DE APRIETE\b|\bTORQUE\b|\bTOLERANCIAS\b|\bL[ÍI]MITES DE CONDENA\b|\bLOTO\b/.test(s)) return 6;
     return 4;
@@ -489,7 +501,7 @@ export function computeVaultMerkleRootSha256(vault: Record<string, any> | undefi
 }
 
 const KNOWN_SECTION_HEADER_REGEX =
-    /^(DESEMPE[ÑN]O NOMINAL( Y EJES DIFERENCIADORES)?|DESEMPE[ÑN]O Y CAPACIDADES NOMINALES|PLANTA MOTRIZ|POTENCIA Y CONSUMOS|CONSUMOS DE (COMBUSTIBLE|ENERG[ÍI]A).*|EFICIENCIA ENERG[ÉE]TICA.*|TREN DE POTENCIA|TREN MOTRIZ( HEAVY-DUTY)?|SISTEMA DE TRABAJO|HIDR[ÁA]ULICA E IMPLEMENTOS|GEOMETR[ÍI]A Y (MASAS|PESOS)|GEOMETR[ÍI]A E INSTALACI[ÓO]N|SERVICIO, ELECTRICIDAD Y CABINA|SERVICIO Y CONTROL|CAPACIDADES Y ELECTRICIDAD|CHASIS Y (RODADO|SUSPENSI[ÓO]N.*)|FRENADO Y RETARDO.*|TELEMETR[ÍI]A.*|CONFIGURACI[ÓO]N DE TOLVA.*|AUTOMATIZACI[ÓO]N Y TELEMETR[ÍI]A|DIRECCI[ÓO]N, FRENADO.*|HERRAMIENTA DE TRABAJO.*)$/i;
+    /^(DESEMPE[ÑN]O NOMINAL( Y EJES DIFERENCIADORES)?|DESEMPE[ÑN]O Y CAPACIDADES NOMINALES|PLANTA MOTRIZ|POTENCIA Y CONSUMOS|CONSUMOS DE (COMBUSTIBLE|ENERG[ÍI]A).*|EFICIENCIA ENERG[ÉE]TICA.*|VALORIZACI[ÓO]N PATRIMONIAL.*|TREN DE POTENCIA|TREN MOTRIZ( HEAVY-DUTY)?|SISTEMA DE TRABAJO|HIDR[ÁA]ULICA E IMPLEMENTOS|GEOMETR[ÍI]A Y (MASAS|PESOS)|GEOMETR[ÍI]A E INSTALACI[ÓO]N|SERVICIO, ELECTRICIDAD Y CABINA|SERVICIO Y CONTROL|CAPACIDADES Y ELECTRICIDAD|CHASIS Y (RODADO|SUSPENSI[ÓO]N.*)|FRENADO Y RETARDO.*|TELEMETR[ÍI]A.*|CONFIGURACI[ÓO]N DE TOLVA.*|AUTOMATIZACI[ÓO]N Y TELEMETR[ÍI]A|DIRECCI[ÓO]N, FRENADO.*|HERRAMIENTA DE TRABAJO.*|ETAPA\s+[IVX]+\s*—.*)$/i;
 
 export function normalizeSwappedPillarItemFields<T extends { title: string; section: string }>(item: T): T {
     const rawTitle = String(item.title || '').trim();
@@ -554,11 +566,23 @@ function ensureRing1CoreCoverage(
         const isConsumptionCore =
             core.chapter_key === 'matriz_energetica_consumos_y_autonomia' ||
             DEDICATED_CONSUMPTION_ITEM_REGEX.test(combinedCore);
+        const isCapexCore =
+            core.chapter_key === 'valorizacion_capex_vida_economica_y_depreciacion' ||
+            DEDICATED_CAPEX_ITEM_REGEX.test(combinedCore);
+        const isWearRodadoCore =
+            core.chapter_key === 'etapa_5_recambio_elementos_desgaste_get_y_rodado' ||
+            DEDICATED_WEAR_RODADO_ITEM_REGEX.test(combinedCore);
 
         const alreadyCovered = result.some((r) => {
             const combinedCandidate = `${r.title} ${r.section || ''}`.toLowerCase();
             if (isConsumptionCore) {
                 return DEDICATED_CONSUMPTION_ITEM_REGEX.test(combinedCandidate);
+            }
+            if (isCapexCore) {
+                return DEDICATED_CAPEX_ITEM_REGEX.test(combinedCandidate);
+            }
+            if (isWearRodadoCore) {
+                return DEDICATED_WEAR_RODADO_ITEM_REGEX.test(combinedCandidate);
             }
             if (tokenJaccardSimilarity(r.title, core.title_es) >= 0.34) return true;
             if (tokenJaccardSimilarity(r.section, core.section_es) >= 0.34) return true;
@@ -633,20 +657,30 @@ export function mergeItemizedStructure(
         if (wasExplicitlyDiscarded) continue;
 
         // Buscar si ya existe un capítulo equivalente en `preserved`
-        const incomingIsDedicatedConsumption = DEDICATED_CONSUMPTION_ITEM_REGEX.test(
-            `${incoming.title} ${incoming.section || ''}`
-        );
+        const incomingCombo = `${incoming.title} ${incoming.section || ''}`;
+        const incomingIsDedicatedConsumption = DEDICATED_CONSUMPTION_ITEM_REGEX.test(incomingCombo);
+        const incomingIsDedicatedCapex = DEDICATED_CAPEX_ITEM_REGEX.test(incomingCombo);
+        const incomingIsDedicatedWearRodado = DEDICATED_WEAR_RODADO_ITEM_REGEX.test(incomingCombo);
         let bestIdx = -1;
         let bestSim = 0;
         for (let i = 0; i < preserved.length; i++) {
-            const preservedIsDedicatedConsumption = DEDICATED_CONSUMPTION_ITEM_REGEX.test(
-                `${preserved[i].title} ${preserved[i].section || ''}`
-            );
-            // Evitar que el capítulo dedicado de Consumos sea absorbido por Motorización o Capacidades de Llenado
-            if (incomingIsDedicatedConsumption !== preservedIsDedicatedConsumption) {
+            const preservedCombo = `${preserved[i].title} ${preserved[i].section || ''}`;
+            const preservedIsDedicatedConsumption = DEDICATED_CONSUMPTION_ITEM_REGEX.test(preservedCombo);
+            const preservedIsDedicatedCapex = DEDICATED_CAPEX_ITEM_REGEX.test(preservedCombo);
+            const preservedIsDedicatedWearRodado = DEDICATED_WEAR_RODADO_ITEM_REGEX.test(preservedCombo);
+            // Evitar que los capítulos dedicados de Consumos, CAPEX o Desgaste/Rodado sean absorbidos por otros capítulos
+            if (
+                incomingIsDedicatedConsumption !== preservedIsDedicatedConsumption ||
+                incomingIsDedicatedCapex !== preservedIsDedicatedCapex ||
+                incomingIsDedicatedWearRodado !== preservedIsDedicatedWearRodado
+            ) {
                 continue;
             }
-            if (incomingIsDedicatedConsumption && preservedIsDedicatedConsumption) {
+            if (
+                (incomingIsDedicatedConsumption && preservedIsDedicatedConsumption) ||
+                (incomingIsDedicatedCapex && preservedIsDedicatedCapex) ||
+                (incomingIsDedicatedWearRodado && preservedIsDedicatedWearRodado)
+            ) {
                 bestIdx = i;
                 bestSim = 1;
                 break;
@@ -739,15 +773,15 @@ export function ensureFichaTecnicaConsumptionBaseItem(params: {
     const dedupedActive: PillarItem[] = [];
     const discardedList: PillarItem[] = normalizedItems.filter((it) => it?.is_discarded);
     for (const candidate of normalizedItems.filter((it) => !it?.is_discarded)) {
-        const candIsConsumption = DEDICATED_CONSUMPTION_ITEM_REGEX.test(
-            `${candidate.title || ''} ${candidate.section || ''}`
-        );
+        const candCombo = `${candidate.title || ''} ${candidate.section || ''}`;
+        const candIsConsumption = DEDICATED_CONSUMPTION_ITEM_REGEX.test(candCombo);
+        const candIsCapex = DEDICATED_CAPEX_ITEM_REGEX.test(candCombo);
         const dupIdx = dedupedActive.findIndex((existingItem) => {
-            const existIsConsumption = DEDICATED_CONSUMPTION_ITEM_REGEX.test(
-                `${existingItem.title || ''} ${existingItem.section || ''}`
-            );
-            if (candIsConsumption !== existIsConsumption) return false;
-            if (candIsConsumption && existIsConsumption) return true;
+            const existCombo = `${existingItem.title || ''} ${existingItem.section || ''}`;
+            const existIsConsumption = DEDICATED_CONSUMPTION_ITEM_REGEX.test(existCombo);
+            const existIsCapex = DEDICATED_CAPEX_ITEM_REGEX.test(existCombo);
+            if (candIsConsumption !== existIsConsumption || candIsCapex !== existIsCapex) return false;
+            if ((candIsConsumption && existIsConsumption) || (candIsCapex && existIsCapex)) return true;
             const sameSection =
                 String(existingItem.section || '').trim().toUpperCase() ===
                 String(candidate.section || '').trim().toUpperCase();
@@ -774,64 +808,181 @@ export function ensureFichaTecnicaConsumptionBaseItem(params: {
         }
     }
 
-    const existing = [...dedupedActive, ...discardedList];
+    let working = [...dedupedActive, ...discardedList];
+    const fallbackSources =
+        Array.isArray(params.defaultSources) && params.defaultSources.length > 0
+            ? params.defaultSources.slice(0, 4)
+            : dedupedActive.find((it) => Array.isArray(it.item_sources) && it.item_sources.length > 0)?.item_sources?.slice(0, 4) || [];
+    const nowIso = new Date().toISOString();
 
-    const wasExplicitlyDiscarded = existing.some(
+    // 3. Garantizar capítulo dedicado de Consumos (salvo descarte humano explícito)
+    const wasConsumptionDiscarded = working.some(
         (it) =>
             it?.is_discarded &&
             DEDICATED_CONSUMPTION_ITEM_REGEX.test(`${it.title || ''} ${it.section || ''}`)
     );
-    if (wasExplicitlyDiscarded) {
-        return {
-            items: modified ? sortAndReindexPillarItems('ficha_tecnica', existing) : rawExisting,
-            modified,
-        };
+    if (!wasConsumptionDiscarded) {
+        const core = buildDedicatedConsumptionCoreChapter(params.typeDoc);
+        const existingIdx = working.findIndex(
+            (it) =>
+                !it?.is_discarded &&
+                DEDICATED_CONSUMPTION_ITEM_REGEX.test(`${it.title || ''} ${it.section || ''}`)
+        );
+        if (existingIdx !== -1) {
+            const current = working[existingIdx];
+            if (
+                !current.is_human_locked &&
+                current.title !== core.title_es &&
+                (/^Matriz\s+Energ[eé]tica\b/i.test(current.title || '') ||
+                    /\bDEF\s*\/\s*AdBlue\b/i.test(current.title || '') ||
+                    /^Consumos\s+de\s+Combustible/i.test(current.title || ''))
+            ) {
+                modified = true;
+                working = working.map((it, idx) =>
+                    idx === existingIdx
+                        ? {
+                              ...it,
+                              title: core.title_es,
+                              section: core.section_es,
+                              rationale: core.rationale_es,
+                          }
+                        : it
+                );
+            }
+        } else {
+            modified = true;
+            working.push({
+                item_id: slugifyItemId('ficha_tecnica', core.title_es, working.length),
+                order: 3,
+                title: core.title_es,
+                section: core.section_es,
+                rationale: core.rationale_es,
+                priority: 'CRÍTICO',
+                content: null,
+                content_status: 'PENDIENTE',
+                created_at: nowIso,
+                item_sources: fallbackSources,
+                is_discarded: false,
+                estado_aprobacion: 'GENERADO_IA',
+                is_human_locked: false,
+                historial_cambios: [],
+                pending_conflicts: [],
+                authorized_delta_buffer: [],
+                symbology_refs: [],
+            });
+        }
     }
 
-    const core = buildDedicatedConsumptionCoreChapter(params.typeDoc);
-    const existingIdx = existing.findIndex(
+    // 4. Garantizar capítulo dedicado de Valorización Referencial (CAPEX) y Base de Depreciación (salvo descarte humano explícito)
+    const wasCapexDiscarded = working.some(
+        (it) =>
+            it?.is_discarded &&
+            DEDICATED_CAPEX_ITEM_REGEX.test(`${it.title || ''} ${it.section || ''}`)
+    );
+    if (!wasCapexDiscarded) {
+        const capexCore = buildDedicatedCapexCoreChapter(params.typeDoc);
+        const existingCapexIdx = working.findIndex(
+            (it) =>
+                !it?.is_discarded &&
+                DEDICATED_CAPEX_ITEM_REGEX.test(`${it.title || ''} ${it.section || ''}`)
+        );
+        if (existingCapexIdx === -1) {
+            modified = true;
+            working.push({
+                item_id: slugifyItemId('ficha_tecnica', capexCore.title_es, working.length),
+                order: working.length + 1,
+                title: capexCore.title_es,
+                section: capexCore.section_es,
+                rationale: capexCore.rationale_es,
+                priority: 'CRÍTICO',
+                content: null,
+                content_status: 'PENDIENTE',
+                created_at: nowIso,
+                item_sources: fallbackSources,
+                is_discarded: false,
+                estado_aprobacion: 'GENERADO_IA',
+                is_human_locked: false,
+                historial_cambios: [],
+                pending_conflicts: [],
+                authorized_delta_buffer: [],
+                symbology_refs: [],
+            });
+        }
+    }
+
+    if (!modified) {
+        return { items: rawExisting, modified: false };
+    }
+    return {
+        items: sortAndReindexPillarItems('ficha_tecnica', working),
+        modified: true,
+    };
+}
+
+/**
+ * Auto-Saneamiento Determinista del Ítem Base de Elementos de Desgaste (GET) y Tren de Rodado en `pauta_mantencion`:
+ * Garantiza que cualquier activo cuyo Pilar 03 (`Pauta de Mantención`) ya haya sido itemizado
+ * posea siempre en `ETAPA V` su capítulo dedicado de recambio de piezas de desgaste y rodado.
+ */
+export function ensurePautaMantencionWearAndRodadoBaseItem(params: {
+    items: PillarItem[];
+    typeDoc: Pick<GlobalEquipmentTypeDoc, 'type_key' | 'canonical_type_es' | 'categoria_equipo' | 'archetype_id'>;
+    defaultSources?: ItemizedSource[];
+}): { items: PillarItem[]; modified: boolean } {
+    const rawExisting = Array.isArray(params.items) ? params.items : [];
+    const activeRaw = rawExisting.filter((it) => !it?.is_discarded);
+    if (activeRaw.length === 0) {
+        return { items: rawExisting, modified: false };
+    }
+
+    const wasDiscarded = rawExisting.some(
+        (it) =>
+            it?.is_discarded &&
+            DEDICATED_WEAR_RODADO_ITEM_REGEX.test(`${it.title || ''} ${it.section || ''}`)
+    );
+    if (wasDiscarded) {
+        return { items: rawExisting, modified: false };
+    }
+
+    const wearCore = buildDedicatedWearAndRodadoCoreChapter(params.typeDoc);
+    const existingIdx = rawExisting.findIndex(
         (it) =>
             !it?.is_discarded &&
-            DEDICATED_CONSUMPTION_ITEM_REGEX.test(`${it.title || ''} ${it.section || ''}`)
+            DEDICATED_WEAR_RODADO_ITEM_REGEX.test(`${it.title || ''} ${it.section || ''}`)
     );
-
     if (existingIdx !== -1) {
-        const current = existing[existingIdx];
-        if (!current.is_human_locked && current.title !== core.title_es && /^Matriz\s+Energ[eé]tica\b/i.test(current.title || '')) {
-            modified = true;
-            const updated = existing.map((it, idx) =>
+        const current = rawExisting[existingIdx];
+        if (!current.is_human_locked && (current.title !== wearCore.title_es || current.section !== wearCore.section_es)) {
+            const updated = rawExisting.map((it, idx) =>
                 idx === existingIdx
                     ? {
                           ...it,
-                          title: core.title_es,
-                          section: core.section_es,
-                          rationale: core.rationale_es,
+                          title: wearCore.title_es,
+                          section: wearCore.section_es,
+                          rationale: wearCore.rationale_es,
                       }
                     : it
             );
             return {
-                items: sortAndReindexPillarItems('ficha_tecnica', updated),
+                items: sortAndReindexPillarItems('pauta_mantencion', updated),
                 modified: true,
             };
         }
-        return {
-            items: modified ? sortAndReindexPillarItems('ficha_tecnica', existing) : existing,
-            modified,
-        };
+        return { items: rawExisting, modified: false };
     }
 
     const fallbackSources =
         Array.isArray(params.defaultSources) && params.defaultSources.length > 0
             ? params.defaultSources.slice(0, 4)
-            : dedupedActive.find((it) => Array.isArray(it.item_sources) && it.item_sources.length > 0)?.item_sources?.slice(0, 4) || [];
+            : activeRaw.find((it) => Array.isArray(it.item_sources) && it.item_sources.length > 0)?.item_sources?.slice(0, 4) || [];
 
     const nowIso = new Date().toISOString();
     const newItem: PillarItem = {
-        item_id: slugifyItemId('ficha_tecnica', core.title_es, existing.length),
-        order: 3,
-        title: core.title_es,
-        section: core.section_es,
-        rationale: core.rationale_es,
+        item_id: slugifyItemId('pauta_mantencion', wearCore.title_es, rawExisting.length),
+        order: rawExisting.length + 1,
+        title: wearCore.title_es,
+        section: wearCore.section_es,
+        rationale: wearCore.rationale_es,
         priority: 'CRÍTICO',
         content: null,
         content_status: 'PENDIENTE',
@@ -846,7 +997,7 @@ export function ensureFichaTecnicaConsumptionBaseItem(params: {
         symbology_refs: [],
     };
 
-    const sorted = sortAndReindexPillarItems('ficha_tecnica', [...existing, newItem]);
+    const sorted = sortAndReindexPillarItems('pauta_mantencion', [...rawExisting, newItem]);
     return { items: sorted, modified: true };
 }
 
@@ -868,12 +1019,12 @@ export async function itemizeSinglePillar(
     }
 
     const assetRef = db.collection('global_asset_catalog').doc(globalAssetId);
-    const assetSnap = await assetRef.get();
-    if (!assetSnap.exists) {
+    const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);
+    if (!hydrated.exists || !hydrated.data) {
         throw new Error(`Activo ${globalAssetId} no encontrado en global_asset_catalog.`);
     }
 
-    const assetData = assetSnap.data()!;
+    const assetData = hydrated.data;
     if (assetData.isSealed === true || assetData.is_sealed === true || assetData.knowledge_vault?.is_sealed === true) {
         const err: any = new Error('La bóveda maestra está sellada (HTTP 403). Desbloquéela antes de itemizar.');
         err.statusCode = 403;
@@ -915,18 +1066,21 @@ export async function itemizeSinglePillar(
     const makeModel = assetData.make_model || `${makeOficial} ${modelOficial}`;
     const [minItems, maxItems] = agent.itemRange;
 
-    // Marcar inicio de itemización del pilar
+    // Marcar inicio de itemización del pilar en repositorio particionado Anti-1MiB
     const vaultInit = assetData.knowledge_vault || createEmptyKnowledgeVault(makeModel);
-    vaultInit[pillarId] = {
-        ...vaultInit[pillarId],
+    const generatingPillarDoc: PillarDocument = {
+        ...(vaultInit[pillarId] || createEmptyKnowledgeVault(makeModel)[pillarId]),
         pillar_id: pillarId,
+        make_model: makeModel,
         itemize_status: 'GENERATING',
         started_at: new Date().toISOString(),
         itemize_error: null,
+        items: Array.isArray(vaultInit[pillarId]?.items) ? vaultInit[pillarId].items : [],
     };
-    await assetRef.update({
-        knowledge_vault: vaultInit,
-        updatedAt: Date.now(),
+    await VaultPersistenceService.savePillarDocument({
+        globalAssetId,
+        pillarId,
+        pillarDoc: generatingPillarDoc,
     });
 
     try {
@@ -1267,8 +1421,8 @@ Combina la evidencia local de la bóveda con Google Search (en español, inglés
             }
         }
 
-        const freshSnap = await assetRef.get();
-        const freshData = freshSnap.data() || assetData;
+        const freshHydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);
+        const freshData = freshHydrated.data || assetData;
         const vault = freshData.knowledge_vault || createEmptyKnowledgeVault(makeModel);
         const existingItems: PillarItem[] = Array.isArray(vault[pillarId]?.items) ? vault[pillarId].items : [];
 
@@ -1330,6 +1484,7 @@ Combina la evidencia local de la bóveda con Google Search (en español, inglés
             : null;
         const structureDigestSha256 =
             computePillarStructureDigestSha256(mergedItems, parentPillarDigestSha256) || '';
+        const contentDigestSha256 = computePillarContentDigestSha256(mergedItems);
 
         const finalPillar: PillarDocument = {
             ...(vault[pillarId] || createEmptyKnowledgeVault(makeModel)[pillarId]),
@@ -1343,6 +1498,7 @@ Combina la evidencia local de la bóveda con Google Search (en español, inglés
             classified_sources_itemized: allAvailableSources,
             suggested_items_pending: vault[pillarId]?.suggested_items_pending || [],
             structure_digest_sha256: structureDigestSha256,
+            content_digest_sha256: contentDigestSha256,
             parent_pillar_digest_sha256: parentPillarDigestSha256,
             updated_at: nowIso,
         };
@@ -1350,13 +1506,20 @@ Combina la evidencia local de la bóveda con Google Search (en español, inglés
         vault[pillarId] = finalPillar;
         const vaultMerkleRootSha256 = computeVaultMerkleRootSha256(vault);
 
-        // IC-03: Actualización atómica por ruta puntual en Firestore para no pisar ediciones concurrentes en otros pilares
-        await assetRef.update({
-            [`knowledge_vault.${pillarId}`]: finalPillar,
-            [`knowledge_vault.vault_merkle_root_sha256`]: vaultMerkleRootSha256,
-            equipment_type_key: assetData.equipment_type_key || typeDoc.type_key,
-            updatedAt: Date.now(),
+        // IC-03 & Anti-1MiB: Persistir pilar en `pillars/{pillarId}` y resumen ligero + Merkle Root en documento raíz
+        await VaultPersistenceService.savePillarDocument({
+            globalAssetId,
+            pillarId,
+            pillarDoc: finalPillar,
+            vaultMerkleRootSha256,
+            extraRootUpdates: {
+                equipment_type_key: assetData.equipment_type_key || typeDoc.type_key,
+            },
         });
+
+        if (pillarId === 'ficha_tecnica' || pillarId === 'pauta_mantencion') {
+            await buildAndPersistEquipmentCostMatrix(globalAssetId).catch(() => null);
+        }
 
         // 6. Trazabilidad Criptográfica Inmutable en `AuditLedger` (SHA-256 + Merkle Root)
         void AuditLedger.record({
@@ -1390,15 +1553,32 @@ Combina la evidencia local de la bóveda con Google Search (en español, inglés
             addedItemsCount: addedCount,
         };
     } catch (err: any) {
-        await assetRef
-            .update({
-                [`knowledge_vault.${pillarId}.itemize_status`]: 'ERROR',
-                [`knowledge_vault.${pillarId}.started_at`]: null,
-                [`knowledge_vault.${pillarId}.itemize_error`]: err?.message || 'Error en itemización.',
-                [`knowledge_vault.${pillarId}.updated_at`]: new Date().toISOString(),
-                updatedAt: Date.now(),
-            })
-            .catch(() => {});
+        const errNow = new Date().toISOString();
+        await Promise.all([
+            assetRef
+                .collection('pillars')
+                .doc(pillarId)
+                .set(
+                    {
+                        pillar_id: pillarId,
+                        itemize_status: 'ERROR',
+                        started_at: null,
+                        itemize_error: err?.message || 'Error en itemización.',
+                        updated_at: errNow,
+                    },
+                    { merge: true }
+                )
+                .catch(() => {}),
+            assetRef
+                .update({
+                    [`knowledge_vault.${pillarId}.itemize_status`]: 'ERROR',
+                    [`knowledge_vault.${pillarId}.started_at`]: null,
+                    [`knowledge_vault.${pillarId}.itemize_error`]: err?.message || 'Error en itemización.',
+                    [`knowledge_vault.${pillarId}.updated_at`]: errNow,
+                    updatedAt: Date.now(),
+                })
+                .catch(() => {}),
+        ]);
         throw err;
     }
 }
@@ -1410,11 +1590,10 @@ export async function suggestComplementaryPillarItems(
     const agent = PILLAR_AGENTS[pillarId];
     if (!agent) throw new Error(`Pilar inválido: ${pillarId}`);
 
-    const assetRef = db.collection('global_asset_catalog').doc(globalAssetId);
-    const snap = await assetRef.get();
-    if (!snap.exists) throw new Error(`Activo ${globalAssetId} no encontrado.`);
+    const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);
+    if (!hydrated.exists || !hydrated.data) throw new Error(`Activo ${globalAssetId} no encontrado.`);
 
-    const assetData = snap.data()!;
+    const assetData = hydrated.data;
     const makeOficial = String(assetData.make_oficial || assetData.make || 'GENÉRICO');
     const modelOficial = String(assetData.model_oficial || assetData.model || globalAssetId);
     const makeModel = assetData.make_model || `${makeOficial} ${modelOficial}`;
@@ -1604,9 +1783,18 @@ Usa Google Search para contrastar contra el manual oficial OEM y fichas técnica
         }
     }
 
-    await assetRef.update({
-        [`knowledge_vault.${pillarId}.suggested_items_pending`]: updatedPending,
-        updatedAt: Date.now(),
+    const currentPillarDoc: PillarDocument = {
+        ...(vault[pillarId] || createEmptyKnowledgeVault(makeModel)[pillarId]),
+        pillar_id: pillarId,
+        make_model: makeModel,
+        items: currentItems,
+        suggested_items_pending: updatedPending,
+        updated_at: new Date().toISOString(),
+    };
+    await VaultPersistenceService.savePillarDocument({
+        globalAssetId,
+        pillarId,
+        pillarDoc: currentPillarDoc,
     });
 
     return updatedPending;

@@ -1195,6 +1195,81 @@ function lineHasLiteralCodeFor(conceptId: string, lineText: string, isoReference
  * 2. Inserta `[SÍMBOLO: concept_id]` únicamente en menciones explícitas; nunca en sustantivos nominales de
  *    especificación (`presión de aceite hidráulico`, `temperatura del refrigerante`, `sistema de carga 24 V`).
  */
+interface MasterSymbologyRamCache {
+    docsById: Map<string, Record<string, any>>;
+    verifiedIds: Set<string>;
+    byIsoRef: Map<string, string>;
+    isoRefById: Map<string, string>;
+    expiresAt: number;
+}
+
+const MASTER_SYMBOLOGY_CACHE_TTL_MS = 5 * 60 * 1000;
+let masterSymbologyCache: MasterSymbologyRamCache | null = null;
+let masterSymbologyInFlight: Promise<MasterSymbologyRamCache> | null = null;
+let syntheticPurgeDoneInProcess = false;
+
+export function invalidateMasterSymbologyCache(): void {
+    masterSymbologyCache = null;
+}
+
+export async function getCachedMasterSymbologyIndex(): Promise<MasterSymbologyRamCache> {
+    if (masterSymbologyCache && Date.now() < masterSymbologyCache.expiresAt) {
+        return masterSymbologyCache;
+    }
+    if (masterSymbologyInFlight) {
+        return masterSymbologyInFlight;
+    }
+
+    masterSymbologyInFlight = (async () => {
+        await ensureUniversalSymbologySeeded(false);
+        if (!syntheticPurgeDoneInProcess) {
+            await purgeSyntheticAdHocSymbols();
+            syntheticPurgeDoneInProcess = true;
+        }
+
+        const vaultSnap = await db.collection('master_symbology_vault').get();
+        const docsById = new Map<string, Record<string, any>>();
+        const verifiedIds = new Set<string>();
+        const byIsoRef = new Map<string, string>();
+        const isoRefById = new Map<string, string>();
+
+        for (const doc of vaultSnap.docs) {
+            const d = doc.data() || {};
+            if (d.created_by === SYNTHETIC_ADHOC_SYMBOL_AUTHOR) continue;
+            docsById.set(doc.id, d);
+
+            if (!d.standard_icon_url && !d.svg_inline) continue;
+            if (d.standard_icon_status && d.standard_icon_status !== 'encontrado') continue;
+            verifiedIds.add(doc.id);
+            const isoRefRaw = String(d.iso_reference || '');
+            isoRefById.set(doc.id, isoRefRaw);
+            const isoRef = isoRefRaw.toUpperCase().replace(/[\s_-]+/g, '');
+            if (isoRef) byIsoRef.set(isoRef, doc.id);
+            const isoCode = String(d.iso_code || '')
+                .toUpperCase()
+                .trim();
+            if (isoCode) {
+                byIsoRef.set(isoCode, doc.id);
+                byIsoRef.set(`ISO7010${isoCode}`, doc.id);
+            }
+        }
+
+        const built: MasterSymbologyRamCache = {
+            docsById,
+            verifiedIds,
+            byIsoRef,
+            isoRefById,
+            expiresAt: Date.now() + MASTER_SYMBOLOGY_CACHE_TTL_MS,
+        };
+        masterSymbologyCache = built;
+        return built;
+    })().finally(() => {
+        masterSymbologyInFlight = null;
+    });
+
+    return masterSymbologyInFlight;
+}
+
 export async function injectVerifiedInlineSymbology(
     markdown: string,
     options: { pillarId?: string } = {}
@@ -1207,36 +1282,7 @@ export async function injectVerifiedInlineSymbology(
         };
     }
 
-    await ensureUniversalSymbologySeeded(false);
-    await purgeSyntheticAdHocSymbols();
-
-    const vaultSnap = await db
-        .collection('master_symbology_vault')
-        .select('iso_reference', 'iso_code', 'standard_icon_url', 'svg_inline', 'created_by', 'standard_icon_status')
-        .get();
-
-    const verifiedIds = new Set<string>();
-    const byIsoRef = new Map<string, string>();
-    const isoRefById = new Map<string, string>();
-
-    for (const doc of vaultSnap.docs) {
-        const d = doc.data();
-        if (!d.standard_icon_url && !d.svg_inline) continue;
-        if (d.created_by === SYNTHETIC_ADHOC_SYMBOL_AUTHOR) continue;
-        if (d.standard_icon_status && d.standard_icon_status !== 'encontrado') continue;
-        verifiedIds.add(doc.id);
-        const isoRefRaw = String(d.iso_reference || '');
-        isoRefById.set(doc.id, isoRefRaw);
-        const isoRef = isoRefRaw.toUpperCase().replace(/[\s_-]+/g, '');
-        if (isoRef) byIsoRef.set(isoRef, doc.id);
-        const isoCode = String(d.iso_code || '')
-            .toUpperCase()
-            .trim();
-        if (isoCode) {
-            byIsoRef.set(isoCode, doc.id);
-            byIsoRef.set(`ISO7010${isoCode}`, doc.id);
-        }
-    }
+    const { verifiedIds, byIsoRef, isoRefById } = await getCachedMasterSymbologyIndex();
 
     const detectedSet = new Set<string>();
     const applicationsByConcept: Record<string, string> = {};

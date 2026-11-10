@@ -29,7 +29,7 @@ export const SecureCasThumbnail: React.FC<SecureCasThumbnailProps> = ({
     src,
     alt,
     tenantId,
-    fallbackIcon = 'front_loader',
+    fallbackIcon = 'precision_manufacturing',
     className = 'w-12 h-12',
     imgClassName = 'w-full h-full object-cover',
 }) => {

@@ -1,10 +1,10 @@
-import { db } from '../../../config/firebase';
 import { ConfidentialityAirlockService } from '../../../core/privacy/ConfidentialityAirlockService';
 import { ResilientAIClient, Type } from '../../../core/resilient-ai-client';
 import { PillarId, PillarItem, ProposedUpdate } from '../types/vault.types';
 import { verifyAndNormalizeTechnicalUnits } from './NeuroSymbolicVerifier';
 import { getPillarEditGovernancePrompt, PILLAR_AGENTS } from './pillarAgents';
 import { applySurgicalFragmentSplice } from './vaultChatService';
+import { VaultPersistenceService } from './VaultPersistenceService';
 
 /**
  * AI ASSIST SERVICE — ETAPA 4 ASISTENCIA QUIRÚRGICA, EVOLUCIÓN Y ORTOGRAFÍA TÉCNICA
@@ -33,10 +33,10 @@ export async function assistItemEdit(options: AiAssistOptions): Promise<AiAssist
     const { globalAssetId, pillarId, itemId, userRequest } = options;
 
     try {
-        const snap = await db.collection('global_asset_catalog').doc(globalAssetId).get();
-        if (!snap.exists) throw new Error(`Catálogo no encontrado: ${globalAssetId}`);
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);
+        if (!hydrated.exists || !hydrated.data) throw new Error(`Catálogo no encontrado: ${globalAssetId}`);
 
-        const catalogProfile = snap.data() || {};
+        const catalogProfile = hydrated.data;
         const items: PillarItem[] = catalogProfile?.knowledge_vault?.[pillarId]?.items ?? [];
         const item = items.find((it) => it.item_id === itemId);
         if (!item) throw new Error(`Ítem "${itemId}" no encontrado.`);
@@ -87,12 +87,17 @@ Responde estrictamente en JSON válido:
   "finalContent": "..."
 }`;
 
+        const requiresExternalWebResearch =
+            /\b(investiga|buscar?\s+en\s+web|google|internet|fuente\s+externa|oem\s+oficial)\b/i.test(
+                userRequest
+            );
+
         const aiRes = await ResilientAIClient.generate({
             module: 'opermaq',
             preferredTier: 'SECONDARY',
             systemInstruction: agent.systemPrompt,
             temperature: 0.1,
-            useGoogleSearch: true,
+            useGoogleSearch: requiresExternalWebResearch,
             prompt,
         });
 
@@ -125,10 +130,10 @@ export async function assistRejection(options: {
     const { globalAssetId, pillarId, itemId, rejectionNote } = options;
 
     try {
-        const snap = await db.collection('global_asset_catalog').doc(globalAssetId).get();
-        if (!snap.exists) throw new Error(`Catálogo no encontrado: ${globalAssetId}`);
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);
+        if (!hydrated.exists || !hydrated.data) throw new Error(`Catálogo no encontrado: ${globalAssetId}`);
 
-        const catalogProfile = snap.data() || {};
+        const catalogProfile = hydrated.data;
         const items: PillarItem[] = catalogProfile?.knowledge_vault?.[pillarId]?.items ?? [];
         const item = items.find((it) => it.item_id === itemId);
         if (!item) throw new Error(`Ítem "${itemId}" no encontrado.`);
@@ -154,12 +159,17 @@ Responde estrictamente en JSON puro:
   "finalContent": "Contenido Markdown completo corregido (sin HTML)"
 }`;
 
+        const requiresExternalWebResearch =
+            /\b(cifra|valor|especificaci[oó]n|oem|manual|verificar|fuente|investiga)\b/i.test(
+                rejectionNote
+            );
+
         const aiRes = await ResilientAIClient.generate({
             module: 'opermaq',
             preferredTier: 'SECONDARY',
             systemInstruction: agent.systemPrompt,
             temperature: 0.1,
-            useGoogleSearch: true,
+            useGoogleSearch: requiresExternalWebResearch,
             prompt,
         });
 

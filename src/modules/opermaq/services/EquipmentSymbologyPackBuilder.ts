@@ -1,4 +1,3 @@
-import { db } from '../../../config/firebase';
 import type {
     EquipmentSymbologyPack,
     PillarId,
@@ -8,103 +7,46 @@ import type {
     SymbologyStandardFamily,
 } from '../types/vault.types';
 import { SEQUENTIAL_PILLAR_ORDER } from '../types/vault.types';
+import { AssetOntologyEngine } from './AssetOntologyEngine';
 import {
+    getCachedMasterSymbologyIndex,
     injectVerifiedInlineSymbology,
-    purgeSyntheticAdHocSymbols,
     SYNTHETIC_ADHOC_SYMBOL_AUTHOR,
 } from './NeuroSymbolicVerifier';
 import { PILLAR_LABELS } from './pillarAgents';
-import { ensureUniversalSymbologySeeded } from './UniversalSymbologySeedService';
+import { VaultPersistenceService } from './VaultPersistenceService';
 
-/**
- * EQUIPMENT SYMBOLOGY COMPILER v9.3 (CERO ESPECULACIÓN IA — SOLO COMPILADO REAL VERIFICADO)
- *
- * Compila determinísticamente la tabla real de simbología que aplica verdaderamente al equipo,
- * extrayendo únicamente:
- * 1. Los símbolos normativos (`ISO 7000`, `ISO 7010`, `ISO 2575`, `IEC 60417`, `GHS`) efectivamente
- *    referenciados o inyectados en los textos y capítulos reales de los 5 pilares del equipo (`knowledge_vault`).
- * 2. Los pictogramas vectorizados directamente desde los manuales PDF OEM cargados para este equipo
- *    (`master_symbology_vault` con `source_asset_id === assetId`).
- *
- * Cada entrada compilada registra su significado técnico normativo, la aplicación específica real
- * dentro del equipo (pilar, capítulo y extracto técnico exacto) y la telemetría de optimización CAS.
- */
-
-export type EquipmentArchetype =
-    | 'EARTHMOVING_HEAVY'
-    | 'UNDERGROUND_DRILL_JUMBO'
-    | 'ROAD_MINING_VEHICLE'
-    | 'LIFTING_CRANE_TELEHANDLER'
-    | 'ROTARY_PERCUSSIVE_POWER_TOOL'
-    | 'STATIONARY_GENSET_COMPRESSOR_WELDER'
-    | 'INDUSTRIAL_GENERAL';
+export type EquipmentArchetype = string;
 
 export function inferEquipmentArchetypeAndTags(assetData: Record<string, any>): {
     archetype: EquipmentArchetype;
     powertrainTags: string[];
 } {
-    const hay = [
-        assetData.make_oficial || assetData.make || '',
-        assetData.model_oficial || assetData.model || '',
-        assetData.tipo_equipo || '',
-        assetData.categoria_equipo || '',
-        ...(Array.isArray(assetData.ambiente_operativo) ? assetData.ambiente_operativo : []),
-        ...(Array.isArray(assetData.contexto_operativo) ? assetData.contexto_operativo : []),
-        ...(Array.isArray(assetData.caracteristicas_principales) ? assetData.caracteristicas_principales : []),
-        ...(Array.isArray(assetData.versions) ? assetData.versions : []),
-    ]
-        .join(' ')
-        .toLowerCase();
+    const traits = AssetOntologyEngine.inferAssetPhysicalTraits({
+        type_key: assetData.equipment_type_key,
+        canonical_type_es: assetData.tipo_equipo,
+        categoria_equipo: assetData.categoria_equipo,
+        archetype_id: assetData.archetype_id,
+        make_oficial: assetData.make_oficial || assetData.make,
+        model_oficial: assetData.model_oficial || assetData.model,
+        caracteristicas_principales: assetData.caracteristicas_principales,
+        ambiente_operativo: assetData.ambiente_operativo,
+        contexto_operativo: assetData.contexto_operativo,
+        existing_traits: assetData.physical_traits,
+    });
 
-    let archetype: EquipmentArchetype = 'INDUSTRIAL_GENERAL';
-
-    if (
-        /(esmeril|taladro|rotomartillo|sierra|lijadora|atornillador|demoledor|herramienta el[eé]ctrica|amoladora|tronzadora)/.test(
-            hay
-        )
-    ) {
-        archetype = 'ROTARY_PERCUSSIVE_POWER_TOOL';
-    } else if (/(perforadora|jumbo|jackleg|stoper|yt27|yt28|yt29|boomer|simba|raisebor|sondaje)/.test(hay)) {
-        archetype = 'UNDERGROUND_DRILL_JUMBO';
-    } else if (/(gr[uú]a|manipulador telesc[oó]pico|telehandler|horquilla|montacarga|alza ?hombre|manlift|izaje|puente gr[uú]a)/.test(hay)) {
-        archetype = 'LIFTING_CRANE_TELEHANDLER';
-    } else if (/(generador|grupo electr[oó]geno|compresor|soldadora|bomba estacionaria|tablero|subestaci[oó]n)/.test(hay)) {
-        archetype = 'STATIONARY_GENSET_COMPRESSOR_WELDER';
-    } else if (/(camioneta|pickup|hilux|l200|ranger|navara|furg[oó]n|fiorino|f-?350|bus|tracto|cami[oó]n aljibe|cami[oó]n pluma|veh[ií]culo liviano)/.test(hay)) {
-        archetype = 'ROAD_MINING_VEHICLE';
-    } else if (
-        /(minicargador|skid steer|excavadora|retroexcavadora|cargador|bulldozer|tractor|motoniveladora|rodillo|compactador|dumper|cami[oó]n minero|caex|797f|palas|movimiento de tierra|242d|320|d8t)/.test(
-            hay
-        )
-    ) {
-        archetype = 'EARTHMOVING_HEAVY';
-    }
-
-    const tags = new Set<string>();
-    if (/(di[eé]sel|c3\.3|cummins|perkins|cat c|power stroke|motor t[eé]rmico|petr[oó]leo)/.test(hay)) {
-        tags.add('DIESEL');
-    }
-    if (/(tier 4|stage v|dpf|adblue|scr|def|common rail|euro 5|euro 6)/.test(hay)) {
-        tags.add('TIER4_DPF_DEF');
-    }
-    if (/(high flow|xps|hidr[aá]ulic|caudal|acople|aditamento|martillo hidr)/.test(hay)) {
-        tags.add('HIGH_FLOW_COUPLED_HYDRAULICS');
-    }
-    if (/(neum[aá]tic|aire comprimido|mpa|bar|psi|compresor|yt27|yt28)/.test(hay)) {
-        tags.add('PNEUMATIC');
-    }
-    if (/(bater[ií]a|ion-litio|li-ion|h[ií]brido|ev|alta tensi[oó]n)/.test(hay)) {
-        tags.add('BATTERY_ELECTRIC');
-    }
-    if (/(subterr[aá]ne|socav[oó]n|t[uú]nel|galer[ií]a)/.test(hay)) {
-        tags.add('UNDERGROUND_FAENA');
-    }
-    if (/(altura|rajo|invierno|fr[ií]o)/.test(hay)) {
-        tags.add('HIGH_ALTITUDE_COLD');
-    }
+    const tags = new Set<string>([
+        traits.mobility,
+        traits.primary_energy,
+        traits.operator_interface,
+        traits.functional_domain,
+    ]);
+    if (traits.has_hydraulic_system) tags.add('HYDRAULIC_SYSTEM');
+    if (traits.has_compressed_air_system) tags.add('PNEUMATIC_SYSTEM');
+    if (traits.requires_metrology_calibration) tags.add('METROLOGY_CALIBRATION');
 
     return {
-        archetype,
+        archetype: `${traits.functional_domain}:${traits.iso_14224_equipment_class}`,
         powertrainTags: Array.from(tags),
     };
 }
@@ -147,11 +89,17 @@ export async function buildAndPersistAssetSymbologyPack(
     assetId: string,
     existingAssetData?: Record<string, any>
 ): Promise<EquipmentSymbologyPack> {
-    await ensureUniversalSymbologySeeded(false);
-    await purgeSyntheticAdHocSymbols();
+    const cachedSymbology = await getCachedMasterSymbologyIndex();
 
-    const docRef = db.collection('global_asset_catalog').doc(assetId);
-    const assetData = existingAssetData || (await docRef.get()).data() || {};
+    const hasInlinePillarItems =
+        existingAssetData?.knowledge_vault &&
+        SEQUENTIAL_PILLAR_ORDER.some((pid) => Array.isArray(existingAssetData.knowledge_vault[pid]?.items));
+
+    const hydrated = hasInlinePillarItems
+        ? { exists: true, data: existingAssetData }
+        : await VaultPersistenceService.loadHydratedAssetCatalog(assetId);
+    const assetData = hydrated.data || existingAssetData || {};
+
     const makeLower = String(assetData.make_oficial || assetData.make || '')
         .trim()
         .toLowerCase();
@@ -190,15 +138,11 @@ export async function buildAndPersistAssetSymbologyPack(
             for (const item of items) {
                 if (item?.is_discarded) continue;
                 const contentStr = String(item?.content || '').trim();
-                // REGLA SOBERANA: La simbología se alimenta exclusivamente de la caza de contenidos
-                // de cada ítem (nunca de los títulos o rationale generados en el itemizado).
                 if (item?.content_status !== 'COMPLETADO' || !contentStr) continue;
 
                 const itemId = String(item?.item_id || '');
                 const chapterTitle = String(item?.title || 'Capítulo Técnico');
 
-                // 1. Escanear determinísticamente únicamente el cuerpo técnico cazado del capítulo
-                //    (Strict Explicit Mention Only; en `ficha_tecnica` solo códigos normativos literales).
                 const inlineAnalysis = await injectVerifiedInlineSymbology(contentStr, { pillarId });
                 const explicitlyDetected = new Set(inlineAnalysis.detectedConceptIds);
 
@@ -215,8 +159,6 @@ export async function buildAndPersistAssetSymbologyPack(
                     });
                 }
 
-                // 2. `symbology_refs` heredados solo se aceptan si su mención explícita fue verificada en el texto
-                //    (descarta refs especulativos de versiones anteriores del cazador).
                 if (Array.isArray(item?.symbology_refs)) {
                     for (const ref of item.symbology_refs) {
                         const cid = typeof ref === 'string' ? ref : ref?.concept_id;
@@ -237,28 +179,19 @@ export async function buildAndPersistAssetSymbologyPack(
         }
     }
 
-    // 3. Incluir símbolos OEM extraídos y vectorizados directamente desde los PDFs de este equipo (`source_asset_id == assetId`)
-    try {
-        const oemSymSnap = await db
-            .collection('master_symbology_vault')
-            .where('source_asset_id', '==', assetId)
-            .limit(40)
-            .get();
-        for (const doc of oemSymSnap.docs) {
-            const d = doc.data();
-            addConceptApplication(doc.id, {
-                pillar_id: 'manual_operaciones',
-                pillar_label: 'Manual OEM Vectorizado',
-                item_id: `oem_pdf_p${d.source_page || 1}`,
-                item_title: `Pictograma OEM Pág. ${d.source_page || 1}`,
-                context_excerpt:
-                    d.action_operator_es ||
-                    d.description_es ||
-                    `Extraído directamente del manual PDF oficial de ${makeModel}.`,
-            });
-        }
-    } catch {
-        // Ignorar si no hay índice o colección vacía
+    // Incluir símbolos OEM extraídos y vectorizados desde los PDFs de este equipo (resolución en RAM: 0 lecturas)
+    for (const [docId, d] of cachedSymbology.docsById.entries()) {
+        if (d.source_asset_id !== assetId) continue;
+        addConceptApplication(docId, {
+            pillar_id: 'manual_operaciones',
+            pillar_label: 'Manual OEM Vectorizado',
+            item_id: `oem_pdf_p${d.source_page || 1}`,
+            item_title: `Pictograma OEM Pág. ${d.source_page || 1}`,
+            context_excerpt:
+                d.action_operator_es ||
+                d.description_es ||
+                `Extraído directamente del manual PDF oficial de ${makeModel}.`,
+        });
     }
 
     const groups: Record<SymbologyFunctionalGroup, SymbologyPackEntry[]> = {
@@ -267,19 +200,11 @@ export async function buildAndPersistAssetSymbologyPack(
         CABIN_TELLTALES_CONTROLS: [],
         MAINTENANCE_FLUIDS_ELECTRICAL: [],
     };
-    const compiledEntries: SymbologyPackEntry[] = [];
+    let totalSymbols = 0;
 
-    const conceptIds = Array.from(chapterApplicationsByConcept.keys());
-    const snaps = await Promise.all(
-        conceptIds.map((cid) => db.collection('master_symbology_vault').doc(cid).get())
-    );
-
-    for (let i = 0; i < snaps.length; i++) {
-        const snap = snaps[i];
-        if (!snap.exists) continue;
-        const d = snap.data()!;
-        const cid = snap.id;
-        // Excluir símbolos sintéticos genéricos del motor ad-hoc retirado (`SB-01`).
+    for (const cid of chapterApplicationsByConcept.keys()) {
+        const d = cachedSymbology.docsById.get(cid);
+        if (!d) continue;
         if (d.created_by === SYNTHETIC_ADHOC_SYMBOL_AUTHOR) continue;
 
         const brandVariant =
@@ -300,21 +225,21 @@ export async function buildAndPersistAssetSymbologyPack(
             (/7010/i.test(d.iso_reference || '')
                 ? 'ISO_7010'
                 : /60417/i.test(d.iso_reference || '')
-                ? 'IEC_60417'
-                : /2575/i.test(d.iso_reference || '')
-                ? 'ISO_2575'
-                : /ghs/i.test(d.iso_reference || '')
-                ? 'GHS'
-                : 'ISO_7000');
+                    ? 'IEC_60417'
+                    : /2575/i.test(d.iso_reference || '')
+                        ? 'ISO_2575'
+                        : /ghs/i.test(d.iso_reference || '')
+                            ? 'GHS'
+                            : 'ISO_7000');
 
         const chapterApps = chapterApplicationsByConcept.get(cid) || [];
         const pillarList = Array.from(pillarLabelsByConcept.get(cid) || []);
         const specificApplicationSummary =
             chapterApps.length > 0
                 ? chapterApps
-                      .slice(0, 3)
-                      .map((ca) => `[${ca.pillar_label} ➔ ${ca.item_title}]: ${ca.context_excerpt}`)
-                      .join(' | ')
+                    .slice(0, 3)
+                    .map((ca) => `[${ca.pillar_label} ➔ ${ca.item_title}]: ${ca.context_excerpt}`)
+                    .join(' | ')
                 : d.action_operator_es || d.description_es || '';
 
         const entry: SymbologyPackEntry = {
@@ -338,10 +263,8 @@ export async function buildAndPersistAssetSymbologyPack(
         };
 
         groups[group].push(entry);
-        compiledEntries.push(entry);
+        totalSymbols += 1;
     }
-
-    const totalSymbols = compiledEntries.length;
 
     const pack: EquipmentSymbologyPack = {
         generated_at: new Date().toISOString(),
@@ -349,18 +272,11 @@ export async function buildAndPersistAssetSymbologyPack(
         powertrain_tags: powertrainTags,
         total_symbols: totalSymbols,
         groups,
-        compiled_entries: compiledEntries,
     };
 
-    await docRef
-        .set(
-            {
-                symbology_pack: pack,
-                updatedAt: Date.now(),
-            },
-            { merge: true }
-        )
-        .catch(() => {});
+    if (hydrated.exists) {
+        await VaultPersistenceService.saveDerivedSymbologyPack(assetId, pack).catch(() => { });
+    }
 
     return pack;
 }

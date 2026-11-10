@@ -6,7 +6,8 @@ import { createHash } from 'crypto';
  *
  * Colección Firestore `audit_ledger` append-only con encadenamiento criptográfico
  * secuencial SHA-256 (`seq`, `prevHash`, `entryHash = SHA-256(prevHash + canonicalPayload)`)
- * gobernado transaccionalmente mediante `audit_ledger_head/global`.
+ * particionado por shard multi-tenant (`audit_ledger_head/{shardId}`) para eliminar
+ * contención transaccional preservando compatibilidad 100% con el shard maestro `global`.
  */
 
 export type AuditLedgerModule =
@@ -39,6 +40,7 @@ export interface ChainVerificationReport {
     headHash: string | null;
     firstSeqChecked: number | null;
     lastSeqChecked: number | null;
+    shardsVerified?: number;
     brokenAtDocId?: string;
     brokenAtSeq?: number;
     reason?: string;
@@ -47,10 +49,6 @@ export interface ChainVerificationReport {
 
 const GENESIS_PREV_HASH = '0'.repeat(64);
 
-/**
- * Serialización JSON determinista con orden lexicográfico de llaves
- * para garantizar reproducibilidad exacta al verificar la cadena.
- */
 function canonicalizeValue(value: unknown): unknown {
     if (value === undefined) return null;
     if (value === null || typeof value !== 'object') {
@@ -83,7 +81,21 @@ export function canonicalJsonStringify(payload: Record<string, unknown>): string
 export class AuditLedger {
     private static readonly COLLECTION_NAME = 'audit_ledger';
     private static readonly HEAD_COLLECTION = 'audit_ledger_head';
-    private static readonly HEAD_DOC_ID = 'global';
+    private static readonly GLOBAL_SHARD_ID = 'global';
+
+    public static resolveShardId(tenantId?: string | null): string {
+        const clean = String(tenantId || '').trim();
+        if (
+            !clean ||
+            clean.toLowerCase() === 'global' ||
+            clean === 'dev-master-sandbox' ||
+            clean === 'admin-master-console'
+        ) {
+            return this.GLOBAL_SHARD_ID;
+        }
+        const safe = clean.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 96);
+        return safe ? `tenant_${safe}` : this.GLOBAL_SHARD_ID;
+    }
 
     private static buildCanonicalPayload(params: {
         seq: number;
@@ -118,12 +130,10 @@ export class AuditLedger {
             .digest('hex');
     }
 
-    /**
-     * Registra un evento inmutable encadenado criptográficamente mediante transacción atómica.
-     */
     public static async record(entry: LedgerEntry): Promise<string> {
         try {
-            const headRef = db.collection(this.HEAD_COLLECTION).doc(this.HEAD_DOC_ID);
+            const shardId = this.resolveShardId(entry.tenantId);
+            const headRef = db.collection(this.HEAD_COLLECTION).doc(shardId);
             const docRef = db.collection(this.COLLECTION_NAME).doc();
             const ipAddress = (entry.ipAddress || 'internal').trim() || 'internal';
             const sanitizedDetails = JSON.parse(
@@ -137,9 +147,10 @@ export class AuditLedger {
                 const headSnap = await tx.get(headRef);
                 const headData = headSnap.exists ? headSnap.data() || {} : {};
 
-                const prevSeq = typeof headData.seq === 'number' && Number.isInteger(headData.seq)
-                    ? headData.seq
-                    : 0;
+                const prevSeq =
+                    typeof headData.seq === 'number' && Number.isInteger(headData.seq)
+                        ? headData.seq
+                        : 0;
                 const prevHash =
                     typeof headData.lastHash === 'string' && /^[a-f0-9]{64}$/i.test(headData.lastHash)
                         ? headData.lastHash
@@ -165,6 +176,7 @@ export class AuditLedger {
 
                 tx.set(docRef, {
                     id: docRef.id,
+                    shardId,
                     seq,
                     prevHash,
                     entryHash,
@@ -185,6 +197,7 @@ export class AuditLedger {
                 tx.set(
                     headRef,
                     {
+                        shardId,
                         seq,
                         lastHash: entryHash,
                         lastEntryId: docRef.id,
@@ -198,7 +211,7 @@ export class AuditLedger {
             });
 
             console.log(
-                `[AUDIT-LEDGER] #${committedSeq} ${entry.action} [${entry.module}] (Hash: ${committedHash.substring(0, 12)}...)`
+                `[AUDIT-LEDGER:${shardId}] #${committedSeq} ${entry.action} [${entry.module}] (Hash: ${committedHash.substring(0, 12)}...)`
             );
             return docRef.id;
         } catch (error) {
@@ -207,23 +220,24 @@ export class AuditLedger {
         }
     }
 
-    /**
-     * Verifica la integridad criptográfica de las últimas `limit` entradas encadenadas en `audit_ledger`.
-     */
-    public static async verifyChain(limit: number = 100): Promise<ChainVerificationReport> {
+    public static async verifyChain(
+        limit: number = 100,
+        targetShardId?: string
+    ): Promise<ChainVerificationReport> {
         const safeLimit = Math.min(Math.max(1, Math.floor(limit || 100)), 1000);
         const verifiedAt = new Date().toISOString();
+        const effectiveHeadId = targetShardId || this.GLOBAL_SHARD_ID;
 
-        const headSnap = await db.collection(this.HEAD_COLLECTION).doc(this.HEAD_DOC_ID).get();
+        const headSnap = await db.collection(this.HEAD_COLLECTION).doc(effectiveHeadId).get();
         const headData = headSnap.exists ? headSnap.data() || {} : null;
         const headSeq = typeof headData?.seq === 'number' ? headData.seq : null;
         const headHash = typeof headData?.lastHash === 'string' ? headData.lastHash : null;
 
-        const chainedSnap = await db
-            .collection(this.COLLECTION_NAME)
-            .orderBy('seq', 'desc')
-            .limit(safeLimit)
-            .get();
+        let queryRef: FirebaseFirestore.Query = db.collection(this.COLLECTION_NAME);
+        if (targetShardId) {
+            queryRef = queryRef.where('shardId', '==', targetShardId);
+        }
+        const chainedSnap = await queryRef.orderBy('timestamp', 'desc').limit(safeLimit).get();
 
         if (chainedSnap.empty) {
             const legacySnap = await db.collection(this.COLLECTION_NAME).limit(safeLimit).get();
@@ -236,150 +250,176 @@ export class AuditLedger {
                 headHash,
                 firstSeqChecked: null,
                 lastSeqChecked: null,
+                shardsVerified: 0,
                 verifiedAt,
             };
         }
 
-        // Orden ascendente por `seq` para recorrer los eslabones en orden cronológico
-        const docsAsc = [...chainedSnap.docs].reverse();
-        let previousEntry: { seq: number; entryHash: string } | null = null;
+        const byShard = new Map<string, FirebaseFirestore.QueryDocumentSnapshot[]>();
+        let legacyUnchainedCount = 0;
 
-        for (const doc of docsAsc) {
+        for (const doc of chainedSnap.docs) {
             const data = doc.data();
-            const seq = data.seq;
-            const prevHash = data.prevHash;
-            const entryHash = data.entryHash;
-
-            if (typeof seq !== 'number' || typeof prevHash !== 'string' || typeof entryHash !== 'string') {
-                return {
-                    valid: false,
-                    checkedCount: docsAsc.length,
-                    chainedCount: docsAsc.length,
-                    legacyUnchainedCount: 0,
-                    headSeq,
-                    headHash,
-                    firstSeqChecked: docsAsc[0]?.data()?.seq ?? null,
-                    lastSeqChecked: docsAsc[docsAsc.length - 1]?.data()?.seq ?? null,
-                    brokenAtDocId: doc.id,
-                    brokenAtSeq: typeof seq === 'number' ? seq : undefined,
-                    reason: 'Metadatos de cadena ausentes o corruptos (seq/prevHash/entryHash).',
-                    verifiedAt,
-                };
+            if (typeof data.seq !== 'number' || typeof data.entryHash !== 'string') {
+                legacyUnchainedCount += 1;
+                continue;
             }
-
-            if (seq === 1 && prevHash !== GENESIS_PREV_HASH) {
-                return {
-                    valid: false,
-                    checkedCount: docsAsc.length,
-                    chainedCount: docsAsc.length,
-                    legacyUnchainedCount: 0,
-                    headSeq,
-                    headHash,
-                    firstSeqChecked: docsAsc[0]?.data()?.seq ?? null,
-                    lastSeqChecked: docsAsc[docsAsc.length - 1]?.data()?.seq ?? null,
-                    brokenAtDocId: doc.id,
-                    brokenAtSeq: seq,
-                    reason: 'El bloque génesis (seq=1) no referencia el hash génesis esperado.',
-                    verifiedAt,
-                };
-            }
-
-            if (previousEntry) {
-                if (seq !== previousEntry.seq + 1) {
-                    return {
-                        valid: false,
-                        checkedCount: docsAsc.length,
-                        chainedCount: docsAsc.length,
-                        legacyUnchainedCount: 0,
-                        headSeq,
-                        headHash,
-                        firstSeqChecked: docsAsc[0]?.data()?.seq ?? null,
-                        lastSeqChecked: docsAsc[docsAsc.length - 1]?.data()?.seq ?? null,
-                        brokenAtDocId: doc.id,
-                        brokenAtSeq: seq,
-                        reason: `Salto de secuencia detectado: se esperaba seq=${previousEntry.seq + 1}, se encontró seq=${seq}.`,
-                        verifiedAt,
-                    };
-                }
-                if (prevHash !== previousEntry.entryHash) {
-                    return {
-                        valid: false,
-                        checkedCount: docsAsc.length,
-                        chainedCount: docsAsc.length,
-                        legacyUnchainedCount: 0,
-                        headSeq,
-                        headHash,
-                        firstSeqChecked: docsAsc[0]?.data()?.seq ?? null,
-                        lastSeqChecked: docsAsc[docsAsc.length - 1]?.data()?.seq ?? null,
-                        brokenAtDocId: doc.id,
-                        brokenAtSeq: seq,
-                        reason: 'Ruptura de eslabón criptográfico: prevHash no coincide con entryHash anterior.',
-                        verifiedAt,
-                    };
-                }
-            }
-
-            const canonicalPayload = this.buildCanonicalPayload({
-                seq,
-                tenantId: String(data.tenantId || ''),
-                actorUid: String(data.actorUid || ''),
-                actorEmail: String(data.actorEmail || ''),
-                action: String(data.action || ''),
-                module: String(data.module || ''),
-                targetEntity: String(data.targetEntity || ''),
-                ipAddress: String(data.ipAddress || 'internal'),
-                timestamp: Number(data.timestamp || 0),
-                details: (data.details || {}) as Record<string, unknown>,
-            });
-
-            const recomputedHash = this.computeChainedHash(prevHash, canonicalPayload);
-            if (recomputedHash !== entryHash) {
-                return {
-                    valid: false,
-                    checkedCount: docsAsc.length,
-                    chainedCount: docsAsc.length,
-                    legacyUnchainedCount: 0,
-                    headSeq,
-                    headHash,
-                    firstSeqChecked: docsAsc[0]?.data()?.seq ?? null,
-                    lastSeqChecked: docsAsc[docsAsc.length - 1]?.data()?.seq ?? null,
-                    brokenAtDocId: doc.id,
-                    brokenAtSeq: seq,
-                    reason: 'Alteración de contenido detectada: el hash SHA-256 recalculado difiere de entryHash.',
-                    verifiedAt,
-                };
-            }
-
-            previousEntry = { seq, entryHash };
+            const sId = typeof data.shardId === 'string' && data.shardId ? data.shardId : this.GLOBAL_SHARD_ID;
+            const bucket = byShard.get(sId) || [];
+            bucket.push(doc);
+            byShard.set(sId, bucket);
         }
 
-        const lastDoc = docsAsc[docsAsc.length - 1].data();
-        if (headSeq !== null && lastDoc.seq === headSeq && headHash && lastDoc.entryHash !== headHash) {
-            return {
-                valid: false,
-                checkedCount: docsAsc.length,
-                chainedCount: docsAsc.length,
-                legacyUnchainedCount: 0,
-                headSeq,
-                headHash,
-                firstSeqChecked: docsAsc[0]?.data()?.seq ?? null,
-                lastSeqChecked: lastDoc.seq,
-                brokenAtDocId: docsAsc[docsAsc.length - 1].id,
-                brokenAtSeq: lastDoc.seq,
-                reason: 'El puntero global audit_ledger_head/global no coincide con el último eslabón.',
-                verifiedAt,
-            };
+        let chainedCount = 0;
+        let firstSeqChecked: number | null = null;
+        let lastSeqChecked: number | null = null;
+
+        for (const [sId, shardDocs] of byShard.entries()) {
+            const docsAsc = [...shardDocs].sort((a, b) => Number(a.data().seq) - Number(b.data().seq));
+            chainedCount += docsAsc.length;
+            if (firstSeqChecked === null && docsAsc.length > 0) {
+                firstSeqChecked = docsAsc[0].data().seq;
+                lastSeqChecked = docsAsc[docsAsc.length - 1].data().seq;
+            }
+
+            let previousEntry: { seq: number; entryHash: string } | null = null;
+            for (const doc of docsAsc) {
+                const data = doc.data();
+                const seq = data.seq;
+                const prevHash = data.prevHash;
+                const entryHash = data.entryHash;
+
+                if (seq === 1 && prevHash !== GENESIS_PREV_HASH) {
+                    return {
+                        valid: false,
+                        checkedCount: chainedSnap.size,
+                        chainedCount,
+                        legacyUnchainedCount,
+                        headSeq,
+                        headHash,
+                        firstSeqChecked,
+                        lastSeqChecked,
+                        shardsVerified: byShard.size,
+                        brokenAtDocId: doc.id,
+                        brokenAtSeq: seq,
+                        reason: `El bloque génesis (seq=1) del shard ${sId} no referencia el hash génesis esperado.`,
+                        verifiedAt,
+                    };
+                }
+
+                if (previousEntry) {
+                    if (seq !== previousEntry.seq + 1) {
+                        return {
+                            valid: false,
+                            checkedCount: chainedSnap.size,
+                            chainedCount,
+                            legacyUnchainedCount,
+                            headSeq,
+                            headHash,
+                            firstSeqChecked,
+                            lastSeqChecked,
+                            shardsVerified: byShard.size,
+                            brokenAtDocId: doc.id,
+                            brokenAtSeq: seq,
+                            reason: `Salto de secuencia en shard ${sId}: se esperaba seq=${previousEntry.seq + 1}, se encontró seq=${seq}.`,
+                            verifiedAt,
+                        };
+                    }
+                    if (prevHash !== previousEntry.entryHash) {
+                        return {
+                            valid: false,
+                            checkedCount: chainedSnap.size,
+                            chainedCount,
+                            legacyUnchainedCount,
+                            headSeq,
+                            headHash,
+                            firstSeqChecked,
+                            lastSeqChecked,
+                            shardsVerified: byShard.size,
+                            brokenAtDocId: doc.id,
+                            brokenAtSeq: seq,
+                            reason: `Ruptura criptográfica en shard ${sId}: prevHash no coincide con entryHash anterior.`,
+                            verifiedAt,
+                        };
+                    }
+                }
+
+                const canonicalPayload = this.buildCanonicalPayload({
+                    seq,
+                    tenantId: String(data.tenantId || ''),
+                    actorUid: String(data.actorUid || ''),
+                    actorEmail: String(data.actorEmail || ''),
+                    action: String(data.action || ''),
+                    module: String(data.module || ''),
+                    targetEntity: String(data.targetEntity || ''),
+                    ipAddress: String(data.ipAddress || 'internal'),
+                    timestamp: Number(data.timestamp || 0),
+                    details: (data.details || {}) as Record<string, unknown>,
+                });
+
+                const recomputedHash = this.computeChainedHash(prevHash, canonicalPayload);
+                if (recomputedHash !== entryHash) {
+                    return {
+                        valid: false,
+                        checkedCount: chainedSnap.size,
+                        chainedCount,
+                        legacyUnchainedCount,
+                        headSeq,
+                        headHash,
+                        firstSeqChecked,
+                        lastSeqChecked,
+                        shardsVerified: byShard.size,
+                        brokenAtDocId: doc.id,
+                        brokenAtSeq: seq,
+                        reason: `Alteración detectada en shard ${sId}: el hash SHA-256 recalculado difiere de entryHash.`,
+                        verifiedAt,
+                    };
+                }
+
+                previousEntry = { seq, entryHash };
+            }
+
+            const sHeadSnap =
+                sId === effectiveHeadId
+                    ? headSnap
+                    : await db.collection(this.HEAD_COLLECTION).doc(sId).get();
+            const sHeadData = sHeadSnap.exists ? sHeadSnap.data() || {} : null;
+            const lastDoc = docsAsc[docsAsc.length - 1].data();
+            if (
+                sHeadData &&
+                typeof sHeadData.seq === 'number' &&
+                lastDoc.seq === sHeadData.seq &&
+                typeof sHeadData.lastHash === 'string' &&
+                lastDoc.entryHash !== sHeadData.lastHash
+            ) {
+                return {
+                    valid: false,
+                    checkedCount: chainedSnap.size,
+                    chainedCount,
+                    legacyUnchainedCount,
+                    headSeq,
+                    headHash,
+                    firstSeqChecked,
+                    lastSeqChecked,
+                    shardsVerified: byShard.size,
+                    brokenAtDocId: docsAsc[docsAsc.length - 1].id,
+                    brokenAtSeq: lastDoc.seq,
+                    reason: `El puntero audit_ledger_head/${sId} no coincide con el último eslabón.`,
+                    verifiedAt,
+                };
+            }
         }
 
         return {
             valid: true,
-            checkedCount: docsAsc.length,
-            chainedCount: docsAsc.length,
-            legacyUnchainedCount: 0,
+            checkedCount: chainedSnap.size,
+            chainedCount,
+            legacyUnchainedCount,
             headSeq,
             headHash,
-            firstSeqChecked: docsAsc[0]?.data()?.seq ?? null,
-            lastSeqChecked: lastDoc.seq ?? null,
+            firstSeqChecked,
+            lastSeqChecked,
+            shardsVerified: byShard.size,
             verifiedAt,
         };
     }

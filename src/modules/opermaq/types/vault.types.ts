@@ -1,19 +1,95 @@
-import { z } from 'zod';
 import type {
+    AssetMobilityTrait,
+    AssetPhysicalTraits,
     CanonicalSpecSlot,
+    CostDriverUnit,
+    CostMatrixTaxonomyMeta,
+    DutyTravelRegimeTrait,
+    EnergyConsumptionProfile,
+    EnergySourceCategory,
     EquipmentAxisValueKind,
+    FleetIdentifierType,
+    FleetOwnershipCondition,
+    FunctionalDomainTrait,
+    OperationalCostMatrix,
+    OperatorInterfaceTrait,
+    PmCadenceBasisTrait,
+} from '../../../contracts/opermaq.contracts';
+import {
+    ApplyCatalogHomologationBodySchema,
+    AssetMobilityTraitSchema,
+    AssetPhysicalTraitsSchema,
+    CanonicalSpecSlotSchema,
+    CostDriverUnitSchema,
+    CostMatrixTaxonomyMetaSchema,
+    DutyTravelRegimeTraitSchema,
+    EnergyConsumptionProfileSchema,
+    EnergySourceCategorySchema,
+    EquipmentAxisValueKindSchema,
+    EquipmentTypeAxisSchema,
+    FleetIdentifierTypeSchema,
+    FleetOwnershipConditionSchema,
+    FleetUnitRegistrationBodySchema,
+    FunctionalDomainTraitSchema,
+    GlobalEquipmentTypeSchema,
+    HITL_CONFIRM_KEYWORD,
+    OperationalCostMatrixSchema,
+    OperatorInterfaceTraitSchema,
+    PmCadenceBasisTraitSchema,
+    ResolveAssetBodySchema,
+    ReviewContributionBodySchema,
+} from '../../../contracts/opermaq.contracts';
+import type {
     EquipmentTypeAxisSchemaItem,
     MachineryArchetypeId,
 } from '../utils/canonicalArchetypeSpecs';
 
 export type {
+    AssetMobilityTrait,
+    AssetPhysicalTraits,
     CanonicalSpecSlot,
+    CostDriverUnit,
+    CostMatrixTaxonomyMeta,
+    DutyTravelRegimeTrait,
+    EnergyConsumptionProfile,
+    EnergySourceCategory,
     EquipmentAxisValueKind,
     EquipmentTypeAxisSchemaItem,
+    FleetIdentifierType,
+    FleetOwnershipCondition,
+    FunctionalDomainTrait,
     MachineryArchetypeId,
+    OperationalCostMatrix,
+    OperatorInterfaceTrait,
+    PmCadenceBasisTrait,
 };
 
-export type EquipmentTypeOrigin = 'SEEDED_ISO_BASE' | 'AI_DISCOVERED' | 'HUMAN_CURATED_HITL';
+export {
+    ApplyCatalogHomologationBodySchema,
+    AssetMobilityTraitSchema,
+    AssetPhysicalTraitsSchema,
+    CanonicalSpecSlotSchema,
+    CostDriverUnitSchema,
+    CostMatrixTaxonomyMetaSchema,
+    DutyTravelRegimeTraitSchema,
+    EnergyConsumptionProfileSchema,
+    EnergySourceCategorySchema,
+    EquipmentAxisValueKindSchema,
+    EquipmentTypeAxisSchema,
+    FleetIdentifierTypeSchema,
+    FleetOwnershipConditionSchema,
+    FleetUnitRegistrationBodySchema,
+    FunctionalDomainTraitSchema,
+    GlobalEquipmentTypeSchema,
+    HITL_CONFIRM_KEYWORD,
+    OperationalCostMatrixSchema,
+    OperatorInterfaceTraitSchema,
+    PmCadenceBasisTraitSchema,
+    ResolveAssetBodySchema,
+    ReviewContributionBodySchema,
+};
+
+export type EquipmentTypeOrigin = 'SEEDED_ISO_BASE' | 'AI_CURATED' | 'AI_DISCOVERED' | 'HUMAN_CURATED_HITL';
 
 export interface EquipmentTypeCoreChapterItem {
     chapter_key: string;
@@ -45,6 +121,9 @@ export interface GlobalEquipmentTypeDoc {
     canonical_type_es: string;
     categoria_equipo: string;
     archetype_id?: MachineryArchetypeId;
+    physical_traits?: AssetPhysicalTraits;
+    cost_schema_blueprint?: CostMatrixTaxonomyMeta;
+    symbology_concept_ids?: string[];
     type_aliases: string[];
     search_tokens: string[];
     embedding_768_raw?: number[];
@@ -57,14 +136,6 @@ export interface GlobalEquipmentTypeDoc {
     created_at: string;
     updated_at: string;
 }
-
-/**
- * TIPOS Y ESQUEMAS FUNCIONALES DE DOMINIO — MÓDULO INTEGRADO OPERMAQ
- * 100% alineado con `web/src/modules/opermaq/backend/types/schema.ts`
- * y 100% libre de lógica de cuentas, contratos o cobros.
- */
-
-export const HITL_CONFIRM_KEYWORD = 'ACTUALIZAR';
 
 export type PillarId =
     | 'ficha_tecnica'
@@ -81,10 +152,6 @@ export const VALID_PILLAR_IDS: PillarId[] = [
     'checklist_pre_op',
 ];
 
-/**
- * SECUENCIA LÓGICA BLOQUEANTE DE LOS 5 PILARES (01 -> 02 -> 03 -> 04 -> 05)
- * Ningún pilar posterior puede itemizarse sin haber completado el pilar anterior.
- */
 export const SEQUENTIAL_PILLAR_ORDER: PillarId[] = [
     'ficha_tecnica',
     'manual_operaciones',
@@ -126,13 +193,13 @@ export interface ExtractedFigureRef {
     storage_url: string;
     mime_type: 'image/webp' | 'image/svg+xml' | 'image/png';
     figure_type:
-    | 'DIAGRAMA_ACOTADO'
-    | 'CURVA_RENDIMIENTO'
-    | 'ESQUEMA_HIDRAULICO_ELECTRICO'
-    | 'FOTO_COMPONENTE'
-    | 'MAPA_LUBRICACION_PM'
-    | 'SIMBOLOGIA_SEGURIDAD'
-    | 'PLANO_VECTORIAL_SVG';
+        | 'DIAGRAMA_ACOTADO'
+        | 'CURVA_RENDIMIENTO'
+        | 'ESQUEMA_HIDRAULICO_ELECTRICO'
+        | 'FOTO_COMPONENTE'
+        | 'MAPA_LUBRICACION_PM'
+        | 'SIMBOLOGIA_SEGURIDAD'
+        | 'PLANO_VECTORIAL_SVG';
     title_es: string;
     caption_es?: string;
     source_page?: number;
@@ -159,7 +226,6 @@ export interface LockedItemAdvisory {
     acknowledged?: boolean;
     acknowledged_by?: string;
     acknowledged_at?: string;
-    /** Re-Auditoría v2 · OPT-F2.5: figura propuesta para una imagen pendiente en un ítem bloqueado. */
     kind?: 'CONTENT' | 'PENDING_FIGURE';
     figure?: ExtractedFigureRef;
     pending_marker_line?: string;
@@ -194,6 +260,7 @@ export interface HistorialAuditoria {
     actor: string;
     detalle?: string;
     snapshot_anterior?: string | null;
+    revision_id?: string;
     changed_fields?: string[];
 }
 
@@ -228,7 +295,6 @@ export interface PillarItem {
     figures?: ExtractedFigureRef[];
     fact_fingerprints?: string[];
     symbology_refs?: string[];
-    /** Telemetría de captura visual de la última caza (fuentes, candidatos, rechazos por motivo, figuras almacenadas). */
     media_harvest_report?: Record<string, any>;
     last_edit_by?: string;
 }
@@ -290,7 +356,11 @@ export interface MasterSymbologyItem {
     description_es: string;
     description_en: string;
     critical_color: 'RED' | 'AMBER' | 'GREEN' | 'BLUE' | 'NONE' | string;
-    standard_icon_status: 'pendiente_busqueda' | 'pendiente_confirmacion_humana' | 'pendiente_dibujo_humano' | 'encontrado';
+    standard_icon_status:
+        | 'pendiente_busqueda'
+        | 'pendiente_confirmacion_humana'
+        | 'pendiente_dibujo_humano'
+        | 'encontrado';
     standard_icon_url?: string;
     temp_standard_icon_url?: string;
     temp_icon_candidates?: Array<{ url: string; source_filename: string }>;
@@ -316,52 +386,10 @@ export interface ChatMessage {
     intent?: 'CHAT' | 'EDIT_PROPOSAL' | 'RESEARCH_WEB' | 'SEARCH_IMAGE';
 }
 
-export type EnergySourceCategory =
-    | 'DIESEL'
-    | 'GASOLINA'
-    | 'ELECTRICO_RED_AC'
-    | 'ELECTRICO_BATERIA_BEV'
-    | 'HIBRIDO_DIESEL_ELECTRICO'
-    | 'HIBRIDO_GASOLINA_ELECTRICO'
-    | 'DUAL_FUEL_DIESEL_GAS'
-    | 'GLP_GNV'
-    | 'NEUMATICO_AIRE_COMPRIMIDO'
-    | 'HIDRAULICO_AUXILIAR'
-    | 'NO_DECLARADO';
-
-export interface EnergyConsumptionProfile {
-    energy_source: EnergySourceCategory;
-    energy_spec_label: string | null;
-    cost_driver_unit: 'L/h' | 'km/L' | 'L/100km' | 'kWh/h' | 'kWh/100km' | 'L/s';
-    hourly_consumption_by_load: {
-        idle_or_pto: string | null;
-        low_load_25_35pct: string | null;
-        medium_load_50_65pct: string | null;
-        high_load_80_100pct: string | null;
-    };
-    road_haul_efficiency: {
-        km_per_liter: string | null;
-        liters_per_100km: string | null;
-        kwh_per_100km: string | null;
-    };
-    specific_consumption_bsfc_gkwh: string | null;
-    pneumatic_or_hydraulic_flow: string | null;
-    def_adblue_consumption: {
-        requires_def: boolean;
-        consumption_pct_of_fuel: string | null;
-        tank_capacity_liters: string | null;
-    };
-    storage_and_autonomy: {
-        tank_or_battery_capacity: string | null;
-        estimated_autonomy: string | null;
-    };
-    source_url: string | null;
-    updated_at: string;
-}
-
 export interface CatalogProfile {
     equipment_type_key?: string;
     archetype_id?: MachineryArchetypeId;
+    physical_traits?: AssetPhysicalTraits;
     tipo_equipo: string;
     categoria_equipo: string;
     canonical_specs?: CanonicalSpecSlot[];
@@ -380,6 +408,7 @@ export interface ResolvedAssetCandidate {
     model_oficial: string;
     equipment_type_key?: string;
     archetype_id?: MachineryArchetypeId;
+    physical_traits?: AssetPhysicalTraits;
     tipo_equipo: string;
     categoria_equipo: string;
     canonical_specs?: CanonicalSpecSlot[];
@@ -454,120 +483,6 @@ export type AdHocManualProfileId =
     | 'WORKSHOP_PM_MANUAL'
     | 'REGULATORY_DS132_LOTO';
 
-export const ResolveAssetBodySchema = z.object({
-    jerga: z.string().optional(),
-    modelo: z.string().optional(),
-    marca: z.string().optional(),
-    tipo: z.string().optional(),
-    isGeneric: z.boolean().optional().default(false),
-    clarificationContext: z.string().optional(),
-    forceWebDiscovery: z.boolean().optional().default(false),
-});
-
-export const FleetIdentifierTypeSchema = z.enum([
-    'SERIAL_NUMBER',
-    'LICENSE_PLATE',
-    'VIN',
-    'ASSET_TAG',
-]);
-
-export type FleetIdentifierType = z.infer<typeof FleetIdentifierTypeSchema>;
-
-export const FleetOwnershipConditionSchema = z.enum([
-    'PROPIO',
-    'ARRENDADO',
-    'CONTRATISTA',
-    'COMODATO',
-]);
-
-export type FleetOwnershipCondition = z.infer<typeof FleetOwnershipConditionSchema>;
-
-export const EnergySourceCategorySchema = z.enum([
-    'DIESEL',
-    'GASOLINA',
-    'ELECTRICO_RED_AC',
-    'ELECTRICO_BATERIA_BEV',
-    'HIBRIDO_DIESEL_ELECTRICO',
-    'HIBRIDO_GASOLINA_ELECTRICO',
-    'DUAL_FUEL_DIESEL_GAS',
-    'GLP_GNV',
-    'NEUMATICO_AIRE_COMPRIMIDO',
-    'HIDRAULICO_AUXILIAR',
-    'NO_DECLARADO',
-]);
-
-export const EnergyConsumptionProfileSchema = z.object({
-    energy_source: EnergySourceCategorySchema.default('NO_DECLARADO'),
-    energy_spec_label: z.string().nullable().default(null),
-    cost_driver_unit: z.enum(['L/h', 'km/L', 'L/100km', 'kWh/h', 'kWh/100km', 'L/s']).default('L/h'),
-    hourly_consumption_by_load: z.object({
-        idle_or_pto: z.string().nullable().default(null),
-        low_load_25_35pct: z.string().nullable().default(null),
-        medium_load_50_65pct: z.string().nullable().default(null),
-        high_load_80_100pct: z.string().nullable().default(null),
-    }),
-    road_haul_efficiency: z.object({
-        km_per_liter: z.string().nullable().default(null),
-        liters_per_100km: z.string().nullable().default(null),
-        kwh_per_100km: z.string().nullable().default(null),
-    }),
-    specific_consumption_bsfc_gkwh: z.string().nullable().default(null),
-    pneumatic_or_hydraulic_flow: z.string().nullable().default(null),
-    def_adblue_consumption: z.object({
-        requires_def: z.boolean().default(false),
-        consumption_pct_of_fuel: z.string().nullable().default(null),
-        tank_capacity_liters: z.string().nullable().default(null),
-    }),
-    storage_and_autonomy: z.object({
-        tank_or_battery_capacity: z.string().nullable().default(null),
-        estimated_autonomy: z.string().nullable().default(null),
-    }),
-    source_url: z.string().nullable().default(null),
-    updated_at: z.string(),
-});
-
-export const CanonicalSpecSlotSchema = z.object({
-    axis_key: z.string().trim().min(1),
-    label_es: z.string().trim().min(1),
-    value_si: z.string().trim().nullable(),
-    unit_si: z.string().trim().optional(),
-    mandatory: z.boolean().optional(),
-    is_differentiator: z.boolean().optional(),
-    value_kind: z.enum(['PHYSICAL_MAGNITUDE', 'CLOSED_ENUM']).optional(),
-    allowed_enum_values: z.array(z.string().trim().min(1)).optional(),
-    source_url: z.string().trim().nullable().optional(),
-    verbatim_evidence: z.string().trim().nullable().optional(),
-});
-
-export const FleetUnitRegistrationBodySchema = z.object({
-    global_asset_id: z.string().trim().optional(),
-    make_oficial: z.string().trim().min(1, 'make_oficial es obligatorio.'),
-    model_oficial: z.string().trim().min(1, 'model_oficial es obligatorio.'),
-    categoria_equipo: z.string().trim().optional(),
-    tipo_equipo: z.string().trim().optional(),
-    equipment_type_key: z.string().trim().optional(),
-    archetype_id: z.string().trim().optional(),
-    canonical_specs: z.array(CanonicalSpecSlotSchema).optional(),
-    energy_consumption_profile: EnergyConsumptionProfileSchema.optional(),
-    ambiente_operativo: z.array(z.string()).optional(),
-    contexto_operativo: z.array(z.string()).optional(),
-    caracteristicas_principales: z.array(z.string()).optional(),
-    chassis_versions: z.array(z.string()).optional(),
-    version: z.string().trim().optional().default('ESTÁNDAR'),
-    official_url: z.string().trim().optional(),
-    original_jargon: z.string().trim().optional(),
-    isGeneric: z.boolean().optional().default(false),
-    identifier_type: FleetIdentifierTypeSchema.default('SERIAL_NUMBER'),
-    identifier_value: z
-        .string()
-        .trim()
-        .min(2, 'Ingrese el Número de Serie, Patente, VIN o Código único de la unidad.')
-        .max(80),
-    ownership_type: FleetOwnershipConditionSchema.default('PROPIO'),
-    horometer: z.number().nonnegative().optional().default(0),
-    confirm_word: z.string().trim().min(1),
-});
-
 export interface QuarantineProposedPillarDelta {
     proposal_id: string;
     pillar_id: PillarId;
@@ -588,24 +503,3 @@ export interface QuarantineProposedPillarDelta {
     source_pages: number[];
     fact_fingerprint: string;
 }
-
-export const ReviewContributionBodySchema = z.object({
-    acceptedProposalIds: z.array(z.string()).default([]),
-    rejectedProposalIds: z.array(z.string()).default([]),
-    reviewNotes: z.string().max(4000).optional(),
-    publishApprovedItems: z.boolean().optional().default(true),
-    confirmWord: z.string().trim().min(1),
-});
-
-export const ApplyCatalogHomologationBodySchema = z.object({
-    equipment_type_key: z.string().trim().min(2).optional(),
-    archetype_id: z.string().trim().min(1).optional(),
-    tipo_equipo: z.string().trim().min(2).optional(),
-    categoria_equipo: z.string().trim().min(2).optional(),
-    official_url: z.string().trim().optional(),
-    approved_slots: z.array(CanonicalSpecSlotSchema).min(1),
-    energy_consumption_profile: EnergyConsumptionProfileSchema.optional(),
-    confirm_word: z.string().trim().min(1),
-});
-
-

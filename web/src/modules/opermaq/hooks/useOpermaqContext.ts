@@ -11,6 +11,7 @@ export interface OpermaqCapabilities {
     canInspect: boolean;
     canManageFleet: boolean;
     canViewVaults: boolean;
+    canViewMasterCatalog?: boolean;
     canCurateAI: boolean;
 }
 
@@ -23,6 +24,8 @@ export interface OpermaqFunctionalContextValue {
     actorId: string;
     actorEmail: string;
     actorName: string;
+    isEduSandbox: boolean;
+    isTestPilot: boolean;
     dataScope: 'PRODUCTION' | 'SANDBOX';
     capabilities: OpermaqCapabilities;
     isDark: boolean;
@@ -58,6 +61,7 @@ export function resolveOpermaqCapabilities(params: {
             canInspect: true,
             canManageFleet: true,
             canViewVaults: true,
+            canViewMasterCatalog: true,
             canCurateAI: true,
         };
     }
@@ -70,6 +74,7 @@ export function resolveOpermaqCapabilities(params: {
         canInspect: true,
         canManageFleet: Boolean(overrideUserId),
         canViewVaults: true,
+        canViewMasterCatalog: false,
         canCurateAI: false,
     };
 }
@@ -78,7 +83,7 @@ export type OpermaqDomainMode = 'CATALOG' | 'FLEET' | 'SYMBOLOGY';
 
 /**
  * Proyecta el dominio efectivo de OPERMAQ (`CATALOG`, `FLEET` o `SYMBOLOGY` transversal).
- * Solo cuentas con `canCurateAI === true` (`1º DEV`, `2º ADMIN`, `3º TEST-PILOT`) pueden abrir `CATALOG`.
+ * Cuentas con `canViewMasterCatalog` o `canCurateAI` (`1º DEV`, `2º ADMIN`, `3º TEST-PILOT`) pueden abrir `CATALOG`.
  * `SYMBOLOGY` es una sección transversal de OPERMAQ (curaduría en `DEV`/`PILOT`, consulta consolidada en `CLIENT`).
  */
 export function resolveEffectiveOpermaqDomain(
@@ -88,7 +93,9 @@ export function resolveEffectiveOpermaqDomain(
     if (requestedDomain === 'SYMBOLOGY') {
         return 'SYMBOLOGY';
     }
-    return requestedDomain === 'CATALOG' && capabilities.canCurateAI ? 'CATALOG' : 'FLEET';
+    return requestedDomain === 'CATALOG' && (capabilities.canViewMasterCatalog || capabilities.canCurateAI)
+        ? 'CATALOG'
+        : 'FLEET';
 }
 
 const OpermaqReactContext = createContext<OpermaqFunctionalContextValue | null>(null);
@@ -104,7 +111,8 @@ export const OpermaqContextProvider: React.FC<{
  * Construye el contexto funcional de OPERMAQ en la raíz del módulo (`App.tsx`).
  */
 export function useBuildOpermaqContext(
-    overrides?: OpermaqContextOverrides
+    overrides?: OpermaqContextOverrides,
+    syncActiveAccount: boolean = true
 ): OpermaqFunctionalContextValue {
     const { session, isLoaded } = useMinReportSession();
     const themeCtx = useOptionalTheme();
@@ -139,8 +147,10 @@ export function useBuildOpermaqContext(
     }, [overrides?.tenantId, isDevGatewayAuthorized, session?.isDevRoot, session?.tenantId]);
 
     useEffect(() => {
-        setOpermaqActiveAccountId(tenantId || null);
-    }, [tenantId]);
+        if (syncActiveAccount) {
+            setOpermaqActiveAccountId(tenantId || null);
+        }
+    }, [tenantId, syncActiveAccount]);
 
     return useMemo<OpermaqFunctionalContextValue>(() => {
         const actorId =
@@ -161,8 +171,11 @@ export function useBuildOpermaqContext(
             ? (session?.isDevRoot && session.tenantName ? session.tenantName : 'DEV Master Sandbox')
             : session?.tenantName || 'Faena Activa';
 
+        const isEduSandbox = Boolean(session?.isEduSandbox);
+        const isTestPilot = Boolean(session?.isTestPilot || hostScope === 'TEST_PILOT');
+
         const dataScope: 'PRODUCTION' | 'SANDBOX' =
-            isDevGatewayAuthorized || session?.isDevRoot || session?.isTestPilot || session?.isEduSandbox
+            isDevGatewayAuthorized || session?.isDevRoot || isTestPilot || isEduSandbox
                 ? 'SANDBOX'
                 : 'PRODUCTION';
 
@@ -185,6 +198,8 @@ export function useBuildOpermaqContext(
             actorId,
             actorEmail,
             actorName,
+            isEduSandbox,
+            isTestPilot,
             dataScope,
             capabilities,
             isDark,
@@ -210,14 +225,15 @@ export function useBuildOpermaqContext(
 
 /**
  * Hook funcional pasivo subordinado 100% al Host Core MINREPORT.
- * Consume prioritariamente el `OpermaqContextProvider` montado por la raíz del módulo
- * para garantizar coherencia total entre `App`, `AssetList` y `KnowledgeVaultDashboard`.
+ * Mantiene orden incondicional de Hooks y evita mutar `setOpermaqActiveAccountId`
+ * redundantemente en componentes hijos cuando `OpermaqContextProvider` ya está montado.
  */
 export function useOpermaqContext(
     overrides?: OpermaqContextOverrides
 ): OpermaqFunctionalContextValue {
     const provided = useContext(OpermaqReactContext);
-    const fallback = useBuildOpermaqContext(overrides);
+    const shouldBuild = !provided || Boolean(overrides);
+    const fallback = useBuildOpermaqContext(overrides, shouldBuild);
 
     if (provided && !overrides) {
         return provided;

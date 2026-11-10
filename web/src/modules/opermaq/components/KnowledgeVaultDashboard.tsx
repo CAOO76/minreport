@@ -4,11 +4,10 @@
  * Sin generación monolítica de pilares.
  */
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { doc, onSnapshot, updateDoc, collection } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { db, auth, API_BASE_URL } from '../firebase/config';
 import { authFetch } from '../utils/authFetch';
 import {
-  extractExplicitSymbolIds,
   isTrustedMasterSymbol,
   sanitizeSpeculativeSymbolMarkers,
 } from '../utils/symbologyExplicitMention';
@@ -39,35 +38,27 @@ import { M3Button } from './M3Button';
 import { M3LinearProgress, M3CircularProgress } from './M3ProgressIndicator';
 import { useTranslation } from 'react-i18next';
 import { mediaDigestorClient } from '../../../core/media/MediaDigestorClient';
+import { syncQueueEngine } from '../../../core/offline/SyncQueueEngine';
 import { useOpermaqContext } from '../hooks/useOpermaqContext';
 import { ItemFiguresAndAdvisoriesBlock, resolveMediaSrc, formatByteWeight } from './ItemFiguresAndAdvisoriesBlock';
 import { OpermaqEngineeringStudioDrawer, type StudioTabId } from './OpermaqEngineeringStudioDrawer';
-import {
-  frameEquipmentPhotoToStudio4x3,
-  reframeExistingEquipmentPhotoUrl,
-} from '../utils/equipmentPhotoFraming';
 import type { PillarId, PillarDocument, PillarItem, ItemizedSource, ProposedUpdate, EstadoAprobacion, HistorialAuditoria, ChatMessage, ExtractedFigureRef } from '../types/vault';
 import { PILLAR_PREREQUISITE_MAP } from '../types/vault';
-import type { EnergyConsumptionProfile, CanonicalSpecSlot } from '../../../contracts';
+import type { AssetPhysicalTraits, EnergyConsumptionProfile, CanonicalSpecSlot, OperationalCostMatrix } from '../../../contracts';
+import { EquipmentCostMatrixPanel } from './EquipmentCostMatrixPanel';
+import {
+  VaultCatalogSidebar,
+  formatPhotoBytes,
+  type OfficialPhotoCandidate,
+  type SidebarCatalogPatch,
+} from './VaultCatalogSidebar';
+import {
+  VaultSymbologyReadOnlyPanel,
+  useLiveHuntedSymbology,
+} from './VaultSymbologyReadOnlyPanel';
+import { VaultPilotFeedbackBox } from './VaultPilotFeedbackBox';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
-interface OfficialPhotoCandidate {
-  candidate_id: string;
-  preview_url: string;
-  storage_path: string;
-  source_type: 'VAULT_PDF' | 'OEM_DOMAIN';
-  source_label: string;
-  authenticity_score: number;
-  subject_box_2d: [number, number, number, number] | null;
-  original_bytes: number;
-  optimized_bytes: number;
-  savings_pct: number;
-  sha256: string;
-  phash_hex?: string;
-  width: number;
-  height: number;
-  framing_mode: 'STUDIO_88' | 'VLM_BOX_4X3' | 'CENTER_4X3';
-}
 interface VaultDashboardProps {
   assetId: string;
   onBack: () => void;
@@ -89,7 +80,9 @@ interface CatalogSnapshot {
   ambiente_operativo?: string[];
   contexto_operativo?: string[];
   caracteristicas_principales?: string[];
+  physical_traits?: AssetPhysicalTraits;
   energy_consumption_profile?: EnergyConsumptionProfile;
+  operational_cost_matrix?: OperationalCostMatrix;
   canonical_specs?: CanonicalSpecSlot[] | Record<string, any>;
   version?: string;
   knowledge_vault?: Partial<Record<PillarId, PillarDocument>>;
@@ -106,15 +99,6 @@ interface CatalogSnapshot {
   };
 }
 
-function formatPhotoBytes(bytes?: number): string {
-  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) return '—';
-  if (bytes < 1024) return `${bytes} B`;
-  const kb = bytes / 1024;
-  if (kb < 1024) return `${kb.toFixed(1)} KB`;
-  const mb = kb / 1024;
-  return `${mb.toFixed(2)} MB`;
-}
-
 interface AiAssistResponse {
   success: boolean;
   intent: 'CORRECTION' | 'RESEARCH' | 'DELETION' | 'GENERAL';
@@ -129,11 +113,11 @@ interface AiAssistResponse {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const PILLARS: Array<{ id: PillarId; stepCode: string; icon: string; romanNumeral: string; label: string; shortLabel: string; color: string; accent: string }> = [
-  { id: 'ficha_tecnica',      stepCode: '01', icon: 'fact_check',  romanNumeral: '0',   label: 'Ficha Técnica',         shortLabel: 'Ficha Técnica',      color: 'text-[#C68346]', accent: '#C68346' },
-  { id: 'manual_operaciones', stepCode: '02', icon: 'settings',    romanNumeral: 'I',   label: 'Manual de Operaciones', shortLabel: 'Manual Oper.',       color: 'text-[#C68346]', accent: '#C68346' },
-  { id: 'pauta_mantencion',   stepCode: '03', icon: 'build',       romanNumeral: 'II',  label: 'Pauta de Mantención',   shortLabel: 'Pauta Mant.',        color: 'text-[#C68346]', accent: '#C68346' },
-  { id: 'matriz_riesgos',     stepCode: '04', icon: 'security',    romanNumeral: 'III', label: 'Matriz de Riesgos',     shortLabel: 'Matriz Riesgos',     color: 'text-[#C68346]', accent: '#C68346' },
-  { id: 'checklist_pre_op',   stepCode: '05', icon: 'rule',        romanNumeral: 'IV',  label: 'Checklist Pre-Op',      shortLabel: 'Checklist Pre-Op',   color: 'text-[#C68346]', accent: '#C68346' },
+  { id: 'ficha_tecnica', stepCode: '01', icon: 'fact_check', romanNumeral: '0', label: 'Ficha Técnica', shortLabel: 'Ficha Técnica', color: 'text-[#C68346]', accent: '#C68346' },
+  { id: 'manual_operaciones', stepCode: '02', icon: 'settings', romanNumeral: 'I', label: 'Manual de Operaciones', shortLabel: 'Manual Oper.', color: 'text-[#C68346]', accent: '#C68346' },
+  { id: 'pauta_mantencion', stepCode: '03', icon: 'build', romanNumeral: 'II', label: 'Pauta de Mantención', shortLabel: 'Pauta Mant.', color: 'text-[#C68346]', accent: '#C68346' },
+  { id: 'matriz_riesgos', stepCode: '04', icon: 'security', romanNumeral: 'III', label: 'Matriz de Riesgos', shortLabel: 'Matriz Riesgos', color: 'text-[#C68346]', accent: '#C68346' },
+  { id: 'checklist_pre_op', stepCode: '05', icon: 'rule', romanNumeral: 'IV', label: 'Checklist Pre-Op', shortLabel: 'Checklist Pre-Op', color: 'text-[#C68346]', accent: '#C68346' },
 ];
 
 const SOURCE_ICONS: Record<string, string> = { OEM: 'precision_manufacturing', EXTERNO: 'school', YOUTUBE: 'smart_display', MANUAL: 'person' };
@@ -308,7 +292,7 @@ function sanitizeHtmlToMarkdown(raw: string, pillarId?: PillarId): string {
 
 function highlightInNode(node: React.ReactNode, activeHighlightText?: string): React.ReactNode {
   if (!activeHighlightText || !activeHighlightText.trim()) return node;
-  
+
   if (Array.isArray(node)) {
     return node.map((n, idx) => <React.Fragment key={idx}>{highlightInNode(n, activeHighlightText)}</React.Fragment>);
   }
@@ -317,7 +301,7 @@ function highlightInNode(node: React.ReactNode, activeHighlightText?: string): R
     const query = activeHighlightText.trim();
     const index = node.toLowerCase().indexOf(query.toLowerCase());
     if (index === -1) return node;
-    
+
     const parts: React.ReactNode[] = [];
     let current = node;
     let idxKey = 0;
@@ -334,8 +318,8 @@ function highlightInNode(node: React.ReactNode, activeHighlightText?: string): R
       }
       const matchText = current.substring(idx, idx + query.length);
       parts.push(
-        <mark 
-          key={`mark-${idxKey++}-${Math.random()}`} 
+        <mark
+          key={`mark-${idxKey++}-${Math.random()}`}
           className="bg-[#C68346]/20 text-[#0F172A] dark:text-[#F3F4F6] px-1 py-0.5 rounded-none border border-[#C68346]/40 font-bold inline-block shadow-none"
         >
           {matchText}
@@ -350,7 +334,7 @@ function highlightInNode(node: React.ReactNode, activeHighlightText?: string): R
     const element = node as React.ReactElement<{ children?: React.ReactNode }>;
     const children = element.props.children;
     if (children) {
-      const highlightedChildren = React.Children.map(children, child => 
+      const highlightedChildren = React.Children.map(children, child =>
         highlightInNode(child, activeHighlightText)
       );
       return React.cloneElement(element, { ...element.props, children: highlightedChildren });
@@ -399,7 +383,7 @@ function highlightUndeclaredInNode(node: React.ReactNode): React.ReactNode {
   }
 
   if (React.isValidElement(node)) {
-    const element = node as React.ReactElement<{ children?: React.ReactNode; ['data-pending-content-slot']?: string }>;
+    const element = node as React.ReactElement<{ children?: React.ReactNode;['data-pending-content-slot']?: string }>;
     if (element.props?.['data-pending-content-slot']) return node;
     const children = element.props.children;
     if (children) {
@@ -455,7 +439,7 @@ function extractCleanTextAndSymbols(
 }
 
 function parseInlineStyles(
-  text: string, 
+  text: string,
   activeHighlightText?: string,
   resolvedSymbology?: Array<{ concept_id: string; url: string; technical_name_es: string }>
 ): React.ReactNode[] {
@@ -476,7 +460,7 @@ function parseInlineStyles(
     } else if (m[7]) {
       const conceptId = m[8].trim();
       const sym = resolvedSymbology?.find(s => s.concept_id === conceptId);
-      
+
       if (sym && sym.url) {
         result.push(
           <img
@@ -914,10 +898,10 @@ function PendingSectionFigureCard({
   );
 }
 
-function MarkdownRenderer({ 
-  content, 
+function MarkdownRenderer({
+  content,
   pillarId,
-  activeHighlightText, 
+  activeHighlightText,
   onFragmentClick,
   resolvedSymbology,
   itemTitle,
@@ -928,11 +912,11 @@ function MarkdownRenderer({
   isItemLocked,
   onUploadPendingFigure,
   onConfirmPendingFigure,
-}: { 
-  content: string; 
+}: {
+  content: string;
   pillarId?: PillarId;
-  activeHighlightText?: string; 
-  onFragmentClick?: (text: string, e: React.MouseEvent) => void; 
+  activeHighlightText?: string;
+  onFragmentClick?: (text: string, e: React.MouseEvent) => void;
   resolvedSymbology?: Array<{ concept_id: string; url: string; technical_name_es: string }>;
   itemTitle?: string;
   itemSources?: ItemizedSource[];
@@ -964,29 +948,29 @@ function MarkdownRenderer({
   while (i < lines.length) {
     const raw = lines[i]; const line = raw.trim();
     if (!line) { i++; continue; }
-    if (line.startsWith('#### ')) { 
+    if (line.startsWith('#### ')) {
       const currentRaw = raw;
-      nodes.push(<h4 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[12px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mt-[21px] mb-[8px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(cleanSymbolMarkersFromText(line.replace('#### ', '')), activeHighlightText, resolvedSymbology)}</h4>); 
-      i++; 
-      continue; 
+      nodes.push(<h4 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[12px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mt-[21px] mb-[8px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(cleanSymbolMarkersFromText(line.replace('#### ', '')), activeHighlightText, resolvedSymbology)}</h4>);
+      i++;
+      continue;
     }
-    if (line.startsWith('### ')) { 
+    if (line.startsWith('### ')) {
       const currentRaw = raw;
-      nodes.push(<h3 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[13px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6] mt-[21px] mb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C] pb-[8px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(cleanSymbolMarkersFromText(line.replace('### ', '')), activeHighlightText, resolvedSymbology)}</h3>); 
-      i++; 
-      continue; 
+      nodes.push(<h3 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[13px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6] mt-[21px] mb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C] pb-[8px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(cleanSymbolMarkersFromText(line.replace('### ', '')), activeHighlightText, resolvedSymbology)}</h3>);
+      i++;
+      continue;
     }
-    if (line.startsWith('## ')) { 
+    if (line.startsWith('## ')) {
       const currentRaw = raw;
-      nodes.push(<h2 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[15px] font-bold uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6] mt-[34px] mb-[13px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(cleanSymbolMarkersFromText(line.replace('## ', '')), activeHighlightText, resolvedSymbology)}</h2>); 
-      i++; 
-      continue; 
+      nodes.push(<h2 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[15px] font-bold uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6] mt-[34px] mb-[13px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(cleanSymbolMarkersFromText(line.replace('## ', '')), activeHighlightText, resolvedSymbology)}</h2>);
+      i++;
+      continue;
     }
-    if (line.startsWith('# ')) { 
+    if (line.startsWith('# ')) {
       const currentRaw = raw;
-      nodes.push(<h1 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[17px] font-bold uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6] mt-[34px] mb-[13px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(cleanSymbolMarkersFromText(line.replace('# ', '')), activeHighlightText, resolvedSymbology)}</h1>); 
-      i++; 
-      continue; 
+      nodes.push(<h1 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[17px] font-bold uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6] mt-[34px] mb-[13px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(cleanSymbolMarkersFromText(line.replace('# ', '')), activeHighlightText, resolvedSymbology)}</h1>);
+      i++;
+      continue;
     }
     if (line.startsWith('- ') || line.startsWith('* ')) {
       const items: { rawText: string; cleanText: string }[] = [];
@@ -1203,8 +1187,8 @@ function MarkdownRenderer({
                     {typeof matchedFig.savings_pct === 'number'
                       ? `-${matchedFig.savings_pct.toFixed(1)}%`
                       : matchedFig.original_bytes > 0
-                      ? `-${Math.max(0, ((matchedFig.original_bytes - matchedFig.optimized_bytes) / matchedFig.original_bytes) * 100).toFixed(1)}%`
-                      : '0%'}
+                        ? `-${Math.max(0, ((matchedFig.original_bytes - matchedFig.optimized_bytes) / matchedFig.original_bytes) * 100).toFixed(1)}%`
+                        : '0%'}
                     )
                   </span>
                 )}
@@ -1276,7 +1260,7 @@ function ItemizedSourcesBlock({ sources }: { sources: ItemizedSource[] }) {
 
 // ─── Item Content Block (CAZA POR ÍTEM) ─────────────────────────────────────
 interface ItemContentBlockProps {
-  item: PillarItem; 
+  item: PillarItem;
   canCurateAI: boolean;
   isHunting: boolean;
   assistingItemId: string | null;
@@ -1289,7 +1273,7 @@ interface ItemContentBlockProps {
   onUpdateApprovalState: (state: EstadoAprobacion, notes?: string) => Promise<void>;
   onRollbackVersion: (timestamp: string) => Promise<void>;
   catalogId: string;
-  
+
   // Nuevos:
   pillarId: PillarId;
   activeProposalView: { itemId: string; pillarId: PillarId; view: 'nuevos' | 'conflictos' } | null;
@@ -1376,11 +1360,10 @@ function ProposalCard({
 
   return (
     <div
-      className={`border p-4 transition-colors duration-300 font-atkinson rounded-none shadow-none ${
-        isApproved
-          ? 'border-[#00AEEF] bg-[#00AEEF]/5'
-          : 'border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D]'
-      }`}
+      className={`border p-4 transition-colors duration-300 font-atkinson rounded-none shadow-none ${isApproved
+        ? 'border-[#00AEEF] bg-[#00AEEF]/5'
+        : 'border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D]'
+        }`}
     >
       <div className="flex justify-between items-start gap-4">
         <div className="flex flex-col gap-0.5">
@@ -1810,8 +1793,8 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
 
 const activeItemChatSessionMap = new Map<string, string>();
 
-function ItemContentBlock({ 
-  item, 
+function ItemContentBlock({
+  item,
   canCurateAI,
   isHunting,
   isSealed,
@@ -1830,13 +1813,15 @@ function ItemContentBlock({
   onOpenStudio,
 }: ItemContentBlockProps) {
   const { t } = useTranslation();
+  const { actorEmail, isTestPilot } = useOpermaqContext();
+  const effectiveCuratorEmail = actorEmail || auth.currentUser?.email || 'curador@minreport.cl';
   const [correctionText, setCorrectionText] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionId, setSessionId] = useState<string>('');
   const [selectedFragment, setSelectedFragment] = useState<string | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  
+
   const [confirmUnlockInput, setConfirmUnlockInput] = useState('');
   const [confirmApprovalInput, setConfirmApprovalInput] = useState('');
   const [huntConfirmText, setHuntConfirmText] = useState('');
@@ -1982,11 +1967,11 @@ function ItemContentBlock({
         toast.warning('No hay ningún borrador de cambios pendiente para aprobar.');
         return;
       }
-      
+
       setIsSending(true);
       const toastId = toast.loading('Aplicando propuesta de cambios...');
       try {
-        const userEmail = auth.currentUser?.email || 'revisor.humano@opermaq.cl';
+        const userEmail = effectiveCuratorEmail;
         const res = await authFetch(`${API_BASE_URL}/vault/apply-assist-proposal`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2026,7 +2011,7 @@ function ItemContentBlock({
     setIsSending(true);
     setIsSearching(true);
     try {
-      const userEmail = auth.currentUser?.email || 'revisor.humano@opermaq.cl';
+      const userEmail = effectiveCuratorEmail;
       const res = await authFetch(`${API_BASE_URL}/vault/ai-assist-chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2183,8 +2168,8 @@ function ItemContentBlock({
             json.mode === 'LOCKED_ADVISORY'
               ? t('vault_dashboard.pending_figure.locked_saved', 'Imagen registrada como propuesta del ítem aprobado.')
               : `${t('vault_dashboard.pending_figure.success', 'Imagen integrada en la sección')} (${formatPhotoBytes(
-                  payload.cas.originalBytes
-                )} ➔ ${formatPhotoBytes(payload.cas.optimizedBytes)}, -${payload.cas.savingsPct}%).`,
+                payload.cas.originalBytes
+              )} ➔ ${formatPhotoBytes(payload.cas.optimizedBytes)}, -${payload.cas.savingsPct}%).`,
           type: 'success',
           isLoading: false,
           autoClose: 3500,
@@ -2204,8 +2189,8 @@ function ItemContentBlock({
   );
 
   return (
-    <div className="flex-1 flex flex-row min-h-0 h-full w-full gap-4 font-atkinson relative overflow-hidden">
-      <div ref={contentContainerRef} className="flex-1 h-full min-h-0 overflow-y-auto custom-scrollbar pr-4 pb-6 select-text">
+    <div className="flex-1 flex flex-col lg:flex-row min-h-0 h-full w-full gap-[21px] font-atkinson relative overflow-hidden">
+      <div ref={contentContainerRef} className="flex-1 lg:w-[61.8%] h-full min-h-0 overflow-y-auto custom-scrollbar pr-4 pb-6 select-text">
         {canCurateAI && activeProposalView?.itemId === item.item_id ? (
           activeProposalView.view === 'nuevos' ? (
             <NuevosHallazgosView
@@ -2227,8 +2212,8 @@ function ItemContentBlock({
         ) : item.content ? (
           <div className="space-y-6">
             <>
-              <MarkdownRenderer 
-                content={sanitizeSpeculativeSymbolMarkers(item.content, pillarId)} 
+              <MarkdownRenderer
+                content={sanitizeSpeculativeSymbolMarkers(item.content, pillarId)}
                 pillarId={pillarId}
                 activeHighlightText={canCurateAI ? activeHighlightText : undefined}
                 onFragmentClick={canCurateAI ? handleFragmentClick : undefined}
@@ -2249,7 +2234,7 @@ function ItemContentBlock({
                 canCurateAI={canCurateAI}
                 isHumanLocked={item.is_human_locked}
                 isSealed={isSealed}
-                figures={[]}
+                figures={item.figures || []}
                 advisories={item.locked_item_advisories}
               />
               {item.item_sources?.length ? (
@@ -2277,258 +2262,251 @@ function ItemContentBlock({
       </div>
 
       {canCurateAI && (
-      <div className="w-[260px] shrink-0 flex flex-col justify-between border-l border-[#E2E8F0] dark:border-[#12151C] pl-4 pb-2 h-full min-h-0 overflow-hidden select-none">
-        <div className="flex-1 flex flex-col min-h-0 pb-2 gap-2 overflow-hidden">
-          <div className="flex items-center justify-between mb-0.5 shrink-0">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-[#475569] dark:text-[#8A93A6]">OPERMAQ IA</span>
-            <div className="flex items-center gap-1">
-              {isSearching && (
-                <M3CircularProgress size={12} strokeWidth={2} indeterminate tone="copper" ariaLabel="Generando respuesta IA" />
-              )}
-              {messages.length > 0 && !isSending && (
-                <button
-                  type="button"
-                  onClick={handleResetChatSession}
-                  title="Reiniciar sesión de chat de este ítem"
-                  aria-label="Reiniciar sesión de chat de este ítem"
-                  className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-                >
-                  <span className="material-symbols-outlined !text-[15px]">restart_alt</span>
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div 
-            ref={chatFeedRef}
-            className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 scroll-smooth custom-scrollbar"
-            style={{
-              scrollbarWidth: 'thin',
-              scrollbarColor: 'var(--color-scrollbar, rgba(198,131,70,0.25)) transparent',
-            }}
-          >
-            {messages.length === 0 ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
-                <span className="material-symbols-outlined !text-[28px] text-[#5A6072] mb-2">forum</span>
-                <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] leading-relaxed">
-                  Ingrese instrucciones técnicas para consultar o curar este ítem con OPERMAQ IA.
-                </p>
+        <div className="w-full lg:w-[38.2%] lg:max-w-[380px] shrink-0 flex flex-col justify-between border-t lg:border-t-0 lg:border-l border-[#E2E8F0] dark:border-[#12151C] pt-[13px] lg:pt-0 lg:pl-[13px] pb-2 h-full min-h-0 overflow-hidden select-none">
+          <div className="flex-1 flex flex-col min-h-0 pb-2 gap-2 overflow-hidden">
+            <div className="flex items-center justify-between mb-0.5 shrink-0">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[#475569] dark:text-[#8A93A6]">OPERMAQ IA</span>
+              <div className="flex items-center gap-1">
+                {isSearching && (
+                  <M3CircularProgress size={12} strokeWidth={2} indeterminate tone="copper" ariaLabel="Generando respuesta IA" />
+                )}
+                {messages.length > 0 && !isSending && (
+                  <button
+                    type="button"
+                    onClick={handleResetChatSession}
+                    title="Reiniciar sesión de chat de este ítem"
+                    aria-label="Reiniciar sesión de chat de este ítem"
+                    className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined !text-[15px]">restart_alt</span>
+                  </button>
+                )}
               </div>
-            ) : (
-              messages.map((msg, index) => {
-                const isUser = msg.role === 'user';
-                const isSystem = msg.role === 'system';
-                
-                if (isSystem) {
+            </div>
+
+            <div
+              ref={chatFeedRef}
+              className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 scroll-smooth custom-scrollbar"
+              style={{
+                scrollbarWidth: 'thin',
+                scrollbarColor: 'var(--color-scrollbar, rgba(198,131,70,0.25)) transparent',
+              }}
+            >
+              {messages.length === 0 ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
+                  <span className="material-symbols-outlined !text-[28px] text-[#5A6072] mb-2">forum</span>
+                  <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] leading-relaxed">
+                    Ingrese instrucciones técnicas para consultar o curar este ítem con OPERMAQ IA.
+                  </p>
+                </div>
+              ) : (
+                messages.map((msg, index) => {
+                  const isUser = msg.role === 'user';
+                  const isSystem = msg.role === 'system';
+
+                  if (isSystem) {
+                    return (
+                      <div key={msg.id || index} className="p-2 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] text-center shrink-0">
+                        <p className="text-[10px] text-[#475569] dark:text-[#8A93A6] font-medium leading-relaxed">
+                          {msg.content}
+                        </p>
+                      </div>
+                    );
+                  }
+
                   return (
-                    <div key={msg.id || index} className="p-2 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] text-center shrink-0">
-                      <p className="text-[10px] text-[#475569] dark:text-[#8A93A6] font-medium leading-relaxed">
-                        {msg.content}
-                      </p>
+                    <div
+                      key={msg.id || index}
+                      className={`flex flex-col gap-1 max-w-[90%] shrink-0 ${isUser ? 'self-end items-end' : 'self-start items-start'}`}
+                    >
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-[#5A6072]">
+                        {isUser ? 'Operador' : 'OPERMAQ IA'}
+                      </span>
+
+                      <div
+                        className={`p-2.5 text-[11px] leading-relaxed font-atkinson rounded-none shadow-none ${isUser
+                          ? 'bg-[#F8FAFC] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C]'
+                          : 'bg-[#C68346]/5 text-[#0F172A] dark:text-[#F3F4F6] border border-[#C68346]/30'
+                          }`}
+                      >
+                        <MarkdownRenderer content={msg.content} resolvedSymbology={resolvedSymbology} />
+                      </div>
+
+                      {msg.highlightText && (
+                        <div className="flex items-center gap-1 mt-0.5 text-[9px] text-[#C68346] font-bold shrink-0">
+                          <span className="material-symbols-outlined !text-[12px]">local_library</span>
+                          Destaque activo en pantalla
+                        </div>
+                      )}
+
+                      {msg.draftContent && msg.draftStatus === 'APPLIED' && (
+                        <div className="mt-1 px-2 py-1 border border-[#00AEEF]/40 bg-[#00AEEF]/10 text-[#00AEEF] text-[9px] font-mono font-bold uppercase tracking-wider rounded-none shadow-none shrink-0">
+                          [BORRADOR APLICADO EN CATÁLOGO]
+                        </div>
+                      )}
+
+                      {msg.draftContent && msg.draftStatus === 'DISCARDED' && (
+                        <div className="mt-1 px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-[#5A6072] text-[9px] font-mono font-bold uppercase tracking-wider rounded-none shadow-none shrink-0">
+                          [BORRADOR DESCARTADO]
+                        </div>
+                      )}
+
+                      {msg.draftContent && (!msg.draftStatus || msg.draftStatus === 'PENDING') && (
+                        <div className="mt-2 w-full bg-[#FFFFFF] dark:bg-[#07090D] border border-[#00AEEF]/40 p-2.5 flex flex-col gap-[8px] rounded-none shadow-none shrink-0">
+                          <div className="flex items-center justify-between gap-1.5 text-[9px] font-bold uppercase tracking-wider text-[#00AEEF]">
+                            <span className="flex items-center gap-1">
+                              <span className="material-symbols-outlined !text-[14px]">edit_document</span>
+                              Vista Comparativa [Actual ➔ Sugerido]
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleDismissDraft(msg.id)}
+                              title="Descartar propuesta de borrador"
+                              aria-label="Descartar propuesta de borrador"
+                              className="bg-transparent border-0 outline-none p-0.5 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined !text-[13px]">close</span>
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-1 gap-[8px]">
+                            <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] p-1.5">
+                              <span className="block text-[8px] font-mono font-bold uppercase tracking-wider text-[#5A6072] mb-0.5">
+                                [ACTUAL]
+                              </span>
+                              <div className="max-h-16 overflow-y-auto text-[9px] font-mono text-[#475569] dark:text-[#8A93A6] custom-scrollbar select-text">
+                                <pre className="whitespace-pre-wrap">{selectedFragment || item.content || '[Información técnica no declarada en ficha]'}</pre>
+                              </div>
+                            </div>
+                            <div className="border border-[#00AEEF]/40 bg-[#F8FAFC] dark:bg-[#000000] p-1.5">
+                              <span className="block text-[8px] font-mono font-bold uppercase tracking-wider text-[#00AEEF] mb-0.5">
+                                [SUGERIDO IA]
+                              </span>
+                              <div className="max-h-24 overflow-y-auto text-[9px] font-mono text-[#0F172A] dark:text-[#F3F4F6] custom-scrollbar select-text">
+                                <pre className="whitespace-pre-wrap">{msg.draftContent}</pre>
+                              </div>
+                            </div>
+                          </div>
+                          <p className="text-[10px] text-[#475569] dark:text-[#8A93A6] leading-snug">
+                            Escribe <span className="font-mono font-bold text-[#C68346]">"ACTUALIZAR"</span> para aplicar estos cambios en el catálogo:
+                          </p>
+                          <input
+                            type="text"
+                            value={draftConfirmInput}
+                            onChange={(e) => setDraftConfirmInput(e.target.value)}
+                            placeholder="ACTUALIZAR"
+                            autoComplete="off"
+                            spellCheck={false}
+                            className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                          />
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button
+                              type="button"
+                              disabled={isSealed || isSending || draftConfirmInput.trim() !== 'ACTUALIZAR'}
+                              onClick={async () => {
+                                setIsSending(true);
+                                const toastId = toast.loading('Aplicando propuesta de cambios...');
+                                try {
+                                  const userEmail = effectiveCuratorEmail;
+                                  const res = await authFetch(`${API_BASE_URL}/vault/apply-assist-proposal`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                      globalAssetId: catalogId,
+                                      pillarId,
+                                      itemId: item.item_id,
+                                      finalContent: msg.draftContent,
+                                      userEmail,
+                                      intent: msg.intent || 'EDIT_PROPOSAL',
+                                      sessionId,
+                                      messageId: msg.id,
+                                    }),
+                                  });
+                                  if (res.ok) {
+                                    setMessages(prev =>
+                                      prev.map(m =>
+                                        m.id === msg.id ? { ...m, draftStatus: 'APPLIED' as const } : m
+                                      )
+                                    );
+                                    toast.update(toastId, { render: 'Cambios aplicados exitosamente.', type: 'success', isLoading: false, autoClose: 3000 });
+                                    setDraftConfirmInput('');
+                                  } else {
+                                    const json = await res.json();
+                                    toast.update(toastId, { render: `Error: ${json.error || 'No se pudieron aplicar los cambios.'}`, type: 'error', isLoading: false, autoClose: 5000 });
+                                  }
+                                } catch (_err) {
+                                  toast.update(toastId, { render: 'Error de red al aplicar cambios.', type: 'error', isLoading: false, autoClose: 5000 });
+                                } finally {
+                                  setIsSending(false);
+                                }
+                              }}
+                              className="bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[10px] py-1.5 font-bold uppercase tracking-wider transition-colors disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
+                            >
+                              Aprobar
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isSending}
+                              onClick={() => handleDismissDraft(msg.id)}
+                              className="bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#0F172A] dark:hover:border-[#F3F4F6] text-[#475569] dark:text-[#8A93A6] text-[10px] py-1.5 font-bold uppercase tracking-wider transition-colors rounded-none shadow-none cursor-pointer"
+                            >
+                              Descartar
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
-                }
+                })
+              )}
 
-                return (
-                  <div 
-                    key={msg.id || index} 
-                    className={`flex flex-col gap-1 max-w-[90%] shrink-0 ${isUser ? 'self-end items-end' : 'self-start items-start'}`}
-                  >
-                    <span className="text-[9px] font-bold uppercase tracking-wider text-[#5A6072]">
-                      {isUser ? 'Operador' : 'OPERMAQ IA'}
-                    </span>
-                    
-                    <div 
-                      className={`p-2.5 text-[11px] leading-relaxed font-atkinson rounded-none shadow-none ${
-                        isUser 
-                          ? 'bg-[#F8FAFC] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C]' 
-                          : 'bg-[#C68346]/5 text-[#0F172A] dark:text-[#F3F4F6] border border-[#C68346]/30'
-                      }`}
-                    >
-                      <MarkdownRenderer content={msg.content} resolvedSymbology={resolvedSymbology} />
-                    </div>
-
-                    {msg.highlightText && (
-                      <div className="flex items-center gap-1 mt-0.5 text-[9px] text-[#C68346] font-bold shrink-0">
-                        <span className="material-symbols-outlined !text-[12px]">local_library</span>
-                        Destaque activo en pantalla
-                      </div>
-                    )}
-
-                    {msg.draftContent && msg.draftStatus === 'APPLIED' && (
-                      <div className="mt-1 px-2 py-1 border border-[#00AEEF]/40 bg-[#00AEEF]/10 text-[#00AEEF] text-[9px] font-mono font-bold uppercase tracking-wider rounded-none shadow-none shrink-0">
-                        [BORRADOR APLICADO EN CATÁLOGO]
-                      </div>
-                    )}
-
-                    {msg.draftContent && msg.draftStatus === 'DISCARDED' && (
-                      <div className="mt-1 px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-[#5A6072] text-[9px] font-mono font-bold uppercase tracking-wider rounded-none shadow-none shrink-0">
-                        [BORRADOR DESCARTADO]
-                      </div>
-                    )}
-
-                    {msg.draftContent && (!msg.draftStatus || msg.draftStatus === 'PENDING') && (
-                      <div className="mt-2 w-full bg-[#FFFFFF] dark:bg-[#07090D] border border-[#00AEEF]/40 p-2.5 flex flex-col gap-2 rounded-none shadow-none shrink-0">
-                        <div className="flex items-center justify-between gap-1.5 text-[9px] font-bold uppercase tracking-wider text-[#00AEEF]">
-                          <span className="flex items-center gap-1">
-                            <span className="material-symbols-outlined !text-[14px]">edit_document</span>
-                            Propuesta de Borrador
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleDismissDraft(msg.id)}
-                            title="Descartar propuesta de borrador"
-                            aria-label="Descartar propuesta de borrador"
-                            className="bg-transparent border-0 outline-none p-0.5 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-                          >
-                            <span className="material-symbols-outlined !text-[13px]">close</span>
-                          </button>
-                        </div>
-                        <p className="text-[10px] text-[#475569] dark:text-[#8A93A6] leading-snug">
-                          Escribe <span className="font-mono font-bold text-[#C68346]">"ACTUALIZAR"</span> para aplicar estos cambios en el catálogo:
-                        </p>
-                        <div className="max-h-24 overflow-y-auto border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] p-1.5 text-[9px] font-mono text-[#0F172A] dark:text-[#F3F4F6] custom-scrollbar">
-                          <pre className="whitespace-pre-wrap">{msg.draftContent}</pre>
-                        </div>
-                        <input
-                          type="text"
-                          value={draftConfirmInput}
-                          onChange={(e) => setDraftConfirmInput(e.target.value)}
-                          placeholder="ACTUALIZAR"
-                          autoComplete="off"
-                          spellCheck={false}
-                          className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
-                        />
-                        <div className="grid grid-cols-2 gap-1.5">
-                          <button
-                            type="button"
-                            disabled={isSealed || isSending || draftConfirmInput.trim() !== 'ACTUALIZAR'}
-                            onClick={async () => {
-                              setIsSending(true);
-                              const toastId = toast.loading('Aplicando propuesta de cambios...');
-                              try {
-                                const userEmail = auth.currentUser?.email || 'revisor.humano@opermaq.cl';
-                                const res = await authFetch(`${API_BASE_URL}/vault/apply-assist-proposal`, {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({
-                                    globalAssetId: catalogId,
-                                    pillarId,
-                                    itemId: item.item_id,
-                                    finalContent: msg.draftContent,
-                                    userEmail,
-                                    intent: msg.intent || 'EDIT_PROPOSAL',
-                                    sessionId,
-                                    messageId: msg.id,
-                                  }),
-                                });
-                                if (res.ok) {
-                                  setMessages(prev =>
-                                    prev.map(m =>
-                                      m.id === msg.id ? { ...m, draftStatus: 'APPLIED' as const } : m
-                                    )
-                                  );
-                                  toast.update(toastId, { render: 'Cambios aplicados exitosamente.', type: 'success', isLoading: false, autoClose: 3000 });
-                                  setDraftConfirmInput('');
-                                } else {
-                                  const json = await res.json();
-                                  toast.update(toastId, { render: `Error: ${json.error || 'No se pudieron aplicar los cambios.'}`, type: 'error', isLoading: false, autoClose: 5000 });
-                                }
-                              } catch (_err) {
-                                toast.update(toastId, { render: 'Error de red al aplicar cambios.', type: 'error', isLoading: false, autoClose: 5000 });
-                              } finally {
-                                setIsSending(false);
-                              }
-                            }}
-                            className="bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[10px] py-1.5 font-bold uppercase tracking-wider transition-colors disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
-                          >
-                            Aprobar
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isSending}
-                            onClick={() => handleDismissDraft(msg.id)}
-                            className="bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#0F172A] dark:hover:border-[#F3F4F6] text-[#475569] dark:text-[#8A93A6] text-[10px] py-1.5 font-bold uppercase tracking-wider transition-colors rounded-none shadow-none cursor-pointer"
-                          >
-                            Descartar
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            )}
-
-            {isSending && (
-              <div className="flex items-center gap-1.5 py-1 justify-start text-[10px] text-[#C68346] shrink-0">
-                <M3CircularProgress size={14} strokeWidth={2} indeterminate tone="copper" ariaLabel="Procesando consulta" />
-                <span>Procesando consulta...</span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="flex flex-col shrink-0">
-          {selectedFragment && (
-            <div className="mb-1.5 bg-[#C68346]/5 border border-[#C68346]/30 p-1.5 text-[10px] flex items-start gap-2 shrink-0 rounded-none">
-              <div className="flex-1 min-w-0">
-                <span className="font-bold text-[#C68346] uppercase block text-[8px] tracking-wider mb-0.5">Fragmento Seleccionado</span>
-                <p className="text-[#475569] dark:text-[#8A93A6] truncate max-w-full">
-                  "{selectedFragment}"
-                </p>
-              </div>
-              <button 
-                type="button"
-                onClick={() => setSelectedFragment(null)}
-                className="bg-transparent border-0 outline-none p-0.5 text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
-              >
-                <span className="material-symbols-outlined !text-[14px]">close</span>
-              </button>
+              {isSending && (
+                <div className="flex items-center gap-1.5 py-1 justify-start text-[10px] text-[#C68346] shrink-0">
+                  <M3CircularProgress size={14} strokeWidth={2} indeterminate tone="copper" ariaLabel="Procesando consulta" />
+                  <span>Procesando consulta...</span>
+                </div>
+              )}
             </div>
-          )}
+          </div>
 
-          {!item.is_human_locked && (
-            <div className="flex flex-col gap-1.5 pb-1.5">
-              <div className="bg-[#F8FAFC] dark:bg-[#07090D] rounded-none flex flex-col p-1.5 border border-[#E2E8F0] dark:border-[#12151C]">
-                <textarea
-                  value={correctionText}
-                  onChange={(e) => setCorrectionText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSendMessage();
-                    }
-                  }}
-                  disabled={isSending || isGenerating || isSealed}
-                  rows={2}
-                  placeholder={latestDraftContent ? 'Escribe ACTUALIZAR para aplicar el borrador...' : 'Ingrese instrucciones técnicas a OPERMAQ'}
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="w-full bg-transparent resize-none focus:outline-none text-[12px] text-[#0F172A] dark:text-[#F3F4F6] placeholder-[#5A6072] custom-scrollbar px-1"
-                />
-                <div className="flex justify-between items-center mt-0.5">
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => onOpenStudio ? onOpenStudio('INGESTION') : toast.info('Ingesta documental no disponible.')}
-                      title="Ingesta documental / multimedia (PDF, ETT, esquemas, fotos)"
-                      className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none"
-                      disabled={isSending || isGenerating || isSealed}
-                    >
-                      <span className="material-symbols-outlined !text-[18px]">upload_file</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onOpenStudio ? onOpenStudio('MANUAL_PUBLISHER') : toast.info('Exportación PDF no disponible.')}
-                      title="Manuales ilustrados y diagramación vectorial"
-                      className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none"
-                      disabled={isSending || isGenerating}
-                    >
-                      <span className="material-symbols-outlined !text-[18px]">draw</span>
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-1">
+          <div className="flex flex-col shrink-0 max-h-[64%] overflow-y-auto custom-scrollbar pr-0.5">
+            {selectedFragment && (
+              <div className="mb-[8px] bg-[#C68346]/5 border border-[#C68346]/30 p-[8px] text-[10px] flex items-start gap-[8px] shrink-0 rounded-none">
+                <div className="flex-1 min-w-0">
+                  <span className="font-bold text-[#C68346] uppercase block text-[8px] tracking-wider mb-0.5">Fragmento Seleccionado</span>
+                  <p className="text-[#475569] dark:text-[#8A93A6] truncate max-w-full">
+                    "{selectedFragment}"
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedFragment(null)}
+                  className="bg-transparent border-0 outline-none p-0.5 text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                >
+                  <span className="material-symbols-outlined !text-[14px]">close</span>
+                </button>
+              </div>
+            )}
+
+            {!item.is_human_locked && (
+              <div className="flex flex-col pb-[8px]">
+                <div className="bg-[#F8FAFC] dark:bg-[#07090D] rounded-none flex flex-col p-[8px] border border-[#E2E8F0] dark:border-[#12151C]">
+                  <textarea
+                    value={correctionText}
+                    onChange={(e) => setCorrectionText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSendMessage();
+                      }
+                    }}
+                    disabled={isSending || isGenerating || isSealed}
+                    rows={2}
+                    placeholder={latestDraftContent ? 'Escribe ACTUALIZAR para aplicar el borrador...' : 'Ingrese instrucciones técnicas a OPERMAQ'}
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="w-full bg-transparent resize-none focus:outline-none text-[12px] text-[#0F172A] dark:text-[#F3F4F6] placeholder-[#5A6072] custom-scrollbar px-1"
+                  />
+                  <div className="flex justify-end items-center gap-[8px] mt-1">
                     <button
                       type="button"
                       onClick={() => toast.info('Función de dictado disponible próximamente.')}
@@ -2543,11 +2521,10 @@ function ItemContentBlock({
                       disabled={!correctionText.trim() || isSending || isSealed || isGenerating}
                       onClick={handleSendMessage}
                       title="Enviar instrucción"
-                      className={`bg-transparent border-0 outline-none p-1 transition-colors cursor-pointer ${
-                        correctionText.trim() && !isSending && !isSealed && !isGenerating
-                          ? 'text-[#C68346] hover:text-[#b07239]'
-                          : 'text-[#5A6072] opacity-40 cursor-not-allowed'
-                      }`}
+                      className={`bg-transparent border-0 outline-none p-1 transition-colors cursor-pointer ${correctionText.trim() && !isSending && !isSealed && !isGenerating
+                        ? 'text-[#C68346] hover:text-[#b07239]'
+                        : 'text-[#5A6072] opacity-40 cursor-not-allowed'
+                        }`}
                     >
                       <span className="material-symbols-outlined !text-[18px]">
                         arrow_upward
@@ -2556,39 +2533,36 @@ function ItemContentBlock({
                   </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          <div className="flex flex-col gap-[6px] pt-2 border-t border-[#E2E8F0] dark:border-[#12151C]">
-            <button
-              type="button"
-              onClick={handleLocateNextPendingContent}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 transition-colors border rounded-none cursor-pointer ${
-                pendingContentSummary.total > 0
+            {/* Bloque 1: Diagnóstico y Curaduría de Hallazgos del Ítem (Orden Vertical 1 a 3) */}
+            <div className="flex flex-col gap-[8px] pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C]">
+              <button
+                type="button"
+                onClick={handleLocateNextPendingContent}
+                className={`w-full flex items-center justify-between px-[13px] py-[6px] transition-colors border rounded-none shadow-none cursor-pointer ${pendingContentSummary.total > 0
                   ? 'bg-[#C68346]/15 border-[#C68346] text-[#C68346] font-bold hover:bg-[#C68346]/25'
                   : 'bg-transparent text-[#475569] dark:text-[#8A93A6] border-[#E2E8F0] dark:border-[#12151C] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-              }`}
-              title={
-                pendingContentSummary.total > 0
-                  ? `${t('vault_dashboard.pending_content.tooltip', 'Contenido Pendiente')}: ${pendingContentSummary.undeclaredFieldsCount} dato(s) no declarado(s) · ${pendingContentSummary.pendingFiguresCount} imagen(es) pendiente(s). Clic para localizar en el documento.`
-                  : t('vault_dashboard.pending_content.completed_tooltip', 'Sin contenido pendiente en este ítem')
-              }
-            >
-              <span className="text-[10px] font-bold uppercase tracking-wider">
-                {t('vault_dashboard.pending_content.label', 'Contenido Pendiente')}
-              </span>
-              <span
-                className={`text-[10px] font-bold px-1.5 py-0.5 rounded-none font-mono tabular-nums ${
+                  }`}
+                title={
                   pendingContentSummary.total > 0
+                    ? `${t('vault_dashboard.pending_content.tooltip', 'Contenido Pendiente')}: ${pendingContentSummary.undeclaredFieldsCount} dato(s) no declarado(s) · ${pendingContentSummary.pendingFiguresCount} imagen(es) pendiente(s). Clic para localizar en el documento.`
+                    : t('vault_dashboard.pending_content.completed_tooltip', 'Sin contenido pendiente en este ítem')
+                }
+              >
+                <span className="text-[10px] font-bold uppercase tracking-wider">
+                  {t('vault_dashboard.pending_content.label', 'Contenido Pendiente')}
+                </span>
+                <span
+                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded-none font-mono tabular-nums ${pendingContentSummary.total > 0
                     ? 'bg-[#C68346]/20 text-[#C68346] border border-[#C68346]'
                     : 'text-[#475569] dark:text-[#8A93A6]'
-                }`}
-              >
-                {pendingContentSummary.total}
-              </span>
-            </button>
+                    }`}
+                >
+                  {pendingContentSummary.total}
+                </span>
+              </button>
 
-            <div className="grid grid-cols-2 gap-[6px]">
               <button
                 type="button"
                 onClick={() => {
@@ -2598,15 +2572,14 @@ function ItemContentBlock({
                     onSetProposalView({ itemId: item.item_id, pillarId, view: 'nuevos' });
                   }
                 }}
-                className={`flex items-center justify-between px-2 py-1.5 bg-transparent transition-colors border rounded-none cursor-pointer ${
-                  activeProposalView?.itemId === item.item_id && activeProposalView.view === 'nuevos'
-                    ? 'text-[#00AEEF] font-bold border-[#00AEEF]'
-                    : 'text-[#475569] dark:text-[#8A93A6] border-[#E2E8F0] dark:border-[#12151C] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                }`}
+                className={`w-full flex items-center justify-between px-[13px] py-[6px] bg-transparent transition-colors border rounded-none shadow-none cursor-pointer ${activeProposalView?.itemId === item.item_id && activeProposalView.view === 'nuevos'
+                  ? 'text-[#00AEEF] font-bold border-[#00AEEF]'
+                  : 'text-[#475569] dark:text-[#8A93A6] border-[#E2E8F0] dark:border-[#12151C] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                  }`}
                 title="Nuevo Contenido"
               >
-                <span className="text-[9px] font-bold uppercase tracking-wider truncate">Nuevos</span>
-                <span className="text-[10px] font-bold px-1 rounded-none font-mono tabular-nums text-[#00AEEF]">
+                <span className="text-[10px] font-bold uppercase tracking-wider">Nuevo Contenido</span>
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-none font-mono tabular-nums text-[#00AEEF]">
                   {(item.pending_conflicts ?? []).filter(p => p.estado_fusion === 'NUEVO' && p.human_decision !== 'ELIMINADO' && p.human_decision !== 'APROBADO').length}
                 </span>
               </button>
@@ -2620,207 +2593,233 @@ function ItemContentBlock({
                     onSetProposalView({ itemId: item.item_id, pillarId, view: 'conflictos' });
                   }
                 }}
-                className={`flex items-center justify-between px-2 py-1.5 bg-transparent transition-colors border rounded-none cursor-pointer ${
-                  activeProposalView?.itemId === item.item_id && activeProposalView.view === 'conflictos'
-                    ? 'text-[#C68346] font-bold border-[#C68346]'
-                    : 'text-[#475569] dark:text-[#8A93A6] border-[#E2E8F0] dark:border-[#12151C] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                }`}
+                className={`w-full flex items-center justify-between px-[13px] py-[6px] bg-transparent transition-colors border rounded-none shadow-none cursor-pointer ${activeProposalView?.itemId === item.item_id && activeProposalView.view === 'conflictos'
+                  ? 'text-[#C68346] font-bold border-[#C68346]'
+                  : 'text-[#475569] dark:text-[#8A93A6] border-[#E2E8F0] dark:border-[#12151C] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                  }`}
                 title="Contenido en Conflicto"
               >
-                <span className="text-[9px] font-bold uppercase tracking-wider truncate">Conflictos</span>
-                <span className="text-[10px] font-bold px-1 rounded-none font-mono tabular-nums text-[#C68346]">
+                <span className="text-[10px] font-bold uppercase tracking-wider">Contenido en Conflicto</span>
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-none font-mono tabular-nums text-[#C68346]">
                   {(item.pending_conflicts ?? []).filter(p => p.estado_fusion === 'CONFLICTO' && p.human_decision !== 'ELIMINADO' && p.human_decision !== 'APROBADO').length}
                 </span>
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-[6px]">
+            {/* Bloque 2: Herramientas Independientes de Ingesta, Publicación, Regeneración e Historial (Orden Vertical 4 a 7) */}
+            <div className="flex flex-col gap-[8px] pt-[8px] mt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C]">
+              <button
+                type="button"
+                disabled={isSending || isGenerating || isSealed}
+                onClick={() => onOpenStudio ? onOpenStudio('INGESTION') : toast.info('Ingesta documental no disponible.')}
+                className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                title="Ingesta documental / multimedia (PDF, ETT, esquemas, fotos)"
+              >
+                Subir Archivos
+              </button>
+
+              <button
+                type="button"
+                disabled={isSending || isGenerating}
+                onClick={() => onOpenStudio ? onOpenStudio('MANUAL_PUBLISHER') : toast.info('Exportación PDF no disponible.')}
+                className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                title="Manuales ilustrados y diagramación vectorial"
+              >
+                Generar Manual Ilustrado
+              </button>
+
               <button
                 type="button"
                 disabled={isSealed || isGenerating || item.is_human_locked}
                 onClick={() => setShowHuntConfirm(!showHuntConfirm)}
-                className="text-center px-2 py-1.5 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[9px] font-bold uppercase tracking-wider rounded-none cursor-pointer truncate"
+                className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                 title="Regenerar con IA"
               >
-                Regenerar IA
+                Regenerar con IA
               </button>
+
+              {showHuntConfirm && (
+                <div className="p-[8px] border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-[8px] rounded-none shadow-none">
+                  <p className="text-[10px] text-[#C68346] font-bold">Escribe "ACTUALIZAR" para confirmar la regeneración por IA:</p>
+                  <input
+                    type="text"
+                    value={huntConfirmText}
+                    onChange={(e) => setHuntConfirmText(e.target.value)}
+                    placeholder="ACTUALIZAR"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                  />
+                  <div className="flex gap-[8px]">
+                    <button
+                      type="button"
+                      disabled={huntConfirmText.trim() !== 'ACTUALIZAR' || isGenerating || isSealed}
+                      onClick={() => {
+                        onHunt();
+                        setHuntConfirmText('');
+                        setShowHuntConfirm(false);
+                      }}
+                      className="px-2 py-1 bg-[#C68346] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
+                    >
+                      Confirmar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowHuntConfirm(false)}
+                      className="px-2 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[10px] rounded-none shadow-none cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <button
                 type="button"
                 onClick={() => setShowHistoryModal(true)}
-                className="text-center px-2 py-1.5 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] text-[9px] font-bold uppercase tracking-wider rounded-none cursor-pointer truncate"
+                className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                 title="Historial de Cambios"
               >
-                Historial
+                Historial de Cambios
               </button>
             </div>
 
-            {showHuntConfirm && (
-              <div className="p-2 border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-2 rounded-none">
-                <p className="text-[10px] text-[#C68346] font-bold">Escribe "ACTUALIZAR" para confirmar la regeneración por IA:</p>
-                <input
-                  type="text"
-                  value={huntConfirmText}
-                  onChange={(e) => setHuntConfirmText(e.target.value)}
-                  placeholder="ACTUALIZAR"
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
-                />
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    disabled={huntConfirmText.trim() !== 'ACTUALIZAR' || isGenerating || isSealed}
-                    onClick={() => {
-                      onHunt();
-                      setHuntConfirmText('');
-                      setShowHuntConfirm(false);
-                    }}
-                    className="px-2 py-1 bg-[#C68346] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none border-0 cursor-pointer"
-                  >
-                    Confirmar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowHuntConfirm(false)}
-                    className="px-2 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[10px] rounded-none cursor-pointer"
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-[6px] pt-2 mt-1.5 border-t border-[#E2E8F0] dark:border-[#12151C]">
-            <div className="grid grid-cols-2 gap-[6px]">
+            {/* Bloque 3: Gobernanza y Cierre HITL del Ítem (Orden Vertical 8 a 9) */}
+            <div className="flex flex-col gap-[8px] pt-[8px] mt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C]">
               {item.is_human_locked ? (
                 <button
                   type="button"
                   disabled={isSealed || isGenerating}
                   onClick={() => setShowUnlockConfirm(!showUnlockConfirm)}
-                  className="text-center px-2 py-1.5 bg-transparent border border-[#C68346] transition-colors text-[#C68346] hover:bg-[#C68346] hover:text-[#FFFFFF] disabled:opacity-40 disabled:pointer-events-none text-[9px] font-bold uppercase tracking-wider rounded-none cursor-pointer truncate"
+                  className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#C68346] transition-colors text-[#C68346] hover:bg-[#C68346] hover:text-[#FFFFFF] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                 >
-                  EDITAR ÍTEM
+                  Editar Ítem
                 </button>
               ) : (
                 <button
                   type="button"
                   disabled={isSealed || isGenerating}
                   onClick={() => setShowApprovalConfirm(!showApprovalConfirm)}
-                  className="text-center px-2 py-1.5 bg-transparent border border-[#00AEEF] transition-colors text-[#00AEEF] hover:bg-[#00AEEF] hover:text-[#FFFFFF] disabled:opacity-40 disabled:pointer-events-none text-[9px] font-bold uppercase tracking-wider rounded-none cursor-pointer truncate"
+                  className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#00AEEF] transition-colors text-[#00AEEF] hover:bg-[#00AEEF] hover:text-[#FFFFFF] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                 >
                   Aprobar Ítem
                 </button>
+              )}
+
+              {showUnlockConfirm && (
+                <div className="p-[8px] border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-[8px] rounded-none shadow-none">
+                  <p className="text-[10px] text-[#C68346] font-bold">Escribe "ACTUALIZAR" para confirmar el desbloqueo:</p>
+                  <input
+                    type="text"
+                    value={confirmUnlockInput}
+                    onChange={(e) => setConfirmUnlockInput(e.target.value)}
+                    placeholder="ACTUALIZAR"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                  />
+                  <div className="flex gap-[8px]">
+                    <button
+                      type="button"
+                      disabled={confirmUnlockInput.trim() !== 'ACTUALIZAR'}
+                      onClick={async () => {
+                        await onUnlockItem();
+                        setConfirmUnlockInput('');
+                        setShowUnlockConfirm(false);
+                      }}
+                      className="px-2 py-1 bg-[#C68346] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
+                    >
+                      Confirmar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConfirmUnlockInput('');
+                        setShowUnlockConfirm(false);
+                      }}
+                      className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none shadow-none cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {showApprovalConfirm && (
+                <div className="p-[8px] border border-[#00AEEF]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-[8px] rounded-none shadow-none">
+                  {pendingFiguresCount > 0 && (
+                    <p className="text-[10px] text-[#C68346] font-bold flex items-center gap-[4px]">
+                      <span className="material-symbols-outlined !text-[14px]">image_search</span>
+                      {t('vault_dashboard.pending_figure.approval_warning', {
+                        count: pendingFiguresCount,
+                        defaultValue: '{{count}} imagen(es) técnica(s) pendiente(s). Tras aprobar, solo podrán registrarse como propuesta.',
+                      })}
+                    </p>
+                  )}
+                  <p className="text-[10px] text-[#00AEEF] font-bold">Escribe "ACTUALIZAR" para confirmar la aprobación:</p>
+                  <input
+                    type="text"
+                    value={confirmApprovalInput}
+                    onChange={(e) => setConfirmApprovalInput(e.target.value)}
+                    placeholder="ACTUALIZAR"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                  />
+                  <div className="flex gap-[8px]">
+                    <button
+                      type="button"
+                      disabled={confirmApprovalInput.trim() !== 'ACTUALIZAR'}
+                      onClick={async () => {
+                        await onUpdateApprovalState('APROBADO_HUMANO');
+                        setConfirmApprovalInput('');
+                        setShowApprovalConfirm(false);
+                      }}
+                      className="px-2 py-1 bg-[#00AEEF] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
+                    >
+                      Confirmar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConfirmApprovalInput('');
+                        setShowApprovalConfirm(false);
+                      }}
+                      className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none shadow-none cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
               )}
 
               <button
                 type="button"
                 disabled={isSealed || isGenerating || item.is_human_locked}
                 onClick={onDiscard}
-                className="text-center px-2 py-1.5 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#0F172A] dark:hover:border-[#F3F4F6] transition-colors text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[9px] font-bold uppercase tracking-wider rounded-none cursor-pointer truncate"
+                className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#0F172A] dark:hover:border-[#F3F4F6] transition-colors text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
               >
-                Descartar
+                Descartar Ítem
               </button>
             </div>
 
-            {showUnlockConfirm && (
-              <div className="p-2 border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-2 rounded-none">
-                <p className="text-[10px] text-[#C68346] font-bold">Escribe "ACTUALIZAR" para confirmar el desbloqueo:</p>
-                <input
-                  type="text"
-                  value={confirmUnlockInput}
-                  onChange={(e) => setConfirmUnlockInput(e.target.value)}
-                  placeholder="ACTUALIZAR"
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
-                />
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    disabled={confirmUnlockInput.trim() !== 'ACTUALIZAR'}
-                    onClick={async () => {
-                      await onUnlockItem();
-                      setConfirmUnlockInput('');
-                      setShowUnlockConfirm(false);
-                    }}
-                    className="px-2 py-1 bg-[#C68346] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none border-0 cursor-pointer"
-                  >
-                    Confirmar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setConfirmUnlockInput('');
-                      setShowUnlockConfirm(false);
-                    }}
-                    className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none cursor-pointer"
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              </div>
-            )}
+            <VaultPilotFeedbackBox
+              globalAssetId={catalogId}
+              pillarId={pillarId}
+              itemId={item.item_id}
+              isSealed={isSealed}
+              isTestPilot={isTestPilot}
+            />
 
-            {showApprovalConfirm && (
-              <div className="p-2 border border-[#00AEEF]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-2 rounded-none">
-                {pendingFiguresCount > 0 && (
-                  <p className="text-[10px] text-[#C68346] font-bold flex items-center gap-[4px]">
-                    <span className="material-symbols-outlined !text-[14px]">image_search</span>
-                    {t('vault_dashboard.pending_figure.approval_warning', {
-                      count: pendingFiguresCount,
-                      defaultValue: '{{count}} imagen(es) técnica(s) pendiente(s). Tras aprobar, solo podrán registrarse como propuesta.',
-                    })}
-                  </p>
-                )}
-                <p className="text-[10px] text-[#00AEEF] font-bold">Escribe "ACTUALIZAR" para confirmar la aprobación:</p>
-                <input
-                  type="text"
-                  value={confirmApprovalInput}
-                  onChange={(e) => setConfirmApprovalInput(e.target.value)}
-                  placeholder="ACTUALIZAR"
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
-                />
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    disabled={confirmApprovalInput.trim() !== 'ACTUALIZAR'}
-                    onClick={async () => {
-                      await onUpdateApprovalState('APROBADO_HUMANO');
-                      setConfirmApprovalInput('');
-                      setShowApprovalConfirm(false);
-                    }}
-                    className="px-2 py-1 bg-[#00AEEF] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none border-0 cursor-pointer"
-                  >
-                    Confirmar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setConfirmApprovalInput('');
-                      setShowApprovalConfirm(false);
-                    }}
-                    className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none cursor-pointer"
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
 
         </div>
-
-      </div>
       )}
 
       {canCurateAI && showHistoryModal && (
         <div className="fixed inset-0 bg-[#000000]/75 flex items-center justify-center z-[100] p-4">
           <div className="bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] w-full max-w-2xl h-[80vh] flex flex-col font-atkinson p-6 justify-between rounded-none shadow-none">
-            
+
             <div className="flex items-center justify-between pb-4 border-b border-[#E2E8F0] dark:border-[#12151C]">
               <div>
                 <h3 className="text-sm font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6]">Historial de Cambios</h3>
@@ -2972,7 +2971,7 @@ interface ItemizedItemsListProps {
 }
 
 
-function ItemizedItemsList({ 
+function ItemizedItemsList({
   items, canCurateAI, onHunt, onAiAssist, onApplyAssist, isAssistingItemId: assistingItemId, huntProgressByItem,
   expandedItems, onToggleExpand, onDiscard: _onDiscard, onReactivate, isArchive, isSealed,
   onUnlockItem, onUpdateApprovalState, onRollbackVersion, catalogId,
@@ -2980,7 +2979,7 @@ function ItemizedItemsList({
   resolveItemSymbology, onOpenStudio
 }: ItemizedItemsListProps) {
   const { t } = useTranslation();
-  
+
   const [confirmDiscardId, setConfirmDiscardId] = useState<string | null>(null);
   const [discardConfirmInput, setDiscardConfirmInput] = useState('');
 
@@ -3004,7 +3003,7 @@ function ItemizedItemsList({
                 const itemHuntKey = `${pillarId}:${item.item_id}`;
                 const itemHuntPct = huntProgressByItem?.[itemHuntKey];
                 const isCompleted = item.content_status === 'COMPLETADO' && itemHuntPct === undefined;
-                const isError     = item.content_status === 'ERROR' && itemHuntPct === undefined;
+                const isError = item.content_status === 'ERROR' && itemHuntPct === undefined;
                 const isGenerating = item.content_status === 'GENERANDO' || itemHuntPct !== undefined;
                 const displayPct = Math.max(0, Math.min(100, Math.round(itemHuntPct ?? 0)));
                 const isExpanded = expandedItems.has(item.item_id);
@@ -3016,12 +3015,11 @@ function ItemizedItemsList({
                   <div
                     key={item.item_id}
                     id={`item-card-${item.item_id}`}
-                    className={`p-3 border transition-colors duration-200 flex flex-col rounded-none shadow-none ${
-                      isCompleted ? 'border-[#00AEEF]/30 bg-[#FFFFFF] dark:bg-[#07090D]' :
-                      isError     ? 'border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D]' :
-                      isGenerating? 'border-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D]' :
-                      'border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D]'
-                    } ${isExpanded ? 'flex-1 h-full min-h-0 overflow-hidden border-[#C68346]' : ''}`}
+                    className={`p-3 border transition-colors duration-200 flex flex-col rounded-none shadow-none ${isCompleted ? 'border-[#00AEEF]/30 bg-[#FFFFFF] dark:bg-[#07090D]' :
+                      isError ? 'border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D]' :
+                        isGenerating ? 'border-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D]' :
+                          'border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D]'
+                      } ${isExpanded ? 'flex-1 h-full min-h-0 overflow-hidden border-[#C68346]' : ''}`}
                   >
                     {/* Cabecera del ítem */}
                     <div className="flex items-start gap-3 shrink-0">
@@ -3051,7 +3049,7 @@ function ItemizedItemsList({
                             <span className="material-symbols-outlined !text-[20px]">arrow_back</span>
                           </button>
                         )}
-                        <span className="text-[11px] font-mono tabular-nums text-[#5A6072]">{String(item.order).padStart(2,'0')}</span>
+                        <span className="text-[11px] font-mono tabular-nums text-[#5A6072]">{String(item.order).padStart(2, '0')}</span>
                       </div>
 
                       <div className="flex-1 min-w-0">
@@ -3097,10 +3095,10 @@ function ItemizedItemsList({
                               item.pending_conflicts.some(
                                 (p) => p.human_decision !== 'ELIMINADO' && p.human_decision !== 'APROBADO'
                               ) && (
-                              <span className="flex items-center justify-center w-8 h-8 shrink-0">
-                                <span className="material-symbols-outlined !text-[20px] text-[#00AEEF]" title="Nuevos hallazgos o conflictos pendientes">release_alert</span>
-                              </span>
-                            )}
+                                <span className="flex items-center justify-center w-8 h-8 shrink-0">
+                                  <span className="material-symbols-outlined !text-[20px] text-[#00AEEF]" title="Nuevos hallazgos o conflictos pendientes">release_alert</span>
+                                </span>
+                              )}
                             {(() => {
                               const pendingFigCount = countItemPendingFigures(item.content, item.title, item.item_sources, item.figures);
                               const pendingTextCount = countUndeclaredTextInMarkdown(item.content);
@@ -3461,15 +3459,15 @@ const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = 
 // ─── Pillar Tab Content ───────────────────────────────────────────────────────
 interface PillarTabContentProps {
   pillarMeta: typeof PILLARS[number];
-  pillar?:      PillarDocument;
-  catalogId:   string;
+  pillar?: PillarDocument;
+  catalogId: string;
   canCurateAI: boolean;
-  onItemize:   (pillarId: PillarId) => void;
-  onHuntItem:  (pillarId: PillarId, itemId: string, correction?: string, forceRestart?: boolean) => void;
+  onItemize: (pillarId: PillarId) => void;
+  onHuntItem: (pillarId: PillarId, itemId: string, correction?: string, forceRestart?: boolean) => void;
   onAiAssistItem: (pillarId: PillarId, itemId: string, userRequest: string) => Promise<AiAssistResponse | null>;
   onApplyAssistItem: (pillarId: PillarId, itemId: string, finalContent: string, intent: string) => Promise<void>;
   onCreateItem: (pillarId: PillarId, title: string, section: string, rationale?: string, itemSource?: Record<string, unknown>) => Promise<void>;
-  itemizing:    boolean;
+  itemizing: boolean;
   huntProgressByItem: Record<string, number>;
   assistingItemId: string | null;
   expandedItems: Set<string>;
@@ -3576,13 +3574,13 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
       toast.update(toastId, { render: t('vault_dashboard.status.network_error'), type: 'error', isLoading: false, autoClose: 5000 });
     }
   };
-  
+
   const itemizeStatus = pillar?.itemize_status ?? 'IDLE';
-  
+
   const allItems = pillar?.items ?? [];
   const activeItems = allItems.filter(it => !it.is_discarded);
   const discardedItems = allItems.filter(it => it.is_discarded);
-  
+
   const hasItems = activeItems.length > 0;
   const startedAt = pillar?.started_at;
   const startedTime = startedAt?.toDate ? startedAt.toDate().getTime() : (startedAt ? new Date(startedAt).getTime() : 0);
@@ -3596,10 +3594,10 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
   const isSequenceBlocked = Boolean(prerequisitePillar && !prerequisitePillar.isItemized);
   const isParentPillarEvolved = Boolean(
     hasItems &&
-      (prerequisitePillar?.hasAncestorChainEvolved ||
-        (prerequisitePillar?.currentDigest &&
-          pillar?.parent_pillar_digest_sha256 &&
-          prerequisitePillar.currentDigest !== pillar.parent_pillar_digest_sha256))
+    (prerequisitePillar?.hasAncestorChainEvolved ||
+      (prerequisitePillar?.currentDigest &&
+        pillar?.parent_pillar_digest_sha256 &&
+        prerequisitePillar.currentDigest !== pillar.parent_pillar_digest_sha256))
   );
 
   return (
@@ -3708,11 +3706,10 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                   setNewManualItemTitle('');
                 }}
                 title={t('vault_dashboard.actions.create_item', 'Crear ítem')}
-                className={`bg-transparent border-0 outline-none p-1 shrink-0 transition-colors cursor-pointer ${
-                  newManualItemTitle.trim() && !isSealed
-                    ? 'text-[#C68346] hover:text-[#b07239]'
-                    : 'text-[#5A6072] opacity-40 cursor-not-allowed'
-                }`}
+                className={`bg-transparent border-0 outline-none p-1 shrink-0 transition-colors cursor-pointer ${newManualItemTitle.trim() && !isSealed
+                  ? 'text-[#C68346] hover:text-[#b07239]'
+                  : 'text-[#5A6072] opacity-40 cursor-not-allowed'
+                  }`}
               >
                 <span className="material-symbols-outlined !text-[20px]">add_circle</span>
               </button>
@@ -3735,9 +3732,8 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                 className="w-[89px]"
                 ariaLabel={t('vault_dashboard.labels.items_progress', { completed: completedItems, total: totalItems })}
               />
-              <span className={`text-[10px] font-bold font-mono tabular-nums ${
-                completedItems === totalItems ? 'text-[#00AEEF]' : 'text-[#C68346]'
-              }`}>
+              <span className={`text-[10px] font-bold font-mono tabular-nums ${completedItems === totalItems ? 'text-[#00AEEF]' : 'text-[#C68346]'
+                }`}>
                 {completedItems}/{totalItems}
               </span>
             </div>
@@ -3781,7 +3777,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                   </span>
                 </button>
               </div>
-              
+
               {!suggestionsCollapsed && (
                 <div className="space-y-3">
                   {(pillar?.suggested_items_pending || []).map((sug, idx) => (
@@ -3808,7 +3804,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
               <h3 className="text-[12px] font-bold uppercase tracking-wider text-[#C68346] mb-3 font-atkinson">
                 Crear Nuevo Ítem Manualmente
               </h3>
-              
+
               {!correctionResult ? (
                 <div className="space-y-3">
                   <div>
@@ -3899,7 +3895,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                 <div className="space-y-4">
                   <div className="p-3 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] space-y-3 rounded-none">
                     <p className="text-[11px] font-bold text-[#C68346] uppercase tracking-wider mb-2">Revisión de IA (Original vs Sugerido)</p>
-                    
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-1">
                         <p className="text-[9px] font-bold text-[#5A6072] uppercase">Título Original</p>
@@ -3909,7 +3905,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                         <p className="text-[9px] font-bold text-[#00AEEF] uppercase mt-2">Sección Técnica Asignada</p>
                         <p className="text-[11px] font-mono font-bold text-[#C68346]">{correctionResult.section}</p>
                       </div>
-                      
+
                       <div className="space-y-1">
                         <p className="text-[9px] font-bold text-[#5A6072] uppercase">Descripción Original</p>
                         <p className="text-[11px] line-through text-[#475569] dark:text-[#8A93A6]">{createFormRationale}</p>
@@ -4007,23 +4003,23 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
         {/* ARCHIVO DE ÍTEMS DESCARTADOS (Exclusivo curación) */}
         {canCurateAI && discardedItems.length > 0 && !isItemizing && expandedItems.size === 0 && (
           <div className="mt-12 pt-8 border-t border-[#E2E8F0] dark:border-[#12151C]">
-            <M3Button 
-            variant="ghost"
-            onClick={() => setShowArchive(!showArchive)}
-            className="text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]"
-          >
-            {t('vault_dashboard.discarded_items_archive')} (<span className="font-mono tabular-nums">{discardedItems.length}</span>)
-          </M3Button>
-            
+            <M3Button
+              variant="ghost"
+              onClick={() => setShowArchive(!showArchive)}
+              className="text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]"
+            >
+              {t('vault_dashboard.discarded_items_archive')} (<span className="font-mono tabular-nums">{discardedItems.length}</span>)
+            </M3Button>
+
             {showArchive && (
               <div className="mt-4">
                 <ItemizedItemsList
                   items={discardedItems}
                   canCurateAI={canCurateAI}
                   catalogId={catalogId}
-                  onHunt={() => {}}
+                  onHunt={() => { }}
                   onAiAssist={async () => null}
-                  onApplyAssist={async () => {}}
+                  onApplyAssist={async () => { }}
                   isAssistingItemId={null}
                   expandedItems={expandedItems}
                   onToggleExpand={onToggleExpand}
@@ -4031,14 +4027,14 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                   onReactivate={onReactivateItem}
                   isArchive
                   isSealed={isSealed}
-                  onUnlockItem={async () => {}}
-                  onUpdateApprovalState={async () => {}}
-                  onRollbackVersion={async () => {}}
+                  onUnlockItem={async () => { }}
+                  onUpdateApprovalState={async () => { }}
+                  onRollbackVersion={async () => { }}
                   pillarId={pillarMeta.id}
                   activeProposalView={null}
-                  onSetProposalView={() => {}}
-                  onDecideProposal={async () => {}}
-                  onEvolveItemByType={async () => {}}
+                  onSetProposalView={() => { }}
+                  onDecideProposal={async () => { }}
+                  onEvolveItemByType={async () => { }}
                   resolveItemSymbology={resolveItemSymbology}
                 />
               </div>
@@ -4127,8 +4123,8 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                       isStuck
                         ? 'Proceso interrumpido — Reiniciar itemización'
                         : pillar?.itemize_status === 'ERROR'
-                        ? 'Reintentar itemización'
-                        : 'Iniciar itemización del pilar'
+                          ? 'Reintentar itemización'
+                          : 'Iniciar itemización del pilar'
                     }
                   >
                     {isStuck ? 'Reiniciar Itemización del Pilar' : 'Itemizar Estructura del Pilar'}
@@ -4153,7 +4149,8 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
   onBack,
 }) => {
   const { t } = useTranslation();
-  const { tenantId, capabilities } = useOpermaqContext();
+  const { tenantId, capabilities, actorEmail, isEduSandbox } = useOpermaqContext();
+  const effectiveCuratorEmail = actorEmail || auth.currentUser?.email || 'curador@minreport.cl';
   const canCurateAI = capabilities.canCurateAI;
   const [catalog, setCatalog] = useState<CatalogSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -4164,25 +4161,15 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
   const huntListenersRef = useRef<Record<string, () => void>>({});
   const [assistingItemId, setAssistingItemId] = useState<string | null>(null);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
-  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
-  const [isDraggingPhoto, setIsDraggingPhoto] = useState(false);
-  const [showPhotoDeleteConfirm, setShowPhotoDeleteConfirm] = useState(false);
-  const [photoDeleteConfirmText, setPhotoDeleteConfirmText] = useState('');
-  const [isHuntingPhoto, setIsHuntingPhoto] = useState(false);
-  const [photoCandidates, setPhotoCandidates] = useState<OfficialPhotoCandidate[]>([]);
-  const [selectedCandidateIdx, setSelectedCandidateIdx] = useState(0);
-  const [candidateConfirmText, setCandidateConfirmText] = useState('');
-  const [isPublishingCandidate, setIsPublishingCandidate] = useState(false);
-  const [isManualFallbackActive, setIsManualFallbackActive] = useState(false);
-  const [manualAuditRejection, setManualAuditRejection] = useState<string | null>(null);
-  const [isReframingPhoto, setIsReframingPhoto] = useState(false);
-  const photoHuntAttemptRef = useRef<number>(0);
-  const photoHuntAbortRef = useRef<AbortController | null>(null);
   const [studioOpen, setStudioOpen] = useState(false);
   const [studioTab, setStudioTab] = useState<StudioTabId>(canCurateAI ? 'INGESTION' : 'MANUAL_PUBLISHER');
   const [showSymbologyInfo, setShowSymbologyInfo] = useState<boolean>(false);
+  const [showCostMatrixInfo, setShowCostMatrixInfo] = useState<boolean>(false);
+  const initializedVaultIdsRef = useRef<Set<string>>(new Set());
+  const tenantOverridesRef = useRef<Record<string, any> | undefined>(undefined);
   const openStudio = useCallback((tab: StudioTabId) => {
     if (tab === 'SYMBOLOGY_PACK') {
+      setShowCostMatrixInfo(false);
       setShowSymbologyInfo(true);
       return;
     }
@@ -4203,14 +4190,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
 
   useEffect(() => {
     let cancelled = false;
-    const unsub = onSnapshot(collection(db, 'master_symbology_vault'), (snap) => {
-      const symbolsMap: Record<string, any> = {};
-      snap.forEach(docSnap => {
-        symbolsMap[docSnap.id] = docSnap.data();
-      });
-      setMasterSymbols(symbolsMap);
-    }, async (err) => {
-      console.warn('[VaultDashboard] Error listening to master_symbology_vault:', err);
+    const loadMasterSymbolsFromCacheApi = async () => {
       try {
         const res = await authFetch(`${API_BASE_URL}/vault/symbology/concepts`);
         if (res.ok && !cancelled) {
@@ -4222,15 +4202,25 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
               if (cid) symbolsMap[String(cid)] = item;
             });
             setMasterSymbols(symbolsMap);
+            void syncQueueEngine.saveOfflineKnowledge('opermaq_master_symbols_v3', symbolsMap);
+            return;
           }
         }
       } catch {
-        // Silencioso en respaldo HTTP
+        // Fallback offline soberano en IndexedDB
       }
-    });
+      if (!cancelled) {
+        const cached = await syncQueueEngine
+          .getOfflineKnowledge<Record<string, any>>('opermaq_master_symbols_v3')
+          .catch(() => null);
+        if (cached && typeof cached === 'object') {
+          setMasterSymbols(cached);
+        }
+      }
+    };
+    void loadMasterSymbolsFromCacheApi();
     return () => {
       cancelled = true;
-      unsub();
     };
   }, []);
 
@@ -4238,9 +4228,8 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     if (!symbologyRefs || !Array.isArray(symbologyRefs)) return [];
     const make = (catalog?.make || '').toLowerCase().trim();
     const packEntries = catalog?.symbology_pack?.compiled_entries || [];
-    // Si la bóveda maestra ya cargó, un `concept_id` ausente (p. ej. símbolo sintético purgado) no se resuelve desde el pack.
     const masterLoaded = Object.keys(masterSymbols || {}).length > 0;
-    
+
     return symbologyRefs.map(cid => {
       const symData = masterSymbols[cid];
       if (symData && !isTrustedMasterSymbol(symData)) return null;
@@ -4272,158 +4261,13 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     }).filter(Boolean) as Array<{ concept_id: string; url: string; technical_name_es: string }>;
   }, [catalog?.make, catalog?.symbology_pack?.compiled_entries, masterSymbols]);
 
-  // Compilado Reactivo en Tiempo Real (Solo Lectura) derivado EXCLUSIVAMENTE de la caza de contenidos (nunca de títulos de itemizado)
-  const liveHuntedSymbology = useMemo(() => {
-    const vault = catalog?.knowledge_vault;
-    const makeKey = (catalog?.make || '').toLowerCase().trim();
-    let huntedItemsCount = 0;
-    let totalActiveItemsCount = 0;
-
-    interface CompiledHuntedSymbolEntry {
-      concept_id: string;
-      iso_code?: string;
-      category: string;
-      technical_name_es: string;
-      description_es: string;
-      icon_url: string;
-      source_mode: string;
-      applications: Array<{
-        pillar_id: PillarId;
-        pillar_label: string;
-        item_id: string;
-        item_title: string;
-        context_excerpt: string;
-      }>;
-    }
-
-    const byConcept = new Map<string, CompiledHuntedSymbolEntry>();
-
-    const extractExcerptForMarker = (content: string, needle: string, fallbackTitle: string, pillarLabel: string): string => {
-      const lines = content
-        .split(/\n+/)
-        .map((l) => l.replace(/^[#>*\-\d.)\s|]+/, '').trim())
-        .filter((l) => l.length > 8);
-      const lowerNeedle = needle.toLowerCase();
-      const matchedLine = lines.find((l) => l.toLowerCase().includes(lowerNeedle));
-      const cleanLine = (matchedLine || lines[0] || `Aplicado en contenido técnico de "${fallbackTitle}" (${pillarLabel})`)
-        .replace(/\[[sS][íÍiI][mM][bB][oO][lL][oO]:\s*[a-zA-Z0-9_-]+\]/g, '')
-        .replace(/\*\*|\*|`/g, '')
-        .replace(/\s{2,}/g, ' ')
-        .trim();
-      return cleanLine.length > 210 ? `${cleanLine.slice(0, 207)}...` : cleanLine;
-    };
-
-    const registerSymbolFromHuntedItem = (
-      cid: string,
-      pillarMeta: { id: PillarId; label: string },
-      item: PillarItem,
-      needleForExcerpt: string
-    ) => {
-      const symData = masterSymbols[cid];
-      if (symData && !isTrustedMasterSymbol(symData)) return;
-      const masterLoaded = Object.keys(masterSymbols || {}).length > 0;
-      const packFallback = masterLoaded
-        ? undefined
-        : catalog?.symbology_pack?.compiled_entries?.find((e) => e.concept_id === cid);
-      if (!symData && !packFallback) return;
-
-      const brandVariant = symData?.brands_variants?.[makeKey];
-      const hasBrandUrl = Boolean(brandVariant?.verified_by_human && brandVariant?.asset_storage_url);
-      const iconUrl: string = hasBrandUrl
-        ? brandVariant.asset_storage_url
-        : symData?.standard_icon_url || packFallback?.icon_url || '';
-      if (!iconUrl) return;
-
-      const excerpt = extractExcerptForMarker(
-        String(item.content || ''),
-        needleForExcerpt,
-        item.title,
-        pillarMeta.label
-      );
-
-      const existing = byConcept.get(cid);
-      if (existing) {
-        if (!existing.applications.some((a) => a.pillar_id === pillarMeta.id && a.item_id === item.item_id)) {
-          existing.applications.push({
-            pillar_id: pillarMeta.id,
-            pillar_label: pillarMeta.label,
-            item_id: item.item_id,
-            item_title: item.title,
-            context_excerpt: excerpt,
-          });
-        }
-        return;
-      }
-
-      byConcept.set(cid, {
-        concept_id: cid,
-        iso_code: symData?.iso_code || packFallback?.iso_code || undefined,
-        category: symData?.category || packFallback?.category || 'ISO_7000',
-        technical_name_es: symData?.technical_name_es || packFallback?.technical_name_es || cid,
-        description_es:
-          brandVariant?.brand_specific_meaning_es ||
-          symData?.action_operator_es ||
-          symData?.description_es ||
-          packFallback?.description_es ||
-          '[Información técnica no declarada en ficha]',
-        icon_url: iconUrl,
-        source_mode: hasBrandUrl ? 'BRAND_VARIANT' : 'STANDARD_ISO_FALLBACK',
-        applications: [
-          {
-            pillar_id: pillarMeta.id,
-            pillar_label: pillarMeta.label,
-            item_id: item.item_id,
-            item_title: item.title,
-            context_excerpt: excerpt,
-          },
-        ],
-      });
-    };
-
-    if (vault) {
-      for (const pMeta of PILLARS) {
-        const items = vault[pMeta.id]?.items ?? [];
-        for (const item of items) {
-          if (!item || item.is_discarded) continue;
-          totalActiveItemsCount += 1;
-
-          const huntedContent = typeof item.content === 'string' ? item.content.trim() : '';
-          // REGLA ESTRICTA: Ignorar ítems que solo están itemizados (solo títulos).
-          // Solo procesar ítems cuyo contenido ya fue cazado.
-          if (item.content_status !== 'COMPLETADO' || !huntedContent) continue;
-          huntedItemsCount += 1;
-
-          // 1. Marcadores inline [SÍMBOLO: concept_id] con mención explícita verificada
-          //    (en `ficha_tecnica` solo con código normativo literal en la misma línea).
-          const explicitIds = extractExplicitSymbolIds(huntedContent, pMeta.id);
-          for (const cid of explicitIds) {
-            registerSymbolFromHuntedItem(cid, pMeta, item, `[SÍMBOLO: ${cid}]`);
-          }
-
-          // 2. `symbology_refs` heredados: solo si su mención explícita existe en el contenido cazado
-          //    (descarta refs especulativos de versiones anteriores del cazador).
-          if (Array.isArray(item.symbology_refs)) {
-            const explicitSet = new Set(explicitIds);
-            for (const refId of item.symbology_refs) {
-              const cid = typeof refId === 'string' ? refId.trim() : '';
-              if (cid && explicitSet.has(cid)) {
-                const symName = masterSymbols[cid]?.technical_name_es || cid;
-                registerSymbolFromHuntedItem(cid, pMeta, item, symName);
-              }
-            }
-          }
-        }
-      }
-    }
-
-    return {
-      entries: Array.from(byConcept.values()),
-      huntedItemsCount,
-      totalActiveItemsCount,
-    };
-  }, [catalog?.knowledge_vault, catalog?.make, catalog?.symbology_pack?.compiled_entries, masterSymbols]);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const liveHuntedSymbology = useLiveHuntedSymbology({
+    knowledgeVault: catalog?.knowledge_vault,
+    make: catalog?.make,
+    compiledEntries: catalog?.symbology_pack?.compiled_entries,
+    masterSymbols,
+    pillars: PILLARS,
+  });
 
   const toggleItemExpansion = useCallback((itemId: string) => {
     setExpandedItems(prev => {
@@ -4448,16 +4292,16 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     } catch (e) { console.warn('[Vault] Initialize silently failed:', e); }
   }, [canCurateAI]);
 
-  useEffect(() => {
-    if (!assetId) return;
-    let unsubTenant: (() => void) | null = null;
-    let unsubLinkedGlobal: (() => void) | null = null;
-
-    const applyCatalogSnapshot = async (
+  const applyCatalogSnapshot = useCallback(
+    async (
       globalId: string,
       data: Record<string, any> | undefined,
       tenantOverrides?: Record<string, any>
     ) => {
+      const effectiveOverrides = tenantOverrides ?? tenantOverridesRef.current;
+      if (tenantOverrides) {
+        tenantOverridesRef.current = tenantOverrides;
+      }
       const rawMake = data?.make_oficial || data?.make || '';
       const rawModel = data?.model_oficial || data?.model || '';
       const displayMake = rawMake === 'GENÉRICO' ? '' : rawMake;
@@ -4470,40 +4314,115 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         make: rawMake,
         categoria_equipo: data?.categoria_equipo,
         tipo_equipo: data?.tipo_equipo || '',
-        ambiente_operativo: tenantOverrides?.ambiente_operativo || data?.ambiente_operativo || [],
-        contexto_operativo: tenantOverrides?.contexto_operativo || data?.contexto_operativo || [],
+        ambiente_operativo: effectiveOverrides?.ambiente_operativo || data?.ambiente_operativo || [],
+        contexto_operativo: effectiveOverrides?.contexto_operativo || data?.contexto_operativo || [],
         caracteristicas_principales: data?.caracteristicas_principales || [],
-        version: tenantOverrides?.version || data?.version || 'ESTÁNDAR',
-        official_url: tenantOverrides?.official_url || data?.official_url || '',
-        foto_url: tenantOverrides?.foto_url || data?.foto_url || '',
-        foto_media_telemetry: tenantOverrides?.foto_media_telemetry || data?.foto_media_telemetry,
+        physical_traits: data?.physical_traits || undefined,
+        version: effectiveOverrides?.version || data?.version || 'ESTÁNDAR',
+        official_url: effectiveOverrides?.official_url || data?.official_url || '',
+        foto_url: effectiveOverrides?.foto_url || data?.foto_url || '',
+        foto_media_telemetry: effectiveOverrides?.foto_media_telemetry || data?.foto_media_telemetry,
         official_photo_candidates: Array.isArray(data?.official_photo_candidates)
           ? data.official_photo_candidates
           : undefined,
         is_sealed: data?.is_sealed,
+        energy_consumption_profile: data?.energy_consumption_profile,
+        operational_cost_matrix: data?.operational_cost_matrix,
+        canonical_specs: data?.canonical_specs,
         knowledge_vault: data?.knowledge_vault,
         symbology_pack: data?.symbology_pack,
       });
       setLoading(false);
+
       const hasPillars = PILLARS.some((p) => !!(data?.knowledge_vault)?.[p.id]);
       const fichaItems: any[] = Array.isArray(data?.knowledge_vault?.ficha_tecnica?.items)
         ? data.knowledge_vault.ficha_tecnica.items
         : [];
-      const hasDedicatedConsumptionItem =
-        fichaItems.length === 0 ||
-        fichaItems.some((it) =>
-          /\b(consumos?\s+de\s+combustible|consumos?\s+de\s+energ[ií]a|consumos?\s+por\s+factor\s+de\s+carga|consumos?\s+y\s+autonom[ií]a)\b/i.test(
-            `${it?.title || ''} ${it?.section || ''}`
-          )
-        );
-      if ((!hasPillars || !hasDedicatedConsumptionItem) && canCurateAI && !data?.is_sealed) {
+      const pmItems: any[] = Array.isArray(data?.knowledge_vault?.pauta_mantencion?.items)
+        ? data.knowledge_vault.pauta_mantencion.items
+        : [];
+      const needsCostMatrixInit =
+        (!data?.operational_cost_matrix || data?.operational_cost_matrix?.version !== '3.0.0') &&
+        (fichaItems.length > 0 || pmItems.length > 0 || Boolean(data?.operational_cost_matrix));
+      if (
+        (!hasPillars || needsCostMatrixInit) &&
+        canCurateAI &&
+        !data?.is_sealed &&
+        !initializedVaultIdsRef.current.has(globalId)
+      ) {
+        initializedVaultIdsRef.current.add(globalId);
         await ensureVaultInitialized(globalId);
       }
+    },
+    [canCurateAI, ensureVaultInitialized, t]
+  );
+
+  const refreshHydratedVault = useCallback(
+    async (
+      targetGlobalId?: string,
+      fallbackRootData?: Record<string, any>,
+      tenantOverrides?: Record<string, any>
+    ) => {
+      const gid = targetGlobalId || catalog?.id || assetId;
+      if (!gid) return;
+      try {
+        const res = await authFetch(`${API_BASE_URL}/vault/asset/${encodeURIComponent(gid)}`);
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          if (data && data.exists !== false) {
+            void syncQueueEngine.saveOfflineKnowledge(`opermaq_vault_v3_${gid}`, data);
+            await applyCatalogSnapshot(String(data.id || gid), data, tenantOverrides);
+            return;
+          }
+        }
+      } catch {
+        // Respaldo offline / caché local IndexedDB
+      }
+      const cachedOffline = await syncQueueEngine
+        .getOfflineKnowledge<Record<string, any>>(`opermaq_vault_v3_${gid}`)
+        .catch(() => null);
+      if (cachedOffline) {
+        await applyCatalogSnapshot(gid, { ...(fallbackRootData || {}), ...cachedOffline }, tenantOverrides);
+        return;
+      }
+      if (fallbackRootData) {
+        await applyCatalogSnapshot(gid, fallbackRootData, tenantOverrides);
+      } else {
+        setLoading(false);
+      }
+    },
+    [applyCatalogSnapshot, assetId, catalog?.id]
+  );
+
+  useEffect(() => {
+    if (!assetId) return;
+    tenantOverridesRef.current = undefined;
+    let unsubTenant: (() => void) | null = null;
+    let unsubLinkedGlobal: (() => void) | null = null;
+    let hydrateTimer: ReturnType<typeof setTimeout> | null = null;
+    let isFirstSnapshot = true;
+
+    const scheduleHydration = (
+      gid: string,
+      rootData?: Record<string, any>,
+      tenantData?: Record<string, any>
+    ) => {
+      if (isFirstSnapshot) {
+        isFirstSnapshot = false;
+        void refreshHydratedVault(gid, rootData, tenantData);
+        return;
+      }
+      if (hydrateTimer) clearTimeout(hydrateTimer);
+      hydrateTimer = setTimeout(() => {
+        void refreshHydratedVault(gid, rootData, tenantData);
+      }, 220);
     };
+
+    const fleetCollectionName = isEduSandbox ? 'edu_sandbox_fleet' : 'tenant_assets';
 
     const unsubDirectGlobal = onSnapshot(
       doc(db, 'global_asset_catalog', assetId),
-      async (globalSnap) => {
+      (globalSnap) => {
         if (globalSnap.exists()) {
           if (unsubTenant) {
             unsubTenant();
@@ -4513,14 +4432,13 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
             unsubLinkedGlobal();
             unsubLinkedGlobal = null;
           }
-          await applyCatalogSnapshot(globalSnap.id, globalSnap.data());
+          scheduleHydration(globalSnap.id, globalSnap.data());
           return;
         }
 
-        // Fallback: si assetId corresponde a una unidad física en tenant_assets, resolver su global_asset_id
         if (!unsubTenant) {
           unsubTenant = onSnapshot(
-            doc(db, 'tenant_assets', assetId),
+            doc(db, fleetCollectionName, assetId),
             (tenantSnap) => {
               if (!tenantSnap.exists()) {
                 setLoading(false);
@@ -4537,55 +4455,41 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                 setLoading(false);
                 return;
               }
+              tenantOverridesRef.current = tenantData;
               if (unsubLinkedGlobal) unsubLinkedGlobal();
               unsubLinkedGlobal = onSnapshot(
                 doc(db, 'global_asset_catalog', globalId),
-                async (linkedSnap) => {
+                (linkedSnap) => {
                   if (!linkedSnap.exists()) {
-                    setLoading(false);
+                    void refreshHydratedVault(globalId, undefined, tenantData);
                     return;
                   }
-                  await applyCatalogSnapshot(linkedSnap.id, linkedSnap.data(), tenantData);
+                  scheduleHydration(linkedSnap.id, linkedSnap.data(), tenantData);
                 },
-                (err) => {
-                  console.warn('[VaultDashboard] Error escuchando global_asset_catalog vinculado:', err);
-                  setLoading(false);
+                () => {
+                  void refreshHydratedVault(globalId, undefined, tenantData);
                 }
               );
             },
-            (err) => {
-              console.warn('[VaultDashboard] Error escuchando tenant_assets fallback:', err);
+            () => {
               setLoading(false);
             }
           );
         }
       },
-      async (err) => {
-        console.warn('[VaultDashboard] Error escuchando global_asset_catalog:', err);
-        try {
-          const res = await authFetch(`${API_BASE_URL}/vault/asset/${encodeURIComponent(assetId)}`);
-          if (res.ok) {
-            const data = await res.json().catch(() => null);
-            if (data && data.exists !== false) {
-              await applyCatalogSnapshot(String(data.id || assetId), data);
-              return;
-            }
-          }
-        } catch {
-          // Respaldo silencioso
-        }
-        setLoading(false);
+      () => {
+        void refreshHydratedVault(assetId);
       }
     );
 
     return () => {
+      if (hydrateTimer) clearTimeout(hydrateTimer);
       unsubDirectGlobal();
       if (unsubTenant) unsubTenant();
       if (unsubLinkedGlobal) unsubLinkedGlobal();
     };
-  }, [assetId, canCurateAI, ensureVaultInitialized, t, tenantId]);
+  }, [assetId, canCurateAI, isEduSandbox, refreshHydratedVault, tenantId]);
 
-  // ID estable derivado del catálogo — evita que los callbacks se recreen en cada snapshot de Firestore
   const catalogId = catalog?.id;
 
   const activeHuntKeys = useMemo(() => {
@@ -4608,7 +4512,6 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     if (!catalogId) return;
     const activeSet = new Set(activeHuntKeys);
 
-    // Limpiar listeners de ítems que ya no están en curso
     for (const existingKey of Object.keys(huntListenersRef.current)) {
       if (!activeSet.has(existingKey)) {
         huntListenersRef.current[existingKey]?.();
@@ -4616,7 +4519,6 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       }
     }
 
-    // Suscribir cada ítem en curso a su documento task_status independiente
     for (const key of activeHuntKeys) {
       if (huntListenersRef.current[key]) continue;
       const [pillarId, itemId] = key.split(':');
@@ -4646,7 +4548,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                   itemId,
                   forceRestart: true,
                 }),
-              }).catch(() => {});
+              }).catch(() => { });
             }
           } else if (data.status === 'COMPLETED') {
             huntListenersRef.current[key]?.();
@@ -4657,6 +4559,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
               delete next[key];
               return next;
             });
+            void refreshHydratedVault(catalogId);
           } else if (data.status === 'FAILED' || data.status === 'ERROR') {
             const errMsg = data.error || t('vault_dashboard.status.async_research_failed');
             toast.error(`Error: ${errMsg}`, { autoClose: 5000 });
@@ -4675,591 +4578,22 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         }
       );
     }
-  }, [catalogId, activeHuntKeys, t]);
+  }, [canCurateAI, catalogId, activeHuntKeys, refreshHydratedVault, t]);
 
   useEffect(() => {
-    photoHuntAttemptRef.current = 0;
-    if (photoHuntAbortRef.current) {
-      photoHuntAbortRef.current.abort();
-      photoHuntAbortRef.current = null;
-    }
     return () => {
       for (const unsub of Object.values(huntListenersRef.current)) {
         unsub?.();
       }
       huntListenersRef.current = {};
-      if (photoHuntAbortRef.current) {
-        photoHuntAbortRef.current.abort();
-        photoHuntAbortRef.current = null;
-      }
     };
   }, [catalogId]);
 
-  const handleOpenStoredAlternatives = useCallback(() => {
-    const storedPool = catalog?.official_photo_candidates || [];
-    if (storedPool.length === 0) return;
-    setPhotoCandidates(storedPool);
-    setSelectedCandidateIdx(0);
-    setManualAuditRejection(null);
-    setIsManualFallbackActive(false);
-    setShowPhotoDeleteConfirm(false);
-  }, [catalog?.official_photo_candidates]);
-
-  const handleStartOfficialPhotoHunt = useCallback(async () => {
-    if (!canCurateAI || !catalogId) return;
-
-    // Permitir actualización on-demand inmediata: si había una petición previa en vuelo, abortarla y lanzar una nueva
-    if (photoHuntAbortRef.current) {
-      photoHuntAbortRef.current.abort();
-    }
-    const abortController = new AbortController();
-    photoHuntAbortRef.current = abortController;
-
-    const currentAttempt = photoHuntAttemptRef.current;
-    photoHuntAttemptRef.current += 1;
-
-    const previousPool: OfficialPhotoCandidate[] =
-      photoCandidates.length > 0 ? photoCandidates : catalog?.official_photo_candidates || [];
-    const previousShas = new Set(previousPool.map((c) => c.sha256));
-
-    setIsHuntingPhoto(true);
-    setManualAuditRejection(null);
-    setShowPhotoDeleteConfirm(false);
-
-    const toastId = toast.loading(
-      currentAttempt > 0
-        ? `Actualizando búsqueda IA de fotografía oficial OEM (intento #${currentAttempt + 1})...`
-        : 'Cazando fotografía oficial OEM en bóveda y fuentes oficiales...'
-    );
-    try {
-      const res = await authFetch(`${API_BASE_URL}/vault/hunt-official-photo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          globalAssetId: catalogId,
-          refreshAttempt: currentAttempt,
-        }),
-        signal: abortController.signal,
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) {
-        throw new Error(data?.error || data?.message || 'Error al cazar fotografía oficial');
-      }
-
-      const returnedCandidates: OfficialPhotoCandidate[] = Array.isArray(data?.candidates)
-        ? data.candidates
-        : [];
-
-      // Fusionar sin bloquear ningún candidato previo (visto, aceptado o rechazado)
-      const mergedCandidates: OfficialPhotoCandidate[] = [];
-      const seenShas = new Set<string>();
-      for (const item of [...returnedCandidates, ...previousPool]) {
-        if (item && item.preview_url && item.sha256 && !seenShas.has(item.sha256)) {
-          seenShas.add(item.sha256);
-          mergedCandidates.push(item);
-        }
-      }
-
-      if (mergedCandidates.length > 0) {
-        const firstNewIdx = mergedCandidates.findIndex((c) => !previousShas.has(c.sha256));
-        const nextIdx =
-          firstNewIdx >= 0
-            ? firstNewIdx
-            : mergedCandidates.length > 1
-            ? (selectedCandidateIdx + 1) % mergedCandidates.length
-            : 0;
-
-        setPhotoCandidates(mergedCandidates);
-        setSelectedCandidateIdx(nextIdx);
-        setCatalog((prev) =>
-          prev
-            ? {
-                ...prev,
-                official_photo_candidates: mergedCandidates,
-              }
-            : prev
-        );
-        setIsManualFallbackActive(false);
-        toast.update(toastId, {
-          render: `${mergedCandidates.length} alternativa(s) de fotografía oficial OEM disponible(s) para elegir`,
-          type: 'success',
-          isLoading: false,
-          autoClose: 3000,
-        });
-      } else {
-        setPhotoCandidates([]);
-        setIsManualFallbackActive(true);
-        toast.update(toastId, {
-          render: 'Sin fotografías oficiales en este barrido. Puede actualizar búsqueda IA o cargar archivo manual.',
-          type: 'info',
-          isLoading: false,
-          autoClose: 3500,
-        });
-      }
-    } catch (err: any) {
-      if (err?.name === 'AbortError') {
-        toast.dismiss(toastId);
-        return;
-      }
-      console.error('[KnowledgeVaultDashboard] Error cazando foto:', err);
-      if (previousPool.length > 0) {
-        setPhotoCandidates(previousPool);
-      } else {
-        setIsManualFallbackActive(true);
-      }
-      toast.update(toastId, {
-        render: err?.message || 'Error en caza de fotos. Puede reintentar búsqueda IA o cargar manual.',
-        type: 'warning',
-        isLoading: false,
-        autoClose: 3500,
-      });
-    } finally {
-      if (photoHuntAbortRef.current === abortController) {
-        setIsHuntingPhoto(false);
-        photoHuntAbortRef.current = null;
-      }
-    }
-  }, [canCurateAI, catalogId, photoCandidates, catalog?.official_photo_candidates, selectedCandidateIdx]);
-
-  const handleConfirmCandidate = useCallback(async () => {
-    if (!canCurateAI || !catalogId || candidateConfirmText.trim().toUpperCase() !== 'ACTUALIZAR') return;
-    const candidate = photoCandidates[selectedCandidateIdx];
-    if (!candidate) return;
-
-    setIsPublishingCandidate(true);
-    const toastId = toast.loading('Publicando fotografía oficial en bóveda CAS...');
-    try {
-      const fotoMediaTelemetry = {
-        original_bytes: candidate.original_bytes,
-        optimized_bytes: candidate.optimized_bytes,
-        savings_pct: candidate.savings_pct,
-        sha256: candidate.sha256,
-        updated_at: new Date().toISOString(),
-      };
-
-      const res = await authFetch(`${API_BASE_URL}/vault/asset-image`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          globalAssetId: catalogId,
-          tenantAssetId: assetId !== catalogId ? assetId : undefined,
-          imageUrl: candidate.preview_url,
-          fotoMediaTelemetry,
-          officialPhotoCandidates: photoCandidates,
-        }),
-      });
-
-      if (!res.ok) {
-        await updateDoc(doc(db, 'global_asset_catalog', catalogId), {
-          foto_url: candidate.preview_url,
-          foto_media_telemetry: fotoMediaTelemetry,
-          official_photo_candidates: photoCandidates,
-          updatedAt: Date.now(),
-        });
-      }
-
-      setCatalog((prev) => prev ? {
-        ...prev,
-        foto_url: candidate.preview_url,
-        foto_media_telemetry: fotoMediaTelemetry,
-        official_photo_candidates: photoCandidates,
-      } : prev);
-
-      setPhotoCandidates([]);
-      setSelectedCandidateIdx(0);
-      setCandidateConfirmText('');
-      setIsManualFallbackActive(false);
-
-      toast.update(toastId, {
-        render: `Fotografía oficial OEM aprobada y publicada (-${candidate.savings_pct}%)`,
-        type: 'success',
-        isLoading: false,
-        autoClose: 3000,
-      });
-    } catch (err: any) {
-      console.error('[KnowledgeVaultDashboard] Error confirmando candidato:', err);
-      toast.update(toastId, {
-        render: err?.message || 'Error al publicar fotografía oficial',
-        type: 'error',
-        isLoading: false,
-        autoClose: 3000,
-      });
-    } finally {
-      setIsPublishingCandidate(false);
-    }
-  }, [canCurateAI, catalogId, candidateConfirmText, photoCandidates, selectedCandidateIdx, assetId]);
-
-  const handleDiscardCandidates = useCallback(() => {
-    // Cerrar modo revisión pero conservar las alternativas en catalog.official_photo_candidates para poder reasignarlas cuando se desee
-    setPhotoCandidates([]);
-    setSelectedCandidateIdx(0);
-    setCandidateConfirmText('');
-    setIsManualFallbackActive(true);
-    toast.info('Panel de revisión cerrado. Todas las candidatas permanecen disponibles para asignación.');
+  const handleCatalogPatch = useCallback((patch: SidebarCatalogPatch) => {
+    setCatalog((prev) => (prev ? { ...prev, ...patch } : prev));
   }, []);
 
-  const processManualPhotoUpload = useCallback(async (file: File) => {
-    if (!canCurateAI || !catalogId || !file) return;
-    if (!file.type.startsWith('image/')) {
-      toast.error('Selecciona un archivo de imagen válido.');
-      return;
-    }
 
-    setIsUploadingPhoto(true);
-    setManualAuditRejection(null);
-    const toastId = toast.loading('Auditando encuadre y autenticidad OEM con VLM...');
-
-    try {
-      // 1. Auto-Encuadre óptico al 88% en cliente
-      const framed = await frameEquipmentPhotoToStudio4x3(file);
-
-      // 2. Verificación VLM en servidor
-      const formData = new FormData();
-      formData.append('globalAssetId', catalogId);
-      formData.append('file', framed.framedFile);
-
-      const res = await authFetch(`${API_BASE_URL}/vault/verify-manual-official-photo`, {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await res.json().catch(() => null);
-
-      if (res.ok && data?.approved && data?.candidate) {
-        const basePool = photoCandidates.length > 0 ? photoCandidates : catalog?.official_photo_candidates || [];
-        const updatedPool = [
-          data.candidate,
-          ...basePool.filter((c) => c.sha256 !== data.candidate.sha256),
-        ];
-        setPhotoCandidates(updatedPool);
-        setSelectedCandidateIdx(0);
-        setCatalog((prev) =>
-          prev
-            ? {
-                ...prev,
-                official_photo_candidates: updatedPool,
-              }
-            : prev
-        );
-        setIsManualFallbackActive(false);
-        toast.update(toastId, {
-          render: 'Fotografía aprobada por el auditor OEM. Escriba ACTUALIZAR para publicar.',
-          type: 'success',
-          isLoading: false,
-          autoClose: 3500,
-        });
-      } else {
-        const reasons = Array.isArray(data?.rejection_reasons) && data.rejection_reasons.length > 0
-          ? data.rejection_reasons.join('. ')
-          : 'La fotografía no cumple el estándar oficial OEM (se detectó equipo propio de faena, patentes o marcas de terceros).';
-        setManualAuditRejection(reasons);
-        toast.update(toastId, {
-          render: 'Fotografía rechazada por no ser oficial de la marca.',
-          type: 'warning',
-          isLoading: false,
-          autoClose: 4000,
-        });
-      }
-    } catch (err: any) {
-      console.error('[KnowledgeVaultDashboard] Error en verificación manual:', err);
-      toast.update(toastId, {
-        render: err?.message || 'Error al procesar y auditar la fotografía.',
-        type: 'error',
-        isLoading: false,
-        autoClose: 3000,
-      });
-    } finally {
-      setIsUploadingPhoto(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  }, [canCurateAI, catalogId, photoCandidates, catalog?.official_photo_candidates]);
-
-  const handlePhotoFileSelected = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!canCurateAI || !file || !catalogId) return;
-    await processManualPhotoUpload(file);
-  }, [canCurateAI, catalogId, processManualPhotoUpload]);
-
-  const handleReframeCurrentPhoto = useCallback(async () => {
-    if (!canCurateAI || !catalogId || !catalog?.foto_url || isReframingPhoto) return;
-    setIsReframingPhoto(true);
-    const toastId = toast.loading('Re-encuadrando fotografía oficial al 88% sobre lienzo 4:3...');
-    try {
-      const res = await authFetch(`${API_BASE_URL}/vault/reframe-official-photo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ globalAssetId: catalogId }),
-      });
-      const data = await res.json().catch(() => null);
-      if (res.ok && data?.success && data?.foto_url) {
-        setCatalog((prev) => prev ? {
-          ...prev,
-          foto_url: data.foto_url,
-          foto_media_telemetry: data.foto_media_telemetry || prev.foto_media_telemetry,
-        } : prev);
-        toast.update(toastId, {
-          render: 'Fotografía oficial re-encuadrada al 88% en estudio 4:3',
-          type: 'success',
-          isLoading: false,
-          autoClose: 3000,
-        });
-      } else {
-        throw new Error(data?.error || 'Fallo en re-encuadre de servidor');
-      }
-    } catch (err: unknown) {
-      console.warn('[KnowledgeVaultDashboard] Error en re-encuadre server, ejecutando cliente:', err);
-      try {
-        const framed = await reframeExistingEquipmentPhotoUrl(catalog.foto_url);
-        const { descriptor, digested } = await mediaDigestorClient.digestAndUploadCas(framed.framedFile, {
-          profile: 'IMAGE_TECHNICAL_HD',
-          scope: 'GLOBAL_OEM',
-          filename: `reframed_${catalogId}.webp`,
-        });
-        const telemetry = {
-          original_bytes: framed.originalBytes,
-          optimized_bytes: digested.optimizedBytes,
-          savings_pct: Math.round(digested.savingsRatio * 100),
-          sha256: digested.sha256,
-          updated_at: new Date().toISOString(),
-        };
-        await authFetch(`${API_BASE_URL}/vault/asset-image`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            globalAssetId: catalogId,
-            tenantAssetId: assetId !== catalogId ? assetId : undefined,
-            imageUrl: descriptor.downloadUrl,
-            fotoMediaTelemetry: telemetry,
-          }),
-        });
-        setCatalog((prev) => prev ? {
-          ...prev,
-          foto_url: descriptor.downloadUrl,
-          foto_media_telemetry: telemetry,
-        } : prev);
-        toast.update(toastId, {
-          render: 'Fotografía re-encuadrada al 88% mediante motor óptico cliente',
-          type: 'success',
-          isLoading: false,
-          autoClose: 3000,
-        });
-      } catch (clientErr: any) {
-        toast.update(toastId, {
-          render: clientErr?.message || 'Error al re-encuadrar fotografía',
-          type: 'error',
-          isLoading: false,
-          autoClose: 3000,
-        });
-      }
-    } finally {
-      setIsReframingPhoto(false);
-    }
-  }, [canCurateAI, catalogId, catalog?.foto_url, isReframingPhoto, assetId]);
-
-  const handlePhotoDelete = useCallback(async () => {
-    if (!canCurateAI || !catalogId || photoDeleteConfirmText.trim().toUpperCase() !== 'ACTUALIZAR') return;
-
-    setIsUploadingPhoto(true);
-    const toastId = toast.loading('Limpiando referencia fotográfica...');
-
-    try {
-      const delRes = await authFetch(`${API_BASE_URL}/vault/asset-image`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          globalAssetId: catalogId,
-          tenantAssetId: assetId !== catalogId ? assetId : undefined,
-          imageUrl: null,
-          fotoMediaTelemetry: null,
-        }),
-      }).catch(() => null);
-
-      if (!delRes || !delRes.ok) {
-        await updateDoc(doc(db, 'global_asset_catalog', catalogId), {
-          foto_url: '',
-          foto_media_telemetry: null,
-          updatedAt: Date.now(),
-        });
-      }
-
-      setCatalog((prev) => prev ? {
-        ...prev,
-        foto_url: '',
-        foto_media_telemetry: undefined,
-      } : prev);
-
-      setShowPhotoDeleteConfirm(false);
-      setPhotoDeleteConfirmText('');
-      setPhotoCandidates([]);
-      setIsManualFallbackActive(false);
-
-      toast.update(toastId, {
-        render: 'Referencia fotográfica eliminada',
-        type: 'success',
-        isLoading: false,
-        autoClose: 3000
-      });
-    } catch (error: unknown) {
-      console.error('Error deleting photo:', error);
-      toast.update(toastId, {
-        render: 'Error al eliminar la referencia fotográfica',
-        type: 'error',
-        isLoading: false,
-        autoClose: 3000
-      });
-    } finally {
-      setIsUploadingPhoto(false);
-    }
-  }, [canCurateAI, catalogId, assetId, photoDeleteConfirmText]);
-
-  const [editingSidebarSection, setEditingSidebarSection] = useState<'caracteristicas' | 'ambiente' | 'contexto' | null>(null);
-  const [sidebarDraftText, setSidebarDraftText] = useState('');
-  const [sidebarConfirmText, setSidebarConfirmText] = useState('');
-  const [isReconcilingSidebar, setIsReconcilingSidebar] = useState(false);
-  const [isSavingSidebarHitl, setIsSavingSidebarHitl] = useState(false);
-
-  const handleReconcileSidebarProfile = useCallback(async () => {
-    if (!canCurateAI || !catalogId || isReconcilingSidebar) return;
-    setIsReconcilingSidebar(true);
-    const toastId = toast.loading('Sincronizando ficha lateral con 01 · Ficha Técnica OEM...');
-    try {
-      const res = await authFetch(`${API_BASE_URL}/vault/reconcile-sidebar-profile`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ globalAssetId: catalogId }),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.success) {
-        throw new Error(data?.error || 'Error al sincronizar perfil lateral');
-      }
-      setCatalog((prev) =>
-        prev
-          ? {
-              ...prev,
-              caracteristicas_principales: data.caracteristicas_principales || prev.caracteristicas_principales,
-              ambiente_operativo: data.ambiente_operativo || prev.ambiente_operativo,
-              contexto_operativo: data.contexto_operativo || prev.contexto_operativo,
-              energy_consumption_profile: data.energy_consumption_profile || prev.energy_consumption_profile,
-            }
-          : prev
-      );
-      toast.update(toastId, {
-        render: 'Ficha lateral sincronizada con parámetros OEM verificados',
-        type: 'success',
-        isLoading: false,
-        autoClose: 3000,
-      });
-    } catch (err: any) {
-      toast.update(toastId, {
-        render: err?.message || 'Error sincronizando perfil lateral',
-        type: 'error',
-        isLoading: false,
-        autoClose: 3500,
-      });
-    } finally {
-      setIsReconcilingSidebar(false);
-    }
-  }, [canCurateAI, catalogId, isReconcilingSidebar]);
-
-  const handleOpenSidebarEditor = useCallback(
-    (section: 'caracteristicas' | 'ambiente' | 'contexto') => {
-      if (!catalog) return;
-      const currentItems =
-        section === 'caracteristicas'
-          ? catalog.caracteristicas_principales || []
-          : section === 'ambiente'
-            ? catalog.ambiente_operativo || []
-            : catalog.contexto_operativo || [];
-      setEditingSidebarSection((prev) => (prev === section ? null : section));
-      setSidebarDraftText(
-        currentItems
-          .filter((x) => !x.startsWith('['))
-          .join('\n')
-      );
-      setSidebarConfirmText('');
-    },
-    [catalog]
-  );
-
-  const handleSaveSidebarSectionHitl = useCallback(async () => {
-    if (!canCurateAI || !catalogId || !editingSidebarSection || sidebarConfirmText.trim().toUpperCase() !== 'ACTUALIZAR') {
-      return;
-    }
-    setIsSavingSidebarHitl(true);
-    const lines = sidebarDraftText
-      .split('\n')
-      .map((l) => l.replace(/^[•\-*]\s*/, '').trim())
-      .filter(Boolean);
-    const finalLines = lines.length > 0 ? lines : ['[Información técnica no declarada en ficha]'];
-
-    const payload: Record<string, any> = {
-      globalAssetId: catalogId,
-      confirmationKeyword: 'ACTUALIZAR',
-    };
-    if (editingSidebarSection === 'caracteristicas') payload.caracteristicas_principales = finalLines;
-    if (editingSidebarSection === 'ambiente') payload.ambiente_operativo = finalLines;
-    if (editingSidebarSection === 'contexto') payload.contexto_operativo = finalLines;
-
-    try {
-      const res = await authFetch(`${API_BASE_URL}/vault/update-sidebar-profile`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.success) {
-        throw new Error(data?.error || 'Error guardando actualización HITL');
-      }
-      setCatalog((prev) =>
-        prev
-          ? {
-              ...prev,
-              ...(editingSidebarSection === 'caracteristicas' ? { caracteristicas_principales: finalLines } : {}),
-              ...(editingSidebarSection === 'ambiente' ? { ambiente_operativo: finalLines } : {}),
-              ...(editingSidebarSection === 'contexto' ? { contexto_operativo: finalLines } : {}),
-            }
-          : prev
-      );
-      setEditingSidebarSection(null);
-      setSidebarDraftText('');
-      setSidebarConfirmText('');
-      toast.success('Registro lateral actualizado y auditado');
-    } catch (err: any) {
-      toast.error(err?.message || 'Error guardando sección lateral');
-    } finally {
-      setIsSavingSidebarHitl(false);
-    }
-  }, [canCurateAI, catalogId, editingSidebarSection, sidebarConfirmText, sidebarDraftText]);
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    if (!canCurateAI) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingPhoto(true);
-  }, [canCurateAI]);
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    if (!canCurateAI) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingPhoto(false);
-  }, [canCurateAI]);
-
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    if (!canCurateAI) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDraggingPhoto(false);
-
-    const file = e.dataTransfer.files?.[0];
-    if (!file || !catalogId) return;
-
-    if (!isManualFallbackActive && !catalog?.foto_url) {
-      toast.info('Haga clic en CAZAR FOTO OFICIAL para búsqueda asistida por IA.');
-      return;
-    }
-
-    await processManualPhotoUpload(file);
-  }, [canCurateAI, catalogId, isManualFallbackActive, catalog?.foto_url, processManualPhotoUpload]);
 
   const handleItemizePillar = useCallback(async (pillarId: PillarId) => {
     if (!canCurateAI || !catalogId || itemizingPillar) return;
@@ -5287,6 +4621,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       const json = await res.json();
       if (res.ok && json.success) {
         toast.dismiss(toastId);
+        void refreshHydratedVault(catalogId);
       } else if (
         (res.status === 422 || res.status === 409) &&
         (json.error === 'SECUENCIA_PILAR_BLOQUEADA' ||
@@ -5370,13 +4705,14 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     if (!canCurateAI || !catalogId) return;
     const toastId = toast.loading(t('vault_dashboard.status.applying_changes').concat('…'));
     try {
-      const userEmail = auth.currentUser?.email || 'revisor.humano@opermaq.cl';
+      const userEmail = effectiveCuratorEmail;
       const res = await authFetch(`${API_BASE_URL}/vault/apply-assist-proposal`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, finalContent, userEmail, intent }),
       });
       if (res.ok) {
         toast.update(toastId, { render: t('vault_dashboard.status.changes_persisted_success'), type: 'success', isLoading: false, autoClose: 3000 });
+        void refreshHydratedVault(catalogId);
       } else {
         const json = await res.json();
         toast.update(toastId, { render: `Error: ${json.error || t('vault_dashboard.status.could_not_apply')}`, type: 'error', isLoading: false, autoClose: 5000 });
@@ -5384,7 +4720,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     } catch (_err) {
       toast.update(toastId, { render: t('vault_dashboard.status.network_error'), type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [canCurateAI, catalogId, t]);
+  }, [canCurateAI, catalogId, effectiveCuratorEmail, refreshHydratedVault, t]);
 
   const handleCreateManualItem = useCallback(async (pillarId: PillarId, title: string, section: string, rationale?: string, itemSource?: Record<string, unknown>) => {
     if (!canCurateAI || !catalogId) return;
@@ -5405,6 +4741,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       });
       if (res.ok) {
         toast.update(toastId, { render: t('vault_dashboard.status.item_created_success'), type: 'success', isLoading: false, autoClose: 3000 });
+        void refreshHydratedVault(catalogId);
       } else {
         const json = await res.json();
         toast.update(toastId, { render: `Error: ${json.error || t('vault_dashboard.status.failed_to_create')}`, type: 'error', isLoading: false, autoClose: 5000 });
@@ -5412,7 +4749,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     } catch (_err) {
       toast.update(toastId, { render: t('vault_dashboard.status.network_error'), type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [canCurateAI, catalogId, catalog?.knowledge_vault, t]);
+  }, [canCurateAI, catalogId, catalog?.knowledge_vault, refreshHydratedVault, t]);
 
   const handleDiscardItem = useCallback(async (itemId: string) => {
     if (!canCurateAI || !catalogId) return;
@@ -5423,7 +4760,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       return next;
     });
 
-    const userEmail = auth.currentUser?.email || 'revisor.humano@opermaq.cl';
+    const userEmail = effectiveCuratorEmail;
     const toastId = toast.loading(t('vault_dashboard.status.discarding_item').concat('…'));
     try {
       const res = await authFetch(`${API_BASE_URL}/vault/discard-item`, {
@@ -5433,6 +4770,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       });
       if (res.ok) {
         toast.update(toastId, { render: t('vault_dashboard.status.item_discarded_success'), type: 'success', isLoading: false, autoClose: 3000 });
+        void refreshHydratedVault(catalogId);
       } else {
         const json = await res.json();
         toast.update(toastId, { render: `Error: ${json.error ?? t('vault_dashboard.status.unknown_failure')}`, type: 'error', isLoading: false, autoClose: 5000 });
@@ -5440,7 +4778,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     } catch (_e) {
       toast.update(toastId, { render: t('vault_dashboard.status.network_error_discard_item'), type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [canCurateAI, catalogId, activeTab, t, setExpandedItems]);
+  }, [canCurateAI, catalogId, activeTab, effectiveCuratorEmail, refreshHydratedVault, t, setExpandedItems]);
 
   const handleReactivateItem = useCallback(async (itemId: string) => {
     if (!canCurateAI || !catalogId) return;
@@ -5454,6 +4792,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       });
       if (res.ok) {
         toast.update(toastId, { render: t('vault_dashboard.status.item_reactivated_success'), type: 'success', isLoading: false, autoClose: 3000 });
+        void refreshHydratedVault(catalogId);
       } else {
         const json = await res.json();
         toast.update(toastId, { render: `Error: ${json.error ?? t('vault_dashboard.status.unknown_failure')}`, type: 'error', isLoading: false, autoClose: 5000 });
@@ -5461,7 +4800,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     } catch (_e) {
       toast.update(toastId, { render: t('vault_dashboard.status.network_error_reactivate_item'), type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [canCurateAI, catalogId, activeTab, t]);
+  }, [canCurateAI, catalogId, activeTab, refreshHydratedVault, t]);
 
   const handleDecideProposal = useCallback(async (
     pillarId: PillarId,
@@ -5505,14 +4844,14 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
             const filteredPending =
               decision === 'ELIMINADO'
                 ? currentPending.filter(
-                    (p, i) => i !== matchedIdx && p.human_decision !== 'ELIMINADO'
-                  )
+                  (p, i) => i !== matchedIdx && p.human_decision !== 'ELIMINADO'
+                )
                 : currentPending.filter(
-                    (p, i) =>
-                      i !== matchedIdx &&
-                      p.human_decision !== 'ELIMINADO' &&
-                      !(p.estado_fusion === targetFusion && p.human_decision === 'APROBADO')
-                  );
+                  (p, i) =>
+                    i !== matchedIdx &&
+                    p.human_decision !== 'ELIMINADO' &&
+                    !(p.estado_fusion === targetFusion && p.human_decision === 'APROBADO')
+                );
 
             return {
               ...it,
@@ -5545,6 +4884,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
           isLoading: false,
           autoClose: 3000,
         });
+        void refreshHydratedVault(catalogId);
       } else {
         toast.update(toastId, {
           render: `Error: ${json.error || 'No se pudo registrar la decisión.'}`,
@@ -5556,7 +4896,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     } catch (_e) {
       toast.update(toastId, { render: 'Error de red al registrar decisión.', type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [canCurateAI, catalogId, activeProposalView]);
+  }, [canCurateAI, catalogId, activeProposalView, refreshHydratedVault]);
 
   const handleEvolveItemByType = useCallback(async (
     pillarId: PillarId,
@@ -5603,13 +4943,14 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         });
         setActiveProposalView(null);
         toast.update(toastId, { render: 'Ítem actualizado con los hallazgos aprobados.', type: 'success', isLoading: false, autoClose: 3000 });
+        void refreshHydratedVault(catalogId);
       } else {
         toast.update(toastId, { render: `Error: ${json.error || 'No se pudo evolucionar la redacción.'}`, type: 'error', isLoading: false, autoClose: 5000 });
       }
     } catch (_e) {
       toast.update(toastId, { render: 'Error de red al evolucionar ítem.', type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [canCurateAI, catalogId]);
+  }, [canCurateAI, catalogId, refreshHydratedVault]);
 
   const handleUnlockItem = useCallback(async (pillarId: PillarId, itemId: string) => {
     if (!canCurateAI || !catalogId) return;
@@ -5622,6 +4963,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       });
       if (res.ok) {
         toast.update(toastId, { render: 'Ítem desbloqueado.', type: 'success', isLoading: false, autoClose: 3000 });
+        void refreshHydratedVault(catalogId);
       } else {
         const json = await res.json();
         toast.update(toastId, { render: `Error: ${json.error || 'No se pudo desbloquear el ítem.'}`, type: 'error', isLoading: false, autoClose: 5000 });
@@ -5629,7 +4971,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     } catch (_e) {
       toast.update(toastId, { render: 'Error de red al desbloquear.', type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [canCurateAI, catalogId]);
+  }, [canCurateAI, catalogId, refreshHydratedVault]);
 
   const handleUpdateItemApprovalState = useCallback(async (pillarId: PillarId, itemId: string, nuevo_estado: EstadoAprobacion, review_notes?: string) => {
     if (!canCurateAI || !catalogId) return;
@@ -5642,6 +4984,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       });
       if (res.ok) {
         toast.update(toastId, { render: 'Estado de aprobación actualizado.', type: 'success', isLoading: false, autoClose: 3000 });
+        void refreshHydratedVault(catalogId);
       } else {
         const json = await res.json();
         toast.update(toastId, { render: `Error: ${json.error || 'No se pudo actualizar el estado de aprobación.'}`, type: 'error', isLoading: false, autoClose: 5000 });
@@ -5649,7 +4992,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     } catch (_e) {
       toast.update(toastId, { render: 'Error de red al actualizar estado de aprobación.', type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [canCurateAI, catalogId]);
+  }, [canCurateAI, catalogId, refreshHydratedVault]);
 
   const handleRollbackItemVersion = useCallback(async (pillarId: PillarId, itemId: string, timestamp: string) => {
     if (!canCurateAI || !catalogId) return;
@@ -5662,6 +5005,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       });
       if (res.ok) {
         toast.update(toastId, { render: 'Versión restaurada.', type: 'success', isLoading: false, autoClose: 3000 });
+        void refreshHydratedVault(catalogId);
       } else {
         const json = await res.json();
         toast.update(toastId, { render: `Error: ${json.error || 'No se pudo restaurar la versión.'}`, type: 'error', isLoading: false, autoClose: 5000 });
@@ -5669,7 +5013,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     } catch (_e) {
       toast.update(toastId, { render: 'Error de red al restaurar versión.', type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [canCurateAI, catalogId]);
+  }, [canCurateAI, catalogId, refreshHydratedVault]);
 
   const activePillarMeta = PILLARS.find(p => p.id === activeTab)!;
 
@@ -5743,926 +5087,183 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       {/* ── BODY: Columna catálogo + Área de pilares ────────────────────────── */}
       <div className="flex-1 flex min-h-0 overflow-hidden">
 
-        {/* ── COLUMNA IZQUIERDA: Datos del catálogo (ancho = foto) ──────────── */}
-        <aside className="no-print shrink-0 w-[260px] flex flex-col border-r border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] overflow-y-auto hide-scrollbar">
-
-          {/* FOTO */}
-          <div className="shrink-0 p-[13px]">
-            <div
-              onDragOver={canCurateAI ? handleDragOver : undefined}
-              onDragLeave={canCurateAI ? handleDragLeave : undefined}
-              onDrop={canCurateAI ? handleDrop : undefined}
-              className={`relative aspect-[4/3] w-full border rounded-none shadow-none overflow-hidden transition-all duration-200 group ${
-                canCurateAI && isDraggingPhoto
-                  ? 'border-[#C68346] bg-[#C68346]/5'
-                  : 'border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000]'
-              }`}
-            >
-              {/* ESTADO 2: Indicador rotatorio durante Caza IA, Re-encuadre o Auditoría VLM */}
-              {isHuntingPhoto || isUploadingPhoto || isReframingPhoto ? (
-                <div className="w-full h-full flex flex-col items-center justify-center gap-[8px] p-2 bg-[#F8FAFC] dark:bg-[#000000]">
-                  <M3CircularProgress
-                    size={24}
-                    strokeWidth={3}
-                    indeterminate
-                    tone="copper"
-                    ariaLabel={
-                      isHuntingPhoto
-                        ? t('vault_dashboard.hunting_official_photo', 'Cazando fotografía oficial OEM…')
-                        : isReframingPhoto
-                        ? t('vault_dashboard.reframe_88', 'ENCUADRAR 88%')
-                        : 'Auditando fotografía'
-                    }
-                  />
-                  <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] text-center">
-                    {isHuntingPhoto
-                      ? 'BUSCANDO FOTO OFICIAL OEM…'
-                      : isReframingPhoto
-                      ? 'ENCUADRANDO 88% STUDIO…'
-                      : 'AUDITANDO VLM…'}
-                  </span>
-                </div>
-              ) : photoCandidates.length > 0 ? (
-                /* ESTADO 3: Candidata Oficial OEM encontrada en revisión */
-                <div className="relative w-full h-full bg-[#FFFFFF] flex items-center justify-center">
-                  <img
-                    src={photoCandidates[selectedCandidateIdx]?.preview_url}
-                    alt={`Candidata OEM ${selectedCandidateIdx + 1}`}
-                    draggable={false}
-                    onContextMenu={(e) => e.preventDefault()}
-                    className="w-full h-full object-contain select-none pointer-events-none"
-                  />
-                  <div className="absolute top-1.5 right-1.5 px-1.5 py-0.5 bg-[#000000]/80 text-[8px] font-mono font-bold text-[#00AEEF] uppercase tracking-wider tabular-nums select-none pointer-events-none">
-                    {photoCandidates[selectedCandidateIdx]?.framing_mode === 'STUDIO_88' ? 'OEM · 88% STUDIO' : 'OEM · 4:3'}
-                  </div>
-                </div>
-              ) : catalog.foto_url ? (
-                /* ESTADO 5: Foto Oficial Publicada */
-                <div className="relative w-full h-full bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-center">
-                  <img
-                    src={catalog.foto_url}
-                    alt={catalog.makeModel}
-                    draggable={false}
-                    onContextMenu={(e) => e.preventDefault()}
-                    className="w-full h-full object-contain select-none pointer-events-none"
-                  />
-                </div>
-              ) : canCurateAI ? (
-                /* ESTADO 1 / 4: Activación On-Demand de Caza Asistida por IA */
-                <div
-                  onClick={handleStartOfficialPhotoHunt}
-                  className={`w-full h-full flex flex-col items-center justify-center gap-[8px] cursor-pointer transition-all border border-dashed rounded-none ${
-                    isDraggingPhoto
-                      ? 'border-[#C68346] text-[#C68346]'
-                      : 'border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] hover:border-[#C68346]'
-                  }`}
-                >
-                  <span className="material-symbols-outlined !text-xl">image_search</span>
-                  <span className="text-[9px] font-bold uppercase tracking-widest text-center px-2">
-                    {isManualFallbackActive
-                      ? 'SIN CANDIDATAS · CLIC PARA ACTUALIZAR BÚSQUEDA IA'
-                      : t('vault_dashboard.hunt_official_photo', 'CAZAR FOTO OFICIAL')}
-                  </span>
-                </div>
-              ) : (
-                <div className="w-full h-full flex items-center justify-center p-[13px] text-center">
-                  <span className="text-[11px] text-[#94A3B8] dark:text-[#5A6072]">
-                    [Información técnica no declarada en ficha]
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* BARRA INFERIOR DE ACCIONES INMEDIATAS ON-DEMAND */}
-
-            {/* Controles permanentes On-Demand cuando no hay foto publicada ni candidatas en revisión */}
-            {canCurateAI && photoCandidates.length === 0 && !catalog.foto_url && (
-              <div className="flex flex-col gap-[6px] w-full mt-[8px]">
-                <div className="flex gap-[6px] w-full">
-                  <button
-                    type="button"
-                    onClick={handleStartOfficialPhotoHunt}
-                    disabled={isUploadingPhoto || isReframingPhoto}
-                    className="flex-1 py-1.5 px-2 border border-[#C68346] bg-[#C68346]/10 hover:bg-[#C68346] text-[#C68346] hover:text-[#000000] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
-                  >
-                    {isHuntingPhoto
-                      ? 'ACTUALIZAR AHORA'
-                      : isManualFallbackActive
-                      ? 'ACTUALIZAR BÚSQUEDA IA'
-                      : 'CAZAR FOTO IA'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isHuntingPhoto || isUploadingPhoto || isReframingPhoto}
-                    className="py-1.5 px-2 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
-                  >
-                    CARGAR MANUAL
-                  </button>
-                </div>
-                {(catalog.official_photo_candidates?.length || 0) > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleOpenStoredAlternatives}
-                    disabled={isHuntingPhoto || isUploadingPhoto || isReframingPhoto}
-                    className="w-full py-1 px-2 border border-[#00AEEF] text-[#00AEEF] hover:bg-[#00AEEF] hover:text-[#000000] text-[9px] font-mono font-bold uppercase tracking-wider tabular-nums rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
-                  >
-                    VER ALTERNATIVAS GUARDADAS ({catalog.official_photo_candidates!.length})
-                  </button>
-                )}
-              </div>
-            )}
-
-            {/* A) Modo Revisión de Candidatas Oficiales (Multi-Alternativa + Tira de Miniaturas + Navegación Circular) */}
-            {photoCandidates.length > 0 && (
-              <div className="flex flex-col gap-[8px] w-full mt-[8px]">
-                {/* Selector Circular de Candidatas */}
-                <div className="flex items-center justify-between px-[6px] py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-[9px] font-mono tabular-nums">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSelectedCandidateIdx(
-                        (prev) => (prev - 1 + photoCandidates.length) % photoCandidates.length
-                      )
-                    }
-                    disabled={photoCandidates.length <= 1}
-                    className="bg-transparent border-0 outline-none p-0 text-slate-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined !text-[16px]">chevron_left</span>
-                  </button>
-                  <span className="text-[#475569] dark:text-[#8A93A6] font-bold tracking-wider">
-                    CANDIDATA {selectedCandidateIdx + 1} / {photoCandidates.length}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSelectedCandidateIdx((prev) => (prev + 1) % photoCandidates.length)
-                    }
-                    disabled={photoCandidates.length <= 1}
-                    className="bg-transparent border-0 outline-none p-0 text-slate-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined !text-[16px]">chevron_right</span>
-                  </button>
-                </div>
-
-                {/* Tira de Miniaturas Clicables (1..N) para selección directa */}
-                {photoCandidates.length > 1 && (
-                  <div className="grid grid-cols-4 gap-[6px] w-full">
-                    {photoCandidates.map((cand, idx) => {
-                      const isSelected = idx === selectedCandidateIdx;
-                      const isPublished =
-                        Boolean(catalog.foto_url) &&
-                        (cand.preview_url === catalog.foto_url ||
-                          (Boolean(catalog.foto_media_telemetry?.sha256) &&
-                            cand.sha256 === catalog.foto_media_telemetry?.sha256));
-                      return (
-                        <button
-                          key={cand.candidate_id || `${cand.sha256}_${idx}`}
-                          type="button"
-                          onClick={() => setSelectedCandidateIdx(idx)}
-                          title={`Alternativa #${idx + 1} (${cand.source_label})`}
-                          className={`relative aspect-[4/3] w-full bg-[#FFFFFF] border rounded-none shadow-none overflow-hidden cursor-pointer transition-colors p-0 ${
-                            isSelected
-                              ? 'border-2 border-[#C68346]'
-                              : 'border-[#E2E8F0] dark:border-[#12151C] opacity-75 hover:opacity-100 hover:border-[#00AEEF]'
-                          }`}
-                        >
-                          <img
-                            src={cand.preview_url}
-                            alt={`Alternativa ${idx + 1}`}
-                            draggable={false}
-                            onContextMenu={(e) => e.preventDefault()}
-                            className="w-full h-full object-contain select-none pointer-events-none"
-                          />
-                          <span className="absolute bottom-0 left-0 px-1 bg-[#000000]/80 text-[8px] font-mono font-bold text-[#F3F4F6] tabular-nums select-none pointer-events-none">
-                            #{idx + 1}
-                          </span>
-                          {isPublished && (
-                            <span className="absolute top-0 right-0 px-1 bg-[#00AEEF] text-[7px] font-mono font-bold text-[#000000] uppercase select-none pointer-events-none">
-                              ACT
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Botón On-Demand de actualización de búsqueda o carga manual directa */}
-                <div className="flex gap-[6px] w-full">
-                  <button
-                    type="button"
-                    onClick={handleStartOfficialPhotoHunt}
-                    disabled={isPublishingCandidate}
-                    className="flex-1 py-1 border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-[#000000] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
-                  >
-                    {isHuntingPhoto ? 'ACTUALIZANDO…' : 'ACTUALIZAR BÚSQUEDA IA'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isPublishingCandidate}
-                    className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
-                  >
-                    MANUAL
-                  </button>
-                </div>
-
-                {/* Telemetría CAS */}
-                <div className="px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] flex items-center justify-between gap-[8px] font-mono tabular-nums text-[9px]">
-                  <span className="text-[#475569] dark:text-[#8A93A6] truncate">
-                    ORIG: {formatPhotoBytes(photoCandidates[selectedCandidateIdx]?.original_bytes)} ➔ CAS: {formatPhotoBytes(photoCandidates[selectedCandidateIdx]?.optimized_bytes)}
-                  </span>
-                  <span className="font-bold text-[#00AEEF] shrink-0">
-                    -{photoCandidates[selectedCandidateIdx]?.savings_pct}%
-                  </span>
-                </div>
-
-                {/* HITL: Confirmación con ACTUALIZAR (insensible a mayúsculas/minúsculas y persistente al cambiar de alternativa) */}
-                <div className="flex flex-col gap-[6px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] rounded-none">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
-                    Escriba ACTUALIZAR para publicar:
-                  </span>
-                  <input
-                    type="text"
-                    value={candidateConfirmText}
-                    onChange={(e) => setCandidateConfirmText(e.target.value.toUpperCase())}
-                    onKeyDown={(e) => {
-                      if (
-                        e.key === 'Enter' &&
-                        !isPublishingCandidate &&
-                        candidateConfirmText.trim().toUpperCase() === 'ACTUALIZAR'
-                      ) {
-                        e.preventDefault();
-                        void handleConfirmCandidate();
-                      }
-                    }}
-                    placeholder="ACTUALIZAR"
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="w-full px-[8px] py-1 text-[11px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
-                  />
-                  <div className="flex gap-[8px]">
-                    <button
-                      type="button"
-                      onClick={handleConfirmCandidate}
-                      disabled={
-                        isPublishingCandidate ||
-                        candidateConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'
-                      }
-                      className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
-                    >
-                      CONFIRMAR
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleDiscardCandidates}
-                      className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
-                    >
-                      CERRAR
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* B) Alerta de Rechazo VLM en Carga Manual */}
-            {photoCandidates.length === 0 && manualAuditRejection && (
-              <div className="mt-[8px] p-[8px] border border-[#C68346] bg-[#C68346]/10 flex flex-col gap-[6px]">
-                <div className="flex items-center gap-1 text-[#C68346] text-[9px] font-bold uppercase tracking-wider">
-                  <span className="material-symbols-outlined !text-[14px]">warning</span>
-                  <span>Rechazo Auditor OEM</span>
-                </div>
-                <p className="text-[10px] text-[#0F172A] dark:text-[#F3F4F6] font-mono leading-tight">
-                  {manualAuditRejection}
-                </p>
-              </div>
-            )}
-
-            {/* C) Modo Foto Publicada (Barra Minimalista de Telemetría CAS + Iconos Planos GEMINI.md §3.6) */}
-            {photoCandidates.length === 0 && catalog.foto_url && (
-              <>
-                <div className="mt-[8px] px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] flex items-center justify-between gap-[8px]">
-                  {catalog.foto_media_telemetry ? (
-                    <div className="flex items-center gap-[6px] font-mono tabular-nums text-[9px] min-w-0">
-                      <span className="text-[#475569] dark:text-[#8A93A6] truncate">
-                        {formatPhotoBytes(catalog.foto_media_telemetry.original_bytes)} ➔ {formatPhotoBytes(catalog.foto_media_telemetry.optimized_bytes)}
-                      </span>
-                      {catalog.foto_media_telemetry.savings_pct > 0 && (
-                        <span className="font-bold text-[#00AEEF] shrink-0">
-                          -{catalog.foto_media_telemetry.savings_pct}%
-                        </span>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="font-mono text-[9px] text-[#5A6072] dark:text-[#94A3B8]">CAS</span>
-                  )}
-
-                  {canCurateAI && (
-                    <div className="flex items-center gap-[2px] shrink-0">
-                      <button
-                        type="button"
-                        onClick={handleStartOfficialPhotoHunt}
-                        disabled={isHuntingPhoto || isReframingPhoto || isUploadingPhoto}
-                        title="Buscar fotografía oficial OEM con IA"
-                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-[#C68346] dark:hover:text-[#C68346] transition-colors cursor-pointer disabled:opacity-40 flex items-center"
-                      >
-                        <span className="material-symbols-outlined !text-[15px]">travel_explore</span>
-                      </button>
-
-                      {(catalog.official_photo_candidates?.length || 0) > 0 && (
-                        <button
-                          type="button"
-                          onClick={handleOpenStoredAlternatives}
-                          disabled={isHuntingPhoto || isReframingPhoto || isUploadingPhoto}
-                          title={`Alternativas verificadas (${catalog.official_photo_candidates!.length})`}
-                          className="bg-transparent border-0 outline-none p-1 text-[#00AEEF] hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer disabled:opacity-40 flex items-center gap-[2px]"
-                        >
-                          <span className="material-symbols-outlined !text-[15px]">photo_library</span>
-                          <span className="font-mono tabular-nums text-[9px] font-bold">
-                            {catalog.official_photo_candidates!.length}
-                          </span>
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={handleReframeCurrentPhoto}
-                        disabled={isHuntingPhoto || isReframingPhoto || isUploadingPhoto}
-                        title={t('vault_dashboard.reframe_88', 'Encuadrar al 88% Studio 4:3')}
-                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-[#00AEEF] dark:hover:text-[#00AEEF] transition-colors cursor-pointer disabled:opacity-40 flex items-center"
-                      >
-                        <span className="material-symbols-outlined !text-[15px]">crop_free</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={isHuntingPhoto || isReframingPhoto || isUploadingPhoto}
-                        title="Subir fotografía oficial manualmente"
-                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer disabled:opacity-40 flex items-center"
-                      >
-                        <span className="material-symbols-outlined !text-[15px]">upload_file</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowPhotoDeleteConfirm((prev) => !prev);
-                          setPhotoDeleteConfirmText('');
-                        }}
-                        disabled={isHuntingPhoto || isReframingPhoto || isUploadingPhoto}
-                        title="Dar de baja fotografía"
-                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-[#C68346] dark:hover:text-[#C68346] transition-colors cursor-pointer disabled:opacity-40 flex items-center"
-                      >
-                        <span className="material-symbols-outlined !text-[15px]">delete</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {canCurateAI && showPhotoDeleteConfirm && (
-                  <div className="flex flex-col gap-[8px] w-full mt-[8px]">
-                    <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] rounded-none">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
-                          Escriba ACTUALIZAR para confirmar baja:
-                        </span>
-                        <input
-                          type="text"
-                          value={photoDeleteConfirmText}
-                          onChange={(e) => setPhotoDeleteConfirmText(e.target.value.toUpperCase())}
-                          placeholder="ACTUALIZAR"
-                          autoComplete="off"
-                          spellCheck={false}
-                          className="w-full px-[8px] py-1 text-[11px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
-                        />
-                        <div className="flex gap-[8px]">
-                          <button
-                            type="button"
-                            onClick={handlePhotoDelete}
-                            disabled={
-                              isUploadingPhoto ||
-                              photoDeleteConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'
-                            }
-                            className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
-                          >
-                            CONFIRMAR
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setShowPhotoDeleteConfirm(false);
-                              setPhotoDeleteConfirmText('');
-                            }}
-                            className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
-                          >
-                            CANCELAR
-                          </button>
-                        </div>
-                      </div>
-                  </div>
-                )}
-              </>
-            )}
-
-            {canCurateAI && (
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handlePhotoFileSelected}
-                accept="image/*"
-                autoComplete="off"
-                spellCheck={false}
-                className="hidden"
-                disabled={isUploadingPhoto || isHuntingPhoto || isReframingPhoto}
-              />
-            )}
-          </div>
-
-          {/* CONTENEDOR FLEXIBLE PARA DISTRIBUIR VERTICALMENTE CP/CD/CT */}
-          <div className="flex flex-col px-[13px] py-[21px] gap-[21px]">
-
-            {/* CARACTERÍSTICAS PRINCIPALES */}
-            <div className="flex flex-col">
-              <div className="flex items-center justify-between mb-[8px]">
-                <h3 className="text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider">
-                  CARACTERÍSTICAS PRINCIPALES
-                </h3>
-                {canCurateAI && !catalog.is_sealed && (
-                  <div className="flex items-center gap-[2px]">
-                    <button
-                      type="button"
-                      onClick={handleReconcileSidebarProfile}
-                      disabled={isReconcilingSidebar}
-                      title="Sincronizar con 01 · Ficha Técnica OEM"
-                      className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-[#00AEEF] dark:hover:text-[#00AEEF] transition-colors cursor-pointer disabled:opacity-40 flex items-center"
-                    >
-                      <span className="material-symbols-outlined !text-[14px]">sync</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleOpenSidebarEditor('caracteristicas')}
-                      title="Editar características principales (HITL)"
-                      className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center"
-                    >
-                      <span className="material-symbols-outlined !text-[14px]">edit</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-              {editingSidebarSection === 'caracteristicas' ? (
-                <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#FFFFFF] dark:bg-[#07090D] rounded-none">
-                  <textarea
-                    rows={6}
-                    value={sidebarDraftText}
-                    onChange={(e) => setSidebarDraftText(e.target.value)}
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder="Una especificación por línea (ej. ROC: 1.678 kg)"
-                    className="w-full p-[8px] text-[11px] font-mono bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
-                  />
-                  <input
-                    type="text"
-                    value={sidebarConfirmText}
-                    onChange={(e) => setSidebarConfirmText(e.target.value.toUpperCase())}
-                    placeholder="ACTUALIZAR"
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="w-full px-[8px] py-1 text-[10px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
-                  />
-                  <div className="flex gap-[8px]">
-                    <button
-                      type="button"
-                      onClick={handleSaveSidebarSectionHitl}
-                      disabled={isSavingSidebarHitl || sidebarConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'}
-                      className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
-                    >
-                      GUARDAR
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEditingSidebarSection(null)}
-                      className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
-                    >
-                      CANCELAR
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <ul className="space-y-1.5 text-[12px] font-normal text-[#475569] dark:text-[#8A93A6] tabular-nums">
-                  {catalog.caracteristicas_principales?.length ? (
-                    catalog.caracteristicas_principales.map((item, idx) => (
-                      <li key={idx} className="flex items-start gap-1.5 leading-tight">
-                        <span className="text-[#C68346] shrink-0 mt-px text-[10px]">•</span>
-                        <span>{highlightUndeclaredInNode(item)}</span>
-                      </li>
-                    ))
-                  ) : (
-                    <li>
-                      <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>[Información técnica no declarada en ficha]</mark>
-                    </li>
-                  )}
-                </ul>
-              )}
-            </div>
-
-            {/* CONDICIONES DE DISEÑO */}
-            <div className="flex flex-col">
-              <div className="flex items-center justify-between mb-[8px]">
-                <h3 className="text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider">
-                  CONDICIONES DE DISEÑO
-                </h3>
-                {canCurateAI && !catalog.is_sealed && (
-                  <button
-                    type="button"
-                    onClick={() => handleOpenSidebarEditor('ambiente')}
-                    title="Editar condiciones de diseño (HITL)"
-                    className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center"
-                  >
-                    <span className="material-symbols-outlined !text-[14px]">edit</span>
-                  </button>
-                )}
-              </div>
-              {editingSidebarSection === 'ambiente' ? (
-                <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#FFFFFF] dark:bg-[#07090D] rounded-none">
-                  <textarea
-                    rows={5}
-                    value={sidebarDraftText}
-                    onChange={(e) => setSidebarDraftText(e.target.value)}
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder="Una condición de diseño por línea"
-                    className="w-full p-[8px] text-[11px] font-mono bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
-                  />
-                  <input
-                    type="text"
-                    value={sidebarConfirmText}
-                    onChange={(e) => setSidebarConfirmText(e.target.value.toUpperCase())}
-                    placeholder="ACTUALIZAR"
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="w-full px-[8px] py-1 text-[10px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
-                  />
-                  <div className="flex gap-[8px]">
-                    <button
-                      type="button"
-                      onClick={handleSaveSidebarSectionHitl}
-                      disabled={isSavingSidebarHitl || sidebarConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'}
-                      className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
-                    >
-                      GUARDAR
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEditingSidebarSection(null)}
-                      className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
-                    >
-                      CANCELAR
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <ul className="space-y-1.5 text-[12px] font-normal text-[#475569] dark:text-[#8A93A6]">
-                  {catalog.ambiente_operativo?.length ? (
-                    catalog.ambiente_operativo.map((item, idx) => (
-                      <li key={idx} className="flex items-start gap-1.5 leading-tight">
-                        <span className="text-[#C68346] shrink-0 mt-px text-[10px]">•</span>
-                        <span>{highlightUndeclaredInNode(item)}</span>
-                      </li>
-                    ))
-                  ) : (
-                    <li>
-                      <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>[Información técnica no declarada en ficha]</mark>
-                    </li>
-                  )}
-                </ul>
-              )}
-            </div>
-
-            {/* CONTEXTO Y TRABAJO */}
-            <div className="flex flex-col">
-              <div className="flex items-center justify-between mb-[8px]">
-                <h3 className="text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider">
-                  CONTEXTO Y TRABAJO
-                </h3>
-                {canCurateAI && !catalog.is_sealed && (
-                  <button
-                    type="button"
-                    onClick={() => handleOpenSidebarEditor('contexto')}
-                    title="Editar contexto y trabajo (HITL)"
-                    className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center"
-                  >
-                    <span className="material-symbols-outlined !text-[14px]">edit</span>
-                  </button>
-                )}
-              </div>
-              {editingSidebarSection === 'contexto' ? (
-                <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#FFFFFF] dark:bg-[#07090D] rounded-none">
-                  <textarea
-                    rows={5}
-                    value={sidebarDraftText}
-                    onChange={(e) => setSidebarDraftText(e.target.value)}
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder="Una aplicación o contexto por línea"
-                    className="w-full p-[8px] text-[11px] font-mono bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
-                  />
-                  <input
-                    type="text"
-                    value={sidebarConfirmText}
-                    onChange={(e) => setSidebarConfirmText(e.target.value.toUpperCase())}
-                    placeholder="ACTUALIZAR"
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="w-full px-[8px] py-1 text-[10px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
-                  />
-                  <div className="flex gap-[8px]">
-                    <button
-                      type="button"
-                      onClick={handleSaveSidebarSectionHitl}
-                      disabled={isSavingSidebarHitl || sidebarConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'}
-                      className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
-                    >
-                      GUARDAR
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEditingSidebarSection(null)}
-                      className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
-                    >
-                      CANCELAR
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <ul className="space-y-1.5 text-[12px] font-normal text-[#475569] dark:text-[#8A93A6]">
-                  {catalog.contexto_operativo?.length ? (
-                    catalog.contexto_operativo.map((item, idx) => (
-                      <li key={idx} className="flex items-start gap-1.5 leading-tight">
-                        <span className="text-[#C68346] shrink-0 mt-px text-[10px]">•</span>
-                        <span>{highlightUndeclaredInNode(item)}</span>
-                      </li>
-                    ))
-                  ) : (
-                    <li>
-                      <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>[Información técnica no declarada en ficha]</mark>
-                    </li>
-                  )}
-                </ul>
-              )}
-            </div>
-            
-          </div>
-        </aside>
+        <VaultCatalogSidebar
+          catalog={catalog}
+          assetId={assetId}
+          canCurateAI={canCurateAI}
+          highlightUndeclared={highlightUndeclaredInNode}
+          onCatalogPatch={handleCatalogPatch}
+          onRefreshVault={() => refreshHydratedVault(catalog.id)}
+        />
 
         {/* ── ÁREA DERECHA: Pilares + Items ─────────────────────────────────── */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
 
-          {/* Barra Minimalista de 5 Pilares + Icono INFO al final de la fila (Al presionar cualquiera vuelve al listado home de ese pilar) */}
+          {/* Barra Minimalista de 5 Pilares + Iconos Automáticos de Solo Lectura (Matriz de Costos + Simbología) */}
           <nav className="shrink-0 flex items-stretch border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] overflow-x-auto hide-scrollbar">
-              {PILLARS.map((p) => {
-                const pillar = catalog.knowledge_vault?.[p.id];
-                const isActive = !showSymbologyInfo && activeTab === p.id;
-                const activeItems = (pillar?.items ?? []).filter((it) => !it.is_discarded);
-                const hasActiveItems = activeItems.length > 0;
-                const isItemized = pillar?.itemize_status === 'COMPLETED' || hasActiveItems;
-                const isFullyCaptured =
-                  isItemized &&
-                  hasActiveItems &&
-                  activeItems.every(
-                    (it) => it.content_status === 'COMPLETADO' && Boolean(it.content && it.content.trim())
-                  );
+            {PILLARS.map((p) => {
+              const pillar = catalog.knowledge_vault?.[p.id];
+              const isActive = !showSymbologyInfo && !showCostMatrixInfo && activeTab === p.id;
+              const activeItems = (pillar?.items ?? []).filter((it) => !it.is_discarded);
+              const hasActiveItems = activeItems.length > 0;
+              const isItemized = pillar?.itemize_status === 'COMPLETED' || hasActiveItems;
+              const isFullyCaptured =
+                isItemized &&
+                hasActiveItems &&
+                activeItems.every(
+                  (it) => it.content_status === 'COMPLETADO' && Boolean(it.content && it.content.trim())
+                );
 
-                const prereqId = PILLAR_PREREQUISITE_MAP[p.id];
-                const prereqPillar = prereqId ? catalog.knowledge_vault?.[prereqId] : null;
-                const isPrereqCompleted = !prereqId || prereqPillar?.itemize_status === 'COMPLETED';
-                const isLockedInSequence = !isPrereqCompleted && !isItemized;
+              const prereqId = PILLAR_PREREQUISITE_MAP[p.id];
+              const prereqPillar = prereqId ? catalog.knowledge_vault?.[prereqId] : null;
+              const isPrereqCompleted = !prereqId || prereqPillar?.itemize_status === 'COMPLETED';
+              const isLockedInSequence = !isPrereqCompleted && !isItemized;
 
-                const statusColorClass = isFullyCaptured
-                  ? 'text-[#00AEEF]'
-                  : isItemized
+              const statusColorClass = isFullyCaptured
+                ? 'text-[#00AEEF]'
+                : isItemized
                   ? 'text-[#C68346]'
                   : isActive
-                  ? 'text-[#0F172A] dark:text-[#F3F4F6]'
-                  : 'text-[#94A3B8] dark:text-[#5A6072]';
+                    ? 'text-[#0F172A] dark:text-[#F3F4F6]'
+                    : 'text-[#94A3B8] dark:text-[#5A6072]';
 
-                const activeBorderClass = isFullyCaptured
-                  ? '!border-[#00AEEF]'
-                  : '!border-[#C68346]';
+              const activeBorderClass = isFullyCaptured
+                ? '!border-[#00AEEF]'
+                : '!border-[#C68346]';
 
-                return (
-                  <M3Button
-                    key={p.id}
-                    onClick={() => {
-                      setShowSymbologyInfo(false);
-                      setExpandedItems(new Set());
-                      setActiveProposalView(null);
-                      setActiveTab(p.id);
-                    }}
-                    variant="ghost"
-                    className={`relative flex-1 min-w-0 flex items-center justify-center !px-2 !py-4 !h-auto transition-all border-b-2 !rounded-none ${
-                      isActive
-                        ? `${activeBorderClass} bg-[#F8FAFC] dark:bg-[#07090D]`
-                        : '!border-transparent hover:bg-[#F8FAFC]/50 dark:hover:bg-[#07090D]/50'
+              return (
+                <M3Button
+                  key={p.id}
+                  onClick={() => {
+                    setShowSymbologyInfo(false);
+                    setShowCostMatrixInfo(false);
+                    setExpandedItems(new Set());
+                    setActiveProposalView(null);
+                    setActiveTab(p.id);
+                  }}
+                  variant="ghost"
+                  className={`relative flex-1 min-w-0 flex items-center justify-center !px-2 !py-4 !h-auto transition-all border-b-2 !rounded-none ${isActive
+                    ? `${activeBorderClass} bg-[#F8FAFC] dark:bg-[#07090D]`
+                    : '!border-transparent hover:bg-[#F8FAFC]/50 dark:hover:bg-[#07090D]/50'
                     }`}
-                    title={
-                      isFullyCaptured
-                        ? `${t(`vault_dashboard.pillars.${p.id}`, p.label)} — Contenidos 100% capturados`
-                        : isItemized
+                  title={
+                    isFullyCaptured
+                      ? `${t(`vault_dashboard.pillars.${p.id}`, p.label)} — Contenidos 100% capturados`
+                      : isItemized
                         ? `${t(`vault_dashboard.pillars.${p.id}`, p.label)} — Itemizado`
                         : isLockedInSequence && prereqId
-                        ? `${t(`vault_dashboard.pillars.${p.id}`, p.label)} — Pendiente del pilar anterior`
-                        : t(`vault_dashboard.pillars.${p.id}`, p.label)
-                    }
-                  >
-                    <span className={`material-symbols-outlined !text-[20px] transition-colors ${statusColorClass}`}>
-                      {p.icon}
-                    </span>
-                  </M3Button>
-                );
-              })}
+                          ? `${t(`vault_dashboard.pillars.${p.id}`, p.label)} — Pendiente del pilar anterior`
+                          : t(`vault_dashboard.pillars.${p.id}`, p.label)
+                  }
+                >
+                  <span className={`material-symbols-outlined !text-[20px] transition-colors ${statusColorClass}`}>
+                    {p.icon}
+                  </span>
+                </M3Button>
+              );
+            })}
 
-              {/* Icono INFO al final de la fila de pilares — Compilado Real de Simbología (Solo Lectura, derivado de caza de contenidos) */}
-              {(() => {
-                const allHunted =
-                  liveHuntedSymbology.totalActiveItemsCount > 0 &&
-                  liveHuntedSymbology.huntedItemsCount === liveHuntedSymbology.totalActiveItemsCount;
-                const someHunted = liveHuntedSymbology.huntedItemsCount > 0;
-                const infoColorClass = allHunted
-                  ? 'text-[#00AEEF]'
-                  : someHunted
+            {/* Icono INFO — Compilado Real de Simbología (Solo Lectura, derivado de caza de contenidos) */}
+            {(() => {
+              const allHunted =
+                liveHuntedSymbology.totalActiveItemsCount > 0 &&
+                liveHuntedSymbology.huntedItemsCount === liveHuntedSymbology.totalActiveItemsCount;
+              const someHunted = liveHuntedSymbology.huntedItemsCount > 0;
+              const infoColorClass = allHunted
+                ? 'text-[#00AEEF]'
+                : someHunted
                   ? 'text-[#C68346]'
                   : showSymbologyInfo
-                  ? 'text-[#0F172A] dark:text-[#F3F4F6]'
-                  : 'text-[#94A3B8] dark:text-[#5A6072]';
-                const infoBorderClass = allHunted
-                  ? '!border-b-[#00AEEF]'
-                  : '!border-b-[#C68346]';
+                    ? 'text-[#0F172A] dark:text-[#F3F4F6]'
+                    : 'text-[#94A3B8] dark:text-[#5A6072]';
+              const infoBorderClass = allHunted
+                ? '!border-b-[#00AEEF]'
+                : '!border-b-[#C68346]';
 
-                return (
-                  <M3Button
-                    onClick={() => {
-                      setExpandedItems(new Set());
-                      setActiveProposalView(null);
-                      setShowSymbologyInfo(true);
-                    }}
-                    variant="ghost"
-                    className={`relative flex-1 min-w-0 flex items-center justify-center !px-2 !py-4 !h-auto transition-all border-b-2 border-l border-l-[#E2E8F0] dark:border-l-[#12151C] !rounded-none ${
-                      showSymbologyInfo
-                        ? `${infoBorderClass} bg-[#F8FAFC] dark:bg-[#07090D]`
-                        : '!border-b-transparent hover:bg-[#F8FAFC]/50 dark:hover:bg-[#07090D]/50'
+              return (
+                <M3Button
+                  onClick={() => {
+                    setExpandedItems(new Set());
+                    setActiveProposalView(null);
+                    setShowCostMatrixInfo(false);
+                    setShowSymbologyInfo(true);
+                  }}
+                  variant="ghost"
+                  className={`relative flex-1 min-w-0 flex items-center justify-center !px-2 !py-4 !h-auto transition-all border-b-2 border-l border-l-[#E2E8F0] dark:border-l-[#12151C] !rounded-none ${showSymbologyInfo
+                    ? `${infoBorderClass} bg-[#F8FAFC] dark:bg-[#07090D]`
+                    : '!border-b-transparent hover:bg-[#F8FAFC]/50 dark:hover:bg-[#07090D]/50'
                     }`}
-                    title="Simbología técnica aplicada al equipo (compilada de contenidos cazados)"
-                  >
-                    <span className={`material-symbols-outlined !text-[20px] transition-colors ${infoColorClass}`}>
-                      info
-                    </span>
-                  </M3Button>
-                );
-              })()}
-            </nav>
+                  title="Simbología técnica aplicada al equipo (compilada de contenidos cazados)"
+                >
+                  <span className={`material-symbols-outlined !text-[20px] transition-colors ${infoColorClass}`}>
+                    info
+                  </span>
+                </M3Button>
+              );
+            })()}
 
-          {/* Tab Content: Sección INFO (Simbología Solo Lectura) o Listado de ítems del Pilar */}
+            {/* Icono PACKAGE_2 al final de la fila — Matriz Automática de Consumos, Insumos y Base de Costos (Solo Lectura) */}
+            {(() => {
+              const costStatus = catalog.operational_cost_matrix?.completeness_status;
+              const hasHuntedFicha = (catalog.knowledge_vault?.ficha_tecnica?.items || []).some(
+                (it) => !it?.is_discarded && it?.content_status === 'COMPLETADO' && Boolean(it?.content?.trim())
+              );
+              const hasHuntedMantencion = (catalog.knowledge_vault?.pauta_mantencion?.items || []).some(
+                (it) => !it?.is_discarded && it?.content_status === 'COMPLETADO' && Boolean(it?.content?.trim())
+              );
+              const hasHuntedCostPillars = hasHuntedFicha || hasHuntedMantencion;
+              const isCostComplete = hasHuntedFicha && hasHuntedMantencion && costStatus === 'COMPLETE';
+              const isCostPartial = hasHuntedCostPillars && !isCostComplete;
+
+              const costColorClass = isCostComplete
+                ? 'text-[#00AEEF]'
+                : isCostPartial
+                  ? 'text-[#C68346]'
+                  : showCostMatrixInfo
+                    ? 'text-[#0F172A] dark:text-[#F3F4F6]'
+                    : 'text-[#94A3B8] dark:text-[#5A6072]';
+              const costBorderClass = isCostComplete
+                ? '!border-b-[#00AEEF]'
+                : '!border-b-[#C68346]';
+
+              return (
+                <M3Button
+                  onClick={() => {
+                    setExpandedItems(new Set());
+                    setActiveProposalView(null);
+                    setShowSymbologyInfo(false);
+                    setShowCostMatrixInfo(true);
+                  }}
+                  variant="ghost"
+                  className={`relative flex-1 min-w-0 flex items-center justify-center !px-2 !py-4 !h-auto transition-all border-b-2 border-l border-l-[#E2E8F0] dark:border-l-[#12151C] !rounded-none ${showCostMatrixInfo
+                    ? `${costBorderClass} bg-[#F8FAFC] dark:bg-[#07090D]`
+                    : '!border-b-transparent hover:bg-[#F8FAFC]/50 dark:hover:bg-[#07090D]/50'
+                    }`}
+                  title="Matriz automática de consumos, insumos y base de costos (compilada de Ficha Técnica y Pauta de Mantención)"
+                >
+                  <span className={`material-symbols-outlined !text-[20px] transition-colors ${costColorClass}`}>
+                    package_2
+                  </span>
+                </M3Button>
+              );
+            })()}
+          </nav>
+
+          {/* Tab Content: Sección MATRIZ DE COSTOS, Sección INFO (Simbología Solo Lectura) o Listado de ítems del Pilar */}
           <section className="flex-1 min-h-0 flex flex-col overflow-hidden">
-            {showSymbologyInfo ? (
-              <div className="flex flex-col h-full min-h-0 select-none font-atkinson">
-                {/* Cabecera de Sección Solo Lectura */}
-                <div className="shrink-0 flex flex-wrap items-center justify-between gap-4 px-5 py-3 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
-                  <div className="flex items-center gap-[13px] min-w-0">
-                    <h1 className="text-[13px] font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6] leading-none">
-                      SIMBOLOGÍA TÉCNICA APLICADA AL EQUIPO
-                    </h1>
-                    <span className="font-mono tabular-nums text-[10px] font-bold uppercase text-[#5A6072]">
-                      [SOLO LECTURA · ACTUALIZACIÓN AUTOMÁTICA POR CAZA DE CONTENIDOS]
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-[13px] shrink-0 ml-auto">
-                    <div
-                      className="flex items-center gap-[8px]"
-                      title={`Ítems con contenido cazado analizados: ${liveHuntedSymbology.huntedItemsCount}/${liveHuntedSymbology.totalActiveItemsCount}`}
-                    >
-                      <M3LinearProgress
-                        value={
-                          liveHuntedSymbology.totalActiveItemsCount > 0
-                            ? Math.round((liveHuntedSymbology.huntedItemsCount / liveHuntedSymbology.totalActiveItemsCount) * 100)
-                            : 0
-                        }
-                        tone={
-                          liveHuntedSymbology.totalActiveItemsCount > 0 &&
-                          liveHuntedSymbology.huntedItemsCount === liveHuntedSymbology.totalActiveItemsCount
-                            ? 'cyan'
-                            : 'copper'
-                        }
-                        className="w-[89px]"
-                        ariaLabel="Ítems cazados procesados"
-                      />
-                      <span className="text-[10px] font-bold font-mono tabular-nums text-[#00AEEF]">
-                        {liveHuntedSymbology.entries.length} SÍMBOLO(S) · {liveHuntedSymbology.huntedItemsCount}/{liveHuntedSymbology.totalActiveItemsCount} ÍTEMS CAZADOS
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Cuerpo Solo Lectura: Tabla Compilada Real */}
-                <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-5 py-5">
-                  {liveHuntedSymbology.huntedItemsCount === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center py-16 text-center max-w-lg mx-auto gap-[13px]">
-                      <span className="material-symbols-outlined !text-[24px] text-[#5A6072]">info</span>
-                      <p className="text-[12px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6] font-mono">
-                        [SIN CONTENIDOS CAZADOS REGISTRADOS]
-                      </p>
-                      <p className="text-[12px] text-[#475569] dark:text-[#8A93A6] leading-relaxed">
-                        Esta sección es de solo lectura y se actualiza automáticamente a medida que se ejecuta la caza de contenidos de cada ítem. Los títulos del itemizado no generan simbología.
-                      </p>
-                    </div>
-                  ) : liveHuntedSymbology.entries.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center py-16 text-center">
-                      <p className="text-[13px] text-[#5A6072]">
-                        [Información técnica no declarada en ficha]
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] overflow-x-auto rounded-none shadow-none">
-                      <table className="w-full border-collapse text-left">
-                        <thead>
-                          <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D]">
-                            <th className="p-[13px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] w-[89px]">
-                              SÍMBOLO
-                            </th>
-                            <th className="p-[13px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] w-[190px]">
-                              CÓDIGO / NORMA
-                            </th>
-                            <th className="p-[13px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] w-[260px]">
-                              SIGNIFICADO TÉCNICO
-                            </th>
-                            <th className="p-[13px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                              APLICACIÓN ESPECÍFICA EN EL EQUIPO (CAZA DE CONTENIDOS)
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {liveHuntedSymbology.entries.map((entry) => (
-                            <tr
-                              key={entry.concept_id}
-                              className="border-b border-[#E2E8F0] dark:border-[#12151C] last:border-b-0 align-top"
-                            >
-                              <td className="p-[13px]">
-                                <div className="w-[55px] h-[55px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] p-[8px] flex items-center justify-center rounded-none shadow-none">
-                                  <img
-                                    src={entry.icon_url}
-                                    alt={entry.technical_name_es}
-                                    draggable={false}
-                                    onContextMenu={(e) => e.preventDefault()}
-                                    style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
-                                    className="max-w-full max-h-full object-contain select-none pointer-events-none"
-                                  />
-                                </div>
-                              </td>
-                              <td className="p-[13px] font-mono tabular-nums">
-                                <p className="text-[12px] font-bold text-[#0F172A] dark:text-[#F3F4F6] select-text">
-                                  {entry.concept_id}
-                                </p>
-                                <p className="text-[11px] text-[#C68346] font-bold mt-[4px]">
-                                  {entry.iso_code || entry.category}
-                                </p>
-                                <p className="text-[10px] text-[#5A6072] mt-[4px]">
-                                  {entry.source_mode === 'BRAND_VARIANT' ? 'OEM VERIFICADO' : 'ESTÁNDAR ISO'}
-                                </p>
-                              </td>
-                              <td className="p-[13px]">
-                                <p className="text-[13px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
-                                  {entry.technical_name_es}
-                                </p>
-                                <p className="text-[12px] text-[#475569] dark:text-[#8A93A6] mt-[4px] leading-snug">
-                                  {entry.description_es}
-                                </p>
-                              </td>
-                              <td className="p-[13px]">
-                                <div className="flex flex-col gap-[8px]">
-                                  {entry.applications.map((ch, idx) => (
-                                    <div
-                                      key={`${entry.concept_id}-ch-${idx}`}
-                                      className="border-l-2 border-[#C68346] pl-[8px]"
-                                    >
-                                      <p className="font-mono tabular-nums text-[11px] font-bold text-[#00AEEF]">
-                                        [{ch.pillar_label}] {ch.item_title}
-                                      </p>
-                                      <p className="text-[12px] text-[#0F172A] dark:text-[#F3F4F6] mt-[2px] leading-snug">
-                                        {ch.context_excerpt}
-                                      </p>
-                                    </div>
-                                  ))}
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              </div>
+            {showCostMatrixInfo ? (
+              <EquipmentCostMatrixPanel
+                makeModel={catalog.makeModel}
+                tipoEquipo={catalog.tipo_equipo}
+                categoriaEquipo={catalog.categoria_equipo}
+                physicalTraits={catalog.physical_traits}
+                operationalCostMatrix={catalog.operational_cost_matrix}
+                energyConsumptionProfile={catalog.energy_consumption_profile}
+                canonicalSpecs={catalog.canonical_specs}
+                knowledgeVault={catalog.knowledge_vault || {}}
+              />
+            ) : showSymbologyInfo ? (
+              <VaultSymbologyReadOnlyPanel liveHuntedSymbology={liveHuntedSymbology} />
             ) : (() => {
               const prereqId = PILLAR_PREREQUISITE_MAP[activeTab];
               const prereqMeta = prereqId ? PILLARS.find(x => x.id === prereqId) : null;
@@ -6685,15 +5286,15 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
               }
               const prerequisitePillar = prereqId && prereqMeta
                 ? {
-                    id: prereqId,
-                    stepCode: prereqMeta.stepCode,
-                    label: prereqMeta.label,
-                    isItemized:
-                      prereqDoc?.itemize_status === 'COMPLETED' ||
-                      (prereqDoc?.items ?? []).some((it: any) => !it?.is_discarded),
-                    currentDigest: prereqDoc?.structure_digest_sha256 ?? null,
-                    hasAncestorChainEvolved,
-                  }
+                  id: prereqId,
+                  stepCode: prereqMeta.stepCode,
+                  label: prereqMeta.label,
+                  isItemized:
+                    prereqDoc?.itemize_status === 'COMPLETED' ||
+                    (prereqDoc?.items ?? []).some((it: any) => !it?.is_discarded),
+                  currentDigest: prereqDoc?.structure_digest_sha256 ?? null,
+                  hasAncestorChainEvolved,
+                }
                 : null;
 
               return (
@@ -6730,6 +5331,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                     setExpandedItems(new Set());
                     setActiveProposalView(null);
                     setShowSymbologyInfo(false);
+                    setShowCostMatrixInfo(false);
                     setActiveTab(id);
                   }}
                 />

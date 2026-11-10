@@ -23,12 +23,17 @@ import {
     CollectiveBenchmarkService,
 } from '../services/CollectiveBenchmarkService';
 import { buildAndPersistAssetSymbologyPack } from '../services/EquipmentSymbologyPackBuilder';
+import {
+    buildAndPersistEquipmentCostMatrix,
+    compileEquipmentCostMatrixFromPillars,
+} from '../services/EquipmentCostMatrixCompiler';
 import { huntVaultItem, reconcileAssetSidebarProfileFromVault } from '../services/ItemHunterService';
 import {
     computePillarContentDigestSha256,
     computePillarStructureDigestSha256,
     computeVaultMerkleRootSha256,
     ensureFichaTecnicaConsumptionBaseItem,
+    ensurePautaMantencionWearAndRodadoBaseItem,
     isPillarMerkleChainEvolved,
     itemizeSinglePillar,
     sortAndReindexPillarItems,
@@ -40,13 +45,10 @@ import {
     verifyAndNormalizeTechnicalUnits,
 } from '../services/NeuroSymbolicVerifier';
 import { OpermaqManualPublisher } from '../services/OpermaqManualPublisher';
-import {
-    type BlueprintKind,
-    OpermaqSvgBlueprintEngine,
-} from '../services/OpermaqSvgBlueprintEngine';
 import { createEmptyKnowledgeVault, PILLAR_LABELS } from '../services/pillarAgents';
 import { OfficialEquipmentPhotoService } from '../services/OfficialEquipmentPhotoService';
 import { SegmentedDocumentProcessorService } from '../services/SegmentedDocumentProcessorService';
+import { VaultPersistenceService } from '../services/VaultPersistenceService';
 import {
     drawStandardIcon,
     generateBrandVariant,
@@ -169,6 +171,7 @@ async function checkVaultNotSealed(req: ScopedRequest, res: Response, next: Next
 
     try {
         const snap = await db.collection('global_asset_catalog').doc(globalAssetId).get();
+        (req as any).catalogDocSnap = snap;
         const data = snap.data();
         if (
             snap.exists &&
@@ -234,23 +237,29 @@ async function propagateItemContentMutationEffects(params: {
     const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
 
     const contentDigestSha256 = computePillarContentDigestSha256(updatedItems);
+    const updatedPillarDoc = {
+        ...(existingVault?.[pillarId] || {
+            pillar_id: pillarId,
+            status: 'COMPLETED',
+            itemize_status: 'COMPLETED',
+            make_model: '',
+        }),
+        pillar_id: pillarId,
+        items: updatedItems,
+        content_digest_sha256: contentDigestSha256,
+        updated_at: new Date().toISOString(),
+    };
     const nextVault = {
         ...(existingVault || {}),
-        [pillarId]: {
-            ...(existingVault?.[pillarId] || {}),
-            items: updatedItems,
-            content_digest_sha256: contentDigestSha256,
-            updated_at: new Date().toISOString(),
-        },
+        [pillarId]: updatedPillarDoc,
     };
     const vaultMerkleRootSha256 = computeVaultMerkleRootSha256(nextVault);
 
-    await docRef.update({
-        [`knowledge_vault.${pillarId}.items`]: updatedItems,
-        [`knowledge_vault.${pillarId}.content_digest_sha256`]: contentDigestSha256,
-        [`knowledge_vault.${pillarId}.updated_at`]: new Date().toISOString(),
-        ...(vaultMerkleRootSha256 ? { 'knowledge_vault.vault_merkle_root_sha256': vaultMerkleRootSha256 } : {}),
-        updatedAt: Date.now(),
+    await VaultPersistenceService.savePillarDocument({
+        globalAssetId,
+        pillarId,
+        pillarDoc: updatedPillarDoc as any,
+        vaultMerkleRootSha256,
     });
 
     if (updatedItem && typeof updatedItem.content === 'string' && updatedItem.content.trim().length > 0) {
@@ -284,6 +293,10 @@ async function propagateItemContentMutationEffects(params: {
         }).catch(() => null);
     }
 
+    if (pillarId === 'ficha_tecnica' || pillarId === 'pauta_mantencion') {
+        await buildAndPersistEquipmentCostMatrix(globalAssetId).catch(() => null);
+    }
+
     return { contentDigestSha256, vaultMerkleRootSha256 };
 }
 
@@ -297,17 +310,25 @@ vaultRouter.post('/initialize-vault', requireCurateAI, checkVaultNotSealed, asyn
 
     try {
         const docRef = db.collection('global_asset_catalog').doc(String(globalAssetId));
-        const snap = await docRef.get();
-        if (!snap.exists) {
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
+            String(globalAssetId),
+            (req as any).catalogDocSnap
+        );
+        if (!hydrated.exists || !hydrated.data) {
             return res.status(404).json({ error: 'Activo no encontrado en global_asset_catalog.' });
         }
 
-        const data = snap.data() || {};
-        if (!data.knowledge_vault) {
+        const data = hydrated.data;
+        const hasVaultKeys =
+            data.knowledge_vault &&
+            VALID_PILLAR_IDS.some((pid) => Boolean(data.knowledge_vault?.[pid]));
+
+        if (!hasVaultKeys) {
             const makeModel =
                 data.make_model || `${data.make_oficial || data.make || ''} ${data.model_oficial || data.model || ''}`.trim();
             await docRef.update({
                 knowledge_vault: createEmptyKnowledgeVault(makeModel),
+                vault_partition_version: 3,
                 updatedAt: Date.now(),
             });
         } else {
@@ -320,21 +341,66 @@ vaultRouter.post('/initialize-vault', requireCurateAI, checkVaultNotSealed, asyn
                         type_key: String(data.equipment_type_key || data.tipo_equipo || ''),
                         canonical_type_es: String(data.tipo_equipo || 'MAQUINARIA INDUSTRIAL'),
                         categoria_equipo: String(data.categoria_equipo || 'MAQUINARIA'),
-                    },
+                        physical_traits: data.physical_traits,
+                    } as any,
                     defaultSources: Array.isArray(fichaDoc?.classified_sources_itemized)
                         ? fichaDoc.classified_sources_itemized
                         : [],
                 });
                 if (healed.modified) {
                     const structureDigest = computePillarStructureDigestSha256(healed.items, null) || '';
-                    await docRef.update({
-                        'knowledge_vault.ficha_tecnica.items': healed.items,
-                        'knowledge_vault.ficha_tecnica.structure_digest_sha256': structureDigest,
-                        'knowledge_vault.ficha_tecnica.updated_at': new Date().toISOString(),
-                        updatedAt: Date.now(),
+                    await VaultPersistenceService.savePillarDocument({
+                        globalAssetId: String(globalAssetId),
+                        pillarId: 'ficha_tecnica',
+                        pillarDoc: {
+                            ...fichaDoc,
+                            pillar_id: 'ficha_tecnica',
+                            items: healed.items,
+                            structure_digest_sha256: structureDigest,
+                            updated_at: new Date().toISOString(),
+                        },
                     });
                 }
             }
+
+            const pmDoc = data.knowledge_vault?.pauta_mantencion;
+            const pmItems = Array.isArray(pmDoc?.items) ? pmDoc.items : [];
+            if (pmItems.length > 0 && !data.is_sealed && !data.isSealed && !data.knowledge_vault?.is_sealed) {
+                const healedPm = ensurePautaMantencionWearAndRodadoBaseItem({
+                    items: pmItems,
+                    typeDoc: {
+                        type_key: String(data.equipment_type_key || data.tipo_equipo || ''),
+                        canonical_type_es: String(data.tipo_equipo || 'MAQUINARIA INDUSTRIAL'),
+                        categoria_equipo: String(data.categoria_equipo || 'MAQUINARIA'),
+                        physical_traits: data.physical_traits,
+                    } as any,
+                    defaultSources: Array.isArray(pmDoc?.classified_sources_itemized)
+                        ? pmDoc.classified_sources_itemized
+                        : [],
+                });
+                if (healedPm.modified) {
+                    const pmStructureDigest =
+                        computePillarStructureDigestSha256(
+                            healedPm.items,
+                            pmDoc?.parent_pillar_digest_sha256 || null
+                        ) || '';
+                    await VaultPersistenceService.savePillarDocument({
+                        globalAssetId: String(globalAssetId),
+                        pillarId: 'pauta_mantencion',
+                        pillarDoc: {
+                            ...pmDoc,
+                            pillar_id: 'pauta_mantencion',
+                            items: healedPm.items,
+                            structure_digest_sha256: pmStructureDigest,
+                            updated_at: new Date().toISOString(),
+                        },
+                    });
+                }
+            }
+        }
+
+        if (!data.is_sealed && !data.isSealed && !data.knowledge_vault?.is_sealed) {
+            await buildAndPersistEquipmentCostMatrix(String(globalAssetId)).catch(() => null);
         }
 
         return res.status(200).json({
@@ -369,11 +435,14 @@ vaultRouter.post('/itemize-pillar', requireCurateAI, checkVaultNotSealed, async 
     const { globalAssetId, pillarId, forceSmartMerge, confirmWord } = parsed.data;
 
     try {
-        const snap = await db.collection('global_asset_catalog').doc(globalAssetId).get();
-        if (!snap.exists) {
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
+            globalAssetId,
+            (req as any).catalogDocSnap
+        );
+        if (!hydrated.exists || !hydrated.data) {
             return res.status(404).json({ error: 'Catálogo no encontrado.' });
         }
-        const data = snap.data() || {};
+        const data = hydrated.data;
         const gate = validateCatalogProfileGate(data);
         if (!gate.valid) {
             return res.status(422).json({
@@ -972,19 +1041,33 @@ vaultRouter.post('/hunt-item-async', requireCurateAI, checkVaultNotSealed, async
             }
         }
 
-        // Marcar ítem en GENERANDO mediante transacción atómica para permitir cazas concurrentes sin condiciones de carrera
+        // Marcar ítem en GENERANDO mediante transacción atómica sobre `pillars/{pillarId}` + resumen raíz
         const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
+        const pillarRef = docRef.collection('pillars').doc(pillarId);
         const lockedTitle = await db.runTransaction(async (tx) => {
-            const snap = await tx.get(docRef);
+            const [snap, pillarSnap] = await Promise.all([tx.get(docRef), tx.get(pillarRef)]);
             if (!snap.exists) return null;
-            const items = [...(snap.data()?.knowledge_vault?.[pillarId]?.items || [])];
+            const rawPillar = pillarSnap.exists
+                ? pillarSnap.data()
+                : snap.data()?.knowledge_vault?.[pillarId];
+            if (!rawPillar) return null;
+            const items = [...(rawPillar.items || [])];
             const idx = items.findIndex((it: any) => it.item_id === itemId);
             if (idx === -1) return null;
             if (items[idx].is_human_locked === true) {
                 return String(items[idx].title || itemId);
             }
             items[idx] = { ...items[idx], content_status: 'GENERANDO', hunt_error: null };
-            tx.update(docRef, { [`knowledge_vault.${pillarId}.items`]: items });
+            VaultPersistenceService.writePillarInTransaction(tx, {
+                globalAssetId,
+                pillarId: pillarId as PillarId,
+                pillarDoc: {
+                    ...(rawPillar as any),
+                    pillar_id: pillarId as PillarId,
+                    items,
+                    updated_at: new Date().toISOString(),
+                },
+            });
             return null;
         });
 
@@ -1254,10 +1337,15 @@ vaultRouter.post('/apply-assist-proposal', requireCurateAI, checkVaultNotSealed,
 
     try {
         const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
-        const snap = await docRef.get();
-        if (!snap.exists) return res.status(404).json({ error: 'Catálogo no encontrado.' });
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
+            globalAssetId,
+            (req as any).catalogDocSnap
+        );
+        if (!hydrated.exists || !hydrated.data) {
+            return res.status(404).json({ error: 'Catálogo no encontrado.' });
+        }
 
-        const catalogData = snap.data() || {};
+        const catalogData = hydrated.data;
         const pillar = catalogData?.knowledge_vault?.[pillarId];
         if (!pillar) return res.status(404).json({ error: 'Pilar no encontrado.' });
 
@@ -1275,6 +1363,17 @@ vaultRouter.post('/apply-assist-proposal', requireCurateAI, checkVaultNotSealed,
         const nowIso = new Date().toISOString();
         const oldContent = items[idx].content;
 
+        const nextHistory = await VaultPersistenceService.appendItemRevision({
+            globalAssetId,
+            pillarId: pillarId as PillarId,
+            itemId,
+            existingHistory: items[idx].historial_cambios,
+            accion: `EDICIÓN_ASISTIDA_${intent || 'GENERAL'}`,
+            actor: ctx.actorEmail,
+            detalle: 'Propuesta aplicada mediante corrector técnico.',
+            snapshotAnterior: oldContent,
+        });
+
         items[idx] = {
             ...items[idx],
             content: sanitized.content,
@@ -1282,16 +1381,7 @@ vaultRouter.post('/apply-assist-proposal', requireCurateAI, checkVaultNotSealed,
             content_status: 'COMPLETADO',
             hunted_at: nowIso,
             last_edit_by: ctx.actorEmail,
-            historial_cambios: [
-                ...(items[idx].historial_cambios || []),
-                {
-                    fecha: nowIso,
-                    accion: `EDICIÓN_ASISTIDA_${intent || 'GENERAL'}`,
-                    actor: ctx.actorEmail,
-                    detalle: 'Propuesta aplicada mediante corrector técnico.',
-                    snapshot_anterior: oldContent,
-                },
-            ],
+            historial_cambios: nextHistory,
         };
 
         const propagation = await propagateItemContentMutationEffects({
@@ -1302,6 +1392,16 @@ vaultRouter.post('/apply-assist-proposal', requireCurateAI, checkVaultNotSealed,
             updatedItems: items,
             existingVault: catalogData.knowledge_vault,
         });
+
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_ASSIST_PROPOSAL_APPLIED',
+            targetEntity: `global_asset_catalog/${globalAssetId}/pillars/${pillarId}/${itemId}`,
+            details: { pillarId, itemId, intent: intent || 'GENERAL' },
+        }).catch(() => undefined);
 
         if (sessionId) {
             const sessionRef = docRef.collection('vault_chats').doc(itemId).collection('sessions').doc(sessionId);
@@ -1488,14 +1588,17 @@ vaultRouter.post(
 
         try {
             const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
+            const pillarRef = docRef.collection('pillars').doc(pillarId);
             const outcome = await db.runTransaction(async (tx) => {
-                const snap = await tx.get(docRef);
+                const [snap, pillarSnap] = await Promise.all([tx.get(docRef), tx.get(pillarRef)]);
                 if (!snap.exists) {
                     const err: any = new Error('Catálogo no encontrado.');
                     err.statusCode = 404;
                     throw err;
                 }
-                const pillar = snap.data()?.knowledge_vault?.[pillarId];
+                const pillar = pillarSnap.exists
+                    ? pillarSnap.data()
+                    : snap.data()?.knowledge_vault?.[pillarId];
                 if (!pillar || !Array.isArray(pillar.items)) {
                     const err: any = new Error('Pilar no encontrado.');
                     err.statusCode = 404;
@@ -1527,7 +1630,16 @@ vaultRouter.post(
                             acknowledged: false,
                         });
                         items[idx] = { ...items[idx], locked_item_advisories: advisories };
-                        tx.update(docRef, { [`knowledge_vault.${pillarId}.items`]: items });
+                        VaultPersistenceService.writePillarInTransaction(tx, {
+                            globalAssetId,
+                            pillarId: pillarId as PillarId,
+                            pillarDoc: {
+                                ...(pillar as any),
+                                pillar_id: pillarId as PillarId,
+                                items,
+                                updated_at: nowIso,
+                            },
+                        });
                     }
                     return { mode: 'LOCKED_ADVISORY' as const };
                 }
@@ -1609,13 +1721,40 @@ vaultRouter.post(
                 const { merged: mergedFigures } = mergeDeduplicatedFigures(items[idx].figures || [], [newFigureRef]);
                 const referencedFigures = filterFiguresReferencedInMarkdown(nextContent, mergedFigures);
 
+                let revisionId: string | undefined;
+                if (currentContent.length > 0) {
+                    revisionId = `rev_${Date.now()}_${randomUUID().slice(0, 8)}`;
+                    const detalleHist = `Imagen técnica integrada en sección: "${cleanTitle}" (SHA-256 ${newFigureRef.sha256.slice(
+                        0,
+                        12
+                    )}, ${newFigureRef.original_bytes || 0} B ➔ ${newFigureRef.optimized_bytes || 0} B, -${
+                        newFigureRef.savings_pct || 0
+                    }%).`;
+                    tx.set(docRef.collection('item_revisions').doc(revisionId), {
+                        revision_id: revisionId,
+                        global_asset_id: globalAssetId,
+                        pillar_id: pillarId,
+                        item_id: itemId,
+                        accion: 'RESOLUCION_IMAGEN_PENDIENTE_CAS',
+                        actor: ctx.actorEmail,
+                        detalle: detalleHist,
+                        snapshot_anterior: currentContent,
+                        created_at: nowIso,
+                    });
+                }
+
+                const cleanExistingHistory = (items[idx].historial_cambios || []).map((h: any) => {
+                    const { snapshot_anterior: _drop, ...rest } = h || {};
+                    return rest;
+                });
+
                 items[idx] = {
                     ...items[idx],
                     content: nextContent,
                     figures: referencedFigures,
                     last_edit_by: ctx.actorEmail,
                     historial_cambios: [
-                        ...(items[idx].historial_cambios || []),
+                        ...cleanExistingHistory,
                         {
                             fecha: nowIso,
                             accion: 'RESOLUCION_IMAGEN_PENDIENTE_CAS',
@@ -1626,12 +1765,23 @@ vaultRouter.post(
                             )}, ${newFigureRef.original_bytes || 0} B ➔ ${newFigureRef.optimized_bytes || 0} B, -${
                                 newFigureRef.savings_pct || 0
                             }%).`,
-                            snapshot_anterior: currentContent,
+                            ...(revisionId ? { revision_id: revisionId } : {}),
                         },
-                    ],
+                    ].slice(-20),
                 };
 
-                tx.update(docRef, { [`knowledge_vault.${pillarId}.items`]: items });
+                const contentDigest = computePillarContentDigestSha256(items);
+                VaultPersistenceService.writePillarInTransaction(tx, {
+                    globalAssetId,
+                    pillarId: pillarId as PillarId,
+                    pillarDoc: {
+                        ...(pillar as any),
+                        pillar_id: pillarId as PillarId,
+                        items,
+                        content_digest_sha256: contentDigest,
+                        updated_at: nowIso,
+                    },
+                });
                 return { mode: 'INTEGRATED' as const };
             });
 
@@ -1712,11 +1862,13 @@ vaultRouter.post('/create-item', requireCurateAI, checkVaultNotSealed, async (re
     }
 
     try {
-        const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
-        const snap = await docRef.get();
-        if (!snap.exists) return res.status(404).json({ error: 'Catálogo no encontrado.' });
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
+            globalAssetId,
+            (req as any).catalogDocSnap
+        );
+        if (!hydrated.exists || !hydrated.data) return res.status(404).json({ error: 'Catálogo no encontrado.' });
 
-        const pillar = snap.data()?.knowledge_vault?.[pillarId];
+        const pillar = hydrated.data.knowledge_vault?.[pillarId];
         if (!pillar) return res.status(404).json({ error: 'Pilar no encontrado.' });
 
         // Sanitización determinista PII (Ley N° 21.719)
@@ -1773,22 +1925,26 @@ vaultRouter.post('/create-item', requireCurateAI, checkVaultNotSealed, async (re
             (it: any) => String(it.title || '').toLowerCase().trim() !== String(title).toLowerCase().trim()
         );
 
+        const nextPillarDoc = {
+            ...pillar,
+            pillar_id: pillarId as PillarId,
+            items: finalItems,
+            structure_digest_sha256: newStructureDigest,
+            classified_sources_itemized: pillarSources,
+            suggested_items_pending: updatedPending,
+            updated_at: new Date().toISOString(),
+        };
         const nextVault = {
-            ...(snap.data()?.knowledge_vault || {}),
-            [pillarId]: {
-                ...pillar,
-                items: finalItems,
-                structure_digest_sha256: newStructureDigest,
-            },
+            ...(hydrated.data.knowledge_vault || {}),
+            [pillarId]: nextPillarDoc,
         };
         const newMerkleRoot = computeVaultMerkleRootSha256(nextVault);
 
-        await docRef.update({
-            [`knowledge_vault.${pillarId}.items`]: finalItems,
-            [`knowledge_vault.${pillarId}.structure_digest_sha256`]: newStructureDigest,
-            [`knowledge_vault.${pillarId}.classified_sources_itemized`]: pillarSources,
-            [`knowledge_vault.${pillarId}.suggested_items_pending`]: updatedPending,
-            [`knowledge_vault.vault_merkle_root_sha256`]: newMerkleRoot,
+        await VaultPersistenceService.savePillarDocument({
+            globalAssetId,
+            pillarId: pillarId as PillarId,
+            pillarDoc: nextPillarDoc,
+            vaultMerkleRootSha256: newMerkleRoot,
         });
 
         void AuditLedger.record({
@@ -1825,11 +1981,13 @@ vaultRouter.post('/discard-item', requireCurateAI, checkVaultNotSealed, async (r
     }
 
     try {
-        const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
-        const snap = await docRef.get();
-        if (!snap.exists) return res.status(404).json({ error: 'Catálogo no encontrado.' });
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
+            globalAssetId,
+            (req as any).catalogDocSnap
+        );
+        if (!hydrated.exists || !hydrated.data) return res.status(404).json({ error: 'Catálogo no encontrado.' });
 
-        const pillar = snap.data()?.knowledge_vault?.[pillarId];
+        const pillar = hydrated.data.knowledge_vault?.[pillarId];
         if (!pillar) return res.status(404).json({ error: 'Pilar no encontrado.' });
 
         const items = [...(pillar.items || [])];
@@ -1845,21 +2003,29 @@ vaultRouter.post('/discard-item', requireCurateAI, checkVaultNotSealed, async (r
 
         const finalItems = sortAndReindexPillarItems(pillarId as PillarId, items);
         const newStructureDigest = computePillarStructureDigestSha256(finalItems);
+        const nextPillarDoc = {
+            ...pillar,
+            pillar_id: pillarId as PillarId,
+            items: finalItems,
+            structure_digest_sha256: newStructureDigest,
+            updated_at: new Date().toISOString(),
+        };
         const nextVault = {
-            ...(snap.data()?.knowledge_vault || {}),
-            [pillarId]: {
-                ...pillar,
-                items: finalItems,
-                structure_digest_sha256: newStructureDigest,
-            },
+            ...(hydrated.data.knowledge_vault || {}),
+            [pillarId]: nextPillarDoc,
         };
         const newMerkleRoot = computeVaultMerkleRootSha256(nextVault);
 
-        await docRef.update({
-            [`knowledge_vault.${pillarId}.items`]: finalItems,
-            [`knowledge_vault.${pillarId}.structure_digest_sha256`]: newStructureDigest,
-            [`knowledge_vault.vault_merkle_root_sha256`]: newMerkleRoot,
+        await VaultPersistenceService.savePillarDocument({
+            globalAssetId,
+            pillarId: pillarId as PillarId,
+            pillarDoc: nextPillarDoc,
+            vaultMerkleRootSha256: newMerkleRoot,
         });
+
+        if (pillarId === 'ficha_tecnica' || pillarId === 'pauta_mantencion') {
+            await buildAndPersistEquipmentCostMatrix(globalAssetId).catch(() => null);
+        }
 
         void AuditLedger.record({
             tenantId: ctx.tenantId || 'GLOBAL_OEM',
@@ -1891,11 +2057,13 @@ vaultRouter.post('/discard-suggested-item', requireCurateAI, checkVaultNotSealed
     }
 
     try {
-        const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
-        const snap = await docRef.get();
-        if (!snap.exists) return res.status(404).json({ error: 'Catálogo no encontrado.' });
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
+            globalAssetId,
+            (req as any).catalogDocSnap
+        );
+        if (!hydrated.exists || !hydrated.data) return res.status(404).json({ error: 'Catálogo no encontrado.' });
 
-        const pillar = snap.data()?.knowledge_vault?.[pillarId];
+        const pillar = hydrated.data.knowledge_vault?.[pillarId];
         if (!pillar) return res.status(404).json({ error: 'Pilar no encontrado.' });
 
         const updatedPending = (pillar.suggested_items_pending || []).filter(
@@ -1930,9 +2098,16 @@ vaultRouter.post('/discard-suggested-item', requireCurateAI, checkVaultNotSealed
         };
 
         const finalItems = reindexPillarItems([...(pillar.items || []), newItem]);
-        await docRef.update({
-            [`knowledge_vault.${pillarId}.items`]: finalItems,
-            [`knowledge_vault.${pillarId}.suggested_items_pending`]: updatedPending,
+        await VaultPersistenceService.savePillarDocument({
+            globalAssetId,
+            pillarId: pillarId as PillarId,
+            pillarDoc: {
+                ...pillar,
+                pillar_id: pillarId as PillarId,
+                items: finalItems,
+                suggested_items_pending: updatedPending,
+                updated_at: new Date().toISOString(),
+            },
         });
 
         void AuditLedger.record({
@@ -1966,11 +2141,13 @@ vaultRouter.post('/reactivate-item', requireCurateAI, checkVaultNotSealed, async
     }
 
     try {
-        const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
-        const snap = await docRef.get();
-        if (!snap.exists) return res.status(404).json({ error: 'Catálogo no encontrado.' });
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
+            globalAssetId,
+            (req as any).catalogDocSnap
+        );
+        if (!hydrated.exists || !hydrated.data) return res.status(404).json({ error: 'Catálogo no encontrado.' });
 
-        const pillar = snap.data()?.knowledge_vault?.[pillarId];
+        const pillar = hydrated.data.knowledge_vault?.[pillarId];
         if (!pillar) return res.status(404).json({ error: 'Pilar no encontrado.' });
 
         const items = [...(pillar.items || [])];
@@ -1985,21 +2162,29 @@ vaultRouter.post('/reactivate-item', requireCurateAI, checkVaultNotSealed, async
 
         const finalItems = sortAndReindexPillarItems(pillarId as PillarId, items);
         const newStructureDigest = computePillarStructureDigestSha256(finalItems);
+        const nextPillarDoc = {
+            ...pillar,
+            pillar_id: pillarId as PillarId,
+            items: finalItems,
+            structure_digest_sha256: newStructureDigest,
+            updated_at: new Date().toISOString(),
+        };
         const nextVault = {
-            ...(snap.data()?.knowledge_vault || {}),
-            [pillarId]: {
-                ...pillar,
-                items: finalItems,
-                structure_digest_sha256: newStructureDigest,
-            },
+            ...(hydrated.data.knowledge_vault || {}),
+            [pillarId]: nextPillarDoc,
         };
         const newMerkleRoot = computeVaultMerkleRootSha256(nextVault);
 
-        await docRef.update({
-            [`knowledge_vault.${pillarId}.items`]: finalItems,
-            [`knowledge_vault.${pillarId}.structure_digest_sha256`]: newStructureDigest,
-            [`knowledge_vault.vault_merkle_root_sha256`]: newMerkleRoot,
+        await VaultPersistenceService.savePillarDocument({
+            globalAssetId,
+            pillarId: pillarId as PillarId,
+            pillarDoc: nextPillarDoc,
+            vaultMerkleRootSha256: newMerkleRoot,
         });
+
+        if (pillarId === 'ficha_tecnica' || pillarId === 'pauta_mantencion') {
+            await buildAndPersistEquipmentCostMatrix(globalAssetId).catch(() => null);
+        }
 
         void AuditLedger.record({
             tenantId: ctx.tenantId || 'GLOBAL_OEM',
@@ -2122,11 +2307,13 @@ vaultRouter.post(
         const { globalAssetId, pillarId, itemId, nuevo_estado, review_notes } = parsed.data;
 
         try {
-            const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
-            const snap = await docRef.get();
-            if (!snap.exists) return res.status(404).json({ error: 'Catálogo no encontrado.' });
+            const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
+                globalAssetId,
+                (req as any).catalogDocSnap
+            );
+            if (!hydrated.exists || !hydrated.data) return res.status(404).json({ error: 'Catálogo no encontrado.' });
 
-            const pillar = snap.data()?.knowledge_vault?.[pillarId];
+            const pillar = hydrated.data.knowledge_vault?.[pillarId];
             if (!pillar) return res.status(404).json({ error: 'Pilar no encontrado.' });
 
             const items = [...(pillar.items || [])];
@@ -2174,8 +2361,18 @@ vaultRouter.post(
                 itemId,
                 updatedItem: item,
                 updatedItems: items,
-                existingVault: snap.data()?.knowledge_vault,
+                existingVault: hydrated.data.knowledge_vault,
             });
+
+            void AuditLedger.record({
+                tenantId: ctx.tenantId || 'GLOBAL_OEM',
+                actorUid: ctx.actorId,
+                actorEmail: ctx.actorEmail,
+                module: 'opermaq',
+                action: `VAULT_ITEM_APPROVAL_${nuevo_estado}`,
+                targetEntity: `global_asset_catalog/${globalAssetId}/pillars/${pillarId}/${itemId}`,
+                details: { pillarId, itemId, nuevo_estado },
+            }).catch(() => undefined);
 
             return res.status(200).json({ success: true, estado: nuevo_estado });
         } catch (err) {
@@ -2191,6 +2388,7 @@ vaultRouter.post('/bulk-approve', checkVaultNotSealed, async (req: ScopedRequest
     }
 
     const schema = z.object({
+        confirmWord: z.string().optional(),
         items: z.array(
             z.object({
                 globalAssetId: z.string(),
@@ -2202,37 +2400,48 @@ vaultRouter.post('/bulk-approve', checkVaultNotSealed, async (req: ScopedRequest
 
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Formato inválido.' });
+    if (
+        parsed.data.confirmWord !== undefined &&
+        parsed.data.confirmWord.trim().toUpperCase() !== HITL_CONFIRM_KEYWORD
+    ) {
+        return res.status(400).json({ error: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".` });
+    }
 
     const { items } = parsed.data;
     const now = new Date().toISOString();
-    const batch = db.batch();
 
     try {
-        const catalogMap = new Map<string, any>();
+        const catalogMap = new Map<string, Record<string, any>>();
+        const mutatedPillarsByAsset = new Map<string, Set<PillarId>>();
+
         for (const it of items) {
             if (!catalogMap.has(it.globalAssetId)) {
-                const snap = await db.collection('global_asset_catalog').doc(it.globalAssetId).get();
-                if (snap.exists) catalogMap.set(it.globalAssetId, snap.data());
+                const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(it.globalAssetId);
+                if (hydrated.exists && hydrated.data) {
+                    catalogMap.set(it.globalAssetId, hydrated.data);
+                }
             }
         }
 
         let approved = 0;
         for (const it of items) {
             const catalogData = catalogMap.get(it.globalAssetId);
-            const pillarItems = catalogData?.knowledge_vault?.[it.pillarId]?.items;
-            if (!Array.isArray(pillarItems)) continue;
+            const pillarDoc = catalogData?.knowledge_vault?.[it.pillarId];
+            if (!pillarDoc || !Array.isArray(pillarDoc.items) || !VALID_PILLAR_IDS.includes(it.pillarId as PillarId)) {
+                continue;
+            }
 
-            const idx = pillarItems.findIndex((pi: any) => pi.item_id === it.itemId);
+            const idx = pillarDoc.items.findIndex((pi: any) => pi.item_id === it.itemId);
             if (idx === -1) continue;
 
-            pillarItems[idx] = {
-                ...pillarItems[idx],
+            pillarDoc.items[idx] = {
+                ...pillarDoc.items[idx],
                 estado_aprobacion: 'APROBADO_HUMANO',
                 approved_by: ctx.actorEmail,
                 approved_at: now,
                 is_human_locked: true,
                 historial_cambios: [
-                    ...(pillarItems[idx].historial_cambios || []),
+                    ...(pillarDoc.items[idx].historial_cambios || []),
                     {
                         fecha: now,
                         accion: 'APROBACION_BATCH',
@@ -2241,15 +2450,42 @@ vaultRouter.post('/bulk-approve', checkVaultNotSealed, async (req: ScopedRequest
                     },
                 ],
             };
-
-            batch.update(db.collection('global_asset_catalog').doc(it.globalAssetId), {
-                [`knowledge_vault.${it.pillarId}.items`]: pillarItems,
-                updatedAt: FieldValue.serverTimestamp(),
-            });
+            pillarDoc.updated_at = now;
+            if (!mutatedPillarsByAsset.has(it.globalAssetId)) {
+                mutatedPillarsByAsset.set(it.globalAssetId, new Set());
+            }
+            mutatedPillarsByAsset.get(it.globalAssetId)!.add(it.pillarId as PillarId);
             approved++;
         }
 
-        await batch.commit();
+        for (const [assetId, pidSet] of mutatedPillarsByAsset.entries()) {
+            const catalogData = catalogMap.get(assetId);
+            if (!catalogData) continue;
+            const pillarsToSave: Partial<Record<PillarId, any>> = {};
+            for (const pid of pidSet) {
+                const pDoc = catalogData.knowledge_vault?.[pid];
+                if (pDoc) {
+                    pDoc.content_digest_sha256 = computePillarContentDigestSha256(pDoc.items || []);
+                    pillarsToSave[pid] = pDoc;
+                }
+            }
+            const merkleRoot = computeVaultMerkleRootSha256(catalogData.knowledge_vault);
+            await VaultPersistenceService.saveMultiplePillars({
+                globalAssetId: assetId,
+                pillars: pillarsToSave,
+                vaultMerkleRootSha256: merkleRoot,
+            });
+            void AuditLedger.record({
+                tenantId: ctx.tenantId || 'GLOBAL_OEM',
+                actorUid: ctx.actorId,
+                actorEmail: ctx.actorEmail,
+                module: 'opermaq',
+                action: 'VAULT_ITEMS_BULK_APPROVED',
+                targetEntity: `global_asset_catalog/${assetId}`,
+                details: { pillars: Array.from(pidSet), approved },
+            }).catch(() => undefined);
+        }
+
         return res.status(200).json({ success: true, approved });
     } catch (err) {
         return handleVaultError(res, err, 'Error en aprobación HITL por lote.');
@@ -2263,19 +2499,25 @@ vaultRouter.post('/update-item-content', requireCurateAI, checkVaultNotSealed, a
         pillarId: z.string(),
         itemId: z.string(),
         newContent: z.string(),
+        confirmWord: z.string().optional(),
     });
 
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Parámetros inválidos.' });
 
-    const { globalAssetId, pillarId, itemId, newContent } = parsed.data;
+    const { globalAssetId, pillarId, itemId, newContent, confirmWord } = parsed.data;
+    if (confirmWord !== undefined && confirmWord.trim().toUpperCase() !== HITL_CONFIRM_KEYWORD) {
+        return res.status(400).json({ error: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".` });
+    }
 
     try {
-        const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
-        const snap = await docRef.get();
-        if (!snap.exists) return res.status(404).json({ error: 'Catálogo no encontrado.' });
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
+            globalAssetId,
+            (req as any).catalogDocSnap
+        );
+        if (!hydrated.exists || !hydrated.data) return res.status(404).json({ error: 'Catálogo no encontrado.' });
 
-        const pillar = snap.data()?.knowledge_vault?.[pillarId];
+        const pillar = hydrated.data.knowledge_vault?.[pillarId];
         if (!pillar || !Array.isArray(pillar.items)) {
             return res.status(404).json({ error: 'Pilar no encontrado.' });
         }
@@ -2292,22 +2534,24 @@ vaultRouter.post('/update-item-content', requireCurateAI, checkVaultNotSealed, a
             pillarId as PillarId
         );
         const oldContent = items[idx].content;
+        const nextHistory = await VaultPersistenceService.appendItemRevision({
+            globalAssetId,
+            pillarId: pillarId as PillarId,
+            itemId,
+            existingHistory: items[idx].historial_cambios,
+            accion: 'EDICION_HITL',
+            actor: ctx.actorEmail,
+            detalle: 'Edición quirúrgica manual.',
+            snapshotAnterior: oldContent,
+        });
+
         items[idx] = {
             ...items[idx],
             content: sanitized.content,
             symbology_refs: sanitized.symbologyRefs,
             content_status: 'COMPLETADO',
             last_edit_by: ctx.actorEmail,
-            historial_cambios: [
-                ...(items[idx].historial_cambios || []),
-                {
-                    fecha: new Date().toISOString(),
-                    accion: 'EDICION_HITL',
-                    actor: ctx.actorEmail,
-                    detalle: 'Edición quirúrgica manual.',
-                    snapshot_anterior: oldContent,
-                },
-            ],
+            historial_cambios: nextHistory,
         };
 
         await propagateItemContentMutationEffects({
@@ -2316,8 +2560,18 @@ vaultRouter.post('/update-item-content', requireCurateAI, checkVaultNotSealed, a
             itemId,
             updatedItem: items[idx],
             updatedItems: items,
-            existingVault: snap.data()?.knowledge_vault,
+            existingVault: hydrated.data.knowledge_vault,
         });
+
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_ITEM_CONTENT_HITL_UPDATED',
+            targetEntity: `global_asset_catalog/${globalAssetId}/pillars/${pillarId}/${itemId}`,
+            details: { pillarId, itemId },
+        }).catch(() => undefined);
 
         return res.status(200).json({ success: true, content: sanitized.content });
     } catch (err) {
@@ -2337,11 +2591,13 @@ vaultRouter.post('/resolve-item-conflict', requireCurateAI, checkVaultNotSealed,
     }
 
     try {
-        const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
-        const snap = await docRef.get();
-        if (!snap.exists) return res.status(404).json({ error: 'Catálogo no encontrado.' });
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
+            globalAssetId,
+            (req as any).catalogDocSnap
+        );
+        if (!hydrated.exists || !hydrated.data) return res.status(404).json({ error: 'Catálogo no encontrado.' });
 
-        const pillar = snap.data()?.knowledge_vault?.[pillarId];
+        const pillar = hydrated.data.knowledge_vault?.[pillarId];
         if (!pillar) return res.status(404).json({ error: 'Pilar no encontrado.' });
 
         const items = [...(pillar.items || [])];
@@ -2384,7 +2640,26 @@ vaultRouter.post('/resolve-item-conflict', requireCurateAI, checkVaultNotSealed,
 
         item.pending_conflicts = finalPending;
         items[idx] = item;
-        await docRef.update({ [`knowledge_vault.${pillarId}.items`]: items });
+        await VaultPersistenceService.savePillarDocument({
+            globalAssetId,
+            pillarId: pillarId as PillarId,
+            pillarDoc: {
+                ...pillar,
+                pillar_id: pillarId as PillarId,
+                items,
+                updated_at: new Date().toISOString(),
+            },
+        });
+
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: `VAULT_ITEM_CONFLICT_${action}`,
+            targetEntity: `global_asset_catalog/${globalAssetId}/pillars/${pillarId}/${itemId}`,
+            details: { pillarId, itemId, proposalId: proposal?.proposal_id || null, action },
+        }).catch(() => undefined);
 
         return res.status(200).json({
             success: true,
@@ -2416,11 +2691,13 @@ vaultRouter.post(
         const { globalAssetId, pillarId, itemId, action, proposals } = parsed.data;
 
         try {
-            const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
-            const snap = await docRef.get();
-            if (!snap.exists) return res.status(404).json({ error: 'Catálogo no encontrado.' });
+            const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
+                globalAssetId,
+                (req as any).catalogDocSnap
+            );
+            if (!hydrated.exists || !hydrated.data) return res.status(404).json({ error: 'Catálogo no encontrado.' });
 
-            const pillar = snap.data()?.knowledge_vault?.[pillarId];
+            const pillar = hydrated.data.knowledge_vault?.[pillarId];
             if (!pillar) return res.status(404).json({ error: 'Pilar no encontrado.' });
 
             const items = [...(pillar.items || [])];
@@ -2461,7 +2738,26 @@ vaultRouter.post(
 
             item.pending_conflicts = finalPending;
             items[idx] = item;
-            await docRef.update({ [`knowledge_vault.${pillarId}.items`]: items });
+            await VaultPersistenceService.savePillarDocument({
+                globalAssetId,
+                pillarId: pillarId as PillarId,
+                pillarDoc: {
+                    ...pillar,
+                    pillar_id: pillarId as PillarId,
+                    items,
+                    updated_at: new Date().toISOString(),
+                },
+            });
+
+            void AuditLedger.record({
+                tenantId: ctx.tenantId || 'GLOBAL_OEM',
+                actorUid: ctx.actorId,
+                actorEmail: ctx.actorEmail,
+                module: 'opermaq',
+                action: `VAULT_ITEM_CONFLICTS_BULK_${action}`,
+                targetEntity: `global_asset_catalog/${globalAssetId}/pillars/${pillarId}/${itemId}`,
+                details: { pillarId, itemId, count: proposals.length, action },
+            }).catch(() => undefined);
 
             return res.status(200).json({
                 success: true,
@@ -2514,11 +2810,13 @@ vaultRouter.post('/decide-proposal', requireCurateAI, checkVaultNotSealed, async
     const { globalAssetId, pillarId, itemId, proposalId, decision } = parsed.data;
 
     try {
-        const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
-        const snap = await docRef.get();
-        if (!snap.exists) return res.status(404).json({ error: 'Catálogo no encontrado.' });
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
+            globalAssetId,
+            (req as any).catalogDocSnap
+        );
+        if (!hydrated.exists || !hydrated.data) return res.status(404).json({ error: 'Catálogo no encontrado.' });
 
-        const data = snap.data() || {};
+        const data = hydrated.data;
         const pillar = data.knowledge_vault?.[pillarId];
         if (!pillar) return res.status(404).json({ error: 'Pilar no encontrado.' });
 
@@ -2603,16 +2901,16 @@ vaultRouter.post('/decide-proposal', requireCurateAI, checkVaultNotSealed, async
             pillarId: pillarId as PillarId,
         });
 
-        item.historial_cambios = [
-            ...(item.historial_cambios || []),
-            {
-                fecha: new Date().toISOString(),
-                accion: targetFusionType === 'NUEVO' ? 'EVOLUCION_NUEVO_CONTENIDO' : 'EVOLUCION_CONFLICTOS',
-                actor: ctx.actorEmail,
-                detalle: `Aprobación e integración inmediata de ${deltas.length} hallazgo(s) ${targetFusionType} (${proposal.componente}).`,
-                snapshot_anterior: currentContent,
-            },
-        ];
+        item.historial_cambios = await VaultPersistenceService.appendItemRevision({
+            globalAssetId,
+            pillarId: pillarId as PillarId,
+            itemId,
+            existingHistory: item.historial_cambios,
+            accion: targetFusionType === 'NUEVO' ? 'EVOLUCION_NUEVO_CONTENIDO' : 'EVOLUCION_CONFLICTOS',
+            actor: ctx.actorEmail,
+            detalle: `Aprobación e integración inmediata de ${deltas.length} hallazgo(s) ${targetFusionType} (${proposal.componente}).`,
+            snapshotAnterior: currentContent,
+        });
 
         const remainingPending = currentPending.filter(
             (p: any) =>
@@ -2645,7 +2943,8 @@ vaultRouter.post('/decide-proposal', requireCurateAI, checkVaultNotSealed, async
         }
 
         if (incomingFigures.length > 0) {
-            item.figures = mergeDeduplicatedFigures(item.figures || [], incomingFigures);
+            const { merged } = mergeDeduplicatedFigures(item.figures || [], incomingFigures);
+            item.figures = merged;
         }
         item.fact_fingerprints = Array.from(existingFingerprints);
 
@@ -2702,11 +3001,13 @@ vaultRouter.post('/evolve-item', requireCurateAI, checkVaultNotSealed, async (re
     const { globalAssetId, pillarId, itemId, filterType } = parsed.data;
 
     try {
-        const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
-        const snap = await docRef.get();
-        if (!snap.exists) return res.status(404).json({ error: 'Catálogo no encontrado.' });
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
+            globalAssetId,
+            (req as any).catalogDocSnap
+        );
+        if (!hydrated.exists || !hydrated.data) return res.status(404).json({ error: 'Catálogo no encontrado.' });
 
-        const data = snap.data() || {};
+        const data = hydrated.data;
         const pillar = data.knowledge_vault?.[pillarId];
         if (!pillar) return res.status(404).json({ error: 'Pilar no encontrado.' });
 
@@ -2742,16 +3043,16 @@ vaultRouter.post('/evolve-item', requireCurateAI, checkVaultNotSealed, async (re
             pillarId: pillarId as PillarId,
         });
 
-        item.historial_cambios = [
-            ...(item.historial_cambios || []),
-            {
-                fecha: new Date().toISOString(),
-                accion: filterType === 'NUEVO' ? 'EVOLUCION_NUEVO_CONTENIDO' : 'EVOLUCION_CONFLICTOS',
-                actor: ctx.actorEmail,
-                detalle: `Fusión evolutiva de ${deltas.length} hallazgo(s) ${filterType}.`,
-                snapshot_anterior: currentContent,
-            },
-        ];
+        item.historial_cambios = await VaultPersistenceService.appendItemRevision({
+            globalAssetId,
+            pillarId: pillarId as PillarId,
+            itemId,
+            existingHistory: item.historial_cambios,
+            accion: filterType === 'NUEVO' ? 'EVOLUCION_NUEVO_CONTENIDO' : 'EVOLUCION_CONFLICTOS',
+            actor: ctx.actorEmail,
+            detalle: `Fusión evolutiva de ${deltas.length} hallazgo(s) ${filterType}.`,
+            snapshotAnterior: currentContent,
+        });
 
         const remainingPending = currentPending.filter(
             (p: any) =>
@@ -2787,7 +3088,8 @@ vaultRouter.post('/evolve-item', requireCurateAI, checkVaultNotSealed, async (re
         }
 
         if (incomingFigures.length > 0) {
-            item.figures = mergeDeduplicatedFigures(item.figures || [], incomingFigures);
+            const { merged } = mergeDeduplicatedFigures(item.figures || [], incomingFigures);
+            item.figures = merged;
         }
         item.fact_fingerprints = Array.from(existingFingerprints);
 
@@ -2826,11 +3128,15 @@ vaultRouter.post('/cancel-evolution', requireCurateAI, checkVaultNotSealed, asyn
     }
 
     try {
-        const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
-        const snap = await docRef.get();
-        if (!snap.exists) return res.status(404).json({ error: 'Catálogo no encontrado.' });
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
+            globalAssetId,
+            (req as any).catalogDocSnap
+        );
+        if (!hydrated.exists || !hydrated.data) return res.status(404).json({ error: 'Catálogo no encontrado.' });
 
-        const items = [...(snap.data()?.knowledge_vault?.[pillarId]?.items || [])];
+        const pillar = hydrated.data.knowledge_vault?.[pillarId];
+        if (!pillar) return res.status(404).json({ error: 'Pilar no encontrado.' });
+        const items = [...(pillar.items || [])];
         const idx = items.findIndex((it: any) => it.item_id === itemId);
         if (idx === -1) return res.status(404).json({ error: 'Ítem no encontrado.' });
 
@@ -2849,7 +3155,16 @@ vaultRouter.post('/cancel-evolution', requireCurateAI, checkVaultNotSealed, asyn
             ],
         };
 
-        await docRef.update({ [`knowledge_vault.${pillarId}.items`]: items });
+        await VaultPersistenceService.savePillarDocument({
+            globalAssetId,
+            pillarId: pillarId as PillarId,
+            pillarDoc: {
+                ...pillar,
+                pillar_id: pillarId as PillarId,
+                items,
+                updated_at: new Date().toISOString(),
+            },
+        });
         return res.status(200).json({ success: true });
     } catch (err) {
         return handleVaultError(res, err, 'Error cancelando evolución.');
@@ -2862,17 +3177,24 @@ vaultRouter.post('/unlock-item', checkVaultNotSealed, async (req: ScopedRequest,
         return res.status(403).json({ error: 'Permisos insuficientes para desbloquear ítems.' });
     }
 
-    const { globalAssetId, pillarId, itemId } = req.body || {};
+    const { globalAssetId, pillarId, itemId, confirmWord } = req.body || {};
     if (!globalAssetId || !pillarId || !itemId) {
         return res.status(400).json({ error: 'Parámetros requeridos: globalAssetId, pillarId, itemId.' });
     }
+    if (confirmWord !== undefined && String(confirmWord).trim().toUpperCase() !== HITL_CONFIRM_KEYWORD) {
+        return res.status(400).json({ error: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".` });
+    }
 
     try {
-        const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
-        const snap = await docRef.get();
-        if (!snap.exists) return res.status(404).json({ error: 'Catálogo no encontrado.' });
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
+            globalAssetId,
+            (req as any).catalogDocSnap
+        );
+        if (!hydrated.exists || !hydrated.data) return res.status(404).json({ error: 'Catálogo no encontrado.' });
 
-        const items = [...(snap.data()?.knowledge_vault?.[pillarId]?.items || [])];
+        const pillar = hydrated.data.knowledge_vault?.[pillarId];
+        if (!pillar) return res.status(404).json({ error: 'Pilar no encontrado.' });
+        const items = [...(pillar.items || [])];
         const idx = items.findIndex((it: any) => it.item_id === itemId);
         if (idx === -1) return res.status(404).json({ error: 'Ítem no encontrado.' });
 
@@ -2891,7 +3213,25 @@ vaultRouter.post('/unlock-item', checkVaultNotSealed, async (req: ScopedRequest,
             ],
         };
 
-        await docRef.update({ [`knowledge_vault.${pillarId}.items`]: items });
+        await VaultPersistenceService.savePillarDocument({
+            globalAssetId,
+            pillarId: pillarId as PillarId,
+            pillarDoc: {
+                ...pillar,
+                pillar_id: pillarId as PillarId,
+                items,
+                updated_at: new Date().toISOString(),
+            },
+        });
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_ITEM_UNLOCKED',
+            targetEntity: `global_asset_catalog/${globalAssetId}/pillars/${pillarId}/${itemId}`,
+            details: { pillarId, itemId },
+        }).catch(() => undefined);
         return res.status(200).json({ success: true });
     } catch (err) {
         return handleVaultError(res, err, 'Error desbloqueando ítem.');
@@ -2908,11 +3248,13 @@ vaultRouter.post('/rollback-item-version', requireCurateAI, checkVaultNotSealed,
     }
 
     try {
-        const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
-        const snap = await docRef.get();
-        if (!snap.exists) return res.status(404).json({ error: 'Catálogo no encontrado.' });
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
+            globalAssetId,
+            (req as any).catalogDocSnap
+        );
+        if (!hydrated.exists || !hydrated.data) return res.status(404).json({ error: 'Catálogo no encontrado.' });
 
-        const items = [...(snap.data()?.knowledge_vault?.[pillarId]?.items || [])];
+        const items = [...(hydrated.data.knowledge_vault?.[pillarId]?.items || [])];
         const idx = items.findIndex((it: any) => it.item_id === itemId);
         if (idx === -1) return res.status(404).json({ error: 'Ítem no encontrado.' });
         if (items[idx].is_human_locked === true) {
@@ -2920,33 +3262,43 @@ vaultRouter.post('/rollback-item-version', requireCurateAI, checkVaultNotSealed,
         }
 
         const targetEntry = (items[idx].historial_cambios || []).find(
-            (h: any) => h.fecha === timestamp && h.snapshot_anterior !== undefined
+            (h: any) => h.fecha === timestamp && (h.snapshot_anterior !== undefined || Boolean(h.revision_id))
         );
         if (!targetEntry) {
             return res.status(404).json({ error: 'Versión histórica no encontrada.' });
         }
 
+        const resolvedSnapshot = await VaultPersistenceService.resolveRevisionSnapshot({
+            globalAssetId,
+            historyEntry: targetEntry,
+        });
+        if (resolvedSnapshot === null) {
+            return res.status(404).json({ error: 'El snapshot histórico solicitado no está disponible.' });
+        }
+
         const sanitized = await sanitizeAndEnrichItemContentForSave(
-            String(targetEntry.snapshot_anterior || ''),
+            String(resolvedSnapshot),
             pillarId as PillarId
         );
         const previous = items[idx].content || '';
+        const nextHistory = await VaultPersistenceService.appendItemRevision({
+            globalAssetId,
+            pillarId: pillarId as PillarId,
+            itemId,
+            existingHistory: items[idx].historial_cambios,
+            accion: 'REVERSION_HISTORICA',
+            actor: ctx.actorEmail,
+            detalle: `Restauración de versión ${timestamp}.`,
+            snapshotAnterior: previous,
+        });
+
         items[idx] = {
             ...items[idx],
             content: sanitized.content,
             symbology_refs: sanitized.symbologyRefs,
             estado_aprobacion: 'GENERADO_IA',
             last_edit_by: ctx.actorEmail,
-            historial_cambios: [
-                ...(items[idx].historial_cambios || []),
-                {
-                    fecha: new Date().toISOString(),
-                    accion: 'REVERSION_HISTORICA',
-                    actor: ctx.actorEmail,
-                    detalle: `Restauración de versión ${timestamp}.`,
-                    snapshot_anterior: previous,
-                },
-            ],
+            historial_cambios: nextHistory,
         };
 
         await propagateItemContentMutationEffects({
@@ -2955,8 +3307,17 @@ vaultRouter.post('/rollback-item-version', requireCurateAI, checkVaultNotSealed,
             itemId,
             updatedItem: items[idx],
             updatedItems: items,
-            existingVault: snap.data()?.knowledge_vault,
+            existingVault: hydrated.data.knowledge_vault,
         });
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_ITEM_VERSION_ROLLED_BACK',
+            targetEntity: `global_asset_catalog/${globalAssetId}/pillars/${pillarId}/${itemId}`,
+            details: { pillarId, itemId, restoredTimestamp: timestamp },
+        }).catch(() => undefined);
         return res.status(200).json({ success: true, restoredContent: sanitized.content });
     } catch (err) {
         return handleVaultError(res, err, 'Error restaurando versión previa.');
@@ -2970,6 +3331,10 @@ vaultRouter.post('/seal/:globalAssetId', async (req: ScopedRequest, res: Respons
     if (!ctx.capabilities.canCurateAI) {
         return res.status(403).json({ error: 'Permisos insuficientes para sellar bóvedas maestras.' });
     }
+    const confirmWord = req.body?.confirmWord;
+    if (confirmWord !== undefined && String(confirmWord).trim().toUpperCase() !== HITL_CONFIRM_KEYWORD) {
+        return res.status(400).json({ error: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".` });
+    }
 
     const globalAssetId = String(req.params.globalAssetId);
     try {
@@ -2977,11 +3342,22 @@ vaultRouter.post('/seal/:globalAssetId', async (req: ScopedRequest, res: Respons
             {
                 isSealed: true,
                 is_sealed: true,
+                knowledge_vault: { is_sealed: true },
                 sealedAt: FieldValue.serverTimestamp(),
                 sealedBy: ctx.actorEmail,
+                updatedAt: Date.now(),
             },
             { merge: true }
         );
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_CATALOG_SEALED',
+            targetEntity: `global_asset_catalog/${globalAssetId}`,
+            details: { globalAssetId },
+        }).catch(() => undefined);
         return res.status(200).json({ success: true, isSealed: true });
     } catch (err) {
         return handleVaultError(res, err, 'Error sellando bóveda.');
@@ -2993,6 +3369,10 @@ vaultRouter.post('/unseal/:globalAssetId', async (req: ScopedRequest, res: Respo
     if (!ctx.capabilities.canCurateAI) {
         return res.status(403).json({ error: 'Permisos insuficientes para desbloquear bóvedas selladas.' });
     }
+    const confirmWord = req.body?.confirmWord;
+    if (confirmWord !== undefined && String(confirmWord).trim().toUpperCase() !== HITL_CONFIRM_KEYWORD) {
+        return res.status(400).json({ error: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".` });
+    }
 
     const globalAssetId = String(req.params.globalAssetId);
     try {
@@ -3000,11 +3380,22 @@ vaultRouter.post('/unseal/:globalAssetId', async (req: ScopedRequest, res: Respo
             {
                 isSealed: false,
                 is_sealed: false,
+                knowledge_vault: { is_sealed: false },
                 unsealedAt: FieldValue.serverTimestamp(),
                 unsealedBy: ctx.actorEmail,
+                updatedAt: Date.now(),
             },
             { merge: true }
         );
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_CATALOG_UNSEALED',
+            targetEntity: `global_asset_catalog/${globalAssetId}`,
+            details: { globalAssetId },
+        }).catch(() => undefined);
         return res.status(200).json({ success: true, isSealed: false });
     } catch (err) {
         return handleVaultError(res, err, 'Error desbloqueando bóveda.');
@@ -3014,12 +3405,36 @@ vaultRouter.post('/unseal/:globalAssetId', async (req: ScopedRequest, res: Respo
 vaultRouter.get('/asset/:globalAssetId', async (req: ScopedRequest, res: Response) => {
     const globalAssetId = String(req.params.globalAssetId);
     try {
-        const snap = await db.collection('global_asset_catalog').doc(globalAssetId).get();
-        if (!snap.exists) {
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);
+        if (!hydrated.exists || !hydrated.data) {
             return res.status(404).json({ exists: false, error: 'Activo no encontrado en el catálogo.' });
         }
-        const resolved = await resolveAssetSymbology({ id: snap.id, ...snap.data() });
-        return res.status(200).json({ exists: true, ...resolved });
+
+        const rawData = hydrated.data;
+        const vault = rawData.knowledge_vault || null;
+        const storedMatrix = rawData.operational_cost_matrix;
+        const currentMerkle = vault?.vault_merkle_root_sha256 || null;
+
+        const effectiveCostMatrix =
+            storedMatrix &&
+            storedMatrix.version === '3.0.0' &&
+            (!currentMerkle || storedMatrix.source_merkle_root_sha256 === currentMerkle)
+                ? storedMatrix
+                : compileEquipmentCostMatrixFromPillars({
+                      assetData: rawData,
+                      fichaDoc: vault?.ficha_tecnica || null,
+                      mantencionDoc: vault?.pauta_mantencion || null,
+                  });
+
+        const resolved = await resolveAssetSymbology({
+            id: hydrated.id,
+            ...rawData,
+            operational_cost_matrix: effectiveCostMatrix,
+            energy_consumption_profile: effectiveCostMatrix.energy_consumption,
+        });
+
+        const projected = VaultPersistenceService.projectAssetForAudience(resolved, req.opermaqContext);
+        return res.status(200).json({ exists: true, ...projected });
     } catch (err) {
         return handleVaultError(res, err, 'Error leyendo activo de catálogo.');
     }
@@ -3351,12 +3766,12 @@ vaultRouter.get('/published/:globalAssetId', async (req: ScopedRequest, res: Res
     if (!globalAssetId) return res.status(400).json({ error: 'globalAssetId requerido.' });
 
     try {
-        const snap = await db.collection('global_asset_catalog').doc(globalAssetId).get();
-        if (!snap.exists) {
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);
+        if (!hydrated.exists || !hydrated.data) {
             return res.status(404).json({ error: 'Ficha de catálogo no encontrada.' });
         }
 
-        const data = snap.data() || {};
+        const data = hydrated.data;
         const rawVault = data.knowledge_vault || {};
         const publishedPillars: Record<
             PillarId,
@@ -3409,7 +3824,7 @@ vaultRouter.get('/published/:globalAssetId', async (req: ScopedRequest, res: Res
         }
 
         return res.status(200).json({
-            id: snap.id,
+            id: hydrated.id,
             make_oficial: String(data.make_oficial || data.make || ''),
             model_oficial: String(data.model_oficial || data.model || ''),
             make_model: String(
@@ -3443,6 +3858,12 @@ vaultRouter.post(
     uploadDocument.single('file'),
     async (req: ScopedRequest, res: Response) => {
         const ctx = req.opermaqContext!;
+        if (ctx.isEduSandbox) {
+            return res.status(403).json({
+                error: 'EDU_SANDBOX_ISOLATED',
+                message: 'El entorno académico EDU opera en sandbox aislado y no envía aportes al repositorio productivo.',
+            });
+        }
         if (!ctx.capabilities.canManageFleet && !ctx.capabilities.canCurateAI) {
             return res.status(403).json({
                 error: 'FORBIDDEN',
@@ -3660,11 +4081,12 @@ vaultRouter.post('/acknowledge-locked-advisory', async (req: ScopedRequest, res:
 
     const { globalAssetId, pillarId, itemId, advisoryId } = parsed.data;
     try {
-        const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
-        const snap = await docRef.get();
-        if (!snap.exists) return res.status(404).json({ error: 'Catálogo no encontrado.' });
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);
+        if (!hydrated.exists || !hydrated.data) return res.status(404).json({ error: 'Catálogo no encontrado.' });
 
-        const items = [...(snap.data()?.knowledge_vault?.[pillarId]?.items || [])];
+        const pillar = hydrated.data.knowledge_vault?.[pillarId];
+        if (!pillar) return res.status(404).json({ error: 'Pilar no encontrado.' });
+        const items = [...(pillar.items || [])];
         const idx = items.findIndex((it: any) => it.item_id === itemId);
         if (idx === -1) return res.status(404).json({ error: 'Ítem no encontrado.' });
 
@@ -3680,22 +4102,40 @@ vaultRouter.post('/acknowledge-locked-advisory', async (req: ScopedRequest, res:
         );
 
         items[idx] = { ...items[idx], locked_item_advisories: advisories };
-        await docRef.update({ [`knowledge_vault.${pillarId}.items`]: items });
+        await VaultPersistenceService.savePillarDocument({
+            globalAssetId,
+            pillarId: pillarId as PillarId,
+            pillarDoc: {
+                ...pillar,
+                pillar_id: pillarId as PillarId,
+                items,
+                updated_at: new Date().toISOString(),
+            },
+        });
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_LOCKED_ADVISORY_ACKNOWLEDGED',
+            targetEntity: `global_asset_catalog/${globalAssetId}/pillars/${pillarId}/${itemId}`,
+            details: { pillarId, itemId, advisoryId },
+        }).catch(() => undefined);
         return res.status(200).json({ success: true });
     } catch (err) {
         return handleVaultError(res, err, 'Error confirmando aviso sobre ítem bloqueado.');
     }
 });
 
-// ── v4.0: PAQUETE AD-HOC DE SIMBOLOGÍA VECTORIAL + PLANOS SVG + MANUALES AD-HOC ──
+// ── v3.0: PAQUETE AD-HOC DE SIMBOLOGÍA VECTORIAL + MANUALES AD-HOC + FEEDBACK TEST-PILOT ──
 
 vaultRouter.get('/symbology-pack/:globalAssetId', async (req: ScopedRequest, res: Response) => {
     const globalAssetId = String(req.params.globalAssetId || '').trim();
     try {
-        const snap = await db.collection('global_asset_catalog').doc(globalAssetId).get();
-        if (!snap.exists) return res.status(404).json({ error: 'Activo no encontrado.' });
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);
+        if (!hydrated.exists || !hydrated.data) return res.status(404).json({ error: 'Activo no encontrado.' });
 
-        const data = snap.data()!;
+        const data = hydrated.data;
         const pack =
             data.symbology_pack && data.symbology_pack.total_symbols > 0
                 ? data.symbology_pack
@@ -3730,40 +4170,125 @@ vaultRouter.post('/symbology/seed-universal', requireCurateAI, async (req: Scope
     }
 });
 
-vaultRouter.post('/generate-blueprint', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
-    const ctx = req.opermaqContext!;
-    const schema = z.object({
-        globalAssetId: z.string().min(1),
-        kind: z.enum([
-            'DIMENSION_SPEC_SHEET',
-            'PERFORMANCE_CURVE',
-            'PM_HOROMETER_TIMELINE',
-            'WALKAROUND_LOTO_MAP',
-            'ISO_SAFETY_PLAQUE',
-        ]),
-        targetPillarId: z.string().optional(),
-        targetItemId: z.string().optional(),
-        customPayload: z.record(z.string(), z.any()).optional(),
-    });
+const VaultPilotFeedbackSchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    pillarId: z
+        .enum([
+            'ficha_tecnica',
+            'manual_operaciones',
+            'pauta_mantencion',
+            'matriz_riesgos',
+            'checklist_pre_op',
+        ])
+        .optional(),
+    itemId: z.string().trim().max(120).optional(),
+    category: z
+        .enum(['AI_KNOWLEDGE_TRAINING', 'CHANGE_REQUEST', 'BUG_CORRECTION', 'FIELD_SIMULATION'])
+        .default('AI_KNOWLEDGE_TRAINING'),
+    priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).default('MEDIUM'),
+    observation: z.string().trim().min(3).max(4000),
+    expectedAiBehavior: z.string().trim().max(2000).optional(),
+    proposedContent: z.string().max(32000).optional(),
+});
 
-    const parsed = schema.safeParse(req.body);
+vaultRouter.post('/pilot-feedback', requireCurateAI, async (req: ScopedRequest, res: Response) => {
+    const ctx = req.opermaqContext!;
+    const parsed = VaultPilotFeedbackSchema.safeParse(req.body || {});
     if (!parsed.success) {
-        return res.status(400).json({ error: 'Parámetros inválidos.', details: parsed.error.format() });
+        return res.status(400).json({
+            error: parsed.error.issues[0]?.message || 'Parámetros de feedback TEST-PILOT inválidos.',
+            details: parsed.error.format(),
+        });
     }
 
     try {
-        const result = await OpermaqSvgBlueprintEngine.generateAndStoreAssetBlueprint({
-            globalAssetId: parsed.data.globalAssetId,
-            kind: parsed.data.kind as BlueprintKind,
-            targetPillarId: parsed.data.targetPillarId as PillarId | undefined,
-            targetItemId: parsed.data.targetItemId,
-            customPayload: parsed.data.customPayload,
-            actorUid: ctx.actorId,
-        });
+        const d = parsed.data;
+        const cleanObs = ConfidentialityAirlockService.scrubDeterministicPii(d.observation).scrubbed.trim();
+        const cleanExpected = d.expectedAiBehavior
+            ? ConfidentialityAirlockService.scrubDeterministicPii(d.expectedAiBehavior).scrubbed.trim()
+            : null;
+        const cleanProposed = d.proposedContent
+            ? ConfidentialityAirlockService.scrubDeterministicPii(d.proposedContent).scrubbed.trim()
+            : null;
 
-        return res.status(200).json({ success: true, ...result });
+        const feedbackRef = db.collection('pilot_feedback').doc();
+        const nowIso = new Date().toISOString();
+        const record = {
+            id: feedbackRef.id,
+            feedbackId: feedbackRef.id,
+            tenantId: ctx.tenantId || 'dev-master-sandbox',
+            authorUid: ctx.actorId,
+            authorEmail: ctx.actorEmail,
+            authorRole:
+                ctx.accountTier === 1
+                    ? 'DEV_ROOT'
+                    : ctx.accountTier === 2
+                    ? 'SUPER_ADMIN'
+                    : ctx.isTestPilot
+                    ? 'TEST_PILOT'
+                    : 'CURATOR',
+            module: 'opermaq' as const,
+            executionMode: 'integrated' as const,
+            category: d.category,
+            priority: d.priority,
+            contextPath: `/opermaq/vault/${d.globalAssetId}${d.pillarId ? `/${d.pillarId}` : ''}${d.itemId ? `/${d.itemId}` : ''}`,
+            assetOrSurveyId: d.globalAssetId,
+            pillarId: d.pillarId || null,
+            itemId: d.itemId || null,
+            observation: cleanObs,
+            expectedAiBehavior: cleanExpected,
+            status: 'OPEN' as const,
+            timestamp: nowIso,
+            createdAt: Date.now(),
+        };
+
+        await feedbackRef.set(record);
+
+        let hitlCandidateId: string | null = null;
+        if (d.category === 'AI_KNOWLEDGE_TRAINING' || cleanProposed) {
+            const candRef = db.collection('hitl_candidates').doc();
+            hitlCandidateId = candRef.id;
+            await candRef.set({
+                id: candRef.id,
+                feedbackId: feedbackRef.id,
+                module: 'opermaq',
+                globalAssetId: d.globalAssetId,
+                pillarId: d.pillarId || null,
+                itemId: d.itemId || null,
+                authorUid: ctx.actorId,
+                authorEmail: ctx.actorEmail,
+                observation: cleanObs,
+                expectedAiBehavior: cleanExpected,
+                proposedContent: cleanProposed,
+                status: 'PENDING_REVIEW',
+                createdAt: nowIso,
+            });
+        }
+
+        await AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'test-pilot',
+            action: `OPERMAQ_PILOT_FEEDBACK_${d.category}`,
+            targetEntity: feedbackRef.id,
+            details: {
+                globalAssetId: d.globalAssetId,
+                pillarId: d.pillarId || null,
+                itemId: d.itemId || null,
+                hitlCandidateId,
+                priority: d.priority,
+            },
+        }).catch(() => undefined);
+
+        return res.status(201).json({
+            success: true,
+            feedbackId: feedbackRef.id,
+            hitlCandidateId,
+            item: record,
+        });
     } catch (err) {
-        return handleVaultError(res, err, 'Error generando esquema vectorial paramétrico.');
+        return handleVaultError(res, err, 'Error registrando retroalimentación TEST-PILOT.');
     }
 });
 
@@ -3827,6 +4352,12 @@ vaultRouter.get('/manuals/:globalAssetId', async (req: ScopedRequest, res: Respo
 
 vaultRouter.post('/benchmarks/record', async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
+    if (ctx.isEduSandbox) {
+        return res.status(403).json({
+            error: 'EDU_SANDBOX_ISOLATED',
+            message: 'El entorno académico EDU opera en sandbox aislado y no contamina benchmarks productivos.',
+        });
+    }
     const schema = z.object({
         module: z.enum(['opermaq', 'stockpile']),
         targetCanonicalId: z.string().min(1),

@@ -1,9 +1,10 @@
 import React, { Suspense, lazy } from 'react';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
 import type { OpermaqDomainMode } from './components/AssetList';
+import { M3CircularProgress } from './components/M3ProgressIndicator';
 import type { OpermaqHostScope } from './hooks/useOpermaqContext';
 
-const OpermaqModuleView = lazy(() => import('./OpermaqModuleView'));
+const OpermaqApp = lazy(() => import('./App'));
 
 export interface OpermaqModuleProps {
     domainMode?: OpermaqDomainMode;
@@ -49,9 +50,7 @@ export const OpermaqModule: React.FC<OpermaqModuleProps> = ({
             <Suspense
                 fallback={
                     <div className="w-full h-96 flex flex-col items-center justify-center p-[34px] gap-[13px] font-mono text-[#475569] dark:text-[#8A93A6]">
-                        <span className="material-symbols-outlined text-3xl text-[#C68346] animate-spin">
-                            progress_activity
-                        </span>
+                        <M3CircularProgress size={28} strokeWidth={3} tone="copper" />
                         <div className="text-[11px] uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
                             {domainMode === 'CATALOG'
                                 ? 'CATÁLOGO'
@@ -62,7 +61,7 @@ export const OpermaqModule: React.FC<OpermaqModuleProps> = ({
                     </div>
                 }
             >
-                <OpermaqModuleView
+                <OpermaqApp
                     domainMode={domainMode}
                     hostScope={hostScope}
                     tenantId={resolvedTenantId}

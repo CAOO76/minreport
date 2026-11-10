@@ -1,4 +1,6 @@
 import admin, { db } from '../../../config/firebase';
+import { AssetOntologyEngine } from './AssetOntologyEngine';
+import type { AssetPhysicalTraits } from '../types/vault.types';
 import {
     BRAND_SYNONYM_TO_OFFICIAL,
     buildCatalogSearchMetadata,
@@ -36,6 +38,7 @@ export interface UpsertCatalogParams {
     archetype_id?: MachineryArchetypeId;
     categoria_equipo?: string;
     tipo_equipo?: string;
+    physical_traits?: AssetPhysicalTraits;
     canonical_specs?: CanonicalSpecSlot[];
     ambiente_operativo?: string[];
     contexto_operativo?: string[];
@@ -117,6 +120,16 @@ export async function upsertGlobalAssetCatalog(params: UpsertCatalogParams): Pro
         if (incomingVersionsToMerge.length > 0) {
             updatePatch.versions = admin.firestore.FieldValue.arrayUnion(...incomingVersionsToMerge);
             updatePatch.chassis_versions = admin.firestore.FieldValue.arrayUnion(...incomingVersionsToMerge);
+        }
+        if (!existingData.physical_traits) {
+            updatePatch.physical_traits =
+                params.physical_traits ||
+                AssetOntologyEngine.inferAssetPhysicalTraits({
+                    type_key: existingData.equipment_type_key || params.equipment_type_key,
+                    canonical_type_es: existingData.tipo_equipo || params.tipo_equipo || '',
+                    categoria_equipo: existingData.categoria_equipo || params.categoria_equipo || '',
+                    canonical_specs: existingData.canonical_specs || params.canonical_specs || [],
+                });
         }
         if (Object.keys(updatePatch).length > 0) {
             await db
@@ -247,6 +260,14 @@ export async function upsertGlobalAssetCatalog(params: UpsertCatalogParams): Pro
         caracteristicas_principales: enriched.caracteristicas_principales,
         official_url: params.official_url || '',
     });
+    const physicalTraits = AssetOntologyEngine.inferAssetPhysicalTraits({
+        type_key: enriched.equipment_type_key || undefined,
+        canonical_type_es: enriched.tipo_equipo,
+        categoria_equipo: enriched.categoria_equipo,
+        canonical_specs: enriched.canonical_specs || [],
+        corpusText: `${cleanMake} ${cleanModel} ${(enriched.ambiente_operativo || []).join(' ')} ${(enriched.contexto_operativo || []).join(' ')}`,
+        existingTraits: params.physical_traits || null,
+    });
     const newCatalogDoc: Record<string, any> = {
         catalog_key: catalogKey,
         make: cleanMake,
@@ -261,6 +282,7 @@ export async function upsertGlobalAssetCatalog(params: UpsertCatalogParams): Pro
         archetype_id: enriched.archetype_id,
         categoria_equipo: enriched.categoria_equipo,
         tipo_equipo: enriched.tipo_equipo,
+        physical_traits: physicalTraits,
         canonical_specs: enriched.canonical_specs || [],
         energy_consumption_profile: energyProfile,
         ambiente_operativo: sanitizeDesignAndWorkContextItems(enriched.ambiente_operativo),

@@ -29,6 +29,10 @@ rules_version = '2';
 //     embedding_768_raw, spec_schema, schema_version, origin, is_human_locked, usage_count, created_at, updated_at }
 //   - /global_asset_lineages/{lineageId}: { lineage_key, schema_version, raw_query_sample, is_generic, total_candidates,
 //     candidates, updated_at }
+//   - /global_asset_catalog/{assetId}/pillars/{pillarId}, /item_revisions/{revId} (append-only), /derived/{docId}:
+//     Particionamiento Anti-1MiB OPERMAQ v3.0 con segregación estricta OEM (1º DEV / 3º TEST-PILOT).
+//   - /edu_sandbox_fleet/{unitId}: Flota sandbox aislada multi-tenant para 5º EDU.
+//   - /ai_grounded_discovery_cache/{cacheKey}: Caché server-only (southamerica-west1) de descubrimiento IA fundamentado.
 // ===============================================================
 
 service cloud.firestore {
@@ -605,6 +609,12 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Caché server-only de descubrimiento IA fundamentado (OPERMAQ v3.0 — Admin SDK southamerica-west1)
+    match /ai_grounded_discovery_cache/{cacheKey} {
+      allow read: if isSystemPrivileged();
+      allow write: if false;
+    }
+
     // ===============================================================
     // 6. Ledgers Criptográficos Inmutables (Append-Only Estricto)
     // ===============================================================
@@ -992,14 +1002,61 @@ service cloud.firestore {
       );
     }
 
+    // Flota aislada Sandbox Académico (5º EDU — OPERMAQ v3.0)
+    match /edu_sandbox_fleet/{unitId} {
+      allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
+      allow create: if isAuthenticated() &&
+        isBoundedPayload(request.resource.data) &&
+        (
+          isSystemPrivileged() ||
+          (docTenantId(request.resource.data) is string && isAccountMember(docTenantId(request.resource.data)))
+        );
+      allow update: if isAuthenticated() &&
+        isBoundedPayload(request.resource.data) &&
+        (
+          isSystemPrivileged() ||
+          (
+            docTenantId(resource.data) is string &&
+            isAccountMember(docTenantId(resource.data)) &&
+            docTenantId(request.resource.data) == docTenantId(resource.data)
+          )
+        );
+      allow delete: if isAuthenticated() && (
+        isSystemPrivileged() ||
+        (docTenantId(resource.data) is string && isAccountMember(docTenantId(resource.data)))
+      );
+    }
+
     // ===============================================================
     // 8. Plan Maestro v4.0 — Catálogo Global, CAS, Bóvedas y Benchmark
     // ===============================================================
 
     match /global_asset_catalog/{assetId} {
       allow read: if isAuthenticated();
-      allow create, update: if isSystemPrivileged() && isValidOpermaqPayload(request.resource.data);
-      allow delete: if isSystemPrivileged();
+      // Segregación estricta GEMINI.md §1.1: 2º ADMIN mantiene lectura comercial; mutación directa cliente OEM exclusiva 1º DEV y 3º TEST-PILOT
+      allow create, update: if (isDevRoot() || isTestPilot()) && isValidOpermaqPayload(request.resource.data);
+      allow delete: if isDevRoot();
+
+      // Particionamiento Anti-1MiB OPERMAQ v3.0: Pilares técnicos del activo OEM
+      match /pillars/{pillarId} {
+        allow read: if isAuthenticated();
+        allow create, update: if (isDevRoot() || isTestPilot()) && isValidOpermaqPayload(request.resource.data);
+        allow delete: if isDevRoot();
+      }
+
+      // Particionamiento Anti-1MiB OPERMAQ v3.0: Historial inmutable append-only de versiones de capítulos
+      match /item_revisions/{revId} {
+        allow read: if isSystemPrivileged();
+        allow create: if (isDevRoot() || isTestPilot()) && isValidOpermaqPayload(request.resource.data);
+        allow update, delete: if false;
+      }
+
+      // Particionamiento Anti-1MiB OPERMAQ v3.0: Artefactos derivados (cost_matrix, symbology_pack, etc.)
+      match /derived/{docId} {
+        allow read: if isAuthenticated();
+        allow create, update: if isSystemPrivileged() && isValidOpermaqPayload(request.resource.data);
+        allow delete: if isDevRoot();
+      }
 
       match /vault_chats/{itemId}/sessions/{sessionId} {
         allow read: if isSystemPrivileged();
@@ -1035,7 +1092,7 @@ service cloud.firestore {
     // Diccionario maestro auto-aprendido de esquemas técnicos por TIPO de equipo (OPERMAQ)
     match /global_equipment_types/{typeId} {
       allow read: if isAuthenticated();
-      allow create, update: if isSystemPrivileged() && isValidOpermaqPayload(request.resource.data);
+      allow create, update: if (isDevRoot() || isTestPilot()) && isValidOpermaqPayload(request.resource.data);
       allow delete: if isAdmin();
     }
 

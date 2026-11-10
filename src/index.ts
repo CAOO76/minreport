@@ -39,10 +39,13 @@ import pilotRoutes from './api/pilot.controller';
 import mediaRoutes from './api/media.routes';
 import { webauthnRouter } from './api/webauthn.controller';
 import { registerOpermaqModuleRoutes } from './modules/opermaq';
+import { AssetOntologyEngine } from './modules/opermaq/services/AssetOntologyEngine';
+import { compileEquipmentCostMatrixFromPillars } from './modules/opermaq/services/EquipmentCostMatrixCompiler';
+import { resolveOrLearnEquipmentType } from './modules/opermaq/services/EquipmentTypeRegistryService';
 import { computePillarStructureDigestSha256, computeVaultMerkleRootSha256 } from './modules/opermaq/services/ItemizerService';
-import { OfficialEquipmentPhotoService } from './modules/opermaq/services/OfficialEquipmentPhotoService';
 import { startHuntTaskWatchdog } from './modules/opermaq/services/TaskQueueService';
-import { PILLAR_PREREQUISITE_MAP, PillarId } from './modules/opermaq/types/vault.types';
+import { VaultPersistenceService } from './modules/opermaq/services/VaultPersistenceService';
+import { PILLAR_PREREQUISITE_MAP, PillarDocument, PillarId } from './modules/opermaq/types/vault.types';
 import { requireSuperAdmin } from './middleware/admin';
 import { requireAuth } from './middleware/auth';
 import {
@@ -287,12 +290,12 @@ app.get(
                 return res.status(400).json({ error: 'Identificador de activo requerido.' });
             }
 
-            const docSnap = await db.collection('global_asset_catalog').doc(assetId).get();
-            if (!docSnap.exists) {
+            const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(assetId);
+            if (!hydrated.exists || !hydrated.data) {
                 return res.status(404).json({ error: 'Activo no encontrado en bóveda soberana OPERMAQ.' });
             }
 
-            const data = docSnap.data() || {};
+            const data = hydrated.data;
             const vault = (data.knowledge_vault || {}) as Record<string, any>;
             const orderedPillars: PillarId[] = [
                 'ficha_tecnica',
@@ -310,12 +313,12 @@ app.get(
                 const activeItems = Array.isArray(pDoc?.items)
                     ? pDoc.items
                           .filter((it: any) => !it?.is_discarded)
-                          .map((it: any) => ({
+                          .map((it: any, idx: number) => ({
                               item_id: it.item_id,
-                              order_index: it.order_index,
+                              order_index: typeof it.order === 'number' ? it.order : idx + 1,
                               section: it.section,
                               title: it.title,
-                              criticality: it.criticality,
+                              criticality: it.priority || 'IMPORTANTE',
                               content_status: it.content_status,
                               estado_aprobacion: it.estado_aprobacion,
                           }))
@@ -361,11 +364,12 @@ app.get(
                 timestamp: new Date().toISOString(),
                 settlementMode: x402Ctx?.mode || 'VERIFIED',
                 blueprint: {
-                    assetId: docSnap.id,
+                    assetId: hydrated.id,
                     make: data.make_oficial || data.make || 'GENÉRICO',
                     model: data.model_oficial || data.model || '',
                     categoria_equipo: data.categoria_equipo || null,
                     tipo_equipo: data.tipo_equipo || null,
+                    physical_traits: data.physical_traits || null,
                     is_sealed: Boolean(data.is_sealed),
                     vault_merkle_root_sha256: vaultMerkleRootSha256,
                     is_merkle_chain_intact: isMerkleChainIntact,
@@ -423,11 +427,122 @@ app.get(
                     ambiente_operativo: Array.isArray(data.ambiente_operativo) ? data.ambiente_operativo : [],
                     contexto_operativo: Array.isArray(data.contexto_operativo) ? data.contexto_operativo : [],
                     energy_consumption_profile: data.energy_consumption_profile || null,
+                    physical_traits: data.physical_traits || null,
                 },
             });
         } catch (err: any) {
             console.error('[M2M-VAULT-SPECS] Error exportando especificaciones canónicas M2M:', err);
             return res.status(500).json({ error: 'Error consultando especificaciones canónicas M2M.' });
+        }
+    }
+);
+
+app.get(
+    '/api/m2m/opermaq/vault/:assetId/cost-matrix',
+    x402Gatekeeper({ priceMicroUSD: 30000, resourceId: 'opermaq-vault-cost-matrix' }),
+    async (req: X402AuthenticatedRequest, res) => {
+        try {
+            const x402Ctx = req.x402Context;
+            const assetId = String(req.params.assetId || '').trim();
+            if (!assetId) {
+                return res.status(400).json({ error: 'Identificador de activo requerido.' });
+            }
+
+            const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(assetId);
+            if (!hydrated.exists || !hydrated.data) {
+                return res.status(404).json({ error: 'Activo no encontrado en bóveda soberana OPERMAQ.' });
+            }
+
+            const assetData = hydrated.data;
+            const cachedMatrix = assetData.operational_cost_matrix;
+            const costMatrix =
+                cachedMatrix && cachedMatrix.version === '3.0.0'
+                    ? cachedMatrix
+                    : compileEquipmentCostMatrixFromPillars({
+                          assetData,
+                          fichaDoc: (assetData.knowledge_vault?.ficha_tecnica || null) as PillarDocument | null,
+                          mantencionDoc: (assetData.knowledge_vault?.pauta_mantencion || null) as PillarDocument | null,
+                      });
+
+            return res.status(200).json({
+                success: true,
+                protocol: 'x402 Foundation v1.0',
+                region: 'southamerica-west1',
+                timestamp: new Date().toISOString(),
+                settlementMode: x402Ctx?.mode || 'VERIFIED',
+                assetId: hydrated.id,
+                make: assetData.make_oficial || assetData.make || 'GENÉRICO',
+                model: assetData.model_oficial || assetData.model || '',
+                tipo_equipo: assetData.tipo_equipo || null,
+                cost_matrix: costMatrix,
+            });
+        } catch (err: any) {
+            console.error('[M2M-VAULT-COST-MATRIX] Error exportando matriz de costos M2M:', err);
+            return res.status(500).json({ error: 'Error consultando matriz de costos operacionales M2M.' });
+        }
+    }
+);
+
+app.get(
+    '/api/m2m/opermaq/ontology/:typeKey',
+    x402Gatekeeper({ priceMicroUSD: 15000, resourceId: 'opermaq-asset-ontology' }),
+    async (req: X402AuthenticatedRequest, res) => {
+        try {
+            const x402Ctx = req.x402Context;
+            const typeKey = String(req.params.typeKey || '').trim();
+            if (typeKey.length < 2) {
+                return res.status(400).json({ error: 'Identificador typeKey requerido.' });
+            }
+
+            const { typeDoc, reusedExistingSchema } = await resolveOrLearnEquipmentType({
+                rawTypeKey: typeKey,
+                rawTypeHint: typeKey.replace(/_/g, ' '),
+            });
+
+            const traits =
+                typeDoc.physical_traits ||
+                AssetOntologyEngine.inferAssetPhysicalTraits({
+                    type_key: typeDoc.type_key,
+                    canonical_type_es: typeDoc.canonical_type_es,
+                    categoria_equipo: typeDoc.categoria_equipo,
+                    archetype_id: typeDoc.archetype_id,
+                    spec_schema: typeDoc.spec_schema,
+                });
+
+            const orderedPillars: PillarId[] = [
+                'ficha_tecnica',
+                'manual_operaciones',
+                'pauta_mantencion',
+                'matriz_riesgos',
+                'checklist_pre_op',
+            ];
+            const pillarBlueprints: Record<string, any> = {};
+            for (const pId of orderedPillars) {
+                pillarBlueprints[pId] = AssetOntologyEngine.buildCompositionalPillarBlueprint(pId, typeDoc);
+            }
+
+            return res.status(200).json({
+                success: true,
+                protocol: 'x402 Foundation v1.0',
+                region: 'southamerica-west1',
+                timestamp: new Date().toISOString(),
+                settlementMode: x402Ctx?.mode || 'VERIFIED',
+                reused_existing_schema: reusedExistingSchema,
+                ontology: {
+                    type_key: typeDoc.type_key,
+                    canonical_type_es: typeDoc.canonical_type_es,
+                    categoria_equipo: typeDoc.categoria_equipo,
+                    physical_traits: traits,
+                    spec_schema: typeDoc.spec_schema,
+                    cost_schema_blueprint:
+                        typeDoc.cost_schema_blueprint ||
+                        AssetOntologyEngine.buildDynamicCostMatrixTaxonomy(traits, typeDoc.canonical_type_es),
+                    pillar_blueprints: pillarBlueprints,
+                },
+            });
+        } catch (err: any) {
+            console.error('[M2M-ONTOLOGY] Error exportando ontología industrial M2M:', err);
+            return res.status(500).json({ error: 'Error consultando ontología industrial M2M.' });
         }
     }
 );
@@ -567,7 +682,6 @@ async function startServer(): Promise<void> {
             );
             try {
                 await ensureDevRootAccount();
-                await OfficialEquipmentPhotoService.ensureStoredPhotoAlternativesHydrated();
                 DevEmulatorCheckpointService.start();
                 DevEmulatorCheckpointService.scheduleCheckpoint('server-boot-sync');
                 startHuntTaskWatchdog();

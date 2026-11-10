@@ -2,7 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { mediaDigestorClient } from '../../../core/media/MediaDigestorClient';
 import { syncQueue } from '../../../core/offline/SyncQueueEngine';
-import type { FleetIdentifierType, FleetOwnershipCondition } from '../../../contracts';
+import type {
+    AssetPhysicalTraits,
+    FleetIdentifierType,
+    FleetOwnershipCondition,
+} from '../../../contracts';
 import { API_BASE_URL } from '../firebase/config';
 import { useOpermaqContext } from '../hooks/useOpermaqContext';
 import { authFetch } from '../utils/authFetch';
@@ -11,6 +15,7 @@ import {
     type CanonicalSpecSlot,
     cleanMachineryTypeLabel,
 } from '../utils/opermaqDomainProjection';
+import { M3CircularProgress } from './M3ProgressIndicator';
 import { M3TextField } from './M3TextField';
 
 interface CatalogLookupItem {
@@ -24,6 +29,7 @@ interface CatalogLookupItem {
     tipo_equipo?: string;
     archetype_id?: string;
     canonical_specs?: CanonicalSpecSlot[];
+    physical_traits?: AssetPhysicalTraits;
     ambiente_operativo?: string[];
     contexto_operativo?: string[];
     caracteristicas_principales?: string[];
@@ -70,6 +76,9 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
     const [identifierValue, setIdentifierValue] = useState<string>('');
     const [ownershipType, setOwnershipType] = useState<FleetOwnershipCondition>('PROPIO');
     const [horometer, setHorometer] = useState<string>('0');
+    const [odometerKm, setOdometerKm] = useState<string>('0');
+    const [cyclesCount, setCyclesCount] = useState<string>('0');
+    const [calibrationDueDate, setCalibrationDueDate] = useState<string>('');
     const [privatePhotoFile, setPrivatePhotoFile] = useState<File | null>(null);
     const [confirmKeyword, setConfirmKeyword] = useState<string>('');
     const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -106,11 +115,69 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                 });
                 if (res.ok) {
                     const payload = await res.json();
-                    setLocalMatches(Array.isArray(payload?.items) ? payload.items : []);
+                    const items: CatalogLookupItem[] = Array.isArray(payload?.items) ? payload.items : [];
+                    setLocalMatches(items);
                     setHasCheckedLocal(true);
+                    if (items.length > 0) {
+                        const existingCache =
+                            (await syncQueue
+                                .getOfflineKnowledge<CatalogLookupItem[]>('opermaq_catalog_lookup_cache_v3')
+                                .catch(() => null)) || [];
+                        const mergedById = new Map<string, CatalogLookupItem>();
+                        [...items, ...existingCache].forEach((entry) => {
+                            const key = String(
+                                entry.global_asset_id ||
+                                    entry.catalog_key ||
+                                    `${entry.make_oficial}_${entry.model_oficial}`
+                            ).toLowerCase();
+                            if (!mergedById.has(key)) mergedById.set(key, entry);
+                        });
+                        void syncQueue.saveOfflineKnowledge(
+                            'opermaq_catalog_lookup_cache_v3',
+                            Array.from(mergedById.values()).slice(0, 250)
+                        );
+                    }
+                    setIsCheckingLocal(false);
+                    return;
                 }
             } catch {
-                // Silencioso en autocompletado
+                // Fallback Offline-First en IndexedDB
+            }
+
+            try {
+                const cachedLookup =
+                    (await syncQueue
+                        .getOfflineKnowledge<CatalogLookupItem[]>('opermaq_catalog_lookup_cache_v3')
+                        .catch(() => null)) || [];
+                const cachedCatalog =
+                    (await syncQueue
+                        .getOfflineKnowledge<any[]>('opermaq_catalog_index_v3')
+                        .catch(() => null)) || [];
+                const qLower = clean.toLowerCase();
+                const offlinePool: CatalogLookupItem[] = [
+                    ...cachedLookup,
+                    ...cachedCatalog.map((row) => ({
+                        global_asset_id: row.id,
+                        make_oficial: row.make_oficial,
+                        model_oficial: row.model_oficial,
+                        tipo_equipo: row.tipo_equipo,
+                        categoria_equipo: row.categoria_equipo,
+                        short_description: row.short_description,
+                        foto_url: row.foto_url,
+                        physical_traits: row.physical_traits,
+                    })),
+                ];
+                const deduped = new Map<string, CatalogLookupItem>();
+                offlinePool.forEach((entry) => {
+                    const hay = `${entry.make_oficial || ''} ${entry.model_oficial || ''} ${entry.tipo_equipo || ''} ${entry.categoria_equipo || ''}`.toLowerCase();
+                    if (!hay.includes(qLower)) return;
+                    const key = String(
+                        entry.global_asset_id || `${entry.make_oficial}_${entry.model_oficial}`
+                    ).toLowerCase();
+                    if (!deduped.has(key)) deduped.set(key, entry);
+                });
+                setLocalMatches(Array.from(deduped.values()));
+                setHasCheckedLocal(true);
             } finally {
                 setIsCheckingLocal(false);
             }
@@ -203,6 +270,26 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
             if (controller.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
                 return;
             }
+            if (!navigator.onLine) {
+                const upper = clean.toUpperCase();
+                const parts = upper.split(/\s+/);
+                const makeDraft =
+                    parts.length > 1 ? parts[0] : searchScope === 'generic' ? 'GENÉRICO' : 'OEM';
+                const modelDraft = parts.length > 1 ? parts.slice(1).join(' ') : upper;
+                setHuntedCandidates([
+                    {
+                        make_oficial: makeDraft,
+                        model_oficial: modelDraft,
+                        categoria_equipo:
+                            searchScope === 'generic' ? 'GENÉRICO' : 'EQUIPAMIENTO INDUSTRIAL',
+                        tipo_equipo: t('registration.not_declared'),
+                        versions: ['ESTÁNDAR'],
+                        isNew: true,
+                        is_pertinent: true,
+                    },
+                ]);
+                return;
+            }
             setErrorMsg(err instanceof Error ? err.message : t('registration.error_resolve_unavailable'));
         } finally {
             if (abortRef.current === controller) {
@@ -251,10 +338,28 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
         const versions = getEquipmentVersions(item);
         setSelectedEquipment(item);
         setSelectedVersion(explicitVersion || versions[0] || 'ESTÁNDAR');
+        if (
+            item.physical_traits?.duty_travel_regime === 'ON_HIGHWAY' ||
+            item.physical_traits?.duty_travel_regime === 'DUAL_ROAD_AND_SITE'
+        ) {
+            setIdentifierType('LICENSE_PLATE');
+        } else if (item.physical_traits?.requires_metrology_calibration) {
+            setIdentifierType('SERIAL_NUMBER');
+        }
         setConfirmKeyword('');
         setErrorMsg(null);
         setStep('OWNERSHIP_SERIAL');
     };
+
+    const pmCadence = selectedEquipment?.physical_traits?.pm_cadence_basis;
+    const requiresMetrology =
+        Boolean(selectedEquipment?.physical_traits?.requires_metrology_calibration) ||
+        pmCadence === 'CALENDAR_AND_METROLOGY';
+    const showHorometer =
+        !pmCadence || pmCadence === 'HOROMETER_HOURS' || pmCadence === 'DUAL_KM_AND_HOURS';
+    const showOdometerKm = pmCadence === 'ODOMETER_KM' || pmCadence === 'DUAL_KM_AND_HOURS';
+    const showCyclesCount = pmCadence === 'CYCLES_OR_FLIGHTS';
+    const showCalibrationDueDate = requiresMetrology;
 
     const filteredHuntedCandidates = useMemo(() => {
         const q = candidateFilter.trim().toLowerCase();
@@ -316,6 +421,9 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
         const resolvedGlobalId =
             selectedEquipment.global_asset_id || selectedEquipment.existing_catalog_id || undefined;
         const parsedHorometer = Math.max(0, Number(horometer) || 0);
+        const parsedOdometerKm = Math.max(0, Number(odometerKm) || 0);
+        const parsedCyclesCount = Math.max(0, Math.round(Number(cyclesCount) || 0));
+        const cleanCalibrationDate = calibrationDueDate.trim() || undefined;
 
         const bodyPayload = {
             global_asset_id: resolvedGlobalId,
@@ -326,6 +434,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
             equipment_type_key: selectedEquipment.equipment_type_key,
             archetype_id: selectedEquipment.archetype_id,
             canonical_specs: selectedEquipment.canonical_specs,
+            physical_traits: selectedEquipment.physical_traits,
             ambiente_operativo: selectedEquipment.ambiente_operativo || [],
             contexto_operativo: selectedEquipment.contexto_operativo || [],
             caracteristicas_principales: selectedEquipment.caracteristicas_principales || [],
@@ -337,7 +446,12 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
             identifier_type: identifierType,
             identifier_value: cleanId,
             ownership_type: ownershipType,
-            horometer: parsedHorometer,
+            ...(showHorometer ? { horometer: parsedHorometer } : {}),
+            ...(showOdometerKm ? { odometer_km: parsedOdometerKm } : {}),
+            ...(showCyclesCount ? { cycles_count: parsedCyclesCount } : {}),
+            ...(showCalibrationDueDate && cleanCalibrationDate
+                ? { calibration_due_date: cleanCalibrationDate }
+                : {}),
             confirm_word: 'ACTUALIZAR' as const,
         };
 
@@ -369,37 +483,62 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                 return;
             }
         } catch {
-            // Fallback Offline-First si no hay conexión en terreno y el modelo ya existía en CATÁLOGO
-            if (!navigator.onLine && resolvedGlobalId) {
-                const queuedId = await syncQueue.enqueue({
-                    module: 'OPERMAQ',
-                    entityType: 'TENANT_ASSET',
-                    targetCollection: 'tenant_assets',
-                    operation: 'CREATE',
+            // Fallback Offline-First mediante SyncQueueEngine (respeta aislamiento EDU/B2B y ontología v3 al reconectar)
+            if (!navigator.onLine) {
+                const deterministicCatalogId =
+                    resolvedGlobalId ||
+                    selectedEquipment.catalog_key ||
+                    `${bodyPayload.make_oficial}_${bodyPayload.model_oficial}`
+                        .normalize('NFD')
+                        .replace(/[\u0300-\u036f]/g, '')
+                        .toLowerCase()
+                        .replace(/[^a-z0-9]+/g, '_')
+                        .replace(/^_+|_+$/g, '');
+
+                const queuedId = await syncQueue.enqueueApiMutation(
+                    '/assets/register-fleet-unit',
+                    bodyPayload,
+                    'OPERMAQ_REGISTER_FLEET_UNIT',
+                    tenantId
+                );
+
+                const existingOfflineFleet =
+                    (await syncQueue
+                        .getOfflineKnowledge<any[]>(`opermaq_fleet_${tenantId}`)
+                        .catch(() => null)) || [];
+                const optimisticRow = {
+                    id: queuedId,
+                    tenant_id: tenantId,
                     tenantId,
-                    payload: {
-                        tenant_id: tenantId,
-                        tenantId,
-                        global_asset_id: resolvedGlobalId,
-                        make_oficial: bodyPayload.make_oficial.toUpperCase(),
-                        model_oficial: bodyPayload.model_oficial.toUpperCase(),
-                        make_model: `${bodyPayload.make_oficial.toUpperCase()} ${bodyPayload.model_oficial.toUpperCase()}`,
-                        categoria_equipo: bodyPayload.categoria_equipo,
-                        tipo_equipo: bodyPayload.tipo_equipo || t('opermaq_domains.not_declared'),
-                        version: bodyPayload.version,
-                        identifier_type: identifierType,
-                        identifier_value: cleanId,
-                        serial_number: cleanId,
-                        ownership_type: ownershipType,
-                        horometer: parsedHorometer,
-                        status: 'OPERATIVO',
-                        archived: false,
-                        registered_by: actorId || 'operador',
-                    },
-                });
+                    global_asset_id: deterministicCatalogId,
+                    make_oficial: bodyPayload.make_oficial.toUpperCase(),
+                    model_oficial: bodyPayload.model_oficial.toUpperCase(),
+                    version: bodyPayload.version,
+                    tipo_equipo: bodyPayload.tipo_equipo || bodyPayload.categoria_equipo,
+                    categoria_equipo: bodyPayload.categoria_equipo,
+                    short_description: buildEquipmentShortDescription(selectedEquipment),
+                    serial_number: cleanId,
+                    identifier_type: identifierType,
+                    identifier_value: cleanId,
+                    ownership_type: ownershipType,
+                    horometer: showHorometer ? parsedHorometer : undefined,
+                    odometer_km: showOdometerKm ? parsedOdometerKm : undefined,
+                    cycles_count: showCyclesCount ? parsedCyclesCount : undefined,
+                    calibration_due_date:
+                        showCalibrationDueDate && cleanCalibrationDate
+                            ? cleanCalibrationDate
+                            : undefined,
+                    physical_traits: selectedEquipment.physical_traits,
+                    registered_by: actorId || 'operador',
+                };
+                void syncQueue.saveOfflineKnowledge(`opermaq_fleet_${tenantId}`, [
+                    optimisticRow,
+                    ...existingOfflineFleet,
+                ]);
+
                 onSuccess({
                     tenantAssetId: queuedId,
-                    globalAssetId: resolvedGlobalId,
+                    globalAssetId: deterministicCatalogId,
                 });
                 return;
             }
@@ -560,9 +699,9 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                         </button>
                                     )}
                                     {isCheckingLocal || isHuntingWeb ? (
-                                        <span className="material-symbols-outlined animate-spin text-[#C68346] text-[20px] p-1">
-                                            progress_activity
-                                        </span>
+                                        <div className="p-1 flex items-center justify-center">
+                                            <M3CircularProgress size={18} strokeWidth={2.5} tone="copper" />
+                                        </div>
                                     ) : (
                                         <button
                                             type="submit"
@@ -894,7 +1033,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                     </div>
                                 </div>
 
-                                {/* Régimen de Pertenencia + Horómetro */}
+                                {/* Régimen de Pertenencia + Telemetría Adaptativa según Ontología Física */}
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-[21px]">
                                     <div className="flex flex-col gap-[8px]">
                                         <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
@@ -914,21 +1053,78 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                         </select>
                                     </div>
 
-                                    <div className="flex flex-col gap-[8px]">
-                                        <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                                            {t('opermaq_domains.horometer_label')}
-                                        </label>
-                                        <input
-                                            type="number"
-                                            min={0}
-                                            step="1"
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            value={horometer}
-                                            onChange={(e) => setHorometer(e.target.value)}
-                                            className="h-10 px-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[13px] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none select-text"
-                                        />
-                                    </div>
+                                    {showHorometer && (
+                                        <div className="flex flex-col gap-[8px]">
+                                            <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                                                {t('opermaq_domains.horometer_label')}
+                                            </label>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                step="1"
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                value={horometer}
+                                                onChange={(e) => setHorometer(e.target.value)}
+                                                className="h-10 px-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[13px] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none select-text"
+                                            />
+                                        </div>
+                                    )}
+
+                                    {showOdometerKm && (
+                                        <div className="flex flex-col gap-[8px]">
+                                            <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                                                {t('opermaq_domains.odometer_km_label', 'ODÓMETRO INICIAL (KM)')}
+                                            </label>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                step="1"
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                value={odometerKm}
+                                                onChange={(e) => setOdometerKm(e.target.value)}
+                                                className="h-10 px-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[13px] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none select-text"
+                                            />
+                                        </div>
+                                    )}
+
+                                    {showCyclesCount && (
+                                        <div className="flex flex-col gap-[8px]">
+                                            <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                                                {t('opermaq_domains.cycles_count_label', 'CICLOS / VUELOS ACUMULADOS')}
+                                            </label>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                step="1"
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                value={cyclesCount}
+                                                onChange={(e) => setCyclesCount(e.target.value)}
+                                                className="h-10 px-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[13px] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none select-text"
+                                            />
+                                        </div>
+                                    )}
+
+                                    {showCalibrationDueDate && (
+                                        <div className="flex flex-col gap-[8px]">
+                                            <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF]">
+                                                {t(
+                                                    'opermaq_domains.calibration_due_date_label',
+                                                    'VENCIMIENTO CALIBRACIÓN METROLÓGICA'
+                                                )}
+                                            </label>
+                                            <input
+                                                type="date"
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                value={calibrationDueDate}
+                                                onChange={(e) => setCalibrationDueDate(e.target.value)}
+                                                className="h-10 px-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] text-[13px] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none select-text"
+                                            />
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* Foto Privada Opcional */}

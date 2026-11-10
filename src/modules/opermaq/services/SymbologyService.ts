@@ -5,7 +5,13 @@ import { MediaDigestorServer } from '../../../core/media/MediaDigestorServer';
 import { ResilientAIClient } from '../../../core/resilient-ai-client';
 import { safeFetchExternal } from '../../../utils/ssrfGuard';
 import { HITL_CONFIRM_KEYWORD, MasterSymbologyItem, MasterSymbologyVariant } from '../types/vault.types';
-import { purgeSyntheticAdHocSymbols, SYNTHETIC_ADHOC_SYMBOL_AUTHOR } from './NeuroSymbolicVerifier';
+import {
+    getCachedMasterSymbologyIndex,
+    invalidateMasterSymbologyCache,
+    SYNTHETIC_ADHOC_SYMBOL_AUTHOR,
+} from './NeuroSymbolicVerifier';
+
+export { getCachedMasterSymbologyIndex };
 import {
     ensureUniversalSymbologySeeded,
     vectorizeRasterSymbolToSvg,
@@ -61,16 +67,13 @@ export function isValidHitlSymbologyWord(word?: string): boolean {
 }
 
 export async function getMasterSymbols(): Promise<MasterSymbologyItem[]> {
-    await ensureUniversalSymbologySeeded(false);
-    await purgeSyntheticAdHocSymbols();
-    const snap = await db.collection('master_symbology_vault').get();
+    const cached = await getCachedMasterSymbologyIndex();
     const items: MasterSymbologyItem[] = [];
-    snap.forEach((doc) => {
-        const data = doc.data() as Omit<MasterSymbologyItem, 'concept_id'> & { created_by?: string };
-        // Símbolos sintéticos genéricos (motor ad-hoc retirado, `SB-01`) nunca se exponen.
-        if (data.created_by === SYNTHETIC_ADHOC_SYMBOL_AUTHOR) return;
-        items.push({ concept_id: doc.id, ...data });
-    });
+    for (const [docId, rawData] of cached.docsById.entries()) {
+        const data = rawData as Omit<MasterSymbologyItem, 'concept_id'> & { created_by?: string };
+        if (data.created_by === SYNTHETIC_ADHOC_SYMBOL_AUTHOR) continue;
+        items.push({ concept_id: docId, ...data });
+    }
     items.sort((a, b) => (a.technical_name_es || '').localeCompare(b.technical_name_es || '', 'es'));
     return items;
 }
@@ -121,6 +124,7 @@ export async function addSymbolConcept(
     };
 
     await docRef.set(newItem);
+    invalidateMasterSymbologyCache();
     return newItem;
 }
 
@@ -386,6 +390,7 @@ export async function registerStandardIcon(
             verified_by: userEmail,
             updated_at: new Date().toISOString(),
         });
+        invalidateMasterSymbologyCache();
         const updatedDirect = await docRef.get();
         return {
             concept_id: updatedDirect.id,
@@ -414,6 +419,7 @@ export async function registerStandardIcon(
         verified_by: userEmail,
         updated_at: new Date().toISOString(),
     });
+    invalidateMasterSymbologyCache();
 
     const updated = await docRef.get();
     return { concept_id: updated.id, ...(updated.data() as Omit<MasterSymbologyItem, 'concept_id'>) };
@@ -618,6 +624,7 @@ export async function uploadStandardIcon(
         verified_by: userEmail,
         updated_at: new Date().toISOString(),
     });
+    invalidateMasterSymbologyCache();
 
     const updated = await docRef.get();
     return { concept_id: updated.id, ...(updated.data() as Omit<MasterSymbologyItem, 'concept_id'>) };

@@ -1701,28 +1701,10 @@ Responde ESTRICTAMENTE en JSON puro:
             };
         }
 
-        // 5. Enrutamiento directo a los 5 Pilares para Autorización Humana Ítem por Ítem
-        // Todo contenido entra como BORRADOR_IA / GENERADO_IA o propuesta comparativa [Actual] ➔ [Sugerido]
-        // dentro de cada ítem del pilar, exigiendo autorización humana ítem por ítem para ser publicado.
-        for (const prop of proposedItems) {
-            await VaultReconciliationService.reconcileContribution({
-                globalAssetId: input.globalAssetId,
-                pillarId: prop.pillar_id,
-                chapterTitle: prop.chapter_title,
-                section: prop.section,
-                priority: prop.priority,
-                markdownContent: prop.suggested_markdown,
-                structuredDeltas: prop.structured_deltas,
-                figures: prop.figures || [],
-                sourceLabel: `${sanitizedFilename} (Págs. ${prop.source_pages.join(', ')})`,
-                isOemSource: true,
-                actorEmail: 'APORTE_DOCUMENTAL_SANITIZADO',
-            }).catch((err) => {
-                console.warn('[SegmentedDocProcessor] Error reconciliando ítem hacia pilar:', err);
-            });
-        }
-
-        // Registro de trazabilidad auditable del documento aportado
+        // 5. Persistencia exclusiva en Cuarentena (`knowledge_contributions`)
+        // Garantía Zero-Trust (Ley N° 21.719): NINGÚN aporte de un cliente B2B muta `global_asset_catalog`
+        // ni promueve imágenes desde `TENANT_PRIVATE` a `GLOBAL_OEM` sin autorización humana granular 1 a 1
+        // mediante `consolidateHumanReviewedContribution` y palabra clave `"ACTUALIZAR"`.
         const contribRef = await db.collection('knowledge_contributions').add({
             global_asset_id: input.globalAssetId,
             make_model: makeModel,
@@ -1733,7 +1715,7 @@ Responde ESTRICTAMENTE en JSON puro:
             file_sha256: descriptor.sha256,
             sanitized_filename: sanitizedFilename,
             page_fingerprints_seen: pageFingerprintsSeen,
-            status: 'ROUTED_TO_PILLAR_ITEMS_HITL',
+            status: 'PENDING_HUMAN_REVIEW',
             estado_aprobacion: 'BORRADOR_IA',
             proposed_items: proposedItems,
             dedup_metrics: {
@@ -1792,7 +1774,10 @@ Responde ESTRICTAMENTE en JSON puro:
         }
 
         const contrib = contribSnap.data()!;
-        if (contrib.status !== 'PENDING_HUMAN_REVIEW') {
+        if (
+            contrib.status !== 'PENDING_HUMAN_REVIEW' &&
+            contrib.status !== 'ROUTED_TO_PILLAR_ITEMS_HITL'
+        ) {
             const err: any = new Error(`La contribución ya fue procesada con estado ${contrib.status}.`);
             err.statusCode = 409;
             throw err;

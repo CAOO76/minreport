@@ -10,6 +10,7 @@ import type {
     EquipmentTypePillarBlueprint,
     GlobalEquipmentTypeDoc,
     MachineryArchetypeId,
+    PillarId,
 } from '../types/vault.types';
 import {
     ACCESSORY_HISTORICAL_SPEC_REGEX,
@@ -20,102 +21,60 @@ import {
     resolveMachineryArchetype,
     validateCrossAxisPhysicalPlausibility,
 } from '../utils/canonicalArchetypeSpecs';
+import { AssetOntologyEngine } from './AssetOntologyEngine';
 import { verifyAndNormalizeTechnicalUnits } from './NeuroSymbolicVerifier';
 
 /**
- * EQUIPMENT TYPE REGISTRY SERVICE v2.0 (Ontología Dinámica Auto-Aprendida por `TIPO` — OPERMAQ)
- *
- * Mecánica Soberana de 2 Tiempos:
- * 1. Al registrar o buscar cualquier activo, OPERMAQ detecta primero su `TIPO` técnico real
- *    (ej. `MOTONIVELADORA`, `CAMIONETA PICK-UP`, `COMPRESOR DE AIRE`, `PERFORADORA NEUMÁTICA MANUAL`,
- *    `CHANCADOR DE MANDÍBULAS`, `MANIPULADOR TELESCÓPICO`).
- * 2. Consulta `global_equipment_types/{typeKey}` (< 10 ms):
- *    - Si el `TIPO` ya existe, reutiliza de inmediato sus 3 a 5 ejes físicos diferenciadores (SI) y `search_keywords`.
- *    - Si el `TIPO` se consulta por 1ª vez en MINREPORT, sintetiza a `Temperature: 0` sus ejes físicos exclusivos
- *      (bloqueando prosa comercial, fechas históricas y parámetros cruzados de otros equipos), genera su vector
- *      semántico `768d` para unificar sinónimos futuros y lo persiste en `global_equipment_types/{typeKey}`.
+ * EQUIPMENT TYPE REGISTRY SERVICE v3.0 (Ontología Universal Zero-Code por Rasgos — OPERMAQ)
  */
 
 export const GLOBAL_EQUIPMENT_TYPES_COLLECTION = 'global_equipment_types';
-export const EQUIPMENT_TYPE_SCHEMA_VERSION = 4;
+export const EQUIPMENT_TYPE_SCHEMA_VERSION = 7;
 const MEMORY_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export function buildDedicatedConsumptionCoreChapter(
-    typeDoc: Pick<GlobalEquipmentTypeDoc, 'type_key' | 'canonical_type_es' | 'categoria_equipo' | 'archetype_id'>
+    typeDoc: Pick<
+        GlobalEquipmentTypeDoc,
+        'type_key' | 'canonical_type_es' | 'categoria_equipo' | 'archetype_id' | 'physical_traits'
+    >
 ): EquipmentTypeCoreChapterItem {
-    const typeText = `${typeDoc.type_key} ${typeDoc.canonical_type_es} ${typeDoc.categoria_equipo || ''} ${typeDoc.archetype_id || ''}`
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '');
+    const traits = AssetOntologyEngine.inferAssetPhysicalTraits({
+        type_key: typeDoc.type_key,
+        canonical_type_es: typeDoc.canonical_type_es,
+        categoria_equipo: typeDoc.categoria_equipo,
+        archetype_id: typeDoc.archetype_id,
+        existing_traits: typeDoc.physical_traits,
+    });
+    return AssetOntologyEngine.buildConsumptionCoreChapter(traits);
+}
 
-    const isPneumaticOrDrill =
-        /\b(neumatic|jackleg|stoper|martillo\s+neumatico|perforadora\s+neumatica)\b/i.test(typeText);
-
-    const isGridElectricPlant =
-        /\b(electric|subestacion|transformador|tablero|chancador|molino|harnero|criba|correa\s+transportadora|soldadora|planta\s+de)\b/i.test(
-            typeText
-        ) && !/\b(diesel|gasolina|camion|camioneta|excavadora|tractor|motoniveladora|fresadora)\b/i.test(typeText);
-
-    const isBatteryOrHybrid =
-        /\b(bateria|bev\b|hibrid|diesel[\s-]*electric|trolley)\b/i.test(typeText);
-
-    const isRoadOrUtilityVehicle =
-        /\b(camion|camioneta|pick\s*up|furgon|utilitario|suv|tractocamion|remolcador|bus|minibus|van|chasis\s+cabina|volquete|tolva)\b/i.test(
-            typeText
-        ) && !/\b(caex|camion\s+de\s+extraccion|ultra\s*class)\b/i.test(typeText);
-
-    if (isPneumaticOrDrill) {
-        return {
-            chapter_key: 'matriz_energetica_consumos_y_autonomia',
-            title_es: 'Consumos de Energía, Aire Comprimido, Combustible y Fluidos de Barrido',
-            section_es: 'CONSUMOS DE ENERGÍA, AIRE COMPRIMIDO Y COMBUSTIBLE',
-            rationale_es:
-                'Detalla la fuente de energía primaria, demanda de caudal de aire comprimido (L/s, m³/min, CFM) a presión nominal de trabajo (bar), consumo de combustible o energía eléctrica si aplica (L/h o kWh/h), consumo de aceite de línea/lubricador y caudal de agua de barrido (L/min) para gestión de costos.',
-            priority: 'CRÍTICO',
-        };
-    }
-
-    if (isGridElectricPlant) {
-        return {
-            chapter_key: 'matriz_energetica_consumos_y_autonomia',
-            title_es: 'Consumos de Energía Eléctrica, Demanda de Potencia y Factor de Carga Operativo',
-            section_es: 'CONSUMOS DE ENERGÍA, DEMANDA ELÉCTRICA Y AUTONOMÍA',
-            rationale_es:
-                'Detalla el suministro eléctrico (tensión V, fases, frecuencia Hz), potencia nominal e instalada (kW / kVA), consumo energético horario por factor de carga bajo/medio/alto (kWh/h), consumo específico por tonelada o volumen procesado (kWh/t, kWh/m³) y factor de potencia (cos φ) para gestión de costos.',
-            priority: 'CRÍTICO',
-        };
-    }
-
-    if (isBatteryOrHybrid) {
-        return {
-            chapter_key: 'matriz_energetica_consumos_y_autonomia',
-            title_es: 'Consumos de Energía (Batería / Híbrido / Combustible), Regeneración y Autonomía por Ciclo',
-            section_es: 'CONSUMOS DE ENERGÍA, COMBUSTIBLE Y AUTONOMÍA',
-            rationale_es:
-                'Detalla la arquitectura energética (batería LFP/NMC, híbrido diésel-eléctrico o trolley), consumo energético horario o vial (kWh/h, kWh/100 km), consumo de combustible diésel por factor de carga (L/h), capacidad útil de almacenamiento (kWh y L), potencia de recarga/regeneración (kW) y autonomía efectiva por ciclo.',
-            priority: 'CRÍTICO',
-        };
-    }
-
-    if (isRoadOrUtilityVehicle) {
-        return {
-            chapter_key: 'matriz_energetica_consumos_y_autonomia',
-            title_es: 'Consumos de Combustible, Insumos Energéticos (DEF/AdBlue) y Autonomía Operativa',
-            section_es: 'CONSUMOS DE COMBUSTIBLE, ENERGÍA Y AUTONOMÍA',
-            rationale_es:
-                'Detalla el tipo de combustible o energía (Diésel ULSD, Gasolina, Gas o Eléctrico), consumo horario en operación/toma de fuerza (L/h) por factor de carga bajo/medio/alto, rendimiento vial en ruta y faena (km/L y L/100 km), consumo específico BSFC (g/kWh), consumo de agente reductor DEF/AdBlue (% o L/h), capacidad de estanque (L) y autonomía operativa efectiva (h / km) para gestión de costos.',
-            priority: 'CRÍTICO',
-        };
-    }
-
+export function buildDedicatedCapexCoreChapter(
+    _typeDoc?: Pick<GlobalEquipmentTypeDoc, 'type_key' | 'canonical_type_es' | 'categoria_equipo' | 'archetype_id'>
+): EquipmentTypeCoreChapterItem {
     return {
-        chapter_key: 'matriz_energetica_consumos_y_autonomia',
-        title_es: 'Consumos de Combustible / Energía por Factor de Carga, DEF/AdBlue y Autonomía Operativa',
-        section_es: 'CONSUMOS DE COMBUSTIBLE, ENERGÍA Y AUTONOMÍA',
+        chapter_key: 'valorizacion_capex_vida_economica_y_depreciacion',
+        title_es: 'Valorización Referencial (CAPEX), Vida Económica y Base de Depreciación',
+        section_es: 'VALORIZACIÓN PATRIMONIAL Y VIDA ECONÓMICA',
         rationale_es:
-            'Detalla la fuente de energía primaria (Diésel, Gasolina, Eléctrico, Híbrido o Neumático), consumo horario por factor de carga bajo (25-35%), medio (50-65%) y alto (80-100%) en L/h o kWh/h, consumo en ralentí/trabajo continuo, consumo específico BSFC (g/kWh), consumo de urea/DEF (AdBlue) si aplica, capacidad de estanque o banco energético (L / kWh) y autonomía efectiva en turno para gestión de costos.',
+            'Detalla el costo referencial de reposición como equipo nuevo (CAPEX OEM en USD/CLP, condición comercial FOB/Dealer y año de referencia), vida útil económica nominal antes de overhaul mayor o retiro (en horas h, kilómetros km, ciclos o años), porcentaje de valor residual referencial (%), base de depreciación lineal y dotación de fábrica para modelos TCO.',
         priority: 'CRÍTICO',
     };
+}
+
+export function buildDedicatedWearAndRodadoCoreChapter(
+    typeDoc: Pick<
+        GlobalEquipmentTypeDoc,
+        'type_key' | 'canonical_type_es' | 'categoria_equipo' | 'archetype_id' | 'physical_traits'
+    >
+): EquipmentTypeCoreChapterItem {
+    const traits = AssetOntologyEngine.inferAssetPhysicalTraits({
+        type_key: typeDoc.type_key,
+        canonical_type_es: typeDoc.canonical_type_es,
+        categoria_equipo: typeDoc.categoria_equipo,
+        archetype_id: typeDoc.archetype_id,
+        existing_traits: typeDoc.physical_traits,
+    });
+    return AssetOntologyEngine.buildWearAndSupportCoreChapter(traits, typeDoc.canonical_type_es);
 }
 
 export function upgradeEquipmentTypeSchemaIfNeeded(doc: GlobalEquipmentTypeDoc): {
@@ -131,12 +90,24 @@ export function upgradeEquipmentTypeSchemaIfNeeded(doc: GlobalEquipmentTypeDoc):
         (a) => a.axis_key === 'capacidad_energetica_autonomia' || a.axis_key === 'capacidad_estanque_o_bateria'
     );
 
-    const isSkidSteerOrCtl =
-        doc.archetype_id === 'MINICARGADOR_SSL_CTL' ||
-        doc.type_key === 'minicargador_sobre_neumaticos' ||
-        doc.type_key === 'cargador_compacto_sobre_orugas';
-    const hasAuxHydraulics =
-        !isSkidSteerOrCtl || existingAxes.some((a) => a.axis_key === 'caudal_presion_hidraulica_aux');
+    const inferredTraits = AssetOntologyEngine.inferAssetPhysicalTraits({
+        type_key: doc.type_key,
+        canonical_type_es: doc.canonical_type_es,
+        categoria_equipo: doc.categoria_equipo,
+        archetype_id: doc.archetype_id,
+        spec_schema: existingAxes,
+        existing_traits: doc.physical_traits,
+    });
+    const costSchemaBlueprint = AssetOntologyEngine.buildDynamicCostMatrixTaxonomy(
+        inferredTraits,
+        doc.canonical_type_es
+    );
+
+    const expectedConsumptionChapter = AssetOntologyEngine.buildConsumptionCoreChapter(inferredTraits);
+    const expectedWearChapter = AssetOntologyEngine.buildWearAndSupportCoreChapter(
+        inferredTraits,
+        doc.canonical_type_es
+    );
 
     const existingFichaCore = doc.pillar_blueprints?.ficha_tecnica?.core_chapters;
     const hasDedicatedConsumptionChapter =
@@ -144,71 +115,70 @@ export function upgradeEquipmentTypeSchemaIfNeeded(doc: GlobalEquipmentTypeDoc):
         existingFichaCore.some(
             (c) =>
                 c.chapter_key === 'matriz_energetica_consumos_y_autonomia' &&
-                /^Consumos\s+de\b/i.test(c.title_es)
+                c.title_es === expectedConsumptionChapter.title_es
+        );
+    const hasDedicatedCapexChapter =
+        !Array.isArray(existingFichaCore) ||
+        existingFichaCore.some(
+            (c) => c.chapter_key === 'valorizacion_capex_vida_economica_y_depreciacion'
+        );
+
+    const existingPmCore = doc.pillar_blueprints?.pauta_mantencion?.core_chapters;
+    const hasDedicatedWearRodadoChapter =
+        !Array.isArray(existingPmCore) ||
+        existingPmCore.some(
+            (c) =>
+                c.chapter_key === 'etapa_5_recambio_elementos_desgaste_get_y_rodado' &&
+                c.title_es === expectedWearChapter.title_es
         );
 
     const needsUpgrade =
         (doc.schema_version ?? 1) < EQUIPMENT_TYPE_SCHEMA_VERSION ||
+        !doc.physical_traits ||
+        !doc.cost_schema_blueprint ||
         !hasEnergySource ||
         !hasConsumption ||
         !hasCapacity ||
-        !hasAuxHydraulics ||
-        !hasDedicatedConsumptionChapter;
+        !hasDedicatedConsumptionChapter ||
+        !hasDedicatedCapexChapter ||
+        !hasDedicatedWearRodadoChapter;
 
     if (!needsUpgrade) {
         return { doc, modified: false };
     }
 
-    let baseAxes = [...existingAxes];
-    if (isSkidSteerOrCtl) {
-        if (!baseAxes.some((a) => a.axis_key === 'carga_vuelco_estatica')) {
-            baseAxes.splice(1, 0, {
-                axis_key: 'carga_vuelco_estatica',
-                label_es: 'Carga estática vuelco',
-                unit_si: 'kg',
-                value_kind: 'PHYSICAL_MAGNITUDE',
-                search_keywords: ['tipping load', 'carga estática de vuelco', 'carga de vuelco', 'kg', 'lb'],
-                mandatory: false,
-                is_differentiator: true,
-            });
-        }
-        if (!baseAxes.some((a) => a.axis_key === 'caudal_presion_hidraulica_aux')) {
-            baseAxes.push({
-                axis_key: 'caudal_presion_hidraulica_aux',
-                label_es: 'Hidráulica auxiliar',
-                unit_si: 'L/min @ bar',
-                value_kind: 'PHYSICAL_MAGNITUDE',
-                search_keywords: [
-                    'hydraulic flow',
-                    'caudal hidráulico auxiliar',
-                    'presión hidráulica',
-                    'XHP',
-                    'high flow',
-                    'L/min',
-                    'bar',
-                    'psi',
-                ],
-                mandatory: false,
-                is_differentiator: true,
-            });
-        }
-    }
-
     const typeContextText = `${doc.type_key} ${doc.canonical_type_es} ${doc.categoria_equipo || ''}`;
-    const upgradedSchema = ensureUniversalEnergyAxesInSpecSchema(baseAxes, typeContextText);
+    const upgradedSchema = ensureUniversalEnergyAxesInSpecSchema([...existingAxes], typeContextText);
 
     const upgradedDoc: GlobalEquipmentTypeDoc = {
         ...doc,
+        physical_traits: inferredTraits,
+        cost_schema_blueprint: costSchemaBlueprint,
         spec_schema: upgradedSchema,
         schema_version: EQUIPMENT_TYPE_SCHEMA_VERSION,
         updated_at: new Date().toISOString(),
     };
 
-    if (upgradedDoc.pillar_blueprints?.ficha_tecnica) {
-        upgradedDoc.pillar_blueprints = {
+    if (upgradedDoc.pillar_blueprints) {
+        const nextBlueprints: Partial<Record<PillarId, EquipmentTypePillarBlueprint>> = {
             ...upgradedDoc.pillar_blueprints,
-            ficha_tecnica: resolveElasticFichaTecnicaBlueprint(upgradedDoc),
         };
+        if (nextBlueprints.ficha_tecnica) {
+            nextBlueprints.ficha_tecnica = resolveElasticFichaTecnicaBlueprint(upgradedDoc);
+        }
+        if (nextBlueprints.manual_operaciones) {
+            nextBlueprints.manual_operaciones = resolveElasticManualOperacionesBlueprint(upgradedDoc);
+        }
+        if (nextBlueprints.pauta_mantencion) {
+            nextBlueprints.pauta_mantencion = resolveElasticPautaMantencionBlueprint(upgradedDoc);
+        }
+        if (nextBlueprints.matriz_riesgos) {
+            nextBlueprints.matriz_riesgos = resolveElasticMatrizRiesgosBlueprint(upgradedDoc);
+        }
+        if (nextBlueprints.checklist_pre_op) {
+            nextBlueprints.checklist_pre_op = resolveElasticChecklistPreOpBlueprint(upgradedDoc);
+        }
+        upgradedDoc.pillar_blueprints = nextBlueprints;
     }
 
     return { doc: upgradedDoc, modified: true };
@@ -243,7 +213,7 @@ const FORBIDDEN_AXIS_META_REGEX =
     /\b(a[ñn]o|per[ií]odo|producci[oó]n|fabricaci[oó]n|lanzamiento|historia|origen|pa[ií]s|descripci[oó]n|resumen|ventaja|beneficio|eslogan|marketing|garant[ií]a|precio|costo|aplicaci[oó]n\s+general|comentario)\b/i;
 
 const VALID_SI_UNIT_DECLARATION_REGEX =
-    /\b(kg|t\b|g\b|ton|kw|w\b|mw|hp|cv|kva|va\b|v\b|kv|a\b|ah|kwh|hz|khz|mhz|m³|m3|cm³|cm3|cc|l\b|ml|mm|cm|m\b|km|m²|m2|l\/s|l\/min|l\/h|m³\/min|m3\/min|m³\/h|m3\/h|cfm|gpm|bar|mbar|pa\b|kpa|mpa|psi|kn|n·m|nm|t·m|kn·m|kgf|j\b|kj|bpm|rpm|km\/h|m\/s|db|dba|°c|°|%)\b/i;
+    /\b(kg|t\b|g\b|ton|kw|w\b|mw|hp|cv|kva|va\b|v\b|kv|a\b|ah|mah|wh|kwh|mwh|hz|khz|mhz|ghz|m³|m3|cm³|cm3|cc|l\b|ml|mm|cm|m\b|km|in\b|m²|m2|l\/s|l\/min|l\/h|m³\/min|m3\/min|m³\/h|m3\/h|t\/h|g\/t|kwh\/t|m\.c\.a\.|mca|cfm|gpm|bar|mbar|pa\b|kpa|mpa|psi|kn|n·m|nm|ft·lbf|t·m|kn·m|kgf|j\b|kj|bpm|rpm|km\/h|m\/s|lm\b|lux|cd\b|mpx|px|ppm|pts\/s|db|dba|dbm|ciclos|vuelos|min\b|h\b|°c|°|%)\b/i;
 
 const TYPE_STOPWORDS = new Set([
     'de',
@@ -1395,11 +1365,24 @@ function blueprintToDoc(bp: SeedTypeBlueprint): GlobalEquipmentTypeDoc {
         bp.spec_schema,
         `${bp.type_key} ${bp.canonical_type_es} ${bp.categoria_equipo}`
     );
+    const physicalTraits = AssetOntologyEngine.inferAssetPhysicalTraits({
+        type_key: bp.type_key,
+        canonical_type_es: bp.canonical_type_es,
+        categoria_equipo: bp.categoria_equipo,
+        archetype_id: bp.archetype_id,
+        spec_schema: enrichedSchema,
+    });
+    const costSchemaBlueprint = AssetOntologyEngine.buildDynamicCostMatrixTaxonomy(
+        physicalTraits,
+        bp.canonical_type_es
+    );
     return {
         type_key: bp.type_key,
         canonical_type_es: bp.canonical_type_es,
         categoria_equipo: bp.categoria_equipo,
         archetype_id: bp.archetype_id,
+        physical_traits: physicalTraits,
+        cost_schema_blueprint: costSchemaBlueprint,
         type_aliases: aliases,
         search_tokens: buildTypeSearchTokens(bp.canonical_type_es, bp.categoria_equipo, aliases),
         spec_schema: enrichedSchema,
@@ -1676,9 +1659,23 @@ async function persistTypeDocWithEmbedding(
         doc.spec_schema || [],
         `${doc.type_key} ${doc.canonical_type_es} ${doc.categoria_equipo}`
     );
+    const physicalTraits = AssetOntologyEngine.inferAssetPhysicalTraits({
+        type_key: doc.type_key,
+        canonical_type_es: doc.canonical_type_es,
+        categoria_equipo: doc.categoria_equipo,
+        archetype_id: doc.archetype_id,
+        spec_schema: enrichedSchema,
+        existing_traits: doc.physical_traits,
+    });
+    const costSchemaBlueprint = AssetOntologyEngine.buildDynamicCostMatrixTaxonomy(
+        physicalTraits,
+        doc.canonical_type_es
+    );
 
     const finalDoc: GlobalEquipmentTypeDoc = {
         ...doc,
+        physical_traits: physicalTraits,
+        cost_schema_blueprint: costSchemaBlueprint,
         spec_schema: enrichedSchema,
         schema_version: EQUIPMENT_TYPE_SCHEMA_VERSION,
         type_aliases: mergedAliases,
@@ -2229,314 +2226,40 @@ export async function listRegisteredEquipmentTypes(): Promise<GlobalEquipmentTyp
     );
 }
 
+
 /**
- * Resuelve la Ontología Elástica en 2 Anillos para el Itemizado de `ficha_tecnica` según el `TIPO` físico del activo:
- * - Anillo 1 (`core_chapters`): Los 4 a 6 capítulos basales invariantes del `TIPO` (garantizan homologación comparativa).
- * - Anillo 2 (`conditional_subsystems`): Catálogo evolutivo de subsistemas complejos (`activation_rule: 'EVIDENCE_PRESENT'`)
- *   que NUNCA contamina a equipos simples (ej. `FIAT Fiorino`) pero se activa y expande sin techo en equipos de alta
- *   complejidad (ej. `Ford F-350 Super Duty`, `CAT 797F`).
+ * Resolución Composicional Universal en 2 Anillos (`OPERMAQ v3.0` — `AssetOntologyEngine`):
+ * - Anillo 1 (`core_chapters`): Capítulos basales derivados ortogonalmente de los rasgos físicos del activo
+ *   (cero fallbacks de excavadora, cero diésel/AdBlue en equipos eléctricos/hidráulicos/batería).
+ * - Anillo 2 (`conditional_subsystems`): Catálogo evolutivo por evidencia (`activation_rule: 'EVIDENCE_PRESENT'`).
  */
-export function resolveElasticFichaTecnicaBlueprint(
+export function resolveElasticPillarBlueprint(
+    pillarId: PillarId,
     typeDoc: GlobalEquipmentTypeDoc
 ): EquipmentTypePillarBlueprint {
-    const existing = typeDoc.pillar_blueprints?.ficha_tecnica;
-    const typeText = `${typeDoc.type_key} ${typeDoc.canonical_type_es} ${typeDoc.categoria_equipo} ${typeDoc.archetype_id || ''}`
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '');
+    const compositional = AssetOntologyEngine.buildCompositionalPillarBlueprint(pillarId, typeDoc);
+    const existing = typeDoc.pillar_blueprints?.[pillarId];
 
-    const axesLabels = (typeDoc.spec_schema || [])
-        .map((a) => `${a.label_es}${a.unit_si ? ` [${a.unit_si}]` : ''}`)
-        .join(', ');
-
-    const isStationaryOrHandTool =
-        /\b(compresor|generador|grupo electrogeno|bomba|motobomba|perforadora manual|jackleg|stoper|martillo neumatico|soldadora|chancador|molino|harnero|criba|tablero|transformador|torre de iluminacion|herramienta)\b/i.test(
-            typeText
-        ) && !/\b(camion|camioneta|excavadora|cargador|motoniveladora|tractor|bulldozer|rodillo|jumbo|manipulador|grua)\b/i.test(typeText);
-
-    const isLightOrHeavyUtilityVehicle =
-        /\b(camioneta|pick\s*up|furgon|utilitario|suv|vehiculo liviano|camion liviano|van|chasis cabina)\b/i.test(
-            typeText
+    let mergedCore = compositional.core_chapters;
+    if (typeDoc.is_human_locked && Array.isArray(existing?.core_chapters) && existing.core_chapters.length >= 3) {
+        const byKey = new Map<string, EquipmentTypeCoreChapterItem>(
+            existing.core_chapters.map((c) => [c.chapter_key, c])
         );
-
-    const isHaulOrDumpTruck =
-        /\b(camion de extraccion|caex|camion minero|camion articulado|camion tolva|dumper|volquete)\b/i.test(
-            typeText
-        );
-
-    // ── ANILLO 1: NÚCLEO MÍNIMO INVARIANTE DEL TIPO (`core_chapters`) ────────
-    const consumptionCoreChapter = buildDedicatedConsumptionCoreChapter(typeDoc);
-    let defaultCore: EquipmentTypeCoreChapterItem[];
-
-    if (isStationaryOrHandTool) {
-        defaultCore = [
-            {
-                chapter_key: 'parametros_nominales_si',
-                title_es: `Parámetros Críticos y Capacidades Nominales SI (${typeDoc.canonical_type_es})`,
-                section_es: 'DESEMPEÑO NOMINAL Y EJES DIFERENCIADORES',
-                rationale_es: `Consolida las magnitudes físicas diferenciadoras del tipo ${typeDoc.canonical_type_es}: ${axesLabels || 'potencia, caudal, presión o frecuencia nominal'}.`,
-                priority: 'CRÍTICO',
-            },
-            consumptionCoreChapter,
-            {
-                chapter_key: 'unidad_proceso_o_trabajo',
-                title_es: 'Unidad Funcional de Trabajo, Etapas de Proceso y Presiones/Caudales',
-                section_es: 'SISTEMA DE TRABAJO',
-                rationale_es: 'Detalla el cabezal compresor, cámara de chancado, mecanismo de percusión, bomba o alternador y sus límites operativos.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'dimensiones_peso_y_conexiones',
-                title_es: 'Dimensiones Generales, Peso Seco/Operativo y Acometidas/Conexiones',
-                section_es: 'GEOMETRÍA E INSTALACIÓN',
-                rationale_es: 'Dimensiones envolventes, masa total, diámetros de acoples/bridas y requerimientos de anclaje o transporte.',
-                priority: 'IMPORTANTE',
-            },
-            {
-                chapter_key: 'fluidos_lubricacion_y_protecciones',
-                title_es: 'Capacidades de Lubricación, Refrigeración y Dispositivos de Protección',
-                section_es: 'SERVICIO Y CONTROL',
-                rationale_es: 'Volúmenes y viscosidades de lubricantes/refrigerantes, válvulas de alivio, nivel de presión sonora (dBA) e instrumentación.',
-                priority: 'IMPORTANTE',
-            },
-        ];
-    } else if (isLightOrHeavyUtilityVehicle) {
-        defaultCore = [
-            {
-                chapter_key: 'parametros_nominales_si',
-                title_es: `Parámetros Críticos y Capacidades Nominales SI (${typeDoc.canonical_type_es})`,
-                section_es: 'DESEMPEÑO Y CAPACIDADES NOMINALES',
-                rationale_es: `Consolida los ejes físicos diferenciadores del tipo ${typeDoc.canonical_type_es}: ${axesLabels || 'potencia, torque, tracción y carga útil'}.`,
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'motorizacion_y_alimentacion',
-                title_es: 'Motorización, Cilindrada, Sobrealimentación y Curvas de Par/Potencia',
-                section_es: 'PLANTA MOTRIZ',
-                rationale_es: 'Código de motor, ciclo, inyección, potencia neta en kW (HP) y par motor máximo en N·m con sus rangos de RPM.',
-                priority: 'CRÍTICO',
-            },
-            consumptionCoreChapter,
-            {
-                chapter_key: 'transmision_y_traccion',
-                title_es: 'Caja de Cambios, Relaciones de Marcha y Sistema de Tracción',
-                section_es: 'TREN MOTRIZ',
-                rationale_es: 'Tipo de transmisión, escalonamiento de marchas, relación final de diferencial y configuración de tracción (4x2 / 4x4 / AWD).',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'chasis_suspension_frenos_y_rodado',
-                title_es: 'Chasis, Suspensión Delantera/Trasera, Dirección, Frenos y Neumáticos',
-                section_es: 'CHASIS Y RODADO',
-                rationale_es: 'Arquitectura de bastidor, esquemas de suspensión, frenos de servicio/estacionamiento y medida/índice de carga de neumáticos.',
-                priority: 'IMPORTANTE',
-            },
-            {
-                chapter_key: 'dimensiones_pesos_y_volumen_carga',
-                title_es: 'Dimensiones Exteriores, Cotas Todo Terreno, Pesos (PBV/Tara) y Caja de Carga',
-                section_es: 'GEOMETRÍA Y PESOS',
-                rationale_es: 'Largo, ancho, alto, distancia entre ejes, despeje al suelo, ángulos de ataque/salida, Peso Bruto Vehicular (PBV) y capacidad útil.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'capacidades_fluidos_y_sistema_electrico',
-                title_es: 'Capacidades de Estanque, Fluidos de Servicio y Sistema Eléctrico Base',
-                section_es: 'CAPACIDADES Y ELECTRICIDAD',
-                rationale_es: 'Capacidad de combustible, aceite de motor, transmisión, refrigerante, líquido de frenos, voltaje de sistema, alternador y batería.',
-                priority: 'IMPORTANTE',
-            },
-        ];
-    } else {
-        defaultCore = [
-            {
-                chapter_key: 'parametros_nominales_si',
-                title_es: `Parámetros Críticos y Capacidades Nominales SI (${typeDoc.canonical_type_es})`,
-                section_es: 'DESEMPEÑO NOMINAL Y EJES DIFERENCIADORES',
-                rationale_es: `Consolida los ejes físicos diferenciadores del tipo ${typeDoc.canonical_type_es}: ${axesLabels || 'potencia neta, peso operativo y capacidad de trabajo'}.`,
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'planta_motriz_y_desempeno',
-                title_es: 'Motorización, Curvas de Potencia/Torque, Emisiones y Derateo por Altitud',
-                section_es: 'PLANTA MOTRIZ',
-                rationale_es: 'Modelo de motor, potencia bruta y neta ISO 9249 / SAE J1349 en kW (HP), reserva de par, cilindrada y altitud máxima sin derateo.',
-                priority: 'CRÍTICO',
-            },
-            consumptionCoreChapter,
-            {
-                chapter_key: 'tren_potencia_y_propulsion',
-                title_es: 'Transmisión, Convertidor/Propulsión, Ejes, Diferenciales y Mandos Finales',
-                section_es: 'TREN DE POTENCIA',
-                rationale_es: 'Arquitectura de transmisión o propulsión, velocidades de desplazamiento (avance/retroceso), fuerza de tracción y reducción final.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'sistema_hidraulico_e_implementos',
-                title_es: 'Sistema Hidráulico de Trabajo, Bombas, Caudales, Presiones de Alivio y Tiempos de Ciclo',
-                section_es: 'HIDRÁULICA E IMPLEMENTOS',
-                rationale_es: 'Tipo de bombas, caudal máximo en L/min, presión de alivio principal en bar/MPa (PSI) y fuerzas/tiempos de ciclo del equipo.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'dimensiones_envolvente_y_pesos',
-                title_es: 'Dimensiones Geométricas de Operación/Transporte y Distribución de Peso Operativo',
-                section_es: 'GEOMETRÍA Y MASAS',
-                rationale_es: 'Cotas oficiales de transporte y trabajo en mm/m, radios de giro, despeje mínimo y masa operativa distribuida por eje o sobre terreno.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'capacidades_servicio_cabina_y_electrico',
-                title_es: 'Capacidades de Llenado de Fluidos, Sistema Eléctrico y Cabina ROPS/FOPS',
-                section_es: 'SERVICIO, ELECTRICIDAD Y CABINA',
-                rationale_es: 'Volúmenes de rellenado en litros (L), arquitectura eléctrica 24V/12V, certificaciones estructurales ROPS/FOPS ISO y nivel sonoro.',
-                priority: 'IMPORTANTE',
-            },
-        ];
-    }
-
-    // ── ANILLO 2: CATÁLOGO CONDICIONAL DE SUBSISTEMAS AVANZADOS (`conditional_subsystems`) ──
-    const defaultConditionals: EquipmentTypeConditionalSubsystemItem[] = [];
-
-    if (isLightOrHeavyUtilityVehicle) {
-        defaultConditionals.push(
-            {
-                subsystem_key: 'caja_transferencia_4x4_drw_y_puentes_hd',
-                title_es: 'Caja de Transferencia 4x4 (Low/High), Eje Trasero Dually (DRW) y Relaciones de Puente Configurables',
-                section_es: 'TREN MOTRIZ HEAVY-DUTY',
-                rationale_es: 'Se activa en camionetas 4x4 o Heavy-Duty (ej. Ford F-350 DRW) con reductora, bloqueo electrónico de diferencial (ELD) o doble rodado trasero.',
-                trigger_keywords: ['4x4', 'transfer case', 'reductora', 'drw', 'dually', 'doble rodado', 'axle ratio', 'bloqueo de diferencial'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'toma_fuerza_pto_y_transmision_hd',
-                title_es: 'Toma de Fuerza en Vivo (Live-Drive PTO) y Enfriamiento Auxiliar de Transmisión',
-                section_es: 'TOMA DE FUERZA E HIDRÁULICA AUXILIAR',
-                rationale_es: 'Se activa en modelos Heavy-Duty o chasis cabina con provisión de Toma de Fuerza (PTO) en la transmisión para equipos hidráulicos externos.',
-                trigger_keywords: ['pto', 'power take-off', 'toma de fuerza', 'live-drive', 'torqshift'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'arrastre_quinta_rueda_gooseneck_y_tbc',
-                title_es: 'Capacidades de Arrastre Convencional, Quinta Rueda / Gooseneck (GCWR) y Control de Freno de Remolque (TBC)',
-                section_es: 'INGENIERÍA DE REMOLQUE Y CARGA SEVERA',
-                rationale_es: 'Se activa cuando el vehículo declara Peso Bruto Combinado (GCWR), arrastre en Quinta Rueda/Gooseneck o controlador de freno de remolque integrado.',
-                trigger_keywords: ['gcwr', '5th wheel', 'quinta rueda', 'gooseneck', 'tbc', 'trailer brake', 'capacidad de remolque'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'postratamiento_def_dpf_y_electrico_upfitter',
-                title_es: 'Postratamiento Diésel (DEF/AdBlue, SCR, DPF) y Sistema Eléctrico Dual / Upfitter Switches',
-                section_es: 'EMISIONES Y EQUIPAMIENTO INDUSTRIAL',
-                rationale_es: 'Se activa en motorizaciones turbodiésel modernas con sistema SCR/DPF o doble alternador/batería auxiliar para carrozado minero.',
-                trigger_keywords: ['adblue', 'def', 'scr', 'dpf', 'dual alternator', 'doble alternador', 'upfitter', 'bateria auxiliar'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'geometria_chasis_carrozado_cab_to_axle',
-                title_es: 'Geometría de Bastidor para Carrozado (Cab-to-Axle, GAWR Delantero/Trasero y Módulo de Sección)',
-                section_es: 'INGENIERÍA DE CHASIS Y CARROZADO',
-                rationale_es: 'Se activa en versiones Chasis Cabina o Heavy-Duty con cotas Cab-to-Axle (CA), cargas máximas por eje (GAWR) y resistencia del larguero.',
-                trigger_keywords: ['cab-to-axle', 'gawr', 'chasis cabina', 'chassis cab', 'section modulus', 'bastidor'],
-                activation_rule: 'EVIDENCE_PRESENT',
+        for (const compChapter of compositional.core_chapters) {
+            if (
+                compChapter.chapter_key === 'matriz_energetica_consumos_y_autonomia' ||
+                compChapter.chapter_key === 'valorizacion_capex_vida_economica_y_depreciacion' ||
+                compChapter.chapter_key === 'etapa_5_recambio_elementos_desgaste_get_y_rodado' ||
+                !byKey.has(compChapter.chapter_key)
+            ) {
+                byKey.set(compChapter.chapter_key, compChapter);
             }
-        );
-    } else if (isHaulOrDumpTruck) {
-        defaultConditionals.push(
-            {
-                subsystem_key: 'propulsion_ac_igbt_o_lockup_hd',
-                title_es: 'Sistema de Propulsión Eléctrica AC/IGBT o Convertidor de Par con Embrague de Traba (Lock-Up Clutch)',
-                section_es: 'PROPULSIÓN MINERA DE ALTA CAPACIDAD',
-                rationale_es: 'Se activa en CAEX Ultra-Class (ej. CAT 797F mecánico Lock-Up o Komatsu 980E AC/IGBT con alternador principal y motores de tracción en rueda).',
-                trigger_keywords: ['lock-up', 'embrague de traba', 'igbt', 'inversor ac', 'wheel motor', 'motor de traccion', 'parrilla de retardo'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'frenos_humedos_enfriados_aceite_y_retardo_arc',
-                title_es: 'Frenos de Discos Múltiples Húmedos Enfriados por Aceite Forzado y Control Automático de Retardo (ARC / Dinámico)',
-                section_es: 'FRENADO Y RETARDO EN PENDIENTE',
-                rationale_es: 'Detalla la superficie de fricción, enfriamiento de frenos en las 4 esquinas, potencia de retardo continuo y curvas ARC/retardo dinámico.',
-                trigger_keywords: ['arc', 'automatic retarder', 'frenos enfriados por aceite', 'oil-cooled brakes', 'retardo dinamico', 'grid resistor'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'enfriamiento_independiente_ejes_rax_y_autolube',
-                title_es: 'Sistema de Enfriamiento Forzado de Ejes/Mandos Finales (RAX) y Lubricación Automática Centralizada (Autolube)',
-                section_es: 'GESTIÓN TÉRMICA DE EJES Y LUBRICACIÓN',
-                rationale_es: 'Se activa en CAEX de gran tonelaje con circuito de filtración/enfriamiento continuo de eje trasero (RAX) y sistema Autolube.',
-                trigger_keywords: ['rax', 'rear axle cooling', 'enfriamiento de eje', 'autolube', 'lubricacion automatica'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'monitoreo_carga_util_tpms_y_telemetria_vims',
-                title_es: 'Sistema de Pesaje de Carga Útil a Bordo (TPMS / Política 10/10/20) y Telemetría de Salud Estructural (VIMS / PLM)',
-                section_es: 'TELEMETRÍA Y GESTIÓN DE CARGA ÚTIL',
-                rationale_es: 'Especifica el sistema de pesaje en suspensión, luces externas de carguío, política de sobrecarga 10/10/20 y arquitectura VIMS/MineStar.',
-                trigger_keywords: ['tpms', '10/10/20', 'vims', 'payload', 'minestar', 'komtrax plus', 'plm'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'tolva_minera_msd_y_envolvente_ruta_bermas',
-                title_es: 'Configuraciones de Tolva Minera (Struck/Heaped SAE 2:1, Revestimientos) y Envolvente de Ruta/Bermas y Neumáticos Gigantes',
-                section_es: 'TOLVA, RUTA MINERA Y NEUMÁTICOS',
-                rationale_es: 'Cubre variantes de tolva (MSD II, X Body, Carbón), ángulo y altura libre de volteo, neumáticos radiales gigantes (ej. 59/80R63) y ancho de pista.',
-                trigger_keywords: ['heaped', 'struck', 'sae 2:1', 'msd', 'x body', '59/80r63', 'altura de descarga', 'turning circle'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            }
-        );
-    } else {
-        defaultConditionals.push(
-            {
-                subsystem_key: 'sistema_frenos_direccion_secundaria_y_ejes',
-                title_es: 'Sistema de Frenos de Servicio/Secundario (ISO 3450), Dirección Articulada/Auxiliar y Oscilación de Ejes/Tándem',
-                section_es: 'DIRECCIÓN, FRENADO Y TREN DE RODAJE',
-                rationale_es: 'Se activa en maquinaria móvil con dirección articulada, tándem oscilante, tracción total hidrostática (AWD) o frenos húmedos ISO 3450.',
-                trigger_keywords: ['iso 3450', 'tandem', 'articulacion', 'awd', 'direccion secundaria', 'orugas', 'tren de rodaje'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'herramienta_corte_balde_vertedera_y_ripper',
-                title_es: 'Geometría de Herramienta de Ataque (Vertedera / Círculo / Balde / Pluma / Ripper Trasero) y Fuerzas de Arranque',
-                section_es: 'HERRAMIENTA DE TRABAJO Y CINEMÁTICA',
-                rationale_es: 'Se activa en equipos con hoja vertedera, círculo de giro, balde, aguilón/brazo o escarificador/ripper trasero.',
-                trigger_keywords: ['vertedera', 'moldboard', 'blade pull', 'ripper', 'escarificador', 'breakout force', 'fuerza de arranque', 'pluma'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'control_automatico_grade_telemetria_y_automatizacion',
-                title_es: 'Sistemas de Control Asistido 2D/3D (Grade Control), Telemetría Embarcada y Operación Tele-Remota',
-                section_es: 'AUTOMATIZACIÓN Y TELEMETRÍA',
-                rationale_es: 'Se activa cuando el modelo incorpora nivelación automática Cross-Slope/3D GNSS, control electrohidráulico joystick o telemetría OEM.',
-                trigger_keywords: ['cross slope', 'accugrade', 'cat grade', 'topcon', 'trimble', 'product link', 'komtrax', 'teleremoto'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            }
-        );
-    }
-
-    let mergedCore: EquipmentTypeCoreChapterItem[];
-    if (existing?.core_chapters && existing.core_chapters.length >= 4) {
-        const existingConsumptionIdx = existing.core_chapters.findIndex(
-            (c) =>
-                c.chapter_key === 'matriz_energetica_consumos_y_autonomia' ||
-                /\b(consumos?\s+de\s+combustible|consumos?\s+de\s+energ[ií]a|rendimiento\s+de\s+combustible|matriz\s+energ[eé]tica)\b/i.test(
-                    `${c.title_es} ${c.section_es}`
-                )
-        );
-        if (existingConsumptionIdx !== -1) {
-            mergedCore = existing.core_chapters.map((c, idx) =>
-                idx === existingConsumptionIdx ? consumptionCoreChapter : c
-            );
-        } else {
-            const copy = [...existing.core_chapters];
-            const insertIdx = Math.min(2, copy.length);
-            copy.splice(insertIdx, 0, consumptionCoreChapter);
-            mergedCore = copy;
         }
-    } else {
-        mergedCore = defaultCore;
+        mergedCore = Array.from(byKey.values());
     }
 
     const condByKey = new Map<string, EquipmentTypeConditionalSubsystemItem>();
-    for (const c of defaultConditionals) {
+    for (const c of compositional.conditional_subsystems) {
         condByKey.set(c.subsystem_key, c);
     }
     for (const c of existing?.conditional_subsystems || []) {
@@ -2552,22 +2275,19 @@ export function resolveElasticFichaTecnicaBlueprint(
     };
 }
 
-/**
- * Aprendizaje Ascendente Sin Techo (`Upward Subsystem Evolution`):
- * Cuando un modelo complejo (ej. `Ford F-350 Super Duty` o `CAT 797F`) descubre subsistemas inéditos
- * durante su itemizado de `ficha_tecnica`, los incorpora al Anillo 2 (`conditional_subsystems`) de
- * `global_equipment_types/{typeKey}` con `activation_rule: 'EVIDENCE_PRESENT'` sin alterar el Anillo 1 (`core_chapters`).
- */
-export async function evolveEquipmentTypeFichaTecnicaBlueprint(params: {
-    typeKey: string;
-    modelOficial: string;
-    discoveredSubsystems: Array<{
-        title_es: string;
-        section_es: string;
-        rationale_es: string;
-        trigger_keywords?: string[];
-    }>;
-}): Promise<void> {
+export async function evolveEquipmentTypePillarBlueprint(
+    pillarId: PillarId,
+    params: {
+        typeKey: string;
+        modelOficial: string;
+        discoveredSubsystems: Array<{
+            title_es: string;
+            section_es: string;
+            rationale_es: string;
+            trigger_keywords?: string[];
+        }>;
+    }
+): Promise<void> {
     const cleanKey = normalizeEquipmentTypeKey(params.typeKey);
     if (!cleanKey || !Array.isArray(params.discoveredSubsystems) || params.discoveredSubsystems.length === 0) {
         return;
@@ -2579,7 +2299,7 @@ export async function evolveEquipmentTypeFichaTecnicaBlueprint(params: {
         if (!snap.exists) return;
 
         const typeDoc = snap.data() as GlobalEquipmentTypeDoc;
-        const currentBlueprint = resolveElasticFichaTecnicaBlueprint(typeDoc);
+        const currentBlueprint = resolveElasticPillarBlueprint(pillarId, typeDoc);
         const existingSubsystems = [...currentBlueprint.conditional_subsystems];
         const nowIso = new Date().toISOString();
 
@@ -2589,15 +2309,10 @@ export async function evolveEquipmentTypeFichaTecnicaBlueprint(params: {
             if (!subSlug || subSlug.length < 4) continue;
 
             const alreadyExists =
-                currentBlueprint.core_chapters.some(
-                    (c) => normalizeEquipmentTypeKey(c.title_es) === subSlug
-                ) ||
+                currentBlueprint.core_chapters.some((c) => normalizeEquipmentTypeKey(c.title_es) === subSlug) ||
                 existingSubsystems.some(
-                    (s) =>
-                        s.subsystem_key === subSlug ||
-                        normalizeEquipmentTypeKey(s.title_es) === subSlug
+                    (s) => s.subsystem_key === subSlug || normalizeEquipmentTypeKey(s.title_es) === subSlug
                 );
-
             if (alreadyExists) continue;
 
             const autoKeywords = Array.from(
@@ -2635,7 +2350,7 @@ export async function evolveEquipmentTypeFichaTecnicaBlueprint(params: {
                 {
                     pillar_blueprints: {
                         ...(typeDoc.pillar_blueprints || {}),
-                        ficha_tecnica: updatedBlueprint,
+                        [pillarId]: updatedBlueprint,
                     },
                     updated_at: nowIso,
                 },
@@ -2648,286 +2363,50 @@ export async function evolveEquipmentTypeFichaTecnicaBlueprint(params: {
                     ...cached.doc,
                     pillar_blueprints: {
                         ...(cached.doc.pillar_blueprints || {}),
-                        ficha_tecnica: updatedBlueprint,
+                        [pillarId]: updatedBlueprint,
                     },
                     updated_at: nowIso,
                 };
             }
         }
     } catch (err: any) {
-        console.warn('[EquipmentTypeRegistry] No se pudo evolucionar conditional_subsystems:', err?.message);
+        console.warn(`[EquipmentTypeRegistry] No se pudo evolucionar ${pillarId}:`, err?.message);
     }
 }
 
-/**
- * Resuelve la Ontología Elástica en 2 Anillos + 5 Fases Cronológicas para el Itemizado de `manual_operaciones`:
- * - Anillo 1 (`core_chapters`): Las 5 Fases Cronológicas invariantes adaptadas a la naturaleza física del TIPO
- *   (Maquinaria móvil con cabina vs Vehículo liviano/pesado vs Herramienta manual / Equipo estacionario).
- * - Anillo 2 (`conditional_subsystems`): Modos operativos especializados (`activation_rule: 'EVIDENCE_PRESENT'`)
- *   que solo se activan cuando el modelo o su Pilar 01 (`Ficha Técnica OEM`) confirma el subsistema físico.
- */
-export function resolveElasticManualOperacionesBlueprint(
-    typeDoc: GlobalEquipmentTypeDoc
-): EquipmentTypePillarBlueprint {
-    const existing = typeDoc.pillar_blueprints?.manual_operaciones;
-    const typeText = `${typeDoc.type_key} ${typeDoc.canonical_type_es} ${typeDoc.categoria_equipo} ${typeDoc.archetype_id || ''}`
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '');
-
-    const isStationaryOrHandTool =
-        /\b(compresor|generador|grupo electrogeno|bomba|motobomba|perforadora manual|jackleg|stoper|martillo neumatico|soldadora|chancador|molino|harnero|criba|tablero|transformador|torre de iluminacion|herramienta)\b/i.test(
-            typeText
-        ) && !/\b(camion|camioneta|excavadora|cargador|motoniveladora|tractor|bulldozer|rodillo|jumbo|manipulador|grua)\b/i.test(typeText);
-
-    const isLightOrHeavyUtilityVehicle =
-        /\b(camioneta|pick\s*up|furgon|utilitario|suv|vehiculo liviano|camion liviano|van|chasis cabina)\b/i.test(
-            typeText
-        );
-
-    const isHaulOrDumpTruck =
-        /\b(camion de extraccion|caex|camion minero|camion articulado|camion tolva|dumper|volquete)\b/i.test(
-            typeText
-        );
-
-    let defaultCore: EquipmentTypeCoreChapterItem[];
-
-    if (isStationaryOrHandTool) {
-        defaultCore = [
-            {
-                chapter_key: 'fase_1_mandos_empunadura_e_indicadores',
-                title_es: 'Reconocimiento de Mandos, Empuñadura / Panel de Control, Válvulas e Indicadores',
-                section_es: 'FASE I — ARQUITECTURA DE MANDOS E INDICADORES',
-                rationale_es: 'Identifica controles físicos, selectores, manómetros/indicadores y paradas de emergencia reales del equipo sin inventar cabina.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'fase_2_conexion_energizacion_y_arranque',
-                title_es: 'Conexión a Suministro / Red, Purga Previa, Puesta en Marcha y Pruebas Funcionales en Vacío',
-                section_es: 'FASE II — PUESTA EN MARCHA Y VERIFICACIÓN',
-                rationale_es: 'Secuencia de acoplamiento neumático/eléctrico o encendido, verificación de lubricación/aislamiento y chequeo inicial sin carga.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'fase_3_tecnica_operativa_y_ciclo_trabajo',
-                title_es: `Técnica Correcta de Operación, Regulación de Carga/Caudal y Ciclo de Trabajo (${typeDoc.canonical_type_es})`,
-                section_es: 'FASE III — OPERACIÓN PRODUCTIVA',
-                rationale_es: 'Procedimiento paso a paso para ejecutar el trabajo nominal del activo con postura ergonómica y control de reacción/proceso.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'fase_4_limites_operativos_y_condiciones_adversas',
-                title_es: 'Límites de Ciclo de Trabajo Continuo, Presiones/Temperaturas Máximas y Control de Polvo/Ruido/Vibración',
-                section_es: 'FASE IV — LÍMITES OPERATIVOS Y ENTORNO',
-                rationale_es: 'Parámetros umbrales que no deben excederse, operación en ambientes confinados/húmedos y mitigación de exposición ocupacional.',
-                priority: 'IMPORTANTE',
-            },
-            {
-                chapter_key: 'fase_5_parada_despresurizacion_y_loto',
-                title_es: 'Parada Normal, Despresurización / Purga de Energías Residuales, Emergencia y Bloqueo LOTO',
-                section_es: 'FASE V — PARADA, EMERGENCIA Y BLOQUEO LOTO',
-                rationale_es: 'Secuencia de detención controlada, alivio de presión residual, desconexión física y aplicación de candado personal LOTO.',
-                priority: 'CRÍTICO',
-            },
-        ];
-    } else if (isLightOrHeavyUtilityVehicle) {
-        defaultCore = [
-            {
-                chapter_key: 'fase_1_puesto_conduccion_mandos_y_testigos',
-                title_es: 'Puesto de Conducción, Cuadro de Instrumentos, Selectores y Testigos Luminosos de Cabina',
-                section_es: 'FASE I — ARQUITECTURA DE MANDOS E INDICADORES',
-                rationale_es: 'Reconocimiento de controles del volante/consola, indicadores de tablero y código de acción ante testigos rojos y ámbar.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'fase_2_arranque_precalentamiento_y_chequeo_dinamico',
-                title_es: 'Secuencia de Arranque, Precalentamiento, Prueba Dinámica de Frenos/Dirección y Salida Segura',
-                section_es: 'FASE II — PUESTA EN MARCHA Y VERIFICACIÓN',
-                rationale_es: 'Ajuste ergonómico, uso de cinturón de seguridad, precalentamiento de motor, código de bocina y verificación de frenos antes de iniciar marcha.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'fase_3_conduccion_estiba_y_operacion_ruta_faena',
-                title_es: 'Técnicas de Conducción Defensiva en Ruta/Faena, Estiba de Carga Útil y Gestión de Transmisión',
-                section_es: 'FASE III — OPERACIÓN PRODUCTIVA',
-                rationale_es: 'Selección de marchas, distribución y amarre de carga dentro del PBV nominal, freno motor en pendientes y distancias de seguimiento.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'fase_4_limites_pendientes_vadeo_y_altitud',
-                title_es: 'Límites Operativos en Pendientes, Vadeo, Gran Altitud y Condiciones Climáticas Adversas',
-                section_es: 'FASE IV — LÍMITES OPERATIVOS Y ENTORNO',
-                rationale_es: 'Ángulos máximos, profundidad máxima de vadeo, compensación en altitud/baja adherencia y prohibiciones operativas OEM.',
-                priority: 'IMPORTANTE',
-            },
-            {
-                chapter_key: 'fase_5_detencion_estacionamiento_acunamiento_y_emergencia',
-                title_es: 'Detención de Motor (Enfriamiento Turbo), Estacionamiento en Rampa/Acuñamiento, Remolque y Cortacorriente LOTO',
-                section_es: 'FASE V — PARADA, EMERGENCIA Y BLOQUEO LOTO',
-                rationale_es: 'Ralentí de enfriamiento del turbocompresor, freno de estacionamiento + cuñas, puntos de rescate/remolque y aislamiento eléctrico.',
-                priority: 'CRÍTICO',
-            },
-        ];
-    } else {
-        defaultCore = [
-            {
-                chapter_key: 'fase_1_cabina_mandos_joysticks_y_monitores',
-                title_es: 'Cabina ROPS/FOPS, Mandos Joysticks/Pedales, Monitores y Categorías de Advertencia OEM',
-                section_es: 'FASE I — ARQUITECTURA DE MANDOS E INDICADORES',
-                rationale_es: 'Disposición física de controles de operación, interruptores de cabina, pantalla de monitoreo y niveles de alarma OEM.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'fase_2_arranque_calentamiento_hidraulico_y_pruebas',
-                title_es: 'Arranque de Motor, Ciclo de Calentamiento Hidráulico/Transmisión y Pruebas de Freno y Dirección',
-                section_es: 'FASE II — PUESTA EN MARCHA Y VERIFICACIÓN',
-                rationale_es: 'Subida con 3 puntos de apoyo, secuencia de arranque, desacoplamiento de bloqueo hidráulico y pruebas funcionales antes de operar.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'fase_3_ciclo_operativo_productivo_y_traslado',
-                title_es: `Técnicas de Operación Productiva y Traslado Seguro en Faena (${typeDoc.canonical_type_es})`,
-                section_es: 'FASE III — OPERACIÓN PRODUCTIVA',
-                rationale_es: 'Maniobras paso a paso del ciclo productivo (ataque, llenado, levante, acarreo, descarga o nivelación) y coordinación con otros equipos.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'fase_4_limites_estabilidad_pendientes_y_sobrecarga',
-                title_es: 'Límites de Estabilidad, Operación en Rampas/Taludes, Altitud y Prohibiciones Operativas OEM',
-                section_es: 'FASE IV — LÍMITES OPERATIVOS Y ENTORNO',
-                rationale_es: 'Pendientes longitudinales/transversales máximas, altura de implemento en traslado, prevención de vuelco y límites térmicos/presión.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'fase_5_parada_enfriamiento_parqueo_remolque_y_loto',
-                title_es: 'Parada Gradual, Bajada de Implementos, Estacionamiento, Remolque de Emergencia y Bloqueo LOTO',
-                section_es: 'FASE V — PARADA, EMERGENCIA Y BLOQUEO LOTO',
-                rationale_es: 'Apoyo de implementos en suelo, alivio de presión hidráulica residual, enfriamiento de motor, liberación para remolque y energía cero LOTO.',
-                priority: 'CRÍTICO',
-            },
-        ];
-    }
-
-    const defaultConditionals: EquipmentTypeConditionalSubsystemItem[] = [];
-
-    if (isLightOrHeavyUtilityVehicle) {
-        defaultConditionals.push(
-            {
-                subsystem_key: 'op_traccion_4x4_reductora_4l_y_eld',
-                title_es: 'Operación de Caja de Transferencia 4x4 (2H / 4H / 4L) y Bloqueo Electrónico de Diferencial (ELD)',
-                section_es: 'FASE III — OPERACIÓN PRODUCTIVA',
-                rationale_es: 'Procedimiento de acople/desacople de tracción 4WD alta y reductora 4L, velocidades máximas permitidas y uso del bloqueo de diferencial.',
-                trigger_keywords: ['4x4', '4wd', '4h', '4l', 'reductora', 'transfer case', 'bloqueo de diferencial', 'eld'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'op_remolque_pesado_tow_haul_tbc_y_freno_escape',
-                title_es: 'Operación en Modo Remolque Pesado (Tow/Haul), Quinta Rueda/Gooseneck, Controlador TBC y Freno de Escape Diésel',
-                section_es: 'FASE III — OPERACIÓN PRODUCTIVA',
-                rationale_es: 'Activación del modo Tow/Haul, calibración de ganancia del controlador de freno de remolque (TBC), freno de escape y límites GCWR.',
-                trigger_keywords: ['tow/haul', 'tbc', 'trailer brake', 'quinta rueda', 'gooseneck', 'freno de escape', 'exhaust brake', 'gcwr'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'op_toma_fuerza_pto_estacionaria_y_movil',
-                title_es: 'Procedimiento de Acoplamiento y Operación de Toma de Fuerza (Live-Drive PTO) y Control de RPM Auxiliar (SEIC)',
-                section_es: 'FASE IV — LÍMITES OPERATIVOS Y ENTORNO',
-                rationale_es: 'Condiciones de enclavamiento para activar la Toma de Fuerza (PTO) en estacionario o movimiento y control electrónico de ralentí elevado.',
-                trigger_keywords: ['pto', 'power take-off', 'toma de fuerza', 'live-drive', 'seic', 'upfitter'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'op_regeneracion_dpf_y_gestion_def_scr',
-                title_es: 'Gestión Operativa de Regeneración del Filtro de Partículas (DPF) y Sistema DEF / AdBlue SCR',
-                section_es: 'FASE IV — LÍMITES OPERATIVOS Y ENTORNO',
-                rationale_es: 'Cuándo y cómo ejecutar regeneración activa o estacionaria por comando del operador (OCR), zonas seguras y alertas de derateo SCR.',
-                trigger_keywords: ['dpf', 'regeneracion', 'def', 'adblue', 'scr', 'filtro de particulas'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            }
-        );
-    } else if (isHaulOrDumpTruck) {
-        defaultConditionals.push(
-            {
-                subsystem_key: 'op_retardo_dinamico_arc_y_descenso_cargado',
-                title_es: 'Operación del Control Automático de Retardo (ARC) / Retardo Dinámico y Tablas de Velocidad/Marcha en Descenso',
-                section_es: 'FASE III — OPERACIÓN PRODUCTIVA',
-                rationale_es: 'Ajuste y monitoreo del retardo automático/manual en rampas mineras, selección de marcha antes de la cresta y protección contra sobrevelocidad.',
-                trigger_keywords: ['arc', 'automatic retarder', 'retardo dinamico', 'parrilla de retardo', 'frenos enfriados por aceite'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'op_freno_carga_posicionamiento_pala_y_descarga_botadero',
-                title_es: 'Procedimiento de Aculatamiento en Pala (Freno de Carga), Política 10/10/20 (TPMS) y Descarga Segura en Botadero/Chancador',
-                section_es: 'FASE III — OPERACIÓN PRODUCTIVA',
-                rationale_es: 'Ingreso a zona de carguío, uso del freno de carga, interpretación de semáforo TPMS y secuencia de levante/bajada de tolva en berma.',
-                trigger_keywords: ['tpms', '10/10/20', 'freno de carga', 'load brake', 'tolva', 'botadero', 'chancador'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'op_gestion_alarmas_vims_y_monitoreo_tkph_rax',
-                title_es: 'Protocolo de Actuación ante Categorías de Advertencia VIMS/PLM (Nivel 1, 2, 2-S y 3), Enfriamiento RAX y Límites TKPH',
-                section_es: 'FASE IV — LÍMITES OPERATIVOS Y ENTORNO',
-                rationale_es: 'Respuesta inmediata del operador según nivel de advertencia VIMS, gestión térmica de ejes RAX/convertidor y límites TKPH de neumáticos gigantes.',
-                trigger_keywords: ['vims', 'plm', 'rax', 'tkph', 'rear axle cooling', 'categoria de advertencia'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'op_direccion_secundaria_freno_emergencia_y_remolque_caex',
-                title_es: 'Actuación ante Pérdida de Potencia, Uso de Freno Secundario / Dirección Auxiliar y Procedimiento de Remolque CAEX',
-                section_es: 'FASE V — PARADA, EMERGENCIA Y BLOQUEO LOTO',
-                rationale_es: 'Accionamiento del pedal de freno secundario con acumuladores, dirección de emergencia, barra rígida de remolque y presurización externa.',
-                trigger_keywords: ['freno secundario', 'direccion secundaria', 'acumulador', 'remolque', 'towing'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            }
-        );
-    } else {
-        defaultConditionals.push(
-            {
-                subsystem_key: 'op_acople_rapido_hidraulica_auxiliar_high_flow',
-                title_es: 'Procedimiento de Cambio de Aditamento con Acoplador Rápido (Quick Coupler) y Circuito Hidráulico Auxiliar High-Flow',
-                section_es: 'FASE III — OPERACIÓN PRODUCTIVA',
-                rationale_es: 'Secuencia de desbloqueo/bloqueo de pasadores, prueba de presión contra el piso, alivio de presión auxiliar y activación de caudal continuo.',
-                trigger_keywords: ['acoplador rapido', 'quick coupler', 'high-flow', 'hidraulica auxiliar', 'aditamento', 'martillo'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'op_articulacion_bastidor_awd_y_control_grade_3d',
-                title_es: 'Operación de Articulación de Bastidor / Dirección en Cangrejo, Tracción AWD y Control Asistido 2D/3D (Grade Control)',
-                section_es: 'FASE III — OPERACIÓN PRODUCTIVA',
-                rationale_es: 'Uso coordinado de articulación de bastidor, ángulo de vertedera/círculo, modo Creep/AWD y automatización de pendiente transversal.',
-                trigger_keywords: ['articulacion', 'awd', 'cross slope', 'grade control', 'accugrade', 'vertedera', 'ripper'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            }
-        );
-    }
-
-    const mergedCore =
-        existing?.core_chapters && existing.core_chapters.length >= 4
-            ? existing.core_chapters
-            : defaultCore;
-
-    const condByKey = new Map<string, EquipmentTypeConditionalSubsystemItem>();
-    for (const c of defaultConditionals) {
-        condByKey.set(c.subsystem_key, c);
-    }
-    for (const c of existing?.conditional_subsystems || []) {
-        if (c?.subsystem_key && c?.title_es) {
-            condByKey.set(c.subsystem_key, c);
-        }
-    }
-
-    return {
-        core_chapters: mergedCore,
-        conditional_subsystems: Array.from(condByKey.values()),
-        updated_at: existing?.updated_at || new Date().toISOString(),
-    };
+export function resolveElasticFichaTecnicaBlueprint(typeDoc: GlobalEquipmentTypeDoc): EquipmentTypePillarBlueprint {
+    return resolveElasticPillarBlueprint('ficha_tecnica', typeDoc);
 }
 
-/**
- * Aprendizaje Ascendente Sin Techo para `manual_operaciones`:
- * Incorpora modos operativos especializados descubiertos en modelos complejos al Anillo 2 (`conditional_subsystems`)
- * sin alterar las 5 fases basales del Anillo 1 (`core_chapters`).
- */
+export function resolveElasticManualOperacionesBlueprint(typeDoc: GlobalEquipmentTypeDoc): EquipmentTypePillarBlueprint {
+    return resolveElasticPillarBlueprint('manual_operaciones', typeDoc);
+}
+
+export function resolveElasticPautaMantencionBlueprint(typeDoc: GlobalEquipmentTypeDoc): EquipmentTypePillarBlueprint {
+    return resolveElasticPillarBlueprint('pauta_mantencion', typeDoc);
+}
+
+export function resolveElasticMatrizRiesgosBlueprint(typeDoc: GlobalEquipmentTypeDoc): EquipmentTypePillarBlueprint {
+    return resolveElasticPillarBlueprint('matriz_riesgos', typeDoc);
+}
+
+export function resolveElasticChecklistPreOpBlueprint(typeDoc: GlobalEquipmentTypeDoc): EquipmentTypePillarBlueprint {
+    return resolveElasticPillarBlueprint('checklist_pre_op', typeDoc);
+}
+
+export async function evolveEquipmentTypeFichaTecnicaBlueprint(params: {
+    typeKey: string;
+    modelOficial: string;
+    discoveredSubsystems: Array<{
+        title_es: string;
+        section_es: string;
+        rationale_es: string;
+        trigger_keywords?: string[];
+    }>;
+}): Promise<void> {
+    return evolveEquipmentTypePillarBlueprint('ficha_tecnica', params);
+}
+
 export async function evolveEquipmentTypeManualOperacionesBlueprint(params: {
     typeKey: string;
     modelOficial: string;
@@ -2938,360 +2417,9 @@ export async function evolveEquipmentTypeManualOperacionesBlueprint(params: {
         trigger_keywords?: string[];
     }>;
 }): Promise<void> {
-    const cleanKey = normalizeEquipmentTypeKey(params.typeKey);
-    if (!cleanKey || !Array.isArray(params.discoveredSubsystems) || params.discoveredSubsystems.length === 0) {
-        return;
-    }
-
-    try {
-        const docRef = db.collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION).doc(cleanKey);
-        const snap = await docRef.get();
-        if (!snap.exists) return;
-
-        const typeDoc = snap.data() as GlobalEquipmentTypeDoc;
-        const currentBlueprint = resolveElasticManualOperacionesBlueprint(typeDoc);
-        const existingSubsystems = [...currentBlueprint.conditional_subsystems];
-        const nowIso = new Date().toISOString();
-
-        let addedCount = 0;
-        for (const sub of params.discoveredSubsystems) {
-            const subSlug = normalizeEquipmentTypeKey(sub.title_es).slice(0, 64);
-            if (!subSlug || subSlug.length < 4) continue;
-
-            const alreadyExists =
-                currentBlueprint.core_chapters.some(
-                    (c) => normalizeEquipmentTypeKey(c.title_es) === subSlug
-                ) ||
-                existingSubsystems.some(
-                    (s) =>
-                        s.subsystem_key === subSlug ||
-                        normalizeEquipmentTypeKey(s.title_es) === subSlug
-                );
-
-            if (alreadyExists) continue;
-
-            const autoKeywords = Array.from(
-                new Set(
-                    [
-                        ...(sub.trigger_keywords || []),
-                        ...normalizeEquipmentTypeAlias(sub.title_es)
-                            .split(' ')
-                            .filter((w) => w.length >= 4 && !TYPE_STOPWORDS.has(w)),
-                    ].slice(0, 8)
-                )
-            );
-
-            existingSubsystems.push({
-                subsystem_key: subSlug,
-                title_es: sub.title_es.trim(),
-                section_es: (sub.section_es || 'FASE IV — LÍMITES OPERATIVOS Y ENTORNO').trim().toUpperCase(),
-                rationale_es: sub.rationale_es.trim(),
-                trigger_keywords: autoKeywords,
-                activation_rule: 'EVIDENCE_PRESENT',
-                discovered_from_model: params.modelOficial,
-                discovered_at: nowIso,
-            });
-            addedCount++;
-        }
-
-        if (addedCount > 0) {
-            const updatedBlueprint: EquipmentTypePillarBlueprint = {
-                core_chapters: currentBlueprint.core_chapters,
-                conditional_subsystems: existingSubsystems.slice(0, 30),
-                updated_at: nowIso,
-            };
-
-            await docRef.set(
-                {
-                    pillar_blueprints: {
-                        ...(typeDoc.pillar_blueprints || {}),
-                        manual_operaciones: updatedBlueprint,
-                    },
-                    updated_at: nowIso,
-                },
-                { merge: true }
-            );
-
-            const cached = memoryByTypeKey.get(cleanKey);
-            if (cached) {
-                cached.doc = {
-                    ...cached.doc,
-                    pillar_blueprints: {
-                        ...(cached.doc.pillar_blueprints || {}),
-                        manual_operaciones: updatedBlueprint,
-                    },
-                    updated_at: nowIso,
-                };
-            }
-        }
-    } catch (err: any) {
-        console.warn('[EquipmentTypeRegistry] No se pudo evolucionar manual_operaciones:', err?.message);
-    }
+    return evolveEquipmentTypePillarBlueprint('manual_operaciones', params);
 }
 
-/**
- * Resuelve la Ontología Elástica en 2 Anillos + 6 Etapas CMRP para el Itemizado de `pauta_mantencion` (`03 · Pauta de Mantención`):
- * - Anillo 1 (`core_chapters`): Las 6 Etapas CMRP invariantes (`ETAPA I` a `ETAPA VI`) adaptadas a la unidad de control real del TIPO:
- *   * Herramienta manual / Equipo estacionario: Jornada / Semanal / Mensual / Overhaul de piezas internas.
- *   * Vehículo liviano / Utilitario / Camioneta: Kilometraje severo minero (`5.000 km`, `10.000 km`, `20.000 km`, `40.000–100.000 km`) + horas motor.
- *   * Maquinaria pesada / Gran Minería CAEX: Horómetro (`10 h / Diario`, `50 h`, `250 h PM1`, `500 h PM2`, `1.000 h PM3`, `2.000 h PM4`, `4.000 h+`).
- * - Anillo 2 (`conditional_subsystems`): Programas de mantenimiento especializado y monitoreo de condición (`S·O·S`, `RAX`, frenos húmedos,
- *   acumuladores ISO 3450, `Autolube`, `4x4/DRW`, `PTO`, `Quinta Rueda`, `DPF/DEF`, neumáticos gigantes) activados por evidencia y herencia de `01` y `02`.
- */
-export function resolveElasticPautaMantencionBlueprint(
-    typeDoc: GlobalEquipmentTypeDoc
-): EquipmentTypePillarBlueprint {
-    const existing = typeDoc.pillar_blueprints?.pauta_mantencion;
-    const typeText = `${typeDoc.type_key} ${typeDoc.canonical_type_es} ${typeDoc.categoria_equipo} ${typeDoc.archetype_id || ''}`
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '');
-
-    const isStationaryOrHandTool =
-        /\b(compresor|generador|grupo electrogeno|bomba|motobomba|perforadora manual|jackleg|stoper|martillo neumatico|soldadora|chancador|molino|harnero|criba|tablero|transformador|torre de iluminacion|herramienta)\b/i.test(
-            typeText
-        ) && !/\b(camion|camioneta|excavadora|cargador|motoniveladora|tractor|bulldozer|rodillo|jumbo|manipulador|grua)\b/i.test(typeText);
-
-    const isLightOrHeavyUtilityVehicle =
-        /\b(camioneta|pick\s*up|furgon|utilitario|suv|vehiculo liviano|camion liviano|van|chasis cabina)\b/i.test(
-            typeText
-        );
-
-    const isHaulOrDumpTruck =
-        /\b(camion de extraccion|caex|camion minero|camion articulado|camion tolva|dumper|volquete)\b/i.test(
-            typeText
-        );
-
-    let defaultCore: EquipmentTypeCoreChapterItem[];
-
-    if (isStationaryOrHandTool) {
-        defaultCore = [
-            {
-                chapter_key: 'etapa_1_lubricantes_insumos_y_especificaciones',
-                title_es: 'Especificaciones de Lubricantes, Aceite Neumático/Dieléctrico, Grasas, Sellos y Consumibles OEM',
-                section_es: 'ETAPA I — LUBRICANTES, FLUIDOS Y CONSUMIBLES OEM',
-                rationale_es: 'Tabla maestra de viscosidades ISO VG/SAE, grasas, kits de sellos/empaquetaduras y capacidades verificadas contra Ficha Técnica.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'etapa_2_mantenimiento_diario_jornada_y_lubricacion',
-                title_es: 'Mantenimiento Diario Pre/Post-Jornada, Limpieza, Drenaje de Condensado y Lubricación en Línea',
-                section_es: 'ETAPA II — MANTENIMIENTO RUTINARIO DIARIO Y SEMANAL',
-                rationale_es: 'Tareas de conservación en cada turno: purga de humedad, recarga de lubricador, limpieza de filtros primarios y ajuste de acoples.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'etapa_3_pauta_preventiva_mensual_trimestral',
-                title_es: 'Pauta Preventiva Periódica (Semanal / Mensual / 100–250 h): Inspección de Mecanismos, Válvulas y Conexiones',
-                section_es: 'ETAPA III — PAUTAS PREVENTIVAS MENORES E INTERMEDIAS (PM1 / PM2)',
-                rationale_es: 'Inspección programada de desgaste en bujes/retenidas/escobillas, reemplazo de elementos filtrantes y chequeo de fugas o aislamiento.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'etapa_4_overhaul_desarme_y_reemplazo_componentes',
-                title_es: 'Mantenimiento Mayor y Overhaul: Desarme, Medición de Piezas Internas (Pistón/Cilindro/Rotor) y Pruebas en Banco',
-                section_es: 'ETAPA IV — PAUTAS PREVENTIVAS MAYORES Y OVERHAUL (PM3 / PM4)',
-                rationale_es: 'Reacondicionamiento integral en taller, reemplazo de sellos/rodamientos/resortes y prueba funcional certificada bajo carga.',
-                priority: 'IMPORTANTE',
-            },
-            {
-                chapter_key: 'etapa_6_pares_apriete_tolerancias_desgaste_y_loto',
-                title_es: 'Pares de Apriete de Tirantes/Pernos, Límites Dimensionales de Condena y Aislamiento LOTO para Intervención',
-                section_es: 'ETAPA VI — PARES DE APRIETE, TOLERANCIAS Y LOTO DE MANTENCIÓN',
-                rationale_es: 'Torques exactos en N·m, holguras máximas admisibles de piezas sujetas a fricción y despresurización/desenergización LOTO antes de abrir el equipo.',
-                priority: 'CRÍTICO',
-            },
-        ];
-    } else if (isLightOrHeavyUtilityVehicle) {
-        defaultCore = [
-            {
-                chapter_key: 'etapa_1_carta_fluidos_viscosidades_y_filtros_oem',
-                title_es: 'Carta Maestra de Lubricantes, Viscosidades SAE/API/ACEA, Refrigerante, Líquido de Frenos y Filtros OEM',
-                section_es: 'ETAPA I — LUBRICANTES, FLUIDOS Y CONSUMIBLES OEM',
-                rationale_es: 'Especificación exacta y volúmenes de llenado para aceite de motor, caja de cambios, diferencial, dirección, frenos DOT y filtros.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'etapa_2_inspeccion_diaria_semanal_y_servicio_severo_5000km',
-                title_es: 'Mantenimiento Rutinario Semanal y Servicio en Condición Severa Minera (Cada 5.000 km / 150 h)',
-                section_es: 'ETAPA II — MANTENIMIENTO RUTINARIO DIARIO Y SEMANAL',
-                rationale_es: 'Revisión de niveles, purga de filtro decantador de combustible, limpieza/reemplazo de filtro de aire en polvo faenero y rotación/presión de neumáticos.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'etapa_3_pauta_preventiva_10000km_pm1_y_20000km_pm2',
-                title_es: 'Pauta Preventiva Periódica Menor e Intermedia: Servicio 10.000 km (PM1) y 20.000 km (PM2)',
-                section_es: 'ETAPA III — PAUTAS PREVENTIVAS MENORES E INTERMEDIAS (PM1 / PM2)',
-                rationale_es: 'Cambio de aceite de motor y filtro, filtros de combustible/cabina, inspección de pastillas/discos/tambores de freno, suspensión, dirección y alineación.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'etapa_4_pauta_preventiva_mayor_40000_a_100000km',
-                title_es: 'Pauta Preventiva Mayor (40.000 km, 60.000 km y 100.000 km): Transmisión, Diferenciales, Refrigeración y Distribución',
-                section_es: 'ETAPA IV — PAUTAS PREVENTIVAS MAYORES Y OVERHAUL (PM3 / PM4)',
-                rationale_es: 'Renovación de fluidos de transmisión y ejes, correa/cadena de distribución y accesorios, líquido de frenos, bujías/inyectores y refrigerante de larga duración.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'etapa_6_pares_apriete_ruedas_chasis_frenos_y_loto',
-                title_es: 'Pares de Apriete Críticos (Tuercas de Rueda, Suspensión, Calipers), Espesores Mínimos de Freno y Bloqueo LOTO en Taller',
-                section_es: 'ETAPA VI — PARES DE APRIETE, TOLERANCIAS Y LOTO DE MANTENCIÓN',
-                rationale_es: 'Torque oficial de llantas (y re-torqueo), espesores mínimos de discos/balatas, cotas de suspensión y desconexión segura de batería/elevador en taller.',
-                priority: 'CRÍTICO',
-            },
-        ];
-    } else {
-        defaultCore = [
-            {
-                chapter_key: 'etapa_1_carta_lubricantes_refrigerante_filtros_y_capacidades',
-                title_es: 'Carta Maestra de Lubricantes SAE/ISO, Refrigerante ELC, Filtros OEM y Capacidades de Rellenado por Compartimento',
-                section_es: 'ETAPA I — LUBRICANTES, FLUIDOS Y CONSUMIBLES OEM',
-                rationale_es: 'Especificación técnica de aceites de motor, hidráulico, transmisión, mandos finales/ejes, grasa NLGI y capacidades en litros.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'etapa_2_mantenimiento_diario_10h_semanal_50h_y_engrase',
-                title_es: 'Mantenimiento Rutinario Diario (10 h), Semanal (50 h) y Mapa de Puntos de Engrase y Drenajes',
-                section_es: 'ETAPA II — MANTENIMIENTO RUTINARIO DIARIO Y SEMANAL',
-                rationale_es: 'Inspección de niveles, drenaje de agua/sedimentos de tanque y separador, indicadores de restricción de aire, tensión de correas/orugas y engrase de pasadores.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'etapa_3_pauta_preventiva_250h_pm1_y_500h_pm2',
-                title_es: 'Pauta Preventiva Periódica Menor e Intermedia: Servicio 250 Horas (PM1) y 500 Horas (PM2)',
-                section_es: 'ETAPA III — PAUTAS PREVENTIVAS MENORES E INTERMEDIAS (PM1 / PM2)',
-                rationale_es: 'Cambio de aceite y filtro de motor, filtros de combustible primarios/secundarios, respiraderos, filtros hidráulicos/transmisión y chequeo de frenos/ROPS.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'etapa_4_pauta_preventiva_mayor_1000h_pm3_2000h_pm4_y_overhaul',
-                title_es: 'Pauta Preventiva Mayor: Servicio 1.000 Horas (PM3), 2.000 Horas (PM4) y Renovación de Fluidos / Calibración de Válvulas',
-                section_es: 'ETAPA IV — PAUTAS PREVENTIVAS MAYORES Y OVERHAUL (PM3 / PM4)',
-                rationale_es: 'Reemplazo de aceite de transmisión, hidráulico, diferenciales y mandos finales, ajuste de luz de válvulas/inyectores, secador de aire y refrigerante ELC.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'etapa_6_pares_apriete_tolerancias_get_y_loto_mantencion',
-                title_es: 'Pares de Apriete Estructurales, Tolerancias de Desgaste (GET / Tren de Rodaje / Frenos) y Protocolo LOTO de Intervención',
-                section_es: 'ETAPA VI — PARES DE APRIETE, TOLERANCIAS Y LOTO DE MANTENCIÓN',
-                rationale_es: 'Torques de pernos de rueda/tornamesa/cuchillas, límites de desgaste y procedimiento de alivio de presión residual hidráulica/neumática y bloqueo LOTO.',
-                priority: 'CRÍTICO',
-            },
-        ];
-    }
-
-    const defaultConditionals: EquipmentTypeConditionalSubsystemItem[] = [];
-
-    if (isLightOrHeavyUtilityVehicle) {
-        defaultConditionals.push(
-            {
-                subsystem_key: 'pm_caja_transferencia_4x4_ejes_drw_y_cubos',
-                title_es: 'Mantenimiento de Caja de Transferencia 4x4, Bloqueo Diferencial (ELD), Cubos Delanteros y Eje Trasero Dually (DRW)',
-                section_es: 'ETAPA V — MANTENIMIENTO DE SUBSISTEMAS ESPECIALIZADOS Y PDM',
-                rationale_es: 'Intervalos de cambio de fluido de caja de transferencia 4WD, aceite sintético de puente trasero bajo carga, engrase de cardanes y torque de ruedas gemelas DRW.',
-                trigger_keywords: ['4x4', '4wd', 'transfer case', 'reductora', 'drw', 'dually', 'doble rodado', 'eld', 'bloqueo de diferencial'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'pm_transmision_hd_remolque_pto_y_quinta_rueda',
-                title_es: 'Servicio de Transmisión Heavy-Duty bajo Remolque, Toma de Fuerza (Live-Drive PTO) y Enganche Quinta Rueda / Gooseneck',
-                section_es: 'ETAPA V — MANTENIMIENTO DE SUBSISTEMAS ESPECIALIZADOS Y PDM',
-                rationale_es: 'Mantenimiento de transmisión TorqShift/automática HD y filtro en uso severo con PTO, inspección de muela/kingpin de Quinta Rueda y conector TBC.',
-                trigger_keywords: ['pto', 'power take-off', 'toma de fuerza', 'torqshift', 'quinta rueda', '5th wheel', 'gooseneck', 'tbc', 'gcwr'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'pm_postratamiento_dpf_scr_def_y_sistema_electrico_dual',
-                title_es: 'Mantenimiento del Sistema de Postratamiento Diésel (Limpieza DPF, Dosificador DEF/SCR) y Sistema Eléctrico Dual',
-                section_es: 'ETAPA V — MANTENIMIENTO DE SUBSISTEMAS ESPECIALIZADOS Y PDM',
-                rationale_es: 'Intervalo de limpieza de cenizas del filtro DPF, filtro de bomba DEF/AdBlue, sensores NOx y prueba de doble batería/alternador auxiliar.',
-                trigger_keywords: ['dpf', 'def', 'adblue', 'scr', 'dual alternator', 'doble alternador', 'bateria auxiliar', 'upfitter'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            }
-        );
-    } else if (isHaulOrDumpTruck) {
-        defaultConditionals.push(
-            {
-                subsystem_key: 'pm_muestreo_tribologico_sos_y_filtros_magneticos',
-                title_es: 'Programa de Análisis Tribológico de Fluidos (S·O·S), Inspección de Tapones Magnéticos y Pantallas de Succión',
-                section_es: 'ETAPA V — MANTENIMIENTO DE SUBSISTEMAS ESPECIALIZADOS Y PDM',
-                rationale_es: 'Frecuencia de muestreo S·O·S (250 h / 500 h), límites de limpieza ISO 4406 y revisión de partículas metálicas en convertidor, transmisión, diferencial y mandos finales.',
-                trigger_keywords: ['sos', 's·o·s', 'muestreo de aceite', 'tapones magneticos', 'magnetic screen', 'iso 4406', 'mandos finales'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'pm_frenos_discos_humedos_retardo_arc_y_acumuladores',
-                title_es: 'Mantenimiento de Paquetes de Frenos Húmedos Enfriados por Aceite, Indicadores de Desgaste, Enfriadores y Acumuladores ISO 3450',
-                section_es: 'ETAPA V — MANTENIMIENTO DE SUBSISTEMAS ESPECIALIZADOS Y PDM',
-                rationale_es: 'Medición de espesor de discos de freno húmedos, purga del circuito de enfriamiento de frenos, precarga de nitrógeno en acumuladores de freno/dirección y parrillas/ARC.',
-                trigger_keywords: ['frenos enfriados por aceite', 'oil-cooled brakes', 'arc', 'acumulador', 'iso 3450', 'parrilla de retardo', 'desgaste de frenos'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'pm_enfriamiento_ejes_rax_suspension_y_autolube',
-                title_es: 'Servicio del Sistema de Enfriamiento de Ejes (RAX), Cilindros Hidroneumáticos de Suspensión, Autolube y Calibración TPMS',
-                section_es: 'ETAPA V — MANTENIMIENTO DE SUBSISTEMAS ESPECIALIZADOS Y PDM',
-                rationale_es: 'Cambio de filtros de eje RAX, altura de carga de nitrógeno/aceite en cilindros de suspensión, inyectores del sistema Autolube y recalibración de sensores TPMS.',
-                trigger_keywords: ['rax', 'rear axle cooling', 'autolube', 'lubricacion automatica', 'cilindros de suspension', 'tpms', 'vims'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'pm_neumaticos_gigantes_torque_clamps_y_tolva_minera',
-                title_es: 'Gestión y Mantenimiento de Neumáticos Gigantes (Nitrógeno / Rotación / TKPH), Torque de Clamps y Revestimiento de Tolva (Liner)',
-                section_es: 'ETAPA V — MANTENIMIENTO DE SUBSISTEMAS ESPECIALIZADOS Y PDM',
-                rationale_es: 'Control de presión en frío con nitrógeno, secuencia de reapriete de tuercas/clamps, inspección ultrasónica/NDT de bastidor y espesor de planchas de desgaste de tolva.',
-                trigger_keywords: ['59/80r63', 'neumaticos', 'tkph', 'tolva', 'msd', 'x body', 'liner', 'pads de tolva'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            }
-        );
-    } else {
-        defaultConditionals.push(
-            {
-                subsystem_key: 'pm_muestreo_sos_hidraulico_y_acumuladores_pilotaje',
-                title_es: 'Muestreo de Aceite (S·O·S), Limpieza de Circuito Hidráulico Auxiliar / High-Flow y Acumuladores de Pilotaje/Freno',
-                section_es: 'ETAPA V — MANTENIMIENTO DE SUBSISTEMAS ESPECIALIZADOS Y PDM',
-                rationale_es: 'Intervalos de muestreo tribológico, reemplazo de filtros de retorno/drenaje de caja (case drain), acoples rápidos y verificación de precarga de acumuladores.',
-                trigger_keywords: ['sos', 'high-flow', 'hidraulica auxiliar', 'case drain', 'acumulador', 'quick coupler', 'acoplador rapido'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'pm_tren_rodaje_orugas_tornamesa_o_tandem',
-                title_es: 'Mantenimiento de Tren de Rodaje (Tensión de Orugas / Rodillos / Rueda Guía), Corona de Giro (Tornamesa) o Cajas Tándem',
-                section_es: 'ETAPA V — MANTENIMIENTO DE SUBSISTEMAS ESPECIALIZADOS Y PDM',
-                rationale_es: 'Medición de comba/tensión de cadenas u orugas, engrase de baño de corona de giro/piñón, nivel de aceite de cajas tándem y ajuste de bandas de desgaste de círculo.',
-                trigger_keywords: ['orugas', 'tren de rodaje', 'tornamesa', 'swing drive', 'tandem', 'vertedera', 'circulo'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            }
-        );
-    }
-
-    const mergedCore =
-        existing?.core_chapters && existing.core_chapters.length >= 4
-            ? existing.core_chapters
-            : defaultCore;
-
-    const condByKey = new Map<string, EquipmentTypeConditionalSubsystemItem>();
-    for (const c of defaultConditionals) {
-        condByKey.set(c.subsystem_key, c);
-    }
-    for (const c of existing?.conditional_subsystems || []) {
-        if (c?.subsystem_key && c?.title_es) {
-            condByKey.set(c.subsystem_key, c);
-        }
-    }
-
-    return {
-        core_chapters: mergedCore,
-        conditional_subsystems: Array.from(condByKey.values()),
-        updated_at: existing?.updated_at || new Date().toISOString(),
-    };
-}
-
-/**
- * Aprendizaje Ascendente Sin Techo para `pauta_mantencion`:
- * Incorpora pautas de subsistemas especializados descubiertas en modelos complejos al Anillo 2 (`conditional_subsystems`)
- * sin alterar las etapas basales del Anillo 1 (`core_chapters`).
- */
 export async function evolveEquipmentTypePautaMantencionBlueprint(params: {
     typeKey: string;
     modelOficial: string;
@@ -3302,351 +2430,9 @@ export async function evolveEquipmentTypePautaMantencionBlueprint(params: {
         trigger_keywords?: string[];
     }>;
 }): Promise<void> {
-    const cleanKey = normalizeEquipmentTypeKey(params.typeKey);
-    if (!cleanKey || !Array.isArray(params.discoveredSubsystems) || params.discoveredSubsystems.length === 0) {
-        return;
-    }
-
-    try {
-        const docRef = db.collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION).doc(cleanKey);
-        const snap = await docRef.get();
-        if (!snap.exists) return;
-
-        const typeDoc = snap.data() as GlobalEquipmentTypeDoc;
-        const currentBlueprint = resolveElasticPautaMantencionBlueprint(typeDoc);
-        const existingSubsystems = [...currentBlueprint.conditional_subsystems];
-        const nowIso = new Date().toISOString();
-
-        let addedCount = 0;
-        for (const sub of params.discoveredSubsystems) {
-            const subSlug = normalizeEquipmentTypeKey(sub.title_es).slice(0, 64);
-            if (!subSlug || subSlug.length < 4) continue;
-
-            const alreadyExists =
-                currentBlueprint.core_chapters.some(
-                    (c) => normalizeEquipmentTypeKey(c.title_es) === subSlug
-                ) ||
-                existingSubsystems.some(
-                    (s) =>
-                        s.subsystem_key === subSlug ||
-                        normalizeEquipmentTypeKey(s.title_es) === subSlug
-                );
-
-            if (alreadyExists) continue;
-
-            const autoKeywords = Array.from(
-                new Set(
-                    [
-                        ...(sub.trigger_keywords || []),
-                        ...normalizeEquipmentTypeAlias(sub.title_es)
-                            .split(' ')
-                            .filter((w) => w.length >= 4 && !TYPE_STOPWORDS.has(w)),
-                    ].slice(0, 8)
-                )
-            );
-
-            existingSubsystems.push({
-                subsystem_key: subSlug,
-                title_es: sub.title_es.trim(),
-                section_es: (sub.section_es || 'ETAPA V — MANTENIMIENTO DE SUBSISTEMAS ESPECIALIZADOS Y PDM').trim().toUpperCase(),
-                rationale_es: sub.rationale_es.trim(),
-                trigger_keywords: autoKeywords,
-                activation_rule: 'EVIDENCE_PRESENT',
-                discovered_from_model: params.modelOficial,
-                discovered_at: nowIso,
-            });
-            addedCount++;
-        }
-
-        if (addedCount > 0) {
-            const updatedBlueprint: EquipmentTypePillarBlueprint = {
-                core_chapters: currentBlueprint.core_chapters,
-                conditional_subsystems: existingSubsystems.slice(0, 30),
-                updated_at: nowIso,
-            };
-
-            await docRef.set(
-                {
-                    pillar_blueprints: {
-                        ...(typeDoc.pillar_blueprints || {}),
-                        pauta_mantencion: updatedBlueprint,
-                    },
-                    updated_at: nowIso,
-                },
-                { merge: true }
-            );
-
-            const cached = memoryByTypeKey.get(cleanKey);
-            if (cached) {
-                cached.doc = {
-                    ...cached.doc,
-                    pillar_blueprints: {
-                        ...(cached.doc.pillar_blueprints || {}),
-                        pauta_mantencion: updatedBlueprint,
-                    },
-                    updated_at: nowIso,
-                };
-            }
-        }
-    } catch (err: any) {
-        console.warn('[EquipmentTypeRegistry] No se pudo evolucionar pauta_mantencion:', err?.message);
-    }
+    return evolveEquipmentTypePillarBlueprint('pauta_mantencion', params);
 }
 
-/**
- * Resuelve la Ontología Elástica en 2 Anillos + 6 Dominios HSEC para el Itemizado de `matriz_riesgos` (`04 · Matriz de Riesgos HSEC`):
- * - Anillo 1 (`core_chapters`): 6 Dominios HSEC invariantes (`DOMINIO I` a `DOMINIO VI`) adaptados a la naturaleza física del TIPO
- *   (herramienta manual / equipo estacionario, vehículo liviano / Heavy-Duty, maquinaria pesada / CAEX), bajo ISO 45001 / ISO 12100 / DS 132.
- * - Anillo 2 (`conditional_subsystems`): Peligros de subsistemas especializados activados por evidencia y herencia de `01`, `02` y `03`.
- */
-export function resolveElasticMatrizRiesgosBlueprint(
-    typeDoc: GlobalEquipmentTypeDoc
-): EquipmentTypePillarBlueprint {
-    const existing = typeDoc.pillar_blueprints?.matriz_riesgos;
-    const typeText = `${typeDoc.type_key} ${typeDoc.canonical_type_es} ${typeDoc.categoria_equipo} ${typeDoc.archetype_id || ''}`
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '');
-
-    const isStationaryOrHandTool =
-        /\b(compresor|generador|grupo electrogeno|bomba|motobomba|perforadora manual|jackleg|stoper|martillo neumatico|soldadora|chancador|molino|harnero|criba|tablero|transformador|torre de iluminacion|herramienta)\b/i.test(
-            typeText
-        ) && !/\b(camion|camioneta|excavadora|cargador|motoniveladora|tractor|bulldozer|rodillo|jumbo|manipulador|grua)\b/i.test(typeText);
-
-    const isLightOrHeavyUtilityVehicle =
-        /\b(camioneta|pick\s*up|furgon|utilitario|suv|vehiculo liviano|camion liviano|van|chasis cabina)\b/i.test(
-            typeText
-        );
-
-    const isHaulOrDumpTruck =
-        /\b(camion de extraccion|caex|camion minero|camion articulado|camion tolva|dumper|volquete)\b/i.test(
-            typeText
-        );
-
-    let defaultCore: EquipmentTypeCoreChapterItem[];
-    const defaultConditionals: EquipmentTypeConditionalSubsystemItem[] = [];
-
-    if (isStationaryOrHandTool) {
-        defaultCore = [
-            {
-                chapter_key: 'dominio_1_loto_despresurizacion_desconexion',
-                title_es: 'Aislamiento de Energías Neumática / Eléctrica / Hidráulica, Despresurización de Líneas y Bloqueo LOTO',
-                section_es: 'DOMINIO I — AISLAMIENTO Y CONTROL DE ENERGÍAS PELIGROSAS (LOTO)',
-                rationale_es: 'Identificación de fuentes de energía del equipo, corte de suministro, alivio de presión residual, candado personal y prueba de energía cero.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'dominio_2_atrapamiento_proyeccion_latigazo',
-                title_es: 'Atrapamiento en Partes Rotatorias, Proyección de Partículas y Latigazo de Mangueras Presurizadas',
-                section_es: 'DOMINIO II — RIESGOS CRÍTICOS EN OPERACIÓN',
-                rationale_es: 'Peligros durante el ciclo de trabajo nominal: guardas, retenedores whipcheck, distancias de seguridad y controles de reacción del equipo.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'dominio_3_intervencion_desarme_y_manipulacion',
-                title_es: 'Riesgos en Desarme, Cambio de Piezas de Desgaste, Manipulación Manual y Pruebas Funcionales',
-                section_es: 'DOMINIO III — RIESGOS EN INTERVENCIÓN Y MANTENCIÓN',
-                rationale_es: 'Peligros derivados de las tareas de la Pauta de Mantención: liberación de resortes/presión, cortes, sobreesfuerzo y prueba post-armado.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'dominio_5_havs_ruido_silice',
-                title_es: 'Exposición a Vibración Mano-Brazo (ISO 5349), Ruido (PREXOR), Sílice Cristalina (PLANESI) y Ergonomía',
-                section_es: 'DOMINIO V — HIGIENE OCUPACIONAL Y AGENTES FÍSICOS/QUÍMICOS',
-                rationale_es: 'Agentes de exposición ocupacional inherentes al equipo, límites permisibles DS 594 y controles de ingeniería/administrativos.',
-                priority: 'IMPORTANTE',
-            },
-            {
-                chapter_key: 'dominio_6_electrico_incendio_epp',
-                title_es: 'Riesgo Eléctrico / Arco, Prevención de Incendio, Respuesta a Emergencias y EPP Certificado',
-                section_es: 'DOMINIO VI — INCENDIO, EMERGENCIAS Y EPP',
-                rationale_es: 'Puesta a tierra, protección diferencial, fuentes de ignición, extintor asociado, actuación ante emergencia y matriz de EPP por tarea.',
-                priority: 'IMPORTANTE',
-            },
-        ];
-    } else if (isLightOrHeavyUtilityVehicle) {
-        defaultCore = [
-            {
-                chapter_key: 'dominio_1_inmovilizacion_cortacorriente_loto',
-                title_es: 'Inmovilización, Acuñamiento, Cortacorriente y Bloqueo LOTO del Vehículo en Taller',
-                section_es: 'DOMINIO I — AISLAMIENTO Y CONTROL DE ENERGÍAS PELIGROSAS (LOTO)',
-                rationale_es: 'Freno de estacionamiento, cuñas, desconexión de batería/cortacorriente, retiro de llave y tarjeta de bloqueo antes de intervenir.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'dominio_2_conduccion_faena_interaccion_equipos',
-                title_es: 'Conducción en Faena, Interacción con Maquinaria Pesada, Puntos Ciegos y Pérdida de Control en Rampa',
-                section_es: 'DOMINIO II — RIESGOS CRÍTICOS EN OPERACIÓN',
-                rationale_es: 'Riesgos de colisión y volcamiento en caminos mineros, distancias de seguimiento, señalización (pértiga/baliza) y prioridad de tránsito.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'dominio_3_levante_cambio_rueda_mantencion',
-                title_es: 'Riesgos en Levante con Gata/Elevador, Cambio de Rueda y Mantención Básica',
-                section_es: 'DOMINIO III — RIESGOS EN INTERVENCIÓN Y MANTENCIÓN',
-                rationale_es: 'Aplastamiento por caída del vehículo, uso de caballetes certificados, puntos de levante OEM y contacto con fluidos calientes.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'dominio_5_estiba_ergonomia_agentes',
-                title_es: 'Desplazamiento de Carga, Ergonomía de Conducción, Fatiga/Somnolencia y Agentes Físicos (Polvo/Ruido)',
-                section_es: 'DOMINIO V — HIGIENE OCUPACIONAL Y AGENTES FÍSICOS/QUÍMICOS',
-                rationale_es: 'Amarre de carga dentro del PBV, postura de conducción, gestión de fatiga en turnos y exposición en ruta.',
-                priority: 'IMPORTANTE',
-            },
-            {
-                chapter_key: 'dominio_6_incendio_emergencia_vial_epp',
-                title_es: 'Prevención de Incendio Vehicular, Emergencia Vial en Faena y EPP Obligatorio',
-                section_es: 'DOMINIO VI — INCENDIO, EMERGENCIAS Y EPP',
-                rationale_es: 'Extintor, kit de emergencia, procedimiento ante falla/accidente en ruta minera y EPP exigido al conductor.',
-                priority: 'IMPORTANTE',
-            },
-        ];
-        defaultConditionals.push(
-            {
-                subsystem_key: 'mr_pto_cardan_atrapamiento',
-                title_es: 'Riesgo de Atrapamiento y Amputación en Eje Cardán de Toma de Fuerza (PTO)',
-                section_es: 'DOMINIO IV — RIESGOS DE SUBSISTEMAS ESPECIALIZADOS',
-                rationale_es: 'Guardas del eje, prohibición de intervención con PTO acoplada y bloqueo del accionamiento.',
-                trigger_keywords: ['pto', 'toma de fuerza', 'power take-off', 'cardan'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'mr_quinta_rueda_remolque',
-                title_es: 'Riesgo de Efecto Tijera, Aplastamiento en Acople de Quinta Rueda / Gooseneck y Falla de Freno de Remolque',
-                section_es: 'DOMINIO IV — RIESGOS DE SUBSISTEMAS ESPECIALIZADOS',
-                rationale_es: 'Maniobra de acople/desacople, verificación de traba, cadenas de seguridad y controlador de frenos de remolque.',
-                trigger_keywords: ['quinta rueda', 'fifth wheel', 'gooseneck', 'remolque', 'trailer', 'enganche'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'mr_drw_rueda_gemela',
-                title_es: 'Riesgo de Estallido y Aplastamiento en Intervención de Doble Rodado Trasero (DRW)',
-                section_es: 'DOMINIO IV — RIESGOS DE SUBSISTEMAS ESPECIALIZADOS',
-                rationale_es: 'Desinflado previo, jaula de inflado, secuencia de torque de tuercas y verificación de llanta interior.',
-                trigger_keywords: ['drw', 'dually', 'doble rodado', 'rueda gemela'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'mr_common_rail_dpf_def',
-                title_es: 'Riesgo de Inyección Cutánea Common-Rail, Quemadura por Regeneración DPF y Exposición a DEF',
-                section_es: 'DOMINIO IV — RIESGOS DE SUBSISTEMAS ESPECIALIZADOS',
-                rationale_es: 'Tiempo de despresurización del riel, zonas térmicas durante regeneración y manipulación de urea (DEF/AdBlue).',
-                trigger_keywords: ['common rail', 'dpf', 'def', 'scr', 'adblue', 'regeneracion'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            }
-        );
-    } else {
-        defaultCore = [
-            {
-                chapter_key: 'dominio_1_loto_multipunto_trabas_mecanicas',
-                title_es: 'Aislamiento y Bloqueo LOTO Multipunto (Eléctrico, Arranque, Hidráulico, Dirección/Frenos) y Trabas Mecánicas de Implementos',
-                section_es: 'DOMINIO I — AISLAMIENTO Y CONTROL DE ENERGÍAS PELIGROSAS (LOTO)',
-                rationale_es: 'Inventario de energías del equipo, puntos de bloqueo OEM, apoyo/traba de implementos izados y prueba de energía cero.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'dominio_2_perdida_control_vuelco_puntos_ciegos',
-                title_es: isHaulOrDumpTruck
-                    ? 'Pérdida de Control en Rampa, Sobrecarga, Colisión y Puntos Ciegos 360°'
-                    : 'Pérdida de Estabilidad / Vuelco (ROPS/FOPS), Interacción Hombre-Máquina y Puntos Ciegos',
-                section_es: 'DOMINIO II — RIESGOS CRÍTICOS EN OPERACIÓN',
-                rationale_es: 'Riesgos de fatalidad durante la operación productiva heredados del Manual de Operaciones: pendientes, bermas, segregación y visibilidad.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'dominio_3_intervencion_izaje_pruebas_hidraulicas',
-                title_es: 'Aplastamiento y Liberación de Energía en Mantención Mayor, Izaje de Componentes y Pruebas Hidráulicas',
-                section_es: 'DOMINIO III — RIESGOS EN INTERVENCIÓN Y MANTENCIÓN',
-                rationale_es: 'Peligros derivados de la Pauta de Mantención: inyección cutánea de fluido, componentes pesados, fluidos calientes y pruebas con presión.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'dominio_5_ruido_vibracion_silice_gases',
-                title_es: 'Higiene Ocupacional en Cabina y Taller (Ruido PREXOR, Vibración Cuerpo Entero ISO 2631, Sílice PLANESI y Gases Diésel)',
-                section_es: 'DOMINIO V — HIGIENE OCUPACIONAL Y AGENTES FÍSICOS/QUÍMICOS',
-                rationale_es: 'Agentes de exposición propios del equipo, presurización/filtrado de cabina y límites permisibles DS 594.',
-                priority: 'IMPORTANTE',
-            },
-            {
-                chapter_key: 'dominio_6_incendio_afex_evacuacion_epp',
-                title_es: 'Prevención de Incendios en Compartimento Motor, Sistema de Supresión, Evacuación de Emergencia y EPP',
-                section_es: 'DOMINIO VI — INCENDIO, EMERGENCIAS Y EPP',
-                rationale_es: 'Fuentes de ignición (turbo/escape/eléctrico), sistema de supresión automática, salida de emergencia de cabina y EPP por tarea.',
-                priority: 'IMPORTANTE',
-            },
-        ];
-        defaultConditionals.push(
-            {
-                subsystem_key: 'mr_acumuladores_suspension_hidroneumatica',
-                title_es: 'Riesgo de Descarga Violenta de Acumuladores Hidráulicos (ISO 3450) y Cilindros de Suspensión Hidroneumáticos',
-                section_es: 'DOMINIO IV — RIESGOS DE SUBSISTEMAS ESPECIALIZADOS',
-                rationale_es: 'Purga de acumuladores de frenos/dirección, carga de nitrógeno y prohibición de desarme bajo presión.',
-                trigger_keywords: ['acumulador', 'iso 3450', 'suspension hidroneumatica', 'nitrogeno', 'frenos humedos'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'mr_neumaticos_gigantes_piroforicidad',
-                title_es: 'Riesgo de Piroforicidad, Explosión y Desmontaje de Neumáticos Gigantes y Llantas Multipieza',
-                section_es: 'DOMINIO IV — RIESGOS DE SUBSISTEMAS ESPECIALIZADOS',
-                rationale_es: 'Zona de exclusión ante calentamiento, inflado con nitrógeno, jaula/manipulador de neumáticos y secuencia de destorque.',
-                trigger_keywords: ['neumatico gigante', 'otr', 'r63', 'r57', 'r51', 'llanta multipieza', 'neumaticos'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'mr_trabajo_altura_pasarelas',
-                title_es: 'Riesgo de Caída a Distinto Nivel en Escaleras, Pasarelas Perimetrales y Techo de Cabina',
-                section_es: 'DOMINIO IV — RIESGOS DE SUBSISTEMAS ESPECIALIZADOS',
-                rationale_es: 'Regla de 3 puntos de apoyo, barandas, arnés con punto de anclaje certificado para trabajos sobre 1,8 m.',
-                trigger_keywords: ['pasarela', 'escalera', 'plataforma', 'altura', 'barandas'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'mr_tolva_pluma_hoja_izada',
-                title_es: 'Riesgo de Atrapamiento por Caída de Tolva / Pluma / Hoja Izada sin Pines o Cables de Retención',
-                section_es: 'DOMINIO IV — RIESGOS DE SUBSISTEMAS ESPECIALIZADOS',
-                rationale_es: 'Uso obligatorio de dispositivos mecánicos de retención OEM antes de ingresar bajo implementos elevados.',
-                trigger_keywords: ['tolva', 'pluma', 'brazo', 'hoja', 'cucharon', 'balde', 'vertedera', 'implemento'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'mr_alta_presion_autolube_levante',
-                title_es: 'Riesgo de Proyección e Inyección Cutánea de Fluido a Alta Presión en Circuitos de Levante, Frenos y Engrase Automático',
-                section_es: 'DOMINIO IV — RIESGOS DE SUBSISTEMAS ESPECIALIZADOS',
-                rationale_es: 'Detección de fugas sin contacto (cartón), despresurización de Autolube y mangueras de levante, atención médica inmediata.',
-                trigger_keywords: ['autolube', 'engrase automatico', 'levante', 'hoist', 'alta presion', 'rax'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            }
-        );
-    }
-
-    const mergedCore =
-        existing?.core_chapters && existing.core_chapters.length >= 4
-            ? existing.core_chapters
-            : defaultCore;
-
-    const condByKey = new Map<string, EquipmentTypeConditionalSubsystemItem>();
-    for (const c of defaultConditionals) {
-        condByKey.set(c.subsystem_key, c);
-    }
-    for (const c of existing?.conditional_subsystems || []) {
-        if (c?.subsystem_key && c?.title_es) {
-            condByKey.set(c.subsystem_key, c);
-        }
-    }
-
-    return {
-        core_chapters: mergedCore,
-        conditional_subsystems: Array.from(condByKey.values()),
-        updated_at: existing?.updated_at || new Date().toISOString(),
-    };
-}
-
-/**
- * Aprendizaje Ascendente Sin Techo para `matriz_riesgos`:
- * Incorpora peligros de subsistemas especializados descubiertos en modelos complejos al Anillo 2 (`conditional_subsystems`)
- * sin alterar los dominios basales del Anillo 1 (`core_chapters`).
- */
 export async function evolveEquipmentTypeMatrizRiesgosBlueprint(params: {
     typeKey: string;
     modelOficial: string;
@@ -3657,350 +2443,9 @@ export async function evolveEquipmentTypeMatrizRiesgosBlueprint(params: {
         trigger_keywords?: string[];
     }>;
 }): Promise<void> {
-    const cleanKey = normalizeEquipmentTypeKey(params.typeKey);
-    if (!cleanKey || !Array.isArray(params.discoveredSubsystems) || params.discoveredSubsystems.length === 0) {
-        return;
-    }
-
-    try {
-        const docRef = db.collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION).doc(cleanKey);
-        const snap = await docRef.get();
-        if (!snap.exists) return;
-
-        const typeDoc = snap.data() as GlobalEquipmentTypeDoc;
-        const currentBlueprint = resolveElasticMatrizRiesgosBlueprint(typeDoc);
-        const existingSubsystems = [...currentBlueprint.conditional_subsystems];
-        const nowIso = new Date().toISOString();
-
-        let addedCount = 0;
-        for (const sub of params.discoveredSubsystems) {
-            const subSlug = normalizeEquipmentTypeKey(sub.title_es).slice(0, 64);
-            if (!subSlug || subSlug.length < 4) continue;
-
-            const alreadyExists =
-                currentBlueprint.core_chapters.some(
-                    (c) => normalizeEquipmentTypeKey(c.title_es) === subSlug
-                ) ||
-                existingSubsystems.some(
-                    (s) =>
-                        s.subsystem_key === subSlug ||
-                        normalizeEquipmentTypeKey(s.title_es) === subSlug
-                );
-
-            if (alreadyExists) continue;
-
-            const autoKeywords = Array.from(
-                new Set(
-                    [
-                        ...(sub.trigger_keywords || []),
-                        ...normalizeEquipmentTypeAlias(sub.title_es)
-                            .split(' ')
-                            .filter((w) => w.length >= 4 && !TYPE_STOPWORDS.has(w)),
-                    ].slice(0, 8)
-                )
-            );
-
-            existingSubsystems.push({
-                subsystem_key: subSlug,
-                title_es: sub.title_es.trim(),
-                section_es: (sub.section_es || 'DOMINIO IV — RIESGOS DE SUBSISTEMAS ESPECIALIZADOS').trim().toUpperCase(),
-                rationale_es: sub.rationale_es.trim(),
-                trigger_keywords: autoKeywords,
-                activation_rule: 'EVIDENCE_PRESENT',
-                discovered_from_model: params.modelOficial,
-                discovered_at: nowIso,
-            });
-            addedCount++;
-        }
-
-        if (addedCount > 0) {
-            const updatedBlueprint: EquipmentTypePillarBlueprint = {
-                core_chapters: currentBlueprint.core_chapters,
-                conditional_subsystems: existingSubsystems.slice(0, 30),
-                updated_at: nowIso,
-            };
-
-            await docRef.set(
-                {
-                    pillar_blueprints: {
-                        ...(typeDoc.pillar_blueprints || {}),
-                        matriz_riesgos: updatedBlueprint,
-                    },
-                    updated_at: nowIso,
-                },
-                { merge: true }
-            );
-
-            const cached = memoryByTypeKey.get(cleanKey);
-            if (cached) {
-                cached.doc = {
-                    ...cached.doc,
-                    pillar_blueprints: {
-                        ...(cached.doc.pillar_blueprints || {}),
-                        matriz_riesgos: updatedBlueprint,
-                    },
-                    updated_at: nowIso,
-                };
-            }
-        }
-    } catch (err: any) {
-        console.warn('[EquipmentTypeRegistry] No se pudo evolucionar matriz_riesgos:', err?.message);
-    }
+    return evolveEquipmentTypePillarBlueprint('matriz_riesgos', params);
 }
 
-/**
- * Resuelve la Ontología Elástica en 2 Anillos + 6 Zonas Cronológicas para el Itemizado de `checklist_pre_op` (`05 · Checklist Pre-Op`):
- * - Anillo 1 (`core_chapters`): Recorrido físico basal (`ZONA I` a `ZONA VI`) ejecutable en < 15 min, adaptado a la naturaleza del TIPO
- *   (herramienta manual / equipo estacionario, vehículo liviano / Heavy-Duty, maquinaria pesada / CAEX).
- * - Anillo 2 (`conditional_subsystems`): Verificaciones pre-uso de subsistemas especializados heredados de `01`, `02`, `03` y `04`.
- */
-export function resolveElasticChecklistPreOpBlueprint(
-    typeDoc: GlobalEquipmentTypeDoc
-): EquipmentTypePillarBlueprint {
-    const existing = typeDoc.pillar_blueprints?.checklist_pre_op;
-    const typeText = `${typeDoc.type_key} ${typeDoc.canonical_type_es} ${typeDoc.categoria_equipo} ${typeDoc.archetype_id || ''}`
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '');
-
-    const isStationaryOrHandTool =
-        /\b(compresor|generador|grupo electrogeno|bomba|motobomba|perforadora manual|jackleg|stoper|martillo neumatico|soldadora|chancador|molino|harnero|criba|tablero|transformador|torre de iluminacion|herramienta)\b/i.test(
-            typeText
-        ) && !/\b(camion|camioneta|excavadora|cargador|motoniveladora|tractor|bulldozer|rodillo|jumbo|manipulador|grua)\b/i.test(typeText);
-
-    const isLightOrHeavyUtilityVehicle =
-        /\b(camioneta|pick\s*up|furgon|utilitario|suv|vehiculo liviano|camion liviano|van|chasis cabina)\b/i.test(
-            typeText
-        );
-
-    const isHaulOrDumpTruck =
-        /\b(camion de extraccion|caex|camion minero|camion articulado|camion tolva|dumper|volquete)\b/i.test(
-            typeText
-        );
-
-    let defaultCore: EquipmentTypeCoreChapterItem[];
-    const defaultConditionals: EquipmentTypeConditionalSubsystemItem[] = [];
-
-    if (isStationaryOrHandTool) {
-        defaultCore = [
-            {
-                chapter_key: 'zona_1_carcasa_guardas_anclaje',
-                title_es: 'Inspección Física de Carcasa, Guardas de Partes Rotatorias, Base de Anclaje y Ausencia de Fugas',
-                section_es: 'ZONA I — INSPECCIÓN PERIMETRAL, ESTRUCTURA Y ESTANQUEIDAD',
-                rationale_es: 'Verificación visual con equipo desconectado: fisuras, pernos de anclaje/soporte, guardas instaladas y ausencia de fugas de aceite/aire.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'zona_2_lineas_suministro_whipcheck_lubricador',
-                title_es: 'Líneas de Suministro: Mangueras, Acoples con Cadena Antilatigazo (Whipcheck), Lubricador en Línea y Cables/Puesta a Tierra',
-                section_es: 'ZONA II — NIVELES DE FLUIDOS Y LÍNEAS DE SUMINISTRO DE ENERGÍA',
-                rationale_es: 'Estado de mangueras y cables, traba de acoples, nivel del lubricador o aceite de cárter y continuidad de puesta a tierra.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'zona_3_organo_trabajo_herramental',
-                title_es: 'Órgano de Trabajo y Herramental: Acero de Perforación / Disco / Elemento de Corte, Fijación y Desgaste',
-                section_es: 'ZONA III — IMPLEMENTOS Y SUBSISTEMAS ESPECIALIZADOS',
-                rationale_es: 'Estado y fijación del elemento de trabajo, retenedores y límites de desgaste antes de energizar.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'zona_4_paradas_emergencia_gatillo',
-                title_es: 'Dispositivos de Seguridad: Parada de Emergencia, Gatillo Hombre Muerto, Válvula de Corte y Extintor Asociado',
-                section_es: 'ZONA IV — DISPOSITIVOS DE SEGURIDAD CRÍTICA Y SUPRESIÓN',
-                rationale_es: 'Funcionamiento de los controles de seguridad derivados de la Matriz de Riesgos, condición BLOQUEANTE si fallan.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'zona_6_prueba_vacio',
-                title_es: 'Energización y Prueba Funcional en Vacío: Presión/Voltaje, Ruidos/Vibraciones Anormales y Respuesta de Mandos',
-                section_es: 'ZONA VI — PUESTA EN MARCHA Y PRUEBA FUNCIONAL',
-                rationale_es: 'Verificación final energizada sin carga antes de iniciar la tarea, con criterio PASA / NO PASA.',
-                priority: 'IMPORTANTE',
-            },
-        ];
-    } else if (isLightOrHeavyUtilityVehicle) {
-        defaultCore = [
-            {
-                chapter_key: 'zona_1_perimetro_neumaticos_luces_fugas',
-                title_es: 'Nivel de Piso: Neumáticos (Presión/Cortes), Tuercas de Rueda, Suspensión, Luces y Ausencia de Fugas',
-                section_es: 'ZONA I — INSPECCIÓN PERIMETRAL, ESTRUCTURA Y ESTANQUEIDAD',
-                rationale_es: 'Recorrido 360° con vehículo detenido: estado de rodado, carrocería, luces exteriores y manchas bajo el vehículo.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'zona_2_bajo_capo_niveles_bateria',
-                title_es: 'Bajo Capó: Niveles de Aceite Motor, Refrigerante, Líquido de Frenos/Dirección, Correas y Batería',
-                section_es: 'ZONA II — NIVELES DE FLUIDOS Y LÍNEAS DE SUMINISTRO DE ENERGÍA',
-                rationale_es: 'Verificación con motor frío de niveles entre mínimo y máximo, estado de correas, mangueras y bornes de batería.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'zona_4_equipamiento_minero_extintor_cunas',
-                title_es: 'Equipamiento de Seguridad Minera: Extintor Vigente, Cuñas, Pértiga/Baliza, Kit de Emergencia y Estiba de Carga',
-                section_es: 'ZONA IV — DISPOSITIVOS DE SEGURIDAD CRÍTICA Y SUPRESIÓN',
-                rationale_es: 'Elementos exigidos para circular en faena y barreras derivadas de la Matriz de Riesgos.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'zona_5_cabina_cinturon_espejos_testigos',
-                title_es: 'Cabina: Cinturón de Seguridad, Espejos, Parabrisas/Limpiaparabrisas, Testigos de Tablero y Documentación',
-                section_es: 'ZONA V — CABINA, INSTRUMENTACIÓN Y VISIBILIDAD',
-                rationale_es: 'Condición interior del puesto de conducción y ausencia de testigos rojos/ámbar activos tras el contacto.',
-                priority: 'IMPORTANTE',
-            },
-            {
-                chapter_key: 'zona_6_prueba_frenos_direccion_alarma',
-                title_es: 'Prueba Funcional: Arranque, Freno de Servicio y Estacionamiento, Dirección, Bocina y Alarma de Retroceso',
-                section_es: 'ZONA VI — PUESTA EN MARCHA Y PRUEBA FUNCIONAL',
-                rationale_es: 'Verificación dinámica a baja velocidad antes de salir; cualquier falla de frenos o dirección es BLOQUEANTE.',
-                priority: 'CRÍTICO',
-            },
-        ];
-        defaultConditionals.push(
-            {
-                subsystem_key: 'cp_drw_rueda_gemela',
-                title_es: 'Inspección de Doble Rodado Trasero (DRW): Presión de Gemelas, Piedras Atrapadas y Torque de Espárragos',
-                section_es: 'ZONA III — IMPLEMENTOS Y SUBSISTEMAS ESPECIALIZADOS',
-                rationale_es: 'Verificación específica de rueda gemela heredada de la Ficha Técnica y la Matriz de Riesgos.',
-                trigger_keywords: ['drw', 'dually', 'doble rodado', 'rueda gemela'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'cp_quinta_rueda_remolque',
-                title_es: 'Verificación de Enganche Quinta Rueda / Gooseneck, Traba de Kingpin, Cadenas y Conector de Freno de Remolque',
-                section_es: 'ZONA III — IMPLEMENTOS Y SUBSISTEMAS ESPECIALIZADOS',
-                rationale_es: 'Chequeo pre-viaje del acople y del controlador de frenos de remolque.',
-                trigger_keywords: ['quinta rueda', 'fifth wheel', 'gooseneck', 'remolque', 'trailer', 'enganche'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'cp_pto_cardan',
-                title_es: 'Chequeo Pre-Uso de Toma de Fuerza (PTO), Guarda de Cardán y Circuito Hidráulico Auxiliar',
-                section_es: 'ZONA III — IMPLEMENTOS Y SUBSISTEMAS ESPECIALIZADOS',
-                rationale_es: 'Guarda instalada, ausencia de fugas y desacople verificado antes de circular.',
-                trigger_keywords: ['pto', 'toma de fuerza', 'power take-off', 'cardan'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'cp_def_dpf_4x4',
-                title_es: 'Verificación de Nivel DEF/AdBlue, Drenaje de Separador Agua/Diésel, Testigo DPF y Acoplamiento 4x4',
-                section_es: 'ZONA II — NIVELES DE FLUIDOS Y LÍNEAS DE SUMINISTRO DE ENERGÍA',
-                rationale_es: 'Controles del sistema de postratamiento y tracción heredados de la Pauta de Mantención (Etapa II).',
-                trigger_keywords: ['def', 'adblue', 'dpf', 'scr', '4x4', 'transferencia', 'separador de agua'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            }
-        );
-    } else {
-        defaultCore = [
-            {
-                chapter_key: 'zona_1_perimetro_360_loto',
-                title_es: 'Nivel de Piso (360°): Bastidor, Rodado/Orugas, Ausencia de Fugas y Caja de Bloqueo LOTO / Cortacorriente',
-                section_es: 'ZONA I — INSPECCIÓN PERIMETRAL, ESTRUCTURA Y ESTANQUEIDAD',
-                rationale_es: 'Recorrido inicial con equipo detenido: fisuras estructurales, estado de rodado, fugas y retiro de bloqueos LOTO.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'zona_2_mirillas_fluidos',
-                title_es: 'Niveles en Mirillas/Varillas: Aceite Motor, Transmisión/Convertidor, Hidráulico, Refrigerante y Combustible',
-                section_es: 'ZONA II — NIVELES DE FLUIDOS Y LÍNEAS DE SUMINISTRO DE ENERGÍA',
-                rationale_es: 'Verificación pre-arranque con motor frío alineada a la Etapa II diaria de la Pauta de Mantención.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'zona_3_implemento_organo_trabajo',
-                title_es: isHaulOrDumpTruck
-                    ? 'Tolva, Pines de Pivote, Almohadillas de Apoyo y Cables de Retención de Tolva'
-                    : 'Implemento de Trabajo (Hoja / Balde / Pluma / Herramientas de Corte GET), Pasadores y Desgaste',
-                section_es: 'ZONA III — IMPLEMENTOS Y SUBSISTEMAS ESPECIALIZADOS',
-                rationale_es: 'Estado del órgano de trabajo y sus pasadores, retenedores y elementos de desgaste confirmados en la Ficha Técnica.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'zona_4_accesos_afex_seguridad',
-                title_es: 'Accesos, Escaleras, Pasarelas, Barandas, Sistema de Supresión de Incendios, Extintores y Cámaras/Espejos',
-                section_es: 'ZONA IV — DISPOSITIVOS DE SEGURIDAD CRÍTICA Y SUPRESIÓN',
-                rationale_es: 'Barreras duras derivadas de la Matriz de Riesgos; cualquier dispositivo inoperativo es BLOQUEANTE.',
-                priority: 'CRÍTICO',
-            },
-            {
-                chapter_key: 'zona_5_cabina_rops_instrumentacion',
-                title_es: 'Cabina ROPS/FOPS: Cinturón, Asiento, Visibilidad, Consola de Instrumentos y Códigos de Falla Activos',
-                section_es: 'ZONA V — CABINA, INSTRUMENTACIÓN Y VISIBILIDAD',
-                rationale_es: 'Condición del puesto de comando y ausencia de alarmas activas en el sistema de monitoreo del equipo.',
-                priority: 'IMPORTANTE',
-            },
-            {
-                chapter_key: 'zona_6_prueba_frenos_direccion',
-                title_es: 'Puesta en Marcha y Prueba Funcional: Freno de Servicio, Secundario y Estacionamiento, Dirección, Retardo y Alarmas',
-                section_es: 'ZONA VI — PUESTA EN MARCHA Y PRUEBA FUNCIONAL',
-                rationale_es: 'Verificación dinámica final según la Fase II del Manual de Operaciones, con criterio PASA / NO PASA BLOQUEANTE.',
-                priority: 'CRÍTICO',
-            },
-        ];
-        defaultConditionals.push(
-            {
-                subsystem_key: 'cp_neumaticos_gigantes',
-                title_es: 'Inspección de Neumáticos Gigantes: Cortes en Banda/Flanco, Presión, Clamps/Pernos y Rocas Atrapadas',
-                section_es: 'ZONA I — INSPECCIÓN PERIMETRAL, ESTRUCTURA Y ESTANQUEIDAD',
-                rationale_es: 'Verificación visual de neumáticos OTR heredada de la Matriz de Riesgos (piroforicidad/explosión).',
-                trigger_keywords: ['neumatico gigante', 'otr', 'r63', 'r57', 'r51', 'neumaticos'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'cp_suspension_acumuladores',
-                title_es: 'Verificación de Cilindros de Suspensión Hidroneumáticos (Altura de Carga) y Precarga de Acumuladores',
-                section_es: 'ZONA III — IMPLEMENTOS Y SUBSISTEMAS ESPECIALIZADOS',
-                rationale_es: 'Altura de cilindros y presión de acumuladores de frenos/dirección según criterio OEM.',
-                trigger_keywords: ['suspension hidroneumatica', 'acumulador', 'iso 3450', 'nitrogeno'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'cp_autolube_rax',
-                title_es: 'Chequeo del Depósito de Engrase Automático, Líneas de Distribución y Circuito de Enfriamiento de Ejes',
-                section_es: 'ZONA II — NIVELES DE FLUIDOS Y LÍNEAS DE SUMINISTRO DE ENERGÍA',
-                rationale_es: 'Nivel de grasa, ausencia de líneas cortadas e indicadores del sistema de enfriamiento de ejes.',
-                trigger_keywords: ['autolube', 'engrase automatico', 'rax', 'enfriamiento de ejes'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            },
-            {
-                subsystem_key: 'cp_tren_rodaje_orugas',
-                title_es: 'Tren de Rodaje: Tensión de Orugas, Zapatas, Rodillos, Rueda Guía y Corona de Giro',
-                section_es: 'ZONA I — INSPECCIÓN PERIMETRAL, ESTRUCTURA Y ESTANQUEIDAD',
-                rationale_es: 'Inspección visual de componentes de rodaje de oruga y tornamesa antes de traslado.',
-                trigger_keywords: ['orugas', 'tren de rodaje', 'tornamesa', 'swing', 'zapatas'],
-                activation_rule: 'EVIDENCE_PRESENT',
-            }
-        );
-    }
-
-    const mergedCore =
-        existing?.core_chapters && existing.core_chapters.length >= 4
-            ? existing.core_chapters
-            : defaultCore;
-
-    const condByKey = new Map<string, EquipmentTypeConditionalSubsystemItem>();
-    for (const c of defaultConditionals) {
-        condByKey.set(c.subsystem_key, c);
-    }
-    for (const c of existing?.conditional_subsystems || []) {
-        if (c?.subsystem_key && c?.title_es) {
-            condByKey.set(c.subsystem_key, c);
-        }
-    }
-
-    return {
-        core_chapters: mergedCore,
-        conditional_subsystems: Array.from(condByKey.values()),
-        updated_at: existing?.updated_at || new Date().toISOString(),
-    };
-}
-
-/**
- * Aprendizaje Ascendente Sin Techo para `checklist_pre_op`:
- * Incorpora zonas de verificación de subsistemas especializados descubiertas en modelos complejos al Anillo 2
- * sin alterar el recorrido basal del Anillo 1.
- */
 export async function evolveEquipmentTypeChecklistPreOpBlueprint(params: {
     typeKey: string;
     modelOficial: string;
@@ -4011,96 +2456,5 @@ export async function evolveEquipmentTypeChecklistPreOpBlueprint(params: {
         trigger_keywords?: string[];
     }>;
 }): Promise<void> {
-    const cleanKey = normalizeEquipmentTypeKey(params.typeKey);
-    if (!cleanKey || !Array.isArray(params.discoveredSubsystems) || params.discoveredSubsystems.length === 0) {
-        return;
-    }
-
-    try {
-        const docRef = db.collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION).doc(cleanKey);
-        const snap = await docRef.get();
-        if (!snap.exists) return;
-
-        const typeDoc = snap.data() as GlobalEquipmentTypeDoc;
-        const currentBlueprint = resolveElasticChecklistPreOpBlueprint(typeDoc);
-        const existingSubsystems = [...currentBlueprint.conditional_subsystems];
-        const nowIso = new Date().toISOString();
-
-        let addedCount = 0;
-        for (const sub of params.discoveredSubsystems) {
-            const subSlug = normalizeEquipmentTypeKey(sub.title_es).slice(0, 64);
-            if (!subSlug || subSlug.length < 4) continue;
-
-            const alreadyExists =
-                currentBlueprint.core_chapters.some(
-                    (c) => normalizeEquipmentTypeKey(c.title_es) === subSlug
-                ) ||
-                existingSubsystems.some(
-                    (s) =>
-                        s.subsystem_key === subSlug ||
-                        normalizeEquipmentTypeKey(s.title_es) === subSlug
-                );
-
-            if (alreadyExists) continue;
-
-            const autoKeywords = Array.from(
-                new Set(
-                    [
-                        ...(sub.trigger_keywords || []),
-                        ...normalizeEquipmentTypeAlias(sub.title_es)
-                            .split(' ')
-                            .filter((w) => w.length >= 4 && !TYPE_STOPWORDS.has(w)),
-                    ].slice(0, 8)
-                )
-            );
-
-            existingSubsystems.push({
-                subsystem_key: subSlug,
-                title_es: sub.title_es.trim(),
-                section_es: (sub.section_es || 'ZONA III — IMPLEMENTOS Y SUBSISTEMAS ESPECIALIZADOS').trim().toUpperCase(),
-                rationale_es: sub.rationale_es.trim(),
-                trigger_keywords: autoKeywords,
-                activation_rule: 'EVIDENCE_PRESENT',
-                discovered_from_model: params.modelOficial,
-                discovered_at: nowIso,
-            });
-            addedCount++;
-        }
-
-        if (addedCount > 0) {
-            const updatedBlueprint: EquipmentTypePillarBlueprint = {
-                core_chapters: currentBlueprint.core_chapters,
-                conditional_subsystems: existingSubsystems.slice(0, 30),
-                updated_at: nowIso,
-            };
-
-            await docRef.set(
-                {
-                    pillar_blueprints: {
-                        ...(typeDoc.pillar_blueprints || {}),
-                        checklist_pre_op: updatedBlueprint,
-                    },
-                    updated_at: nowIso,
-                },
-                { merge: true }
-            );
-
-            const cached = memoryByTypeKey.get(cleanKey);
-            if (cached) {
-                cached.doc = {
-                    ...cached.doc,
-                    pillar_blueprints: {
-                        ...(cached.doc.pillar_blueprints || {}),
-                        checklist_pre_op: updatedBlueprint,
-                    },
-                    updated_at: nowIso,
-                };
-            }
-        }
-    } catch (err: any) {
-        console.warn('[EquipmentTypeRegistry] No se pudo evolucionar checklist_pre_op:', err?.message);
-    }
+    return evolveEquipmentTypePillarBlueprint('checklist_pre_op', params);
 }
-
-
-

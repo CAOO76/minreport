@@ -392,6 +392,19 @@ export class ResilientAIClient {
     }
 
     private static async getSDKClient(): Promise<GoogleGenAI> {
+        if (process.env.USE_VERTEX_AI === 'true') {
+            const project = process.env.GCP_PROJECT_ID || 'minreport-8f2a8';
+            const location = 'southamerica-west1';
+            const vertexKey = `vertex:${project}:${location}`;
+            if (!cachedGenAIClient || cachedGenAIClient.key !== vertexKey) {
+                cachedGenAIClient = {
+                    key: vertexKey,
+                    client: new GoogleGenAI({ vertexai: true, project, location }),
+                };
+            }
+            return cachedGenAIClient.client;
+        }
+
         const apiKey = await resolveGeminiApiKey();
         if (apiKey) {
             if (!cachedGenAIClient || cachedGenAIClient.key !== apiKey) {
@@ -403,21 +416,8 @@ export class ResilientAIClient {
             return cachedGenAIClient.client;
         }
 
-        if (process.env.USE_VERTEX_AI === 'true') {
-            const project = process.env.GCP_PROJECT_ID || 'minreport-8f2a8';
-            const location = process.env.VERTEX_AI_LOCATION || process.env.GCP_LOCATION || 'southamerica-west1';
-            const vertexKey = `vertex:${project}:${location}`;
-            if (!cachedGenAIClient || cachedGenAIClient.key !== vertexKey) {
-                cachedGenAIClient = {
-                    key: vertexKey,
-                    client: new GoogleGenAI({ vertexai: true, project, location }),
-                };
-            }
-            return cachedGenAIClient.client;
-        }
-
         throw new AISwarmUnavailableError(
-            'Credencial GEMINI_API_KEY no configurada en Cloud Secret Manager ni en variables de entorno locales.',
+            'Credencial GEMINI_API_KEY no configurada en Cloud Secret Manager ni USE_VERTEX_AI activo.',
             'GEMINI_API_KEY_MISSING'
         );
     }
@@ -1176,6 +1176,7 @@ export class ResilientAIClient {
                 if (oldest) memoryTechnicalImageCache.delete(oldest);
             }
             memoryTechnicalImageCache.set(cacheKey, res);
+            const imageSha256 = createHash('sha256').update(res.base64Data).digest('hex');
             db.collection(this.CACHE_COLLECTION)
                 .doc(cacheKey)
                 .set({
@@ -1184,7 +1185,8 @@ export class ResilientAIClient {
                     modelUsed: res.modelUsed,
                     mimeType: res.mimeType,
                     aspectRatio,
-                    base64Data: res.base64Data,
+                    imageSha256,
+                    byteLength: Math.floor((res.base64Data.length * 3) / 4),
                     createdAt: new Date().toISOString(),
                 })
                 .catch(() => { });

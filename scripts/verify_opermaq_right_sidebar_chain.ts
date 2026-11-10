@@ -305,7 +305,42 @@ async function main() {
         '  [OK] 6. Consolidación inmediata de Nuevos y Conflictos (`applyDeterministicProposalFallback` + `/decide-proposal` + contadores) verificada.'
     );
 
-    console.log('\n=== TODAS LAS PRUEBAS UNITARIAS PASARON EXITOSAMENTE (6/6) ===');
+    // 7. Verificación de Botonera Vertical Independiente bajo el Chat IA (Orden Lógico 1 a 9 y Separación de Estudio)
+    const idxChatPlaceholder = dashboardSrc.indexOf("placeholder={latestDraftContent ? 'Escribe ACTUALIZAR para aplicar el borrador...'");
+    const idxPendingBtn = dashboardSrc.indexOf("t('vault_dashboard.pending_content.label', 'Contenido Pendiente')", idxChatPlaceholder);
+    const idxNuevosBtn = dashboardSrc.indexOf('>Nuevo Contenido</span>', idxPendingBtn);
+    const idxConflictosBtn = dashboardSrc.indexOf('>Contenido en Conflicto</span>', idxNuevosBtn);
+    const idxSubirBtn = dashboardSrc.indexOf('Subir Archivos', idxConflictosBtn);
+    const idxManualBtn = dashboardSrc.indexOf('Generar Manual Ilustrado', idxSubirBtn);
+    const idxRegenerarBtn = dashboardSrc.indexOf('Regenerar con IA', idxManualBtn);
+    const idxHistorialBtn = dashboardSrc.indexOf('Historial de Cambios', idxRegenerarBtn);
+    const idxAprobarBtn = dashboardSrc.indexOf('Aprobar Ítem', idxHistorialBtn);
+    const idxDescartarBtn = dashboardSrc.indexOf('Descartar Ítem', idxAprobarBtn);
+
+    assert.ok(
+        idxChatPlaceholder > 0 &&
+            idxPendingBtn > idxChatPlaceholder &&
+            idxNuevosBtn > idxPendingBtn &&
+            idxConflictosBtn > idxNuevosBtn &&
+            idxSubirBtn > idxConflictosBtn &&
+            idxManualBtn > idxSubirBtn &&
+            idxRegenerarBtn > idxManualBtn &&
+            idxHistorialBtn > idxRegenerarBtn &&
+            idxAprobarBtn > idxHistorialBtn &&
+            idxDescartarBtn > idxAprobarBtn,
+        'Los 9 botones bajo el chat IA deben estar ordenados verticalmente en secuencia lógica (1 a 9)'
+    );
+
+    const chatBoxSlice = dashboardSrc.slice(idxChatPlaceholder, idxPendingBtn);
+    assert.ok(
+        !chatBoxSlice.includes('upload_file') && !chatBoxSlice.includes('>draw<'),
+        'La caja de entrada del chat IA no debe contener iconos de Subir Archivos (upload_file) ni Manuales Ilustrados (draw)'
+    );
+    console.log(
+        '  [OK] 7. Botones independientes (Subir Archivos / Generar Manual Ilustrado) y ordenamiento vertical lógico (1 a 9) verificados.'
+    );
+
+    console.log('\n=== TODAS LAS PRUEBAS UNITARIAS PASARON EXITOSAMENTE (7/7) ===');
 }
 
 main().catch((err) => {

@@ -9,7 +9,7 @@ import { CasStorageService } from '../../../core/media/CasStorageService';
 import { ConfidentialityAirlockService } from '../../../core/privacy/ConfidentialityAirlockService';
 import { AISwarmUnavailableError, UngroundedEvidenceError } from '../../../core/resilient-ai-client';
 import type { ScopedRequest } from '../../../middleware/sessionScope';
-import { generateRegistrationFields } from '../services/AssetContextGenerator';
+import { inferAssetPhysicalTraits } from '../services/AssetOntologyEngine';
 import { resolveMachineryCandidates } from '../services/AssetResolverService';
 import { resolveFromLocalCommonsCatalog } from '../services/CanonicalEntityResolver';
 import { enrichCatalogProfile, proposeCatalogHomologation } from '../services/CatalogProfileEnricher';
@@ -135,6 +135,61 @@ function handleRouteError(res: Response, err: unknown, fallbackMsg: string) {
     });
 }
 
+const CATALOG_PROJECTED_FIELDS = [
+    'make_oficial',
+    'make',
+    'model_oficial',
+    'model',
+    'equipment_type_key',
+    'archetype_id',
+    'physical_traits',
+    'tipo_equipo',
+    'categoria_equipo',
+    'canonical_specs',
+    'contexto_operativo',
+    'caracteristicas_principales',
+    'foto_url',
+    'official_url',
+    'versions',
+    'chassis_versions',
+    'version',
+    'search_aliases',
+    'is_generic',
+    'catalog_key',
+    'knowledge_vault',
+    'archived',
+] as const;
+
+const CATALOG_CACHE_TTL_MS = 30_000;
+let catalogProjectionCache: {
+    expiresAt: number;
+    docs: Array<{ id: string; data: Record<string, any> }>;
+} | null = null;
+
+export function invalidateCatalogProjectionCache(): void {
+    catalogProjectionCache = null;
+}
+
+async function getProjectedCatalogDocs(): Promise<Array<{ id: string; data: Record<string, any> }>> {
+    if (catalogProjectionCache && Date.now() < catalogProjectionCache.expiresAt) {
+        return catalogProjectionCache.docs;
+    }
+    const snap = await db
+        .collection('global_asset_catalog')
+        .select(...CATALOG_PROJECTED_FIELDS)
+        .get();
+    const docs = snap.docs.map((d) => ({ id: d.id, data: d.data() || {} }));
+    catalogProjectionCache = {
+        expiresAt: Date.now() + CATALOG_CACHE_TTL_MS,
+        docs,
+    };
+    return docs;
+}
+
+function resolveFleetCollectionName(ctx: ScopedRequest['opermaqContext']): string {
+    return ctx?.isEduSandbox ? 'edu_sandbox_fleet' : 'tenant_assets';
+}
+
 function countPublishedVaultPillars(knowledgeVault: Record<string, any> | null | undefined): number {
     if (!knowledgeVault || typeof knowledgeVault !== 'object') return 0;
     const pillarIds = [
@@ -146,7 +201,13 @@ function countPublishedVaultPillars(knowledgeVault: Record<string, any> | null |
     ];
     let count = 0;
     for (const pid of pillarIds) {
-        const items: any[] = Array.isArray(knowledgeVault[pid]?.items) ? knowledgeVault[pid].items : [];
+        const pSummary = knowledgeVault[pid];
+        if (!pSummary || typeof pSummary !== 'object') continue;
+        if (typeof pSummary.approved_items_count === 'number' && pSummary.approved_items_count > 0) {
+            count += 1;
+            continue;
+        }
+        const items: any[] = Array.isArray(pSummary.items) ? pSummary.items : [];
         const hasApproved = items.some(
             (it) =>
                 !it?.is_discarded &&
@@ -179,17 +240,18 @@ assetsRouter.get('/equipment-types', async (_req: ScopedRequest, res: Response) 
  */
 assetsRouter.get('/catalog', async (req: ScopedRequest, res: Response) => {
     try {
-        if (!req.opermaqContext?.capabilities?.canCurateAI) {
+        const caps = req.opermaqContext?.capabilities;
+        if (!caps?.canViewMasterCatalog && !caps?.canCurateAI) {
             return res.status(403).json({
                 error: 'CATALOG_CURATOR_ONLY',
-                message: 'El Catálogo Maestro completo es exclusivo de ingeniería y curaduría MINREPORT.',
+                message: 'El Catálogo Maestro completo es exclusivo de ingeniería, administración y curaduría MINREPORT.',
             });
         }
 
-        const snap = await db.collection('global_asset_catalog').get();
-        const items = snap.docs
-            .map((docSnap) => {
-                const d = docSnap.data() || {};
+        const docs = await getProjectedCatalogDocs();
+        const items = docs
+            .map((docEntry) => {
+                const d = docEntry.data || {};
                 if (d.archived === true) return null;
                 const makeOficial = String(
                     d.make_oficial || d.make || MISSING_FULL_TECH_SPEC
@@ -199,13 +261,21 @@ assetsRouter.get('/catalog', async (req: ScopedRequest, res: Response) => {
                     d.tipo_equipo || d.categoria_equipo || MISSING_FULL_TECH_SPEC
                 );
                 const homologous = extractHomologousAxisValues(d);
+                const physicalTraits =
+                    d.physical_traits ||
+                    inferAssetPhysicalTraits({
+                        rawTypeText: tipoEquipo,
+                        rawCategoryText: d.categoria_equipo,
+                        makeModelText: `${makeOficial} ${modelOficial}`,
+                    });
 
                 return {
-                    id: docSnap.id,
+                    id: docEntry.id,
                     make_oficial: makeOficial || MISSING_FULL_TECH_SPEC,
                     model_oficial: modelOficial,
                     equipment_type_key: d.equipment_type_key ? String(d.equipment_type_key) : undefined,
                     archetype_id: homologous.archetype.id,
+                    physical_traits: physicalTraits,
                     tipo_equipo: tipoEquipo,
                     categoria_equipo: d.categoria_equipo ? String(d.categoria_equipo) : undefined,
                     canonical_specs: homologous.slots,
@@ -343,9 +413,18 @@ assetsRouter.patch('/catalog/:id/apply-homologation', async (req: ScopedRequest,
         });
 
         const serializedSpecs = serializeCanonicalSlotsToSpecsArray(consolidatedSlots);
+        const resolvedTraits =
+            body.physical_traits ||
+            typeDoc.physical_traits ||
+            inferAssetPhysicalTraits({
+                rawTypeText: finalCanonicalTipo,
+                rawCategoryText: nextCategoria,
+                makeModelText: `${existingData.make_oficial || ''} ${existingData.model_oficial || ''}`.trim(),
+            });
         const updatePayload: Record<string, any> = {
             equipment_type_key: typeDoc.type_key,
             archetype_id: targetArchetypeId,
+            physical_traits: resolvedTraits,
             tipo_equipo: finalCanonicalTipo,
             categoria_equipo: nextCategoria,
             canonical_specs: consolidatedSlots,
@@ -355,11 +434,15 @@ assetsRouter.patch('/catalog/:id/apply-homologation', async (req: ScopedRequest,
             homologated_at: new Date().toISOString(),
             updatedAt: Date.now(),
         };
+        if (body.energy_consumption_profile) {
+            updatePayload.energy_consumption_profile = body.energy_consumption_profile;
+        }
         if (body.official_url && body.official_url.startsWith('http')) {
             updatePayload.official_url = body.official_url.trim();
         }
 
         await docRef.update(updatePayload);
+        invalidateCatalogProjectionCache();
 
         const updatedRecord = {
             ...existingData,
@@ -465,18 +548,29 @@ assetsRouter.get('/catalog-lookup', async (req: ScopedRequest, res: Response) =>
             .trim();
         const qTokens = qNorm.split(/\s+/).filter(Boolean);
 
-        const catalogSnap = await db.collection('global_asset_catalog').get();
-        for (const docSnap of catalogSnap.docs) {
-            const d = docSnap.data();
+        const catalogDocs = await getProjectedCatalogDocs();
+        for (const docEntry of catalogDocs) {
+            const d = docEntry.data;
+            if (d.archived === true) continue;
             const make = String(d.make_oficial || d.make || '').trim();
             const model = String(d.model_oficial || d.model || '').trim();
             if (!make && !model) continue;
 
-            if (foundMap.has(docSnap.id)) {
-                const existing = foundMap.get(docSnap.id)!;
+            const resolvedTraits =
+                d.physical_traits ||
+                inferAssetPhysicalTraits({
+                    rawTypeText: d.tipo_equipo,
+                    rawCategoryText: d.categoria_equipo,
+                    makeModelText: `${make} ${model}`,
+                });
+
+            if (foundMap.has(docEntry.id)) {
+                const existing = foundMap.get(docEntry.id)!;
                 const homologous = extractHomologousAxisValues(d);
                 existing.foto_url = d.foto_url ? String(d.foto_url) : undefined;
+                existing.equipment_type_key = d.equipment_type_key || undefined;
                 existing.archetype_id = homologous.archetype.id;
+                existing.physical_traits = resolvedTraits;
                 existing.canonical_specs = homologous.slots;
                 existing.short_description = buildConciseEquipmentDescription(d);
                 continue;
@@ -512,12 +606,14 @@ assetsRouter.get('/catalog-lookup', async (req: ScopedRequest, res: Response) =>
             );
 
             const homologous = extractHomologousAxisValues(d);
-            foundMap.set(docSnap.id, {
-                global_asset_id: docSnap.id,
-                catalog_key: d.catalog_key || docSnap.id,
+            foundMap.set(docEntry.id, {
+                global_asset_id: docEntry.id,
+                catalog_key: d.catalog_key || docEntry.id,
                 make_oficial: make,
                 model_oficial: model,
+                equipment_type_key: d.equipment_type_key || undefined,
                 archetype_id: homologous.archetype.id,
+                physical_traits: resolvedTraits,
                 tipo_equipo: cleanMachineryType(d.tipo_equipo),
                 categoria_equipo: String(d.categoria_equipo || 'EQUIPAMIENTO INDUSTRIAL'),
                 canonical_specs: homologous.slots,
@@ -566,9 +662,10 @@ assetsRouter.get('/catalog-lookup', async (req: ScopedRequest, res: Response) =>
 assetsRouter.get('/my-fleet', async (req: ScopedRequest, res: Response) => {
     try {
         const ctx = req.opermaqContext!;
+        const fleetCol = resolveFleetCollectionName(ctx);
         const [bySnake, byCamel] = await Promise.all([
-            db.collection('tenant_assets').where('tenant_id', '==', ctx.tenantId).get(),
-            db.collection('tenant_assets').where('tenantId', '==', ctx.tenantId).get(),
+            db.collection(fleetCol).where('tenant_id', '==', ctx.tenantId).get(),
+            db.collection(fleetCol).where('tenantId', '==', ctx.tenantId).get(),
         ]);
 
         const merged = new Map<string, Record<string, any>>();
@@ -617,6 +714,15 @@ assetsRouter.get('/my-fleet', async (req: ScopedRequest, res: Response) => {
                 unit.serial_number || unit.identifier_value || '[Pendiente de registro]'
             ).trim();
 
+            const resolvedTraits =
+                unit.physical_traits ||
+                cat?.physical_traits ||
+                inferAssetPhysicalTraits({
+                    rawTypeText: tipoEquipo,
+                    rawCategoryText: unit.categoria_equipo || cat?.categoria_equipo,
+                    makeModelText: `${makeOficial} ${modelOficial}`,
+                });
+
             return {
                 ...unit,
                 global_asset_id: gid,
@@ -624,6 +730,7 @@ assetsRouter.get('/my-fleet', async (req: ScopedRequest, res: Response) => {
                 model_oficial: modelOficial,
                 tipo_equipo: tipoEquipo,
                 archetype_id: cat?.archetype_id || unit.archetype_id || undefined,
+                physical_traits: resolvedTraits,
                 canonical_specs: Array.isArray(cat?.canonical_specs)
                     ? cat.canonical_specs
                     : Array.isArray(unit.canonical_specs)
@@ -676,7 +783,8 @@ assetsRouter.get('/my-fleet', async (req: ScopedRequest, res: Response) => {
 assetsRouter.get('/unit/:id', async (req: ScopedRequest, res: Response) => {
     try {
         const ctx = req.opermaqContext!;
-        const unitSnap = await db.collection('tenant_assets').doc(String(req.params.id)).get();
+        const fleetCol = resolveFleetCollectionName(ctx);
+        const unitSnap = await db.collection(fleetCol).doc(String(req.params.id)).get();
         if (!unitSnap.exists) {
             return res.status(404).json({ error: 'Unidad de flota no encontrada.' });
         }
@@ -689,10 +797,12 @@ assetsRouter.get('/unit/:id', async (req: ScopedRequest, res: Response) => {
 
         const globalAssetId = String(unitData.global_asset_id || unitData.globalAssetId || '').trim();
         let catalogSummary: Record<string, any> | null = null;
+        let catalogTraits: Record<string, any> | undefined;
         if (globalAssetId) {
             const catSnap = await db.collection('global_asset_catalog').doc(globalAssetId).get();
             if (catSnap.exists) {
                 const c = catSnap.data() || {};
+                catalogTraits = c.physical_traits;
                 catalogSummary = {
                     id: catSnap.id,
                     make_oficial: c.make_oficial || c.make || '',
@@ -700,6 +810,7 @@ assetsRouter.get('/unit/:id', async (req: ScopedRequest, res: Response) => {
                     make_model: c.make_model || `${c.make_oficial || ''} ${c.model_oficial || ''}`.trim(),
                     tipo_equipo: c.tipo_equipo || '[Información técnica no declarada en ficha]',
                     categoria_equipo: c.categoria_equipo || '',
+                    physical_traits: c.physical_traits || undefined,
                     caracteristicas_principales: Array.isArray(c.caracteristicas_principales)
                         ? c.caracteristicas_principales
                         : [],
@@ -710,12 +821,22 @@ assetsRouter.get('/unit/:id', async (req: ScopedRequest, res: Response) => {
             }
         }
 
+        const unitTraits =
+            unitData.physical_traits ||
+            catalogTraits ||
+            inferAssetPhysicalTraits({
+                rawTypeText: unitData.tipo_equipo || catalogSummary?.tipo_equipo,
+                rawCategoryText: unitData.categoria_equipo || catalogSummary?.categoria_equipo,
+                makeModelText: `${unitData.make_oficial || ''} ${unitData.model_oficial || ''}`,
+            });
+
         return res.status(200).json({
             success: true,
             unit: {
                 id: unitSnap.id,
                 ...unitData,
                 global_asset_id: globalAssetId,
+                physical_traits: unitTraits,
                 serial_number: String(
                     unitData.serial_number || unitData.identifier_value || '[Pendiente de registro]'
                 ),
@@ -773,10 +894,12 @@ assetsRouter.post('/register-fleet-unit', async (req: ScopedRequest, res: Respon
             .update(`${ctx.tenantId}:${data.identifier_type}:${compactIdentifier}`)
             .digest('hex');
 
+        const fleetCol = resolveFleetCollectionName(ctx);
+
         // Validar cero duplicidad del Número de Serie / Patente dentro del mismo tenant
         const [tenantUnitsSnake, tenantUnitsCamel] = await Promise.all([
-            db.collection('tenant_assets').where('tenant_id', '==', ctx.tenantId).get(),
-            db.collection('tenant_assets').where('tenantId', '==', ctx.tenantId).get(),
+            db.collection(fleetCol).where('tenant_id', '==', ctx.tenantId).get(),
+            db.collection(fleetCol).where('tenantId', '==', ctx.tenantId).get(),
         ]);
         const existingTenantDocs = [...tenantUnitsSnake.docs, ...tenantUnitsCamel.docs];
         const duplicateUnit = existingTenantDocs.find((d) => {
@@ -796,34 +919,65 @@ assetsRouter.post('/register-fleet-unit', async (req: ScopedRequest, res: Respon
 
         validateIndustrialDomain(`${data.make_oficial} ${data.model_oficial}`, data.categoria_equipo);
 
-        const upserted = await upsertGlobalAssetCatalog({
-            existingCatalogId: data.global_asset_id,
-            make_oficial: data.make_oficial,
-            model_oficial: data.model_oficial,
-            equipment_type_key: data.equipment_type_key,
-            categoria_equipo: data.categoria_equipo,
-            tipo_equipo: data.tipo_equipo,
-            archetype_id: data.archetype_id as MachineryArchetypeId | undefined,
-            canonical_specs: data.canonical_specs,
-            ambiente_operativo: data.ambiente_operativo,
-            contexto_operativo: data.contexto_operativo,
-            caracteristicas_principales: data.caracteristicas_principales,
-            version: data.version,
-            versions: data.chassis_versions,
-            official_url: data.official_url,
-            original_jargon: data.original_jargon,
-            isGeneric: data.isGeneric,
-            actorId: ctx.actorId,
-            actorEmail: ctx.actorEmail,
-        });
+        let finalGlobalId = String(data.global_asset_id || '').trim();
+        let catalogAsset: Record<string, any> = {};
+        let catalogAlreadyExisted = false;
 
-        const finalGlobalId = upserted.global_asset_id;
-        const catalogAsset = upserted.asset_data || {};
+        if (ctx.isEduSandbox) {
+            if (finalGlobalId) {
+                const existingSnap = await db.collection('global_asset_catalog').doc(finalGlobalId).get();
+                if (existingSnap.exists) {
+                    catalogAsset = existingSnap.data() || {};
+                    catalogAlreadyExisted = true;
+                }
+            } else {
+                const simHash = createHash('sha256')
+                    .update(`${data.make_oficial}:${data.model_oficial}`)
+                    .digest('hex')
+                    .slice(0, 12);
+                finalGlobalId = `edu_sim_${simHash}`;
+            }
+        } else {
+            const upserted = await upsertGlobalAssetCatalog({
+                existingCatalogId: data.global_asset_id,
+                make_oficial: data.make_oficial,
+                model_oficial: data.model_oficial,
+                equipment_type_key: data.equipment_type_key,
+                categoria_equipo: data.categoria_equipo,
+                tipo_equipo: data.tipo_equipo,
+                physical_traits: data.physical_traits,
+                archetype_id: data.archetype_id as MachineryArchetypeId | undefined,
+                canonical_specs: data.canonical_specs,
+                ambiente_operativo: data.ambiente_operativo,
+                contexto_operativo: data.contexto_operativo,
+                caracteristicas_principales: data.caracteristicas_principales,
+                version: data.version,
+                versions: data.chassis_versions,
+                official_url: data.official_url,
+                original_jargon: data.original_jargon,
+                isGeneric: data.isGeneric,
+                actorId: ctx.actorId,
+                actorEmail: ctx.actorEmail,
+            });
+            invalidateCatalogProjectionCache();
+            finalGlobalId = upserted.global_asset_id;
+            catalogAsset = upserted.asset_data || {};
+            catalogAlreadyExisted = upserted.already_existed;
+        }
+
         const makeOficial = String(catalogAsset.make_oficial || data.make_oficial).toUpperCase();
         const modelOficial = String(catalogAsset.model_oficial || data.model_oficial).toUpperCase();
         const tipoEquipo = String(
             catalogAsset.tipo_equipo || data.tipo_equipo || '[Información técnica no declarada en ficha]'
         );
+        const resolvedTraits =
+            data.physical_traits ||
+            catalogAsset.physical_traits ||
+            inferAssetPhysicalTraits({
+                rawTypeText: tipoEquipo,
+                rawCategoryText: catalogAsset.categoria_equipo || data.categoria_equipo,
+                makeModelText: `${makeOficial} ${modelOficial}`,
+            });
 
         const nowDate = new Date();
         const unitPayload = {
@@ -835,8 +989,15 @@ assetsRouter.post('/register-fleet-unit', async (req: ScopedRequest, res: Respon
             tipo_equipo: tipoEquipo,
             equipment_type_key: catalogAsset.equipment_type_key || data.equipment_type_key || null,
             archetype_id: catalogAsset.archetype_id || data.archetype_id || null,
-            canonical_specs: Array.isArray(catalogAsset.canonical_specs) ? catalogAsset.canonical_specs : [],
-            short_description: buildConciseEquipmentDescription(catalogAsset),
+            physical_traits: resolvedTraits,
+            canonical_specs: Array.isArray(catalogAsset.canonical_specs)
+                ? catalogAsset.canonical_specs
+                : Array.isArray(data.canonical_specs)
+                ? data.canonical_specs
+                : [],
+            short_description: buildConciseEquipmentDescription(
+                Object.keys(catalogAsset).length > 0 ? catalogAsset : data
+            ),
             version: data.version || 'ESTÁNDAR',
             identifier_type: data.identifier_type,
             identifier_value: displayIdentifier,
@@ -844,6 +1005,9 @@ assetsRouter.post('/register-fleet-unit', async (req: ScopedRequest, res: Respon
             identity_uniqueness_key: uniquenessKey,
             ownership_type: data.ownership_type,
             horometer: Number(data.horometer || 0),
+            odometer_km: typeof data.odometer_km === 'number' ? data.odometer_km : null,
+            cycles_count: typeof data.cycles_count === 'number' ? data.cycles_count : null,
+            calibration_due_date: data.calibration_due_date || null,
             status: 'OPERATIVO',
             private_photos: [],
             primary_private_photo_url: null,
@@ -853,12 +1017,13 @@ assetsRouter.post('/register-fleet-unit', async (req: ScopedRequest, res: Respon
             registered_by: ctx.actorId,
             registered_by_email: ctx.actorEmail,
             data_scope: ctx.dataScope,
+            is_edu_sandbox: Boolean(ctx.isEduSandbox),
             archived: false,
             createdAt: nowDate,
             updatedAt: nowDate,
         };
 
-        const createdRef = await db.collection('tenant_assets').add(unitPayload);
+        const createdRef = await db.collection(fleetCol).add(unitPayload);
 
         await AuditLedger.record({
             tenantId: ctx.tenantId,
@@ -869,11 +1034,12 @@ assetsRouter.post('/register-fleet-unit', async (req: ScopedRequest, res: Respon
             targetEntity: createdRef.id,
             details: {
                 globalAssetId: finalGlobalId,
-                catalogAlreadyExisted: upserted.already_existed,
+                catalogAlreadyExisted,
                 identifierType: data.identifier_type,
                 identifierValue: displayIdentifier,
                 ownershipType: data.ownership_type,
                 version: data.version || 'ESTÁNDAR',
+                fleetCollection: fleetCol,
             },
         }).catch(() => {});
 
@@ -881,7 +1047,7 @@ assetsRouter.post('/register-fleet-unit', async (req: ScopedRequest, res: Respon
             success: true,
             tenant_asset_id: createdRef.id,
             global_asset_id: finalGlobalId,
-            catalog_already_existed: upserted.already_existed,
+            catalog_already_existed: catalogAlreadyExisted,
             serial_number: displayIdentifier,
         });
     } catch (err) {
@@ -911,7 +1077,8 @@ assetsRouter.post(
                 });
             }
 
-            const unitRef = db.collection('tenant_assets').doc(String(req.params.id));
+            const fleetCol = resolveFleetCollectionName(ctx);
+            const unitRef = db.collection(fleetCol).doc(String(req.params.id));
             const unitSnap = await unitRef.get();
             if (!unitSnap.exists) {
                 return res.status(404).json({ error: 'Unidad de flota no encontrada.' });
@@ -1003,7 +1170,8 @@ assetsRouter.delete('/:id/private-photo/:sha256', async (req: ScopedRequest, res
             return res.status(403).json({ error: 'Permisos insuficientes.' });
         }
 
-        const unitRef = db.collection('tenant_assets').doc(String(req.params.id));
+        const fleetCol = resolveFleetCollectionName(ctx);
+        const unitRef = db.collection(fleetCol).doc(String(req.params.id));
         const unitSnap = await unitRef.get();
         if (!unitSnap.exists) {
             return res.status(404).json({ error: 'Unidad de flota no encontrada.' });
@@ -1092,11 +1260,20 @@ assetsRouter.post('/resolve', async (req: ScopedRequest, res: Response) => {
 
         const sanitizedCandidates = (result.candidates || []).map((c: any) => {
             const homologous = extractHomologousAxisValues(c);
+            const cleanedTipo = c.tipo_equipo ? cleanMachineryType(c.tipo_equipo) : c.tipo_equipo;
+            const resolvedTraits =
+                c.physical_traits ||
+                inferAssetPhysicalTraits({
+                    rawTypeText: cleanedTipo,
+                    rawCategoryText: c.categoria_equipo,
+                    makeModelText: `${c.make_oficial || ''} ${c.model_oficial || ''}`,
+                });
             return {
                 ...c,
                 equipment_type_key: c.equipment_type_key || result.detected_equipment_type?.type_key || undefined,
                 archetype_id: homologous.archetype.id,
-                tipo_equipo: c.tipo_equipo ? cleanMachineryType(c.tipo_equipo) : c.tipo_equipo,
+                physical_traits: resolvedTraits,
+                tipo_equipo: cleanedTipo,
                 canonical_specs: homologous.slots,
                 caracteristicas_principales: serializeCanonicalSlotsToSpecsArray(homologous.slots),
                 short_description: buildHomologousEquipmentDescription(c),
@@ -1106,105 +1283,6 @@ assetsRouter.post('/resolve', async (req: ScopedRequest, res: Response) => {
         return res.status(200).json(sanitizedCandidates);
     } catch (err) {
         return handleRouteError(res, err, 'Error resolviendo candidatos de maquinaria.');
-    }
-});
-
-/**
- * POST /api/assets/register-instance
- * Registra una unidad física en la flota del tenant activo (`tenant_assets`).
- */
-assetsRouter.post('/register-instance', async (req: ScopedRequest, res: Response) => {
-    try {
-        const ctx = req.opermaqContext!;
-        const {
-            global_asset_id,
-            make_oficial,
-            model_oficial,
-            categoria_equipo,
-            tipo_equipo,
-            ambiente_operativo,
-            contexto_operativo,
-            caracteristicas_principales,
-            chassis_versions,
-            official_url,
-            ownership_type,
-            identifier_value,
-            original_jargon,
-            dynamic_data,
-            version,
-        } = req.body || {};
-
-        if (!ownership_type) {
-            return res.status(400).json({ error: 'ownership_type es requerido.' });
-        }
-
-        validateIndustrialDomain(`${make_oficial || ''} ${model_oficial || ''}`, categoria_equipo);
-
-        let finalGlobalId: string | undefined = global_asset_id;
-        if (make_oficial && model_oficial) {
-            const upserted = await upsertGlobalAssetCatalog({
-                existingCatalogId: finalGlobalId,
-                make_oficial,
-                model_oficial,
-                tipo_equipo,
-                categoria_equipo,
-                ambiente_operativo,
-                contexto_operativo,
-                caracteristicas_principales,
-                versions: chassis_versions,
-                official_url,
-                original_jargon,
-                actorId: ctx.actorId,
-                actorEmail: ctx.actorEmail,
-            });
-            finalGlobalId = upserted.global_asset_id;
-        } else if (finalGlobalId && original_jargon) {
-            await db
-                .collection('global_asset_catalog')
-                .doc(finalGlobalId)
-                .update({
-                    alias_detectados: FieldValue.arrayUnion(original_jargon),
-                })
-                .catch(() => undefined);
-        }
-
-        if (!finalGlobalId) {
-            return res.status(400).json({
-                error: 'No se pudo determinar global_asset_id: se requieren make_oficial y model_oficial.',
-            });
-        }
-
-        const identifier_type = 'DYNAMIC';
-        const instanceDoc = await db.collection('tenant_assets').add({
-            global_asset_id: finalGlobalId,
-            make_model: `${make_oficial || ''} ${model_oficial || ''}`.trim(),
-            make_oficial: make_oficial || '',
-            model_oficial: model_oficial || '',
-            categoria_equipo: categoria_equipo || 'Maquinaria Pesada',
-            version: version || 'ESTÁNDAR',
-            ownership_type,
-            identifier_type,
-            identifier_value: identifier_value || `EQ-${Date.now()}`,
-            original_jargon: original_jargon || '',
-            registered_by: ctx.actorId,
-            registered_by_email: ctx.actorEmail,
-            tenant_id: ctx.tenantId,
-            tenantId: ctx.tenantId,
-            data_scope: ctx.dataScope,
-            dynamic_data: dynamic_data || {},
-            archived: false,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-        });
-
-        return res.status(200).json({
-            success: true,
-            identifier_type,
-            instanceId: instanceDoc.id,
-            global_asset_id: finalGlobalId,
-        });
-    } catch (err) {
-        return handleRouteError(res, err, 'Error registrando unidad en flota.');
     }
 });
 
@@ -1234,7 +1312,7 @@ assetsRouter.post('/add-tenant-catalog', async (req: ScopedRequest, res: Respons
             isGlobalOnly,
         } = req.body || {};
 
-        if (isGlobalOnly && !ctx.capabilities.canCurateAI) {
+        if (isGlobalOnly && (!ctx.capabilities.canCurateAI || ctx.isEduSandbox)) {
             return res.status(403).json({
                 error: 'Permisos insuficientes para pre-registro global de catálogos.',
             });
@@ -1306,7 +1384,15 @@ assetsRouter.post('/add-tenant-catalog', async (req: ScopedRequest, res: Respons
         }
 
         let finalGlobalId: string | undefined = global_asset_id;
-        if (make_oficial && model_oficial) {
+        if (ctx.isEduSandbox) {
+            if (!finalGlobalId && make_oficial && model_oficial) {
+                const simHash = createHash('sha256')
+                    .update(`${make_oficial}:${model_oficial}`)
+                    .digest('hex')
+                    .slice(0, 12);
+                finalGlobalId = `edu_sim_${simHash}`;
+            }
+        } else if (make_oficial && model_oficial) {
             const upserted = await upsertGlobalAssetCatalog({
                 existingCatalogId: finalGlobalId,
                 make_oficial,
@@ -1319,6 +1405,7 @@ assetsRouter.post('/add-tenant-catalog', async (req: ScopedRequest, res: Respons
                 actorId: ctx.actorId,
                 actorEmail: ctx.actorEmail,
             });
+            invalidateCatalogProjectionCache();
             finalGlobalId = upserted.global_asset_id;
         }
 
@@ -1336,8 +1423,9 @@ assetsRouter.post('/add-tenant-catalog', async (req: ScopedRequest, res: Respons
             });
         }
 
+        const fleetCol = resolveFleetCollectionName(ctx);
         const existingQs = await db
-            .collection('tenant_assets')
+            .collection(fleetCol)
             .where('tenant_id', '==', ctx.tenantId)
             .where('global_asset_id', '==', finalGlobalId)
             .limit(1)
@@ -1355,12 +1443,12 @@ assetsRouter.post('/add-tenant-catalog', async (req: ScopedRequest, res: Respons
             });
         }
 
-        const tenantAssetDoc = await db.collection('tenant_assets').add({
+        const tenantAssetDoc = await db.collection(fleetCol).add({
             global_asset_id: finalGlobalId,
             make_model: `${make_oficial} ${model_oficial}`.trim(),
             make_oficial,
             model_oficial,
-            categoria_equipo: categoria_equipo || 'Maquinaria Pesada',
+            categoria_equipo: categoria_equipo || 'EQUIPAMIENTO INDUSTRIAL',
             tipo_equipo: profileData.tipo_equipo,
             version: version || 'ESTÁNDAR',
             original_jargon: original_jargon || '',
@@ -1369,6 +1457,7 @@ assetsRouter.post('/add-tenant-catalog', async (req: ScopedRequest, res: Respons
             addedBy: ctx.actorId,
             addedByEmail: ctx.actorEmail,
             data_scope: ctx.dataScope,
+            is_edu_sandbox: Boolean(ctx.isEduSandbox),
             archived: false,
             createdAt: new Date(),
             updatedAt: new Date(),
@@ -1385,26 +1474,8 @@ assetsRouter.post('/add-tenant-catalog', async (req: ScopedRequest, res: Respons
 });
 
 /**
- * POST /api/assets/generate-fields
- * Genera campos dinámicos de enrolamiento según categoría y modelo.
- */
-assetsRouter.post('/generate-fields', async (req: ScopedRequest, res: Response) => {
-    try {
-        const { categoria_equipo, make_model } = req.body || {};
-        if (!categoria_equipo || !make_model) {
-            return res.status(400).json({ error: 'categoria_equipo y make_model son requeridos.' });
-        }
-
-        const fields = await generateRegistrationFields(String(make_model), String(categoria_equipo));
-        return res.status(200).json({ fields });
-    } catch (err) {
-        return handleRouteError(res, err, 'Error generando campos de enrolamiento.');
-    }
-});
-
-/**
  * DELETE /api/assets/:id
- * Archiva lógicamente un equipo de la flota de la cuenta activa (`tenant_assets`).
+ * Archiva lógicamente un equipo de la flota de la cuenta activa (`tenant_assets` o `edu_sandbox_fleet`).
  */
 assetsRouter.delete('/:id', async (req: ScopedRequest, res: Response) => {
     try {
@@ -1413,7 +1484,8 @@ assetsRouter.delete('/:id', async (req: ScopedRequest, res: Response) => {
             return res.status(403).json({ error: 'Permisos insuficientes para retirar equipos de flota.' });
         }
 
-        const docRef = db.collection('tenant_assets').doc(String(req.params.id));
+        const fleetCol = resolveFleetCollectionName(ctx);
+        const docRef = db.collection(fleetCol).doc(String(req.params.id));
         const snap = await docRef.get();
         if (!snap.exists) {
             return res.status(404).json({ error: 'Equipo de flota no encontrado.' });
@@ -1471,7 +1543,8 @@ assetsRouter.patch('/:id/overrides', async (req: ScopedRequest, res: Response) =
             });
         }
 
-        const docRef = db.collection('tenant_assets').doc(String(req.params.id));
+        const fleetCol = resolveFleetCollectionName(ctx);
+        const docRef = db.collection(fleetCol).doc(String(req.params.id));
         const snap = await docRef.get();
         if (!snap.exists) {
             return res.status(404).json({ error: 'Activo de flota no encontrado.' });
@@ -1524,6 +1597,12 @@ assetsRouter.patch('/:id/overrides', async (req: ScopedRequest, res: Response) =
 assetsRouter.post('/:id/contribute-to-commons', async (req: ScopedRequest, res: Response) => {
     try {
         const ctx = req.opermaqContext!;
+        if (ctx.isEduSandbox) {
+            return res.status(403).json({
+                error: 'EDU_SANDBOX_ISOLATED',
+                message: 'Las cuentas académicas sandbox no modifican ni envían aportes al Catálogo Maestro común.',
+            });
+        }
         const rawText = String(req.body?.content || req.body?.text || '').trim();
         if (rawText.length < 8) {
             return res.status(400).json({
@@ -1531,7 +1610,8 @@ assetsRouter.post('/:id/contribute-to-commons', async (req: ScopedRequest, res: 
             });
         }
 
-        const docRef = db.collection('tenant_assets').doc(String(req.params.id));
+        const fleetCol = resolveFleetCollectionName(ctx);
+        const docRef = db.collection(fleetCol).doc(String(req.params.id));
         const snap = await docRef.get();
         if (!snap.exists) {
             return res.status(404).json({ error: 'Unidad de flota no encontrada.' });

@@ -253,6 +253,13 @@ export interface EquipmentSymbologyPack {
   groups: Record<SymbologyFunctionalGroup, SymbologyPackEntry[]>;
 }
 
+export type {
+  AssetPhysicalTraits,
+  CostMatrixTaxonomyMeta,
+  EnergyConsumptionProfile,
+  OperationalCostMatrix,
+} from '../../../contracts/opermaq.contracts';
+
 export type AdHocManualProfileId =
   | 'MASTER_5_PILLARS'
   | 'OPERATOR_POCKET_GUIDE'

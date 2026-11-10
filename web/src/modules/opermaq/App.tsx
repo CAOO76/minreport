@@ -8,6 +8,7 @@ import {
     type OpermaqHostScope,
 } from './hooks/useOpermaqContext';
 import { AssetList, type OpermaqDomainMode } from './components/AssetList';
+import { M3CircularProgress } from './components/M3ProgressIndicator';
 
 // Carga diferida (Capa 2 MINREPORT — INP < 100ms, cero bloqueo en render path)
 const AssetRegistration = lazy(() =>
@@ -46,8 +47,8 @@ export interface OpermaqAppProps {
 }
 
 const ViewFallback = () => (
-    <div className="h-full w-full flex items-center justify-center p-[21px] font-mono text-xs text-[#475569] dark:text-[#8A93A6]">
-        [Cargando...]
+    <div className="h-full w-full flex items-center justify-center p-[21px]">
+        <M3CircularProgress size={22} strokeWidth={2.5} tone="copper" />
     </div>
 );
 
@@ -79,6 +80,7 @@ function App({
     } | null>(null);
     const [showFleetRegistrationModal, setShowFleetRegistrationModal] = useState<boolean>(false);
     const [fleetRefreshSeq, setFleetRefreshSeq] = useState<number>(0);
+    const [catalogRefreshSeq, setCatalogRefreshSeq] = useState<number>(0);
 
     // Al cambiar entre CATÁLOGO y FLOTA o al presionar nuevamente el icono del menú de sección, volver al home respectivo
     useEffect(() => {
@@ -130,7 +132,7 @@ function App({
     if (!ctx.isLoaded) {
         return (
             <div className="h-full min-h-[calc(100vh-64px)] w-full flex items-center justify-center bg-[#FFFFFF] dark:bg-[#000000]">
-                <div className="w-8 h-8 border-2 border-[#C68346] border-t-transparent rounded-none animate-spin" />
+                <M3CircularProgress size={28} strokeWidth={3} tone="copper" />
             </div>
         );
     }
@@ -140,10 +142,11 @@ function App({
             <div className="w-full h-full min-h-0 flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-sans overflow-hidden select-none">
                 <main className="flex-1 min-h-0 flex flex-col overflow-hidden relative bg-[#FFFFFF] dark:bg-[#000000]">
                     <div className="h-full w-full flex-1 min-h-0 overflow-auto relative">
-                        {/* DOMINIO 1: CATÁLOGO ÚNICO Y GENÉRICO (`1º DEV` / `3º TEST-PILOT`) */}
+                        {/* DOMINIO 1: CATÁLOGO ÚNICO Y GENÉRICO (`1º DEV` / `2º ADMIN` / `3º TEST-PILOT`) */}
                         {effectiveDomain === 'CATALOG' &&
                             (currentView === 'list' || currentView === 'registration') && (
                                 <AssetList
+                                    key={`catalog-list-${catalogRefreshSeq}`}
                                     domainMode="CATALOG"
                                     onSelectCatalogAsset={handleSelectCatalogAsset}
                                     onNew={() => setCurrentView('registration')}
@@ -168,6 +171,7 @@ function App({
                                 <AssetRegistration
                                     isGlobalOnly={true}
                                     onSuccess={(id) => {
+                                        setCatalogRefreshSeq((s) => s + 1);
                                         onTelemetryEvent?.({
                                             type: 'EQUIPMENT_REGISTERED',
                                             assetId: id,
@@ -187,6 +191,7 @@ function App({
                                         assetId={selectedCatalogAssetId}
                                         onBack={() => {
                                             setSelectedCatalogAssetId(null);
+                                            setCatalogRefreshSeq((s) => s + 1);
                                             setCurrentView('list');
                                         }}
                                     />

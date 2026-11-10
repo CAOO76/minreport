@@ -4,6 +4,7 @@ import { useOpermaqContext } from '../hooks/useOpermaqContext';
 import { authFetch } from '../utils/authFetch';
 import { toast } from 'react-toastify';
 import type { MasterSymbologyItem } from '../types/vault';
+import { M3CircularProgress } from './M3ProgressIndicator';
 
 export const GlobalSymbologyDashboard: React.FC = () => {
   const { capabilities } = useOpermaqContext();
@@ -425,9 +426,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
             <div className="flex-1 overflow-y-auto p-[21px] space-y-[21px] bg-[#FFFFFF] dark:bg-[#000000]">
               {loading ? (
                 <div className="flex items-center justify-center py-20">
-                  <span className="material-symbols-outlined animate-spin text-[#C68346] text-[24px]">
-                    progress_activity
-                  </span>
+                  <M3CircularProgress size={24} strokeWidth={3} tone="copper" />
                 </div>
               ) : pendingList.length === 0 ? (
                 <div className="p-[34px] text-center text-[12px] font-mono text-[#94A3B8] dark:text-[#5A6072]">
@@ -452,9 +451,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
             <div className="flex-1 overflow-y-auto p-[21px] space-y-[13px] bg-[#F8FAFC] dark:bg-[#07090D]">
               {loading ? (
                 <div className="flex items-center justify-center py-20">
-                  <span className="material-symbols-outlined animate-spin text-[#C68346] text-[24px]">
-                    progress_activity
-                  </span>
+                  <M3CircularProgress size={24} strokeWidth={3} tone="copper" />
                 </div>
               ) : consolidatedList.length === 0 ? (
                 <div className="p-[34px] text-center text-[12px] font-mono text-[#94A3B8] dark:text-[#5A6072]">
@@ -473,9 +470,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
         <div className="flex-1 overflow-y-auto p-[21px]">
           {loading ? (
             <div className="flex items-center justify-center py-20">
-              <span className="material-symbols-outlined animate-spin text-[#C68346] text-[24px]">
-                progress_activity
-              </span>
+              <M3CircularProgress size={24} strokeWidth={3} tone="copper" />
             </div>
           ) : consolidatedList.length === 0 ? (
             <div className="p-[34px] text-center text-[12px] font-mono text-[#94A3B8] dark:text-[#5A6072]">

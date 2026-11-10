@@ -14,7 +14,8 @@ import type {
 } from '../types/vault.types';
 import { buildAndPersistAssetSymbologyPack } from './EquipmentSymbologyPackBuilder';
 import { normalizeProceduralStepsToMarkdownTable } from './NeuroSymbolicVerifier';
-import { type BlueprintKind, OpermaqSvgBlueprintEngine } from './OpermaqSvgBlueprintEngine';
+import type { BlueprintKind } from './OpermaqSvgBlueprintEngine';
+import { VaultPersistenceService } from './VaultPersistenceService';
 
 /**
  * OPERMAQ MANUAL PUBLISHER v4.0 — Editorial Industrial de Manuales Ad-Hoc Propios Ilustrados
@@ -262,14 +263,14 @@ async function resolveStorageUrlToPngBuffer(storageUrl: string, svgInline?: stri
 export class OpermaqManualPublisher {
     public static async compileAdHocManual(input: CompileManualInput): Promise<CompiledManualOutput> {
         const assetRef = db.collection('global_asset_catalog').doc(input.globalAssetId);
-        const snap = await assetRef.get();
-        if (!snap.exists) {
+        const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(input.globalAssetId);
+        if (!hydrated.exists || !hydrated.data) {
             const err: any = new Error(`Activo ${input.globalAssetId} no existe en global_asset_catalog.`);
             err.statusCode = 404;
             throw err;
         }
+        const assetData = hydrated.data;
 
-        const assetData = snap.data()!;
         const cfg = PROFILE_CONFIG[input.profileId] || PROFILE_CONFIG.MASTER_5_PILLARS;
 
         const make = String(assetData.make_oficial || assetData.make || 'OEM');
@@ -286,10 +287,13 @@ export class OpermaqManualPublisher {
         // 2. Cero plantillas SVG genéricas (`FIX-01`): el manual compilado solo incluye figuras reales y gráficos de datos verificados
         const generatedBlueprints: Array<{ figure: ExtractedFigureRef; svgString: string }> = [];
 
-        // 3. Cargar opcionalmente `tenant_custom_overrides` (aislado por tenant)
+        // 3. Cargar opcionalmente `tenant_custom_overrides` (aislado por tenant o sandbox EDU)
         let tenantOverrides: Record<string, any> | null = null;
         if (input.includeTenantOverrides && input.tenantAssetId) {
-            const tSnap = await db.collection('tenant_assets').doc(input.tenantAssetId).get();
+            let tSnap = await db.collection('tenant_assets').doc(input.tenantAssetId).get();
+            if (!tSnap.exists) {
+                tSnap = await db.collection('edu_sandbox_fleet').doc(input.tenantAssetId).get();
+            }
             if (tSnap.exists) {
                 const tData = tSnap.data()!;
                 const docTenant = tData.tenantId || tData.accountId;
