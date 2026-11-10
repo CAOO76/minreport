@@ -444,7 +444,32 @@ export function isPillarMerkleChainEvolved(
 }
 
 /**
+ * Calcula el Hash Criptográfico SHA-256 del contenido técnico y estado de aprobación HITL
+ * de los capítulos activos de un pilar (`content_digest_sha256`).
+ * Permite detectar derivas de parámetros cuando un editor lateral modifica cifras o bloquea un ítem.
+ */
+export function computePillarContentDigestSha256(
+    items: PillarItem[] | undefined
+): string | null {
+    const active = Array.isArray(items) ? items.filter((it) => !it?.is_discarded) : [];
+    if (active.length === 0) return null;
+    const canonicalContent = active.map((it, idx) => ({
+        order: idx + 1,
+        item_id: String(it.item_id || ''),
+        title: normalizeComparableTitle(it.title),
+        content_hash:
+            it.content && String(it.content).trim()
+                ? createHash('sha256').update(String(it.content).trim()).digest('hex')
+                : 'PENDIENTE',
+        locked: Boolean(it.is_human_locked),
+        approval: String(it.estado_aprobacion || 'GENERADO_IA'),
+    }));
+    return createHash('sha256').update(JSON.stringify(canonicalContent)).digest('hex');
+}
+
+/**
  * Calcula la Raíz Merkle SHA-256 de la bóveda de 5 pilares (`vault_merkle_root_sha256`).
+ * Cubre tanto el índice estructural (`structure_digest_sha256`) como el estado de contenido (`content_digest_sha256`).
  */
 export function computeVaultMerkleRootSha256(vault: Record<string, any> | undefined): string | null {
     if (!vault || typeof vault !== 'object') return null;
@@ -453,8 +478,10 @@ export function computeVaultMerkleRootSha256(vault: Record<string, any> | undefi
         const doc = vault[pid];
         const digest =
             doc?.structure_digest_sha256 || computePillarStructureDigestSha256(doc?.items);
+        const contentDigest =
+            doc?.content_digest_sha256 || computePillarContentDigestSha256(doc?.items);
         if (digest) {
-            digests.push(`${pid}:${digest}`);
+            digests.push(contentDigest ? `${pid}:${digest}:${contentDigest}` : `${pid}:${digest}`);
         }
     }
     if (digests.length === 0) return null;

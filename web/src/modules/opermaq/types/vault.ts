@@ -314,6 +314,8 @@ export interface PillarDocument {
   itemize_error?: string | null;
   /** Hash SHA-256 canónico de la estructura activa del pilar (Web 3.0 Merkle Chain). */
   structure_digest_sha256?: string | null;
+  /** Hash SHA-256 canónico del contenido y estado de los ítems activos del pilar. */
+  content_digest_sha256?: string | null;
   /** Hash SHA-256 del pilar padre inmediato al momento de itemizar este pilar. */
   parent_pillar_digest_sha256?: string | null;
 }
@@ -576,6 +578,10 @@ export interface ChatMessage {
   timestamp: string;
   highlightText?: string;
   draftContent?: string;
+  draftStatus?: 'PENDING' | 'APPLIED' | 'DISCARDED';
+  appliedAt?: string;
+  discardedAt?: string;
+  selectedFragmentTarget?: string;
   intent?: 'CHAT' | 'EDIT_PROPOSAL' | 'RESEARCH_WEB' | 'SEARCH_IMAGE';
 }
 

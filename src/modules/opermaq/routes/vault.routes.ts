@@ -25,6 +25,7 @@ import {
 import { buildAndPersistAssetSymbologyPack } from '../services/EquipmentSymbologyPackBuilder';
 import { huntVaultItem, reconcileAssetSidebarProfileFromVault } from '../services/ItemHunterService';
 import {
+    computePillarContentDigestSha256,
     computePillarStructureDigestSha256,
     computeVaultMerkleRootSha256,
     ensureFichaTecnicaConsumptionBaseItem,
@@ -33,6 +34,11 @@ import {
     sortAndReindexPillarItems,
     suggestComplementaryPillarItems,
 } from '../services/ItemizerService';
+import {
+    computeFactFingerprint,
+    injectVerifiedInlineSymbology,
+    verifyAndNormalizeTechnicalUnits,
+} from '../services/NeuroSymbolicVerifier';
 import { OpermaqManualPublisher } from '../services/OpermaqManualPublisher';
 import {
     type BlueprintKind,
@@ -191,6 +197,94 @@ function reindexPillarItems(items: any[]): any[] {
         it.order = active.length + idx + 1;
     });
     return [...active, ...discarded];
+}
+
+async function sanitizeAndEnrichItemContentForSave(
+    rawContent: string,
+    pillarId: PillarId
+): Promise<{ content: string; symbologyRefs: string[] }> {
+    const unitChecked = verifyAndNormalizeTechnicalUnits(String(rawContent || ''));
+    const symbologyRes = await injectVerifiedInlineSymbology(unitChecked.normalizedMarkdown, {
+        pillarId,
+    });
+    return {
+        content: symbologyRes.enrichedMarkdown,
+        symbologyRefs: symbologyRes.detectedConceptIds,
+    };
+}
+
+/**
+ * Orquestador de Cadena Indirecta Multi-Pilar (`propagateItemContentMutationEffects`):
+ * Ejecutado tras cualquier mutación en los editores de contenido de la columna derecha
+ * (`apply-assist-proposal`, `evolve-item`, `update-item-content`, `rollback-item-version`,
+ * `update-item-approval-state`, `resolve-pending-figure`):
+ * 1. Calcula `content_digest_sha256` del pilar y actualiza `vault_merkle_root_sha256`.
+ * 2. Sincroniza el contenido curado en `vault_corpus_chunks` (`southamerica-west1`) para retroalimentar el RAG soberano.
+ * 3. Si `pillarId === 'ficha_tecnica'`, reconcilia automáticamente la Ficha Lateral Izquierda y la Matriz Energética.
+ */
+async function propagateItemContentMutationEffects(params: {
+    globalAssetId: string;
+    pillarId: PillarId;
+    itemId: string;
+    updatedItem: any;
+    updatedItems: any[];
+    existingVault: Record<string, any> | undefined;
+}): Promise<{ contentDigestSha256: string | null; vaultMerkleRootSha256: string | null }> {
+    const { globalAssetId, pillarId, itemId, updatedItem, updatedItems, existingVault } = params;
+    const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
+
+    const contentDigestSha256 = computePillarContentDigestSha256(updatedItems);
+    const nextVault = {
+        ...(existingVault || {}),
+        [pillarId]: {
+            ...(existingVault?.[pillarId] || {}),
+            items: updatedItems,
+            content_digest_sha256: contentDigestSha256,
+            updated_at: new Date().toISOString(),
+        },
+    };
+    const vaultMerkleRootSha256 = computeVaultMerkleRootSha256(nextVault);
+
+    await docRef.update({
+        [`knowledge_vault.${pillarId}.items`]: updatedItems,
+        [`knowledge_vault.${pillarId}.content_digest_sha256`]: contentDigestSha256,
+        [`knowledge_vault.${pillarId}.updated_at`]: new Date().toISOString(),
+        ...(vaultMerkleRootSha256 ? { 'knowledge_vault.vault_merkle_root_sha256': vaultMerkleRootSha256 } : {}),
+        updatedAt: Date.now(),
+    });
+
+    if (updatedItem && typeof updatedItem.content === 'string' && updatedItem.content.trim().length > 0) {
+        const chunkId = `curated_${pillarId}_${itemId}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
+        await docRef
+            .collection('vault_corpus_chunks')
+            .doc(chunkId)
+            .set(
+                {
+                    chunk_id: chunkId,
+                    pillar_id: pillarId,
+                    item_id: itemId,
+                    chapter_title: String(updatedItem.title || itemId),
+                    section: String(updatedItem.section || ''),
+                    source_filename: 'Curaduría Técnica HITL Soberana (southamerica-west1)',
+                    markdown_es: updatedItem.content,
+                    is_curated_hitl: true,
+                    is_human_locked: Boolean(updatedItem.is_human_locked),
+                    estado_aprobacion: String(updatedItem.estado_aprobacion || 'GENERADO_IA'),
+                    updated_at: new Date().toISOString(),
+                },
+                { merge: true }
+            )
+            .catch(() => undefined);
+    }
+
+    if (pillarId === 'ficha_tecnica') {
+        await reconcileAssetSidebarProfileFromVault(globalAssetId, {
+            allowGroundedEnrichmentIfNeeded: false,
+            preferVaultMarkdownOverExisting: true,
+        }).catch(() => null);
+    }
+
+    return { contentDigestSha256, vaultMerkleRootSha256 };
 }
 
 // ── ETAPA 2: INICIALIZACIÓN E ITEMIZADO ON-DEMAND POR PILAR ──────────────────
@@ -1047,7 +1141,15 @@ vaultRouter.post('/ai-assist-chat', requireCurateAI, checkVaultNotSealed, async 
             content: result.message,
             timestamp: new Date().toISOString(),
             ...(result.highlightText !== undefined ? { highlightText: result.highlightText } : {}),
-            ...(result.draftContent !== undefined ? { draftContent: result.draftContent } : {}),
+            ...(result.draftContent !== undefined
+                ? {
+                      draftContent: result.draftContent,
+                      draftStatus: 'PENDING' as const,
+                  }
+                : {}),
+            ...(result.selectedFragmentTarget !== undefined
+                ? { selectedFragmentTarget: result.selectedFragmentTarget }
+                : {}),
             ...(result.intent !== undefined ? { intent: result.intent } : {}),
         };
 
@@ -1144,7 +1246,7 @@ vaultRouter.post('/ai-assist-rejection', requireCurateAI, checkVaultNotSealed, a
 
 vaultRouter.post('/apply-assist-proposal', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const { globalAssetId, pillarId, itemId, finalContent, intent, sessionId } = req.body || {};
+    const { globalAssetId, pillarId, itemId, finalContent, intent, sessionId, messageId } = req.body || {};
 
     if (!globalAssetId || !pillarId || !itemId || !finalContent) {
         return res.status(400).json({ error: 'Parámetros requeridos: globalAssetId, pillarId, itemId, finalContent.' });
@@ -1155,7 +1257,8 @@ vaultRouter.post('/apply-assist-proposal', requireCurateAI, checkVaultNotSealed,
         const snap = await docRef.get();
         if (!snap.exists) return res.status(404).json({ error: 'Catálogo no encontrado.' });
 
-        const pillar = snap.data()?.knowledge_vault?.[pillarId];
+        const catalogData = snap.data() || {};
+        const pillar = catalogData?.knowledge_vault?.[pillarId];
         if (!pillar) return res.status(404).json({ error: 'Pilar no encontrado.' });
 
         const items = [...(pillar.items || [])];
@@ -1165,17 +1268,24 @@ vaultRouter.post('/apply-assist-proposal', requireCurateAI, checkVaultNotSealed,
             return res.status(403).json({ error: 'Ítem bloqueado por autoridad humana.' });
         }
 
+        const sanitized = await sanitizeAndEnrichItemContentForSave(
+            String(finalContent),
+            pillarId as PillarId
+        );
+        const nowIso = new Date().toISOString();
         const oldContent = items[idx].content;
+
         items[idx] = {
             ...items[idx],
-            content: finalContent,
+            content: sanitized.content,
+            symbology_refs: sanitized.symbologyRefs,
             content_status: 'COMPLETADO',
-            hunted_at: new Date().toISOString(),
+            hunted_at: nowIso,
             last_edit_by: ctx.actorEmail,
             historial_cambios: [
                 ...(items[idx].historial_cambios || []),
                 {
-                    fecha: new Date().toISOString(),
+                    fecha: nowIso,
                     accion: `EDICIÓN_ASISTIDA_${intent || 'GENERAL'}`,
                     actor: ctx.actorEmail,
                     detalle: 'Propuesta aplicada mediante corrector técnico.',
@@ -1184,35 +1294,98 @@ vaultRouter.post('/apply-assist-proposal', requireCurateAI, checkVaultNotSealed,
             ],
         };
 
-        await docRef.update({ [`knowledge_vault.${pillarId}.items`]: items });
+        const propagation = await propagateItemContentMutationEffects({
+            globalAssetId,
+            pillarId: pillarId as PillarId,
+            itemId,
+            updatedItem: items[idx],
+            updatedItems: items,
+            existingVault: catalogData.knowledge_vault,
+        });
 
         if (sessionId) {
             const sessionRef = docRef.collection('vault_chats').doc(itemId).collection('sessions').doc(sessionId);
             const sessionSnap = await sessionRef.get();
             if (sessionSnap.exists) {
-                const history = sessionSnap.data()?.messages || [];
+                const rawHistory: ChatMessage[] = sessionSnap.data()?.messages || [];
+                const history = rawHistory.map((m) => {
+                    if (m.role === 'model' && m.draftContent && (!messageId || m.id === messageId || m.draftStatus !== 'DISCARDED')) {
+                        return {
+                            ...m,
+                            draftStatus: 'APPLIED' as const,
+                            appliedAt: nowIso,
+                        };
+                    }
+                    return m;
+                });
                 history.push(
                     {
                         id: `msg_user_aprobacion_${Date.now()}`,
                         role: 'user',
                         content: HITL_CONFIRM_KEYWORD,
-                        timestamp: new Date().toISOString(),
+                        timestamp: nowIso,
                     },
                     {
                         id: `msg_model_aprobacion_${Date.now()}`,
                         role: 'model',
-                        content: 'Cambios consolidados en el catálogo y registrados en el historial del ítem.',
-                        timestamp: new Date().toISOString(),
+                        content: 'Cambios consolidados en el catálogo, sincronizados en la cadena de pilares y registrados en el historial del ítem.',
+                        timestamp: nowIso,
                         intent: 'CHAT',
                     }
                 );
-                await sessionRef.set({ messages: history }, { merge: true });
+                await sessionRef.set({ messages: history, updatedAt: nowIso }, { merge: true });
             }
         }
 
-        return res.status(200).json({ success: true });
+        return res.status(200).json({
+            success: true,
+            content: sanitized.content,
+            symbology_refs: sanitized.symbologyRefs,
+            content_digest_sha256: propagation.contentDigestSha256,
+            vault_merkle_root_sha256: propagation.vaultMerkleRootSha256,
+        });
     } catch (err) {
         return handleVaultError(res, err, 'Error aplicando propuesta asistida.');
+    }
+});
+
+vaultRouter.post('/dismiss-assist-proposal', requireCurateAI, async (req: ScopedRequest, res: Response) => {
+    const { globalAssetId, itemId, sessionId, messageId } = req.body || {};
+    if (!globalAssetId || !itemId || !sessionId) {
+        return res.status(400).json({ error: 'Parámetros requeridos: globalAssetId, itemId, sessionId.' });
+    }
+
+    try {
+        const sessionRef = db
+            .collection('global_asset_catalog')
+            .doc(String(globalAssetId))
+            .collection('vault_chats')
+            .doc(String(itemId))
+            .collection('sessions')
+            .doc(String(sessionId));
+
+        const sessionSnap = await sessionRef.get();
+        if (!sessionSnap.exists) {
+            return res.status(200).json({ success: true });
+        }
+
+        const nowIso = new Date().toISOString();
+        const rawHistory: ChatMessage[] = sessionSnap.data()?.messages || [];
+        const updatedHistory = rawHistory.map((m) => {
+            if (m.role === 'model' && m.draftContent && (!messageId || m.id === messageId)) {
+                return {
+                    ...m,
+                    draftStatus: 'DISCARDED' as const,
+                    discardedAt: nowIso,
+                };
+            }
+            return m;
+        });
+
+        await sessionRef.set({ messages: updatedHistory, updatedAt: nowIso }, { merge: true });
+        return res.status(200).json({ success: true });
+    } catch (err) {
+        return handleVaultError(res, err, 'Error descartando propuesta de borrador.');
     }
 });
 
@@ -1995,9 +2168,13 @@ vaultRouter.post(
             }
 
             items[idx] = item;
-            await docRef.update({
-                [`knowledge_vault.${pillarId}.items`]: items,
-                updatedAt: FieldValue.serverTimestamp(),
+            await propagateItemContentMutationEffects({
+                globalAssetId,
+                pillarId: pillarId as PillarId,
+                itemId,
+                updatedItem: item,
+                updatedItems: items,
+                existingVault: snap.data()?.knowledge_vault,
             });
 
             return res.status(200).json({ success: true, estado: nuevo_estado });
@@ -2110,11 +2287,17 @@ vaultRouter.post('/update-item-content', requireCurateAI, checkVaultNotSealed, a
             return res.status(403).json({ error: 'Ítem bloqueado por autoridad humana.' });
         }
 
+        const sanitized = await sanitizeAndEnrichItemContentForSave(
+            String(newContent),
+            pillarId as PillarId
+        );
         const oldContent = items[idx].content;
         items[idx] = {
             ...items[idx],
-            content: newContent,
+            content: sanitized.content,
+            symbology_refs: sanitized.symbologyRefs,
             content_status: 'COMPLETADO',
+            last_edit_by: ctx.actorEmail,
             historial_cambios: [
                 ...(items[idx].historial_cambios || []),
                 {
@@ -2127,12 +2310,16 @@ vaultRouter.post('/update-item-content', requireCurateAI, checkVaultNotSealed, a
             ],
         };
 
-        await docRef.update({
-            [`knowledge_vault.${pillarId}.items`]: items,
-            updatedAt: FieldValue.serverTimestamp(),
+        await propagateItemContentMutationEffects({
+            globalAssetId,
+            pillarId: pillarId as PillarId,
+            itemId,
+            updatedItem: items[idx],
+            updatedItems: items,
+            existingVault: snap.data()?.knowledge_vault,
         });
 
-        return res.status(200).json({ success: true });
+        return res.status(200).json({ success: true, content: sanitized.content });
     } catch (err) {
         return handleVaultError(res, err, 'Error guardando contenido del ítem.');
     }
@@ -2287,6 +2474,30 @@ vaultRouter.post(
     }
 );
 
+function buildFallbackProposalKey(p: any, idx?: number): string {
+    const estado = String(p?.estado_fusion || 'NUEVO').trim();
+    const comp = String(p?.componente || '').trim();
+    const val = String(p?.valor_nuevo || '').trim().slice(0, 80);
+    return idx !== undefined
+        ? `fallback_${estado}::${comp}::${val}::${idx}`
+        : `fallback_${estado}::${comp}::${val}`;
+}
+
+function matchPendingProposalIndex(pendingList: any[], proposalId: string): number {
+    const exactIdx = pendingList.findIndex((p: any) => p.proposal_id === proposalId);
+    if (exactIdx !== -1) return exactIdx;
+
+    const withIdxMatch = pendingList.findIndex(
+        (p: any, i: number) => buildFallbackProposalKey(p, i) === proposalId
+    );
+    if (withIdxMatch !== -1) return withIdxMatch;
+
+    const withoutIdxMatch = pendingList.findIndex(
+        (p: any) => buildFallbackProposalKey(p) === proposalId
+    );
+    return withoutIdxMatch;
+}
+
 vaultRouter.post('/decide-proposal', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
     const schema = z.object({
@@ -2307,7 +2518,8 @@ vaultRouter.post('/decide-proposal', requireCurateAI, checkVaultNotSealed, async
         const snap = await docRef.get();
         if (!snap.exists) return res.status(404).json({ error: 'Catálogo no encontrado.' });
 
-        const pillar = snap.data()?.knowledge_vault?.[pillarId];
+        const data = snap.data() || {};
+        const pillar = data.knowledge_vault?.[pillarId];
         if (!pillar) return res.status(404).json({ error: 'Pilar no encontrado.' });
 
         const items = [...(pillar.items || [])];
@@ -2319,33 +2531,147 @@ vaultRouter.post('/decide-proposal', requireCurateAI, checkVaultNotSealed, async
 
         const item = { ...items[idx] };
         const currentPending = [...(item.pending_conflicts || [])];
-        const pIdx = currentPending.findIndex((p: any) => p.proposal_id === proposalId);
+        const pIdx = matchPendingProposalIndex(currentPending, proposalId);
         if (pIdx === -1) return res.status(404).json({ error: 'Propuesta no encontrada.' });
 
         const proposal = {
             ...currentPending[pIdx],
+            proposal_id: currentPending[pIdx].proposal_id || proposalId,
             human_decision: decision,
             decided_at: new Date().toISOString(),
             decided_by: ctx.actorEmail,
         };
         currentPending[pIdx] = proposal;
 
-        item.pending_conflicts = currentPending;
+        const targetFusionType: 'NUEVO' | 'CONFLICTO' =
+            proposal.estado_fusion === 'CONFLICTO' ? 'CONFLICTO' : 'NUEVO';
+
+        if (decision === 'ELIMINADO') {
+            const remainingPending = currentPending.filter(
+                (p: any, i: number) => i !== pIdx && p.human_decision !== 'ELIMINADO'
+            );
+            item.pending_conflicts = remainingPending;
+            item.historial_cambios = [
+                ...(item.historial_cambios || []),
+                {
+                    fecha: new Date().toISOString(),
+                    accion: 'PROPUESTA_ELIMINADA',
+                    actor: ctx.actorEmail,
+                    detalle: `Decisión ELIMINADO para ${proposal.componente}.`,
+                },
+            ];
+            item.last_edit_by = ctx.actorEmail;
+            items[idx] = item;
+
+            await propagateItemContentMutationEffects({
+                globalAssetId,
+                pillarId: pillarId as PillarId,
+                itemId,
+                updatedItem: item,
+                updatedItems: items,
+                existingVault: data.knowledge_vault,
+            });
+
+            const remainingCount = remainingPending.filter(
+                (p: any) => p.estado_fusion === targetFusionType && p.human_decision !== 'ELIMINADO' && p.human_decision !== 'APROBADO'
+            ).length;
+
+            return res.status(200).json({
+                success: true,
+                decision,
+                proposalId,
+                remainingCount,
+                autoConsolidated: false,
+            });
+        }
+
+        // decision === 'APROBADO': Consolidación inmediata en item.content + remoción física de pending_conflicts
+        const deltas = currentPending.filter(
+            (p: any) => p.estado_fusion === targetFusionType && p.human_decision === 'APROBADO'
+        );
+
+        const make = String(data.make_oficial || data.make || '').trim();
+        const model = String(data.model_oficial || data.model || '').trim();
+        const makeModel = `${make} ${model}`.trim() || globalAssetId;
+        const currentContent = item.content || '';
+
+        const evolvedContent = await evolveItemContent({
+            makeModel,
+            itemTitle: item.title,
+            currentContent,
+            deltas,
+            pillarId: pillarId as PillarId,
+        });
+
         item.historial_cambios = [
             ...(item.historial_cambios || []),
             {
                 fecha: new Date().toISOString(),
-                accion: decision === 'APROBADO' ? 'PROPUESTA_APROBADA' : 'PROPUESTA_ELIMINADA',
+                accion: targetFusionType === 'NUEVO' ? 'EVOLUCION_NUEVO_CONTENIDO' : 'EVOLUCION_CONFLICTOS',
                 actor: ctx.actorEmail,
-                detalle: `Decisión ${decision} para ${proposal.componente}.`,
+                detalle: `Aprobación e integración inmediata de ${deltas.length} hallazgo(s) ${targetFusionType} (${proposal.componente}).`,
+                snapshot_anterior: currentContent,
             },
         ];
 
-        items[idx] = item;
-        await docRef.update({ [`knowledge_vault.${pillarId}.items`]: items });
+        const remainingPending = currentPending.filter(
+            (p: any) =>
+                p.human_decision !== 'ELIMINADO' &&
+                !(p.estado_fusion === targetFusionType && p.human_decision === 'APROBADO')
+        );
 
-        const remainingCount = currentPending.filter(
-            (p: any) => p.estado_fusion === proposal.estado_fusion && p.human_decision !== 'ELIMINADO'
+        item.item_sources = item.item_sources || [];
+        const existingFingerprints = new Set<string>(item.fact_fingerprints || []);
+        let incomingFigures: ExtractedFigureRef[] = [];
+
+        for (const d of deltas) {
+            if (d.source_url && d.source_url.trim() && d.source_url.trim() !== '#') {
+                const urlStr = d.source_url.trim();
+                if (!item.item_sources.some((s: any) => s.url === urlStr)) {
+                    item.item_sources.push({
+                        type: d.is_oem ? 'OEM' : 'EXTERNO',
+                        author: make || 'Fabricante',
+                        description: `${d.componente} (${d.zona})`,
+                        url: urlStr,
+                    });
+                }
+            }
+            if (d.valor_nuevo) {
+                existingFingerprints.add(computeFactFingerprint(d.valor_nuevo, d.componente || ''));
+            }
+            if (Array.isArray(d.figures) && d.figures.length > 0) {
+                incomingFigures = incomingFigures.concat(d.figures);
+            }
+        }
+
+        if (incomingFigures.length > 0) {
+            item.figures = mergeDeduplicatedFigures(item.figures || [], incomingFigures);
+        }
+        item.fact_fingerprints = Array.from(existingFingerprints);
+
+        const sanitized = await sanitizeAndEnrichItemContentForSave(
+            evolvedContent,
+            pillarId as PillarId
+        );
+        item.content = sanitized.content;
+        item.symbology_refs = sanitized.symbologyRefs;
+        item.pending_conflicts = remainingPending;
+        item.authorized_delta_buffer = [];
+        item.estado_aprobacion = 'GENERADO_IA';
+        item.last_edit_by = ctx.actorEmail;
+        items[idx] = item;
+
+        await propagateItemContentMutationEffects({
+            globalAssetId,
+            pillarId: pillarId as PillarId,
+            itemId,
+            updatedItem: item,
+            updatedItems: items,
+            existingVault: data.knowledge_vault,
+        });
+
+        const remainingCount = remainingPending.filter(
+            (p: any) => p.estado_fusion === targetFusionType && p.human_decision !== 'ELIMINADO' && p.human_decision !== 'APROBADO'
         ).length;
 
         return res.status(200).json({
@@ -2353,6 +2679,8 @@ vaultRouter.post('/decide-proposal', requireCurateAI, checkVaultNotSealed, async
             decision,
             proposalId,
             remainingCount,
+            evolvedContent: sanitized.content,
+            autoConsolidated: true,
         });
     } catch (err) {
         return handleVaultError(res, err, 'Error registrando decisión sobre propuesta.');
@@ -2427,6 +2755,7 @@ vaultRouter.post('/evolve-item', requireCurateAI, checkVaultNotSealed, async (re
 
         const remainingPending = currentPending.filter(
             (p: any) =>
+                p.human_decision !== 'ELIMINADO' &&
                 !(
                     p.estado_fusion === filterType &&
                     (p.human_decision === 'APROBADO' || p.human_decision === 'ELIMINADO')
@@ -2434,6 +2763,9 @@ vaultRouter.post('/evolve-item', requireCurateAI, checkVaultNotSealed, async (re
         );
 
         item.item_sources = item.item_sources || [];
+        const existingFingerprints = new Set<string>(item.fact_fingerprints || []);
+        let incomingFigures: ExtractedFigureRef[] = [];
+
         for (const d of deltas) {
             if (d.source_url && d.source_url.trim() && d.source_url.trim() !== '#') {
                 const urlStr = d.source_url.trim();
@@ -2446,20 +2778,41 @@ vaultRouter.post('/evolve-item', requireCurateAI, checkVaultNotSealed, async (re
                     });
                 }
             }
+            if (d.valor_nuevo) {
+                existingFingerprints.add(computeFactFingerprint(d.valor_nuevo, d.componente || ''));
+            }
+            if (Array.isArray(d.figures) && d.figures.length > 0) {
+                incomingFigures = incomingFigures.concat(d.figures);
+            }
         }
 
-        item.content = evolvedContent;
+        if (incomingFigures.length > 0) {
+            item.figures = mergeDeduplicatedFigures(item.figures || [], incomingFigures);
+        }
+        item.fact_fingerprints = Array.from(existingFingerprints);
+
+        const sanitized = await sanitizeAndEnrichItemContentForSave(
+            evolvedContent,
+            pillarId as PillarId
+        );
+        item.content = sanitized.content;
+        item.symbology_refs = sanitized.symbologyRefs;
         item.pending_conflicts = remainingPending;
         item.authorized_delta_buffer = [];
         item.estado_aprobacion = 'GENERADO_IA';
+        item.last_edit_by = ctx.actorEmail;
         items[idx] = item;
 
-        await docRef.update({
-            [`knowledge_vault.${pillarId}.items`]: items,
-            updatedAt: FieldValue.serverTimestamp(),
+        await propagateItemContentMutationEffects({
+            globalAssetId,
+            pillarId: pillarId as PillarId,
+            itemId,
+            updatedItem: item,
+            updatedItems: items,
+            existingVault: data.knowledge_vault,
         });
 
-        return res.status(200).json({ success: true, evolvedContent });
+        return res.status(200).json({ success: true, evolvedContent: sanitized.content });
     } catch (err) {
         return handleVaultError(res, err, 'Error evolucionando contenido del ítem.');
     }
@@ -2573,11 +2926,17 @@ vaultRouter.post('/rollback-item-version', requireCurateAI, checkVaultNotSealed,
             return res.status(404).json({ error: 'Versión histórica no encontrada.' });
         }
 
+        const sanitized = await sanitizeAndEnrichItemContentForSave(
+            String(targetEntry.snapshot_anterior || ''),
+            pillarId as PillarId
+        );
         const previous = items[idx].content || '';
         items[idx] = {
             ...items[idx],
-            content: targetEntry.snapshot_anterior,
+            content: sanitized.content,
+            symbology_refs: sanitized.symbologyRefs,
             estado_aprobacion: 'GENERADO_IA',
+            last_edit_by: ctx.actorEmail,
             historial_cambios: [
                 ...(items[idx].historial_cambios || []),
                 {
@@ -2590,8 +2949,15 @@ vaultRouter.post('/rollback-item-version', requireCurateAI, checkVaultNotSealed,
             ],
         };
 
-        await docRef.update({ [`knowledge_vault.${pillarId}.items`]: items });
-        return res.status(200).json({ success: true, restoredContent: targetEntry.snapshot_anterior });
+        await propagateItemContentMutationEffects({
+            globalAssetId,
+            pillarId: pillarId as PillarId,
+            itemId,
+            updatedItem: items[idx],
+            updatedItems: items,
+            existingVault: snap.data()?.knowledge_vault,
+        });
+        return res.status(200).json({ success: true, restoredContent: sanitized.content });
     } catch (err) {
         return handleVaultError(res, err, 'Error restaurando versión previa.');
     }

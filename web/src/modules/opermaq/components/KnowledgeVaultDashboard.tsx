@@ -722,7 +722,7 @@ function PendingSectionFigureCard({
       onPaste={handlePaste}
       data-pending-content-slot="true"
       data-pending-fragment={`[IMAGEN PENDIENTE] ${description}`}
-      className="my-[21px] border border-[#EAB308] dark:border-[#FACC15] border-l-2 border-l-[#C68346] bg-[#FEF08A]/20 dark:bg-[#FACC15]/10 p-[13px] rounded-none shadow-none select-none outline-none focus:border-[#00AEEF] dark:focus:border-[#00AEEF]"
+      className="my-[21px] border border-[#C68346]/60 border-l-2 border-l-[#C68346] bg-[#C68346]/10 dark:bg-[#C68346]/15 p-[13px] rounded-none shadow-none select-none outline-none focus:border-[#00AEEF] dark:focus:border-[#00AEEF]"
     >
       <div className="flex flex-wrap items-center justify-between gap-[8px] pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C]">
         <div className="flex items-center gap-[8px]">
@@ -1301,18 +1301,42 @@ interface ItemContentBlockProps {
 }
 
 // ─── Subcomponentes para la refactorización de Actualización por IA ─────────
+function getEffectiveProposalId(proposal: ProposedUpdate, fallbackIdx?: number): string {
+  if (proposal.proposal_id && proposal.proposal_id.trim()) {
+    return proposal.proposal_id.trim();
+  }
+  const estado = String(proposal.estado_fusion || 'NUEVO').trim();
+  const comp = String(proposal.componente || '').trim();
+  const val = String(proposal.valor_nuevo || '').trim().slice(0, 80);
+  return fallbackIdx !== undefined
+    ? `fallback_${estado}::${comp}::${val}::${fallbackIdx}`
+    : `fallback_${estado}::${comp}::${val}`;
+}
+
 interface ProposalCardProps {
   proposal: ProposedUpdate;
+  fallbackIndex?: number;
   onDecide: (proposalId: string, decision: 'APROBADO' | 'ELIMINADO') => Promise<void>;
+  onConsolidateApproved?: () => Promise<void>;
   isSealed: boolean;
   fallbackUrl?: string;
   children?: React.ReactNode;
 }
 
-function ProposalCard({ proposal, onDecide, isSealed, fallbackUrl, children }: ProposalCardProps) {
+function ProposalCard({
+  proposal,
+  fallbackIndex,
+  onDecide,
+  onConsolidateApproved,
+  isSealed,
+  fallbackUrl,
+  children,
+}: ProposalCardProps) {
   const [confirmingDecision, setConfirmingDecision] = useState<'APROBADO' | 'ELIMINADO' | null>(null);
   const [confirmText, setConfirmText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const effectiveProposalId = getEffectiveProposalId(proposal, fallbackIndex);
 
   const handleReset = () => {
     setConfirmingDecision(null);
@@ -1320,11 +1344,27 @@ function ProposalCard({ proposal, onDecide, isSealed, fallbackUrl, children }: P
   };
 
   const handleConfirm = async () => {
-    if (!proposal.proposal_id || !confirmingDecision || confirmText.trim() !== 'ACTUALIZAR') return;
+    if (!effectiveProposalId || !confirmingDecision || confirmText.trim().toUpperCase() !== 'ACTUALIZAR') return;
     setIsSubmitting(true);
     try {
-      await onDecide(proposal.proposal_id, confirmingDecision);
+      await onDecide(effectiveProposalId, confirmingDecision);
       handleReset();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDirectConsolidate = async () => {
+    if (isSealed || isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      if (onConsolidateApproved) {
+        await onConsolidateApproved();
+      } else {
+        await onDecide(effectiveProposalId, 'APROBADO');
+      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -1356,9 +1396,32 @@ function ProposalCard({ proposal, onDecide, isSealed, fallbackUrl, children }: P
 
         <div className="flex items-center gap-2">
           {isApproved ? (
-            <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[#00AEEF] border border-[#00AEEF]/30 px-2 py-0.5 rounded-none">
-              Aprobado
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[#00AEEF] border border-[#00AEEF]/30 px-2 py-0.5 rounded-none">
+                {isSubmitting ? 'Integrando...' : 'Aprobado'}
+              </span>
+              {!confirmingDecision && (
+                <>
+                  <button
+                    type="button"
+                    disabled={isSealed || isSubmitting}
+                    onClick={handleDirectConsolidate}
+                    className="px-2 py-0.5 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none border-0 cursor-pointer disabled:opacity-40"
+                    title="Integrar inmediatamente este hallazgo aprobado al contenido del ítem"
+                  >
+                    {isSubmitting ? 'Integrando...' : 'Integrar Ahora'}
+                  </button>
+                  <M3IconButton
+                    icon="delete"
+                    onClick={() => setConfirmingDecision('ELIMINADO')}
+                    variant="ghost"
+                    title="Eliminar propuesta"
+                    className="text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] !p-1 shrink-0"
+                    disabled={isSealed || isSubmitting}
+                  />
+                </>
+              )}
+            </div>
           ) : confirmingDecision ? (
             <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 border border-[#C68346]/40 text-[#C68346] rounded-none">
               Confirmando...
@@ -1375,7 +1438,7 @@ function ProposalCard({ proposal, onDecide, isSealed, fallbackUrl, children }: P
                 icon="done"
                 onClick={() => setConfirmingDecision('APROBADO')}
                 variant="ghost"
-                title="Aprobar hallazgo"
+                title="Aprobar e integrar hallazgo"
                 className="text-[#00AEEF] !p-1 shrink-0"
                 disabled={isSealed || isSubmitting}
               />
@@ -1447,7 +1510,7 @@ function ProposalCard({ proposal, onDecide, isSealed, fallbackUrl, children }: P
       {confirmingDecision && (
         <div className="mt-3 pt-3 border-t border-[#E2E8F0] dark:border-[#12151C] space-y-2">
           <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-            Escribe <span className="font-mono text-[#C68346] font-bold">"ACTUALIZAR"</span> para confirmar ({confirmingDecision}):
+            Escribe <span className="font-mono text-[#C68346] font-bold">"ACTUALIZAR"</span> para confirmar ({confirmingDecision === 'APROBADO' ? 'APROBAR E INTEGRAR' : 'ELIMINAR'}):
           </p>
           <div className="flex gap-2">
             <input
@@ -1461,11 +1524,11 @@ function ProposalCard({ proposal, onDecide, isSealed, fallbackUrl, children }: P
             />
             <button
               type="button"
-              disabled={confirmText.trim() !== 'ACTUALIZAR' || isSubmitting}
+              disabled={confirmText.trim().toUpperCase() !== 'ACTUALIZAR' || isSubmitting}
               onClick={handleConfirm}
               className="px-3 py-1 font-bold text-[10px] text-[#FFFFFF] bg-[#C68346] hover:bg-[#b07239] disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer"
             >
-              {isSubmitting ? 'Procesando...' : 'Confirmar'}
+              {isSubmitting ? 'Integrando...' : 'Confirmar'}
             </button>
             <button
               type="button"
@@ -1491,8 +1554,8 @@ interface NuevosHallazgosViewProps {
 }
 
 function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClose, isSealed }: NuevosHallazgosViewProps) {
-  const [evolveInput, setEvolveInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const autoEvolvedRef = useRef(false);
   const firstValidUrl = item.item_sources?.find(s => s.url && s.url !== '#')?.url;
 
   const proposals = (item.pending_conflicts ?? []).filter(
@@ -1500,21 +1563,27 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
   );
 
   const approvedCount = proposals.filter(p => p.human_decision === 'APROBADO').length;
-  const pendingCount = proposals.filter(p => p.human_decision === null).length;
+  const pendingCount = proposals.filter(p => p.human_decision !== 'APROBADO').length;
 
-  const handleEvolve = async () => {
-    if (evolveInput.trim() !== 'ACTUALIZAR') return;
+  const handleEvolve = useCallback(async () => {
+    if (isSealed || isSubmitting) return;
     setIsSubmitting(true);
     try {
       await onEvolveItemByType('NUEVO');
-      setEvolveInput('');
-      onClose();
     } catch (e) {
       console.error(e);
     } finally {
       setIsSubmitting(false);
     }
-  };
+  }, [isSealed, isSubmitting, onEvolveItemByType]);
+
+  // Auto-consolidar hallazgos que quedaron congelados en estado APROBADO de sesiones previas
+  useEffect(() => {
+    if (approvedCount > 0 && !isSealed && !item.is_human_locked && !autoEvolvedRef.current) {
+      autoEvolvedRef.current = true;
+      void handleEvolve();
+    }
+  }, [approvedCount, isSealed, item.is_human_locked, handleEvolve]);
 
   return (
     <div className="flex-1 flex flex-col min-h-0 w-full font-atkinson">
@@ -1533,7 +1602,7 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
               Nuevo Contenido
             </h3>
             <p className="text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
-              {pendingCount} pendiente(s) · {approvedCount} aprobado(s)
+              {pendingCount} pendiente(s){approvedCount > 0 ? ` · ${approvedCount} integrándose` : ''}
             </p>
           </div>
         </div>
@@ -1549,29 +1618,18 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
       </div>
 
       {approvedCount > 0 && (
-        <div className="mt-3 p-3 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#00AEEF] flex flex-col gap-2 shrink-0 rounded-none shadow-none">
+        <div className="mt-3 p-3 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#00AEEF] flex items-center justify-between gap-2 shrink-0 rounded-none shadow-none">
           <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-            Propuestas aprobadas (<span className="font-mono tabular-nums">{approvedCount}</span>). Escribe <span className="font-mono text-[#C68346]">"ACTUALIZAR"</span> para integrar estos cambios:
+            Propuestas aprobadas (<span className="font-mono tabular-nums">{approvedCount}</span>) listas para consolidar en el documento:
           </p>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={evolveInput}
-              onChange={(e) => setEvolveInput(e.target.value)}
-              placeholder="ACTUALIZAR"
-              autoComplete="off"
-              spellCheck={false}
-              className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[11px] font-mono flex-1 text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
-            />
-            <button
-              type="button"
-              disabled={evolveInput.trim() !== 'ACTUALIZAR' || isSealed || isSubmitting}
-              onClick={handleEvolve}
-              className="px-3 py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer"
-            >
-              {isSubmitting ? 'Actualizando...' : 'Actualizar Ítem'}
-            </button>
-          </div>
+          <button
+            type="button"
+            disabled={isSealed || isSubmitting}
+            onClick={handleEvolve}
+            className="px-3 py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-[10px] uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer shrink-0"
+          >
+            {isSubmitting ? 'Integrando...' : 'Integrar Ahora'}
+          </button>
         </div>
       )}
 
@@ -1581,11 +1639,13 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
             No hay propuestas de nuevo contenido pendientes de revisión.
           </div>
         ) : (
-          proposals.map((prop) => (
+          proposals.map((prop, pIdx) => (
             <ProposalCard
-              key={prop.proposal_id}
+              key={getEffectiveProposalId(prop, pIdx)}
               proposal={prop}
+              fallbackIndex={pIdx}
               onDecide={onDecideProposal}
+              onConsolidateApproved={handleEvolve}
               isSealed={isSealed}
               fallbackUrl={firstValidUrl}
             >
@@ -1619,8 +1679,8 @@ interface ConflictosViewProps {
 }
 
 function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, isSealed }: ConflictosViewProps) {
-  const [evolveInput, setEvolveInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const autoEvolvedRef = useRef(false);
   const firstValidUrl = item.item_sources?.find(s => s.url && s.url !== '#')?.url;
 
   const proposals = (item.pending_conflicts ?? []).filter(
@@ -1628,21 +1688,27 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
   );
 
   const approvedCount = proposals.filter(p => p.human_decision === 'APROBADO').length;
-  const pendingCount = proposals.filter(p => p.human_decision === null).length;
+  const pendingCount = proposals.filter(p => p.human_decision !== 'APROBADO').length;
 
-  const handleEvolve = async () => {
-    if (evolveInput.trim() !== 'ACTUALIZAR') return;
+  const handleEvolve = useCallback(async () => {
+    if (isSealed || isSubmitting) return;
     setIsSubmitting(true);
     try {
       await onEvolveItemByType('CONFLICTO');
-      setEvolveInput('');
-      onClose();
     } catch (e) {
       console.error(e);
     } finally {
       setIsSubmitting(false);
     }
-  };
+  }, [isSealed, isSubmitting, onEvolveItemByType]);
+
+  // Auto-consolidar conflictos que quedaron congelados en estado APROBADO de sesiones previas
+  useEffect(() => {
+    if (approvedCount > 0 && !isSealed && !item.is_human_locked && !autoEvolvedRef.current) {
+      autoEvolvedRef.current = true;
+      void handleEvolve();
+    }
+  }, [approvedCount, isSealed, item.is_human_locked, handleEvolve]);
 
   return (
     <div className="flex-1 flex flex-col min-h-0 w-full font-atkinson">
@@ -1661,7 +1727,7 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
               Contenido en Conflicto
             </h3>
             <p className="text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
-              {pendingCount} pendiente(s) · {approvedCount} aprobado(s)
+              {pendingCount} pendiente(s){approvedCount > 0 ? ` · ${approvedCount} integrándose` : ''}
             </p>
           </div>
         </div>
@@ -1677,29 +1743,18 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
       </div>
 
       {approvedCount > 0 && (
-        <div className="mt-3 p-3 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#C68346] flex flex-col gap-2 shrink-0 rounded-none shadow-none">
+        <div className="mt-3 p-3 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#C68346] flex items-center justify-between gap-2 shrink-0 rounded-none shadow-none">
           <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-            Propuestas aprobadas (<span className="font-mono tabular-nums">{approvedCount}</span>). Escribe <span className="font-mono text-[#C68346]">"ACTUALIZAR"</span> para resolver los conflictos:
+            Conflictos resueltos (<span className="font-mono tabular-nums">{approvedCount}</span>) listos para consolidar en el documento:
           </p>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={evolveInput}
-              onChange={(e) => setEvolveInput(e.target.value)}
-              placeholder="ACTUALIZAR"
-              autoComplete="off"
-              spellCheck={false}
-              className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[11px] font-mono flex-1 text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
-            />
-            <button
-              type="button"
-              disabled={evolveInput.trim() !== 'ACTUALIZAR' || isSealed || isSubmitting}
-              onClick={handleEvolve}
-              className="px-3 py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer"
-            >
-              {isSubmitting ? 'Actualizando...' : 'Actualizar Ítem'}
-            </button>
-          </div>
+          <button
+            type="button"
+            disabled={isSealed || isSubmitting}
+            onClick={handleEvolve}
+            className="px-3 py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-[10px] uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer shrink-0"
+          >
+            {isSubmitting ? 'Integrando...' : 'Integrar Ahora'}
+          </button>
         </div>
       )}
 
@@ -1709,11 +1764,13 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
             No hay propuestas de conflicto pendientes de revisión.
           </div>
         ) : (
-          proposals.map((prop) => (
+          proposals.map((prop, pIdx) => (
             <ProposalCard
-              key={prop.proposal_id}
+              key={getEffectiveProposalId(prop, pIdx)}
               proposal={prop}
+              fallbackIndex={pIdx}
               onDecide={onDecideProposal}
+              onConsolidateApproved={handleEvolve}
               isSealed={isSealed}
               fallbackUrl={firstValidUrl}
             >
@@ -1750,6 +1807,8 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
     </div>
   );
 }
+
+const activeItemChatSessionMap = new Map<string, string>();
 
 function ItemContentBlock({ 
   item, 
@@ -1792,24 +1851,63 @@ function ItemContentBlock({
   const chatFeedRef = useRef<HTMLDivElement>(null);
   const contentContainerRef = useRef<HTMLDivElement>(null);
   const pendingLocatorCursorRef = useRef<number>(0);
+  const autoConsolidatedTypesRef = useRef<Set<string>>(new Set());
 
   const isGenerating = item.content_status === 'GENERANDO' || isHunting || isSearching;
 
+  // Auto-consolidar propuestas que quedaron congeladas en estado APROBADO de sesiones anteriores
   useEffect(() => {
-    if (!canCurateAI) return;
-    const newSessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
-    setSessionId(newSessionId);
+    if (!canCurateAI || isSealed || item.is_human_locked) return;
+    const pendingList = item.pending_conflicts ?? [];
+    const hasStuckNuevo = pendingList.some(
+      (p) => p.estado_fusion === 'NUEVO' && p.human_decision === 'APROBADO'
+    );
+    const hasStuckConflicto = pendingList.some(
+      (p) => p.estado_fusion === 'CONFLICTO' && p.human_decision === 'APROBADO'
+    );
 
-    return () => {
-      if (catalogId && item.item_id && newSessionId) {
-        authFetch(`${API_BASE_URL}/vault/ai-assist-session-close`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ globalAssetId: catalogId, itemId: item.item_id, sessionId: newSessionId })
-        }).catch(err => console.warn('[VaultChat] Error al cerrar sesión:', err));
-      }
-    };
+    const nuevoKey = `${item.item_id}:NUEVO`;
+    if (hasStuckNuevo && !autoConsolidatedTypesRef.current.has(nuevoKey)) {
+      autoConsolidatedTypesRef.current.add(nuevoKey);
+      void onEvolveItemByType('NUEVO');
+    }
+
+    const conflictoKey = `${item.item_id}:CONFLICTO`;
+    if (hasStuckConflicto && !autoConsolidatedTypesRef.current.has(conflictoKey)) {
+      autoConsolidatedTypesRef.current.add(conflictoKey);
+      void onEvolveItemByType('CONFLICTO');
+    }
+  }, [canCurateAI, isSealed, item.is_human_locked, item.item_id, item.pending_conflicts, onEvolveItemByType]);
+
+  useEffect(() => {
+    if (!canCurateAI || !catalogId || !item.item_id) return;
+    const sessionKey = `${catalogId}:${item.item_id}`;
+    let currentSessionId = activeItemChatSessionMap.get(sessionKey);
+    if (!currentSessionId) {
+      currentSessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+      activeItemChatSessionMap.set(sessionKey, currentSessionId);
+    }
+    setSessionId(currentSessionId);
   }, [canCurateAI, catalogId, item.item_id]);
+
+  const handleResetChatSession = useCallback(() => {
+    if (!canCurateAI || !catalogId || !item.item_id) return;
+    const sessionKey = `${catalogId}:${item.item_id}`;
+    const prevSessionId = activeItemChatSessionMap.get(sessionKey) || sessionId;
+    if (prevSessionId) {
+      authFetch(`${API_BASE_URL}/vault/ai-assist-session-close`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ globalAssetId: catalogId, itemId: item.item_id, sessionId: prevSessionId })
+      }).catch(err => console.warn('[VaultChat] Error al reiniciar sesión:', err));
+    }
+    const freshSessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    activeItemChatSessionMap.set(sessionKey, freshSessionId);
+    setSessionId(freshSessionId);
+    setMessages([]);
+    setSelectedFragment(null);
+    setDraftConfirmInput('');
+  }, [canCurateAI, catalogId, item.item_id, sessionId]);
 
   useEffect(() => {
     if (!canCurateAI || !catalogId || !item.item_id || !sessionId) return;
@@ -1841,12 +1939,40 @@ function ItemContentBlock({
     setSelectedFragment(text);
   };
 
-  const latestDraftMessage = [...messages].reverse().find(msg => msg.role === 'model' && msg.draftContent);
+  const latestDraftMessage = [...messages]
+    .reverse()
+    .find(msg => msg.role === 'model' && msg.draftContent && (!msg.draftStatus || msg.draftStatus === 'PENDING'));
   const latestDraftContent = latestDraftMessage?.draftContent || null;
   const latestDraftIntent = latestDraftMessage?.intent || 'EDIT_PROPOSAL';
 
   const latestModelMessage = [...messages].reverse().find(msg => msg.role === 'model');
   const activeHighlightText = latestModelMessage?.highlightText || undefined;
+
+  const handleDismissDraft = useCallback(async (targetMsgId?: string) => {
+    if (!canCurateAI || !catalogId || !item.item_id || !sessionId) return;
+    setMessages(prev =>
+      prev.map(m =>
+        (targetMsgId ? m.id === targetMsgId : Boolean(m.draftContent && (!m.draftStatus || m.draftStatus === 'PENDING')))
+          ? { ...m, draftStatus: 'DISCARDED' as const }
+          : m
+      )
+    );
+    setDraftConfirmInput('');
+    try {
+      await authFetch(`${API_BASE_URL}/vault/dismiss-assist-proposal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          globalAssetId: catalogId,
+          itemId: item.item_id,
+          sessionId,
+          messageId: targetMsgId,
+        }),
+      });
+    } catch (err) {
+      console.warn('[VaultChat] No se pudo persistir descarte de borrador:', err);
+    }
+  }, [canCurateAI, catalogId, item.item_id, sessionId]);
 
   const handleSendMessage = async () => {
     if (!canCurateAI || !correctionText.trim()) return;
@@ -1871,10 +1997,16 @@ function ItemContentBlock({
             finalContent: latestDraftContent,
             userEmail,
             intent: latestDraftIntent,
-            sessionId
+            sessionId,
+            messageId: latestDraftMessage?.id,
           }),
         });
         if (res.ok) {
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === latestDraftMessage?.id ? { ...m, draftStatus: 'APPLIED' as const } : m
+            )
+          );
           toast.update(toastId, { render: 'Cambios aplicados exitosamente.', type: 'success', isLoading: false, autoClose: 3000 });
           setCorrectionText('');
           setDraftConfirmInput('');
@@ -2092,62 +2224,79 @@ function ItemContentBlock({
               isSealed={isSealed}
             />
           )
-        ) : (
-          item.content && (
-            <div className="space-y-6">
-              <>
-                <MarkdownRenderer 
-                  content={sanitizeSpeculativeSymbolMarkers(item.content, pillarId)} 
-                  pillarId={pillarId}
-                  activeHighlightText={canCurateAI ? activeHighlightText : undefined}
-                  onFragmentClick={canCurateAI ? handleFragmentClick : undefined}
-                  resolvedSymbology={resolvedSymbology}
-                  itemTitle={item.title}
-                  itemSources={item.item_sources || []}
-                  galleryFigures={galleryFigures}
-                  canCurateAI={canCurateAI}
-                  isSealed={isSealed}
-                  isItemLocked={Boolean(item.is_human_locked)}
-                  onUploadPendingFigure={handleUploadPendingFigure}
-                  onConfirmPendingFigure={handleConfirmPendingFigure}
-                />
-                <ItemFiguresAndAdvisoriesBlock
-                  catalogId={catalogId}
-                  pillarId={pillarId}
-                  itemId={item.item_id}
-                  canCurateAI={canCurateAI}
-                  isHumanLocked={item.is_human_locked}
-                  isSealed={isSealed}
-                  figures={[]}
-                  advisories={item.locked_item_advisories}
-                />
-                {item.item_sources?.length ? (
-                  <ItemizedSourcesBlock sources={item.item_sources} />
-                ) : null}
-              </>
+        ) : item.content ? (
+          <div className="space-y-6">
+            <>
+              <MarkdownRenderer 
+                content={sanitizeSpeculativeSymbolMarkers(item.content, pillarId)} 
+                pillarId={pillarId}
+                activeHighlightText={canCurateAI ? activeHighlightText : undefined}
+                onFragmentClick={canCurateAI ? handleFragmentClick : undefined}
+                resolvedSymbology={resolvedSymbology}
+                itemTitle={item.title}
+                itemSources={item.item_sources || []}
+                galleryFigures={galleryFigures}
+                canCurateAI={canCurateAI}
+                isSealed={isSealed}
+                isItemLocked={Boolean(item.is_human_locked)}
+                onUploadPendingFigure={handleUploadPendingFigure}
+                onConfirmPendingFigure={handleConfirmPendingFigure}
+              />
+              <ItemFiguresAndAdvisoriesBlock
+                catalogId={catalogId}
+                pillarId={pillarId}
+                itemId={item.item_id}
+                canCurateAI={canCurateAI}
+                isHumanLocked={item.is_human_locked}
+                isSealed={isSealed}
+                figures={[]}
+                advisories={item.locked_item_advisories}
+              />
+              {item.item_sources?.length ? (
+                <ItemizedSourcesBlock sources={item.item_sources} />
+              ) : null}
+            </>
 
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex flex-col gap-1">
-                  {item.approved_by && (
-                    <span className="text-[10px] text-[#5A6072] font-mono tabular-nums">
-                      {t('vault_dashboard.labels.by')} {item.approved_by} · {item.approved_at ? new Date(item.approved_at).toLocaleDateString() : ''}
-                    </span>
-                  )}
-                </div>
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex flex-col gap-1">
+                {item.approved_by && (
+                  <span className="text-[10px] text-[#5A6072] font-mono tabular-nums">
+                    {t('vault_dashboard.labels.by')} {item.approved_by} · {item.approved_at ? new Date(item.approved_at).toLocaleDateString() : ''}
+                  </span>
+                )}
               </div>
             </div>
-          )
+          </div>
+        ) : (
+          <div className="py-12 px-4 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-center rounded-none shadow-none">
+            <p className="text-[11px] font-mono font-bold text-[#5A6072]">
+              [Ítem pendiente de redacción técnica — Utilice Regenerar IA o el asistente lateral OPERMAQ IA]
+            </p>
+          </div>
         )}
       </div>
 
       {canCurateAI && (
       <div className="w-[260px] shrink-0 flex flex-col justify-between border-l border-[#E2E8F0] dark:border-[#12151C] pl-4 pb-2 h-full min-h-0 overflow-hidden select-none">
-        <div className="flex-1 flex flex-col min-h-0 pb-4 gap-4 overflow-hidden">
-          <div className="flex items-center justify-between mb-1 shrink-0">
+        <div className="flex-1 flex flex-col min-h-0 pb-2 gap-2 overflow-hidden">
+          <div className="flex items-center justify-between mb-0.5 shrink-0">
             <span className="text-[10px] font-bold uppercase tracking-widest text-[#475569] dark:text-[#8A93A6]">OPERMAQ IA</span>
-            {isSearching && (
-              <M3CircularProgress size={12} strokeWidth={2} indeterminate tone="copper" ariaLabel="Generando respuesta IA" />
-            )}
+            <div className="flex items-center gap-1">
+              {isSearching && (
+                <M3CircularProgress size={12} strokeWidth={2} indeterminate tone="copper" ariaLabel="Generando respuesta IA" />
+              )}
+              {messages.length > 0 && !isSending && (
+                <button
+                  type="button"
+                  onClick={handleResetChatSession}
+                  title="Reiniciar sesión de chat de este ítem"
+                  aria-label="Reiniciar sesión de chat de este ítem"
+                  className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                >
+                  <span className="material-symbols-outlined !text-[15px]">restart_alt</span>
+                </button>
+              )}
+            </div>
           </div>
 
           <div 
@@ -2206,11 +2355,34 @@ function ItemContentBlock({
                       </div>
                     )}
 
-                    {msg.draftContent && (
+                    {msg.draftContent && msg.draftStatus === 'APPLIED' && (
+                      <div className="mt-1 px-2 py-1 border border-[#00AEEF]/40 bg-[#00AEEF]/10 text-[#00AEEF] text-[9px] font-mono font-bold uppercase tracking-wider rounded-none shadow-none shrink-0">
+                        [BORRADOR APLICADO EN CATÁLOGO]
+                      </div>
+                    )}
+
+                    {msg.draftContent && msg.draftStatus === 'DISCARDED' && (
+                      <div className="mt-1 px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-[#5A6072] text-[9px] font-mono font-bold uppercase tracking-wider rounded-none shadow-none shrink-0">
+                        [BORRADOR DESCARTADO]
+                      </div>
+                    )}
+
+                    {msg.draftContent && (!msg.draftStatus || msg.draftStatus === 'PENDING') && (
                       <div className="mt-2 w-full bg-[#FFFFFF] dark:bg-[#07090D] border border-[#00AEEF]/40 p-2.5 flex flex-col gap-2 rounded-none shadow-none shrink-0">
-                        <div className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-[#00AEEF]">
-                          <span className="material-symbols-outlined !text-[14px]">edit_document</span>
-                          Propuesta de Borrador
+                        <div className="flex items-center justify-between gap-1.5 text-[9px] font-bold uppercase tracking-wider text-[#00AEEF]">
+                          <span className="flex items-center gap-1">
+                            <span className="material-symbols-outlined !text-[14px]">edit_document</span>
+                            Propuesta de Borrador
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleDismissDraft(msg.id)}
+                            title="Descartar propuesta de borrador"
+                            aria-label="Descartar propuesta de borrador"
+                            className="bg-transparent border-0 outline-none p-0.5 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined !text-[13px]">close</span>
+                          </button>
                         </div>
                         <p className="text-[10px] text-[#475569] dark:text-[#8A93A6] leading-snug">
                           Escribe <span className="font-mono font-bold text-[#C68346]">"ACTUALIZAR"</span> para aplicar estos cambios en el catálogo:
@@ -2227,44 +2399,60 @@ function ItemContentBlock({
                           spellCheck={false}
                           className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
                         />
-                        <button
-                          type="button"
-                          disabled={isSealed || isSending || draftConfirmInput.trim() !== 'ACTUALIZAR'}
-                          onClick={async () => {
-                            setIsSending(true);
-                            const toastId = toast.loading('Aplicando propuesta de cambios...');
-                            try {
-                              const userEmail = auth.currentUser?.email || 'revisor.humano@opermaq.cl';
-                              const res = await authFetch(`${API_BASE_URL}/vault/apply-assist-proposal`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                  globalAssetId: catalogId,
-                                  pillarId,
-                                  itemId: item.item_id,
-                                  finalContent: msg.draftContent,
-                                  userEmail,
-                                  intent: msg.intent || 'EDIT_PROPOSAL',
-                                  sessionId
-                                }),
-                              });
-                              if (res.ok) {
-                                toast.update(toastId, { render: 'Cambios aplicados exitosamente.', type: 'success', isLoading: false, autoClose: 3000 });
-                                setDraftConfirmInput('');
-                              } else {
-                                const json = await res.json();
-                                toast.update(toastId, { render: `Error: ${json.error || 'No se pudieron aplicar los cambios.'}`, type: 'error', isLoading: false, autoClose: 5000 });
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <button
+                            type="button"
+                            disabled={isSealed || isSending || draftConfirmInput.trim() !== 'ACTUALIZAR'}
+                            onClick={async () => {
+                              setIsSending(true);
+                              const toastId = toast.loading('Aplicando propuesta de cambios...');
+                              try {
+                                const userEmail = auth.currentUser?.email || 'revisor.humano@opermaq.cl';
+                                const res = await authFetch(`${API_BASE_URL}/vault/apply-assist-proposal`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({
+                                    globalAssetId: catalogId,
+                                    pillarId,
+                                    itemId: item.item_id,
+                                    finalContent: msg.draftContent,
+                                    userEmail,
+                                    intent: msg.intent || 'EDIT_PROPOSAL',
+                                    sessionId,
+                                    messageId: msg.id,
+                                  }),
+                                });
+                                if (res.ok) {
+                                  setMessages(prev =>
+                                    prev.map(m =>
+                                      m.id === msg.id ? { ...m, draftStatus: 'APPLIED' as const } : m
+                                    )
+                                  );
+                                  toast.update(toastId, { render: 'Cambios aplicados exitosamente.', type: 'success', isLoading: false, autoClose: 3000 });
+                                  setDraftConfirmInput('');
+                                } else {
+                                  const json = await res.json();
+                                  toast.update(toastId, { render: `Error: ${json.error || 'No se pudieron aplicar los cambios.'}`, type: 'error', isLoading: false, autoClose: 5000 });
+                                }
+                              } catch (_err) {
+                                toast.update(toastId, { render: 'Error de red al aplicar cambios.', type: 'error', isLoading: false, autoClose: 5000 });
+                              } finally {
+                                setIsSending(false);
                               }
-                            } catch (_err) {
-                              toast.update(toastId, { render: 'Error de red al aplicar cambios.', type: 'error', isLoading: false, autoClose: 5000 });
-                            } finally {
-                              setIsSending(false);
-                            }
-                          }}
-                          className="w-full bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[10px] py-1.5 font-bold uppercase tracking-wider transition-colors disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
-                        >
-                          Aprobar y Guardar
-                        </button>
+                            }}
+                            className="bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[10px] py-1.5 font-bold uppercase tracking-wider transition-colors disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
+                          >
+                            Aprobar
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isSending}
+                            onClick={() => handleDismissDraft(msg.id)}
+                            className="bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#0F172A] dark:hover:border-[#F3F4F6] text-[#475569] dark:text-[#8A93A6] text-[10px] py-1.5 font-bold uppercase tracking-wider transition-colors rounded-none shadow-none cursor-pointer"
+                          >
+                            Descartar
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -2283,7 +2471,7 @@ function ItemContentBlock({
 
         <div className="flex flex-col shrink-0">
           {selectedFragment && (
-            <div className="mb-2 bg-[#C68346]/5 border border-[#C68346]/30 p-2 text-[10px] flex items-start gap-2 shrink-0 rounded-none">
+            <div className="mb-1.5 bg-[#C68346]/5 border border-[#C68346]/30 p-1.5 text-[10px] flex items-start gap-2 shrink-0 rounded-none">
               <div className="flex-1 min-w-0">
                 <span className="font-bold text-[#C68346] uppercase block text-[8px] tracking-wider mb-0.5">Fragmento Seleccionado</span>
                 <p className="text-[#475569] dark:text-[#8A93A6] truncate max-w-full">
@@ -2301,8 +2489,8 @@ function ItemContentBlock({
           )}
 
           {!item.is_human_locked && (
-            <div className="flex flex-col gap-2 pb-3">
-              <div className="bg-[#F8FAFC] dark:bg-[#07090D] rounded-none flex flex-col p-2 border border-[#E2E8F0] dark:border-[#12151C]">
+            <div className="flex flex-col gap-1.5 pb-1.5">
+              <div className="bg-[#F8FAFC] dark:bg-[#07090D] rounded-none flex flex-col p-1.5 border border-[#E2E8F0] dark:border-[#12151C]">
                 <textarea
                   value={correctionText}
                   onChange={(e) => setCorrectionText(e.target.value)}
@@ -2319,113 +2507,65 @@ function ItemContentBlock({
                   spellCheck={false}
                   className="w-full bg-transparent resize-none focus:outline-none text-[12px] text-[#0F172A] dark:text-[#F3F4F6] placeholder-[#5A6072] custom-scrollbar px-1"
                 />
-                <div className="flex justify-end items-center mt-1 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => toast.info('Función de dictado disponible próximamente.')}
-                    title="Dictado por voz"
-                    className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-                    disabled={isSending || isGenerating || isSealed}
-                  >
-                    <span className="material-symbols-outlined !text-[20px]">mic</span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!correctionText.trim() || isSending || isSealed || isGenerating}
-                    onClick={handleSendMessage}
-                    title="Enviar instrucción"
-                    className={`bg-transparent border-0 outline-none p-1 transition-colors cursor-pointer ${
-                      correctionText.trim() && !isSending && !isSealed && !isGenerating
-                        ? 'text-[#C68346] hover:text-[#b07239]'
-                        : 'text-[#5A6072] opacity-40 cursor-not-allowed'
-                    }`}
-                  >
-                    <span className="material-symbols-outlined !text-[18px]">
-                      arrow_upward
-                    </span>
-                  </button>
+                <div className="flex justify-between items-center mt-0.5">
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => onOpenStudio ? onOpenStudio('INGESTION') : toast.info('Ingesta documental no disponible.')}
+                      title="Ingesta documental / multimedia (PDF, ETT, esquemas, fotos)"
+                      className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none"
+                      disabled={isSending || isGenerating || isSealed}
+                    >
+                      <span className="material-symbols-outlined !text-[18px]">upload_file</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onOpenStudio ? onOpenStudio('MANUAL_PUBLISHER') : toast.info('Exportación PDF no disponible.')}
+                      title="Manuales ilustrados y diagramación vectorial"
+                      className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none"
+                      disabled={isSending || isGenerating}
+                    >
+                      <span className="material-symbols-outlined !text-[18px]">draw</span>
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => toast.info('Función de dictado disponible próximamente.')}
+                      title="Dictado por voz"
+                      className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                      disabled={isSending || isGenerating || isSealed}
+                    >
+                      <span className="material-symbols-outlined !text-[18px]">mic</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!correctionText.trim() || isSending || isSealed || isGenerating}
+                      onClick={handleSendMessage}
+                      title="Enviar instrucción"
+                      className={`bg-transparent border-0 outline-none p-1 transition-colors cursor-pointer ${
+                        correctionText.trim() && !isSending && !isSealed && !isGenerating
+                          ? 'text-[#C68346] hover:text-[#b07239]'
+                          : 'text-[#5A6072] opacity-40 cursor-not-allowed'
+                      }`}
+                    >
+                      <span className="material-symbols-outlined !text-[18px]">
+                        arrow_upward
+                      </span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
           )}
 
-          {!item.is_human_locked && (
-            <div className="flex items-center justify-start gap-2 py-2 px-2 border-t border-[#E2E8F0] dark:border-[#12151C]">
-              <button
-                type="button"
-                onClick={() => onOpenStudio ? onOpenStudio('INGESTION') : toast.info('Ingesta documental no disponible.')}
-                title="Ingesta documental / multimedia (PDF, ETT, esquemas, fotos)"
-                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none"
-                disabled={isSending || isGenerating || isSealed}
-              >
-                <span className="material-symbols-outlined !text-[20px]">upload_file</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => onOpenStudio ? onOpenStudio('MANUAL_PUBLISHER') : toast.info('Exportación PDF no disponible.')}
-                title="Manuales ilustrados y diagramación vectorial"
-                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none"
-                disabled={isSending || isGenerating}
-              >
-                <span className="material-symbols-outlined !text-[20px]">draw</span>
-              </button>
-            </div>
-          )}
-
-          <div className="flex flex-col gap-2 pt-3 border-t border-[#E2E8F0] dark:border-[#12151C]">
-            <div className="flex flex-col gap-2">
-              <button
-                type="button"
-                disabled={isSealed || isGenerating || item.is_human_locked}
-                onClick={() => setShowHuntConfirm(!showHuntConfirm)}
-                className="w-full text-left px-3 py-2 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none cursor-pointer"
-              >
-                Regenerar con IA
-              </button>
-
-              {showHuntConfirm && (
-                <div className="p-2 border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-2 rounded-none">
-                  <p className="text-[10px] text-[#C68346] font-bold">Escribe "ACTUALIZAR" para confirmar la regeneración por IA:</p>
-                  <input
-                    type="text"
-                    value={huntConfirmText}
-                    onChange={(e) => setHuntConfirmText(e.target.value)}
-                    placeholder="ACTUALIZAR"
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      disabled={huntConfirmText.trim() !== 'ACTUALIZAR' || isGenerating || isSealed}
-                      onClick={() => {
-                        onHunt();
-                        setHuntConfirmText('');
-                        setShowHuntConfirm(false);
-                      }}
-                      className="px-2 py-1 bg-[#C68346] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none border-0 cursor-pointer"
-                    >
-                      Confirmar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowHuntConfirm(false)}
-                      className="px-2 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[10px] rounded-none cursor-pointer"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-
+          <div className="flex flex-col gap-[6px] pt-2 border-t border-[#E2E8F0] dark:border-[#12151C]">
             <button
               type="button"
               onClick={handleLocateNextPendingContent}
-              className={`w-full flex items-center justify-between px-3 py-2 transition-colors border rounded-none cursor-pointer ${
+              className={`w-full flex items-center justify-between px-2.5 py-1.5 transition-colors border rounded-none cursor-pointer ${
                 pendingContentSummary.total > 0
-                  ? 'bg-[#FEF08A]/45 dark:bg-[#FACC15]/15 border-[#EAB308] dark:border-[#FACC15] text-[#0F172A] dark:text-[#FEF08A] font-bold hover:bg-[#FEF08A]/70 dark:hover:bg-[#FACC15]/25'
+                  ? 'bg-[#C68346]/15 border-[#C68346] text-[#C68346] font-bold hover:bg-[#C68346]/25'
                   : 'bg-transparent text-[#475569] dark:text-[#8A93A6] border-[#E2E8F0] dark:border-[#12151C] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
               }`}
               title={
@@ -2440,7 +2580,7 @@ function ItemContentBlock({
               <span
                 className={`text-[10px] font-bold px-1.5 py-0.5 rounded-none font-mono tabular-nums ${
                   pendingContentSummary.total > 0
-                    ? 'bg-[#FEF08A] dark:bg-[#FACC15]/30 text-[#0F172A] dark:text-[#FEF08A] border border-[#EAB308] dark:border-[#FACC15]'
+                    ? 'bg-[#C68346]/20 text-[#C68346] border border-[#C68346]'
                     : 'text-[#475569] dark:text-[#8A93A6]'
                 }`}
               >
@@ -2448,177 +2588,228 @@ function ItemContentBlock({
               </span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                if (activeProposalView?.itemId === item.item_id && activeProposalView.view === 'nuevos') {
-                  onSetProposalView(null);
-                } else {
-                  onSetProposalView({ itemId: item.item_id, pillarId, view: 'nuevos' });
-                }
-              }}
-              className={`w-full flex items-center justify-between px-3 py-2 bg-transparent transition-colors border rounded-none cursor-pointer ${
-                activeProposalView?.itemId === item.item_id && activeProposalView.view === 'nuevos'
-                  ? 'text-[#00AEEF] font-bold border-[#00AEEF]'
-                  : 'text-[#475569] dark:text-[#8A93A6] border-[#E2E8F0] dark:border-[#12151C] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-              }`}
-              title="Nuevo Contenido"
-            >
-              <span className="text-[10px] font-bold uppercase tracking-wider">Nuevo Contenido</span>
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-none font-mono tabular-nums text-[#00AEEF]">
-                {(item.pending_conflicts ?? []).filter(p => p.estado_fusion === 'NUEVO' && p.human_decision !== 'ELIMINADO').length}
-              </span>
-            </button>
+            <div className="grid grid-cols-2 gap-[6px]">
+              <button
+                type="button"
+                onClick={() => {
+                  if (activeProposalView?.itemId === item.item_id && activeProposalView.view === 'nuevos') {
+                    onSetProposalView(null);
+                  } else {
+                    onSetProposalView({ itemId: item.item_id, pillarId, view: 'nuevos' });
+                  }
+                }}
+                className={`flex items-center justify-between px-2 py-1.5 bg-transparent transition-colors border rounded-none cursor-pointer ${
+                  activeProposalView?.itemId === item.item_id && activeProposalView.view === 'nuevos'
+                    ? 'text-[#00AEEF] font-bold border-[#00AEEF]'
+                    : 'text-[#475569] dark:text-[#8A93A6] border-[#E2E8F0] dark:border-[#12151C] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                }`}
+                title="Nuevo Contenido"
+              >
+                <span className="text-[9px] font-bold uppercase tracking-wider truncate">Nuevos</span>
+                <span className="text-[10px] font-bold px-1 rounded-none font-mono tabular-nums text-[#00AEEF]">
+                  {(item.pending_conflicts ?? []).filter(p => p.estado_fusion === 'NUEVO' && p.human_decision !== 'ELIMINADO' && p.human_decision !== 'APROBADO').length}
+                </span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                if (activeProposalView?.itemId === item.item_id && activeProposalView.view === 'conflictos') {
-                  onSetProposalView(null);
-                } else {
-                  onSetProposalView({ itemId: item.item_id, pillarId, view: 'conflictos' });
-                }
-              }}
-              className={`w-full flex items-center justify-between px-3 py-2 bg-transparent transition-colors border rounded-none cursor-pointer ${
-                activeProposalView?.itemId === item.item_id && activeProposalView.view === 'conflictos'
-                  ? 'text-[#C68346] font-bold border-[#C68346]'
-                  : 'text-[#475569] dark:text-[#8A93A6] border-[#E2E8F0] dark:border-[#12151C] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-              }`}
-              title="Contenido en Conflicto"
-            >
-              <span className="text-[10px] font-bold uppercase tracking-wider">Contenido en Conflicto</span>
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-none font-mono tabular-nums text-[#C68346]">
-                {(item.pending_conflicts ?? []).filter(p => p.estado_fusion === 'CONFLICTO' && p.human_decision !== 'ELIMINADO').length}
-              </span>
-            </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (activeProposalView?.itemId === item.item_id && activeProposalView.view === 'conflictos') {
+                    onSetProposalView(null);
+                  } else {
+                    onSetProposalView({ itemId: item.item_id, pillarId, view: 'conflictos' });
+                  }
+                }}
+                className={`flex items-center justify-between px-2 py-1.5 bg-transparent transition-colors border rounded-none cursor-pointer ${
+                  activeProposalView?.itemId === item.item_id && activeProposalView.view === 'conflictos'
+                    ? 'text-[#C68346] font-bold border-[#C68346]'
+                    : 'text-[#475569] dark:text-[#8A93A6] border-[#E2E8F0] dark:border-[#12151C] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                }`}
+                title="Contenido en Conflicto"
+              >
+                <span className="text-[9px] font-bold uppercase tracking-wider truncate">Conflictos</span>
+                <span className="text-[10px] font-bold px-1 rounded-none font-mono tabular-nums text-[#C68346]">
+                  {(item.pending_conflicts ?? []).filter(p => p.estado_fusion === 'CONFLICTO' && p.human_decision !== 'ELIMINADO' && p.human_decision !== 'APROBADO').length}
+                </span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-[6px]">
+              <button
+                type="button"
+                disabled={isSealed || isGenerating || item.is_human_locked}
+                onClick={() => setShowHuntConfirm(!showHuntConfirm)}
+                className="text-center px-2 py-1.5 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[9px] font-bold uppercase tracking-wider rounded-none cursor-pointer truncate"
+                title="Regenerar con IA"
+              >
+                Regenerar IA
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowHistoryModal(true)}
+                className="text-center px-2 py-1.5 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] text-[9px] font-bold uppercase tracking-wider rounded-none cursor-pointer truncate"
+                title="Historial de Cambios"
+              >
+                Historial
+              </button>
+            </div>
+
+            {showHuntConfirm && (
+              <div className="p-2 border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-2 rounded-none">
+                <p className="text-[10px] text-[#C68346] font-bold">Escribe "ACTUALIZAR" para confirmar la regeneración por IA:</p>
+                <input
+                  type="text"
+                  value={huntConfirmText}
+                  onChange={(e) => setHuntConfirmText(e.target.value)}
+                  placeholder="ACTUALIZAR"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={huntConfirmText.trim() !== 'ACTUALIZAR' || isGenerating || isSealed}
+                    onClick={() => {
+                      onHunt();
+                      setHuntConfirmText('');
+                      setShowHuntConfirm(false);
+                    }}
+                    className="px-2 py-1 bg-[#C68346] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none border-0 cursor-pointer"
+                  >
+                    Confirmar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowHuntConfirm(false)}
+                    className="px-2 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[10px] rounded-none cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
-          <div className="flex flex-col gap-2 pt-3 mt-2 border-t border-[#E2E8F0] dark:border-[#12151C]">
-            <button
-              type="button"
-              onClick={() => setShowHistoryModal(true)}
-              className="w-full text-left px-3 py-2 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] text-[10px] font-bold uppercase tracking-wider rounded-none cursor-pointer"
-            >
-              Historial de Cambios
-            </button>
+          <div className="flex flex-col gap-[6px] pt-2 mt-1.5 border-t border-[#E2E8F0] dark:border-[#12151C]">
+            <div className="grid grid-cols-2 gap-[6px]">
+              {item.is_human_locked ? (
+                <button
+                  type="button"
+                  disabled={isSealed || isGenerating}
+                  onClick={() => setShowUnlockConfirm(!showUnlockConfirm)}
+                  className="text-center px-2 py-1.5 bg-transparent border border-[#C68346] transition-colors text-[#C68346] hover:bg-[#C68346] hover:text-[#FFFFFF] disabled:opacity-40 disabled:pointer-events-none text-[9px] font-bold uppercase tracking-wider rounded-none cursor-pointer truncate"
+                >
+                  EDITAR ÍTEM
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isSealed || isGenerating}
+                  onClick={() => setShowApprovalConfirm(!showApprovalConfirm)}
+                  className="text-center px-2 py-1.5 bg-transparent border border-[#00AEEF] transition-colors text-[#00AEEF] hover:bg-[#00AEEF] hover:text-[#FFFFFF] disabled:opacity-40 disabled:pointer-events-none text-[9px] font-bold uppercase tracking-wider rounded-none cursor-pointer truncate"
+                >
+                  Aprobar Ítem
+                </button>
+              )}
 
-          {item.is_human_locked ? (
-            <div className="flex flex-col gap-2">
               <button
                 type="button"
-                disabled={isSealed || isGenerating}
-                onClick={() => setShowUnlockConfirm(!showUnlockConfirm)}
-                className="w-full text-left px-3 py-2 bg-transparent border border-[#C68346] transition-colors text-[#C68346] hover:bg-[#C68346] hover:text-[#FFFFFF] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none cursor-pointer"
+                disabled={isSealed || isGenerating || item.is_human_locked}
+                onClick={onDiscard}
+                className="text-center px-2 py-1.5 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#0F172A] dark:hover:border-[#F3F4F6] transition-colors text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[9px] font-bold uppercase tracking-wider rounded-none cursor-pointer truncate"
               >
-                EDITAR ÍTEM
+                Descartar
               </button>
-              {showUnlockConfirm && (
-                <div className="p-2 border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-2 rounded-none">
-                  <p className="text-[10px] text-[#C68346] font-bold">Escribe "ACTUALIZAR" para confirmar el desbloqueo:</p>
-                  <input
-                    type="text"
-                    value={confirmUnlockInput}
-                    onChange={(e) => setConfirmUnlockInput(e.target.value)}
-                    placeholder="ACTUALIZAR"
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      disabled={confirmUnlockInput.trim() !== 'ACTUALIZAR'}
-                      onClick={async () => {
-                        await onUnlockItem();
-                        setConfirmUnlockInput('');
-                        setShowUnlockConfirm(false);
-                      }}
-                      className="px-2 py-1 bg-[#C68346] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none border-0 cursor-pointer"
-                    >
-                      Confirmar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setConfirmUnlockInput('');
-                        setShowUnlockConfirm(false);
-                      }}
-                      className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none cursor-pointer"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              <button
-                type="button"
-                disabled={isSealed || isGenerating}
-                onClick={() => setShowApprovalConfirm(!showApprovalConfirm)}
-                className="w-full text-left px-3 py-2 bg-transparent border border-[#00AEEF] transition-colors text-[#00AEEF] hover:bg-[#00AEEF] hover:text-[#FFFFFF] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none cursor-pointer"
-              >
-                Aprobar Ítem
-              </button>
-              {showApprovalConfirm && (
-                <div className="p-2 border border-[#00AEEF]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-2 rounded-none">
-                  {pendingFiguresCount > 0 && (
-                    <p className="text-[10px] text-[#C68346] font-bold flex items-center gap-[4px]">
-                      <span className="material-symbols-outlined !text-[14px]">image_search</span>
-                      {t('vault_dashboard.pending_figure.approval_warning', {
-                        count: pendingFiguresCount,
-                        defaultValue: '{{count}} imagen(es) técnica(s) pendiente(s). Tras aprobar, solo podrán registrarse como propuesta.',
-                      })}
-                    </p>
-                  )}
-                  <p className="text-[10px] text-[#00AEEF] font-bold">Escribe "ACTUALIZAR" para confirmar la aprobación:</p>
-                  <input
-                    type="text"
-                    value={confirmApprovalInput}
-                    onChange={(e) => setConfirmApprovalInput(e.target.value)}
-                    placeholder="ACTUALIZAR"
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      disabled={confirmApprovalInput.trim() !== 'ACTUALIZAR'}
-                      onClick={async () => {
-                        await onUpdateApprovalState('APROBADO_HUMANO');
-                        setConfirmApprovalInput('');
-                        setShowApprovalConfirm(false);
-                      }}
-                      className="px-2 py-1 bg-[#00AEEF] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none border-0 cursor-pointer"
-                    >
-                      Confirmar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setConfirmApprovalInput('');
-                        setShowApprovalConfirm(false);
-                      }}
-                      className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none cursor-pointer"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
 
-          <button
-            type="button"
-            disabled={isSealed || isGenerating || item.is_human_locked}
-            onClick={onDiscard}
-            className="w-full text-left px-3 py-2 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#0F172A] dark:hover:border-[#F3F4F6] transition-colors text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none cursor-pointer"
-          >
-            Descartar Ítem
-          </button>
+            {showUnlockConfirm && (
+              <div className="p-2 border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-2 rounded-none">
+                <p className="text-[10px] text-[#C68346] font-bold">Escribe "ACTUALIZAR" para confirmar el desbloqueo:</p>
+                <input
+                  type="text"
+                  value={confirmUnlockInput}
+                  onChange={(e) => setConfirmUnlockInput(e.target.value)}
+                  placeholder="ACTUALIZAR"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={confirmUnlockInput.trim() !== 'ACTUALIZAR'}
+                    onClick={async () => {
+                      await onUnlockItem();
+                      setConfirmUnlockInput('');
+                      setShowUnlockConfirm(false);
+                    }}
+                    className="px-2 py-1 bg-[#C68346] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none border-0 cursor-pointer"
+                  >
+                    Confirmar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmUnlockInput('');
+                      setShowUnlockConfirm(false);
+                    }}
+                    className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {showApprovalConfirm && (
+              <div className="p-2 border border-[#00AEEF]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-2 rounded-none">
+                {pendingFiguresCount > 0 && (
+                  <p className="text-[10px] text-[#C68346] font-bold flex items-center gap-[4px]">
+                    <span className="material-symbols-outlined !text-[14px]">image_search</span>
+                    {t('vault_dashboard.pending_figure.approval_warning', {
+                      count: pendingFiguresCount,
+                      defaultValue: '{{count}} imagen(es) técnica(s) pendiente(s). Tras aprobar, solo podrán registrarse como propuesta.',
+                    })}
+                  </p>
+                )}
+                <p className="text-[10px] text-[#00AEEF] font-bold">Escribe "ACTUALIZAR" para confirmar la aprobación:</p>
+                <input
+                  type="text"
+                  value={confirmApprovalInput}
+                  onChange={(e) => setConfirmApprovalInput(e.target.value)}
+                  placeholder="ACTUALIZAR"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={confirmApprovalInput.trim() !== 'ACTUALIZAR'}
+                    onClick={async () => {
+                      await onUpdateApprovalState('APROBADO_HUMANO');
+                      setConfirmApprovalInput('');
+                      setShowApprovalConfirm(false);
+                    }}
+                    className="px-2 py-1 bg-[#00AEEF] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none border-0 cursor-pointer"
+                  >
+                    Confirmar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmApprovalInput('');
+                      setShowApprovalConfirm(false);
+                    }}
+                    className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
         </div>
@@ -2798,7 +2989,7 @@ function ItemizedItemsList({
 
   if (!items?.length) return null;
   const sections = [...new Set(items.map(it => it.section))];
-  const hasExpanded = expandedItems.size > 0;
+  const hasExpanded = items.some(it => expandedItems.has(it.item_id));
 
   return (
     <div className={`mt-4 ${isArchive ? 'opacity-60' : ''} ${hasExpanded ? 'flex-1 flex flex-col h-full min-h-0 overflow-hidden' : 'space-y-5'}`}>
@@ -2838,9 +3029,23 @@ function ItemizedItemsList({
                         {isExpanded && (
                           <button
                             type="button"
-                            onClick={() => onToggleExpand(item.item_id)}
-                            title="Volver al listado de ítems"
-                            aria-label="Volver al listado de ítems"
+                            onClick={() => {
+                              if (activeProposalView?.itemId === item.item_id) {
+                                onSetProposalView(null);
+                              } else {
+                                onToggleExpand(item.item_id);
+                              }
+                            }}
+                            title={
+                              activeProposalView?.itemId === item.item_id
+                                ? 'Volver al contenido del ítem'
+                                : 'Volver al listado de ítems'
+                            }
+                            aria-label={
+                              activeProposalView?.itemId === item.item_id
+                                ? 'Volver al contenido del ítem'
+                                : 'Volver al listado de ítems'
+                            }
                             className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none"
                           >
                             <span className="material-symbols-outlined !text-[20px]">arrow_back</span>
@@ -2887,7 +3092,11 @@ function ItemizedItemsList({
                                 {displayPct}%
                               </button>
                             )}
-                            {canCurateAI && item.pending_conflicts && item.pending_conflicts.length > 0 && (
+                            {canCurateAI &&
+                              item.pending_conflicts &&
+                              item.pending_conflicts.some(
+                                (p) => p.human_decision !== 'ELIMINADO' && p.human_decision !== 'APROBADO'
+                              ) && (
                               <span className="flex items-center justify-center w-8 h-8 shrink-0">
                                 <span className="material-symbols-outlined !text-[20px] text-[#00AEEF]" title="Nuevos hallazgos o conflictos pendientes">release_alert</span>
                               </span>
@@ -2898,7 +3107,7 @@ function ItemizedItemsList({
                               const totalItemPending = pendingFigCount + pendingTextCount;
                               return totalItemPending > 0 ? (
                                 <span
-                                  className="flex items-center gap-[4px] h-6 px-[6px] shrink-0 bg-[#FEF08A] dark:bg-[#FACC15]/25 text-[#0F172A] dark:text-[#FEF08A] border border-[#EAB308] dark:border-[#FACC15] rounded-none"
+                                  className="flex items-center gap-[4px] h-6 px-[6px] shrink-0 bg-[#C68346]/15 dark:bg-[#C68346]/20 text-[#C68346] border border-[#C68346] rounded-none"
                                   title={`${t('vault_dashboard.pending_content.label', 'Contenido Pendiente')}: ${pendingTextCount} dato(s) no declarado(s) · ${pendingFigCount} imagen(es) pendiente(s)`}
                                 >
                                   <span className="material-symbols-outlined !text-[14px]">pending_actions</span>
@@ -3402,9 +3611,15 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
           {expandedItems.size > 0 && (
             <button
               type="button"
-              onClick={() => expandedItems.forEach((id) => onToggleExpand(id))}
-              title="Volver al listado de ítems"
-              aria-label="Volver al listado de ítems"
+              onClick={() => {
+                if (activeProposalView) {
+                  onSetProposalView(null);
+                } else {
+                  expandedItems.forEach((id) => onToggleExpand(id));
+                }
+              }}
+              title={activeProposalView ? 'Volver al contenido del ítem' : 'Volver al listado de ítems'}
+              aria-label={activeProposalView ? 'Volver al contenido del ítem' : 'Volver al listado de ítems'}
               className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none"
             >
               <span className="material-symbols-outlined !text-[20px]">arrow_back</span>
@@ -4213,8 +4428,12 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
   const toggleItemExpansion = useCallback((itemId: string) => {
     setExpandedItems(prev => {
       const next = new Set(prev);
-      if (next.has(itemId)) next.delete(itemId);
-      else next.add(itemId);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+        setActiveProposalView(cur => (cur?.itemId === itemId ? null : cur));
+      } else {
+        next.add(itemId);
+      }
       return next;
     });
   }, []);
@@ -5253,7 +5472,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     if (!canCurateAI || !catalogId) return;
     const toastId = toast.loading(
       decision === 'APROBADO'
-        ? 'Aprobando propuesta…'
+        ? 'Aprobando e integrando propuesta al contenido del ítem…'
         : 'Eliminando propuesta…'
     );
     try {
@@ -5262,26 +5481,82 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, proposalId, decision }),
       });
-      if (res.ok) {
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json.success) {
+        setCatalog((prev) => {
+          if (!prev?.knowledge_vault?.[pillarId]) return prev;
+          const currentPillar = prev.knowledge_vault[pillarId];
+          const nextItems = (currentPillar.items || []).map((it) => {
+            if (it.item_id !== itemId) return it;
+            const currentPending = it.pending_conflicts || [];
+            const matchedIdx = currentPending.findIndex(
+              (p, i) =>
+                p.proposal_id === proposalId ||
+                getEffectiveProposalId(p, i) === proposalId ||
+                getEffectiveProposalId(p) === proposalId
+            );
+            const targetFusion =
+              matchedIdx !== -1
+                ? currentPending[matchedIdx].estado_fusion
+                : activeProposalView?.view === 'conflictos'
+                  ? 'CONFLICTO'
+                  : 'NUEVO';
+
+            const filteredPending =
+              decision === 'ELIMINADO'
+                ? currentPending.filter(
+                    (p, i) => i !== matchedIdx && p.human_decision !== 'ELIMINADO'
+                  )
+                : currentPending.filter(
+                    (p, i) =>
+                      i !== matchedIdx &&
+                      p.human_decision !== 'ELIMINADO' &&
+                      !(p.estado_fusion === targetFusion && p.human_decision === 'APROBADO')
+                  );
+
+            return {
+              ...it,
+              content: typeof json.evolvedContent === 'string' ? json.evolvedContent : it.content,
+              pending_conflicts: filteredPending,
+            };
+          });
+          return {
+            ...prev,
+            knowledge_vault: {
+              ...prev.knowledge_vault,
+              [pillarId]: {
+                ...currentPillar,
+                items: nextItems,
+              },
+            },
+          };
+        });
+
+        if (typeof json.remainingCount === 'number' && json.remainingCount === 0) {
+          setActiveProposalView(null);
+        }
+
         toast.update(toastId, {
-          render: decision === 'APROBADO' ? 'Propuesta aprobada.' : 'Propuesta eliminada.',
+          render:
+            decision === 'APROBADO'
+              ? 'Propuesta aprobada e integrada en el contenido del ítem.'
+              : 'Propuesta eliminada.',
           type: 'success',
           isLoading: false,
-          autoClose: 3000
+          autoClose: 3000,
         });
       } else {
-        const json = await res.json();
         toast.update(toastId, {
           render: `Error: ${json.error || 'No se pudo registrar la decisión.'}`,
           type: 'error',
           isLoading: false,
-          autoClose: 5000
+          autoClose: 5000,
         });
       }
     } catch (_e) {
       toast.update(toastId, { render: 'Error de red al registrar decisión.', type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [canCurateAI, catalogId]);
+  }, [canCurateAI, catalogId, activeProposalView]);
 
   const handleEvolveItemByType = useCallback(async (
     pillarId: PillarId,
@@ -5289,17 +5564,46 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     filterType: 'NUEVO' | 'CONFLICTO'
   ) => {
     if (!canCurateAI || !catalogId) return;
-    const toastId = toast.loading(`Actualizando ítem con propuestas de tipo ${filterType}…`);
+    const toastId = toast.loading(`Integrando propuestas aprobadas (${filterType}) en el contenido…`);
     try {
       const res = await authFetch(`${API_BASE_URL}/vault/evolve-item`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, filterType }),
       });
-      if (res.ok) {
-        toast.update(toastId, { render: 'Ítem actualizado y redactado por IA.', type: 'success', isLoading: false, autoClose: 3000 });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json.success) {
+        setCatalog((prev) => {
+          if (!prev?.knowledge_vault?.[pillarId]) return prev;
+          const currentPillar = prev.knowledge_vault[pillarId];
+          const nextItems = (currentPillar.items || []).map((it) => {
+            if (it.item_id !== itemId) return it;
+            const currentPending = it.pending_conflicts || [];
+            const filteredPending = currentPending.filter(
+              (p) =>
+                p.human_decision !== 'ELIMINADO' &&
+                !(p.estado_fusion === filterType && p.human_decision === 'APROBADO')
+            );
+            return {
+              ...it,
+              content: typeof json.evolvedContent === 'string' ? json.evolvedContent : it.content,
+              pending_conflicts: filteredPending,
+            };
+          });
+          return {
+            ...prev,
+            knowledge_vault: {
+              ...prev.knowledge_vault,
+              [pillarId]: {
+                ...currentPillar,
+                items: nextItems,
+              },
+            },
+          };
+        });
+        setActiveProposalView(null);
+        toast.update(toastId, { render: 'Ítem actualizado con los hallazgos aprobados.', type: 'success', isLoading: false, autoClose: 3000 });
       } else {
-        const json = await res.json();
         toast.update(toastId, { render: `Error: ${json.error || 'No se pudo evolucionar la redacción.'}`, type: 'error', isLoading: false, autoClose: 5000 });
       }
     } catch (_e) {
@@ -6423,6 +6727,8 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                   onOpenStudio={openStudio}
                   prerequisitePillar={prerequisitePillar}
                   onNavigateToPillar={(id) => {
+                    setExpandedItems(new Set());
+                    setActiveProposalView(null);
                     setShowSymbologyInfo(false);
                     setActiveTab(id);
                   }}

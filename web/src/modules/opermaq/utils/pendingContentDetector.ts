@@ -25,10 +25,10 @@ export function isUndeclaredContentText(text: string | null | undefined): boolea
 }
 
 /**
- * Clases visuales estándar MINREPORT (Fondo Amarillo de Alerta de Completitud, Geometría 0px, Alto Contraste Light/Dark).
+ * Clases visuales estándar MINREPORT (Acento Cobre Oficial #C68346, Geometría 0px, Alto Contraste Light/Dark).
  */
 export const PENDING_CONTENT_HIGHLIGHT_CLASS =
-  'bg-[#FEF08A] dark:bg-[#FACC15]/25 text-[#0F172A] dark:text-[#FEF08A] border border-[#EAB308] dark:border-[#FACC15] px-[6px] py-[2px] font-mono text-[11px] font-bold rounded-none shadow-none inline-block align-baseline';
+  'bg-[#C68346]/15 dark:bg-[#C68346]/20 text-[#C68346] border border-[#C68346] px-[6px] py-[2px] font-mono text-[11px] font-bold rounded-none shadow-none inline-block align-baseline';
 
 /**
  * Cuenta cuántas ocurrencias de texto no declarado / pendiente existen en un bloque Markdown,

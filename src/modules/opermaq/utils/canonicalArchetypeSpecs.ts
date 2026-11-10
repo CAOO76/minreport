@@ -1428,11 +1428,11 @@ export function deriveEnergyConsumptionProfile(params: {
     ]);
 
     const corpusText = [
+        params.fichaTecnicaMarkdown || '',
         sourceSlot?.value_si || '',
         consumptionSlot?.value_si || '',
         capacitySlot?.value_si || '',
         ...(Array.isArray(params.caracteristicas_principales) ? params.caracteristicas_principales : []),
-        params.fichaTecnicaMarkdown || '',
         params.tipo_equipo || '',
     ].join('\n');
 
@@ -1522,25 +1522,25 @@ export function deriveEnergyConsumptionProfile(params: {
         Boolean(prev?.def_adblue_consumption?.requires_def);
 
     const defTankMatch =
-        extractRegexMatch(/(?:def|adblue|urea)[^|\n]{0,40}?(\d{1,3}(?:[.,]\d+)?\s*L\b)/i) ||
+        extractRegexMatch(/(?:def|adblue|urea)[^\n]{0,50}?(\d{1,3}(?:[.,]\d+)?\s*L\b)/i) ||
         prev?.def_adblue_consumption?.tank_capacity_liters ||
         null;
 
     const defPctMatch =
-        extractRegexMatch(/(?:def|adblue)[^|\n]{0,40}?(\d{1,2}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,2}(?:[.,]\d+)?)?\s*%)/i) ||
+        extractRegexMatch(/(?:def|adblue)[^\n]{0,50}?(\d{1,2}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,2}(?:[.,]\d+)?)?\s*%)/i) ||
         prev?.def_adblue_consumption?.consumption_pct_of_fuel ||
         null;
 
     const tankCapMatch =
-        capacitySlot?.value_si ||
         extractRegexMatch(
-            /(?:estanque\s+de\s+combustible|tanque\s+de\s+combustible|combustible|capacidad\s+bater[ií]a)[^|\n]{0,45}?(\d{1,4}(?:[.,]\d+)?\s*(?:L\b|litros?|kWh))/i
+            /(?:estanque\s+de\s+combustible|tanque\s+de\s+combustible|capacidad\s+(?:de\s+)?(?:estanque|tanque|combustible|bater[ií]a))[^\n]{0,55}?(\d{1,4}(?:[.,]\d+)?\s*(?:L\b|litros?|kWh))/i
         ) ||
+        capacitySlot?.value_si ||
         prev?.storage_and_autonomy?.tank_or_battery_capacity ||
         null;
 
     const autonomyMatch =
-        extractRegexMatch(/autonom[ií]a[^|\n]{0,35}?(\d{1,4}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,4}(?:[.,]\d+)?)?\s*(?:h\b|horas|km\b))/i) ||
+        extractRegexMatch(/autonom[ií]a[^\n]{0,50}?(\d{1,4}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,4}(?:[.,]\d+)?)?\s*(?:h\b|horas|km\b))/i) ||
         prev?.storage_and_autonomy?.estimated_autonomy ||
         null;
 

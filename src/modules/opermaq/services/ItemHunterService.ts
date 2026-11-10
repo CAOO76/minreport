@@ -70,7 +70,7 @@ function scheduleDebouncedAssetSymbologyPackRebuild(globalAssetId: string, delay
  */
 export async function reconcileAssetSidebarProfileFromVault(
     globalAssetId: string,
-    options?: { allowGroundedEnrichmentIfNeeded?: boolean }
+    options?: { allowGroundedEnrichmentIfNeeded?: boolean; preferVaultMarkdownOverExisting?: boolean }
 ): Promise<{
     canonical_specs: CanonicalSpecSlot[];
     caracteristicas_principales: string[];
@@ -128,9 +128,10 @@ export async function reconcileAssetSidebarProfileFromVault(
         });
 
         // Fusionar esquema actualizado del TIPO con los slots existentes y rescatar valores verificados desde el Markdown del Pilar 01
+        const preferMarkdown = Boolean(options?.preferVaultMarkdownOverExisting);
         const mergedSlots: CanonicalSpecSlot[] = typeDoc.spec_schema.map((schemaAxis) => {
             const prev = existingByKey.get(schemaAxis.axis_key);
-            if (prev && prev.value_si && !prev.value_si.startsWith('[')) {
+            if (!preferMarkdown && prev && prev.value_si && !prev.value_si.startsWith('[')) {
                 return {
                     ...prev,
                     label_es: schemaAxis.label_es,
@@ -167,10 +168,10 @@ export async function reconcileAssetSidebarProfileFromVault(
                 rescuedValue = profile.storage_and_autonomy.tank_or_battery_capacity || null;
             } else if (schemaAxis.axis_key === 'caudal_presion_hidraulica_aux' && fullMarkdown) {
                 const flowMatch = fullMarkdown.match(
-                    /(?:caudal\s+hidr[aá]ulico(?:\s+auxiliar|\s+xhp|\s+ m[aá]ximo)?|high\s+flow|xhp)[^|\n]{0,60}?(\d{2,3}(?:[.,]\d+)?\s*L\/min)/i
+                    /(?:caudal\s+hidr[aá]ulico(?:\s+auxiliar|\s+xhp|\s+m[aá]ximo)?|high\s+flow|xhp)[^\n]{0,65}?(\d{2,3}(?:[.,]\d+)?\s*L\/min)/i
                 );
                 const pressMatch = fullMarkdown.match(
-                    /(?:presi[oó]n\s+hidr[aá]ulica(?:\s+auxiliar|\s+xhp|\s+de\s+alivio)?|xhp)[^|\n]{0,60}?(\d{2,3}(?:[.,]\d+)?\s*bar)/i
+                    /(?:presi[oó]n\s+hidr[aá]ulica(?:\s+auxiliar|\s+xhp|\s+de\s+alivio)?|xhp)[^\n]{0,65}?(\d{2,3}(?:[.,]\d+)?\s*bar)/i
                 );
                 if (flowMatch && pressMatch) {
                     rescuedValue = `${flowMatch[1].trim()} @ ${pressMatch[1].trim()}`;
@@ -179,17 +180,40 @@ export async function reconcileAssetSidebarProfileFromVault(
                 }
             } else if (schemaAxis.axis_key === 'carga_vuelco_estatica' && fullMarkdown) {
                 const tipMatch = fullMarkdown.match(
-                    /(?:carga\s+(?:est[aá]tica\s+de\s+)?vuelco|tipping\s+load)[^|\n]{0,50}?(\d{1,2}[.,]\d{3}\s*kg|\d{3,5}\s*kg)/i
+                    /(?:carga\s+(?:est[aá]tica\s+de\s+)?vuelco|tipping\s+load)[^\n]{0,60}?(\d{1,2}[.,]\d{3}\s*kg|\d{3,5}\s*kg)/i
                 );
                 if (tipMatch) {
                     rescuedValue = tipMatch[1].trim();
                 }
+            } else if (schemaAxis.axis_key === 'peso_operativo' && fullMarkdown) {
+                const weightMatch = fullMarkdown.match(
+                    /(?:peso\s+operativo|operating\s+weight)[^\n]{0,60}?(\d{1,3}(?:[.,]\d{3})+\s*kg|\d{3,6}\s*kg)/i
+                );
+                if (weightMatch) {
+                    rescuedValue = weightMatch[1].trim();
+                }
+            } else if (schemaAxis.axis_key === 'potencia_neta' && fullMarkdown) {
+                const powerMatch = fullMarkdown.match(
+                    /(?:potencia\s+neta|net\s+power)[^\n]{0,60}?(\d{1,4}(?:[.,]\d+)?\s*kW(?:\s*\(\s*\d{1,4}\s*HP\s*\))?)/i
+                );
+                if (powerMatch) {
+                    rescuedValue = powerMatch[1].trim();
+                }
+            } else if (schemaAxis.axis_key === 'roc_capacidad_nominal' && fullMarkdown) {
+                const rocMatch = fullMarkdown.match(
+                    /(?:capacidad\s+operativa\s+nominal|\broc\b)[^\n]{0,60}?(\d{1,2}[.,]\d{3}\s*kg|\d{3,5}\s*kg)/i
+                );
+                if (rocMatch) {
+                    rescuedValue = rocMatch[1].trim();
+                }
             }
+
+            const finalVal = rescuedValue || (prev && prev.value_si && !prev.value_si.startsWith('[') ? prev.value_si : null);
 
             return {
                 axis_key: schemaAxis.axis_key,
                 label_es: schemaAxis.label_es,
-                value_si: rescuedValue || prev?.value_si || null,
+                value_si: finalVal,
                 unit_si: schemaAxis.unit_si,
                 mandatory: schemaAxis.mandatory,
                 is_differentiator: schemaAxis.is_differentiator,

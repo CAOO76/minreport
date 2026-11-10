@@ -285,6 +285,48 @@ export const PILLAR_LABELS: Record<PillarId, string> = {
     checklist_pre_op: 'Checklist Pre-Operacional',
 };
 
+/**
+ * Devuelve las invariantes estructurales y tabulares de edición de cada pilar (`01..05`)
+ * para que toda intervención desde la columna lateral derecha (`processVaultChat`, `assistItemEdit`, `evolveItemContent`)
+ * respete el contrato de formato y la coherencia con pilares previos.
+ */
+export function getPillarEditGovernancePrompt(pillarId: PillarId): string {
+    switch (pillarId) {
+        case 'ficha_tecnica':
+            return (
+                `INVARIANTES DE EDICIÓN — PILAR 01 (FICHA TÉCNICA OEM):\n` +
+                `- Toda especificación debe presentarse en tabla Markdown de 3 columnas: | Parámetro / Especificación | Valor OEM Verificado (SI + Imperial) | Norma / Condición de Medición |.\n` +
+                `- Si editas el capítulo dedicado de Consumos / Matriz Energética, conserva el desglose horario por factor de carga (baja/media/alta severidad), unidad rectora (L/h, kWh/h, km/L, L/s), consumo específico BSFC, DEF/AdBlue y autonomía.\n` +
+                `- PROHIBIDO insertar marcadores [SÍMBOLO: ...] especulativos junto a parámetros nominales.`
+            );
+        case 'manual_operaciones':
+            return (
+                `INVARIANTES DE EDICIÓN — PILAR 02 (MANUAL DE OPERACIONES OMM):\n` +
+                `- Conserva las tablas operativas de la fase correspondiente (Controles/Mandos, Testigos/Categorías de Alerta OEM, Pruebas Funcionales Dinámicas o Límites Operativos) en una sola línea continua por fila.\n` +
+                `- Respeta estrictamente las magnitudes verificadas en el Pilar 01 (Ficha Técnica OEM) sin contradecir presiones, caudales, capacidades ni potencias.`
+            );
+        case 'pauta_mantencion':
+            return (
+                `INVARIANTES DE EDICIÓN — PILAR 03 (PAUTA DE MANTENCIÓN CMRP/RCM):\n` +
+                `- Conserva las tablas ejecutables de mantenimiento (Lubricantes/Fluidos/Capacidades, Filtros, Rutina Diaria, PM1–PM4, S·O·S/PDM o Pares de Apriete/LOTO) en una sola línea continua por fila.\n` +
+                `- PROHIBIDO inventar códigos de parte OEM (usar "[Código de parte OEM no declarado en fuente]" si no consta) y prohibido contradecir las capacidades en litros del Pilar 01.`
+            );
+        case 'matriz_riesgos':
+            return (
+                `INVARIANTES DE EDICIÓN — PILAR 04 (MATRIZ DE RIESGOS HSEC ISO 45001 / DS 132):\n` +
+                `- SALIDA 100% TABULAR OPERATIVA: prohibido agregar párrafos narrativos o listas en texto plano.\n` +
+                `- Mantén la estructura de TABLA 1 (5 columnas: Peligro y Fuente de Energía | Evento No Deseado y Consecuencia | Magnitud / Umbral Crítico SI | Controles Duros de Ingeniería y Bloqueo LOTO | Controles Administrativos, EPP Certificado y Norma) y TABLA 2 (4 columnas: Paso | Etapa / Punto de Intervención | Procedimiento Operativo de Control / Maniobra | Criterio de Verificación / Magnitud Nominal (SI)).\n` +
+                `- PROHIBIDO inventar puntajes subjetivos (P × S = MR).`
+            );
+        case 'checklist_pre_op':
+            return (
+                `INVARIANTES DE EDICIÓN — PILAR 05 (CHECKLIST PRE-OPERACIONAL BINARIO):\n` +
+                `- SALIDA 100% EN TABLA BINARIA DE 6 COLUMNAS (CERO PROSA NARRATIVA): | N° | Punto / Componente de Inspección | Criterio Técnico de Aceptación (Umbral SI / Imperial) | CUMPLE | NO CUMPLE | OBSERVACIONES |.\n` +
+                `- En CUMPLE y NO CUMPLE escribe siempre "[ ]". PROHIBIDO estados intermedios o "N/A", y prohibido incluir tareas de taller (250 h–2.000 h).`
+            );
+    }
+}
+
 export function createEmptyKnowledgeVault(makeModel: string = ''): KnowledgeVault {
     const vault: Partial<KnowledgeVault> = {
         is_sealed: false,

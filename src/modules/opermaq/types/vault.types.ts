@@ -260,6 +260,7 @@ export interface PillarDocument {
     itemized_at?: string | null;
     itemize_error?: string | null;
     structure_digest_sha256?: string | null;
+    content_digest_sha256?: string | null;
     parent_pillar_digest_sha256?: string | null;
     indices?: Record<string, any>;
 }
@@ -308,6 +309,10 @@ export interface ChatMessage {
     timestamp: string;
     highlightText?: string;
     draftContent?: string;
+    draftStatus?: 'PENDING' | 'APPLIED' | 'DISCARDED';
+    appliedAt?: string;
+    discardedAt?: string;
+    selectedFragmentTarget?: string;
     intent?: 'CHAT' | 'EDIT_PROPOSAL' | 'RESEARCH_WEB' | 'SEARCH_IMAGE';
 }
 
