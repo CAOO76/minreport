@@ -152,16 +152,64 @@ export type EquipmentAxisValueKind = z.infer<typeof EquipmentAxisValueKindSchema
 
 export const EquipmentTypeAxisSchema = z.object({
     axis_key: z.string().trim().min(1).max(64),
-    label_es: z.string().trim().min(1).max(48),
-    unit_si: z.string().trim().min(1).max(48),
+    label_es: z.string().trim().min(1).max(64),
+    unit_si: z.string().trim().min(1).max(64),
     value_kind: EquipmentAxisValueKindSchema,
     allowed_enum_values: z.array(z.string().trim().min(1)).optional(),
-    search_keywords: z.array(z.string().trim().min(1)).min(1).max(12),
+    search_keywords: z.array(z.string().trim().min(1)).min(1).max(16),
     mandatory: z.boolean().default(true),
     is_differentiator: z.boolean().default(false),
 });
 
 export type EquipmentTypeAxis = z.infer<typeof EquipmentTypeAxisSchema>;
+
+export const EnergySourceCategorySchema = z.enum([
+    'DIESEL',
+    'GASOLINA',
+    'ELECTRICO_RED_AC',
+    'ELECTRICO_BATERIA_BEV',
+    'HIBRIDO_DIESEL_ELECTRICO',
+    'HIBRIDO_GASOLINA_ELECTRICO',
+    'DUAL_FUEL_DIESEL_GAS',
+    'GLP_GNV',
+    'NEUMATICO_AIRE_COMPRIMIDO',
+    'HIDRAULICO_AUXILIAR',
+    'NO_DECLARADO',
+]);
+
+export type EnergySourceCategory = z.infer<typeof EnergySourceCategorySchema>;
+
+export const EnergyConsumptionProfileSchema = z.object({
+    energy_source: EnergySourceCategorySchema.default('NO_DECLARADO'),
+    energy_spec_label: z.string().nullable().default(null),
+    cost_driver_unit: z.enum(['L/h', 'km/L', 'L/100km', 'kWh/h', 'kWh/100km', 'L/s']).default('L/h'),
+    hourly_consumption_by_load: z.object({
+        idle_or_pto: z.string().nullable().default(null),
+        low_load_25_35pct: z.string().nullable().default(null),
+        medium_load_50_65pct: z.string().nullable().default(null),
+        high_load_80_100pct: z.string().nullable().default(null),
+    }),
+    road_haul_efficiency: z.object({
+        km_per_liter: z.string().nullable().default(null),
+        liters_per_100km: z.string().nullable().default(null),
+        kwh_per_100km: z.string().nullable().default(null),
+    }),
+    specific_consumption_bsfc_gkwh: z.string().nullable().default(null),
+    pneumatic_or_hydraulic_flow: z.string().nullable().default(null),
+    def_adblue_consumption: z.object({
+        requires_def: z.boolean().default(false),
+        consumption_pct_of_fuel: z.string().nullable().default(null),
+        tank_capacity_liters: z.string().nullable().default(null),
+    }),
+    storage_and_autonomy: z.object({
+        tank_or_battery_capacity: z.string().nullable().default(null),
+        estimated_autonomy: z.string().nullable().default(null),
+    }),
+    source_url: z.string().nullable().default(null),
+    updated_at: z.string(),
+});
+
+export type EnergyConsumptionProfile = z.infer<typeof EnergyConsumptionProfileSchema>;
 
 export const GlobalEquipmentTypeSchema = z.object({
     type_key: z.string().trim().min(2).max(80),
@@ -170,9 +218,9 @@ export const GlobalEquipmentTypeSchema = z.object({
     archetype_id: z.string().trim().optional(),
     type_aliases: z.array(z.string()).default([]),
     search_tokens: z.array(z.string()).default([]),
-    spec_schema: z.array(EquipmentTypeAxisSchema).min(2).max(6),
-    schema_version: z.number().int().positive().default(1),
-    origin: z.enum(['SEEDED_ISO_BASE', 'AI_DISCOVERED', 'HUMAN_CURATED_HITL']),
+    spec_schema: z.array(EquipmentTypeAxisSchema).min(2).max(10),
+    schema_version: z.number().int().positive().default(2),
+    origin: z.enum(['SEEDED_ISO_BASE', 'AI_CURATED', 'AI_DISCOVERED', 'HUMAN_CURATED_HITL']),
     is_human_locked: z.boolean().default(false),
     usage_count: z.number().int().nonnegative().default(0),
     created_at: z.string(),
@@ -205,6 +253,7 @@ export const FleetUnitRegistrationSchema = z.object({
     equipment_type_key: z.string().optional(),
     archetype_id: z.string().optional(),
     canonical_specs: z.array(CanonicalSpecSlotSchema).optional(),
+    energy_consumption_profile: EnergyConsumptionProfileSchema.optional(),
     ambiente_operativo: z.array(z.string()).optional(),
     contexto_operativo: z.array(z.string()).optional(),
     caracteristicas_principales: z.array(z.string()).optional(),

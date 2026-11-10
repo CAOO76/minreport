@@ -624,6 +624,63 @@ export function verifyAndNormalizeTechnicalUnits(markdown: string): SiVerificati
         }
     );
 
+    // 12. Consumo horario `gal/h` / `gph` -> `L/h`
+    text = text.replace(
+        /(\b\d{1,4}(?:[.,]\d{1,2})?)\s*(?:gal\/h|gph)\b/gi,
+        (match, rawVal, offset: number, fullStr: string) => {
+            const neighborhood = fullStr.slice(Math.max(0, offset - 32), Math.min(fullStr.length, offset + match.length + 32));
+            if (/\bl\/h\b/i.test(neighborhood)) return match;
+            const gph = parseFloat(String(rawVal).replace(',', '.'));
+            if (!Number.isFinite(gph) || gph <= 0) return match;
+            const lh = gph * 3.78541;
+            conversionsApplied++;
+            return `${formatSmartNumber(lh)} L/h (${rawVal} gal/h)`;
+        }
+    );
+
+    // 13. Rendimiento de combustible `mpg` -> `km/L` y `L/100 km`
+    text = text.replace(
+        /(\b\d{1,3}(?:[.,]\d{1,2})?)\s*mpg\b/gi,
+        (match, rawVal, offset: number, fullStr: string) => {
+            const neighborhood = fullStr.slice(Math.max(0, offset - 32), Math.min(fullStr.length, offset + match.length + 32));
+            if (/\b(?:km\/l|l\/100\s*km)\b/i.test(neighborhood)) return match;
+            const mpg = parseFloat(String(rawVal).replace(',', '.'));
+            if (!Number.isFinite(mpg) || mpg <= 0) return match;
+            const kmL = mpg * 0.425144;
+            const lPer100km = 235.215 / mpg;
+            conversionsApplied++;
+            return `${formatSmartNumber(kmL)} km/L [${formatSmartNumber(lPer100km)} L/100 km] (${rawVal} mpg)`;
+        }
+    );
+
+    // 14. Consumo específico de motor `lb/(hp·h)` -> `g/kWh`
+    text = text.replace(
+        /(\b\d{1,2}(?:[.,]\d{1,3})?)\s*(?:lb\/(?:hp[·.\s-]?h|hp-hr)|lbs?\/hp-?h)\b/gi,
+        (match, rawVal, offset: number, fullStr: string) => {
+            const neighborhood = fullStr.slice(Math.max(0, offset - 32), Math.min(fullStr.length, offset + match.length + 32));
+            if (/\bg\/kwh\b/i.test(neighborhood)) return match;
+            const lbHph = parseFloat(String(rawVal).replace(',', '.'));
+            if (!Number.isFinite(lbHph) || lbHph <= 0) return match;
+            const gKwh = lbHph * 608.277;
+            conversionsApplied++;
+            return `${formatSmartNumber(gKwh)} g/kWh (${rawVal} lb/hp·h)`;
+        }
+    );
+
+    // 15. Caudal neumático de aire libre `cfm` / `scfm` -> `m³/min`
+    text = text.replace(
+        /(\b\d{1,5}(?:[.,]\d{1,2})?)\s*(?:scfm|cfm)\b/gi,
+        (match, rawVal, offset: number, fullStr: string) => {
+            const neighborhood = fullStr.slice(Math.max(0, offset - 32), Math.min(fullStr.length, offset + match.length + 32));
+            if (/\b(?:m³\/min|m3\/min|l\/s)\b/i.test(neighborhood)) return match;
+            const cfm = parseFloat(String(rawVal).replace(',', '.'));
+            if (!Number.isFinite(cfm) || cfm <= 0) return match;
+            const m3min = cfm * 0.0283168;
+            conversionsApplied++;
+            return `${formatSmartNumber(m3min)} m³/min (${rawVal} cfm)`;
+        }
+    );
+
     // 6. Cortafuegos determinista Anti-Marketing y Verificación de Envolvente Física:
     // Elimina oraciones promocionales o afirmaciones operacionales falsas (ej. "mayor alcance para carga de camiones"
     // traducido de folletos residenciales en equipos compactos).

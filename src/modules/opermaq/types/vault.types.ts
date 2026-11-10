@@ -311,12 +311,56 @@ export interface ChatMessage {
     intent?: 'CHAT' | 'EDIT_PROPOSAL' | 'RESEARCH_WEB' | 'SEARCH_IMAGE';
 }
 
+export type EnergySourceCategory =
+    | 'DIESEL'
+    | 'GASOLINA'
+    | 'ELECTRICO_RED_AC'
+    | 'ELECTRICO_BATERIA_BEV'
+    | 'HIBRIDO_DIESEL_ELECTRICO'
+    | 'HIBRIDO_GASOLINA_ELECTRICO'
+    | 'DUAL_FUEL_DIESEL_GAS'
+    | 'GLP_GNV'
+    | 'NEUMATICO_AIRE_COMPRIMIDO'
+    | 'HIDRAULICO_AUXILIAR'
+    | 'NO_DECLARADO';
+
+export interface EnergyConsumptionProfile {
+    energy_source: EnergySourceCategory;
+    energy_spec_label: string | null;
+    cost_driver_unit: 'L/h' | 'km/L' | 'L/100km' | 'kWh/h' | 'kWh/100km' | 'L/s';
+    hourly_consumption_by_load: {
+        idle_or_pto: string | null;
+        low_load_25_35pct: string | null;
+        medium_load_50_65pct: string | null;
+        high_load_80_100pct: string | null;
+    };
+    road_haul_efficiency: {
+        km_per_liter: string | null;
+        liters_per_100km: string | null;
+        kwh_per_100km: string | null;
+    };
+    specific_consumption_bsfc_gkwh: string | null;
+    pneumatic_or_hydraulic_flow: string | null;
+    def_adblue_consumption: {
+        requires_def: boolean;
+        consumption_pct_of_fuel: string | null;
+        tank_capacity_liters: string | null;
+    };
+    storage_and_autonomy: {
+        tank_or_battery_capacity: string | null;
+        estimated_autonomy: string | null;
+    };
+    source_url: string | null;
+    updated_at: string;
+}
+
 export interface CatalogProfile {
     equipment_type_key?: string;
     archetype_id?: MachineryArchetypeId;
     tipo_equipo: string;
     categoria_equipo: string;
     canonical_specs?: CanonicalSpecSlot[];
+    energy_consumption_profile?: EnergyConsumptionProfile;
     ambiente_operativo: string[];
     contexto_operativo: string[];
     caracteristicas_principales: string[];
@@ -334,6 +378,7 @@ export interface ResolvedAssetCandidate {
     tipo_equipo: string;
     categoria_equipo: string;
     canonical_specs?: CanonicalSpecSlot[];
+    energy_consumption_profile?: EnergyConsumptionProfile;
     ambiente_operativo: string[];
     contexto_operativo: string[];
     caracteristicas_principales: string[];
@@ -432,6 +477,50 @@ export const FleetOwnershipConditionSchema = z.enum([
 
 export type FleetOwnershipCondition = z.infer<typeof FleetOwnershipConditionSchema>;
 
+export const EnergySourceCategorySchema = z.enum([
+    'DIESEL',
+    'GASOLINA',
+    'ELECTRICO_RED_AC',
+    'ELECTRICO_BATERIA_BEV',
+    'HIBRIDO_DIESEL_ELECTRICO',
+    'HIBRIDO_GASOLINA_ELECTRICO',
+    'DUAL_FUEL_DIESEL_GAS',
+    'GLP_GNV',
+    'NEUMATICO_AIRE_COMPRIMIDO',
+    'HIDRAULICO_AUXILIAR',
+    'NO_DECLARADO',
+]);
+
+export const EnergyConsumptionProfileSchema = z.object({
+    energy_source: EnergySourceCategorySchema.default('NO_DECLARADO'),
+    energy_spec_label: z.string().nullable().default(null),
+    cost_driver_unit: z.enum(['L/h', 'km/L', 'L/100km', 'kWh/h', 'kWh/100km', 'L/s']).default('L/h'),
+    hourly_consumption_by_load: z.object({
+        idle_or_pto: z.string().nullable().default(null),
+        low_load_25_35pct: z.string().nullable().default(null),
+        medium_load_50_65pct: z.string().nullable().default(null),
+        high_load_80_100pct: z.string().nullable().default(null),
+    }),
+    road_haul_efficiency: z.object({
+        km_per_liter: z.string().nullable().default(null),
+        liters_per_100km: z.string().nullable().default(null),
+        kwh_per_100km: z.string().nullable().default(null),
+    }),
+    specific_consumption_bsfc_gkwh: z.string().nullable().default(null),
+    pneumatic_or_hydraulic_flow: z.string().nullable().default(null),
+    def_adblue_consumption: z.object({
+        requires_def: z.boolean().default(false),
+        consumption_pct_of_fuel: z.string().nullable().default(null),
+        tank_capacity_liters: z.string().nullable().default(null),
+    }),
+    storage_and_autonomy: z.object({
+        tank_or_battery_capacity: z.string().nullable().default(null),
+        estimated_autonomy: z.string().nullable().default(null),
+    }),
+    source_url: z.string().nullable().default(null),
+    updated_at: z.string(),
+});
+
 export const CanonicalSpecSlotSchema = z.object({
     axis_key: z.string().trim().min(1),
     label_es: z.string().trim().min(1),
@@ -454,6 +543,7 @@ export const FleetUnitRegistrationBodySchema = z.object({
     equipment_type_key: z.string().trim().optional(),
     archetype_id: z.string().trim().optional(),
     canonical_specs: z.array(CanonicalSpecSlotSchema).optional(),
+    energy_consumption_profile: EnergyConsumptionProfileSchema.optional(),
     ambiente_operativo: z.array(z.string()).optional(),
     contexto_operativo: z.array(z.string()).optional(),
     caracteristicas_principales: z.array(z.string()).optional(),
@@ -509,6 +599,7 @@ export const ApplyCatalogHomologationBodySchema = z.object({
     categoria_equipo: z.string().trim().min(2).optional(),
     official_url: z.string().trim().optional(),
     approved_slots: z.array(CanonicalSpecSlotSchema).min(1),
+    energy_consumption_profile: EnergyConsumptionProfileSchema.optional(),
     confirm_word: z.string().trim().min(1),
 });
 

@@ -13,7 +13,9 @@ import type {
 } from '../types/vault.types';
 import {
     ACCESSORY_HISTORICAL_SPEC_REGEX,
+    buildUniversalEnergySpecAxesForType,
     cleanDynamicAxisValue,
+    ensureUniversalEnergyAxesInSpecSchema,
     FORBIDDEN_MARKETING_OR_UNVERIFIED_CLAIM_REGEX,
     resolveMachineryArchetype,
     validateCrossAxisPhysicalPlausibility,
@@ -21,7 +23,7 @@ import {
 import { verifyAndNormalizeTechnicalUnits } from './NeuroSymbolicVerifier';
 
 /**
- * EQUIPMENT TYPE REGISTRY SERVICE v1.0 (Ontología Dinámica Auto-Aprendida por `TIPO` — OPERMAQ)
+ * EQUIPMENT TYPE REGISTRY SERVICE v2.0 (Ontología Dinámica Auto-Aprendida por `TIPO` — OPERMAQ)
  *
  * Mecánica Soberana de 2 Tiempos:
  * 1. Al registrar o buscar cualquier activo, OPERMAQ detecta primero su `TIPO` técnico real
@@ -35,8 +37,182 @@ import { verifyAndNormalizeTechnicalUnits } from './NeuroSymbolicVerifier';
  */
 
 export const GLOBAL_EQUIPMENT_TYPES_COLLECTION = 'global_equipment_types';
-const EQUIPMENT_TYPE_SCHEMA_VERSION = 1;
+export const EQUIPMENT_TYPE_SCHEMA_VERSION = 4;
 const MEMORY_CACHE_TTL_MS = 5 * 60 * 1000;
+
+export function buildDedicatedConsumptionCoreChapter(
+    typeDoc: Pick<GlobalEquipmentTypeDoc, 'type_key' | 'canonical_type_es' | 'categoria_equipo' | 'archetype_id'>
+): EquipmentTypeCoreChapterItem {
+    const typeText = `${typeDoc.type_key} ${typeDoc.canonical_type_es} ${typeDoc.categoria_equipo || ''} ${typeDoc.archetype_id || ''}`
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+
+    const isPneumaticOrDrill =
+        /\b(neumatic|jackleg|stoper|martillo\s+neumatico|perforadora\s+neumatica)\b/i.test(typeText);
+
+    const isGridElectricPlant =
+        /\b(electric|subestacion|transformador|tablero|chancador|molino|harnero|criba|correa\s+transportadora|soldadora|planta\s+de)\b/i.test(
+            typeText
+        ) && !/\b(diesel|gasolina|camion|camioneta|excavadora|tractor|motoniveladora|fresadora)\b/i.test(typeText);
+
+    const isBatteryOrHybrid =
+        /\b(bateria|bev\b|hibrid|diesel[\s-]*electric|trolley)\b/i.test(typeText);
+
+    const isRoadOrUtilityVehicle =
+        /\b(camion|camioneta|pick\s*up|furgon|utilitario|suv|tractocamion|remolcador|bus|minibus|van|chasis\s+cabina|volquete|tolva)\b/i.test(
+            typeText
+        ) && !/\b(caex|camion\s+de\s+extraccion|ultra\s*class)\b/i.test(typeText);
+
+    if (isPneumaticOrDrill) {
+        return {
+            chapter_key: 'matriz_energetica_consumos_y_autonomia',
+            title_es: 'Consumos de Energía, Aire Comprimido, Combustible y Fluidos de Barrido',
+            section_es: 'CONSUMOS DE ENERGÍA, AIRE COMPRIMIDO Y COMBUSTIBLE',
+            rationale_es:
+                'Detalla la fuente de energía primaria, demanda de caudal de aire comprimido (L/s, m³/min, CFM) a presión nominal de trabajo (bar), consumo de combustible o energía eléctrica si aplica (L/h o kWh/h), consumo de aceite de línea/lubricador y caudal de agua de barrido (L/min) para gestión de costos.',
+            priority: 'CRÍTICO',
+        };
+    }
+
+    if (isGridElectricPlant) {
+        return {
+            chapter_key: 'matriz_energetica_consumos_y_autonomia',
+            title_es: 'Consumos de Energía Eléctrica, Demanda de Potencia y Factor de Carga Operativo',
+            section_es: 'CONSUMOS DE ENERGÍA, DEMANDA ELÉCTRICA Y AUTONOMÍA',
+            rationale_es:
+                'Detalla el suministro eléctrico (tensión V, fases, frecuencia Hz), potencia nominal e instalada (kW / kVA), consumo energético horario por factor de carga bajo/medio/alto (kWh/h), consumo específico por tonelada o volumen procesado (kWh/t, kWh/m³) y factor de potencia (cos φ) para gestión de costos.',
+            priority: 'CRÍTICO',
+        };
+    }
+
+    if (isBatteryOrHybrid) {
+        return {
+            chapter_key: 'matriz_energetica_consumos_y_autonomia',
+            title_es: 'Consumos de Energía (Batería / Híbrido / Combustible), Regeneración y Autonomía por Ciclo',
+            section_es: 'CONSUMOS DE ENERGÍA, COMBUSTIBLE Y AUTONOMÍA',
+            rationale_es:
+                'Detalla la arquitectura energética (batería LFP/NMC, híbrido diésel-eléctrico o trolley), consumo energético horario o vial (kWh/h, kWh/100 km), consumo de combustible diésel por factor de carga (L/h), capacidad útil de almacenamiento (kWh y L), potencia de recarga/regeneración (kW) y autonomía efectiva por ciclo.',
+            priority: 'CRÍTICO',
+        };
+    }
+
+    if (isRoadOrUtilityVehicle) {
+        return {
+            chapter_key: 'matriz_energetica_consumos_y_autonomia',
+            title_es: 'Consumos de Combustible, Insumos Energéticos (DEF/AdBlue) y Autonomía Operativa',
+            section_es: 'CONSUMOS DE COMBUSTIBLE, ENERGÍA Y AUTONOMÍA',
+            rationale_es:
+                'Detalla el tipo de combustible o energía (Diésel ULSD, Gasolina, Gas o Eléctrico), consumo horario en operación/toma de fuerza (L/h) por factor de carga bajo/medio/alto, rendimiento vial en ruta y faena (km/L y L/100 km), consumo específico BSFC (g/kWh), consumo de agente reductor DEF/AdBlue (% o L/h), capacidad de estanque (L) y autonomía operativa efectiva (h / km) para gestión de costos.',
+            priority: 'CRÍTICO',
+        };
+    }
+
+    return {
+        chapter_key: 'matriz_energetica_consumos_y_autonomia',
+        title_es: 'Consumos de Combustible / Energía por Factor de Carga, DEF/AdBlue y Autonomía Operativa',
+        section_es: 'CONSUMOS DE COMBUSTIBLE, ENERGÍA Y AUTONOMÍA',
+        rationale_es:
+            'Detalla la fuente de energía primaria (Diésel, Gasolina, Eléctrico, Híbrido o Neumático), consumo horario por factor de carga bajo (25-35%), medio (50-65%) y alto (80-100%) en L/h o kWh/h, consumo en ralentí/trabajo continuo, consumo específico BSFC (g/kWh), consumo de urea/DEF (AdBlue) si aplica, capacidad de estanque o banco energético (L / kWh) y autonomía efectiva en turno para gestión de costos.',
+        priority: 'CRÍTICO',
+    };
+}
+
+export function upgradeEquipmentTypeSchemaIfNeeded(doc: GlobalEquipmentTypeDoc): {
+    doc: GlobalEquipmentTypeDoc;
+    modified: boolean;
+} {
+    const existingAxes = Array.isArray(doc.spec_schema) ? doc.spec_schema : [];
+    const hasEnergySource = existingAxes.some((a) => a.axis_key === 'fuente_energia');
+    const hasConsumption = existingAxes.some(
+        (a) => a.axis_key === 'consumo_energetico_nominal' || a.axis_key === 'consumo_nominal_o_tasa'
+    );
+    const hasCapacity = existingAxes.some(
+        (a) => a.axis_key === 'capacidad_energetica_autonomia' || a.axis_key === 'capacidad_estanque_o_bateria'
+    );
+
+    const isSkidSteerOrCtl =
+        doc.archetype_id === 'MINICARGADOR_SSL_CTL' ||
+        doc.type_key === 'minicargador_sobre_neumaticos' ||
+        doc.type_key === 'cargador_compacto_sobre_orugas';
+    const hasAuxHydraulics =
+        !isSkidSteerOrCtl || existingAxes.some((a) => a.axis_key === 'caudal_presion_hidraulica_aux');
+
+    const existingFichaCore = doc.pillar_blueprints?.ficha_tecnica?.core_chapters;
+    const hasDedicatedConsumptionChapter =
+        !Array.isArray(existingFichaCore) ||
+        existingFichaCore.some(
+            (c) =>
+                c.chapter_key === 'matriz_energetica_consumos_y_autonomia' &&
+                /^Consumos\s+de\b/i.test(c.title_es)
+        );
+
+    const needsUpgrade =
+        (doc.schema_version ?? 1) < EQUIPMENT_TYPE_SCHEMA_VERSION ||
+        !hasEnergySource ||
+        !hasConsumption ||
+        !hasCapacity ||
+        !hasAuxHydraulics ||
+        !hasDedicatedConsumptionChapter;
+
+    if (!needsUpgrade) {
+        return { doc, modified: false };
+    }
+
+    let baseAxes = [...existingAxes];
+    if (isSkidSteerOrCtl) {
+        if (!baseAxes.some((a) => a.axis_key === 'carga_vuelco_estatica')) {
+            baseAxes.splice(1, 0, {
+                axis_key: 'carga_vuelco_estatica',
+                label_es: 'Carga estática vuelco',
+                unit_si: 'kg',
+                value_kind: 'PHYSICAL_MAGNITUDE',
+                search_keywords: ['tipping load', 'carga estática de vuelco', 'carga de vuelco', 'kg', 'lb'],
+                mandatory: false,
+                is_differentiator: true,
+            });
+        }
+        if (!baseAxes.some((a) => a.axis_key === 'caudal_presion_hidraulica_aux')) {
+            baseAxes.push({
+                axis_key: 'caudal_presion_hidraulica_aux',
+                label_es: 'Hidráulica auxiliar',
+                unit_si: 'L/min @ bar',
+                value_kind: 'PHYSICAL_MAGNITUDE',
+                search_keywords: [
+                    'hydraulic flow',
+                    'caudal hidráulico auxiliar',
+                    'presión hidráulica',
+                    'XHP',
+                    'high flow',
+                    'L/min',
+                    'bar',
+                    'psi',
+                ],
+                mandatory: false,
+                is_differentiator: true,
+            });
+        }
+    }
+
+    const typeContextText = `${doc.type_key} ${doc.canonical_type_es} ${doc.categoria_equipo || ''}`;
+    const upgradedSchema = ensureUniversalEnergyAxesInSpecSchema(baseAxes, typeContextText);
+
+    const upgradedDoc: GlobalEquipmentTypeDoc = {
+        ...doc,
+        spec_schema: upgradedSchema,
+        schema_version: EQUIPMENT_TYPE_SCHEMA_VERSION,
+        updated_at: new Date().toISOString(),
+    };
+
+    if (upgradedDoc.pillar_blueprints?.ficha_tecnica) {
+        upgradedDoc.pillar_blueprints = {
+            ...upgradedDoc.pillar_blueprints,
+            ficha_tecnica: resolveElasticFichaTecnicaBlueprint(upgradedDoc),
+        };
+    }
+
+    return { doc: upgradedDoc, modified: true };
+}
 
 interface CachedTypeEntry {
     doc: GlobalEquipmentTypeDoc;
@@ -323,6 +499,15 @@ const SEEDED_TYPE_BLUEPRINTS: SeedTypeBlueprint[] = [
                 is_differentiator: true,
             },
             {
+                axis_key: 'carga_vuelco_estatica',
+                label_es: 'Carga estática vuelco',
+                unit_si: 'kg',
+                value_kind: 'PHYSICAL_MAGNITUDE',
+                search_keywords: ['tipping load', 'carga estática de vuelco', 'carga de vuelco', 'kg', 'lb'],
+                mandatory: false,
+                is_differentiator: true,
+            },
+            {
                 axis_key: 'altura_max_descarga',
                 label_es: 'Altura máx. descarga',
                 unit_si: 'mm',
@@ -345,6 +530,24 @@ const SEEDED_TYPE_BLUEPRINTS: SeedTypeBlueprint[] = [
                 search_keywords: ['net power', 'potencia neta', 'kW', 'HP'],
                 mandatory: true,
                 is_differentiator: false,
+            },
+            {
+                axis_key: 'caudal_presion_hidraulica_aux',
+                label_es: 'Hidráulica auxiliar',
+                unit_si: 'L/min @ bar',
+                value_kind: 'PHYSICAL_MAGNITUDE',
+                search_keywords: [
+                    'hydraulic flow',
+                    'caudal hidráulico auxiliar',
+                    'presión hidráulica',
+                    'XHP',
+                    'high flow',
+                    'L/min',
+                    'bar',
+                    'psi',
+                ],
+                mandatory: false,
+                is_differentiator: true,
             },
             {
                 axis_key: 'peso_operativo',
@@ -392,6 +595,15 @@ const SEEDED_TYPE_BLUEPRINTS: SeedTypeBlueprint[] = [
                 is_differentiator: true,
             },
             {
+                axis_key: 'carga_vuelco_estatica',
+                label_es: 'Carga estática vuelco',
+                unit_si: 'kg',
+                value_kind: 'PHYSICAL_MAGNITUDE',
+                search_keywords: ['tipping load', 'carga estática de vuelco', 'carga de vuelco', 'kg', 'lb'],
+                mandatory: false,
+                is_differentiator: true,
+            },
+            {
                 axis_key: 'altura_max_descarga',
                 label_es: 'Altura máx. descarga',
                 unit_si: 'mm',
@@ -408,6 +620,24 @@ const SEEDED_TYPE_BLUEPRINTS: SeedTypeBlueprint[] = [
                 search_keywords: ['net power', 'potencia neta', 'kW', 'HP'],
                 mandatory: true,
                 is_differentiator: false,
+            },
+            {
+                axis_key: 'caudal_presion_hidraulica_aux',
+                label_es: 'Hidráulica auxiliar',
+                unit_si: 'L/min @ bar',
+                value_kind: 'PHYSICAL_MAGNITUDE',
+                search_keywords: [
+                    'hydraulic flow',
+                    'caudal hidráulico auxiliar',
+                    'presión hidráulica',
+                    'XHP',
+                    'high flow',
+                    'L/min',
+                    'bar',
+                    'psi',
+                ],
+                mandatory: false,
+                is_differentiator: true,
             },
             {
                 axis_key: 'peso_operativo',
@@ -1161,6 +1391,10 @@ function blueprintToDoc(bp: SeedTypeBlueprint): GlobalEquipmentTypeDoc {
     const aliases = Array.from(
         new Set([bp.type_key.replace(/_/g, ' '), ...bp.type_aliases.map(normalizeEquipmentTypeAlias)])
     ).filter(Boolean);
+    const enrichedSchema = ensureUniversalEnergyAxesInSpecSchema(
+        bp.spec_schema,
+        `${bp.type_key} ${bp.canonical_type_es} ${bp.categoria_equipo}`
+    );
     return {
         type_key: bp.type_key,
         canonical_type_es: bp.canonical_type_es,
@@ -1168,7 +1402,7 @@ function blueprintToDoc(bp: SeedTypeBlueprint): GlobalEquipmentTypeDoc {
         archetype_id: bp.archetype_id,
         type_aliases: aliases,
         search_tokens: buildTypeSearchTokens(bp.canonical_type_es, bp.categoria_equipo, aliases),
-        spec_schema: bp.spec_schema,
+        spec_schema: enrichedSchema,
         schema_version: EQUIPMENT_TYPE_SCHEMA_VERSION,
         origin: 'SEEDED_ISO_BASE',
         is_human_locked: false,
@@ -1438,11 +1672,19 @@ async function persistTypeDocWithEmbedding(
         }
     }
 
+    const enrichedSchema = ensureUniversalEnergyAxesInSpecSchema(
+        doc.spec_schema || [],
+        `${doc.type_key} ${doc.canonical_type_es} ${doc.categoria_equipo}`
+    );
+
     const finalDoc: GlobalEquipmentTypeDoc = {
         ...doc,
+        spec_schema: enrichedSchema,
+        schema_version: EQUIPMENT_TYPE_SCHEMA_VERSION,
         type_aliases: mergedAliases,
         search_tokens: searchTokens,
         ...(embedding ? { embedding_768_raw: embedding } : {}),
+        updated_at: new Date().toISOString(),
     };
 
     try {
@@ -1489,8 +1731,17 @@ export async function resolveOrLearnEquipmentType(
     if (explicitKey) {
         const mem = getFromMemoryCacheByKey(explicitKey);
         if (mem) {
+            const { doc: upgraded, modified } = upgradeEquipmentTypeSchemaIfNeeded(mem);
+            if (modified) {
+                putInMemoryCache(upgraded);
+                void db
+                    .collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION)
+                    .doc(upgraded.type_key)
+                    .set(upgraded, { merge: true })
+                    .catch(() => undefined);
+            }
             return {
-                typeDoc: mem,
+                typeDoc: upgraded,
                 reusedExistingSchema: true,
                 resolutionSource: 'MEMORY_CACHE',
                 latencyMs: Date.now() - startMs,
@@ -1501,8 +1752,17 @@ export async function resolveOrLearnEquipmentType(
         const mappedKey = memoryAliasToKey.get(normHintAlias)!;
         const mem = getFromMemoryCacheByKey(mappedKey);
         if (mem) {
+            const { doc: upgraded, modified } = upgradeEquipmentTypeSchemaIfNeeded(mem);
+            if (modified) {
+                putInMemoryCache(upgraded);
+                void db
+                    .collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION)
+                    .doc(upgraded.type_key)
+                    .set(upgraded, { merge: true })
+                    .catch(() => undefined);
+            }
             return {
-                typeDoc: mem,
+                typeDoc: upgraded,
                 reusedExistingSchema: true,
                 resolutionSource: 'MEMORY_CACHE',
                 latencyMs: Date.now() - startMs,
@@ -1520,14 +1780,23 @@ export async function resolveOrLearnEquipmentType(
             if (directSnap.exists) {
                 const existing = directSnap.data() as GlobalEquipmentTypeDoc;
                 if (Array.isArray(existing.spec_schema) && existing.spec_schema.length >= 2) {
-                    putInMemoryCache(existing);
-                    void db
-                        .collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION)
-                        .doc(existing.type_key)
-                        .update({ usage_count: FieldValue.increment(1) })
-                        .catch(() => undefined);
+                    const { doc: upgraded, modified } = upgradeEquipmentTypeSchemaIfNeeded(existing);
+                    putInMemoryCache(upgraded);
+                    if (modified) {
+                        void db
+                            .collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION)
+                            .doc(upgraded.type_key)
+                            .set(upgraded, { merge: true })
+                            .catch(() => undefined);
+                    } else {
+                        void db
+                            .collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION)
+                            .doc(existing.type_key)
+                            .update({ usage_count: FieldValue.increment(1) })
+                            .catch(() => undefined);
+                    }
                     return {
-                        typeDoc: existing,
+                        typeDoc: upgraded,
                         reusedExistingSchema: true,
                         resolutionSource: 'FIRESTORE_EXACT',
                         latencyMs: Date.now() - startMs,
@@ -1544,14 +1813,23 @@ export async function resolveOrLearnEquipmentType(
                 if (!aliasSnap.empty) {
                     const existing = aliasSnap.docs[0].data() as GlobalEquipmentTypeDoc;
                     if (Array.isArray(existing.spec_schema) && existing.spec_schema.length >= 2) {
-                        putInMemoryCache(existing);
-                        void db
-                            .collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION)
-                            .doc(existing.type_key)
-                            .update({ usage_count: FieldValue.increment(1) })
-                            .catch(() => undefined);
+                        const { doc: upgraded, modified } = upgradeEquipmentTypeSchemaIfNeeded(existing);
+                        putInMemoryCache(upgraded);
+                        if (modified) {
+                            void db
+                                .collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION)
+                                .doc(upgraded.type_key)
+                                .set(upgraded, { merge: true })
+                                .catch(() => undefined);
+                        } else {
+                            void db
+                                .collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION)
+                                .doc(existing.type_key)
+                                .update({ usage_count: FieldValue.increment(1) })
+                                .catch(() => undefined);
+                        }
                         return {
-                            typeDoc: existing,
+                            typeDoc: upgraded,
                             reusedExistingSchema: true,
                             resolutionSource: 'FIRESTORE_EXACT',
                             latencyMs: Date.now() - startMs,
@@ -1579,6 +1857,7 @@ export async function resolveOrLearnEquipmentType(
             if (storedSeedSnap.exists) {
                 const storedDoc = storedSeedSnap.data() as GlobalEquipmentTypeDoc;
                 if (Array.isArray(storedDoc.spec_schema) && storedDoc.spec_schema.length >= 2) {
+                    const { doc: upgraded, modified } = upgradeEquipmentTypeSchemaIfNeeded(storedDoc);
                     if (normHintAlias && !storedDoc.type_aliases?.includes(normHintAlias)) {
                         void db
                             .collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION)
@@ -1589,9 +1868,16 @@ export async function resolveOrLearnEquipmentType(
                             })
                             .catch(() => undefined);
                     }
-                    putInMemoryCache(storedDoc);
+                    if (modified) {
+                        void db
+                            .collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION)
+                            .doc(upgraded.type_key)
+                            .set(upgraded, { merge: true })
+                            .catch(() => undefined);
+                    }
+                    putInMemoryCache(upgraded);
                     return {
-                        typeDoc: storedDoc,
+                        typeDoc: upgraded,
                         reusedExistingSchema: true,
                         resolutionSource: 'FIRESTORE_EXACT',
                         latencyMs: Date.now() - startMs,
@@ -1979,6 +2265,7 @@ export function resolveElasticFichaTecnicaBlueprint(
         );
 
     // ── ANILLO 1: NÚCLEO MÍNIMO INVARIANTE DEL TIPO (`core_chapters`) ────────
+    const consumptionCoreChapter = buildDedicatedConsumptionCoreChapter(typeDoc);
     let defaultCore: EquipmentTypeCoreChapterItem[];
 
     if (isStationaryOrHandTool) {
@@ -1990,13 +2277,7 @@ export function resolveElasticFichaTecnicaBlueprint(
                 rationale_es: `Consolida las magnitudes físicas diferenciadoras del tipo ${typeDoc.canonical_type_es}: ${axesLabels || 'potencia, caudal, presión o frecuencia nominal'}.`,
                 priority: 'CRÍTICO',
             },
-            {
-                chapter_key: 'fuente_energia_y_accionamiento',
-                title_es: 'Fuente de Energía, Accionamiento Primario y Consumo',
-                section_es: 'POTENCIA Y ACCIONAMIENTO',
-                rationale_es: 'Especifica el motor térmico, motor eléctrico o suministro neumático/hidráulico, curva de régimen y consumo específico.',
-                priority: 'CRÍTICO',
-            },
+            consumptionCoreChapter,
             {
                 chapter_key: 'unidad_proceso_o_trabajo',
                 title_es: 'Unidad Funcional de Trabajo, Etapas de Proceso y Presiones/Caudales',
@@ -2035,6 +2316,7 @@ export function resolveElasticFichaTecnicaBlueprint(
                 rationale_es: 'Código de motor, ciclo, inyección, potencia neta en kW (HP) y par motor máximo en N·m con sus rangos de RPM.',
                 priority: 'CRÍTICO',
             },
+            consumptionCoreChapter,
             {
                 chapter_key: 'transmision_y_traccion',
                 title_es: 'Caja de Cambios, Relaciones de Marcha y Sistema de Tracción',
@@ -2080,6 +2362,7 @@ export function resolveElasticFichaTecnicaBlueprint(
                 rationale_es: 'Modelo de motor, potencia bruta y neta ISO 9249 / SAE J1349 en kW (HP), reserva de par, cilindrada y altitud máxima sin derateo.',
                 priority: 'CRÍTICO',
             },
+            consumptionCoreChapter,
             {
                 chapter_key: 'tren_potencia_y_propulsion',
                 title_es: 'Transmisión, Convertidor/Propulsión, Ejes, Diferenciales y Mandos Finales',
@@ -2229,10 +2512,28 @@ export function resolveElasticFichaTecnicaBlueprint(
         );
     }
 
-    const mergedCore =
-        existing?.core_chapters && existing.core_chapters.length >= 4
-            ? existing.core_chapters
-            : defaultCore;
+    let mergedCore: EquipmentTypeCoreChapterItem[];
+    if (existing?.core_chapters && existing.core_chapters.length >= 4) {
+        const existingConsumptionIdx = existing.core_chapters.findIndex(
+            (c) =>
+                c.chapter_key === 'matriz_energetica_consumos_y_autonomia' ||
+                /\b(consumos?\s+de\s+combustible|consumos?\s+de\s+energ[ií]a|rendimiento\s+de\s+combustible|matriz\s+energ[eé]tica)\b/i.test(
+                    `${c.title_es} ${c.section_es}`
+                )
+        );
+        if (existingConsumptionIdx !== -1) {
+            mergedCore = existing.core_chapters.map((c, idx) =>
+                idx === existingConsumptionIdx ? consumptionCoreChapter : c
+            );
+        } else {
+            const copy = [...existing.core_chapters];
+            const insertIdx = Math.min(2, copy.length);
+            copy.splice(insertIdx, 0, consumptionCoreChapter);
+            mergedCore = copy;
+        }
+    } else {
+        mergedCore = defaultCore;
+    }
 
     const condByKey = new Map<string, EquipmentTypeConditionalSubsystemItem>();
     for (const c of defaultConditionals) {

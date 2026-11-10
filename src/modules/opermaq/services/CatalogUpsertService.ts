@@ -9,7 +9,9 @@ import { enrichCatalogProfile } from './CatalogProfileEnricher';
 import { buildAndPersistAssetSymbologyPack } from './EquipmentSymbologyPackBuilder';
 import { resolveOrLearnEquipmentType } from './EquipmentTypeRegistryService';
 import {
+    deriveEnergyConsumptionProfile,
     extractHomologousAxisValues,
+    sanitizeDesignAndWorkContextItems,
     serializeCanonicalSlotsToSpecsArray,
     type CanonicalSpecSlot,
     type MachineryArchetypeId,
@@ -223,8 +225,8 @@ export async function upsertGlobalAssetCatalog(params: UpsertCatalogParams): Pro
               tipo_equipo: resolvedCanonicalTipo || params.tipo_equipo!,
               categoria_equipo: (params.categoria_equipo || 'EQUIPAMIENTO INDUSTRIAL').toUpperCase(),
               canonical_specs: preExtracted.slots,
-              ambiente_operativo: params.ambiente_operativo || ['Superficie'],
-              contexto_operativo: params.contexto_operativo || ['Operación Industrial'],
+              ambiente_operativo: sanitizeDesignAndWorkContextItems(params.ambiente_operativo),
+              contexto_operativo: sanitizeDesignAndWorkContextItems(params.contexto_operativo),
               caracteristicas_principales: serializeCanonicalSlotsToSpecsArray(preExtracted.slots),
           };
 
@@ -237,6 +239,13 @@ export async function upsertGlobalAssetCatalog(params: UpsertCatalogParams): Pro
         tipo_equipo: enriched.tipo_equipo,
         categoria_equipo: enriched.categoria_equipo,
         original_jargon: params.original_jargon,
+    });
+    const energyProfile = deriveEnergyConsumptionProfile({
+        tipo_equipo: enriched.tipo_equipo,
+        categoria_equipo: enriched.categoria_equipo,
+        canonical_specs: enriched.canonical_specs || [],
+        caracteristicas_principales: enriched.caracteristicas_principales,
+        official_url: params.official_url || '',
     });
     const newCatalogDoc: Record<string, any> = {
         catalog_key: catalogKey,
@@ -253,8 +262,9 @@ export async function upsertGlobalAssetCatalog(params: UpsertCatalogParams): Pro
         categoria_equipo: enriched.categoria_equipo,
         tipo_equipo: enriched.tipo_equipo,
         canonical_specs: enriched.canonical_specs || [],
-        ambiente_operativo: enriched.ambiente_operativo,
-        contexto_operativo: enriched.contexto_operativo,
+        energy_consumption_profile: energyProfile,
+        ambiente_operativo: sanitizeDesignAndWorkContextItems(enriched.ambiente_operativo),
+        contexto_operativo: sanitizeDesignAndWorkContextItems(enriched.contexto_operativo),
         caracteristicas_principales: enriched.caracteristicas_principales,
         alias_detectados: params.original_jargon ? [params.original_jargon] : [],
         ecosystem_dependencies: [],

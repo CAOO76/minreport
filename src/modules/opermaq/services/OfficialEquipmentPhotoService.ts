@@ -1862,13 +1862,68 @@ REGLAS DE EVALUACIÓN OBLIGATORIAS:
     }
 
     /**
-     * Enmarca un buffer a proporción fija 4:3 (1600x1200 WebP HD) al 88% de escala útil:
+     * Codificador adaptativo Zero-Inflation CAS (4:3 WebP):
+     * Garantiza que `optimizedBytes < originalBytes` evitando el sobremuestreo artificial
+     * de imágenes livianas y ajustando progresivamente calidad WebP (`effort: 6`) y lienzo 4:3.
+     */
+    private static async encodeZeroInflationWebp4x3(params: {
+        originalByteLength: number;
+        nativeWidth: number;
+        renderAtSize: (width: number, height: number) => Promise<Buffer>;
+    }): Promise<{ buffer: Buffer; width: number; height: number }> {
+        const { originalByteLength, nativeWidth, renderAtSize } = params;
+        const targetCeilingBytes =
+            originalByteLength > 18 * 1024
+                ? Math.floor(originalByteLength * 0.92)
+                : Math.max(1024, originalByteLength - 512);
+
+        const baseWidth =
+            nativeWidth >= 1400 && originalByteLength >= 180 * 1024
+                ? 1440
+                : nativeWidth >= 1000 && originalByteLength >= 95 * 1024
+                  ? 1120
+                  : Math.min(960, Math.max(640, Math.round(nativeWidth / 16) * 16));
+
+        const compressionSteps: Array<{ scale: number; quality: number }> = [
+            { scale: 1.0, quality: 82 },
+            { scale: 1.0, quality: 72 },
+            { scale: 0.85, quality: 66 },
+            { scale: 0.74, quality: 58 },
+            { scale: 0.64, quality: 52 },
+        ];
+
+        let bestResult: { buffer: Buffer; width: number; height: number } | null = null;
+
+        for (const step of compressionSteps) {
+            const w = Math.max(480, Math.round((baseWidth * step.scale) / 4) * 4);
+            const h = Math.round((w * 3) / 4);
+            const rawComposite = await renderAtSize(w, h);
+            const encoded = await sharp(rawComposite)
+                .webp({ quality: step.quality, effort: 6, smartSubsample: true })
+                .toBuffer();
+
+            if (!bestResult || encoded.length < bestResult.buffer.length) {
+                bestResult = { buffer: encoded, width: w, height: h };
+            }
+
+            if (encoded.length <= targetCeilingBytes) {
+                return { buffer: encoded, width: w, height: h };
+            }
+        }
+
+        return bestResult!;
+    }
+
+    /**
+     * Enmarca un buffer a proporción 4:3 al 88% de escala útil bajo invariante Zero-Inflation CAS:
      * 1. Si proviene de una página completa de folleto PDF (`isFullDocumentPage`), recorta primero `subjectBox2d`.
      * 2. Si el perímetro es blanco de estudio o transparente (>= 72%), aplica `STUDIO_88` (recorte exacto + escala 88% sobre #FFFFFF).
      * 3. Si es fotografía oficial de catálogo con entorno natural y posee `subjectBox2d`, aplica `VLM_BOX_4X3` sin barras blancas artificiales.
+     * 4. Garantiza mediante `encodeZeroInflationWebp4x3` que el peso CAS resultante nunca infle el tamaño original.
      */
     public static async frameBufferToStudio4x3(params: {
         inputBuffer: Buffer;
+        originalByteLength?: number;
         subjectBox2d?: [number, number, number, number] | null;
         isFullDocumentPage?: boolean;
     }): Promise<{
@@ -1878,13 +1933,15 @@ REGLAS DE EVALUACIÓN OBLIGATORIAS:
         height: number;
         framing_mode: 'STUDIO_88' | 'VLM_BOX_4X3' | 'CENTER_4X3';
     }> {
-        const { inputBuffer, subjectBox2d, isFullDocumentPage = false } = params;
-        const targetWidth = 1600;
-        const targetHeight = 1200; // Proporción 4:3
+        const { inputBuffer, originalByteLength, subjectBox2d, isFullDocumentPage = false } = params;
+        const effectiveOrigBytes =
+            typeof originalByteLength === 'number' && originalByteLength > 0
+                ? originalByteLength
+                : inputBuffer.length;
         const fillRatio = 0.88;
 
         let workingBuffer = await sharp(inputBuffer).rotate().toBuffer();
-        let metadata = await sharp(workingBuffer).metadata();
+        const metadata = await sharp(workingBuffer).metadata();
         let origW = metadata.width || 1200;
         let origH = metadata.height || 900;
 
@@ -1928,35 +1985,45 @@ REGLAS DE EVALUACIÓN OBLIGATORIAS:
                     const subW = trimmedBuf.info.width;
                     const subH = trimmedBuf.info.height;
 
-                    const scale = Math.min((targetWidth * fillRatio) / subW, (targetHeight * fillRatio) / subH);
-                    const drawW = Math.max(1, Math.round(subW * scale));
-                    const drawH = Math.max(1, Math.round(subH * scale));
+                    const encoded = await this.encodeZeroInflationWebp4x3({
+                        originalByteLength: effectiveOrigBytes,
+                        nativeWidth: Math.max(origW, Math.round(subW / fillRatio)),
+                        renderAtSize: async (targetWidth, targetHeight) => {
+                            const scale = Math.min(
+                                (targetWidth * fillRatio) / subW,
+                                (targetHeight * fillRatio) / subH
+                            );
+                            const drawW = Math.max(1, Math.round(subW * scale));
+                            const drawH = Math.max(1, Math.round(subH * scale));
 
-                    const scaledSubject = await sharp(trimmedBuf.data)
-                        .resize(drawW, drawH, { fit: 'fill' })
-                        .toBuffer();
+                            const scaledSubject = await sharp(trimmedBuf.data)
+                                .resize(drawW, drawH, { fit: 'fill' })
+                                .png()
+                                .toBuffer();
 
-                    const left = Math.round((targetWidth - drawW) / 2);
-                    const top = Math.round((targetHeight - drawH) / 2);
+                            const left = Math.round((targetWidth - drawW) / 2);
+                            const top = Math.round((targetHeight - drawH) / 2);
 
-                    const finalBuf = await sharp({
-                        create: {
-                            width: targetWidth,
-                            height: targetHeight,
-                            channels: 4,
-                            background: { r: 255, g: 255, b: 255, alpha: 1 },
+                            return sharp({
+                                create: {
+                                    width: targetWidth,
+                                    height: targetHeight,
+                                    channels: 4,
+                                    background: { r: 255, g: 255, b: 255, alpha: 1 },
+                                },
+                            })
+                                .composite([{ input: scaledSubject, left, top }])
+                                .png()
+                                .toBuffer();
                         },
-                    })
-                        .composite([{ input: scaledSubject, left, top }])
-                        .webp({ quality: 88, effort: 4 })
-                        .toBuffer();
+                    });
 
-                    const sha256 = MediaDigestorServer.computeSha256Hex(finalBuf);
+                    const sha256 = MediaDigestorServer.computeSha256Hex(encoded.buffer);
                     return {
-                        buffer: finalBuf,
+                        buffer: encoded.buffer,
                         sha256,
-                        width: targetWidth,
-                        height: targetHeight,
+                        width: encoded.width,
+                        height: encoded.height,
                         framing_mode: 'STUDIO_88',
                     };
                 }
@@ -1992,39 +2059,49 @@ REGLAS DE EVALUACIÓN OBLIGATORIAS:
                 const left = Math.max(0, Math.min(origW - safeCropW, Math.round(cx - safeCropW / 2)));
                 const top = Math.max(0, Math.min(origH - safeCropH, Math.round(cy - safeCropH / 2)));
 
-                const finalBuf = await sharp(workingBuffer)
+                const extractedCrop = await sharp(workingBuffer)
                     .extract({ left, top, width: safeCropW, height: safeCropH })
-                    .resize(targetWidth, targetHeight, { fit: 'fill' })
-                    .webp({ quality: 88, effort: 4 })
                     .toBuffer();
 
-                const sha256 = MediaDigestorServer.computeSha256Hex(finalBuf);
+                const encoded = await this.encodeZeroInflationWebp4x3({
+                    originalByteLength: effectiveOrigBytes,
+                    nativeWidth: safeCropW,
+                    renderAtSize: (targetWidth, targetHeight) =>
+                        sharp(extractedCrop).resize(targetWidth, targetHeight, { fit: 'fill' }).png().toBuffer(),
+                });
+
+                const sha256 = MediaDigestorServer.computeSha256Hex(encoded.buffer);
                 return {
-                    buffer: finalBuf,
+                    buffer: encoded.buffer,
                     sha256,
-                    width: targetWidth,
-                    height: targetHeight,
+                    width: encoded.width,
+                    height: encoded.height,
                     framing_mode: 'VLM_BOX_4X3',
                 };
             }
         }
 
-        // 3. Fallback: encuadre 4:3 proporcional limpio
-        const finalBuf = await sharp(workingBuffer)
-            .resize(targetWidth, targetHeight, {
-                fit: isStudioOrAlpha ? 'contain' : 'cover',
-                position: 'centre',
-                background: { r: 255, g: 255, b: 255, alpha: 1 },
-            })
-            .webp({ quality: 88, effort: 4 })
-            .toBuffer();
+        // 3. Fallback: encuadre 4:3 proporcional limpio bajo Zero-Inflation
+        const encoded = await this.encodeZeroInflationWebp4x3({
+            originalByteLength: effectiveOrigBytes,
+            nativeWidth: origW,
+            renderAtSize: (targetWidth, targetHeight) =>
+                sharp(workingBuffer)
+                    .resize(targetWidth, targetHeight, {
+                        fit: isStudioOrAlpha ? 'contain' : 'cover',
+                        position: 'centre',
+                        background: { r: 255, g: 255, b: 255, alpha: 1 },
+                    })
+                    .png()
+                    .toBuffer(),
+        });
 
-        const sha256 = MediaDigestorServer.computeSha256Hex(finalBuf);
+        const sha256 = MediaDigestorServer.computeSha256Hex(encoded.buffer);
         return {
-            buffer: finalBuf,
+            buffer: encoded.buffer,
             sha256,
-            width: targetWidth,
-            height: targetHeight,
+            width: encoded.width,
+            height: encoded.height,
             framing_mode: isStudioOrAlpha ? 'STUDIO_88' : 'CENTER_4X3',
         };
     }

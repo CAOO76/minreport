@@ -2,8 +2,10 @@ import { db } from '../../../config/firebase';
 import { ResilientAIClient, Type } from '../../../core/resilient-ai-client';
 import type { GlobalEquipmentTypeDoc, ResolvedAssetCandidate } from '../types/vault.types';
 import {
+    detectDeterministicEquipmentTypeFromBrandAndModel,
     extractHomologousAxisValues,
     hasSelfDescribingTypeSchema,
+    sanitizeDesignAndWorkContextItems,
     serializeCanonicalSlotsToSpecsArray,
 } from '../utils/canonicalArchetypeSpecs';
 import { DomainRejectionError, normalizeCatalogKey, validateIndustrialDomain } from '../utils/domainGuard';
@@ -201,10 +203,14 @@ const PASS2_TYPE_SCOPED_CANDIDATE_SCHEMA = {
                     ambiente_operativo: {
                         type: Type.ARRAY,
                         items: { type: Type.STRING },
+                        description:
+                            'CONDICIONES DE DISEÑO (2 a 4 viñetas técnicas concretas verificadas en la fuente OEM): certificaciones estructurales (ej. ROPS ISO 3471 / FOPS ISO 3449), régimen hidromecánico/térmico/altitud (ej. circuito auxiliar XHP 150 L/min @ 280 bar, enfriamiento de alta temperatura) y configuración de rodaje/terreno admisible. Prohibido usar palabras sueltas genéricas como "Superficie" o "Terreno".',
                     },
                     contexto_operativo: {
                         type: Type.ARRAY,
                         items: { type: Type.STRING },
+                        description:
+                            'CONTEXTO Y TRABAJO (2 a 4 viñetas técnicas concretas verificadas en la fuente OEM): aplicaciones operativas reales en minería, construcción o industria y familia de herramientas/implementos de trabajo compatibles. Prohibido usar frases vacías como "Operación Técnica" u "Operación Industrial".',
                     },
                     extracted_axes: {
                         type: Type.ARRAY,
@@ -483,11 +489,14 @@ INSTRUCCIONES DE INVESTIGACIÓN WEB FOCALIZADA POR TIPO (CENSO EXHAUSTIVO 1..N S
    - Si el usuario buscó un modelo específico con restricciones técnicas (ej. "PEUGEOT LANDTREK 4X4 DIESEL 2022"), identifica y lista por separado TODAS las versiones/equipamientos comerciales reales verificados que cumplan exactamente dichas restricciones (ej. "LANDTREK ACTIVE 1.9D 4X4", "LANDTREK ACTION 1.9D 4X4", "LANDTREK 4ACTION 1.9D 4X4", "LANDTREK ALLURE 1.9D 4X4", diferenciando transmisión MT6 / AT6 si aplica), EXCLUYENDO motorizaciones o tracciones que contradigan la consulta.
    - Si el usuario buscó una familia o serie de maquinaria (ej. "CAT D10", "CAT 140M", "KOMATSU PC200"), identifica y lista el 100% de las generaciones y series reales ("D10", "D10N", "D10R", "D10T", "D10T2", "D10 NEXT GEN"; "140M", "140M2", "140M3").
    - PROHIBICIÓN ABSOLUTA DE RANGOS TEMPORALES EN NOMBRES: Jamás agregues frases como "(desde 2020 a la actualidad)", "(2020-presente)" ni rangos de años a los nombres de modelos o versiones.
-2. BÚSQUEDA EXCLUSIVA DE LAS CARACTERÍSTICAS DE "${typeDoc.canonical_type_es}":
-   Para cada versión, modelo o serie identificada, busca en las fichas técnicas OEM ÚNICAMENTE estos ${typeDoc.spec_schema.length} parámetros principales y diferenciadores establecidos para "${typeDoc.canonical_type_es}":
+2. BÚSQUEDA EXCLUSIVA DE LAS CARACTERÍSTICAS DE "${typeDoc.canonical_type_es}" Y CONDICIONES DE DISEÑO / TRABAJO:
+   Para cada versión, modelo o serie identificada, busca en las fichas técnicas OEM:
+   A) Los ${typeDoc.spec_schema.length} parámetros principales y diferenciadores establecidos para "${typeDoc.canonical_type_es}" (incluyendo diferenciadores de sufijo OEM como XHP, XE, VHP, LGP, LC y consumos energéticos):
 ${axesInstructions}
+   B) CONDICIONES DE DISEÑO (ambiente_operativo): certificaciones de cabina/estructura (ROPS/FOPS, presurización), régimen hidráulico/térmico/emisiones (Tier/Stage) y configuración de tracción/rodado/superficie de trabajo.
+   C) CONTEXTO Y TRABAJO (contexto_operativo): labores específicas en minería, construcción o industria y herramientas/implementos acoplables compatibles.
 3. CERO PARÁMETROS CRUZADOS, FORMATO DENSO Y CERO PROSA PUBLICITARIA:
-   - Formato ultra-compacto: presenta máximo 2 a 3 líneas densas por cada versión/generación con sus cifras SI y fuente. Prohibido redactar introducciones o párrafos extensos.
+   - Formato ultra-compacto: presenta máximo 3 a 4 líneas densas por cada versión/generación con sus cifras SI, condiciones de diseño, trabajo y fuente. Prohibido redactar introducciones o párrafos extensos.
    - Si algún parámetro no figura explícitamente en las páginas web consultadas, escribe literalmente "NO DECLARADO EN FUENTE".`;
 }
 
@@ -537,9 +546,11 @@ REGLAS ESTRICTAS FAIL-CLOSED (1..N SIN RESTRICCIÓN DE CANTIDAD):
    - Si el informe describe múltiples series/generaciones de una familia de maquinaria (ej. "D10", "D10N", "D10R", "D10T", "D10T2", "D10 NEXT GEN" o "140M", "140M2", "140M3"), emite cada serie como un candidato independiente.
    - PROHIBICIÓN ABSOLUTA DE RUIDO TEMPORAL: Jamás incluyas años, rangos de años ni frases como "(desde 2020 a la actualidad)" o "(2020-presente)" en "model_oficial" ni en "versions".
    - En modo OEM, normaliza "make_oficial" a la marca oficial corregida en MAYÚSCULAS (ej. "PEUGUEOT" -> "PEUGEOT", "CAT" -> "CATERPILLAR").
-3. EXTRACCIÓN EXACTA DE "extracted_axes":
+3. EXTRACCIÓN EXACTA DE "extracted_axes", "ambiente_operativo" (CONDICIONES DE DISEÑO) Y "contexto_operativo" (CONTEXTO Y TRABAJO):
    - Devuelve en "extracted_axes" una entrada por cada "axis_key" del esquema de "${typeDoc.canonical_type_es}".
-   - En "value_si" escribe ÚNICAMENTE la cifra con su unidad métrica SI (ej. "110 kW (150 HP)", "1.910 cm³", "350 Nm", "1.020 kg", "4x4") o el valor exacto del enum permitido. JAMÁS repitas el nombre de la etiqueta dentro de "value_si".
+   - En "value_si" escribe ÚNICAMENTE la cifra con su unidad métrica SI (ej. "110 kW (150 HP)", "150 L/min @ 280 bar", "1.910 cm³", "350 Nm", "1.020 kg", "4x4") o el valor exacto del enum permitido. JAMÁS repitas el nombre de la etiqueta dentro de "value_si".
+   - En "ambiente_operativo" extrae de 2 a 4 viñetas técnicas concretas de CONDICIONES DE DISEÑO (certificaciones ROPS/FOPS, circuito hidráulico/térmico/emisiones, configuración de tracción y terreno). Prohibido devolver palabras sueltas como "Superficie".
+   - En "contexto_operativo" extrae de 2 a 4 viñetas técnicas concretas de CONTEXTO Y TRABAJO (labores específicas en minería/construcción/industria e implementos compatibles). Prohibido devolver frases vacías como "Operación Técnica".
    - Si un eje NO aparece con dato explícito en el informe verificado (o dice NO DECLARADO), devuelve "value_si": null, "source_url": null, "verbatim_evidence": null.
    - "source_url" y "official_url" DEBEN ser URLs literales tomadas de FUENTES WEB VERIFICADAS DISPONIBLES.`;
 }
@@ -577,38 +588,48 @@ export async function resolveMachineryCandidates(
         candidates: [] as ResolvedAssetCandidate[],
     }));
 
-    // ── PASO 1: Detección Primaria del `TIPO` de Equipo y Pertinencia (Antes de Buscar Parámetros) ──
+    // ── PASO 1: Detección Primaria del `TIPO` de Equipo y Pertinencia (Con Fast-Path Determinista < 1 ms) ──
     const explicitTypeInQuery = detectExplicitTypeFromQueryText(
         `${cleanInput} ${clarificationContext || ''}`
     );
+    const deterministicBrandModelType = !isGeneric
+        ? detectDeterministicEquipmentTypeFromBrandAndModel(cleanInput)
+        : null;
 
-    let correctedMake = isGeneric ? 'GENÉRICO' : '';
-    let correctedModelOrFamily = designator || cleanInput;
-    let detectedTipoHint = explicitTypeInQuery?.canonical_type_es || '';
-    let detectedCategoriaHint = '';
+    let correctedMake = isGeneric
+        ? 'GENÉRICO'
+        : deterministicBrandModelType?.correctedMake || '';
+    let correctedModelOrFamily =
+        deterministicBrandModelType?.correctedModel || designator || cleanInput;
+    let detectedTipoHint =
+        deterministicBrandModelType?.canonical_type_es ||
+        explicitTypeInQuery?.canonical_type_es ||
+        '';
+    let detectedCategoriaHint = deterministicBrandModelType?.categoria_equipo || '';
     let needsWebTypeIdentification = false;
 
-    try {
-        const { data: step1 } = await ResilientAIClient.generateStructured<{
-            is_pertinent: boolean;
-            rejection_reason: string | null;
-            requires_clarification: boolean;
-            clarification_message: string | null;
-            corrected_make: string;
-            corrected_model_or_family: string;
-            detected_tipo_equipo: string;
-            detected_categoria_equipo: string;
-            needs_web_to_identify_type: boolean;
-        }>({
-            module: 'opermaq',
-            preferredTier: 'ANCHOR_HA',
-            temperature: 0,
-            topP: 1,
-            topK: 1,
-            maxOutputTokens: 768,
-            bypassCache: forceWebDiscovery,
-            responseSchema: STEP1_PRIMARY_TYPE_DETECTION_SCHEMA,
-            prompt: `Analiza la siguiente solicitud de búsqueda/registro de activo en OPERMAQ:
+    if (!deterministicBrandModelType) {
+        try {
+            const { data: step1 } = await ResilientAIClient.generateStructured<{
+                is_pertinent: boolean;
+                rejection_reason: string | null;
+                requires_clarification: boolean;
+                clarification_message: string | null;
+                corrected_make: string;
+                corrected_model_or_family: string;
+                detected_tipo_equipo: string;
+                detected_categoria_equipo: string;
+                needs_web_to_identify_type: boolean;
+            }>({
+                module: 'opermaq',
+                preferredTier: 'ANCHOR_HA',
+                temperature: 0,
+                topP: 1,
+                topK: 1,
+                maxOutputTokens: 768,
+                bypassCache: forceWebDiscovery,
+                responseSchema: STEP1_PRIMARY_TYPE_DETECTION_SCHEMA,
+                prompt: `Analiza la siguiente solicitud de búsqueda/registro de activo en OPERMAQ:
 - Texto ingresado: "${cleanInput}"
 - Modo: ${isGeneric ? 'GENÉRICO (sin marca obligatoria)' : 'MARCA / MODELO OEM'}
 ${designator ? `- Código alfanumérico detectado: "${designator}"` : ''}
@@ -620,42 +641,43 @@ TAREA PRIMARIA (PASO 1):
 2. Verifica si requiere aclaración ("requires_clarification": true solo si escribió únicamente una marca suelta sin modelo ni tipo, p. ej. solo "Caterpillar" o solo "Toyota", o una palabra vacía como "máquina").
 3. Corrige errores ortográficos de marca y modelo SIN INCLUIR AÑOS NI TRACCIÓN EN EL MODELO BASE (ej. "PEUGUEOT LANDTRECK 4X4 DIESEL 2022" -> marca "PEUGEOT", modelo "LANDTREK"; "CAT 140M" -> marca "CATERPILLAR", modelo "140M").
 4. Identifica en "detected_tipo_equipo" el TIPO canónico exacto de equipo en español singular MAYÚSCULAS (ej. "MOTONIVELADORA", "CAMIONETA PICK-UP", "COMPRESOR DE AIRE", "PERFORADORA NEUMÁTICA MANUAL", "CHANCADOR DE MANDÍBULAS", "EXCAVADORA HIDRÁULICA", "BULLDOZER SOBRE ORUGAS").`,
-        });
+            });
 
-        if (step1.is_pertinent === false) {
-            throw new DomainRejectionError(
-                step1.rejection_reason ||
-                    `"${cleanInput}" corresponde a un artículo doméstico o de consumo personal ajeno a vehículos, maquinaria o equipamiento técnico.`
+            if (step1.is_pertinent === false) {
+                throw new DomainRejectionError(
+                    step1.rejection_reason ||
+                        `"${cleanInput}" corresponde a un artículo doméstico o de consumo personal ajeno a vehículos, maquinaria o equipamiento técnico.`
+                );
+            }
+
+            if (step1.requires_clarification === true && !clarificationContext) {
+                return {
+                    requires_clarification: true,
+                    clarification_message:
+                        step1.clarification_message ||
+                        'La búsqueda es demasiado amplia. Especifique modelo, serie o tipo específico de equipo.',
+                    candidates: [],
+                };
+            }
+
+            const rawMakeUpper = String(step1.corrected_make || '').trim().toUpperCase();
+            correctedMake = isGeneric
+                ? 'GENÉRICO'
+                : BRAND_SYNONYM_TO_OFFICIAL[rawMakeUpper] || rawMakeUpper;
+            correctedModelOrFamily = normalizeModelCode(
+                String(step1.corrected_model_or_family || designator || cleanInput).trim()
             );
+            if (!isVagueDetectedType(step1.detected_tipo_equipo)) {
+                detectedTipoHint = step1.detected_tipo_equipo.trim();
+            }
+            detectedCategoriaHint = String(step1.detected_categoria_equipo || '').trim();
+            needsWebTypeIdentification = Boolean(step1.needs_web_to_identify_type);
+        } catch (step1Err) {
+            if (step1Err instanceof DomainRejectionError) {
+                throw step1Err;
+            }
+            needsWebTypeIdentification = !detectedTipoHint;
         }
-
-        if (step1.requires_clarification === true && !clarificationContext) {
-            return {
-                requires_clarification: true,
-                clarification_message:
-                    step1.clarification_message ||
-                    'La búsqueda es demasiado amplia. Especifique modelo, serie o tipo específico de equipo.',
-                candidates: [],
-            };
-        }
-
-        const rawMakeUpper = String(step1.corrected_make || '').trim().toUpperCase();
-        correctedMake = isGeneric
-            ? 'GENÉRICO'
-            : BRAND_SYNONYM_TO_OFFICIAL[rawMakeUpper] || rawMakeUpper;
-        correctedModelOrFamily = normalizeModelCode(
-            String(step1.corrected_model_or_family || designator || cleanInput).trim()
-        );
-        if (!isVagueDetectedType(step1.detected_tipo_equipo)) {
-            detectedTipoHint = step1.detected_tipo_equipo.trim();
-        }
-        detectedCategoriaHint = String(step1.detected_categoria_equipo || '').trim();
-        needsWebTypeIdentification = Boolean(step1.needs_web_to_identify_type);
-    } catch (step1Err) {
-        if (step1Err instanceof DomainRejectionError) {
-            throw step1Err;
-        }
-        needsWebTypeIdentification = !detectedTipoHint;
     }
 
     // Segunda verificación de Linaje Colaborativo post-corrección ortográfica (ej. "landtreck" -> "LANDTREK")
@@ -1001,10 +1023,14 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
                     canonical_specs: hasSelfDescribingTypeSchema(existingData)
                         ? existingData.canonical_specs
                         : homologous.slots,
-                    ambiente_operativo:
-                        existingData.ambiente_operativo || raw.ambiente_operativo || ['Superficie'],
-                    contexto_operativo:
-                        existingData.contexto_operativo || raw.contexto_operativo || ['Operación Industrial'],
+                    ambiente_operativo: sanitizeDesignAndWorkContextItems(
+                        raw.ambiente_operativo,
+                        existingData.ambiente_operativo
+                    ),
+                    contexto_operativo: sanitizeDesignAndWorkContextItems(
+                        raw.contexto_operativo,
+                        existingData.contexto_operativo
+                    ),
                     caracteristicas_principales: serializeCanonicalSlotsToSpecsArray(homologous.slots),
                     versions: existingVersions.length > 0 ? existingVersions : ['ESTÁNDAR'],
                     chassis_versions:
@@ -1034,14 +1060,8 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
                       tipo_equipo: activeTypeDoc.canonical_type_es,
                       categoria_equipo: activeTypeDoc.categoria_equipo,
                       canonical_specs: verifiedSlots,
-                      ambiente_operativo:
-                          Array.isArray(raw.ambiente_operativo) && raw.ambiente_operativo.length > 0
-                              ? raw.ambiente_operativo
-                              : ['Superficie'],
-                      contexto_operativo:
-                          Array.isArray(raw.contexto_operativo) && raw.contexto_operativo.length > 0
-                              ? raw.contexto_operativo
-                              : ['Operación Técnica'],
+                      ambiente_operativo: sanitizeDesignAndWorkContextItems(raw.ambiente_operativo),
+                      contexto_operativo: sanitizeDesignAndWorkContextItems(raw.contexto_operativo),
                       caracteristicas_principales: serializeCanonicalSlotsToSpecsArray(verifiedSlots),
                   }
                 : await enrichCatalogProfile(

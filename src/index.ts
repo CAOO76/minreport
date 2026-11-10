@@ -369,12 +369,65 @@ app.get(
                     is_sealed: Boolean(data.is_sealed),
                     vault_merkle_root_sha256: vaultMerkleRootSha256,
                     is_merkle_chain_intact: isMerkleChainIntact,
+                    canonical_specs: data.canonical_specs || {},
+                    energy_consumption_profile: data.energy_consumption_profile || null,
                     pillars: pillarsBlueprint,
                 },
             });
         } catch (err: any) {
             console.error('[M2M-VAULT-BLUEPRINT] Error exportando blueprint criptográfico:', err);
             return res.status(500).json({ error: 'Error consultando blueprint criptográfico de bóveda OPERMAQ.' });
+        }
+    }
+);
+
+app.get(
+    '/api/m2m/opermaq/vault/:assetId/specs',
+    x402Gatekeeper({ priceMicroUSD: 20000, resourceId: 'opermaq-vault-canonical-specs' }),
+    async (req: X402AuthenticatedRequest, res) => {
+        try {
+            const x402Ctx = req.x402Context;
+            const assetId = String(req.params.assetId || '').trim();
+            if (!assetId) {
+                return res.status(400).json({ error: 'Identificador de activo requerido.' });
+            }
+
+            const docSnap = await db.collection('global_asset_catalog').doc(assetId).get();
+            if (!docSnap.exists) {
+                return res.status(404).json({ error: 'Activo no encontrado en bóveda soberana OPERMAQ.' });
+            }
+
+            const data = docSnap.data() || {};
+            const vault = (data.knowledge_vault || {}) as Record<string, any>;
+            const vaultMerkleRootSha256 =
+                vault.vault_merkle_root_sha256 || computeVaultMerkleRootSha256(vault);
+
+            return res.status(200).json({
+                success: true,
+                protocol: 'x402 Foundation v1.0',
+                region: 'southamerica-west1',
+                timestamp: new Date().toISOString(),
+                settlementMode: x402Ctx?.mode || 'VERIFIED',
+                asset: {
+                    assetId: docSnap.id,
+                    make: data.make_oficial || data.make || 'GENÉRICO',
+                    model: data.model_oficial || data.model || '',
+                    categoria_equipo: data.categoria_equipo || null,
+                    tipo_equipo: data.tipo_equipo || null,
+                    is_sealed: Boolean(data.is_sealed),
+                    vault_merkle_root_sha256: vaultMerkleRootSha256,
+                    canonical_specs: data.canonical_specs || {},
+                    caracteristicas_principales: Array.isArray(data.caracteristicas_principales)
+                        ? data.caracteristicas_principales
+                        : [],
+                    ambiente_operativo: Array.isArray(data.ambiente_operativo) ? data.ambiente_operativo : [],
+                    contexto_operativo: Array.isArray(data.contexto_operativo) ? data.contexto_operativo : [],
+                    energy_consumption_profile: data.energy_consumption_profile || null,
+                },
+            });
+        } catch (err: any) {
+            console.error('[M2M-VAULT-SPECS] Error exportando especificaciones canónicas M2M:', err);
+            return res.status(500).json({ error: 'Error consultando especificaciones canónicas M2M.' });
         }
     }
 );

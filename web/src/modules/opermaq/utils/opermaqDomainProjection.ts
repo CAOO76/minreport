@@ -84,9 +84,42 @@ const NUM_UNIT_VOLUME = /\b\d[\d.,]*\s*(?:m³|yd³|(?:m3|l|litros?|yd3)\b)(?![a-
 const NUM_UNIT_LENGTH = /\b\d[\d.,]*\s*(?:mm|m\b|cm|pulg|in)\b/i;
 const NUM_UNIT_FORCE_TORQUE = /\b\d[\d.,]*\s*(?:kn|n[·.\s-]?m|kgf|daN|j\b|joules?|hz|bpm)\b/i;
 const NUM_UNIT_FLOW_PRESSURE_ELEC =
-    /\b\d[\d.,]*\s*(?:m³\/min|(?:l\/s|l\/min|m3\/min|cfm|bar|mpa|psi|kva|kw|v|volt|a|amp)\b)/i;
+    /\b\d[\d.,]*\s*(?:m³\/min|(?:l\/s|l\/min|m3\/min|cfm|scfm|bar|mpa|psi|kva|kw|v|volt|a|amp)\b)/i;
+const NUM_UNIT_ENERGY_CONSUMPTION =
+    /\b\d[\d.,]*\s*(?:l\/100\s*km|kwh\/100\s*km|km\/l|l\/h|gal\/h|gph|mpg|g\/kwh|lb\/hp[·.\s-]?h(?:r)?|kwh\/h|kwh\/t|l\/t|l\/ton|m³\/min|m3\/min|l\/s|l\/min|cfm|scfm|kwh|kw)\b/i;
+const NUM_UNIT_ENERGY_CAPACITY =
+    /\b\d[\d.,]*\s*(?:l\b|litros?|gal|kwh|ah|m³|m3)\b/i;
+const ENERGY_SOURCE_VALUE_REGEX =
+    /\b(di[eé]sel(?:\s+ulsd)?|gasolina|bencina|el[eé]ctric[oa](?:\s+(?:red\s+ac|trif[aá]sic[oa]|monof[aá]sic[oa]|bater[ií]a|bev))?|bater[ií]a(?:\s+bev|\s+li-?ion|\s+lfp)?|bev|h[ií]brid[oa](?:\s+di[eé]sel[- ]el[eé]ctric[oa])?|dual[- ]?fuel|glp|gnv|gnl|aire\s+comprimido|neum[aá]tic[oa]|electrohidr[aá]ulic[oa]|hidr[aá]ulic[oa])\b/i;
 const ANY_SI_METRIC =
-    /\b\d[\d.,]*\s*(?:m³\/min|m³|(?:kg|t|ton|kw|hp|cv|m3\/min|m3|mm|m|cm|l\/s|l\/min|cfm|bar|mpa|psi|kn|n[·.\s-]?m|kva|v|hz|j|rpm)\b)/i;
+    /\b\d[\d.,]*\s*(?:l\/100\s*km|kwh\/100\s*km|km\/l|g\/kwh|lb\/hp[·.\s-]?h(?:r)?|kwh\/h|kwh\/t|l\/t|l\/ton|gal\/h|gph|mpg|m³\/min|m³|(?:kg|t|ton|kw|hp|cv|m3\/min|m3|mm|m|cm|l\/s|l\/min|l\/h|cfm|scfm|bar|mpa|psi|kn|n[·.\s-]?m|kva|kwh|ah|v|hz|j|rpm)\b)/i;
+
+const ARCHETYPE_UNIVERSAL_ENERGY_AXES: ArchetypeAxisDefinition[] = [
+    {
+        axis_key: 'fuente_energia',
+        label_es: 'Fuente energía',
+        unit_hint: 'Diésel | Gasolina | Eléctrico | Híbrido | GLP/GNV | Neumático',
+        mandatory: false,
+        legacyKeyPattern: /\b(fuente\s+de\s+energ[ií]a|tipo\s+de\s+(?:combustible|energ[ií]a)|combustible|alimentaci[oó]n\s+energ[eé]tica)\b/i,
+        validValuePattern: ENERGY_SOURCE_VALUE_REGEX,
+    },
+    {
+        axis_key: 'consumo_energetico_nominal',
+        label_es: 'Consumo nominal',
+        unit_hint: 'L/h / km/L (L/100 km) / g/kWh / kWh/h / L/s',
+        mandatory: false,
+        legacyKeyPattern: /\b(consumo\s+(?:energ[eé]tico|nominal|de\s+combustible|espec[ií]fico|horario|el[eé]ctrico|de\s+aire)|rendimiento\s+de\s+combustible|bsfc)\b/i,
+        validValuePattern: NUM_UNIT_ENERGY_CONSUMPTION,
+    },
+    {
+        axis_key: 'capacidad_energetica_autonomia',
+        label_es: 'Capacidad estanque / batería',
+        unit_hint: 'L / kWh (Autonomía h / km)',
+        mandatory: false,
+        legacyKeyPattern: /\b(capacidad\s+(?:de\s+)?(?:estanque|tanque\s+de\s+combustible|bater[ií]a)|estanque\s+de\s+combustible|autonom[ií]a)\b/i,
+        validValuePattern: NUM_UNIT_ENERGY_CAPACITY,
+    },
+];
 
 export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefinition> = {
     BULLDOZER_ORUGAS: {
@@ -125,6 +158,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(tren\s+de\s+rodaje|rueda\s+(?:motriz|cabilla)|rodaje|sprocket)\b/i,
                 validValuePattern: /\b(rueda\s+(?:motriz|cabilla)\s+elevada|high\s+drive|oruga\s+convencional|baja\s+presi[oó]n|lgp)\b/i,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     BULLDOZER_NEUMATICOS: {
@@ -155,6 +189,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(capacidad\s+de\s+hoja|hoja)\b/i,
                 validValuePattern: NUM_UNIT_VOLUME,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     MINICARGADOR_SSL_CTL: {
@@ -201,6 +236,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(cinem[aá]tica|levante|levantamiento)\b/i,
                 validValuePattern: /^(levante\s+vertical|levante\s+radial)$/i,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     EXCAVADORA_HIDRAULICA: {
@@ -239,6 +275,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(profundidad\s+(?:m[aá]x(?:ima)?\.?\s+(?:de\s+)?)?excavaci[oó]n|prof\.\s*m[aá]x\.\s*excavaci[oó]n|alcance\s+vertical)\b/i,
                 validValuePattern: NUM_UNIT_LENGTH,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     CARGADOR_FRONTAL: {
@@ -277,6 +314,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(potencia(\s+neta|\s+motor)?)\b/i,
                 validValuePattern: NUM_UNIT_POWER,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     RETROEXCAVADORA: {
@@ -315,6 +353,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(peso\s+operativo|masa\s+operativa|peso\b)\b/i,
                 validValuePattern: NUM_UNIT_MASS,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     CAMION_TOLVA_CAEX: {
@@ -353,6 +392,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(peso\s+bruto(\s+vehicular|\s+operativo)?|pbv|gvw|gmw)\b/i,
                 validValuePattern: NUM_UNIT_MASS,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     MOTONIVELADORA: {
@@ -383,6 +423,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(peso\s+operativo|masa\s+operativa|peso\b)\b/i,
                 validValuePattern: NUM_UNIT_MASS,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     COMPACTADOR_RODILLO: {
@@ -413,6 +454,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(ancho\s+(?:de\s+)?(?:compactaci[oó]n|tambor|rodillo)|tambor)\b/i,
                 validValuePattern: NUM_UNIT_LENGTH,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     GRUA_IZAJE_MANIPULADOR: {
@@ -443,6 +485,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(potencia(\s+neta|\s+motor)?)\b/i,
                 validValuePattern: NUM_UNIT_POWER,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     PERFORADORA_SONDAJE: {
@@ -481,6 +524,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(peso(\s+operativo|\s+neto)?|masa)\b/i,
                 validValuePattern: NUM_UNIT_MASS,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     COMPRESOR_GENERADOR_BOMBA: {
@@ -511,6 +555,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(potencia\s+(?:motor|motriz|eje)|motor)\b/i,
                 validValuePattern: NUM_UNIT_POWER,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     VEHICULO_LIVIANO_TRANSPORTE: {
@@ -549,6 +594,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(tracci[oó]n|transmisi[oó]n\s+motriz)\b/i,
                 validValuePattern: /\b([2468]x[2468]|awd|4wd|2wd|fwd|rwd|integral)\b/i,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     HERRAMIENTA_INDUSTRIAL_GENERAL: {
@@ -579,6 +625,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(peso(\s+operativo|\s+neto)?|masa)\b/i,
                 validValuePattern: NUM_UNIT_MASS,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
 };
@@ -684,6 +731,37 @@ export function resolveMachineryArchetype(
     return ARCHETYPE_DEFINITIONS.HERRAMIENTA_INDUSTRIAL_GENERAL;
 }
 
+function stripTextAccents(val: string): string {
+    return String(val || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+}
+
+export function normalizeCanonicalEnergyEnumLabel(rawVal: string): string | null {
+    const norm = stripTextAccents(rawVal);
+    if (!norm) return null;
+    if (/\bdual[- ]?fuel\b/.test(norm)) return 'Dual-Fuel Diésel-Gas';
+    if (/\bhibrid/.test(norm)) {
+        return /\b(gasolina|bencina)\b/.test(norm)
+            ? 'Híbrido Gasolina-Eléctrico'
+            : 'Híbrido Diésel-Eléctrico';
+    }
+    if (/\b(glp|gnv|gnl|gas\s+licuado|gas\s+natural)\b/.test(norm)) return 'GLP / GNV';
+    if (/\b(neumatic|aire\s+comprimido)\b/.test(norm)) return 'Neumático (Aire Comprimido)';
+    if (/\belectrohidraulic/.test(norm)) return 'Electrohidráulico';
+    if (/\b(bateria|bev|li-?ion|lfp)\b/.test(norm) && !/\b(diesel|gasolina)\b/.test(norm)) {
+        return 'Eléctrico Batería (BEV)';
+    }
+    if (/\belectric/.test(norm) && !/\b(diesel|gasolina)\b/.test(norm)) {
+        return 'Eléctrico Red AC';
+    }
+    if (/\b(gasolina|bencina|nafta)\b/.test(norm)) return 'Gasolina';
+    if (/\b(diesel|turbodiesel|ulsd)\b/.test(norm)) return 'Diésel';
+    return null;
+}
+
 export function cleanCanonicalAxisValue(
     rawVal: unknown,
     axisDef?: ArchetypeAxisDefinition
@@ -694,7 +772,7 @@ export function cleanCanonicalAxisValue(
         .replace(/\s+/g, ' ')
         .trim();
 
-    if (!str || str.startsWith('[') || /^(null|undefined|n\/a|n\/d|pendiente|-)$/i.test(str)) {
+    if (!str || str.startsWith('[') || /^(null|undefined|n\/a|n\/d|pendiente|no\s+declarado.*|-)$/i.test(str)) {
         return null;
     }
     if (FORBIDDEN_MARKETING_OR_UNVERIFIED_CLAIM_REGEX.test(str)) {
@@ -713,6 +791,11 @@ export function cleanCanonicalAxisValue(
     valueOnly = valueOnly.replace(/\.+$/, '').trim();
     if (!valueOnly || valueOnly.length > 68) {
         return null;
+    }
+
+    if (axisDef?.axis_key === 'fuente_energia' || axisDef?.validValuePattern === ENERGY_SOURCE_VALUE_REGEX) {
+        const canonEnergy = normalizeCanonicalEnergyEnumLabel(valueOnly);
+        if (canonEnergy) return canonEnergy;
     }
 
     if (axisDef && !axisDef.validValuePattern.test(valueOnly)) {
@@ -778,12 +861,13 @@ function inferDiscreteSkidSteerKinematics(record: Record<string, any>): string |
     return null;
 }
 
-const ANY_ENGINEERING_METRIC_REGEX =
-    /\b\d[\d.,]*\s*(?:m³\/h|m³\/min|m³|t\/h|km\/h|n[·.\s-]?m|kn[·.\s-]?m|t[·.\s-]?m|(?:kg|g|t|ton|toneladas?|lb|lbs|kw|mw|hp|cv|m3\/h|m3\/min|m3|mm|cm|m|km|pulg|in|l\/s|l\/min|l\/h|cfm|gpm|bar|mpa|kpa|psi|kn|dan|kgf|kva|va|v|kv|mv|a|ma|ah|wh|kwh|hz|khz|mhz|j|kj|rpm|bpm|db|dba|°c)\b)/i;
+export const ANY_ENGINEERING_METRIC_REGEX =
+    /\b(\d[\d.,]*\s*(?:l\/100\s*km|kwh\/100\s*km|km\/l|g\/kwh|lb\/hp[·.\s-]?h(?:r)?|kwh\/h|kwh\/t|l\/t|l\/ton|gal\/h|gph|mpg|m³\/min|m³\/h|m3\/min|m3\/h|l\/min|l\/s|l\/h|km\/h|m\/s|kn[·.\s-]?m|t[·.\s-]?m|n[·.\s-]?m|m\.?c\.?a\.?|m³|m²|cm³|yd³|°c|dba|db|kwh|kva|kw|mw|hp|cv|kgf|kg|toneladas?|ton|lbs?|mm|cm|km|pulg|ft|in|m3|m2|cm3|cc|yd3|litros?|gal|scfm|cfm|gpm|mbar|bar|mpa|kpa|psi|kn|kj|hz|khz|mhz|bpm|rpm|mah|ah|wh|kv|mv|volt|amp|[tgwvnajmlh%])\b|[2468]x[2468]|\b(?:awd|4wd|2wd|fwd|rwd|[bhnp]q)\b|\d[\d.,]*\s*°)/i;
 
 export function cleanDynamicAxisValue(
     rawVal: unknown,
     axisMeta?: {
+        axis_key?: string;
         value_kind?: EquipmentAxisValueKind;
         allowed_enum_values?: string[];
         unit_si?: string;
@@ -815,7 +899,17 @@ export function cleanDynamicAxisValue(
         return null;
     }
 
+    if (axisMeta?.axis_key === 'fuente_energia' || /^(fuente_energia|tipo_combustible|tipo_energia)$/i.test(String(axisMeta?.axis_key || ''))) {
+        const canonEnergy = normalizeCanonicalEnergyEnumLabel(valueOnly);
+        if (canonEnergy) return canonEnergy;
+    }
+
     if (axisMeta?.value_kind === 'CLOSED_ENUM' && Array.isArray(axisMeta.allowed_enum_values) && axisMeta.allowed_enum_values.length > 0) {
+        const canonEnergy = normalizeCanonicalEnergyEnumLabel(valueOnly);
+        if (canonEnergy && axisMeta.allowed_enum_values.includes(canonEnergy)) {
+            return canonEnergy;
+        }
+
         const normCandidate = valueOnly
             .normalize('NFD')
             .replace(/[\u0300-\u036f]/g, '')

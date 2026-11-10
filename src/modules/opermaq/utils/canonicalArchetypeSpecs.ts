@@ -88,11 +88,57 @@ const NUM_UNIT_VOLUME = /\b\d[\d.,]*\s*(?:m³|yd³|(?:m3|l|litros?|yd3)\b)(?![a-
 const NUM_UNIT_LENGTH = /\b\d[\d.,]*\s*(?:mm|m\b|cm|pulg|in)\b/i;
 const NUM_UNIT_FORCE_TORQUE = /\b\d[\d.,]*\s*(?:kn|n[·.\s-]?m|kgf|daN|j\b|joules?|hz|bpm)\b/i;
 const NUM_UNIT_FLOW_PRESSURE_ELEC =
-    /\b\d[\d.,]*\s*(?:m³\/min|(?:l\/s|l\/min|m3\/min|cfm|bar|mpa|psi|kva|kw|v|volt|a|amp)\b)/i;
+    /\b\d[\d.,]*\s*(?:m³\/min|(?:l\/s|l\/min|m3\/min|cfm|scfm|bar|mpa|psi|kva|kw|v|volt|a|amp)\b)/i;
+const NUM_UNIT_ENERGY_CONSUMPTION =
+    /\b\d[\d.,]*\s*(?:l\/100\s*km|kwh\/100\s*km|km\/l|l\/h|gal\/h|gph|mpg|g\/kwh|lb\/hp[·.\s-]?h(?:r)?|kwh\/h|kwh\/t|l\/t|l\/ton|m³\/min|m3\/min|l\/s|l\/min|cfm|scfm|kwh|kw)\b/i;
+const NUM_UNIT_ENERGY_CAPACITY =
+    /\b\d[\d.,]*\s*(?:l\b|litros?|gal|kwh|ah|m³|m3)\b/i;
+export const ENERGY_SOURCE_VALUE_REGEX =
+    /\b(di[eé]sel(?:\s+ulsd)?|gasolina|bencina|el[eé]ctric[oa](?:\s+(?:red\s+ac|trif[aá]sic[oa]|monof[aá]sic[oa]|bater[ií]a|bev))?|bater[ií]a(?:\s+bev|\s+li-?ion|\s+lfp)?|bev|h[ií]brid[oa](?:\s+di[eé]sel[- ]el[eé]ctric[oa])?|dual[- ]?fuel|glp|gnv|gnl|aire\s+comprimido|neum[aá]tic[oa]|electrohidr[aá]ulic[oa]|hidr[aá]ulic[oa])\b/i;
 export const ANY_ENGINEERING_METRIC_REGEX =
-    /\b(\d[\d.,]*\s*(?:m³\/min|m³\/h|m3\/min|m3\/h|l\/min|l\/s|l\/h|km\/h|m\/s|kn[·.\s-]?m|t[·.\s-]?m|n[·.\s-]?m|m\.?c\.?a\.?|m³|m²|cm³|yd³|°c|dba|db|kwh|kva|kw|mw|hp|cv|kgf|kg|toneladas?|ton|lbs?|mm|cm|km|pulg|ft|in|m3|m2|cm3|cc|yd3|litros?|gal|cfm|gpm|mbar|bar|mpa|kpa|psi|kn|kj|hz|khz|mhz|bpm|rpm|mah|ah|wh|kv|mv|volt|amp|[tgwvnajmlh%])\b|[2468]x[2468]|\b(?:awd|4wd|2wd|fwd|rwd|[bhnp]q)\b|\d[\d.,]*\s*°)/i;
+    /\b(\d[\d.,]*\s*(?:l\/100\s*km|kwh\/100\s*km|km\/l|g\/kwh|lb\/hp[·.\s-]?h(?:r)?|kwh\/h|kwh\/t|l\/t|l\/ton|gal\/h|gph|mpg|m³\/min|m³\/h|m3\/min|m3\/h|l\/min|l\/s|l\/h|km\/h|m\/s|kn[·.\s-]?m|t[·.\s-]?m|n[·.\s-]?m|m\.?c\.?a\.?|m³|m²|cm³|yd³|°c|dba|db|kwh|kva|kw|mw|hp|cv|kgf|kg|toneladas?|ton|lbs?|mm|cm|km|pulg|ft|in|m3|m2|cm3|cc|yd3|litros?|gal|scfm|cfm|gpm|mbar|bar|mpa|kpa|psi|kn|kj|hz|khz|mhz|bpm|rpm|mah|ah|wh|kv|mv|volt|amp|[tgwvnajmlh%])\b|[2468]x[2468]|\b(?:awd|4wd|2wd|fwd|rwd|[bhnp]q)\b|\d[\d.,]*\s*°)/i;
 
 const ANY_SI_METRIC = ANY_ENGINEERING_METRIC_REGEX;
+
+export const UNIVERSAL_ENERGY_SOURCE_ENUM_VALUES: string[] = [
+    'Diésel',
+    'Gasolina',
+    'Eléctrico Red AC',
+    'Eléctrico Batería (BEV)',
+    'Híbrido Diésel-Eléctrico',
+    'Híbrido Gasolina-Eléctrico',
+    'Dual-Fuel Diésel-Gas',
+    'GLP / GNV',
+    'Neumático (Aire Comprimido)',
+    'Electrohidráulico',
+];
+
+const ARCHETYPE_UNIVERSAL_ENERGY_AXES: ArchetypeAxisDefinition[] = [
+    {
+        axis_key: 'fuente_energia',
+        label_es: 'Fuente energía',
+        unit_hint: 'Diésel | Gasolina | Eléctrico | Híbrido | GLP/GNV | Neumático',
+        mandatory: false,
+        legacyKeyPattern: /\b(fuente\s+(?:de\s+)?energ[ií]a|tipo\s+de\s+(?:combustible|energ[ií]a)|combustible|alimentaci[oó]n\s+energ[eé]tica)\b/i,
+        validValuePattern: ENERGY_SOURCE_VALUE_REGEX,
+    },
+    {
+        axis_key: 'consumo_energetico_nominal',
+        label_es: 'Consumo nominal',
+        unit_hint: 'L/h / km/L (L/100 km) / g/kWh / kWh/h / L/s',
+        mandatory: false,
+        legacyKeyPattern: /\b(consumo\s+(?:energ[eé]tico|nominal|de\s+combustible|espec[ií]fico|horario|el[eé]ctrico|de\s+aire)|rendimiento\s+de\s+combustible|bsfc)\b/i,
+        validValuePattern: NUM_UNIT_ENERGY_CONSUMPTION,
+    },
+    {
+        axis_key: 'capacidad_energetica_autonomia',
+        label_es: 'Capacidad estanque / batería',
+        unit_hint: 'L / kWh (Autonomía h / km)',
+        mandatory: false,
+        legacyKeyPattern: /\b(capacidad\s+(?:de\s+)?(?:estanque|tanque\s+de\s+combustible|bater[ií]a)|estanque\s+de\s+combustible|autonom[ií]a)\b/i,
+        validValuePattern: NUM_UNIT_ENERGY_CAPACITY,
+    },
+];
 
 export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefinition> = {
     BULLDOZER_ORUGAS: {
@@ -131,6 +177,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(tren\s+de\s+rodaje|rueda\s+(?:motriz|cabilla)|sprocket)\b/i,
                 validValuePattern: /\b(rueda\s+(?:motriz|cabilla)\s+elevada|high\s+drive|oruga\s+convencional|baja\s+presi[oó]n|lgp)\b/i,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     BULLDOZER_NEUMATICOS: {
@@ -161,6 +208,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(capacidad\s+de\s+hoja|hoja)\b/i,
                 validValuePattern: NUM_UNIT_VOLUME,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     MINICARGADOR_SSL_CTL: {
@@ -176,12 +224,12 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 validValuePattern: NUM_UNIT_MASS,
             },
             {
-                axis_key: 'altura_max_descarga',
-                label_es: 'Altura máx. descarga',
-                unit_hint: 'mm',
-                mandatory: true,
-                legacyKeyPattern: /\b(altura\s+(?:m[aá]x(?:ima)?\.?\s+(?:de\s+)?)?(?:descarga|volteo|vaciado)|dump\s+clearance)\b/i,
-                validValuePattern: NUM_UNIT_LENGTH,
+                axis_key: 'carga_vuelco_estatica',
+                label_es: 'Carga estática vuelco',
+                unit_hint: 'kg',
+                mandatory: false,
+                legacyKeyPattern: /\b(carga\s+(?:est[aá]tica\s+(?:de\s+)?)?vuelco|tipping\s+load)\b/i,
+                validValuePattern: NUM_UNIT_MASS,
             },
             {
                 axis_key: 'potencia_neta',
@@ -192,12 +240,29 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 validValuePattern: NUM_UNIT_POWER,
             },
             {
+                axis_key: 'caudal_presion_hidraulica_aux',
+                label_es: 'Hidráulica auxiliar',
+                unit_hint: 'L/min @ bar',
+                mandatory: false,
+                legacyKeyPattern:
+                    /\b(hidr[aá]ulic[oa]\s+auxiliar|caudal\s+hidr[aá]ulico|presi[oó]n\s+hidr[aá]ulica|\bxhp\b|high\s+flow)\b/i,
+                validValuePattern: NUM_UNIT_FLOW_PRESSURE_ELEC,
+            },
+            {
                 axis_key: 'peso_operativo',
                 label_es: 'Peso operativo',
                 unit_hint: 'kg',
                 mandatory: true,
                 legacyKeyPattern: /\b(peso\s+operativo|masa\s+operativa|peso\b)\b/i,
                 validValuePattern: NUM_UNIT_MASS,
+            },
+            {
+                axis_key: 'altura_max_descarga',
+                label_es: 'Altura máx. descarga',
+                unit_hint: 'mm',
+                mandatory: true,
+                legacyKeyPattern: /\b(altura\s+(?:m[aá]x(?:ima)?\.?\s+(?:de\s+)?)?(?:descarga|volteo|vaciado)|dump\s+clearance)\b/i,
+                validValuePattern: NUM_UNIT_LENGTH,
             },
             {
                 axis_key: 'cinematica_levante',
@@ -207,6 +272,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(cinem[aá]tica|levante|levantamiento)\b/i,
                 validValuePattern: /^(levante\s+vertical|levante\s+radial)$/i,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     EXCAVADORA_HIDRAULICA: {
@@ -245,6 +311,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(profundidad\s+(?:m[aá]x(?:ima)?\.?\s+(?:de\s+)?)?excavaci[oó]n|alcance\s+vertical)\b/i,
                 validValuePattern: NUM_UNIT_LENGTH,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     CARGADOR_FRONTAL: {
@@ -283,6 +350,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(potencia(\s+neta|\s+motor)?)\b/i,
                 validValuePattern: NUM_UNIT_POWER,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     RETROEXCAVADORA: {
@@ -321,6 +389,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(peso\s+operativo|masa\s+operativa|peso\b)\b/i,
                 validValuePattern: NUM_UNIT_MASS,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     CAMION_TOLVA_CAEX: {
@@ -359,6 +428,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(peso\s+bruto(\s+vehicular|\s+operativo)?|pbv|gvw|gmw)\b/i,
                 validValuePattern: NUM_UNIT_MASS,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     MOTONIVELADORA: {
@@ -389,6 +459,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(peso\s+operativo|masa\s+operativa|peso\b)\b/i,
                 validValuePattern: NUM_UNIT_MASS,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     COMPACTADOR_RODILLO: {
@@ -419,6 +490,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(ancho\s+de\s+(?:compactaci[oó]n|tambor|rodillo)|tambor)\b/i,
                 validValuePattern: NUM_UNIT_LENGTH,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     GRUA_IZAJE_MANIPULADOR: {
@@ -449,6 +521,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(potencia(\s+neta|\s+motor)?)\b/i,
                 validValuePattern: NUM_UNIT_POWER,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     PERFORADORA_SONDAJE: {
@@ -487,6 +560,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(peso(\s+operativo|\s+neto)?|masa)\b/i,
                 validValuePattern: NUM_UNIT_MASS,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     COMPRESOR_GENERADOR_BOMBA: {
@@ -517,6 +591,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(potencia\s+(?:motor|motriz|eje)|motor)\b/i,
                 validValuePattern: NUM_UNIT_POWER,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     VEHICULO_LIVIANO_TRANSPORTE: {
@@ -555,6 +630,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(tracci[oó]n|transmisi[oó]n\s+motriz)\b/i,
                 validValuePattern: /\b([2468]x[2468]|awd|4wd|2wd|fwd|rwd|integral)\b/i,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
     HERRAMIENTA_INDUSTRIAL_GENERAL: {
@@ -585,6 +661,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(peso(\s+operativo|\s+neto)?|masa)\b/i,
                 validValuePattern: NUM_UNIT_MASS,
             },
+            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
         ],
     },
 };
@@ -649,6 +726,29 @@ function stripTextAccents(input: string): string {
     return input.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 }
 
+function normalizeCanonicalEnergyEnumLabel(rawVal: string): string | null {
+    const norm = stripTextAccents(rawVal);
+    if (!norm) return null;
+    if (/\bdual[- ]?fuel\b/.test(norm)) return 'Dual-Fuel Diésel-Gas';
+    if (/\bhibrid/.test(norm)) {
+        return /\b(gasolina|bencina)\b/.test(norm)
+            ? 'Híbrido Gasolina-Eléctrico'
+            : 'Híbrido Diésel-Eléctrico';
+    }
+    if (/\b(glp|gnv|gnl|gas\s+licuado|gas\s+natural)\b/.test(norm)) return 'GLP / GNV';
+    if (/\b(neumatic|aire\s+comprimido)\b/.test(norm)) return 'Neumático (Aire Comprimido)';
+    if (/\belectrohidraulic/.test(norm)) return 'Electrohidráulico';
+    if (/\b(bateria|bev|li-?ion|lfp)\b/.test(norm) && !/\b(diesel|gasolina)\b/.test(norm)) {
+        return 'Eléctrico Batería (BEV)';
+    }
+    if (/\belectric/.test(norm) && !/\b(diesel|gasolina)\b/.test(norm)) {
+        return 'Eléctrico Red AC';
+    }
+    if (/\b(gasolina|bencina|nafta)\b/.test(norm)) return 'Gasolina';
+    if (/\b(diesel|turbodiesel|ulsd)\b/.test(norm)) return 'Diésel';
+    return null;
+}
+
 /**
  * Limpia y valida un valor contra un eje dinámico por `TIPO` (`EquipmentTypeAxisSchemaItem` o `CanonicalSpecSlot` auto-descriptivo).
  * - Rechaza cualquier prosa publicitaria o años históricos de producción.
@@ -658,6 +758,7 @@ function stripTextAccents(input: string): string {
 export function cleanDynamicAxisValue(
     rawVal: unknown,
     axisMeta?: {
+        axis_key?: string;
         value_kind?: EquipmentAxisValueKind;
         allowed_enum_values?: string[];
     }
@@ -685,8 +786,13 @@ export function cleanDynamicAxisValue(
     }
 
     valueOnly = valueOnly.replace(/\.+$/, '').trim();
-    if (!valueOnly || valueOnly.length > 72) {
+    if (!valueOnly || valueOnly.length > 96) {
         return null;
+    }
+
+    if (axisMeta?.axis_key === 'fuente_energia' || (axisMeta?.value_kind === 'CLOSED_ENUM' && ENERGY_SOURCE_VALUE_REGEX.test(valueOnly))) {
+        const canonEnergy = normalizeCanonicalEnergyEnumLabel(valueOnly);
+        if (canonEnergy) return canonEnergy;
     }
 
     if (axisMeta?.value_kind === 'CLOSED_ENUM') {
@@ -697,7 +803,7 @@ export function cleanDynamicAxisValue(
             );
             return matchedEnum || null;
         }
-        return valueOnly.length <= 40 ? valueOnly : null;
+        return valueOnly.length <= 48 ? valueOnly : null;
     }
 
     if (!ANY_ENGINEERING_METRIC_REGEX.test(valueOnly)) {
@@ -741,8 +847,13 @@ export function cleanCanonicalAxisValue(
     }
 
     valueOnly = valueOnly.replace(/\.+$/, '').trim();
-    if (!valueOnly || valueOnly.length > 72) {
+    if (!valueOnly || valueOnly.length > 96) {
         return null;
+    }
+
+    if (axisDef?.axis_key === 'fuente_energia') {
+        const canonEnergy = normalizeCanonicalEnergyEnumLabel(valueOnly);
+        if (canonEnergy) return canonEnergy;
     }
 
     if (axisDef && !axisDef.validValuePattern.test(valueOnly)) {
@@ -1073,3 +1184,579 @@ export function validateCrossAxisPhysicalPlausibility(
         warnings,
     };
 }
+
+/**
+ * Construye los 3 ejes canónicos obligatorios de Matriz Energética, Consumo y Capacidad/Autonomía
+ * adaptados a la naturaleza física del `TIPO` de equipo (vehículo vial/tolva, maquinaria pesada,
+ * planta estacionaria/eléctrica o equipo neumático/hidráulico).
+ */
+export function buildUniversalEnergySpecAxesForType(typeContextText: string): EquipmentTypeAxisSchemaItem[] {
+    const norm = stripTextAccents(typeContextText || '');
+    const isRoadOrDumpOrUtilityVehicle =
+        /\b(camion\s+tolva|tractocamion|camioneta|pick\s*up|automovil|suv|furgon|van|bus|minibus|vehiculo|motocicleta|volquete)\b/.test(
+            norm
+        );
+    const isPneumaticOrHandTool =
+        /\b(perforadora\s+neumatica|jackleg|stoper|martillo\s+neumatico|herramienta\s+neumatica)\b/.test(
+            norm
+        );
+    const isStationaryPlantOrElectric =
+        /\b(grupo\s+electrogeno|generador|compresor|chancador|molino|harnero|bomba|motobomba|soldadora|planta)\b/.test(
+            norm
+        );
+
+    const consumptionUnitSi = isPneumaticOrHandTool
+        ? 'L/s (m³/min) / kWh/h'
+        : isRoadOrDumpOrUtilityVehicle
+            ? 'km/L (L/100 km) / L/h / kWh/100 km'
+            : isStationaryPlantOrElectric
+                ? 'L/h (50%/75%/100%) / kWh/h / g/kWh'
+                : 'L/h (Bajo/Medio/Alto) / g/kWh / kWh/h';
+
+    const consumptionKeywords = isPneumaticOrHandTool
+        ? ['consumo de aire', 'air consumption', 'L/s', 'm³/min', 'cfm', 'potencia absorbida', 'kWh/h']
+        : isRoadOrDumpOrUtilityVehicle
+            ? [
+                  'consumo de combustible',
+                  'rendimiento de combustible',
+                  'fuel consumption',
+                  'km/L',
+                  'L/100 km',
+                  'L/h',
+                  'g/kWh',
+                  'kWh/100 km',
+                  'mpg',
+              ]
+            : [
+                  'consumo de combustible',
+                  'fuel consumption',
+                  'consumo horario',
+                  'L/h',
+                  'gal/h',
+                  'consumo específico',
+                  'BSFC',
+                  'g/kWh',
+                  'kWh/h',
+              ];
+
+    return [
+        {
+            axis_key: 'fuente_energia',
+            label_es: 'Fuente energía',
+            unit_si: 'Diésel | Gasolina | Eléctrico | Híbrido | GLP/GNV | Neumático',
+            value_kind: 'CLOSED_ENUM',
+            allowed_enum_values: UNIVERSAL_ENERGY_SOURCE_ENUM_VALUES,
+            search_keywords: [
+                'tipo de combustible',
+                'fuente de energía',
+                'fuel type',
+                'diésel',
+                'gasolina',
+                'eléctrico',
+                'batería',
+                'híbrido',
+                'GLP',
+                'aire comprimido',
+            ],
+            mandatory: true,
+            is_differentiator: false,
+        },
+        {
+            axis_key: 'consumo_energetico_nominal',
+            label_es: 'Consumo nominal',
+            unit_si: consumptionUnitSi,
+            value_kind: 'PHYSICAL_MAGNITUDE',
+            search_keywords: consumptionKeywords,
+            mandatory: true,
+            is_differentiator: true,
+        },
+        {
+            axis_key: 'capacidad_energetica_autonomia',
+            label_es: 'Capacidad estanque / batería',
+            unit_si: 'L / kWh',
+            value_kind: 'PHYSICAL_MAGNITUDE',
+            search_keywords: [
+                'capacidad tanque de combustible',
+                'capacidad estanque',
+                'fuel tank capacity',
+                'DEF tank',
+                'AdBlue',
+                'capacidad batería',
+                'kWh',
+                'litros',
+                'autonomía',
+            ],
+            mandatory: true,
+            is_differentiator: false,
+        },
+    ];
+}
+
+const CONSUMPTION_AXIS_KEY_ALIASES = new Set([
+    'consumo_energetico_nominal',
+    'consumo_combustible',
+    'consumo_aire',
+    'consumo_nominal',
+    'consumo_horario',
+    'rendimiento_combustible',
+]);
+
+const ENERGY_SOURCE_AXIS_KEY_ALIASES = new Set([
+    'fuente_energia',
+    'tipo_combustible',
+    'tipo_energia',
+    'energia_motriz',
+]);
+
+const ENERGY_CAPACITY_AXIS_KEY_ALIASES = new Set([
+    'capacidad_energetica_autonomia',
+    'capacidad_estanque',
+    'capacidad_combustible',
+    'capacidad_bateria',
+    'estanque_combustible',
+]);
+
+/**
+ * Inyecta de forma idempotente los ejes universales de Energía, Consumo y Capacidad/Autonomía
+ * en cualquier `spec_schema` de `GlobalEquipmentTypeDoc`, respetando ejes equivalentes ya existentes.
+ */
+export function ensureUniversalEnergyAxesInSpecSchema(
+    existingSchema: EquipmentTypeAxisSchemaItem[],
+    typeContextText: string
+): EquipmentTypeAxisSchemaItem[] {
+    const base = Array.isArray(existingSchema) ? [...existingSchema] : [];
+    const universalAxes = buildUniversalEnergySpecAxesForType(typeContextText);
+
+    const hasEnergySource = base.some(
+        (ax) =>
+            ENERGY_SOURCE_AXIS_KEY_ALIASES.has(ax.axis_key) ||
+            /\b(fuente\s+.*energ|tipo\s+.*combustible|combustible)\b/i.test(ax.label_es)
+    );
+    const hasConsumption = base.some(
+        (ax) =>
+            CONSUMPTION_AXIS_KEY_ALIASES.has(ax.axis_key) ||
+            /\b(consumo|rendimiento\s+.*combustible|bsfc)\b/i.test(ax.label_es)
+    );
+    const hasCapacity = base.some(
+        (ax) =>
+            ENERGY_CAPACITY_AXIS_KEY_ALIASES.has(ax.axis_key) ||
+            /\b(estanque|tanque\s+.*combustible|bater[ií]a|autonom[ií]a)\b/i.test(ax.label_es)
+    );
+
+    if (!hasEnergySource) {
+        base.push(universalAxes[0]);
+    }
+    if (!hasConsumption) {
+        base.push(universalAxes[1]);
+    }
+    if (!hasCapacity && !/\b(perforadora\s+neumatica|jackleg|stoper|martillo\s+neumatico)\b/i.test(stripTextAccents(typeContextText))) {
+        base.push(universalAxes[2]);
+    }
+
+    return base.slice(0, 10);
+}
+
+/**
+ * Deriva determinísticamente el perfil estructurado `energy_consumption_profile` (para gestión de costos OPEX/TCO)
+ * a partir de los `canonical_specs`, `caracteristicas_principales` y contenido verificado del Pilar 01 (`ficha_tecnica`).
+ */
+export function deriveEnergyConsumptionProfile(params: {
+    tipo_equipo?: string | null;
+    categoria_equipo?: string | null;
+    canonical_specs?: CanonicalSpecSlot[] | null;
+    caracteristicas_principales?: string[] | null;
+    fichaTecnicaMarkdown?: string | null;
+    official_url?: string | null;
+    existingProfile?: Record<string, any> | null;
+}): {
+    energy_source:
+        | 'DIESEL'
+        | 'GASOLINA'
+        | 'ELECTRICO_RED_AC'
+        | 'ELECTRICO_BATERIA_BEV'
+        | 'HIBRIDO_DIESEL_ELECTRICO'
+        | 'HIBRIDO_GASOLINA_ELECTRICO'
+        | 'DUAL_FUEL_DIESEL_GAS'
+        | 'GLP_GNV'
+        | 'NEUMATICO_AIRE_COMPRIMIDO'
+        | 'HIDRAULICO_AUXILIAR'
+        | 'NO_DECLARADO';
+    energy_spec_label: string | null;
+    cost_driver_unit: 'L/h' | 'km/L' | 'L/100km' | 'kWh/h' | 'kWh/100km' | 'L/s';
+    hourly_consumption_by_load: {
+        idle_or_pto: string | null;
+        low_load_25_35pct: string | null;
+        medium_load_50_65pct: string | null;
+        high_load_80_100pct: string | null;
+    };
+    road_haul_efficiency: {
+        km_per_liter: string | null;
+        liters_per_100km: string | null;
+        kwh_per_100km: string | null;
+    };
+    specific_consumption_bsfc_gkwh: string | null;
+    pneumatic_or_hydraulic_flow: string | null;
+    def_adblue_consumption: {
+        requires_def: boolean;
+        consumption_pct_of_fuel: string | null;
+        tank_capacity_liters: string | null;
+    };
+    storage_and_autonomy: {
+        tank_or_battery_capacity: string | null;
+        estimated_autonomy: string | null;
+    };
+    source_url: string | null;
+    updated_at: string;
+} {
+    const slots = Array.isArray(params.canonical_specs) ? params.canonical_specs : [];
+    const prev = params.existingProfile && typeof params.existingProfile === 'object' ? params.existingProfile : {};
+    const findSlot = (keys: string[]) =>
+        slots.find((s) => s && keys.includes(s.axis_key) && s.value_si && !s.value_si.startsWith('[')) || null;
+
+    const sourceSlot = findSlot(['fuente_energia', 'tipo_combustible', 'tipo_energia']);
+    const consumptionSlot = findSlot([
+        'consumo_energetico_nominal',
+        'consumo_combustible',
+        'consumo_aire',
+        'consumo_nominal',
+    ]);
+    const capacitySlot = findSlot([
+        'capacidad_energetica_autonomia',
+        'capacidad_estanque',
+        'capacidad_combustible',
+        'capacidad_bateria',
+    ]);
+
+    const corpusText = [
+        sourceSlot?.value_si || '',
+        consumptionSlot?.value_si || '',
+        capacitySlot?.value_si || '',
+        ...(Array.isArray(params.caracteristicas_principales) ? params.caracteristicas_principales : []),
+        params.fichaTecnicaMarkdown || '',
+        params.tipo_equipo || '',
+    ].join('\n');
+
+    const normCorpus = stripTextAccents(corpusText);
+    const normSourceSlot = stripTextAccents(sourceSlot?.value_si || '');
+
+    let energySource: ReturnType<typeof deriveEnergyConsumptionProfile>['energy_source'] =
+        prev.energy_source && prev.energy_source !== 'NO_DECLARADO' ? prev.energy_source : 'NO_DECLARADO';
+
+    const targetDetect = normSourceSlot || normCorpus;
+    if (/\bdual[- ]?fuel\b/.test(targetDetect)) {
+        energySource = 'DUAL_FUEL_DIESEL_GAS';
+    } else if (/\bhibrid/.test(targetDetect)) {
+        energySource = /\b(gasolina|bencina)\b/.test(targetDetect)
+            ? 'HIBRIDO_GASOLINA_ELECTRICO'
+            : 'HIBRIDO_DIESEL_ELECTRICO';
+    } else if (/\b(glp|gnv|gnl|gas\s+licuado|gas\s+natural)\b/.test(targetDetect)) {
+        energySource = 'GLP_GNV';
+    } else if (/\b(perforadora\s+neumatica|martillo\s+neumatico|aire\s+comprimido)\b/.test(targetDetect) && !/\b(motor\s+diesel|turbodiesel)\b/.test(targetDetect)) {
+        energySource = 'NEUMATICO_AIRE_COMPRIMIDO';
+    } else if (/\b(bateria\s+bev|el[eé]ctrico\s+bater[ií]a|100%\s+el[eé]ctric|bev|bateria\s+li-?ion|bateria\s+lfp)\b/.test(targetDetect) && !/\b(motor\s+diesel|turbodiesel|alternador\s+24\s*v|baterias?\s+12\s*v)\b/.test(targetDetect)) {
+        energySource = 'ELECTRICO_BATERIA_BEV';
+    } else if (/\b(el[eé]ctrico\s+red|red\s+trif[aá]sica|alimentaci[oó]n\s+el[eé]ctrica\s+ac)\b/.test(targetDetect) && !/\b(motor\s+diesel|turbodiesel)\b/.test(targetDetect)) {
+        energySource = 'ELECTRICO_RED_AC';
+    } else if (/\b(gasolina|bencina|nafta)\b/.test(targetDetect) && !/\b(diesel|turbodiesel|ulsd)\b/.test(targetDetect)) {
+        energySource = 'GASOLINA';
+    } else if (/\b(diesel|turbodiesel|ulsd|common[- ]?rail|inyeccion\s+directa|tier\s+[234]|stage\s+[iiiv]+|euro\s+[3456])\b/.test(targetDetect)) {
+        energySource = 'DIESEL';
+    }
+
+    const isRoadOrTruck = /\b(camion\s+tolva|tractocamion|camioneta|pick\s*up|automovil|suv|furgon|van|bus)\b/.test(
+        stripTextAccents(`${params.tipo_equipo || ''} ${params.categoria_equipo || ''}`)
+    );
+
+    let costDriverUnit: 'L/h' | 'km/L' | 'L/100km' | 'kWh/h' | 'kWh/100km' | 'L/s' = 'L/h';
+    if (energySource === 'NEUMATICO_AIRE_COMPRIMIDO') {
+        costDriverUnit = 'L/s';
+    } else if (energySource === 'ELECTRICO_RED_AC') {
+        costDriverUnit = 'kWh/h';
+    } else if (energySource === 'ELECTRICO_BATERIA_BEV') {
+        costDriverUnit = isRoadOrTruck ? 'kWh/100km' : 'kWh/h';
+    } else if (isRoadOrTruck && /\b(km\/l|l\/100\s*km)\b/i.test(corpusText)) {
+        costDriverUnit = 'km/L';
+    }
+
+    const extractRegexMatch = (re: RegExp): string | null => {
+        const m = corpusText.match(re);
+        return m && m[1] ? m[1].replace(/\s+/g, ' ').trim() : null;
+    };
+
+    const bsfcMatch =
+        extractRegexMatch(/\b(\d{3}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{3}(?:[.,]\d+)?)?\s*g\/kWh)\b/i) ||
+        prev.specific_consumption_bsfc_gkwh ||
+        null;
+
+    const kmPerLiterMatch =
+        extractRegexMatch(/\b(\d{1,2}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,2}(?:[.,]\d+)?)?\s*km\/L)\b/i) ||
+        prev?.road_haul_efficiency?.km_per_liter ||
+        null;
+
+    const lPer100KmMatch =
+        extractRegexMatch(/\b(\d{1,2}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,2}(?:[.,]\d+)?)?\s*L\/100\s*km)\b/i) ||
+        prev?.road_haul_efficiency?.liters_per_100km ||
+        null;
+
+    const kwhPer100KmMatch =
+        extractRegexMatch(/\b(\d{1,3}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,3}(?:[.,]\d+)?)?\s*kWh\/100\s*km)\b/i) ||
+        prev?.road_haul_efficiency?.kwh_per_100km ||
+        null;
+
+    const lhRangeMatch =
+        extractRegexMatch(/\b(\d{1,3}(?:[.,]\d+)?(?:\s*[-–a/]\s*\d{1,3}(?:[.,]\d+)?){0,2}\s*(?:L\/h|kWh\/h))\b/i) ||
+        (consumptionSlot?.value_si && /\b(L\/h|kWh\/h)\b/i.test(consumptionSlot.value_si)
+            ? consumptionSlot.value_si
+            : null) ||
+        prev?.hourly_consumption_by_load?.medium_load_50_65pct ||
+        null;
+
+    const pneumaticFlowMatch =
+        extractRegexMatch(/\b(\d{1,4}(?:[.,]\d+)?\s*(?:L\/s|m³\/min|m3\/min)(?:\s*\([^)]+\))?)\b/i) ||
+        (energySource === 'NEUMATICO_AIRE_COMPRIMIDO' ? consumptionSlot?.value_si || null : null) ||
+        prev.pneumatic_or_hydraulic_flow ||
+        null;
+
+    const requiresDef =
+        /\b(def\b|adblue|scr\b|reducci[oó]n\s+catal[ií]tica)\b/i.test(corpusText) ||
+        Boolean(prev?.def_adblue_consumption?.requires_def);
+
+    const defTankMatch =
+        extractRegexMatch(/(?:def|adblue|urea)[^|\n]{0,40}?(\d{1,3}(?:[.,]\d+)?\s*L\b)/i) ||
+        prev?.def_adblue_consumption?.tank_capacity_liters ||
+        null;
+
+    const defPctMatch =
+        extractRegexMatch(/(?:def|adblue)[^|\n]{0,40}?(\d{1,2}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,2}(?:[.,]\d+)?)?\s*%)/i) ||
+        prev?.def_adblue_consumption?.consumption_pct_of_fuel ||
+        null;
+
+    const tankCapMatch =
+        capacitySlot?.value_si ||
+        extractRegexMatch(
+            /(?:estanque\s+de\s+combustible|tanque\s+de\s+combustible|combustible|capacidad\s+bater[ií]a)[^|\n]{0,45}?(\d{1,4}(?:[.,]\d+)?\s*(?:L\b|litros?|kWh))/i
+        ) ||
+        prev?.storage_and_autonomy?.tank_or_battery_capacity ||
+        null;
+
+    const autonomyMatch =
+        extractRegexMatch(/autonom[ií]a[^|\n]{0,35}?(\d{1,4}(?:[.,]\d+)?(?:\s*[-–a]\s*\d{1,4}(?:[.,]\d+)?)?\s*(?:h\b|horas|km\b))/i) ||
+        prev?.storage_and_autonomy?.estimated_autonomy ||
+        null;
+
+    return {
+        energy_source: energySource,
+        energy_spec_label: sourceSlot?.value_si || prev.energy_spec_label || null,
+        cost_driver_unit: costDriverUnit,
+        hourly_consumption_by_load: {
+            idle_or_pto: prev?.hourly_consumption_by_load?.idle_or_pto || null,
+            low_load_25_35pct: prev?.hourly_consumption_by_load?.low_load_25_35pct || null,
+            medium_load_50_65pct: lhRangeMatch,
+            high_load_80_100pct: prev?.hourly_consumption_by_load?.high_load_80_100pct || null,
+        },
+        road_haul_efficiency: {
+            km_per_liter: kmPerLiterMatch,
+            liters_per_100km: lPer100KmMatch,
+            kwh_per_100km: kwhPer100KmMatch,
+        },
+        specific_consumption_bsfc_gkwh: bsfcMatch,
+        pneumatic_or_hydraulic_flow: pneumaticFlowMatch,
+        def_adblue_consumption: {
+            requires_def: requiresDef,
+            consumption_pct_of_fuel: defPctMatch,
+            tank_capacity_liters: defTankMatch,
+        },
+        storage_and_autonomy: {
+            tank_or_battery_capacity: tankCapMatch,
+            estimated_autonomy: autonomyMatch,
+        },
+        source_url:
+            consumptionSlot?.source_url ||
+            sourceSlot?.source_url ||
+            capacitySlot?.source_url ||
+            params.official_url ||
+            prev.source_url ||
+            null,
+        updated_at: new Date().toISOString(),
+    };
+}
+
+const FORBIDDEN_GENERIC_BULLET_TOKENS = new Set([
+    'superficie',
+    'operacion tecnica',
+    'operacion industrial',
+    'operacion minera',
+    'operacion general',
+    'uso general',
+    'uso industrial',
+    'general',
+    'estandar',
+    'standard',
+    'terreno',
+    'exterior',
+    'interior',
+    'faena',
+    'construccion',
+    'mineria',
+    'industrial',
+    'no declarado',
+    'n/a',
+    'na',
+]);
+
+/**
+ * Purga viñetas genéricas de 1–2 palabras ("Superficie", "Operación Técnica", "Operación Industrial")
+ * en `ambiente_operativo` (`CONDICIONES DE DISEÑO`) y `contexto_operativo` (`CONTEXTO Y TRABAJO`).
+ * Si tras la purga no quedan especificaciones técnicas reales, aplica política Fail-Closed honesta:
+ * `["[Información técnica no declarada en ficha]"]`.
+ */
+export function sanitizeDesignAndWorkContextItems(
+    rawItems: unknown,
+    fallbackSourceItems?: unknown
+): string[] {
+    const filterList = (input: unknown): string[] => {
+        if (!Array.isArray(input)) return [];
+        const out: string[] = [];
+        const seen = new Set<string>();
+        for (const item of input) {
+            const clean = String(item || '')
+                .replace(/^[•\-*]\s*/, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+            if (!clean) continue;
+            if (clean === MISSING_FULL_TECH_SPEC || clean === MISSING_AXIS_VALUE) continue;
+            if (FORBIDDEN_MARKETING_OR_UNVERIFIED_CLAIM_REGEX.test(clean)) continue;
+
+            const norm = stripTextAccents(clean).replace(/[.,;:]/g, '').trim();
+            if (!norm || FORBIDDEN_GENERIC_BULLET_TOKENS.has(norm)) continue;
+            // Exigir contenido técnico real (>= 12 caracteres o al menos 2 palabras con significado técnico)
+            if (norm.length < 10 && !ANY_ENGINEERING_METRIC_REGEX.test(clean)) continue;
+            if (seen.has(norm)) continue;
+            seen.add(norm);
+            out.push(clean);
+        }
+        return out;
+    };
+
+    const primary = filterList(rawItems);
+    if (primary.length > 0) return primary.slice(0, 6);
+
+    const secondary = filterList(fallbackSourceItems);
+    if (secondary.length > 0) return secondary.slice(0, 6);
+
+    return [MISSING_FULL_TECH_SPEC];
+}
+
+export function hasOnlyGenericOrMissingContextItems(items: unknown): boolean {
+    if (!Array.isArray(items) || items.length === 0) return true;
+    const sanitized = sanitizeDesignAndWorkContextItems(items);
+    return sanitized.length === 1 && sanitized[0] === MISSING_FULL_TECH_SPEC;
+}
+
+/**
+ * Resolución determinista ultra-rápida (< 1 ms, $0 IA) del `TIPO` canónico a partir del par
+ * `(Marca, Código de Modelo / Serie)` para evitar llamadas LLM redundantes en el Paso 1.
+ */
+export function detectDeterministicEquipmentTypeFromBrandAndModel(
+    rawInput: string
+): {
+    correctedMake: string;
+    correctedModel: string;
+    type_key: string;
+    canonical_type_es: string;
+    categoria_equipo: string;
+} | null {
+    const clean = String(rawInput || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!clean || clean.length < 3) return null;
+
+    // 1. Caterpillar Skid Steer Loaders (216, 226, 232, 236, 242, 246, 252, 262, 272 + D/D2/D3/XHP/XE)
+    const catSsl = clean.match(
+        /\b(?:CAT(?:ERPILLAR)?)\s+(2(?:16|26|32|36|42|46|52|62|68|72)[A-Z0-9]*(?:\s+(?:XHP|XE|D|D2|D3))*)\b/
+    );
+    if (catSsl) {
+        return {
+            correctedMake: 'CATERPILLAR',
+            correctedModel: catSsl[1].trim(),
+            type_key: 'minicargador_sobre_neumaticos',
+            canonical_type_es: 'MINICARGADOR SOBRE NEUMÁTICOS',
+            categoria_equipo: 'CARGUÍO COMPACTO Y MOVIMIENTO DE TIERRA',
+        };
+    }
+
+    // 2. Caterpillar Compact Track Loaders (239, 249, 255, 259, 265, 275, 279, 285, 289, 299 + D/D2/D3/XHP/XE)
+    const catCtl = clean.match(
+        /\b(?:CAT(?:ERPILLAR)?)\s+(2(?:39|49|55|57|59|65|75|77|79|85|87|89|97|99)[A-Z0-9]*(?:\s+(?:XHP|XE|D|D2|D3))*)\b/
+    );
+    if (catCtl) {
+        return {
+            correctedMake: 'CATERPILLAR',
+            correctedModel: catCtl[1].trim(),
+            type_key: 'cargador_compacto_sobre_orugas',
+            canonical_type_es: 'CARGADOR COMPACTO SOBRE ORUGAS',
+            categoria_equipo: 'CARGUÍO COMPACTO Y MOVIMIENTO DE TIERRA',
+        };
+    }
+
+    // 3. Caterpillar Bulldozers sobre Orugas (D3..D11)
+    const catDozer = clean.match(
+        /\b(?:CAT(?:ERPILLAR)?)\s+(D(?:3|4|5|6|7|8|9|10|11)[A-Z0-9]*(?:\s+(?:LGP|XE|T|T2|R|N|NEXT\s+GEN))*)\b/
+    );
+    if (catDozer) {
+        return {
+            correctedMake: 'CATERPILLAR',
+            correctedModel: catDozer[1].trim(),
+            type_key: 'bulldozer_sobre_orugas',
+            canonical_type_es: 'BULLDOZER SOBRE ORUGAS',
+            categoria_equipo: 'MOVIMIENTO DE TIERRA',
+        };
+    }
+
+    // 4. Caterpillar Motoniveladoras (120, 140, 150, 160, 12M, 14M, 16M, 18M, 24M)
+    const catGrader = clean.match(
+        /\b(?:CAT(?:ERPILLAR)?)\s+((?:120|140|150|160|12|14|16|18|24)[A-Z0-9]*(?:\s+(?:AWD|LVR|GC))*)\b/
+    );
+    if (catGrader && /\b(120|140|150|160|12M|14M|16M|18M|24M|14H|16H|24H)\b/.test(catGrader[1])) {
+        return {
+            correctedMake: 'CATERPILLAR',
+            correctedModel: catGrader[1].trim(),
+            type_key: 'motoniveladora',
+            canonical_type_es: 'MOTONIVELADORA',
+            categoria_equipo: 'MOVIMIENTO DE TIERRA Y VIALIDAD',
+        };
+    }
+
+    // 5. Caterpillar Excavadoras Hidráulicas (312..395)
+    const catExc = clean.match(
+        /\b(?:CAT(?:ERPILLAR)?)\s+(3(?:12|13|15|18|20|23|25|26|30|36|40|45|49|52|74|90|95)[A-Z0-9]*(?:\s+(?:GC|L|DL|EL|FL|NEXT\s+GEN))*)\b/
+    );
+    if (catExc) {
+        return {
+            correctedMake: 'CATERPILLAR',
+            correctedModel: catExc[1].trim(),
+            type_key: 'excavadora_hidraulica',
+            canonical_type_es: 'EXCAVADORA HIDRÁULICA',
+            categoria_equipo: 'EXCAVACIÓN Y CARGUÍO',
+        };
+    }
+
+    // 6. Komatsu Excavadoras Hidráulicas (PC130..PC8000)
+    const komExc = clean.match(/\bKOMATSU\s+(PC\s*\d{2,4}[A-Z0-9-]*)\b/);
+    if (komExc) {
+        return {
+            correctedMake: 'KOMATSU',
+            correctedModel: komExc[1].replace(/\s+/g, ''),
+            type_key: 'excavadora_hidraulica',
+            canonical_type_es: 'EXCAVADORA HIDRÁULICA',
+            categoria_equipo: 'EXCAVACIÓN Y CARGUÍO',
+        };
+    }
+
+    return null;
+}
+
+

@@ -48,6 +48,7 @@ import {
 } from '../utils/equipmentPhotoFraming';
 import type { PillarId, PillarDocument, PillarItem, ItemizedSource, ProposedUpdate, EstadoAprobacion, HistorialAuditoria, ChatMessage, ExtractedFigureRef } from '../types/vault';
 import { PILLAR_PREREQUISITE_MAP } from '../types/vault';
+import type { EnergyConsumptionProfile, CanonicalSpecSlot } from '../../../contracts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface OfficialPhotoCandidate {
@@ -88,6 +89,8 @@ interface CatalogSnapshot {
   ambiente_operativo?: string[];
   contexto_operativo?: string[];
   caracteristicas_principales?: string[];
+  energy_consumption_profile?: EnergyConsumptionProfile;
+  canonical_specs?: CanonicalSpecSlot[] | Record<string, any>;
   version?: string;
   knowledge_vault?: Partial<Record<PillarId, PillarDocument>>;
   symbology_pack?: {
@@ -122,6 +125,7 @@ interface AiAssistResponse {
   clarification: string;
   error?: string;
 }
+
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const PILLARS: Array<{ id: PillarId; stepCode: string; icon: string; romanNumeral: string; label: string; shortLabel: string; color: string; accent: string }> = [
@@ -2907,9 +2911,32 @@ function ItemizedItemsList({
                                 <span className="material-symbols-outlined !text-[20px] text-[#00AEEF]" title="Verificado">verified</span>
                               </span>
                             ) : canCurateAI && hasContent ? (
-                              <span className="flex items-center justify-center w-8 h-8 shrink-0">
-                                <span className="material-symbols-outlined !text-[20px] text-[#C68346]" title="Editable">edit_document</span>
-                              </span>
+                              <>
+                                {!isExpanded && !isGenerating && (
+                                  <M3IconButton
+                                    icon="travel_explore"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (!isSealed) onHunt(item.item_id);
+                                    }}
+                                    variant="ghost"
+                                    title="Actualizar / Re-cazar contenido IA"
+                                    className={`text-[#C68346] ${isSealed ? 'opacity-20 cursor-not-allowed' : ''}`}
+                                    disabled={isSealed || item.is_human_locked}
+                                  />
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onToggleExpand(item.item_id);
+                                  }}
+                                  title="Abrir y editar contenido del ítem"
+                                  className="bg-transparent border-0 outline-none flex items-center justify-center w-8 h-8 shrink-0 text-[#C68346] hover:text-[#b07239] cursor-pointer"
+                                >
+                                  <span className="material-symbols-outlined !text-[20px]">edit_document</span>
+                                </button>
+                              </>
                             ) : null}
                           </div>
                         )}
@@ -4240,7 +4267,19 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       });
       setLoading(false);
       const hasPillars = PILLARS.some((p) => !!(data?.knowledge_vault)?.[p.id]);
-      if (!hasPillars && canCurateAI) await ensureVaultInitialized(globalId);
+      const fichaItems: any[] = Array.isArray(data?.knowledge_vault?.ficha_tecnica?.items)
+        ? data.knowledge_vault.ficha_tecnica.items
+        : [];
+      const hasDedicatedConsumptionItem =
+        fichaItems.length === 0 ||
+        fichaItems.some((it) =>
+          /\b(consumos?\s+de\s+combustible|consumos?\s+de\s+energ[ií]a|consumos?\s+por\s+factor\s+de\s+carga|consumos?\s+y\s+autonom[ií]a)\b/i.test(
+            `${it?.title || ''} ${it?.section || ''}`
+          )
+        );
+      if ((!hasPillars || !hasDedicatedConsumptionItem) && canCurateAI && !data?.is_sealed) {
+        await ensureVaultInitialized(globalId);
+      }
     };
 
     const unsubDirectGlobal = onSnapshot(
@@ -4852,6 +4891,125 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       setIsUploadingPhoto(false);
     }
   }, [canCurateAI, catalogId, assetId, photoDeleteConfirmText]);
+
+  const [editingSidebarSection, setEditingSidebarSection] = useState<'caracteristicas' | 'ambiente' | 'contexto' | null>(null);
+  const [sidebarDraftText, setSidebarDraftText] = useState('');
+  const [sidebarConfirmText, setSidebarConfirmText] = useState('');
+  const [isReconcilingSidebar, setIsReconcilingSidebar] = useState(false);
+  const [isSavingSidebarHitl, setIsSavingSidebarHitl] = useState(false);
+
+  const handleReconcileSidebarProfile = useCallback(async () => {
+    if (!canCurateAI || !catalogId || isReconcilingSidebar) return;
+    setIsReconcilingSidebar(true);
+    const toastId = toast.loading('Sincronizando ficha lateral con 01 · Ficha Técnica OEM...');
+    try {
+      const res = await authFetch(`${API_BASE_URL}/vault/reconcile-sidebar-profile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ globalAssetId: catalogId }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || 'Error al sincronizar perfil lateral');
+      }
+      setCatalog((prev) =>
+        prev
+          ? {
+              ...prev,
+              caracteristicas_principales: data.caracteristicas_principales || prev.caracteristicas_principales,
+              ambiente_operativo: data.ambiente_operativo || prev.ambiente_operativo,
+              contexto_operativo: data.contexto_operativo || prev.contexto_operativo,
+              energy_consumption_profile: data.energy_consumption_profile || prev.energy_consumption_profile,
+            }
+          : prev
+      );
+      toast.update(toastId, {
+        render: 'Ficha lateral sincronizada con parámetros OEM verificados',
+        type: 'success',
+        isLoading: false,
+        autoClose: 3000,
+      });
+    } catch (err: any) {
+      toast.update(toastId, {
+        render: err?.message || 'Error sincronizando perfil lateral',
+        type: 'error',
+        isLoading: false,
+        autoClose: 3500,
+      });
+    } finally {
+      setIsReconcilingSidebar(false);
+    }
+  }, [canCurateAI, catalogId, isReconcilingSidebar]);
+
+  const handleOpenSidebarEditor = useCallback(
+    (section: 'caracteristicas' | 'ambiente' | 'contexto') => {
+      if (!catalog) return;
+      const currentItems =
+        section === 'caracteristicas'
+          ? catalog.caracteristicas_principales || []
+          : section === 'ambiente'
+            ? catalog.ambiente_operativo || []
+            : catalog.contexto_operativo || [];
+      setEditingSidebarSection((prev) => (prev === section ? null : section));
+      setSidebarDraftText(
+        currentItems
+          .filter((x) => !x.startsWith('['))
+          .join('\n')
+      );
+      setSidebarConfirmText('');
+    },
+    [catalog]
+  );
+
+  const handleSaveSidebarSectionHitl = useCallback(async () => {
+    if (!canCurateAI || !catalogId || !editingSidebarSection || sidebarConfirmText.trim().toUpperCase() !== 'ACTUALIZAR') {
+      return;
+    }
+    setIsSavingSidebarHitl(true);
+    const lines = sidebarDraftText
+      .split('\n')
+      .map((l) => l.replace(/^[•\-*]\s*/, '').trim())
+      .filter(Boolean);
+    const finalLines = lines.length > 0 ? lines : ['[Información técnica no declarada en ficha]'];
+
+    const payload: Record<string, any> = {
+      globalAssetId: catalogId,
+      confirmationKeyword: 'ACTUALIZAR',
+    };
+    if (editingSidebarSection === 'caracteristicas') payload.caracteristicas_principales = finalLines;
+    if (editingSidebarSection === 'ambiente') payload.ambiente_operativo = finalLines;
+    if (editingSidebarSection === 'contexto') payload.contexto_operativo = finalLines;
+
+    try {
+      const res = await authFetch(`${API_BASE_URL}/vault/update-sidebar-profile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || 'Error guardando actualización HITL');
+      }
+      setCatalog((prev) =>
+        prev
+          ? {
+              ...prev,
+              ...(editingSidebarSection === 'caracteristicas' ? { caracteristicas_principales: finalLines } : {}),
+              ...(editingSidebarSection === 'ambiente' ? { ambiente_operativo: finalLines } : {}),
+              ...(editingSidebarSection === 'contexto' ? { contexto_operativo: finalLines } : {}),
+            }
+          : prev
+      );
+      setEditingSidebarSection(null);
+      setSidebarDraftText('');
+      setSidebarConfirmText('');
+      toast.success('Registro lateral actualizado y auditado');
+    } catch (err: any) {
+      toast.error(err?.message || 'Error guardando sección lateral');
+    } finally {
+      setIsSavingSidebarHitl(false);
+    }
+  }, [canCurateAI, catalogId, editingSidebarSection, sidebarConfirmText, sidebarDraftText]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (!canCurateAI) return;
@@ -5577,52 +5735,72 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
               </div>
             )}
 
-            {/* C) Modo Foto Publicada */}
+            {/* C) Modo Foto Publicada (Barra Minimalista de Telemetría CAS + Iconos Planos GEMINI.md §3.6) */}
             {photoCandidates.length === 0 && catalog.foto_url && (
               <>
-                {catalog.foto_media_telemetry && (
-                  <div className="mt-[8px] px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] flex items-center justify-between gap-[8px] font-mono tabular-nums text-[9px]">
-                    <span className="text-[#475569] dark:text-[#8A93A6] truncate">
-                      ORIG: {formatPhotoBytes(catalog.foto_media_telemetry.original_bytes)} ➔ CAS: {formatPhotoBytes(catalog.foto_media_telemetry.optimized_bytes)}
-                    </span>
-                    <span className="font-bold text-[#00AEEF] shrink-0">
-                      -{catalog.foto_media_telemetry.savings_pct}%
-                    </span>
-                  </div>
-                )}
+                <div className="mt-[8px] px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] flex items-center justify-between gap-[8px]">
+                  {catalog.foto_media_telemetry ? (
+                    <div className="flex items-center gap-[6px] font-mono tabular-nums text-[9px] min-w-0">
+                      <span className="text-[#475569] dark:text-[#8A93A6] truncate">
+                        {formatPhotoBytes(catalog.foto_media_telemetry.original_bytes)} ➔ {formatPhotoBytes(catalog.foto_media_telemetry.optimized_bytes)}
+                      </span>
+                      {catalog.foto_media_telemetry.savings_pct > 0 && (
+                        <span className="font-bold text-[#00AEEF] shrink-0">
+                          -{catalog.foto_media_telemetry.savings_pct}%
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="font-mono text-[9px] text-[#5A6072] dark:text-[#94A3B8]">CAS</span>
+                  )}
 
-                {canCurateAI && (
-                  <div className="flex flex-col gap-[8px] w-full mt-[8px]">
-                    <div className="flex gap-[6px] w-full">
+                  {canCurateAI && (
+                    <div className="flex items-center gap-[2px] shrink-0">
                       <button
                         type="button"
                         onClick={handleStartOfficialPhotoHunt}
-                        disabled={isReframingPhoto || isUploadingPhoto}
-                        title="Actualizar búsqueda IA de fotografía oficial"
-                        className="flex-1 py-1 border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-[#000000] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                        disabled={isHuntingPhoto || isReframingPhoto || isUploadingPhoto}
+                        title="Buscar fotografía oficial OEM con IA"
+                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-[#C68346] dark:hover:text-[#C68346] transition-colors cursor-pointer disabled:opacity-40 flex items-center"
                       >
-                        {isHuntingPhoto ? 'ACTUALIZANDO…' : 'ACTUALIZAR IA'}
+                        <span className="material-symbols-outlined !text-[15px]">travel_explore</span>
                       </button>
+
                       {(catalog.official_photo_candidates?.length || 0) > 0 && (
                         <button
                           type="button"
                           onClick={handleOpenStoredAlternatives}
                           disabled={isHuntingPhoto || isReframingPhoto || isUploadingPhoto}
-                          title="Elegir entre todas las candidatas encontradas"
-                          className="flex-1 py-1 border border-[#00AEEF] text-[#00AEEF] hover:bg-[#00AEEF] hover:text-[#000000] text-[9px] font-mono font-bold uppercase tracking-wider tabular-nums rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                          title={`Alternativas verificadas (${catalog.official_photo_candidates!.length})`}
+                          className="bg-transparent border-0 outline-none p-1 text-[#00AEEF] hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer disabled:opacity-40 flex items-center gap-[2px]"
                         >
-                          ALTERNATIVAS ({catalog.official_photo_candidates!.length})
+                          <span className="material-symbols-outlined !text-[15px]">photo_library</span>
+                          <span className="font-mono tabular-nums text-[9px] font-bold">
+                            {catalog.official_photo_candidates!.length}
+                          </span>
                         </button>
                       )}
+
                       <button
                         type="button"
                         onClick={handleReframeCurrentPhoto}
                         disabled={isHuntingPhoto || isReframingPhoto || isUploadingPhoto}
-                        title={t('vault_dashboard.reframe_88', 'ENCUADRAR 88%')}
-                        className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                        title={t('vault_dashboard.reframe_88', 'Encuadrar al 88% Studio 4:3')}
+                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-[#00AEEF] dark:hover:text-[#00AEEF] transition-colors cursor-pointer disabled:opacity-40 flex items-center"
                       >
-                        {t('vault_dashboard.reframe_88', 'ENCUADRAR 88%')}
+                        <span className="material-symbols-outlined !text-[15px]">crop_free</span>
                       </button>
+
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isHuntingPhoto || isReframingPhoto || isUploadingPhoto}
+                        title="Subir fotografía oficial manualmente"
+                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer disabled:opacity-40 flex items-center"
+                      >
+                        <span className="material-symbols-outlined !text-[15px]">upload_file</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => {
@@ -5631,14 +5809,17 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                         }}
                         disabled={isHuntingPhoto || isReframingPhoto || isUploadingPhoto}
                         title="Dar de baja fotografía"
-                        className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-[#C68346] dark:hover:text-[#C68346] transition-colors cursor-pointer disabled:opacity-40 flex items-center"
                       >
-                        ELIMINAR
+                        <span className="material-symbols-outlined !text-[15px]">delete</span>
                       </button>
                     </div>
+                  )}
+                </div>
 
-                    {showPhotoDeleteConfirm && (
-                      <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] rounded-none">
+                {canCurateAI && showPhotoDeleteConfirm && (
+                  <div className="flex flex-col gap-[8px] w-full mt-[8px]">
+                    <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] rounded-none">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
                           Escriba ACTUALIZAR para confirmar baja:
                         </span>
@@ -5675,7 +5856,6 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                           </button>
                         </div>
                       </div>
-                    )}
                   </div>
                 )}
               </>
@@ -5700,65 +5880,232 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
 
             {/* CARACTERÍSTICAS PRINCIPALES */}
             <div className="flex flex-col">
-              <h3 className="text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider mb-[8px]">
-                CARACTERÍSTICAS PRINCIPALES
-              </h3>
-              <ul className="space-y-1.5 text-[12px] font-normal text-[#475569] dark:text-[#8A93A6]">
-                {catalog.caracteristicas_principales?.length ? (
-                  catalog.caracteristicas_principales.map((item, idx) => (
-                    <li key={idx} className="flex items-start gap-1.5 leading-tight">
-                      <span className="text-[#C68346] shrink-0 mt-px text-[10px]">•</span>
-                      <span>{highlightUndeclaredInNode(item)}</span>
-                    </li>
-                  ))
-                ) : (
-                  <li>
-                    <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>[Información técnica no declarada en ficha]</mark>
-                  </li>
+              <div className="flex items-center justify-between mb-[8px]">
+                <h3 className="text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider">
+                  CARACTERÍSTICAS PRINCIPALES
+                </h3>
+                {canCurateAI && !catalog.is_sealed && (
+                  <div className="flex items-center gap-[2px]">
+                    <button
+                      type="button"
+                      onClick={handleReconcileSidebarProfile}
+                      disabled={isReconcilingSidebar}
+                      title="Sincronizar con 01 · Ficha Técnica OEM"
+                      className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-[#00AEEF] dark:hover:text-[#00AEEF] transition-colors cursor-pointer disabled:opacity-40 flex items-center"
+                    >
+                      <span className="material-symbols-outlined !text-[14px]">sync</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenSidebarEditor('caracteristicas')}
+                      title="Editar características principales (HITL)"
+                      className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center"
+                    >
+                      <span className="material-symbols-outlined !text-[14px]">edit</span>
+                    </button>
+                  </div>
                 )}
-              </ul>
+              </div>
+              {editingSidebarSection === 'caracteristicas' ? (
+                <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#FFFFFF] dark:bg-[#07090D] rounded-none">
+                  <textarea
+                    rows={6}
+                    value={sidebarDraftText}
+                    onChange={(e) => setSidebarDraftText(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="Una especificación por línea (ej. ROC: 1.678 kg)"
+                    className="w-full p-[8px] text-[11px] font-mono bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                  />
+                  <input
+                    type="text"
+                    value={sidebarConfirmText}
+                    onChange={(e) => setSidebarConfirmText(e.target.value.toUpperCase())}
+                    placeholder="ACTUALIZAR"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="w-full px-[8px] py-1 text-[10px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                  />
+                  <div className="flex gap-[8px]">
+                    <button
+                      type="button"
+                      onClick={handleSaveSidebarSectionHitl}
+                      disabled={isSavingSidebarHitl || sidebarConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'}
+                      className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                    >
+                      GUARDAR
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingSidebarSection(null)}
+                      className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                    >
+                      CANCELAR
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <ul className="space-y-1.5 text-[12px] font-normal text-[#475569] dark:text-[#8A93A6] tabular-nums">
+                  {catalog.caracteristicas_principales?.length ? (
+                    catalog.caracteristicas_principales.map((item, idx) => (
+                      <li key={idx} className="flex items-start gap-1.5 leading-tight">
+                        <span className="text-[#C68346] shrink-0 mt-px text-[10px]">•</span>
+                        <span>{highlightUndeclaredInNode(item)}</span>
+                      </li>
+                    ))
+                  ) : (
+                    <li>
+                      <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>[Información técnica no declarada en ficha]</mark>
+                    </li>
+                  )}
+                </ul>
+              )}
             </div>
 
             {/* CONDICIONES DE DISEÑO */}
             <div className="flex flex-col">
-              <h3 className="text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider mb-[8px]">
-                CONDICIONES DE DISEÑO
-              </h3>
-              <ul className="space-y-1.5 text-[12px] font-normal text-[#475569] dark:text-[#8A93A6]">
-                {catalog.ambiente_operativo?.length ? (
-                  catalog.ambiente_operativo.map((item, idx) => (
-                    <li key={idx} className="flex items-start gap-1.5 leading-tight">
-                      <span className="text-[#C68346] shrink-0 mt-px text-[10px]">•</span>
-                      <span>{highlightUndeclaredInNode(item)}</span>
-                    </li>
-                  ))
-                ) : (
-                  <li>
-                    <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>[Información técnica no declarada en ficha]</mark>
-                  </li>
+              <div className="flex items-center justify-between mb-[8px]">
+                <h3 className="text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider">
+                  CONDICIONES DE DISEÑO
+                </h3>
+                {canCurateAI && !catalog.is_sealed && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenSidebarEditor('ambiente')}
+                    title="Editar condiciones de diseño (HITL)"
+                    className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center"
+                  >
+                    <span className="material-symbols-outlined !text-[14px]">edit</span>
+                  </button>
                 )}
-              </ul>
+              </div>
+              {editingSidebarSection === 'ambiente' ? (
+                <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#FFFFFF] dark:bg-[#07090D] rounded-none">
+                  <textarea
+                    rows={5}
+                    value={sidebarDraftText}
+                    onChange={(e) => setSidebarDraftText(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="Una condición de diseño por línea"
+                    className="w-full p-[8px] text-[11px] font-mono bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                  />
+                  <input
+                    type="text"
+                    value={sidebarConfirmText}
+                    onChange={(e) => setSidebarConfirmText(e.target.value.toUpperCase())}
+                    placeholder="ACTUALIZAR"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="w-full px-[8px] py-1 text-[10px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                  />
+                  <div className="flex gap-[8px]">
+                    <button
+                      type="button"
+                      onClick={handleSaveSidebarSectionHitl}
+                      disabled={isSavingSidebarHitl || sidebarConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'}
+                      className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                    >
+                      GUARDAR
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingSidebarSection(null)}
+                      className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                    >
+                      CANCELAR
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <ul className="space-y-1.5 text-[12px] font-normal text-[#475569] dark:text-[#8A93A6]">
+                  {catalog.ambiente_operativo?.length ? (
+                    catalog.ambiente_operativo.map((item, idx) => (
+                      <li key={idx} className="flex items-start gap-1.5 leading-tight">
+                        <span className="text-[#C68346] shrink-0 mt-px text-[10px]">•</span>
+                        <span>{highlightUndeclaredInNode(item)}</span>
+                      </li>
+                    ))
+                  ) : (
+                    <li>
+                      <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>[Información técnica no declarada en ficha]</mark>
+                    </li>
+                  )}
+                </ul>
+              )}
             </div>
 
             {/* CONTEXTO Y TRABAJO */}
             <div className="flex flex-col">
-              <h3 className="text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider mb-[8px]">
-                CONTEXTO Y TRABAJO
-              </h3>
-              <ul className="space-y-1.5 text-[12px] font-normal text-[#475569] dark:text-[#8A93A6]">
-                {catalog.contexto_operativo?.length ? (
-                  catalog.contexto_operativo.map((item, idx) => (
-                    <li key={idx} className="flex items-start gap-1.5 leading-tight">
-                      <span className="text-[#C68346] shrink-0 mt-px text-[10px]">•</span>
-                      <span>{highlightUndeclaredInNode(item)}</span>
-                    </li>
-                  ))
-                ) : (
-                  <li>
-                    <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>[Información técnica no declarada en ficha]</mark>
-                  </li>
+              <div className="flex items-center justify-between mb-[8px]">
+                <h3 className="text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider">
+                  CONTEXTO Y TRABAJO
+                </h3>
+                {canCurateAI && !catalog.is_sealed && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenSidebarEditor('contexto')}
+                    title="Editar contexto y trabajo (HITL)"
+                    className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center"
+                  >
+                    <span className="material-symbols-outlined !text-[14px]">edit</span>
+                  </button>
                 )}
-              </ul>
+              </div>
+              {editingSidebarSection === 'contexto' ? (
+                <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#FFFFFF] dark:bg-[#07090D] rounded-none">
+                  <textarea
+                    rows={5}
+                    value={sidebarDraftText}
+                    onChange={(e) => setSidebarDraftText(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="Una aplicación o contexto por línea"
+                    className="w-full p-[8px] text-[11px] font-mono bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                  />
+                  <input
+                    type="text"
+                    value={sidebarConfirmText}
+                    onChange={(e) => setSidebarConfirmText(e.target.value.toUpperCase())}
+                    placeholder="ACTUALIZAR"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="w-full px-[8px] py-1 text-[10px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                  />
+                  <div className="flex gap-[8px]">
+                    <button
+                      type="button"
+                      onClick={handleSaveSidebarSectionHitl}
+                      disabled={isSavingSidebarHitl || sidebarConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'}
+                      className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                    >
+                      GUARDAR
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingSidebarSection(null)}
+                      className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                    >
+                      CANCELAR
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <ul className="space-y-1.5 text-[12px] font-normal text-[#475569] dark:text-[#8A93A6]">
+                  {catalog.contexto_operativo?.length ? (
+                    catalog.contexto_operativo.map((item, idx) => (
+                      <li key={idx} className="flex items-start gap-1.5 leading-tight">
+                        <span className="text-[#C68346] shrink-0 mt-px text-[10px]">•</span>
+                        <span>{highlightUndeclaredInNode(item)}</span>
+                      </li>
+                    ))
+                  ) : (
+                    <li>
+                      <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>[Información técnica no declarada en ficha]</mark>
+                    </li>
+                  )}
+                </ul>
+              )}
             </div>
             
           </div>

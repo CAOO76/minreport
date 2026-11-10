@@ -5,6 +5,7 @@ import { ResilientAIClient, Type, UngroundedEvidenceError } from '../../../core/
 import type {
     CanonicalSpecSlot,
     EquipmentTypePillarBlueprint,
+    GlobalEquipmentTypeDoc,
     ItemizedSource,
     PillarDocument,
     PillarId,
@@ -13,6 +14,7 @@ import type {
 import { PILLAR_PREREQUISITE_MAP, SEQUENTIAL_PILLAR_ORDER } from '../types/vault.types';
 import { validateCatalogProfileGate } from './CatalogUpsertService';
 import {
+    buildDedicatedConsumptionCoreChapter,
     evolveEquipmentTypeChecklistPreOpBlueprint,
     evolveEquipmentTypeFichaTecnicaBlueprint,
     evolveEquipmentTypeManualOperacionesBlueprint,
@@ -221,14 +223,24 @@ function buildCumulativePriorPillarsContext(
     return blocks.join('\n\n');
 }
 
+export const DEDICATED_CONSUMPTION_ITEM_REGEX =
+    /\b(consumos?\s+de\s+combustible|consumos?\s+de\s+energ[ií]a|consumos?\s+por\s+factor\s+de\s+carga|consumos?\s+y\s+autonom[ií]a|rendimiento\s+de\s+combustible|matriz\s+energ[eé]tica|consumo\s+horario|consumo\s+espec[ií]fico|autonom[ií]a\s+operativa|autonom[ií]a\s+por\s+ciclo|demanda\s+de\s+potencia\s+y\s+factor\s+de\s+carga)\b/i;
+
 function getFichaTecnicaSectionRank(section?: string, title?: string): number {
     const s = `${section || ''} ${title || ''}`.toUpperCase();
-    if (/\bIDENTIFICACI[ÓO]N\b|\bDIMENSIONES\b|\bPESOS\b|\bMASAS\b|\bGEOMETR[ÍI]A\b|\bARQUITECTURA GENERAL\b/.test(s)) return 1;
-    if (/\bPLANTA MOTRIZ\b|\bMOTOR\b|\bENERG[ÍI]A\b|\bEL[ÉE]CTRIC|\bNEUM[ÁA]TIC|\bPOTENCIA\b|\bCOMBUSTIBLE\b/.test(s)) return 2;
-    if (/\bTRANSMISI[ÓO]N\b|\bTREN DE FUERZA\b|\bTRACCI[ÓO]N\b|\bEJES\b|\bFRENOS\b|\bDIRECCI[ÓO]N\b|\bSUSPENSI[ÓO]N\b|\bRODADO\b|\bORUGAS\b|\bNEUM[ÁA]TICOS\b/.test(s)) return 3;
-    if (/\bHIDR[ÁA]ULIC|\bIMPLEMENTO\b|\bÓRGANO DE TRABAJO\b|\bTOLVA\b|\bHOJA\b|\bBALDE\b|\bPLUMA\b|\bPERFORACI[ÓO]N\b|\bCARGA\b/.test(s)) return 4;
+    if (/\bDESEMPE[ÑN]O NOMINAL\b|\bEJES DIFERENCIADORES\b|\bPAR[ÁA]METROS CR[ÍI]TICOS\b|\bIDENTIFICACI[ÓO]N\b|\bARQUITECTURA GENERAL\b/.test(s)) return 1;
+    if (DEDICATED_CONSUMPTION_ITEM_REGEX.test(s)) return 2.5;
+    if (
+        (/\bPLANTA MOTRIZ\b|\bMOTOR(IZACI[ÓO]N)?\b|\bCILINDRADA\b|\bSOBREALIMENTACI[ÓO]N\b|\bCURVAS DE (PAR|POTENCIA|TORQUE)\b/.test(s)) &&
+        !/\bTREN DE POTENCIA\b|\bFRENO MOTOR\b|\bFRENADO\b|\bRETARDO\b/.test(s)
+    ) {
+        return 2;
+    }
+    if (/\bTRANSMISI[ÓO]N\b|\bTREN DE FUERZA\b|\bTREN DE POTENCIA\b|\bTREN MOTRIZ\b|\bCAJA DE CAMBIOS\b|\bTRACCI[ÓO]N\b|\bEJES\b|\bFRENOS\b|\bDIRECCI[ÓO]N\b|\bSUSPENSI[ÓO]N\b|\bRODADO\b|\bORUGAS\b|\bNEUM[ÁA]TICOS\b/.test(s)) return 3;
+    if (/\bHIDR[ÁA]ULIC|\bIMPLEMENTO\b|\bÓRGANO DE TRABAJO\b|\bTOLVA\b|\bHOJA\b|\bBALDE\b|\bPLUMA\b|\bPERFORACI[ÓO]N\b|\bSISTEMA DE TRABAJO\b/.test(s)) return 4;
+    if (/\bGEOMETR[ÍI]A\b|\bDIMENSIONES\b|\bPESOS\b|\bMASAS\b/.test(s)) return 4.5;
     if (/\bESPECIALIZADO\b|\bCONDICIONAL\b|\bPTO\b|\bQUINTA RUEDA\b|\bDRW\b|\bRAX\b|\bAUTOLUBE\b|\bVIMS\b|\bTPMS\b|\bAFEX\b/.test(s)) return 5;
-    if (/\bCAPACIDADES DE LLENADO\b|\bFLUIDOS\b|\bCABINA\b|\bROPS\b|\bFOPS\b|\bNORMATIVA\b|\bSEGURIDAD\b|\bEMISIONES\b/.test(s)) return 6;
+    if (/\bCAPACIDADES DE LLENADO\b|\bCAPACIDADES DE ESTANQUE\b|\bFLUIDOS\b|\bSISTEMA EL[ÉE]CTRICO\b|\bCABINA\b|\bROPS\b|\bFOPS\b|\bNORMATIVA\b|\bSEGURIDAD\b|\bEMISIONES\b|\bSERVICIO\b/.test(s)) return 6;
     return 4;
 }
 
@@ -449,6 +461,30 @@ export function computeVaultMerkleRootSha256(vault: Record<string, any> | undefi
     return createHash('sha256').update(digests.join('|')).digest('hex');
 }
 
+const KNOWN_SECTION_HEADER_REGEX =
+    /^(DESEMPE[ÑN]O NOMINAL( Y EJES DIFERENCIADORES)?|DESEMPE[ÑN]O Y CAPACIDADES NOMINALES|PLANTA MOTRIZ|POTENCIA Y CONSUMOS|CONSUMOS DE (COMBUSTIBLE|ENERG[ÍI]A).*|EFICIENCIA ENERG[ÉE]TICA.*|TREN DE POTENCIA|TREN MOTRIZ( HEAVY-DUTY)?|SISTEMA DE TRABAJO|HIDR[ÁA]ULICA E IMPLEMENTOS|GEOMETR[ÍI]A Y (MASAS|PESOS)|GEOMETR[ÍI]A E INSTALACI[ÓO]N|SERVICIO, ELECTRICIDAD Y CABINA|SERVICIO Y CONTROL|CAPACIDADES Y ELECTRICIDAD|CHASIS Y (RODADO|SUSPENSI[ÓO]N.*)|FRENADO Y RETARDO.*|TELEMETR[ÍI]A.*|CONFIGURACI[ÓO]N DE TOLVA.*|AUTOMATIZACI[ÓO]N Y TELEMETR[ÍI]A|DIRECCI[ÓO]N, FRENADO.*|HERRAMIENTA DE TRABAJO.*)$/i;
+
+export function normalizeSwappedPillarItemFields<T extends { title: string; section: string }>(item: T): T {
+    const rawTitle = String(item.title || '').trim();
+    const rawSection = String(item.section || '').trim();
+    if (!rawTitle || !rawSection) return item;
+
+    const titleIsKnownSection = KNOWN_SECTION_HEADER_REGEX.test(rawTitle);
+    const sectionIsKnownSection = KNOWN_SECTION_HEADER_REGEX.test(rawSection);
+
+    if (
+        (titleIsKnownSection && !sectionIsKnownSection && rawSection.length > rawTitle.length) ||
+        (rawTitle === rawTitle.toUpperCase() && rawTitle.length <= 38 && rawSection.length >= rawTitle.length + 10 && !sectionIsKnownSection)
+    ) {
+        return {
+            ...item,
+            title: rawSection,
+            section: rawTitle.toUpperCase(),
+        };
+    }
+    return item;
+}
+
 /**
  * Verificador Neuro-Simbólico de Cobertura del Anillo 1 (`ensureRing1CoreCoverage`):
  * Garantiza determinísticamente en 0 ms que ningún capítulo obligatorio `CRÍTICO` del Anillo 1 (`core_chapters`)
@@ -467,10 +503,11 @@ function ensureRing1CoreCoverage(
     elasticBlueprint: EquipmentTypePillarBlueprint | null,
     existingItems: PillarItem[]
 ): typeof rawItems {
+    const normalizedInput = rawItems.map((r) => normalizeSwappedPillarItemFields(r));
     if (!elasticBlueprint || !Array.isArray(elasticBlueprint.core_chapters)) {
-        return rawItems;
+        return normalizedInput;
     }
-    const result = [...rawItems];
+    const result = [...normalizedInput];
     const discardedExisting = existingItems.filter((it) => it.is_discarded);
 
     for (const core of elasticBlueprint.core_chapters) {
@@ -486,15 +523,30 @@ function ensureRing1CoreCoverage(
             .split('—')[0]
             .trim()
             .toUpperCase();
+        const combinedCore = `${core.title_es} ${core.section_es || ''}`.toLowerCase();
+        const isConsumptionCore =
+            core.chapter_key === 'matriz_energetica_consumos_y_autonomia' ||
+            DEDICATED_CONSUMPTION_ITEM_REGEX.test(combinedCore);
 
-        const alreadyCovered = result.some(
-            (r) =>
-                tokenJaccardSimilarity(r.title, core.title_es) >= 0.34 ||
-                (coreSectionPrefix.length >= 6 &&
-                    String(r.section || '')
-                        .toUpperCase()
-                        .startsWith(coreSectionPrefix))
-        );
+        const alreadyCovered = result.some((r) => {
+            const combinedCandidate = `${r.title} ${r.section || ''}`.toLowerCase();
+            if (isConsumptionCore) {
+                return DEDICATED_CONSUMPTION_ITEM_REGEX.test(combinedCandidate);
+            }
+            if (tokenJaccardSimilarity(r.title, core.title_es) >= 0.34) return true;
+            if (tokenJaccardSimilarity(r.section, core.section_es) >= 0.34) return true;
+            if (tokenJaccardSimilarity(r.title, core.section_es) >= 0.48) return true;
+            if (tokenJaccardSimilarity(r.section, core.title_es) >= 0.48) return true;
+            if (tokenJaccardSimilarity(combinedCandidate, combinedCore) >= 0.36) return true;
+            if (
+                coreSectionPrefix.length >= 6 &&
+                (String(r.section || '').toUpperCase().includes(coreSectionPrefix) ||
+                    String(r.title || '').toUpperCase().includes(coreSectionPrefix))
+            ) {
+                return true;
+            }
+            return false;
+        });
 
         if (!alreadyCovered) {
             result.push({
@@ -554,9 +606,24 @@ export function mergeItemizedStructure(
         if (wasExplicitlyDiscarded) continue;
 
         // Buscar si ya existe un capítulo equivalente en `preserved`
+        const incomingIsDedicatedConsumption = DEDICATED_CONSUMPTION_ITEM_REGEX.test(
+            `${incoming.title} ${incoming.section || ''}`
+        );
         let bestIdx = -1;
         let bestSim = 0;
         for (let i = 0; i < preserved.length; i++) {
+            const preservedIsDedicatedConsumption = DEDICATED_CONSUMPTION_ITEM_REGEX.test(
+                `${preserved[i].title} ${preserved[i].section || ''}`
+            );
+            // Evitar que el capítulo dedicado de Consumos sea absorbido por Motorización o Capacidades de Llenado
+            if (incomingIsDedicatedConsumption !== preservedIsDedicatedConsumption) {
+                continue;
+            }
+            if (incomingIsDedicatedConsumption && preservedIsDedicatedConsumption) {
+                bestIdx = i;
+                bestSim = 1;
+                break;
+            }
             const pNorm = normalizeComparableTitle(preserved[i].title);
             if (pNorm === incNorm) {
                 bestIdx = i;
@@ -564,8 +631,12 @@ export function mergeItemizedStructure(
                 break;
             }
             const sim = tokenJaccardSimilarity(preserved[i].title, incoming.title);
-            if (sim > bestSim) {
-                bestSim = sim;
+            const simSection = tokenJaccardSimilarity(preserved[i].section || '', incoming.section || '');
+            const simCross1 = tokenJaccardSimilarity(preserved[i].title, incoming.section || '');
+            const simCross2 = tokenJaccardSimilarity(preserved[i].section || '', incoming.title);
+            const effectiveSim = Math.max(sim, simSection * 0.88, simCross1 * 0.92, simCross2 * 0.92);
+            if (effectiveSim > bestSim) {
+                bestSim = effectiveSim;
                 bestIdx = i;
             }
         }
@@ -604,6 +675,152 @@ export function mergeItemizedStructure(
         preservedCount: preserved.length,
         addedCount: newlyAdded.length,
     };
+}
+
+/**
+ * Auto-Saneamiento Determinista del Ítem Base de Consumos en `ficha_tecnica`:
+ * Garantiza que cualquier activo cuyo Pilar 01 (`Ficha Técnica OEM`) ya haya sido itemizado
+ * posea siempre en su listado de capítulos (`knowledge_vault.ficha_tecnica.items`) un `PillarItem`
+ * dedicado e interactivo para Consumos (Combustible, Energía, Aire Comprimido, DEF/AdBlue, Otros)
+ * adaptado al tipo de equipo.
+ */
+export function ensureFichaTecnicaConsumptionBaseItem(params: {
+    items: PillarItem[];
+    typeDoc: Pick<GlobalEquipmentTypeDoc, 'type_key' | 'canonical_type_es' | 'categoria_equipo' | 'archetype_id'>;
+    defaultSources?: ItemizedSource[];
+}): { items: PillarItem[]; modified: boolean } {
+    const rawExisting = Array.isArray(params.items) ? params.items : [];
+    const activeRaw = rawExisting.filter((it) => !it?.is_discarded);
+    if (activeRaw.length === 0) {
+        return { items: rawExisting, modified: false };
+    }
+
+    let modified = false;
+
+    // 1. Normalizar cualquier inversión accidental entre `title` y `section`
+    const normalizedItems = rawExisting.map((it) => {
+        if (it?.is_discarded) return it;
+        const norm = normalizeSwappedPillarItemFields(it);
+        if (norm.title !== it.title || norm.section !== it.section) {
+            modified = true;
+            return norm;
+        }
+        return it;
+    });
+
+    // 2. Deduplicar capítulos equivalentes (conservando siempre el que tenga `content` o `is_human_locked`)
+    const dedupedActive: PillarItem[] = [];
+    const discardedList: PillarItem[] = normalizedItems.filter((it) => it?.is_discarded);
+    for (const candidate of normalizedItems.filter((it) => !it?.is_discarded)) {
+        const candIsConsumption = DEDICATED_CONSUMPTION_ITEM_REGEX.test(
+            `${candidate.title || ''} ${candidate.section || ''}`
+        );
+        const dupIdx = dedupedActive.findIndex((existingItem) => {
+            const existIsConsumption = DEDICATED_CONSUMPTION_ITEM_REGEX.test(
+                `${existingItem.title || ''} ${existingItem.section || ''}`
+            );
+            if (candIsConsumption !== existIsConsumption) return false;
+            if (candIsConsumption && existIsConsumption) return true;
+            const sameSection =
+                String(existingItem.section || '').trim().toUpperCase() ===
+                String(candidate.section || '').trim().toUpperCase();
+            return (
+                normalizeComparableTitle(existingItem.title) === normalizeComparableTitle(candidate.title) ||
+                tokenJaccardSimilarity(existingItem.title, candidate.title) >= (sameSection ? 0.42 : 0.56)
+            );
+        });
+
+        if (dupIdx === -1) {
+            dedupedActive.push(candidate);
+        } else {
+            modified = true;
+            const prev = dedupedActive[dupIdx];
+            const prevHasContent = Boolean(prev.content && prev.content.trim());
+            const candHasContent = Boolean(candidate.content && candidate.content.trim());
+            if (!prevHasContent && candHasContent) {
+                dedupedActive[dupIdx] = {
+                    ...candidate,
+                    title: candidate.title.length >= prev.title.length ? candidate.title : prev.title,
+                    section: prev.section || candidate.section,
+                };
+            }
+        }
+    }
+
+    const existing = [...dedupedActive, ...discardedList];
+
+    const wasExplicitlyDiscarded = existing.some(
+        (it) =>
+            it?.is_discarded &&
+            DEDICATED_CONSUMPTION_ITEM_REGEX.test(`${it.title || ''} ${it.section || ''}`)
+    );
+    if (wasExplicitlyDiscarded) {
+        return {
+            items: modified ? sortAndReindexPillarItems('ficha_tecnica', existing) : rawExisting,
+            modified,
+        };
+    }
+
+    const core = buildDedicatedConsumptionCoreChapter(params.typeDoc);
+    const existingIdx = existing.findIndex(
+        (it) =>
+            !it?.is_discarded &&
+            DEDICATED_CONSUMPTION_ITEM_REGEX.test(`${it.title || ''} ${it.section || ''}`)
+    );
+
+    if (existingIdx !== -1) {
+        const current = existing[existingIdx];
+        if (!current.is_human_locked && current.title !== core.title_es && /^Matriz\s+Energ[eé]tica\b/i.test(current.title || '')) {
+            modified = true;
+            const updated = existing.map((it, idx) =>
+                idx === existingIdx
+                    ? {
+                          ...it,
+                          title: core.title_es,
+                          section: core.section_es,
+                          rationale: core.rationale_es,
+                      }
+                    : it
+            );
+            return {
+                items: sortAndReindexPillarItems('ficha_tecnica', updated),
+                modified: true,
+            };
+        }
+        return {
+            items: modified ? sortAndReindexPillarItems('ficha_tecnica', existing) : existing,
+            modified,
+        };
+    }
+
+    const fallbackSources =
+        Array.isArray(params.defaultSources) && params.defaultSources.length > 0
+            ? params.defaultSources.slice(0, 4)
+            : dedupedActive.find((it) => Array.isArray(it.item_sources) && it.item_sources.length > 0)?.item_sources?.slice(0, 4) || [];
+
+    const nowIso = new Date().toISOString();
+    const newItem: PillarItem = {
+        item_id: slugifyItemId('ficha_tecnica', core.title_es, existing.length),
+        order: 3,
+        title: core.title_es,
+        section: core.section_es,
+        rationale: core.rationale_es,
+        priority: 'CRÍTICO',
+        content: null,
+        content_status: 'PENDIENTE',
+        created_at: nowIso,
+        item_sources: fallbackSources,
+        is_discarded: false,
+        estado_aprobacion: 'GENERADO_IA',
+        is_human_locked: false,
+        historial_cambios: [],
+        pending_conflicts: [],
+        authorized_delta_buffer: [],
+        symbology_refs: [],
+    };
+
+    const sorted = sortAndReindexPillarItems('ficha_tecnica', [...existing, newItem]);
+    return { items: sorted, modified: true };
 }
 
 export async function itemizeSinglePillar(
@@ -851,7 +1068,7 @@ Combina la evidencia local de la bóveda con Google Search (en español, inglés
         const canUseSinglePassSynthesis =
             (pillarId !== 'ficha_tecnica' &&
                 Boolean(cumulativePriorContext) &&
-                (sovereignCorpus.sovereignSources.length > 0 || initialSourcesPool.length >= 2)) ||
+                (sovereignCorpus.sovereignSources.length > 0 || initialSourcesPool.length >= 1)) ||
             (pillarId === 'ficha_tecnica' && hasStrongSovereignLocalCorpus);
 
         if (canUseSinglePassSynthesis) {

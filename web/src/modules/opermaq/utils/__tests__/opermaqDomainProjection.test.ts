@@ -9,7 +9,9 @@ import {
     resolveOpermaqCapabilities,
 } from '../../hooks/useOpermaqContext';
 import {
+    ARCHETYPE_DEFINITIONS,
     buildEquipmentShortDescription,
+    cleanCanonicalAxisValue,
     cleanMachineryTypeLabel,
     countPublishedPillars,
     groupEquipmentByBrandAndType,
@@ -544,6 +546,83 @@ describe('OPERMAQ — Separación Estricta de Dominios CATÁLOGO y FLOTA', () =>
         expect(metsoC120).toBe(
             'Boca alimentación: 1.200 x 870 mm · Rango CSS: 70 - 200 mm · Capacidad producción: 575 t/h'
         );
+    });
+
+    it('homologa y normaliza la Matriz Energética, Consumos y Autonomía en los arquetipos y contratos Zod v2', () => {
+        const caexAxes = ARCHETYPE_DEFINITIONS.CAMION_TOLVA_CAEX.axes;
+        const energySourceAxis = caexAxes.find((a) => a.axis_key === 'fuente_energia');
+        const consumptionAxis = caexAxes.find((a) => a.axis_key === 'consumo_energetico_nominal' || a.axis_key === 'consumo_nominal_o_tasa');
+        const capacityAxis = caexAxes.find((a) => a.axis_key === 'capacidad_energetica_autonomia' || a.axis_key === 'capacidad_estanque_o_bateria');
+
+        expect(energySourceAxis).toBeDefined();
+        expect(consumptionAxis).toBeDefined();
+        expect(capacityAxis).toBeDefined();
+
+        // Normalización canónica de enums de combustible y energía
+        expect(cleanCanonicalAxisValue('Turbodiésel Ultra Bajo Azufre', energySourceAxis)).toBe('Diésel');
+        expect(cleanCanonicalAxisValue('Dual-fuel diesel gas natural', energySourceAxis)).toBe('Dual-Fuel Diésel-Gas');
+        expect(cleanCanonicalAxisValue('100% Electric BEV Battery', energySourceAxis)).toBe('Eléctrico Batería (BEV)');
+
+        // Validación de consumos SI
+        expect(cleanCanonicalAxisValue('28.5 L/h', consumptionAxis)).toBe('28.5 L/h');
+        expect(cleanCanonicalAxisValue('2.4 km/L', consumptionAxis)).toBe('2.4 km/L');
+        expect(cleanCanonicalAxisValue('378 L', capacityAxis)).toBe('378 L');
+
+        // Validación de contrato Zod v2 para GlobalEquipmentTypeDoc
+        const typeV2 = GlobalEquipmentTypeSchema.safeParse({
+            type_key: 'camion_tolva',
+            canonical_type_es: 'CAMIÓN TOLVA',
+            categoria_equipo: 'TRANSPORTE PESADO Y MOVIMIENTO DE TIERRA',
+            archetype_id: 'CAMION_TOLVA_CAEX',
+            type_aliases: ['camion tolva', 'volquete', 'dumper'],
+            search_tokens: ['camion', 'tolva', 'volquete'],
+            spec_schema: [
+                {
+                    axis_key: 'carga_util_nominal',
+                    label_es: 'Carga útil',
+                    unit_si: 't',
+                    value_kind: 'PHYSICAL_MAGNITUDE',
+                    search_keywords: ['carga útil', 'payload'],
+                    mandatory: true,
+                    is_differentiator: true,
+                },
+                {
+                    axis_key: 'fuente_energia',
+                    label_es: 'Fuente de energía',
+                    unit_si: 'Diésel | Eléctrico | Híbrido',
+                    value_kind: 'CLOSED_ENUM',
+                    allowed_enum_values: ['Diésel', 'Eléctrico Red AC', 'Eléctrico Batería (BEV)', 'Híbrido Diésel-Eléctrico'],
+                    search_keywords: ['combustible', 'energia'],
+                    mandatory: true,
+                    is_differentiator: true,
+                },
+                {
+                    axis_key: 'consumo_nominal_o_tasa',
+                    label_es: 'Consumo nominal',
+                    unit_si: 'L/h (km/L)',
+                    value_kind: 'PHYSICAL_MAGNITUDE',
+                    search_keywords: ['consumo', 'l/h', 'km/l'],
+                    mandatory: true,
+                    is_differentiator: false,
+                },
+                {
+                    axis_key: 'capacidad_estanque_o_bateria',
+                    label_es: 'Capacidad estanque',
+                    unit_si: 'L',
+                    value_kind: 'PHYSICAL_MAGNITUDE',
+                    search_keywords: ['estanque', 'capacidad'],
+                    mandatory: true,
+                    is_differentiator: false,
+                },
+            ],
+            schema_version: 2,
+            origin: 'SEEDED_ISO_BASE',
+            is_human_locked: false,
+            usage_count: 5,
+            created_at: '2026-11-09T00:00:00.000Z',
+            updated_at: '2026-11-09T00:00:00.000Z',
+        });
+        expect(typeV2.success).toBe(true);
     });
 });
 

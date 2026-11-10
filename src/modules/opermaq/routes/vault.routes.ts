@@ -23,10 +23,11 @@ import {
     CollectiveBenchmarkService,
 } from '../services/CollectiveBenchmarkService';
 import { buildAndPersistAssetSymbologyPack } from '../services/EquipmentSymbologyPackBuilder';
-import { huntVaultItem } from '../services/ItemHunterService';
+import { huntVaultItem, reconcileAssetSidebarProfileFromVault } from '../services/ItemHunterService';
 import {
     computePillarStructureDigestSha256,
     computeVaultMerkleRootSha256,
+    ensureFichaTecnicaConsumptionBaseItem,
     isPillarMerkleChainEvolved,
     itemizeSinglePillar,
     sortAndReindexPillarItems,
@@ -215,6 +216,31 @@ vaultRouter.post('/initialize-vault', requireCurateAI, checkVaultNotSealed, asyn
                 knowledge_vault: createEmptyKnowledgeVault(makeModel),
                 updatedAt: Date.now(),
             });
+        } else {
+            const fichaDoc = data.knowledge_vault?.ficha_tecnica;
+            const fichaItems = Array.isArray(fichaDoc?.items) ? fichaDoc.items : [];
+            if (fichaItems.length > 0 && !data.is_sealed && !data.isSealed && !data.knowledge_vault?.is_sealed) {
+                const healed = ensureFichaTecnicaConsumptionBaseItem({
+                    items: fichaItems,
+                    typeDoc: {
+                        type_key: String(data.equipment_type_key || data.tipo_equipo || ''),
+                        canonical_type_es: String(data.tipo_equipo || 'MAQUINARIA INDUSTRIAL'),
+                        categoria_equipo: String(data.categoria_equipo || 'MAQUINARIA'),
+                    },
+                    defaultSources: Array.isArray(fichaDoc?.classified_sources_itemized)
+                        ? fichaDoc.classified_sources_itemized
+                        : [],
+                });
+                if (healed.modified) {
+                    const structureDigest = computePillarStructureDigestSha256(healed.items, null) || '';
+                    await docRef.update({
+                        'knowledge_vault.ficha_tecnica.items': healed.items,
+                        'knowledge_vault.ficha_tecnica.structure_digest_sha256': structureDigest,
+                        'knowledge_vault.ficha_tecnica.updated_at': new Date().toISOString(),
+                        updatedAt: Date.now(),
+                    });
+                }
+            }
         }
 
         return res.status(200).json({
@@ -533,14 +559,18 @@ vaultRouter.post(
                 return res.status(400).json({ error: 'El activo no tiene fotografía cargada para re-encuadrar.' });
             }
 
-            // Descargar imagen actual (CAS o URL externa)
+            // Descargar imagen actual (CAS por ruta directa, proxy /api/media/blob o URL externa)
             let imgBuffer: Buffer | null = null;
-            if (currentUrl.includes('/cas_blobs/')) {
-                const match = currentUrl.match(/(cas_blobs\/[^?#]+)/);
-                if (match) {
-                    const casBlob = await CasStorageService.readCasBlob(match[1]);
-                    if (casBlob) imgBuffer = casBlob.buffer;
-                }
+            const casDirectMatch = String(currentUrl).match(/(cas_blobs\/[^?#]+)/);
+            const casProxyMatch = String(currentUrl).match(/\/api\/media\/blob\/([^/?#]+)\/([^/?#]+)/);
+            const resolvedCasPath = casDirectMatch
+                ? casDirectMatch[1]
+                : casProxyMatch
+                  ? `cas_blobs/${casProxyMatch[1]}/${casProxyMatch[2]}`
+                  : null;
+            if (resolvedCasPath) {
+                const casBlob = await CasStorageService.readCasBlob(resolvedCasPath);
+                if (casBlob) imgBuffer = casBlob.buffer;
             }
 
             if (!imgBuffer) {
@@ -560,8 +590,12 @@ vaultRouter.post(
                 return res.status(422).json({ error: 'No se pudo obtener el binario de la imagen actual para re-encuadrar.' });
             }
 
+            const storedOrigBytes = Number(data.foto_media_telemetry?.original_bytes || 0);
+            const baseOriginalBytes = storedOrigBytes > 0 ? storedOrigBytes : imgBuffer.length;
+
             const framed = await OfficialEquipmentPhotoService.frameBufferToStudio4x3({
                 inputBuffer: imgBuffer,
+                originalByteLength: baseOriginalBytes,
             });
 
             const descriptor = await CasStorageService.persistDigestedBinary(
@@ -571,10 +605,10 @@ vaultRouter.post(
                     mimeType: 'image/webp',
                     extension: 'webp',
                     profile: 'IMAGE_TECHNICAL_HD',
-                    originalBytes: imgBuffer.length,
+                    originalBytes: baseOriginalBytes,
                     optimizedBytes: framed.buffer.length,
                     savingsRatio: Number(
-                        ((imgBuffer.length - framed.buffer.length) / Math.max(1, imgBuffer.length)).toFixed(4)
+                        ((baseOriginalBytes - framed.buffer.length) / Math.max(1, baseOriginalBytes)).toFixed(4)
                     ),
                     width: framed.width,
                     height: framed.height,
@@ -583,16 +617,16 @@ vaultRouter.post(
                     scope: 'GLOBAL_OEM',
                     actorUid: req.opermaqContext?.actorId,
                     originalFilename: 'reframed_photo_studio88.webp',
-                    clientOriginalBytes: imgBuffer.length,
+                    clientOriginalBytes: baseOriginalBytes,
                 }
             );
 
             const fotoMediaTelemetry = {
-                original_bytes: imgBuffer.length,
+                original_bytes: baseOriginalBytes,
                 optimized_bytes: framed.buffer.length,
                 savings_pct: Math.max(
                     0,
-                    Math.round(((imgBuffer.length - framed.buffer.length) / Math.max(1, imgBuffer.length)) * 100)
+                    Math.round(((baseOriginalBytes - framed.buffer.length) / Math.max(1, baseOriginalBytes)) * 100)
                 ),
                 sha256: framed.sha256,
                 updated_at: new Date().toISOString(),
@@ -625,6 +659,130 @@ vaultRouter.post(
             });
         } catch (err) {
             return handleVaultError(res, err, 'Error re-encuadrando fotografía oficial.');
+        }
+    }
+);
+
+vaultRouter.post(
+    '/reconcile-sidebar-profile',
+    requireCurateAI,
+    checkVaultNotSealed,
+    async (req: ScopedRequest, res: Response) => {
+        const { globalAssetId } = req.body || {};
+        if (!globalAssetId || typeof globalAssetId !== 'string') {
+            return res.status(400).json({ error: 'globalAssetId es requerido.' });
+        }
+
+        try {
+            const reconciled = await reconcileAssetSidebarProfileFromVault(globalAssetId, {
+                allowGroundedEnrichmentIfNeeded: true,
+            });
+            if (!reconciled) {
+                return res.status(404).json({ error: 'No se encontró el activo para reconciliar su perfil lateral.' });
+            }
+
+            void AuditLedger.record({
+                tenantId: 'GLOBAL_OEM',
+                actorUid: req.opermaqContext?.actorId || 'system',
+                actorEmail: req.opermaqContext?.actorEmail || 'curador@minreport.com',
+                module: 'opermaq',
+                action: 'VAULT_SIDEBAR_PROFILE_RECONCILED',
+                targetEntity: `global_asset_catalog/${globalAssetId}`,
+                details: {
+                    globalAssetId,
+                    caracteristicasCount: reconciled.caracteristicas_principales.length,
+                    ambienteCount: reconciled.ambiente_operativo.length,
+                    contextoCount: reconciled.contexto_operativo.length,
+                },
+            }).catch(() => undefined);
+
+            return res.status(200).json({
+                success: true,
+                ...reconciled,
+            });
+        } catch (err) {
+            return handleVaultError(res, err, 'Error reconciliando perfil lateral del equipo.');
+        }
+    }
+);
+
+vaultRouter.post(
+    '/update-sidebar-profile',
+    requireCurateAI,
+    checkVaultNotSealed,
+    async (req: ScopedRequest, res: Response) => {
+        const schema = z.object({
+            globalAssetId: z.string().min(1),
+            confirmationKeyword: z.string().min(1),
+            caracteristicas_principales: z.array(z.string()).optional(),
+            ambiente_operativo: z.array(z.string()).optional(),
+            contexto_operativo: z.array(z.string()).optional(),
+        });
+
+        const parsed = schema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({ error: 'Parámetros inválidos para actualización quirúrgica del perfil lateral.' });
+        }
+
+        const {
+            globalAssetId,
+            confirmationKeyword,
+            caracteristicas_principales,
+            ambiente_operativo,
+            contexto_operativo,
+        } = parsed.data;
+
+        if (confirmationKeyword.trim().toUpperCase() !== 'ACTUALIZAR') {
+            return res.status(400).json({
+                error: 'Confirmación HITL inválida. Debe escribir exactamente ACTUALIZAR.',
+            });
+        }
+
+        try {
+            const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
+            const snap = await docRef.get();
+            if (!snap.exists) {
+                return res.status(404).json({ error: 'Activo no encontrado.' });
+            }
+
+            const updates: Record<string, any> = { updatedAt: Date.now() };
+            if (Array.isArray(caracteristicas_principales)) {
+                updates.caracteristicas_principales = caracteristicas_principales
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+            }
+            if (Array.isArray(ambiente_operativo)) {
+                updates.ambiente_operativo = ambiente_operativo
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+            }
+            if (Array.isArray(contexto_operativo)) {
+                updates.contexto_operativo = contexto_operativo
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+            }
+
+            await docRef.update(updates);
+
+            void AuditLedger.record({
+                tenantId: 'GLOBAL_OEM',
+                actorUid: req.opermaqContext?.actorId || 'system',
+                actorEmail: req.opermaqContext?.actorEmail || 'curador@minreport.com',
+                module: 'opermaq',
+                action: 'VAULT_SIDEBAR_PROFILE_HITL_UPDATED',
+                targetEntity: `global_asset_catalog/${globalAssetId}`,
+                details: {
+                    globalAssetId,
+                    updatedFields: Object.keys(updates).filter((k) => k !== 'updatedAt'),
+                },
+            }).catch(() => undefined);
+
+            return res.status(200).json({
+                success: true,
+                ...updates,
+            });
+        } catch (err) {
+            return handleVaultError(res, err, 'Error guardando actualización HITL del perfil lateral.');
         }
     }
 );

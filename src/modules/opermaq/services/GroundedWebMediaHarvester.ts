@@ -713,9 +713,11 @@ Responde SOLO JSON:
             // FIX-02: base = URL final real (no el redirector de grounding)
             const extracted = extractTechnicalCandidatesFromHtml(html, fetched.finalUrl);
             for (const pdf of extracted.pdfUrls) discoveredPdfUrls.add(pdf);
-            if (extracted.images.length === 0) bumpRejection(report, 'HTML_SIN_IMAGENES_ESTATICAS');
-            for (const img of extracted.images.slice(0, 6)) {
-                if (candidateImages.length < 14) candidateImages.push(img);
+            if (maxFigures > 0) {
+                if (extracted.images.length === 0) bumpRejection(report, 'HTML_SIN_IMAGENES_ESTATICAS');
+                for (const img of extracted.images.slice(0, 6)) {
+                    if (candidateImages.length < 14) candidateImages.push(img);
+                }
             }
         };
 

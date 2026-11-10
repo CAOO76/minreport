@@ -6,9 +6,11 @@ import {
 } from '../../../core/resilient-ai-client';
 import type { CatalogProfile, EquipmentTypeOrigin, GlobalEquipmentTypeDoc } from '../types/vault.types';
 import {
+    detectDeterministicEquipmentTypeFromBrandAndModel,
     extractHomologousAxisValues,
     MISSING_AXIS_VALUE,
     MISSING_FULL_TECH_SPEC,
+    sanitizeDesignAndWorkContextItems,
     serializeCanonicalSlotsToSpecsArray,
     type CanonicalSpecSlot,
     type MachineryArchetypeId,
@@ -82,10 +84,14 @@ const PASS2_TYPE_EXTRACTION_SCHEMA = {
         ambiente_operativo: {
             type: Type.ARRAY,
             items: { type: Type.STRING },
+            description:
+                'CONDICIONES DE DISEÑO (2 a 4 viñetas técnicas concretas verificadas en la evidencia): certificaciones de cabina/estructura (ROPS/FOPS, presurización), régimen hidráulico/térmico/altitud/emisiones y configuración de tracción/rodado/terreno. Prohibido usar palabras sueltas como "Superficie".',
         },
         contexto_operativo: {
             type: Type.ARRAY,
             items: { type: Type.STRING },
+            description:
+                'CONTEXTO Y TRABAJO (2 a 4 viñetas técnicas concretas verificadas en la evidencia): aplicaciones operativas reales en minería, construcción o industria e implementos compatibles. Prohibido usar frases vacías como "Operación Técnica" u "Operación Industrial".',
         },
         extracted_axes: {
             type: Type.ARRAY,
@@ -205,6 +211,17 @@ async function resolveTargetEquipmentTypeForAsset(
             rawTypeKey: explicitFromText.type_key,
             rawTypeHint: explicitFromText.canonical_type_es,
             rawCategoryHint: seedHint?.categoria_equipo,
+            assetQueryContext: assetContext,
+        });
+        return { typeDoc: res.typeDoc, reusedExistingSchema: res.reusedExistingSchema };
+    }
+
+    const deterministicMatch = detectDeterministicEquipmentTypeFromBrandAndModel(assetContext);
+    if (deterministicMatch) {
+        const res = await resolveOrLearnEquipmentType({
+            rawTypeKey: deterministicMatch.type_key,
+            rawTypeHint: deterministicMatch.canonical_type_es,
+            rawCategoryHint: seedHint?.categoria_equipo || deterministicMatch.categoria_equipo,
             assetQueryContext: assetContext,
         });
         return { typeDoc: res.typeDoc, reusedExistingSchema: res.reusedExistingSchema };
@@ -361,8 +378,11 @@ Consulta mediante Google Search la hoja de especificaciones oficial del fabrican
 - TIPO CANÓNICO DE EQUIPO: "${typeDoc.canonical_type_es}" (${typeDoc.categoria_equipo})
 
 TAREA EXCLUSIVA — BÚSQUEDA DIRIGIDA POR TIPO DE EQUIPO:
-Para un equipo de tipo "${typeDoc.canonical_type_es}", busca y reporta en español técnico conciso ÚNICAMENTE las cifras reales comprobadas de estos ${typeDoc.spec_schema.length} parámetros específicos de su clase:
+Para un equipo de tipo "${typeDoc.canonical_type_es}", busca y reporta en español técnico conciso:
+A) Las cifras reales comprobadas de estos ${typeDoc.spec_schema.length} parámetros específicos de su clase (incluyendo diferenciadores de sufijo OEM como XHP, XE, VHP, LGP, LC y consumos energéticos):
 ${requestedAxesGuide}
+B) CONDICIONES DE DISEÑO (ambiente_operativo): certificaciones de cabina/estructura (ROPS/FOPS, presurización), régimen hidráulico/térmico/emisiones (Tier/Stage) y configuración de tracción/rodado/superficie de trabajo.
+C) CONTEXTO Y TRABAJO (contexto_operativo): aplicaciones operativas reales en minería, construcción o industria y familia de herramientas/implementos compatibles.
 
 REGLAS ESTRICTAS:
 1. NO busques ni reportes parámetros ajenos a "${typeDoc.canonical_type_es}".
@@ -415,10 +435,8 @@ REGLAS ESTRICTAS:
                 .trim()
                 .toUpperCase(),
             canonical_specs: emptySlots,
-            ambiente_operativo: seedHint?.ambiente_operativo?.length ? seedHint.ambiente_operativo : ['Superficie'],
-            contexto_operativo: seedHint?.contexto_operativo?.length
-                ? seedHint.contexto_operativo
-                : ['Operación Industrial'],
+            ambiente_operativo: sanitizeDesignAndWorkContextItems(seedHint?.ambiente_operativo),
+            contexto_operativo: sanitizeDesignAndWorkContextItems(seedHint?.contexto_operativo),
             caracteristicas_principales: [MISSING_FULL_TECH_SPEC],
             grounded_sources: [],
         };
@@ -454,9 +472,11 @@ ${localEvidenceBlock ? `${localEvidenceBlock}\n\n` : ''}${webEvidenceText.slice(
 REGLAS INVIOLABLES FAIL-CLOSED:
 1. PROHIBIDO usar conocimiento externo o memoria interna fuera del bloque EVIDENCIA DOCUMENTAL RECUPERADA.
 2. Si un eje ("axis_key") NO tiene cifra o configuración explícita en la evidencia adjunta (o dice "NO DECLARADO"), DEBES devolver "value_si": null, "source_url": null, "verbatim_evidence": null.
-3. En "value_si" escribe ÚNICAMENTE la magnitud numérica con su unidad métrica SI (ej. "136 kW (183 HP)", "3.700 mm", "8,5 m³/min", "7 bar", "15.800 kg") o el valor exacto del enum técnico permitido. JAMÁS incluyas el nombre de la etiqueta dentro de "value_si".
-4. PROHIBIDO escribir eslóganes comerciales, adjetivos promocionales o afirmaciones operacionales.
-5. "source_url" DEBE ser exactamente una de las URLs listadas en FUENTES VERIFICADAS DISPONIBLES.`;
+3. En "value_si" escribe ÚNICAMENTE la magnitud numérica con su unidad métrica SI (ej. "136 kW (183 HP)", "150 L/min @ 280 bar", "3.700 mm", "8,5 m³/min", "7 bar", "15.800 kg") o el valor exacto del enum técnico permitido. JAMÁS incluyas el nombre de la etiqueta dentro de "value_si".
+4. En "ambiente_operativo" (CONDICIONES DE DISEÑO) devuelve 2 a 4 viñetas técnicas concretas verificadas (certificaciones ROPS/FOPS, circuito hidráulico/térmico/emisiones, tracción y terreno). Prohibido devolver palabras genéricas como "Superficie".
+5. En "contexto_operativo" (CONTEXTO Y TRABAJO) devuelve 2 a 4 viñetas técnicas concretas verificadas (aplicaciones operativas en minería/construcción/industria e implementos compatibles). Prohibido devolver frases vacías como "Operación Técnica" u "Operación Industrial".
+6. PROHIBIDO escribir eslóganes comerciales, adjetivos promocionales o afirmaciones operacionales.
+7. "source_url" DEBE ser exactamente una de las URLs listadas en FUENTES VERIFICADAS DISPONIBLES.`;
 
     try {
         const { data } = await ResilientAIClient.generateStructured<{
@@ -501,18 +521,14 @@ REGLAS INVIOLABLES FAIL-CLOSED:
                 .trim()
                 .toUpperCase(),
             canonical_specs: canonicalSlots,
-            ambiente_operativo:
-                Array.isArray(data.ambiente_operativo) && data.ambiente_operativo.length > 0
-                    ? data.ambiente_operativo
-                    : seedHint?.ambiente_operativo?.length
-                    ? seedHint.ambiente_operativo
-                    : ['Superficie'],
-            contexto_operativo:
-                Array.isArray(data.contexto_operativo) && data.contexto_operativo.length > 0
-                    ? data.contexto_operativo
-                    : seedHint?.contexto_operativo?.length
-                    ? seedHint.contexto_operativo
-                    : ['Operación Industrial'],
+            ambiente_operativo: sanitizeDesignAndWorkContextItems(
+                data.ambiente_operativo,
+                seedHint?.ambiente_operativo
+            ),
+            contexto_operativo: sanitizeDesignAndWorkContextItems(
+                data.contexto_operativo,
+                seedHint?.contexto_operativo
+            ),
             caracteristicas_principales: serializeCanonicalSlotsToSpecsArray(canonicalSlots),
             grounded_sources: collectedGroundingSources.map((s) => s.uri),
         };
@@ -535,10 +551,8 @@ REGLAS INVIOLABLES FAIL-CLOSED:
                 .trim()
                 .toUpperCase(),
             canonical_specs: emptySlots,
-            ambiente_operativo: seedHint?.ambiente_operativo?.length ? seedHint.ambiente_operativo : ['Superficie'],
-            contexto_operativo: seedHint?.contexto_operativo?.length
-                ? seedHint.contexto_operativo
-                : ['Operación Industrial'],
+            ambiente_operativo: sanitizeDesignAndWorkContextItems(seedHint?.ambiente_operativo),
+            contexto_operativo: sanitizeDesignAndWorkContextItems(seedHint?.contexto_operativo),
             caracteristicas_principales: [MISSING_FULL_TECH_SPEC],
             grounded_sources: collectedGroundingSources.map((s) => s.uri),
         };

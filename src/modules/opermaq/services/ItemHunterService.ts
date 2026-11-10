@@ -42,6 +42,15 @@ import {
     mergeDeduplicatedFigures,
     reconcileSectionFiguresAndPendingMarkers,
 } from './VaultReconciliationService';
+import { enrichCatalogProfile } from './CatalogProfileEnricher';
+import { resolveOrLearnEquipmentType } from './EquipmentTypeRegistryService';
+import {
+    type CanonicalSpecSlot,
+    deriveEnergyConsumptionProfile,
+    hasOnlyGenericOrMissingContextItems,
+    sanitizeDesignAndWorkContextItems,
+    serializeCanonicalSlotsToSpecsArray,
+} from '../utils/canonicalArchetypeSpecs';
 
 const symbologyPackRebuildTimers = new Map<string, NodeJS.Timeout>();
 function scheduleDebouncedAssetSymbologyPackRebuild(globalAssetId: string, delayMs = 3500): void {
@@ -52,6 +61,233 @@ function scheduleDebouncedAssetSymbologyPackRebuild(globalAssetId: string, delay
         void buildAndPersistAssetSymbologyPack(globalAssetId).catch(() => {});
     }, delayMs);
     symbologyPackRebuildTimers.set(globalAssetId, timer);
+}
+
+/**
+ * Sincroniza bidireccionalmente el contenido verificado del Pilar 01 (`ficha_tecnica`)
+ * hacia la columna lateral izquierda (`canonical_specs`, `caracteristicas_principales`,
+ * `ambiente_operativo`, `contexto_operativo` y `energy_consumption_profile`).
+ */
+export async function reconcileAssetSidebarProfileFromVault(
+    globalAssetId: string,
+    options?: { allowGroundedEnrichmentIfNeeded?: boolean }
+): Promise<{
+    canonical_specs: CanonicalSpecSlot[];
+    caracteristicas_principales: string[];
+    ambiente_operativo: string[];
+    contexto_operativo: string[];
+    energy_consumption_profile: Record<string, any>;
+} | null> {
+    try {
+        const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
+        const snap = await docRef.get();
+        if (!snap.exists) return null;
+        const data = snap.data();
+        if (!data) return null;
+
+        const makeOficial = String(data.make_oficial || data.make || 'GENÉRICO').trim();
+        const modelOficial = String(data.model_oficial || data.model || globalAssetId).trim();
+
+        const fichaItems: PillarItem[] = Array.isArray(data.knowledge_vault?.ficha_tecnica?.items)
+            ? data.knowledge_vault.ficha_tecnica.items.filter((it: any) => !it?.is_discarded)
+            : [];
+        const fullMarkdown = fichaItems
+            .map((it) => `${it.title}\n${it.content || ''}`)
+            .join('\n\n');
+
+        const typeRes = await resolveOrLearnEquipmentType({
+            rawTypeKey: data.equipment_type_key,
+            rawTypeHint: data.tipo_equipo,
+            rawCategoryHint: data.categoria_equipo,
+            assetQueryContext: `${makeOficial} ${modelOficial}`,
+        });
+        const typeDoc = typeRes.typeDoc;
+
+        const existingSlots: CanonicalSpecSlot[] = Array.isArray(data.canonical_specs)
+            ? [...data.canonical_specs]
+            : [];
+        const existingByKey = new Map<string, CanonicalSpecSlot>();
+        for (const s of existingSlots) {
+            if (s && s.axis_key) existingByKey.set(s.axis_key, s);
+        }
+
+        const primaryVerifiedUrl =
+            String(data.official_url || '').trim() ||
+            fichaItems.find((it) => Array.isArray(it.item_sources) && it.item_sources.length > 0)?.item_sources?.[0]
+                ?.url ||
+            null;
+
+        const profile = deriveEnergyConsumptionProfile({
+            tipo_equipo: data.tipo_equipo || typeDoc.canonical_type_es,
+            categoria_equipo: data.categoria_equipo || typeDoc.categoria_equipo,
+            canonical_specs: existingSlots,
+            caracteristicas_principales: data.caracteristicas_principales,
+            fichaTecnicaMarkdown: fullMarkdown,
+            official_url: primaryVerifiedUrl,
+            existingProfile: data.energy_consumption_profile,
+        });
+
+        // Fusionar esquema actualizado del TIPO con los slots existentes y rescatar valores verificados desde el Markdown del Pilar 01
+        const mergedSlots: CanonicalSpecSlot[] = typeDoc.spec_schema.map((schemaAxis) => {
+            const prev = existingByKey.get(schemaAxis.axis_key);
+            if (prev && prev.value_si && !prev.value_si.startsWith('[')) {
+                return {
+                    ...prev,
+                    label_es: schemaAxis.label_es,
+                    unit_si: schemaAxis.unit_si,
+                    mandatory: schemaAxis.mandatory,
+                    is_differentiator: schemaAxis.is_differentiator,
+                    value_kind: schemaAxis.value_kind,
+                };
+            }
+
+            let rescuedValue: string | null = null;
+            if (schemaAxis.axis_key === 'fuente_energia' && profile.energy_source !== 'NO_DECLARADO') {
+                const mapLabel: Record<string, string> = {
+                    DIESEL: 'Diésel',
+                    GASOLINA: 'Gasolina',
+                    ELECTRICO_RED_AC: 'Eléctrico Red AC',
+                    ELECTRICO_BATERIA_BEV: 'Eléctrico Batería (BEV)',
+                    HIBRIDO_DIESEL_ELECTRICO: 'Híbrido Diésel-Eléctrico',
+                    HIBRIDO_GASOLINA_ELECTRICO: 'Híbrido Gasolina-Eléctrico',
+                    DUAL_FUEL_DIESEL_GAS: 'Dual-Fuel Diésel-Gas',
+                    GLP_GNV: 'GLP / GNV',
+                    NEUMATICO_AIRE_COMPRIMIDO: 'Neumático (Aire Comprimido)',
+                };
+                rescuedValue = profile.energy_spec_label || mapLabel[profile.energy_source] || null;
+            } else if (schemaAxis.axis_key === 'consumo_energetico_nominal') {
+                rescuedValue =
+                    profile.hourly_consumption_by_load.medium_load_50_65pct ||
+                    profile.road_haul_efficiency.km_per_liter ||
+                    profile.road_haul_efficiency.liters_per_100km ||
+                    profile.pneumatic_or_hydraulic_flow ||
+                    profile.specific_consumption_bsfc_gkwh ||
+                    null;
+            } else if (schemaAxis.axis_key === 'capacidad_energetica_autonomia') {
+                rescuedValue = profile.storage_and_autonomy.tank_or_battery_capacity || null;
+            } else if (schemaAxis.axis_key === 'caudal_presion_hidraulica_aux' && fullMarkdown) {
+                const flowMatch = fullMarkdown.match(
+                    /(?:caudal\s+hidr[aá]ulico(?:\s+auxiliar|\s+xhp|\s+ m[aá]ximo)?|high\s+flow|xhp)[^|\n]{0,60}?(\d{2,3}(?:[.,]\d+)?\s*L\/min)/i
+                );
+                const pressMatch = fullMarkdown.match(
+                    /(?:presi[oó]n\s+hidr[aá]ulica(?:\s+auxiliar|\s+xhp|\s+de\s+alivio)?|xhp)[^|\n]{0,60}?(\d{2,3}(?:[.,]\d+)?\s*bar)/i
+                );
+                if (flowMatch && pressMatch) {
+                    rescuedValue = `${flowMatch[1].trim()} @ ${pressMatch[1].trim()}`;
+                } else if (flowMatch) {
+                    rescuedValue = flowMatch[1].trim();
+                }
+            } else if (schemaAxis.axis_key === 'carga_vuelco_estatica' && fullMarkdown) {
+                const tipMatch = fullMarkdown.match(
+                    /(?:carga\s+(?:est[aá]tica\s+de\s+)?vuelco|tipping\s+load)[^|\n]{0,50}?(\d{1,2}[.,]\d{3}\s*kg|\d{3,5}\s*kg)/i
+                );
+                if (tipMatch) {
+                    rescuedValue = tipMatch[1].trim();
+                }
+            }
+
+            return {
+                axis_key: schemaAxis.axis_key,
+                label_es: schemaAxis.label_es,
+                value_si: rescuedValue || prev?.value_si || null,
+                unit_si: schemaAxis.unit_si,
+                mandatory: schemaAxis.mandatory,
+                is_differentiator: schemaAxis.is_differentiator,
+                value_kind: schemaAxis.value_kind,
+                ...(schemaAxis.allowed_enum_values ? { allowed_enum_values: schemaAxis.allowed_enum_values } : {}),
+                source_url: rescuedValue ? profile.source_url || primaryVerifiedUrl : prev?.source_url || null,
+                verbatim_evidence: prev?.verbatim_evidence || null,
+            };
+        });
+
+        let nextAmbiente = sanitizeDesignAndWorkContextItems(data.ambiente_operativo);
+        let nextContexto = sanitizeDesignAndWorkContextItems(data.contexto_operativo);
+        let finalSlots = mergedSlots;
+
+        const needsContextUpgrade =
+            hasOnlyGenericOrMissingContextItems(data.ambiente_operativo) ||
+            hasOnlyGenericOrMissingContextItems(data.contexto_operativo);
+        const missingDiffAxes = finalSlots.filter((s) => s.is_differentiator && !s.value_si).length;
+
+        if (
+            (needsContextUpgrade || missingDiffAxes > 0) &&
+            (fullMarkdown.trim().length > 200 || options?.allowGroundedEnrichmentIfNeeded)
+        ) {
+            try {
+                const gatheredSources = fichaItems
+                    .flatMap((it) => (Array.isArray(it.item_sources) ? it.item_sources : []))
+                    .filter((s) => s && s.url)
+                    .map((s) => ({ uri: s.url, title: `${s.author}: ${s.description}` }));
+                if (primaryVerifiedUrl && !gatheredSources.some((g) => g.uri === primaryVerifiedUrl)) {
+                    gatheredSources.unshift({ uri: primaryVerifiedUrl, title: `${makeOficial} ${modelOficial} OEM` });
+                }
+
+                const enriched = await enrichCatalogProfile(
+                    makeOficial,
+                    modelOficial,
+                    {
+                        equipment_type_key: typeDoc.type_key,
+                        tipo_equipo: typeDoc.canonical_type_es,
+                        categoria_equipo: data.categoria_equipo || typeDoc.categoria_equipo,
+                        ambiente_operativo: nextAmbiente,
+                        contexto_operativo: nextContexto,
+                    },
+                    Boolean(data.is_generic),
+                    {
+                        globalAssetId,
+                        preRetrievedEvidenceText: fullMarkdown.trim().length > 200 ? fullMarkdown : undefined,
+                        preRetrievedSources: gatheredSources.length > 0 ? gatheredSources : undefined,
+                        preResolvedTypeDoc: typeDoc,
+                    }
+                );
+
+                if (!hasOnlyGenericOrMissingContextItems(enriched.ambiente_operativo)) {
+                    nextAmbiente = enriched.ambiente_operativo;
+                }
+                if (!hasOnlyGenericOrMissingContextItems(enriched.contexto_operativo)) {
+                    nextContexto = enriched.contexto_operativo;
+                }
+                if (Array.isArray(enriched.canonical_specs)) {
+                    finalSlots = finalSlots.map((slot) => {
+                        if (slot.value_si && !slot.value_si.startsWith('[')) return slot;
+                        const found = enriched.canonical_specs?.find((e) => e.axis_key === slot.axis_key);
+                        return found && found.value_si ? { ...slot, ...found } : slot;
+                    });
+                }
+            } catch {
+                // Conservar slots y listas sanitizadas locales si el enriquecedor falla
+            }
+        }
+
+        const nextCaracteristicas = serializeCanonicalSlotsToSpecsArray(finalSlots);
+
+        await docRef.update({
+            equipment_type_key: typeDoc.type_key,
+            canonical_specs: finalSlots,
+            caracteristicas_principales: nextCaracteristicas,
+            ambiente_operativo: nextAmbiente,
+            contexto_operativo: nextContexto,
+            energy_consumption_profile: profile,
+            updatedAt: Date.now(),
+        });
+
+        return {
+            canonical_specs: finalSlots,
+            caracteristicas_principales: nextCaracteristicas,
+            ambiente_operativo: nextAmbiente,
+            contexto_operativo: nextContexto,
+            energy_consumption_profile: profile,
+        };
+    } catch (err: any) {
+        console.warn(`[ItemHunterService] Error reconciliando perfil lateral de ${globalAssetId}:`, err?.message);
+        return null;
+    }
+}
+
+async function syncEnergyProfileAndCanonicalSpecs(globalAssetId: string): Promise<void> {
+    await reconcileAssetSidebarProfileFromVault(globalAssetId, {
+        allowGroundedEnrichmentIfNeeded: false,
+    });
 }
 
 /**
@@ -722,7 +958,8 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
         //    b) Cosecha web/PDF (URL final real, srcset, og:image, mupdf + box_2d) + texto de evidencia de cada fuente
         //    OPT-F3.5: el juez VLM recibe un resumen por sección y `maxFigures` se adapta a las secciones con referencia visual.
         const sectionVisualSummary = buildSectionVisualSummary(symbolizedMarkdown, currentItem.title);
-        const adaptiveMaxFigures = Math.min(6, Math.max(2, countSectionsWithExplicitVisualReference(symbolizedMarkdown)));
+        const explicitVisualRefs = countSectionsWithExplicitVisualReference(symbolizedMarkdown);
+        const adaptiveMaxFigures = explicitVisualRefs > 0 ? Math.min(6, explicitVisualRefs) : 0;
         const harvestSources = [
             ...groundingSources,
             ...preAssignedSources
@@ -1079,6 +1316,11 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
 
         // 5. Actualizar paquete ad-hoc de simbología del activo con debounce (`VEL-03`) para evitar contención en cazas concurrentes
         scheduleDebouncedAssetSymbologyPackRebuild(globalAssetId);
+
+        // 5b. Sincronizar perfil de consumos de energía y slots canónicos al cazar ficha técnica
+        if (pillarId === 'ficha_tecnica') {
+            void syncEnergyProfileAndCanonicalSpecs(globalAssetId).catch(() => undefined);
+        }
 
         // 6. Trazabilidad Criptográfica Inmutable en `AuditLedger` (`SEC-05`: preserva `actorId` humano)
         void AuditLedger.record({
