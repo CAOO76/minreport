@@ -504,3 +504,178 @@ export const ApplyCatalogHomologationBodySchema = z.object({
     confirm_word: z.string().trim().min(1),
 });
 
+// ── Gobernanza HITL "ACTUALIZAR", Bóveda Técnica y Bucle TEST-PILOT ───────────
+
+export function isValidHitlConfirmWord(raw: unknown): boolean {
+    return String(raw ?? '').trim().toUpperCase() === HITL_CONFIRM_KEYWORD;
+}
+
+export const HitlConfirmWordSchema = z
+    .string()
+    .trim()
+    .refine((val) => val.toUpperCase() === HITL_CONFIRM_KEYWORD, {
+        message: 'CONFIRM_WORD_MISMATCH',
+    });
+
+export const VaultPillarIdSchema = z.enum([
+    'ficha_tecnica',
+    'manual_operaciones',
+    'pauta_mantencion',
+    'matriz_riesgos',
+    'checklist_pre_op',
+]);
+
+export type VaultPillarId = z.infer<typeof VaultPillarIdSchema>;
+
+export const ReframePhotoMetricsSchema = z
+    .object({
+        original_bytes: z.number().nonnegative().optional(),
+        optimized_bytes: z.number().nonnegative().optional(),
+        savings_pct: z.number().nonnegative().optional(),
+        originalBytes: z.number().nonnegative().optional(),
+        optimizedBytes: z.number().nonnegative().optional(),
+        savingsPct: z.number().nonnegative().optional(),
+        sha256: z.string().optional(),
+        width: z.number().positive().optional(),
+        height: z.number().positive().optional(),
+        updated_at: z.string().optional(),
+    })
+    .passthrough();
+
+export type ReframePhotoMetrics = z.infer<typeof ReframePhotoMetricsSchema>;
+
+export const ReframeOfficialPhotoBodySchema = z
+    .object({
+        assetId: z.string().trim().min(1).max(160).optional(),
+        globalAssetId: z.string().trim().min(1).max(160).optional(),
+        previewOnly: z.boolean().optional().default(false),
+        confirmWord: z.string().optional(),
+        proposedUrl: z.string().trim().min(1).max(2048).optional(),
+        proposedSha256: z
+            .string()
+            .trim()
+            .regex(/^[a-f0-9]{64}$/i)
+            .optional(),
+        proposedMetrics: ReframePhotoMetricsSchema.optional(),
+    })
+    .refine((data) => Boolean(data.assetId || data.globalAssetId), {
+        message: 'assetId o globalAssetId es obligatorio.',
+    });
+
+export type ReframeOfficialPhotoBody = z.infer<typeof ReframeOfficialPhotoBodySchema>;
+
+export const ReconcileSidebarProfileBodySchema = z
+    .object({
+        assetId: z.string().trim().min(1).max(160).optional(),
+        globalAssetId: z.string().trim().min(1).max(160).optional(),
+        previewOnly: z.boolean().optional().default(false),
+        confirmWord: z.string().optional(),
+        approvedProfile: z.record(z.string(), z.unknown()).optional(),
+    })
+    .refine((data) => Boolean(data.assetId || data.globalAssetId), {
+        message: 'assetId o globalAssetId es obligatorio.',
+    });
+
+export type ReconcileSidebarProfileBody = z.infer<typeof ReconcileSidebarProfileBodySchema>;
+
+export const PilotHitlConsolidateBodySchema = z.object({
+    decision: z.enum(['APPROVED', 'REJECTED']),
+    confirmWord: HitlConfirmWordSchema,
+    approvedFields: z.record(z.string(), z.unknown()).optional(),
+    curatedDirective: z.string().max(32000).nullable().optional(),
+});
+
+export type PilotHitlConsolidateBody = z.infer<typeof PilotHitlConsolidateBodySchema>;
+
+export const VaultUpdateAssetImageBodySchema = z
+    .object({
+        globalAssetId: z.string().trim().min(1).max(160).optional(),
+        assetId: z.string().trim().min(1).max(160).optional(),
+        tenantAssetId: z.string().trim().max(160).optional(),
+        imageUrl: z.string().max(2048).nullable(),
+        imagePath: z.string().max(1024).nullable().optional(),
+        imageMetadata: z.record(z.string(), z.unknown()).nullable().optional(),
+        fotoMediaTelemetry: z.record(z.string(), z.unknown()).nullable().optional(),
+        fotoVlmAuditVersion: z.number().int().nullable().optional(),
+        officialPhotoCandidates: z.array(z.record(z.string(), z.unknown())).optional(),
+        confirmWord: HitlConfirmWordSchema,
+    })
+    .refine((data) => Boolean(data.globalAssetId || data.assetId), {
+        message: 'globalAssetId o assetId es obligatorio.',
+    });
+
+export const VaultCreateItemBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    pillarId: VaultPillarIdSchema,
+    title: z.string().trim().min(1).max(400),
+    section: z.string().trim().min(1).max(240),
+    rationale: z.string().max(4000).optional(),
+    priority: z.string().trim().max(40).optional(),
+    itemSource: z.record(z.string(), z.unknown()).optional(),
+    confirmWord: HitlConfirmWordSchema,
+});
+
+export const VaultMutateItemHitlBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    pillarId: VaultPillarIdSchema,
+    itemId: z.string().trim().min(1).max(160),
+    confirmWord: HitlConfirmWordSchema,
+});
+
+export const VaultBulkApproveBodySchema = z.object({
+    confirmWord: HitlConfirmWordSchema,
+    items: z
+        .array(
+            z.object({
+                globalAssetId: z.string().trim().min(1).max(160),
+                pillarId: VaultPillarIdSchema,
+                itemId: z.string().trim().min(1).max(160),
+            })
+        )
+        .max(500),
+});
+
+export const VaultUpdateItemContentBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    pillarId: VaultPillarIdSchema,
+    itemId: z.string().trim().min(1).max(160),
+    newContent: z.string().max(250000),
+    confirmWord: HitlConfirmWordSchema,
+});
+
+export const VaultApplyAssistProposalBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    pillarId: VaultPillarIdSchema,
+    itemId: z.string().trim().min(1).max(160),
+    finalContent: z.string().min(1).max(250000),
+    intent: z.string().max(120).optional(),
+    sessionId: z.string().max(160).optional(),
+    messageId: z.string().max(160).optional(),
+    userEmail: z.string().max(320).optional(),
+    confirmWord: HitlConfirmWordSchema,
+});
+
+export const VaultResolveConflictBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    pillarId: VaultPillarIdSchema,
+    itemId: z.string().trim().min(1).max(160),
+    action: z.enum(['ACCEPT', 'REJECT']),
+    proposal: z
+        .object({
+            proposal_id: z.string().optional(),
+            componente: z.string().optional(),
+            zona: z.string().optional(),
+        })
+        .passthrough(),
+    confirmWord: HitlConfirmWordSchema,
+});
+
+export const VaultRollbackVersionBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    pillarId: VaultPillarIdSchema,
+    itemId: z.string().trim().min(1).max(160),
+    timestamp: z.string().trim().min(1).max(80),
+    confirmWord: HitlConfirmWordSchema,
+});
+
+

@@ -94,32 +94,161 @@ const ENERGY_SOURCE_VALUE_REGEX =
 const ANY_SI_METRIC =
     /\b\d[\d.,]*\s*(?:l\/100\s*km|kwh\/100\s*km|km\/l|g\/kwh|lb\/hp[·.\s-]?h(?:r)?|kwh\/h|kwh\/t|l\/t|l\/ton|gal\/h|gph|mpg|m³\/min|m³|(?:kg|t|ton|kw|hp|cv|m3\/min|m3|mm|m|cm|l\/s|l\/min|l\/h|cfm|scfm|bar|mpa|psi|kn|n[·.\s-]?m|kva|kwh|ah|v|hz|j|rpm)\b)/i;
 
-const ARCHETYPE_UNIVERSAL_ENERGY_AXES: ArchetypeAxisDefinition[] = [
-    {
+const ENERGY_AXIS_KEY_SET = new Set([
+    'fuente_energia',
+    'consumo_energetico_nominal',
+    'capacidad_energetica_autonomia',
+]);
+
+export function resolveUniversalEnergyAxes(params?: {
+    primaryEnergy?: string | null;
+    energyValueText?: string | null;
+    typeContextText?: string | null;
+}): ArchetypeAxisDefinition[] {
+    const sourceAxis: ArchetypeAxisDefinition = {
         axis_key: 'fuente_energia',
         label_es: 'Fuente energía',
-        unit_hint: 'Diésel | Gasolina | Eléctrico | Híbrido | GLP/GNV | Neumático',
+        unit_hint: 'Diésel | Gasolina | Eléctrico Batería (BEV) | Eléctrico Red AC | Híbrido | GLP/GNV | Neumático',
         mandatory: false,
-        legacyKeyPattern: /\b(fuente\s+(?:de\s+)?energ[ií]a|tipo\s+de\s+(?:combustible|energ[ií]a)|combustible|alimentaci[oó]n\s+energ[eé]tica)\b/i,
+        legacyKeyPattern:
+            /\b(fuente\s+(?:de\s+)?energ[ií]a|tipo\s+de\s+(?:combustible|energ[ií]a)|combustible|alimentaci[oó]n\s+energ[eé]tica)\b/i,
         validValuePattern: ENERGY_SOURCE_VALUE_REGEX,
-    },
-    {
-        axis_key: 'consumo_energetico_nominal',
-        label_es: 'Consumo horario combustible',
-        unit_hint: 'L/h · g/kWh',
-        mandatory: false,
-        legacyKeyPattern: /\b(consumo\s+(?:energ[eé]tico|nominal|de\s+combustible|espec[ií]fico|horario|el[eé]ctrico|de\s+aire)|rendimiento\s+de\s+combustible|potencia\s+el[eé]ctrica\s+absorbida|bsfc)\b/i,
-        validValuePattern: NUM_UNIT_ENERGY_CONSUMPTION,
-    },
-    {
-        axis_key: 'capacidad_energetica_autonomia',
-        label_es: 'Capacidad estanque combustible',
-        unit_hint: 'L',
-        mandatory: false,
-        legacyKeyPattern: /\b(capacidad\s+(?:de\s+)?(?:estanque|tanque\s+de\s+combustible|banco\s+bater[ií]as|bater[ií]a)|estanque\s+(?:de\s+)?combustible|autonom[ií]a)\b/i,
-        validValuePattern: NUM_UNIT_ENERGY_CAPACITY,
-    },
-];
+    };
+
+    const energyKind = classifyFrontendEnergyKind(params);
+
+    switch (energyKind) {
+        case 'MANUAL_MECHANICAL':
+        case 'TOWED_PASSIVE':
+            return [sourceAxis];
+        case 'BATTERY_BEV':
+            return [
+                sourceAxis,
+                {
+                    axis_key: 'consumo_energetico_nominal',
+                    label_es: 'Energía horaria',
+                    unit_hint: 'kWh/h',
+                    mandatory: false,
+                    legacyKeyPattern:
+                        /\b(energ[ií]a\s+horaria|consumo\s+(?:energ[eé]tico|nominal|el[eé]ctrico|horario)|demanda\s+energ[eé]tica|autonom[ií]a\s+por\s+carga)\b/i,
+                    validValuePattern: /\b\d[\d.,]*\s*(?:kwh\/h|kwh\/100\s*km|kwh\/t|kwh|wh|kw|min|h\b|horas?)\b/i,
+                },
+                {
+                    axis_key: 'capacidad_energetica_autonomia',
+                    label_es: 'Capacidad banco baterías',
+                    unit_hint: 'kWh',
+                    mandatory: false,
+                    legacyKeyPattern:
+                        /\b(capacidad\s+(?:de\s+)?(?:banco\s+(?:de\s+)?bater[ií]as|bater[ií]a)|banco\s+(?:de\s+)?bater[ií]as|energ[ií]a\s+almacenada)\b/i,
+                    validValuePattern: /\b\d[\d.,]*\s*(?:kwh|wh|ah)\b/i,
+                },
+            ];
+        case 'GRID_AC':
+            return [
+                sourceAxis,
+                {
+                    axis_key: 'consumo_energetico_nominal',
+                    label_es: 'Demanda eléctrica',
+                    unit_hint: 'kWh/h',
+                    mandatory: false,
+                    legacyKeyPattern:
+                        /\b(demanda\s+el[eé]ctrica|potencia\s+el[eé]ctrica\s+absorbida|consumo\s+(?:el[eé]ctrico|energ[eé]tico|nominal))\b/i,
+                    validValuePattern: /\b\d[\d.,]*\s*(?:kwh\/h|kwh\/t|kw|kva|kwh)\b/i,
+                },
+                {
+                    axis_key: 'capacidad_energetica_autonomia',
+                    label_es: 'Alimentación eléctrica nominal',
+                    unit_hint: 'V · Hz · kVA',
+                    mandatory: false,
+                    legacyKeyPattern:
+                        /\b(alimentaci[oó]n\s+el[eé]ctrica(?:\s+nominal)?|tensi[oó]n\s+(?:nominal|de\s+alimentaci[oó]n|red)|voltaje\s+nominal|red\s+trif[aá]sica)\b/i,
+                    validValuePattern: /\b\d[\d.,]*\s*(?:kv\b|v\b|volt|hz|kva|a\b|amp)\b/i,
+                },
+            ];
+        case 'PNEUMATIC_AIR':
+            return [
+                sourceAxis,
+                {
+                    axis_key: 'consumo_energetico_nominal',
+                    label_es: 'Consumo aire comprimido',
+                    unit_hint: 'L/s · m³/min',
+                    mandatory: false,
+                    legacyKeyPattern:
+                        /\b(consumo\s+(?:de\s+)?aire(?:\s+comprimido|\s+requerido)?|caudal\s+de\s+aire|demanda\s+neum[aá]tica)\b/i,
+                    validValuePattern: /\b\d[\d.,]*\s*(?:l\/s|l\/min|m³\/min|m3\/min|cfm|scfm)\b/i,
+                },
+                {
+                    axis_key: 'capacidad_energetica_autonomia',
+                    label_es: 'Presión neumática',
+                    unit_hint: 'bar · MPa',
+                    mandatory: false,
+                    legacyKeyPattern:
+                        /\b(presi[oó]n\s+(?:neum[aá]tica|de\s+aire|de\s+trabajo|nominal|operativa))\b/i,
+                    validValuePattern: /\b\d[\d.,]*\s*(?:bar|mpa|psi)\b/i,
+                },
+            ];
+        case 'HYBRID':
+            return [
+                sourceAxis,
+                {
+                    axis_key: 'consumo_energetico_nominal',
+                    label_es: 'Consumo horario combinado',
+                    unit_hint: 'L/h · kWh/h',
+                    mandatory: false,
+                    legacyKeyPattern:
+                        /\b(consumo\s+(?:horario\s+combinado|combinado|energ[eé]tico|nominal|de\s+combustible)|rendimiento\s+combinado)\b/i,
+                    validValuePattern: NUM_UNIT_ENERGY_CONSUMPTION,
+                },
+                {
+                    axis_key: 'capacidad_energetica_autonomia',
+                    label_es: 'Capacidad estanque + batería HV',
+                    unit_hint: 'L + kWh',
+                    mandatory: false,
+                    legacyKeyPattern:
+                        /\b(capacidad\s+(?:estanque|tanque|combustible|bater[ií]a)|estanque\s*\+\s*bater[ií]a)\b/i,
+                    validValuePattern: NUM_UNIT_ENERGY_CAPACITY,
+                },
+            ];
+        case 'THERMAL_FUEL':
+        default:
+            return [
+                sourceAxis,
+                {
+                    axis_key: 'consumo_energetico_nominal',
+                    label_es: 'Consumo horario combustible',
+                    unit_hint: 'L/h · g/kWh',
+                    mandatory: false,
+                    legacyKeyPattern:
+                        /\b(consumo\s+(?:energ[eé]tico|nominal|de\s+combustible|espec[ií]fico|horario|el[eé]ctrico|de\s+aire)|rendimiento\s+de\s+combustible|potencia\s+el[eé]ctrica\s+absorbida|bsfc)\b/i,
+                    validValuePattern: NUM_UNIT_ENERGY_CONSUMPTION,
+                },
+                {
+                    axis_key: 'capacidad_energetica_autonomia',
+                    label_es: 'Capacidad estanque combustible',
+                    unit_hint: 'L',
+                    mandatory: false,
+                    legacyKeyPattern:
+                        /\b(capacidad\s+(?:de\s+)?(?:estanque|tanque\s+de\s+combustible|banco\s+bater[ií]as|bater[ií]a)|estanque\s+(?:de\s+)?combustible|autonom[ií]a)\b/i,
+                    validValuePattern: NUM_UNIT_ENERGY_CAPACITY,
+                },
+            ];
+    }
+}
+
+export function withResolvedArchetypeEnergyAxes(
+    base: ArchetypeDefinition,
+    params?: {
+        primaryEnergy?: string | null;
+        energyValueText?: string | null;
+        typeContextText?: string | null;
+    }
+): ArchetypeDefinition {
+    const coreAxes = base.axes.filter((ax) => !ENERGY_AXIS_KEY_SET.has(ax.axis_key));
+    return {
+        ...base,
+        axes: [...coreAxes, ...resolveUniversalEnergyAxes(params)],
+    };
+}
 
 export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefinition> = {
     BULLDOZER_ORUGAS: {
@@ -158,7 +287,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(tren\s+de\s+rodaje|rueda\s+(?:motriz|cabilla)|rodaje|sprocket)\b/i,
                 validValuePattern: /\b(rueda\s+(?:motriz|cabilla)\s+elevada|high\s+drive|oruga\s+convencional|baja\s+presi[oó]n|lgp)\b/i,
             },
-            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
+            ...resolveUniversalEnergyAxes(),
         ],
     },
     BULLDOZER_NEUMATICOS: {
@@ -189,7 +318,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(capacidad\s+de\s+hoja|hoja)\b/i,
                 validValuePattern: NUM_UNIT_VOLUME,
             },
-            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
+            ...resolveUniversalEnergyAxes(),
         ],
     },
     MINICARGADOR_SSL_CTL: {
@@ -236,7 +365,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(cinem[aá]tica|levante|levantamiento)\b/i,
                 validValuePattern: /^(levante\s+vertical|levante\s+radial)$/i,
             },
-            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
+            ...resolveUniversalEnergyAxes(),
         ],
     },
     EXCAVADORA_HIDRAULICA: {
@@ -275,7 +404,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(profundidad\s+(?:m[aá]x(?:ima)?\.?\s+(?:de\s+)?)?excavaci[oó]n|prof\.\s*m[aá]x\.\s*excavaci[oó]n|alcance\s+vertical)\b/i,
                 validValuePattern: NUM_UNIT_LENGTH,
             },
-            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
+            ...resolveUniversalEnergyAxes(),
         ],
     },
     CARGADOR_FRONTAL: {
@@ -314,7 +443,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(potencia(\s+neta|\s+motor)?)\b/i,
                 validValuePattern: NUM_UNIT_POWER,
             },
-            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
+            ...resolveUniversalEnergyAxes(),
         ],
     },
     RETROEXCAVADORA: {
@@ -353,7 +482,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(peso\s+operativo|masa\s+operativa|peso\b)\b/i,
                 validValuePattern: NUM_UNIT_MASS,
             },
-            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
+            ...resolveUniversalEnergyAxes(),
         ],
     },
     CAMION_TOLVA_CAEX: {
@@ -392,7 +521,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(peso\s+bruto(\s+vehicular|\s+operativo)?|pbv|gvw|gmw)\b/i,
                 validValuePattern: NUM_UNIT_MASS,
             },
-            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
+            ...resolveUniversalEnergyAxes(),
         ],
     },
     MOTONIVELADORA: {
@@ -423,7 +552,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(peso\s+operativo|masa\s+operativa|peso\b)\b/i,
                 validValuePattern: NUM_UNIT_MASS,
             },
-            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
+            ...resolveUniversalEnergyAxes(),
         ],
     },
     COMPACTADOR_RODILLO: {
@@ -454,7 +583,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(ancho\s+(?:de\s+)?(?:compactaci[oó]n|tambor|rodillo)|tambor)\b/i,
                 validValuePattern: NUM_UNIT_LENGTH,
             },
-            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
+            ...resolveUniversalEnergyAxes(),
         ],
     },
     GRUA_IZAJE_MANIPULADOR: {
@@ -485,7 +614,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(potencia(\s+neta|\s+motor)?)\b/i,
                 validValuePattern: NUM_UNIT_POWER,
             },
-            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
+            ...resolveUniversalEnergyAxes(),
         ],
     },
     PERFORADORA_SONDAJE: {
@@ -524,7 +653,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(peso(\s+operativo|\s+neto)?|masa)\b/i,
                 validValuePattern: NUM_UNIT_MASS,
             },
-            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
+            ...resolveUniversalEnergyAxes(),
         ],
     },
     COMPRESOR_GENERADOR_BOMBA: {
@@ -555,7 +684,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(potencia\s+(?:motor|motriz|eje)|motor)\b/i,
                 validValuePattern: NUM_UNIT_POWER,
             },
-            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
+            ...resolveUniversalEnergyAxes(),
         ],
     },
     VEHICULO_LIVIANO_TRANSPORTE: {
@@ -594,7 +723,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(tracci[oó]n|transmisi[oó]n\s+motriz)\b/i,
                 validValuePattern: /\b([2468]x[2468]|awd|4wd|2wd|fwd|rwd|integral)\b/i,
             },
-            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
+            ...resolveUniversalEnergyAxes(),
         ],
     },
     HERRAMIENTA_INDUSTRIAL_GENERAL: {
@@ -625,7 +754,7 @@ export const ARCHETYPE_DEFINITIONS: Record<MachineryArchetypeId, ArchetypeDefini
                 legacyKeyPattern: /\b(peso(\s+operativo|\s+neto)?|masa)\b/i,
                 validValuePattern: NUM_UNIT_MASS,
             },
-            ...ARCHETYPE_UNIVERSAL_ENERGY_AXES,
+            ...resolveUniversalEnergyAxes(),
         ],
     },
 };
@@ -677,58 +806,57 @@ export function cleanMachineryTypeLabel(rawType?: string): string {
 
 export function resolveMachineryArchetype(
     tipoEquipo?: string | null,
-    categoriaEquipo?: string | null
+    categoriaEquipo?: string | null,
+    energyContext?: {
+        primaryEnergy?: string | null;
+        energyValueText?: string | null;
+    }
 ): ArchetypeDefinition {
-    const combined = `${tipoEquipo || ''} ${categoriaEquipo || ''}`
+    const typeContextText = `${tipoEquipo || ''} ${categoriaEquipo || ''}`;
+    const combined = typeContextText
         .toLowerCase()
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '');
 
+    let matched: ArchetypeDefinition = ARCHETYPE_DEFINITIONS.HERRAMIENTA_INDUSTRIAL_GENERAL;
+
     if (/\b(minicargador|skid\s*steer|cargador\s+compacto|compact\s+track\s+loader|\bssl\b|\bctl\b)\b/.test(combined)) {
-        return ARCHETYPE_DEFINITIONS.MINICARGADOR_SSL_CTL;
-    }
-    if (/\b(bulldozer|tractor\s+topador|tractor\s+sobre\s+orugas|tractor\s+de\s+cadenas|dozer)\b/.test(combined)) {
-        if (/\b(neumatic|ruedas|wheel\s+dozer)\b/.test(combined)) {
-            return ARCHETYPE_DEFINITIONS.BULLDOZER_NEUMATICOS;
-        }
-        return ARCHETYPE_DEFINITIONS.BULLDOZER_ORUGAS;
-    }
-    if (/\b(retroexcavadora|backhoe)\b/.test(combined)) {
-        return ARCHETYPE_DEFINITIONS.RETROEXCAVADORA;
-    }
-    if (/\b(excavadora|pala\s+hidraulica|pala\s+electrica|pala\s+de\s+cables)\b/.test(combined)) {
-        return ARCHETYPE_DEFINITIONS.EXCAVADORA_HIDRAULICA;
-    }
-    if (/\b(cargador\s+frontal|cargador\s+sobre\s+ruedas|cargador\s+de\s+ruedas|scooptram|\blhd\b|wheel\s+loader)\b/.test(combined)) {
-        return ARCHETYPE_DEFINITIONS.CARGADOR_FRONTAL;
-    }
-    if (/\b(camion\s+(?:minero|caex|extraccion|tolva|volquete|articulado|aljibe|batea)|caex|dumper|volquete)\b/.test(combined)) {
-        return ARCHETYPE_DEFINITIONS.CAMION_TOLVA_CAEX;
-    }
-    if (/\b(motoniveladora|motor\s*grader)\b/.test(combined)) {
-        return ARCHETYPE_DEFINITIONS.MOTONIVELADORA;
-    }
-    if (/\b(compactador|rodillo\s+vibratorio|rodillo\s+compactador|placa\s+compactadora)\b/.test(combined)) {
-        return ARCHETYPE_DEFINITIONS.COMPACTADOR_RODILLO;
-    }
-    if (/\b(grua|camion\s+pluma|manipulador\s+telescopico|telehandler|horquilla|montacargas|alza\s*hombre|manlift)\b/.test(combined)) {
-        return ARCHETYPE_DEFINITIONS.GRUA_IZAJE_MANIPULADOR;
-    }
-    if (/\b(perforadora|jackleg|stopper|jumbo|sondaje|martillo\s+neumatico|drill|simba|roc\b)\b/.test(combined)) {
-        return ARCHETYPE_DEFINITIONS.PERFORADORA_SONDAJE;
-    }
-    if (/\b(compresor|generador|grupo\s+electrogeno|motobomba|bomba\s+centrifuga|soldadora|torre\s+de\s+iluminacion)\b/.test(combined)) {
-        return ARCHETYPE_DEFINITIONS.COMPRESOR_GENERADOR_BOMBA;
-    }
-    if (
+        matched = ARCHETYPE_DEFINITIONS.MINICARGADOR_SSL_CTL;
+    } else if (/\b(bulldozer|tractor\s+topador|tractor\s+sobre\s+orugas|tractor\s+de\s+cadenas|dozer)\b/.test(combined)) {
+        matched = /\b(neumatic|ruedas|wheel\s+dozer)\b/.test(combined)
+            ? ARCHETYPE_DEFINITIONS.BULLDOZER_NEUMATICOS
+            : ARCHETYPE_DEFINITIONS.BULLDOZER_ORUGAS;
+    } else if (/\b(retroexcavadora|backhoe)\b/.test(combined)) {
+        matched = ARCHETYPE_DEFINITIONS.RETROEXCAVADORA;
+    } else if (/\b(excavadora|pala\s+hidraulica|pala\s+electrica|pala\s+de\s+cables)\b/.test(combined)) {
+        matched = ARCHETYPE_DEFINITIONS.EXCAVADORA_HIDRAULICA;
+    } else if (/\b(cargador\s+frontal|cargador\s+sobre\s+ruedas|cargador\s+de\s+ruedas|scooptram|\blhd\b|wheel\s+loader)\b/.test(combined)) {
+        matched = ARCHETYPE_DEFINITIONS.CARGADOR_FRONTAL;
+    } else if (/\b(camion\s+(?:minero|caex|extraccion|tolva|volquete|articulado|aljibe|batea)|caex|dumper|volquete)\b/.test(combined)) {
+        matched = ARCHETYPE_DEFINITIONS.CAMION_TOLVA_CAEX;
+    } else if (/\b(motoniveladora|motor\s*grader)\b/.test(combined)) {
+        matched = ARCHETYPE_DEFINITIONS.MOTONIVELADORA;
+    } else if (/\b(compactador|rodillo\s+vibratorio|rodillo\s+compactador|placa\s+compactadora)\b/.test(combined)) {
+        matched = ARCHETYPE_DEFINITIONS.COMPACTADOR_RODILLO;
+    } else if (/\b(grua|camion\s+pluma|manipulador\s+telescopico|telehandler|horquilla|montacargas|alza\s*hombre|manlift)\b/.test(combined)) {
+        matched = ARCHETYPE_DEFINITIONS.GRUA_IZAJE_MANIPULADOR;
+    } else if (/\b(perforadora|jackleg|stopper|jumbo|sondaje|martillo\s+neumatico|drill|simba|roc\b)\b/.test(combined)) {
+        matched = ARCHETYPE_DEFINITIONS.PERFORADORA_SONDAJE;
+    } else if (/\b(compresor|generador|grupo\s+electrogeno|motobomba|bomba\s+centrifuga|soldadora|torre\s+de\s+iluminacion)\b/.test(combined)) {
+        matched = ARCHETYPE_DEFINITIONS.COMPRESOR_GENERADOR_BOMBA;
+    } else if (
         /\b(camioneta|pick[- ]?up|tractocamion|furgon|furgoneta|van|minivan|bus|minibus|autobus|suv|crossover|automovil|sedan|hatchback|citycar|station\s+wagon|todo\s*terreno|4x4|ambulancia|motocicleta|moto\b|cuatrimoto|atv|utv|vehiculo|camion\s+(?:3\/4|plano|cerrado|reparto|forestal|combustible|lubricador))\b/.test(
             combined
         )
     ) {
-        return ARCHETYPE_DEFINITIONS.VEHICULO_LIVIANO_TRANSPORTE;
+        matched = ARCHETYPE_DEFINITIONS.VEHICULO_LIVIANO_TRANSPORTE;
     }
 
-    return ARCHETYPE_DEFINITIONS.HERRAMIENTA_INDUSTRIAL_GENERAL;
+    return withResolvedArchetypeEnergyAxes(matched, {
+        primaryEnergy: energyContext?.primaryEnergy || null,
+        energyValueText: energyContext?.energyValueText || null,
+        typeContextText,
+    });
 }
 
 function stripTextAccents(val: string): string {
@@ -1150,21 +1278,21 @@ export function resolveFrontendEnergySemantics(params?: {
             return {
                 energyKind,
                 includeConsumptionAxis: true,
-                includeCapacityAxis: false,
-                consumptionLabelEs: 'Potencia eléctrica absorbida',
-                consumptionUnitSi: 'kW · kWh/h',
-                capacityLabelEs: null,
-                capacityUnitSi: null,
+                includeCapacityAxis: true,
+                consumptionLabelEs: 'Demanda eléctrica',
+                consumptionUnitSi: 'kWh/h',
+                capacityLabelEs: 'Alimentación eléctrica nominal',
+                capacityUnitSi: 'V · Hz · kVA',
             };
         case 'PNEUMATIC_AIR':
             return {
                 energyKind,
                 includeConsumptionAxis: true,
-                includeCapacityAxis: false,
-                consumptionLabelEs: 'Consumo de aire requerido',
-                consumptionUnitSi: 'L/s (m³/min @ bar)',
-                capacityLabelEs: null,
-                capacityUnitSi: null,
+                includeCapacityAxis: true,
+                consumptionLabelEs: 'Consumo aire comprimido',
+                consumptionUnitSi: 'L/s · m³/min',
+                capacityLabelEs: 'Presión neumática',
+                capacityUnitSi: 'bar · MPa',
             };
         case 'HYDRAULIC_AUX':
             return {
@@ -1185,10 +1313,10 @@ export function resolveFrontendEnergySemantics(params?: {
                     ? 'Consumo eléctrico nominal'
                     : isDroneOrCyclicBattery
                     ? 'Autonomía por carga'
-                    : 'Consumo eléctrico horario',
+                    : 'Energía horaria',
                 consumptionUnitSi: isRoadOrUtilityVehicle ? 'kWh/100 km' : isDroneOrCyclicBattery ? 'min · Wh' : 'kWh/h',
                 capacityLabelEs: 'Capacidad banco baterías',
-                capacityUnitSi: 'kWh · Wh',
+                capacityUnitSi: 'kWh',
             };
         case 'HYBRID':
             return {
@@ -1424,6 +1552,67 @@ export function sanitizeFrontendContextLines(
     return out.length > 0 ? out : [MISSING_TECH_SPEC];
 }
 
+function detectRecordEnergyContext(record: {
+    canonical_specs?: CanonicalSpecSlot[] | Record<string, any> | null;
+    caracteristicas_principales?: string[];
+    short_description?: string;
+    physical_traits?: { primary_energy_source?: string | null } | null;
+}): { primaryEnergy: string | null; energyValueText: string | null } {
+    const primaryEnergy = record.physical_traits?.primary_energy_source || null;
+    let energyValueText: string | null = null;
+
+    if (Array.isArray(record.canonical_specs)) {
+        const energySlot = record.canonical_specs.find(
+            (s) =>
+                s &&
+                (s.axis_key === 'fuente_energia' || /\bfuente\s+(?:de\s+)?energ[ií]a\b/i.test(s.label_es || '')) &&
+                s.value_si &&
+                !String(s.value_si).startsWith('[')
+        );
+        if (energySlot?.value_si) {
+            energyValueText = String(energySlot.value_si).trim();
+        }
+    } else if (record.canonical_specs && typeof record.canonical_specs === 'object') {
+        const rawEnergy = (record.canonical_specs as Record<string, any>).fuente_energia;
+        const candidate = typeof rawEnergy === 'object' && rawEnergy !== null ? rawEnergy.value_si : rawEnergy;
+        if (candidate && !String(candidate).startsWith('[')) {
+            energyValueText = String(candidate).trim();
+        }
+    }
+
+    if (!energyValueText) {
+        const candidateLines = [
+            ...(Array.isArray(record.caracteristicas_principales)
+                ? record.caracteristicas_principales.map((l) => String(l || '').trim()).filter(Boolean)
+                : []),
+            ...(record.short_description
+                ? String(record.short_description)
+                      .split('·')
+                      .map((t) => t.trim())
+                      .filter(Boolean)
+                : []),
+        ];
+        const energyKeyRegex =
+            /\b(fuente\s+(?:de\s+)?energ[ií]a|tipo\s+de\s+(?:combustible|energ[ií]a)|combustible|alimentaci[oó]n\s+energ[eé]tica)\b/i;
+        for (const line of candidateLines) {
+            if (FORBIDDEN_MARKETING_OR_UNVERIFIED_CLAIM_REGEX.test(line)) continue;
+            for (const seg of line.split(/\s*[—–]\s*/)) {
+                if (!energyKeyRegex.test(seg)) continue;
+                const colonIdx = seg.indexOf(':');
+                const valCandidate = colonIdx > 0 ? seg.slice(colonIdx + 1).trim() : seg.trim();
+                const canon = normalizeCanonicalEnergyEnumLabel(valCandidate);
+                if (canon) {
+                    energyValueText = canon;
+                    break;
+                }
+            }
+            if (energyValueText) break;
+        }
+    }
+
+    return { primaryEnergy, energyValueText };
+}
+
 export function extractHomologousAxisValues(record: {
     equipment_type_key?: string;
     archetype_id?: string;
@@ -1432,13 +1621,24 @@ export function extractHomologousAxisValues(record: {
     canonical_specs?: CanonicalSpecSlot[] | Record<string, any> | null;
     caracteristicas_principales?: string[];
     short_description?: string;
+    physical_traits?: { primary_energy_source?: string | null } | null;
 }): { archetype: ArchetypeDefinition; slots: CanonicalSpecSlot[] } {
     const typeContextText = `${record.equipment_type_key || ''} ${record.tipo_equipo || ''} ${record.categoria_equipo || ''}`;
+    const detectedEnergy = detectRecordEnergyContext(record);
     const explicitArch =
         record.archetype_id && record.archetype_id in ARCHETYPE_DEFINITIONS
-            ? ARCHETYPE_DEFINITIONS[record.archetype_id as MachineryArchetypeId]
+            ? withResolvedArchetypeEnergyAxes(
+                  ARCHETYPE_DEFINITIONS[record.archetype_id as MachineryArchetypeId],
+                  {
+                      primaryEnergy: detectedEnergy.primaryEnergy,
+                      energyValueText: detectedEnergy.energyValueText,
+                      typeContextText,
+                  }
+              )
             : null;
-    const baseArchetype = explicitArch || resolveMachineryArchetype(record.tipo_equipo, record.categoria_equipo);
+    const baseArchetype =
+        explicitArch ||
+        resolveMachineryArchetype(record.tipo_equipo, record.categoria_equipo, detectedEnergy);
 
     // RUTA PRIMARIA: Esquema auto-descriptivo propio del `TIPO` de equipo (`global_equipment_types/{typeKey}`)
     if (hasSelfDescribingTypeSchema(record)) {
@@ -1497,7 +1697,11 @@ export function extractHomologousAxisValues(record: {
             });
         }
 
-        const normalizedDynamicSlots = normalizeFrontendSlotsByEnergy(dynamicSlots, { typeContextText });
+        const normalizedDynamicSlots = normalizeFrontendSlotsByEnergy(dynamicSlots, {
+            typeContextText,
+            primaryEnergy: detectedEnergy.primaryEnergy,
+            energyValueText: detectedEnergy.energyValueText,
+        });
         if (normalizedDynamicSlots.length >= 2) {
             const alignedAxes = normalizedDynamicSlots.map((ns) => {
                 const origAx = dynamicAxes.find((a) => a.axis_key === ns.axis_key);
@@ -1612,7 +1816,11 @@ export function extractHomologousAxisValues(record: {
         };
     });
 
-    const slots = normalizeFrontendSlotsByEnergy(rawFallbackSlots, { typeContextText });
+    const slots = normalizeFrontendSlotsByEnergy(rawFallbackSlots, {
+        typeContextText,
+        primaryEnergy: detectedEnergy.primaryEnergy,
+        energyValueText: detectedEnergy.energyValueText,
+    });
     const alignedFallbackAxes = slots.map((ns) => {
         const origAx = archetype.axes.find((a) => a.axis_key === ns.axis_key);
         return {

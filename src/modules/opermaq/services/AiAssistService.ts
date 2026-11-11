@@ -1,16 +1,86 @@
+import { db } from '../../../config/firebase';
 import { ConfidentialityAirlockService } from '../../../core/privacy/ConfidentialityAirlockService';
 import { ResilientAIClient, Type } from '../../../core/resilient-ai-client';
 import { PillarId, PillarItem, ProposedUpdate } from '../types/vault.types';
 import { sanitizePositivePresenceMarkdown } from '../utils/canonicalArchetypeSpecs';
 import { verifyAndNormalizeTechnicalUnits } from './NeuroSymbolicVerifier';
 import { getPillarEditGovernancePrompt, PILLAR_AGENTS } from './pillarAgents';
+import { SegmentedDocumentProcessorService } from './SegmentedDocumentProcessorService';
 import { applySurgicalFragmentSplice } from './vaultChatService';
 import { VaultPersistenceService } from './VaultPersistenceService';
 
 /**
  * AI ASSIST SERVICE — ETAPA 4 ASISTENCIA QUIRÚRGICA, EVOLUCIÓN Y ORTOGRAFÍA TÉCNICA
- * 100% enrutado por `ResilientAIClient` v2.0 (Cero simulación, HITL obligatorio antes de persistir).
+ * 100% enrutado por `ResilientAIClient` v2.0 en modo `SOVEREIGN_VAULT_FIRST` (Ley N° 21.719, HITL obligatorio).
  */
+
+const EXPLICIT_EXTERNAL_SEARCH_REQUEST_REGEX =
+    /\b(busca(?:r)?\s+en\s+(?:la\s+)?web|investiga(?:r)?\s+en\s+(?:la\s+)?web|google|internet|fuentes?\s+externas?|contrasta(?:r)?\s+en\s+l[ií]nea|buscar?\s+ficha\s+oficial\s+en\s+web)\b/i;
+
+async function retrieveSovereignVaultEvidenceForAssist(
+    globalAssetId: string,
+    pillarId: PillarId,
+    queryText: string
+): Promise<{ evidenceBlock: string; totalChars: number }> {
+    const snippets: string[] = [];
+    const seenTexts = new Set<string>();
+
+    try {
+        const semanticChunks = await SegmentedDocumentProcessorService.searchLocalAssetCorpus(
+            globalAssetId,
+            queryText,
+            6
+        );
+        for (const chunk of semanticChunks) {
+            const body = ConfidentialityAirlockService.scrubDeterministicPii(
+                String(chunk.markdown || '')
+            )
+                .scrubbed.replace(/\s+/g, ' ')
+                .trim()
+                .slice(0, 480);
+            if (body && !seenTexts.has(body)) {
+                seenTexts.add(body);
+                snippets.push(`- [${chunk.sourceFilename || 'Bóveda Soberana'} — ${chunk.title || pillarId}]: ${body}`);
+            }
+        }
+    } catch {
+        // Fallback directo sobre Firestore subcollection vault_corpus_chunks
+    }
+
+    if (snippets.length < 2) {
+        try {
+            const snap = await db
+                .collection('global_asset_catalog')
+                .doc(globalAssetId)
+                .collection('vault_corpus_chunks')
+                .where('pillar_id', '==', pillarId)
+                .limit(8)
+                .get();
+
+            for (const docSnap of snap.docs) {
+                const d = docSnap.data() || {};
+                const title = String(d.chapter_title || 'Fragmento Bóveda').trim();
+                const src = String(d.source_filename || 'Bóveda Soberana').trim();
+                const body = ConfidentialityAirlockService.scrubDeterministicPii(String(d.markdown_es || ''))
+                    .scrubbed.replace(/\s+/g, ' ')
+                    .trim()
+                    .slice(0, 480);
+                if (body && !seenTexts.has(body)) {
+                    seenTexts.add(body);
+                    snippets.push(`- [${src} — ${title}]: ${body}`);
+                }
+            }
+        } catch {
+            // Continuar sin bloquear si aún no existen chunks indexados
+        }
+    }
+
+    const joined = snippets.join('\n');
+    return {
+        evidenceBlock: joined,
+        totalChars: joined.length,
+    };
+}
 
 export interface AiAssistOptions {
     globalAssetId: string;
@@ -52,6 +122,13 @@ export async function assistItemEdit(options: AiAssistOptions): Promise<AiAssist
         const agent = PILLAR_AGENTS[pillarId];
         if (!agent) throw new Error(`Pilar inválido: ${pillarId}`);
 
+        const safeUserRequest = ConfidentialityAirlockService.scrubDeterministicPii(userRequest || '').scrubbed;
+        const sovereignVault = await retrieveSovereignVaultEvidenceForAssist(
+            globalAssetId,
+            pillarId,
+            `${item.section || ''} ${item.title} ${safeUserRequest}`
+        );
+
         const prompt = `Actúa como el Especialista Técnico del pilar "${agent.title}" (${agent.rolePersona}) asistiendo a un curador experto.
 
 ACTIVO:
@@ -62,20 +139,20 @@ ACTIVO:
 
 ÍTEM BAJO EDICIÓN:
 - Título: "${item.title}" (Sección: ${item.section})
-
+${sovereignVault.evidenceBlock ? `\nEVIDENCIA SOBERANA EN BÓVEDA (vault_corpus_chunks — southamerica-west1):\n${sovereignVault.evidenceBlock}\n` : ''}
 CONTENIDO ACTUAL:
 ---
 ${item.content || '(Vacío)'}
 ---
 
 SOLICITUD DEL EXPERTO HUMANO:
-"${userRequest}"
+"${safeUserRequest}"
 
 INSTRUCCIONES:
 1. Clasifica "intent" en "CORRECTION", "RESEARCH" o "DELETION".
 2. En "clarification" explica de forma técnica y concisa qué ajuste propones.
 3. Si es CORRECTION o DELETION: indica "originalFragment" (exacto) y "proposedFragment" (o "[SEGMENTO ELIMINADO]").
-4. Si es RESEARCH: usa Google Search y redacta el bloque técnico verificado en "additionalBlock".
+4. Si es RESEARCH: respalda cada dato en la bóveda soberana o búsqueda verificada y redacta el bloque técnico en "additionalBlock".
 5. En "finalContent" entrega el Markdown completo resultante listo para revisión HITL (sin HTML).
 
 Responde estrictamente en JSON válido:
@@ -88,10 +165,7 @@ Responde estrictamente en JSON válido:
   "finalContent": "..."
 }`;
 
-        const requiresExternalWebResearch =
-            /\b(investiga|buscar?\s+en\s+web|google|internet|fuente\s+externa|oem\s+oficial)\b/i.test(
-                userRequest
-            );
+        const requiresExternalWebResearch = EXPLICIT_EXTERNAL_SEARCH_REQUEST_REGEX.test(safeUserRequest);
 
         const aiRes = await ResilientAIClient.generate({
             module: 'opermaq',
@@ -99,6 +173,7 @@ Responde estrictamente en JSON válido:
             systemInstruction: agent.systemPrompt,
             temperature: 0.1,
             useGoogleSearch: requiresExternalWebResearch,
+            requireGroundedEvidence: requiresExternalWebResearch,
             prompt,
         });
 
@@ -146,34 +221,47 @@ export async function assistRejection(options: {
         const model = String(catalogProfile.model_oficial || catalogProfile.model || globalAssetId).trim();
         const agent = PILLAR_AGENTS[pillarId];
 
+        const safeRejectionNote = ConfidentialityAirlockService.scrubDeterministicPii(
+            rejectionNote || ''
+        ).scrubbed;
+
+        // Modo SOVEREIGN_VAULT_FIRST (Ley N° 21.719): consultar primero `vault_corpus_chunks` del equipo en southamerica-west1
+        const sovereignVault = await retrieveSovereignVaultEvidenceForAssist(
+            globalAssetId,
+            pillarId,
+            `${item.section || ''} ${item.title} ${safeRejectionNote}`
+        );
+        const hasSufficientSovereignEvidence = sovereignVault.totalChars >= 120;
+        const explicitCuratorWebRequest = EXPLICIT_EXTERNAL_SEARCH_REQUEST_REGEX.test(safeRejectionNote);
+        const shouldUseExternalSearch = explicitCuratorWebRequest || !hasSufficientSovereignEvidence;
+
         const prompt = `Un revisor humano rechazó el ítem "${item.title}" del equipo "${make} ${model}" en el pilar "${agent.title}".
 
 OBSERVACIÓN DE RECHAZO HUMANO:
-"${rejectionNote}"
-
+"${safeRejectionNote}"
+${sovereignVault.evidenceBlock
+                ? `\nEVIDENCIA SOBERANA LOCAL EN BÓVEDA (vault_corpus_chunks — southamerica-west1, PRIORIDAD PRIMARIA):\n${sovereignVault.evidenceBlock}\n`
+                : '\n(Sin fragmentos suficientes en vault_corpus_chunks locales para este capítulo)\n'
+            }
 CONTENIDO RECHAZADO:
 ---
 ${item.content || '(Vacío)'}
 ---
 
-Genera una propuesta técnica corregida (puedes verificar con Google Search si hay dudas de cifras OEM).
+Genera una propuesta técnica corregida priorizando estrictamente la evidencia soberana local de la bóveda${shouldUseExternalSearch ? ' y respaldando con fuentes web OEM verificadas los datos faltantes' : ' (sin recurrir a fuentes externas)'}.
 Responde estrictamente en JSON puro:
 {
   "clarification": "Explicación concisa de la corrección aplicada",
   "finalContent": "Contenido Markdown completo corregido (sin HTML)"
 }`;
 
-        const requiresExternalWebResearch =
-            /\b(cifra|valor|especificaci[oó]n|oem|manual|verificar|fuente|investiga)\b/i.test(
-                rejectionNote
-            );
-
         const aiRes = await ResilientAIClient.generate({
             module: 'opermaq',
             preferredTier: 'SECONDARY',
             systemInstruction: agent.systemPrompt,
             temperature: 0.1,
-            useGoogleSearch: requiresExternalWebResearch,
+            useGoogleSearch: shouldUseExternalSearch,
+            requireGroundedEvidence: shouldUseExternalSearch,
             prompt,
         });
 
@@ -220,6 +308,7 @@ export function applyDeterministicProposalFallback(
                 currentContent: nextContent,
                 selectedFragment: delta.valor_actual.trim(),
                 fragmentReplacement: normalizedNew,
+                pillarId,
             });
             if (spliced && spliced !== nextContent) {
                 nextContent = spliced;

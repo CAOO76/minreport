@@ -32,6 +32,49 @@ export interface ScopedRequest extends Request {
     opermaqContext?: OpermaqFunctionalContext;
 }
 
+const MODULE_STATUS_CACHE_TTL_MS = 30_000;
+let opermaqModuleStatusCache: { enabled: boolean; expiresAt: number } | null = null;
+
+export function invalidateOpermaqModuleStatusCache(): void {
+    opermaqModuleStatusCache = null;
+}
+
+async function isOpermaqGloballyEnabled(): Promise<boolean> {
+    const now = Date.now();
+    if (opermaqModuleStatusCache && now < opermaqModuleStatusCache.expiresAt) {
+        return opermaqModuleStatusCache.enabled;
+    }
+
+    let enabled = true;
+    try {
+        const modSnap = await db.collection('modules_status').doc('opermaq').get();
+        if (modSnap.exists) {
+            const data = modSnap.data() || {};
+            if (typeof data.enabled === 'boolean') {
+                enabled = data.enabled;
+            }
+        } else {
+            const settingsSnap = await db.collection('settings').doc('modules_status').get();
+            if (settingsSnap.exists) {
+                const sData = settingsSnap.data() || {};
+                if (typeof sData.opermaq === 'boolean') {
+                    enabled = sData.opermaq;
+                }
+            }
+        }
+    } catch {
+        if (opermaqModuleStatusCache) {
+            return opermaqModuleStatusCache.enabled;
+        }
+    }
+
+    opermaqModuleStatusCache = {
+        enabled,
+        expiresAt: now + MODULE_STATUS_CACHE_TTL_MS,
+    };
+    return enabled;
+}
+
 export const resolveMinReportSessionScope = async (
     req: ScopedRequest,
     res: Response,
@@ -201,10 +244,19 @@ export const resolveMinReportSessionScope = async (
                 claimRole === 'STUDENT' ||
                 Boolean(accountData?.isEduSandbox));
 
-        if (!hasFullSuiteOverride && accountData?.contract?.activeModules?.opermaq === false) {
-            return res.status(403).json({
-                error: 'El módulo OPERMAQ no está habilitado en la cuenta activa de MINREPORT.',
-            });
+        if (!hasFullSuiteOverride) {
+            const globallyEnabled = await isOpermaqGloballyEnabled();
+            if (!globallyEnabled) {
+                return res.status(403).json({
+                    error: 'MODULE_DISABLED_GLOBALLY',
+                    message: 'El módulo OPERMAQ se encuentra temporalmente deshabilitado a nivel global en MINREPORT.',
+                });
+            }
+            if (accountData?.contract?.activeModules?.opermaq === false) {
+                return res.status(403).json({
+                    error: 'El módulo OPERMAQ no está habilitado en la cuenta activa de MINREPORT.',
+                });
+            }
         }
 
         const effectiveB2BRole =

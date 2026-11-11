@@ -66,7 +66,10 @@ export interface AirlockEvaluationResult {
 
 export class ConfidentialityAirlockService {
     /**
-     * Redacción determinista de primera línea (0 ms, 100% determinista)
+     * Redacción determinista de primera línea (0 ms, 100% determinista — Ley N° 19.628 y Nueva Ley N° 21.719).
+     * Cubre RUT, correos, teléfonos +56, coordenadas GPS decimales y UTM (husos 18/19), contratos/OC,
+     * patentes chilenas contextualizadas (preservando códigos OEM como PC200-8, WA380-6, ISO 7000),
+     * truncado de cola privada en VIN/PIN de 17 caracteres (ISO 3779 / ISO 10261) y números de serie S/N.
      */
     public static scrubDeterministicPii(rawText: string): {
         scrubbed: string;
@@ -76,31 +79,89 @@ export class ConfidentialityAirlockService {
         const cats = new Set<string>();
 
         const applyRule = (regex: RegExp, replacement: string, category: string) => {
+            regex.lastIndex = 0;
             if (regex.test(s)) {
                 cats.add(category);
+                regex.lastIndex = 0;
                 s = s.replace(regex, replacement);
             }
         };
 
-        // RUT Chileno (ej. 12.345.678-9, 76543210-K)
+        // 1. RUT Chileno (ej. 12.345.678-9, 76543210-K)
         applyRule(/\b\d{1,2}\.?\d{3}\.?\d{3}-[\dkK]\b/g, '[RUT_RESERVADO]', 'RUT_IDENTIFICADOR');
-        // Emails corporativos o personales
+
+        // 2. Emails corporativos o personales
         applyRule(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[EMAIL_RESERVADO]', 'EMAIL');
-        // Teléfonos móviles y fijos (+56 9 ..., +562...)
-        applyRule(/(?:\+?56\s*)?(?:9\s*\d{4}\s*\d{4}|2\s*\d{4}\s*\d{4})\b/g, '[TEL_RESERVADO]', 'TELEFONO');
-        // Coordenadas GPS explícitas
-        applyRule(/[-+]?\d{1,2}\.\d{4,}\s*,\s*[-+]?\d{1,3}\.\d{4,}/g, '[COORD_FAENA_RESERVADA]', 'GPS_FAENA');
-        // Contratos, órdenes de compra, licitaciones y montos monetarios internos
+
+        // 3. Teléfonos móviles y fijos de Chile (+56 9 ..., +56 2 ..., 9 XXXX XXXX)
         applyRule(
-            /\b(?:OC|PO|CONTRATO|LICITACI[OÓ]N)\s*[-#:]?\s*[A-Z0-9-]{3,20}\b/gi,
+            /(?<![\dA-Za-z])(?:\+?56[\s.-]*)?(?:9[\s.-]*\d{4}[\s.-]*\d{4}|2[\s.-]*\d{4}[\s.-]*\d{4})\b/g,
+            '[TEL_RESERVADO]',
+            'TELEFONO'
+        );
+
+        // 4. Coordenadas GPS decimales explícitas
+        applyRule(/[-+]?\d{1,2}\.\d{4,}\s*,\s*[-+]?\d{1,3}\.\d{4,}/g, '[COORD_FAENA_RESERVADA]', 'GPS_FAENA');
+
+        // 5. Coordenadas UTM en husos chilenos 18 y 19 (bandas F, G, H, J, K)
+        applyRule(
+            /\b(?:UTM\s*[:#-]?\s*)?(?:18|19)\s*[FGHJK](?:\s+|\s*[,;/-]\s*)\d{6}(?:[.,]\d+)?(?:\s*m?\s*E)?[\s,;/-]+\d{7}(?:[.,]\d+)?(?:\s*m?\s*N)?\b/gi,
+            '[UTM_FAENA_RESERVADA]',
+            'UTM_FAENA'
+        );
+
+        // 6. Contratos, órdenes de compra, licitaciones y referencias comerciales con dígitos
+        applyRule(
+            /\b(?:OC|PO|CONTRATO|LICITACI[OÓ]N)\s*[-#:]?\s*(?=[A-Z0-9-]*\d)[A-Z0-9-]{3,24}\b/gi,
             '[REF_CONTRACTUAL_RESERVADA]',
             'CONTRATO_OC'
         );
-        // Patentes vehiculares chilenas (ABCD-12, ABCD12, AB-1234) cuando aparecen precedidas por patente/ppu
+
+        // 7. Patentes vehiculares chilenas (PPU) contextualizadas sin afectar modelos/normas OEM (PC200-8, WA380-6, ISO 7000)
         applyRule(
-            /\b(?:patente|ppu)\s*[:#-]?\s*[A-Z]{2,4}[-\s]?\d{2,4}\b/gi,
+            /\b(?:placa\s+patente|patente(?:\s+vehicular)?|ppu|matr[ií]cula\s+vehicular)\s*[:#-]?\s*(?!(?:ISO|IEC|DIN|SAE|NOM)\b)(?:[A-Z]{2}[-\s·•]?[A-Z]{2}[-\s·•]?\d{2}|[A-Z]{2}[-\s·•]?\d{2}[-\s·•]?\d{2}|[A-Z]{3}[-\s·•]?\d{2,3})(?![-\w])/gi,
             '[PATENTE_RESERVADA]',
             'PATENTE_INTERNA'
+        );
+        if (
+            /\b(veh[ií]culo|camioneta|cami[oó]n|furg[oó]n|tracto|remolque)\s+(?!(?:SDLG|GVWR|GCWR|BLDC|PRCD|BSPT|LVDT|SPDT|DPDT|SPST|NPTF)\b)[BCDFGHJKLPRSTVWXYZ]{4}[-\s·•]?\d{2}(?![-\w])/i.test(
+                s
+            )
+        ) {
+            cats.add('PATENTE_INTERNA');
+            s = s.replace(
+                /\b(veh[ií]culo|camioneta|cami[oó]n|furg[oó]n|tracto|remolque)\s+(?!(?:SDLG|GVWR|GCWR|BLDC|PRCD|BSPT|LVDT|SPDT|DPDT|SPST|NPTF)\b)[BCDFGHJKLPRSTVWXYZ]{4}[-\s·•]?\d{2}(?![-\w])/gi,
+                '$1 [PATENTE_RESERVADA]'
+            );
+        }
+        applyRule(
+            /\b(?!(?:SDLG|GVWR|GCWR|BLDC|PRCD|BSPT|LVDT|SPDT|DPDT|SPST|NPTF)\b)[BCDFGHJKLPRSTVWXYZ]{4}[-·•]\d{2}(?![-\w])/g,
+            '[PATENTE_RESERVADA]',
+            'PATENTE_INTERNA'
+        );
+
+        // 8. VIN / PIN de 17 caracteres (ISO 3779 / ISO 10261): preserva WMI+VDS (1..8) y redacta cola serial (9..17)
+        s = s.replace(
+            /(?<![/:.=_-])\b([A-HJ-NPR-Z0-9]{8})([A-HJ-NPR-Z0-9]{9})\b(?![/:.=_-])/gi,
+            (full, wmiVds: string, tail: string) => {
+                const upFull = full.toUpperCase();
+                const upWmi = wmiVds.toUpperCase();
+                const upTail = tail.toUpperCase();
+                const hasLetters = /[A-HJ-NPR-Z]/.test(upFull);
+                const hasValidSerialTail = /\d{3,}$/.test(upTail) && (/\d/.test(upWmi) || /\d{4,}$/.test(upTail));
+                if (hasLetters && hasValidSerialTail) {
+                    cats.add('VIN_SERIAL_TAIL_REDACTED');
+                    return `${upWmi}-XXXXXXXXX`;
+                }
+                return full;
+            }
+        );
+
+        // 9. Números de serie individuales explícitos (S/N, N° de serie, Serial No., Chasis N°, N° interno)
+        applyRule(
+            /\b(?:s\/n[°º]?|sn\s*[:#]|n[°º.]?\s*(?:de\s+)?serie|n[uú]mero\s+de\s+serie|serial(?:\s+(?:no\.?|number|#))?|chasis\s*(?:n[°º.]?|#|:)|n[°º.]?\s*interno|c[oó]d(?:igo)?\.?\s+interno)\s*[:#-]?\s*(?!\[|[A-HJ-NPR-Z0-9]{8}-XXXXXXXXX\b)(?=[A-Z0-9/-]*\d)[A-Z0-9][A-Z0-9/-]{2,23}\b/gi,
+            '[SERIE_UNIDAD_RESERVADA]',
+            'SERIAL_INDIVIDUAL_REDACTED'
         );
 
         return {
@@ -125,35 +186,22 @@ export class ConfidentialityAirlockService {
         const base = this.scrubDeterministicPii(rawText || '');
         let s = base.scrubbed;
         const cats = new Set<string>(base.redactedCategories);
-        let extractedStructuralWmiVds: string | null = null;
 
-        // Detectar VIN / PIN de 17 caracteres ISO 3779: preservar WMI+VDS (1..8) y truncar serie privada (9..17)
-        s = s.replace(/\b([A-HJ-NPR-Z0-9]{8})([A-HJ-NPR-Z0-9]{9})\b/gi, (_full, wmiVds: string) => {
-            const up = wmiVds.toUpperCase();
-            // Exigir al menos 1 letra y 1 dígito para evitar falsos positivos en palabras comunes de 17 letras
-            if (/[A-Z]/.test(up) && /\d/.test(up)) {
-                if (!extractedStructuralWmiVds) {
-                    extractedStructuralWmiVds = up;
-                }
-                cats.add('VIN_SERIAL_TAIL_REDACTED');
-                return `${up}-XXXXXXXXX`;
-            }
-            return _full;
-        });
+        // Extraer el prefijo estructural WMI+VDS si scrubDeterministicPii truncó un VIN/PIN de 17 caracteres
+        const vinMatch = s.match(/\b([A-HJ-NPR-Z0-9]{8})-XXXXXXXXX\b/);
+        const extractedStructuralWmiVds: string | null = vinMatch ? vinMatch[1].toUpperCase() : null;
 
-        // Purgar números de serie individuales explícitos (S/N, Serial, N° Serie, Chasis, Interno)
-        if (/\b(?:s\/n|n[°º]?\s*(?:de\s+)?serie|serial(?:\s+no\.?)?|n[°º]?\s*interno|cod(?:igo)?\s+interno)\s*[:#-]?\s*[A-Z0-9-]{4,24}\b/i.test(s)) {
-            cats.add('SERIAL_INDIVIDUAL_REDACTED');
-            s = s.replace(
-                /\b(?:s\/n|n[°º]?\s*(?:de\s+)?serie|serial(?:\s+no\.?)?|n[°º]?\s*interno|cod(?:igo)?\s+interno)\s*[:#-]?\s*[A-Z0-9-]{4,24}\b/gi,
-                '[SERIE_UNIDAD_RESERVADA]'
-            );
-        }
-
-        // Purgar patentes chilenas sueltas formato vigente (4 consonantes + 2 dígitos, ej. ABCD-12)
-        if (/\b[BCDFGHJKLPRSTVWXYZ]{4}[-\s]\d{2}\b/.test(s)) {
+        // En texto crudo de placa de identificación, purgar también patentes chilenas separadas por espacio (ABCD 12)
+        if (
+            /\b(?!(?:SDLG|GVWR|GCWR|BLDC|PRCD|BSPT|LVDT|SPDT|DPDT|SPST|NPTF)\b)[BCDFGHJKLPRSTVWXYZ]{4}\s\d{2}\b/.test(
+                s
+            )
+        ) {
             cats.add('PATENTE_INTERNA');
-            s = s.replace(/\b[BCDFGHJKLPRSTVWXYZ]{4}[-\s]\d{2}\b/g, '[PATENTE_RESERVADA]');
+            s = s.replace(
+                /\b(?!(?:SDLG|GVWR|GCWR|BLDC|PRCD|BSPT|LVDT|SPDT|DPDT|SPST|NPTF)\b)[BCDFGHJKLPRSTVWXYZ]{4}\s\d{2}\b/g,
+                '[PATENTE_RESERVADA]'
+            );
         }
 
         return {

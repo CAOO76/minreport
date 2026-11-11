@@ -107,6 +107,11 @@ service cloud.firestore {
       return isDevRoot() || isSuperAdmin() || isTestPilot();
     }
 
+    // Curación Técnica de Ingeniería OPERMAQ (1º DEV + 3º TEST-PILOT; excluye mutación directa de 2º ADMIN)
+    function canCurateOpermaq() {
+      return isDevRoot() || isTestPilot();
+    }
+
     // 4º y 5º Jerarquía Soberana — Pertenencia estricta a cuenta B2B / EDU (Aislamiento Multi-Tenant puro)
     function isAccountMember(accountId) {
       return request.auth != null &&
@@ -1054,77 +1059,77 @@ service cloud.firestore {
       // Particionamiento Anti-1MiB OPERMAQ v3.0: Artefactos derivados (cost_matrix, symbology_pack, etc.)
       match /derived/{docId} {
         allow read: if isAuthenticated();
-        allow create, update: if isSystemPrivileged() && isValidOpermaqPayload(request.resource.data);
+        allow create, update: if canCurateOpermaq() && isValidOpermaqPayload(request.resource.data);
         allow delete: if isDevRoot();
       }
 
       match /vault_chats/{itemId}/sessions/{sessionId} {
         allow read: if isSystemPrivileged();
-        allow create, update: if isSystemPrivileged() && isValidOpermaqPayload(request.resource.data);
-        allow delete: if isSystemPrivileged();
+        allow create, update: if canCurateOpermaq() && isValidOpermaqPayload(request.resource.data);
+        allow delete: if canCurateOpermaq();
       }
 
       match /vault_files/{fileHash} {
         allow read: if isSystemPrivileged();
-        allow create, update: if isSystemPrivileged() && isValidOpermaqPayload(request.resource.data);
-        allow delete: if isSystemPrivileged();
+        allow create, update: if canCurateOpermaq() && isValidOpermaqPayload(request.resource.data);
+        allow delete: if canCurateOpermaq();
       }
 
       match /vault_corpus_chunks/{chunkId} {
         allow read: if isSystemPrivileged();
-        allow create, update: if isSystemPrivileged() && isValidOpermaqPayload(request.resource.data);
-        allow delete: if isSystemPrivileged();
+        allow create, update: if canCurateOpermaq() && isValidOpermaqPayload(request.resource.data);
+        allow delete: if canCurateOpermaq();
       }
 
       match /ingestion_jobs/{jobId} {
         allow read: if isSystemPrivileged();
-        allow create, update: if isSystemPrivileged() && isValidOpermaqPayload(request.resource.data);
-        allow delete: if isSystemPrivileged();
+        allow create, update: if canCurateOpermaq() && isValidOpermaqPayload(request.resource.data);
+        allow delete: if canCurateOpermaq();
       }
 
       match /generated_manuals/{manualId} {
         allow read: if isAuthenticated();
-        allow create, update: if isSystemPrivileged() && isValidOpermaqPayload(request.resource.data);
-        allow delete: if isSystemPrivileged();
+        allow create, update: if canCurateOpermaq() && isValidOpermaqPayload(request.resource.data);
+        allow delete: if canCurateOpermaq();
       }
     }
 
     // Diccionario maestro auto-aprendido de esquemas técnicos por TIPO de equipo (OPERMAQ)
     match /global_equipment_types/{typeId} {
       allow read: if isAuthenticated();
-      allow create, update: if (isDevRoot() || isTestPilot()) && isValidOpermaqPayload(request.resource.data);
-      allow delete: if isAdmin();
+      allow create, update: if canCurateOpermaq() && isValidOpermaqPayload(request.resource.data);
+      allow delete: if isDevRoot();
     }
 
     // Manifiestos colaborativos de linaje y versiones de modelos (OPERMAQ)
     match /global_asset_lineages/{lineageId} {
       allow read: if isAuthenticated();
-      allow create, update: if isSystemPrivileged() && isValidOpermaqPayload(request.resource.data);
-      allow delete: if isAdmin();
+      allow create, update: if canCurateOpermaq() && isValidOpermaqPayload(request.resource.data);
+      allow delete: if isDevRoot();
     }
 
     match /master_symbology_vault/{docId} {
       allow read: if isAuthenticated();
-      allow create, update: if isSystemPrivileged() && isBoundedPayload(request.resource.data);
-      allow delete: if isSystemPrivileged();
+      allow create, update: if canCurateOpermaq() && isBoundedPayload(request.resource.data);
+      allow delete: if canCurateOpermaq();
     }
 
     match /task_status/{taskId} {
       allow read: if isAuthenticated();
-      allow create, update: if isSystemPrivileged() && isValidOpermaqPayload(request.resource.data);
-      allow delete: if isSystemPrivileged();
+      allow create, update: if canCurateOpermaq() && isValidOpermaqPayload(request.resource.data);
+      allow delete: if canCurateOpermaq();
     }
 
     match /vault_corpus_files/{fileId} {
       allow read: if isAuthenticated();
-      allow create, update: if isSystemPrivileged() && isValidOpermaqPayload(request.resource.data);
-      allow delete: if isSystemPrivileged();
+      allow create, update: if canCurateOpermaq() && isValidOpermaqPayload(request.resource.data);
+      allow delete: if canCurateOpermaq();
     }
 
     match /vault_assist_sessions/{sessionId} {
       allow read: if isSystemPrivileged();
-      allow create, update: if isSystemPrivileged() && isValidOpermaqPayload(request.resource.data);
-      allow delete: if isSystemPrivileged();
+      allow create, update: if canCurateOpermaq() && isValidOpermaqPayload(request.resource.data);
+      allow delete: if canCurateOpermaq();
     }
 
     match /benchmark_events/{eventId} {

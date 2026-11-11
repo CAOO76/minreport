@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { collection, doc, getDocs, updateDoc } from 'firebase/firestore';
+import { collection, getDocs } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
@@ -39,6 +39,15 @@ interface HitlCandidateDoc {
     tenantId?: string;
     module?: string;
     targetEntity?: string;
+    feedbackId?: string;
+    globalAssetId?: string;
+    pillarId?: string | null;
+    itemId?: string | null;
+    category?: string;
+    priority?: string;
+    observation?: string;
+    expectedAiBehavior?: string | null;
+    proposedContent?: string | null;
     status?: string;
     currentValues?: Record<string, unknown>;
     suggestedValues?: Record<string, unknown>;
@@ -50,6 +59,40 @@ interface HitlCandidateDoc {
 }
 
 const MISSING_TECH = '[Información técnica no declarada en ficha]';
+
+function resolveCandidateSuggestedMap(cand: HitlCandidateDoc): Record<string, unknown> {
+    if (
+        cand.suggestedValues &&
+        typeof cand.suggestedValues === 'object' &&
+        Object.keys(cand.suggestedValues).length > 0
+    ) {
+        return cand.suggestedValues;
+    }
+    if (cand.field) {
+        return { [cand.field]: cand.suggestedValue };
+    }
+    const opermaqFields: Record<string, unknown> = {};
+    if (typeof cand.observation === 'string' && cand.observation.trim()) {
+        opermaqFields.observation = cand.observation.trim();
+    }
+    if (typeof cand.expectedAiBehavior === 'string' && cand.expectedAiBehavior.trim()) {
+        opermaqFields.expectedAiBehavior = cand.expectedAiBehavior.trim();
+    }
+    if (typeof cand.proposedContent === 'string' && cand.proposedContent.trim()) {
+        opermaqFields.proposedContent = cand.proposedContent.trim();
+    }
+    return opermaqFields;
+}
+
+function resolveCandidateTargetLabel(cand: HitlCandidateDoc): string {
+    if (cand.targetEntity && cand.targetEntity.trim()) {
+        return cand.targetEntity.trim();
+    }
+    const parts = [cand.globalAssetId, cand.pillarId, cand.itemId].filter(
+        (p): p is string => typeof p === 'string' && p.trim().length > 0
+    );
+    return parts.length > 0 ? parts.join(' · ') : MISSING_TECH;
+}
 
 export const TestPilotWorkspace: React.FC = () => {
     const navigate = useNavigate();
@@ -127,7 +170,7 @@ export const TestPilotWorkspace: React.FC = () => {
     const handleSelectCandidate = (cand: HitlCandidateDoc) => {
         setSelectedCandidate(cand);
         setConfirmKeyword('');
-        const suggestedMap = cand.suggestedValues || (cand.field ? { [cand.field]: cand.suggestedValue } : {});
+        const suggestedMap = resolveCandidateSuggestedMap(cand);
         const initialChecks: Record<string, boolean> = {};
         Object.keys(suggestedMap).forEach((k) => {
             initialChecks[k] = true;
@@ -140,7 +183,7 @@ export const TestPilotWorkspace: React.FC = () => {
         setErrorMsg(null);
         setStatusMsg(null);
         try {
-            const suggestedMap = selectedCandidate.suggestedValues || (selectedCandidate.field ? { [selectedCandidate.field]: selectedCandidate.suggestedValue } : {});
+            const suggestedMap = resolveCandidateSuggestedMap(selectedCandidate);
             const acceptedPatch: Record<string, unknown> = {};
             Object.entries(suggestedMap).forEach(([k, v]) => {
                 if (approvedFields[k]) {
@@ -148,13 +191,35 @@ export const TestPilotWorkspace: React.FC = () => {
                 }
             });
 
-            await updateDoc(doc(db, 'hitl_candidates', selectedCandidate.id), {
-                status: decision,
-                approvedFields: decision === 'APPROVED' ? acceptedPatch : {},
-                reviewedByUid: session?.uid || '',
-                reviewedByEmail: session?.email || '',
-                reviewedAt: new Date().toISOString(),
-            });
+            const curatedDirective =
+                (typeof acceptedPatch.expectedAiBehavior === 'string' && acceptedPatch.expectedAiBehavior.trim()) ||
+                (typeof acceptedPatch.proposedContent === 'string' && acceptedPatch.proposedContent.trim()) ||
+                (typeof selectedCandidate.expectedAiBehavior === 'string' && selectedCandidate.expectedAiBehavior.trim()) ||
+                (typeof selectedCandidate.proposedContent === 'string' && selectedCandidate.proposedContent.trim()) ||
+                undefined;
+
+            const token = await getToken();
+            const res = await fetch(
+                getApiUrl(`/api/vault/pilot-hitl/${encodeURIComponent(selectedCandidate.id)}/consolidate`),
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                        ...(session?.tenantId ? { 'X-Active-Account-Id': session.tenantId } : {}),
+                    },
+                    body: JSON.stringify({
+                        decision,
+                        confirmWord: confirmKeyword.trim(),
+                        approvedFields: decision === 'APPROVED' ? acceptedPatch : {},
+                        ...(curatedDirective ? { curatedDirective } : {}),
+                    }),
+                }
+            );
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(body?.error || body?.message || `Error HTTP ${res.status}`);
+            }
 
             setStatusMsg(`Candidato HITL ${selectedCandidate.id} consolidado con estado ${decision}.`);
             setConfirmKeyword('');
@@ -276,12 +341,12 @@ export const TestPilotWorkspace: React.FC = () => {
 
             <nav className="px-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center gap-fib-21 overflow-x-auto">
                 {[
-                    { id: 'SIM_OPERMAQ_CATALOG' as PilotTab, label: 'CATÁLOGO', icon: 'front_loader' },
-                    { id: 'SIM_OPERMAQ_FLEET' as PilotTab, label: 'FLOTA', icon: 'lists' },
-                    { id: 'SIM_OPERMAQ_SYMBOLOGY' as PilotTab, label: 'SIMBOLOGÍA', icon: 'shapes' },
-                    { id: 'SIM_STOCKPILE' as PilotTab, label: 'STOCKPILE 3D', icon: 'layers' },
-                    { id: 'FEEDBACK_LOG' as PilotTab, label: 'PILOT_FEEDBACK', icon: 'fact_check' },
-                    { id: 'HITL_CURATION' as PilotTab, label: 'HITL_CANDIDATES', icon: 'psychology' },
+                    { id: 'SIM_OPERMAQ_CATALOG' as PilotTab, label: 'CATÁLOGO' },
+                    { id: 'SIM_OPERMAQ_FLEET' as PilotTab, label: 'FLOTA' },
+                    { id: 'SIM_OPERMAQ_SYMBOLOGY' as PilotTab, label: 'SIMBOLOGÍA' },
+                    { id: 'SIM_STOCKPILE' as PilotTab, label: 'STOCKPILE 3D' },
+                    { id: 'FEEDBACK_LOG' as PilotTab, label: 'PILOT_FEEDBACK' },
+                    { id: 'HITL_CURATION' as PilotTab, label: 'HITL_CANDIDATES' },
                 ].map((tab) => (
                     <button
                         key={tab.id}
@@ -292,12 +357,11 @@ export const TestPilotWorkspace: React.FC = () => {
                             setStatusMsg(null);
                             window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
                         }}
-                        className={`py-fib-13 px-fib-8 bg-transparent border-0 border-b-2 text-xs font-mono uppercase tracking-wider cursor-pointer flex items-center gap-fib-8 whitespace-nowrap ${activeTab === tab.id
+                        className={`py-fib-13 px-fib-8 bg-transparent border-0 border-b-2 text-xs font-mono uppercase tracking-wider cursor-pointer flex items-center whitespace-nowrap rounded-none shadow-none ${activeTab === tab.id
                             ? 'border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-bold'
                             : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                             }`}
                     >
-                        <span className="material-symbols-outlined text-[18px]">{tab.icon}</span>
                         <span>{tab.label}</span>
                     </button>
                 ))}
@@ -449,7 +513,7 @@ export const TestPilotWorkspace: React.FC = () => {
                                                 >
                                                     <td className="py-fib-13 px-fib-8 select-text">{cand.id}</td>
                                                     <td className="py-fib-13 px-fib-8 uppercase text-[#C68346]">{cand.module || 'core'}</td>
-                                                    <td className="py-fib-13 px-fib-8">{cand.targetEntity || MISSING_TECH}</td>
+                                                    <td className="py-fib-13 px-fib-8">{resolveCandidateTargetLabel(cand)}</td>
                                                     <td className="py-fib-13 px-fib-8 text-[#00AEEF] uppercase">{cand.status || 'PENDING'}</td>
                                                 </tr>
                                             ))
@@ -481,47 +545,50 @@ export const TestPilotWorkspace: React.FC = () => {
                             ) : (
                                 <div className="space-y-fib-21">
                                     <div className="space-y-fib-8 text-xs font-mono">
-                                        {Object.entries(
-                                            selectedCandidate.suggestedValues ||
-                                            (selectedCandidate.field ? { [selectedCandidate.field]: selectedCandidate.suggestedValue } : {})
-                                        ).map(([fieldKey, suggestedVal]) => {
-                                            const currentVal =
-                                                selectedCandidate.currentValues?.[fieldKey] ??
-                                                selectedCandidate.currentValue ??
-                                                MISSING_TECH;
-                                            return (
-                                                <label
-                                                    key={fieldKey}
-                                                    className="flex items-start gap-fib-13 p-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] cursor-pointer"
-                                                >
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={Boolean(approvedFields[fieldKey])}
-                                                        onChange={(e) =>
-                                                            setApprovedFields((prev) => ({
-                                                                ...prev,
-                                                                [fieldKey]: e.target.checked,
-                                                            }))
-                                                        }
-                                                        className="mt-1 accent-[#C68346]"
-                                                    />
-                                                    <div className="flex-1 space-y-1">
-                                                        <span className="text-microcopy uppercase text-[#C68346] block">{fieldKey}</span>
-                                                        <div className="flex flex-wrap items-center gap-fib-8 text-xs">
-                                                            <span className="text-[#475569] dark:text-[#8A93A6]">
-                                                                [Actual: {String(currentVal)}]
+                                        {Object.entries(resolveCandidateSuggestedMap(selectedCandidate)).map(
+                                            ([fieldKey, suggestedVal]) => {
+                                                const currentVal =
+                                                    selectedCandidate.currentValues?.[fieldKey] ??
+                                                    selectedCandidate.currentValue ??
+                                                    MISSING_TECH;
+                                                return (
+                                                    <label
+                                                        key={fieldKey}
+                                                        className="flex items-start gap-fib-13 p-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none cursor-pointer"
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            autoComplete="off"
+                                                            spellCheck={false}
+                                                            checked={Boolean(approvedFields[fieldKey])}
+                                                            onChange={(e) =>
+                                                                setApprovedFields((prev) => ({
+                                                                    ...prev,
+                                                                    [fieldKey]: e.target.checked,
+                                                                }))
+                                                            }
+                                                            className="mt-1 accent-[#C68346] rounded-none"
+                                                        />
+                                                        <div className="flex-1 space-y-1">
+                                                            <span className="text-microcopy uppercase text-[#C68346] block">
+                                                                {fieldKey}
                                                             </span>
-                                                            <span className="material-symbols-outlined text-[14px] text-[#00AEEF]">
-                                                                arrow_forward
-                                                            </span>
-                                                            <span className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                                                                [Sugerido: {String(suggestedVal)}]
-                                                            </span>
+                                                            <div className="flex flex-wrap items-center gap-fib-8 text-xs">
+                                                                <span className="text-[#475569] dark:text-[#8A93A6]">
+                                                                    [Actual: {String(currentVal)}]
+                                                                </span>
+                                                                <span className="material-symbols-outlined text-[14px] text-[#00AEEF]">
+                                                                    arrow_forward
+                                                                </span>
+                                                                <span className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                                    [Sugerido: {String(suggestedVal ?? MISSING_TECH)}]
+                                                                </span>
+                                                            </div>
                                                         </div>
-                                                    </div>
-                                                </label>
-                                            );
-                                        })}
+                                                    </label>
+                                                );
+                                            }
+                                        )}
                                     </div>
 
                                     <div className="space-y-fib-13 border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-13">

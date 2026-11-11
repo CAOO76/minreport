@@ -236,6 +236,21 @@ export const x402Gatekeeper = (requirement: X402PaymentRequirement) => {
         // VÍA A: Contrato Corporativo Activo con identidad verificada y membresía real
         const corpResult = await verifyCorporateContractAccess(req);
         if (corpResult.authorized && corpResult.tenantId && corpResult.uid) {
+            await AuditLedger.record({
+                tenantId: corpResult.tenantId,
+                actorUid: corpResult.uid,
+                actorEmail: corpResult.email || `${corpResult.uid}@corporate.minreport.internal`,
+                action: 'M2M_CORPORATE_CONTRACT_ACCESS',
+                module: 'web3-m2m',
+                targetEntity: requirement.resourceId,
+                details: {
+                    mode: 'CORPORATE_CONTRACT',
+                    resource: req.originalUrl,
+                    priceMicroUsdCoveredByContract: requirement.priceMicroUSD,
+                },
+                ipAddress: clientIp,
+            }).catch(() => {});
+
             req.x402Context = {
                 mode: 'CORPORATE_CONTRACT',
                 tenantId: corpResult.tenantId,

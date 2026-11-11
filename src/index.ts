@@ -41,11 +41,27 @@ import { webauthnRouter } from './api/webauthn.controller';
 import { registerOpermaqModuleRoutes } from './modules/opermaq';
 import { AssetOntologyEngine } from './modules/opermaq/services/AssetOntologyEngine';
 import { compileEquipmentCostMatrixFromPillars } from './modules/opermaq/services/EquipmentCostMatrixCompiler';
-import { resolveOrLearnEquipmentType } from './modules/opermaq/services/EquipmentTypeRegistryService';
+import {
+    GLOBAL_EQUIPMENT_TYPES_COLLECTION,
+    listRegisteredEquipmentTypes,
+    normalizeEquipmentTypeAlias,
+    normalizeEquipmentTypeKey,
+    upgradeEquipmentTypeSchemaIfNeeded,
+} from './modules/opermaq/services/EquipmentTypeRegistryService';
 import { computePillarStructureDigestSha256, computeVaultMerkleRootSha256 } from './modules/opermaq/services/ItemizerService';
 import { startHuntTaskWatchdog } from './modules/opermaq/services/TaskQueueService';
 import { VaultPersistenceService } from './modules/opermaq/services/VaultPersistenceService';
-import { PILLAR_PREREQUISITE_MAP, PillarDocument, PillarId } from './modules/opermaq/types/vault.types';
+import {
+    type GlobalEquipmentTypeDoc,
+    PILLAR_PREREQUISITE_MAP,
+    PillarDocument,
+    PillarId,
+} from './modules/opermaq/types/vault.types';
+import {
+    normalizeCanonicalSlotsByResolvedEnergy,
+    normalizeLegacySpecLinesByEnergy,
+    sanitizeDesignAndWorkContextItems,
+} from './modules/opermaq/utils/canonicalArchetypeSpecs';
 import { requireSuperAdmin } from './middleware/admin';
 import { requireAuth } from './middleware/auth';
 import {
@@ -385,26 +401,142 @@ app.get(
     }
 );
 
+const M2mAssetIdParamSchema = z.object({
+    assetId: z.string().trim().min(1).max(128),
+});
+
+const M2mTypeKeyParamSchema = z.object({
+    typeKey: z.string().trim().min(2).max(96),
+});
+
+function normalizeSidebarProfileLists(data: Record<string, any>): {
+    canonical_specs: any[];
+    caracteristicas_principales: string[];
+    ambiente_operativo: string[];
+    contexto_operativo: string[];
+} {
+    const typeContextText = `${data.make_model || ''} ${data.tipo_equipo || ''} ${data.categoria_equipo || ''}`.trim();
+    const primaryEnergy = data.physical_traits?.primary_energy || null;
+    const energyValueText =
+        data.energy_consumption_profile?.energy_spec_label ||
+        (data.energy_consumption_profile?.energy_source &&
+        data.energy_consumption_profile.energy_source !== 'NO_DECLARADO'
+            ? data.energy_consumption_profile.energy_source
+            : null);
+
+    const canonicalSpecs = Array.isArray(data.canonical_specs)
+        ? normalizeCanonicalSlotsByResolvedEnergy(data.canonical_specs, {
+              typeContextText,
+              primaryEnergy,
+              energyValueText,
+          })
+        : [];
+
+    const caracteristicasPrincipales = Array.isArray(data.caracteristicas_principales)
+        ? normalizeLegacySpecLinesByEnergy(data.caracteristicas_principales, {
+              typeContextText,
+              primaryEnergy,
+              energyValueText,
+          })
+        : [];
+
+    const ambienteOperativo = Array.isArray(data.ambiente_operativo)
+        ? sanitizeDesignAndWorkContextItems(data.ambiente_operativo, undefined, {
+              canonicalTypeEs: data.tipo_equipo || null,
+          })
+        : [];
+
+    const contextoOperativo = Array.isArray(data.contexto_operativo)
+        ? sanitizeDesignAndWorkContextItems(data.contexto_operativo, undefined, {
+              canonicalTypeEs: data.tipo_equipo || null,
+          })
+        : [];
+
+    return {
+        canonical_specs: canonicalSpecs,
+        caracteristicas_principales: caracteristicasPrincipales,
+        ambiente_operativo: ambienteOperativo,
+        contexto_operativo: contextoOperativo,
+    };
+}
+
+async function resolveReadOnlyEquipmentTypeOntology(rawTypeKey: string): Promise<GlobalEquipmentTypeDoc | null> {
+    const normalizedKey = normalizeEquipmentTypeKey(rawTypeKey);
+    const normalizedAlias = normalizeEquipmentTypeAlias(rawTypeKey.replace(/_/g, ' '));
+
+    if (normalizedKey) {
+        const directSnap = await db.collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION).doc(normalizedKey).get();
+        if (directSnap.exists) {
+            const existing = directSnap.data() as GlobalEquipmentTypeDoc;
+            if (Array.isArray(existing?.spec_schema) && existing.spec_schema.length >= 2) {
+                return upgradeEquipmentTypeSchemaIfNeeded(existing).doc;
+            }
+        }
+    }
+
+    if (rawTypeKey !== normalizedKey) {
+        const rawSnap = await db.collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION).doc(rawTypeKey).get();
+        if (rawSnap.exists) {
+            const existing = rawSnap.data() as GlobalEquipmentTypeDoc;
+            if (Array.isArray(existing?.spec_schema) && existing.spec_schema.length >= 2) {
+                return upgradeEquipmentTypeSchemaIfNeeded(existing).doc;
+            }
+        }
+    }
+
+    if (normalizedAlias.length >= 2) {
+        const aliasSnap = await db
+            .collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION)
+            .where('type_aliases', 'array-contains', normalizedAlias)
+            .limit(1)
+            .get();
+        if (!aliasSnap.empty) {
+            const existing = aliasSnap.docs[0].data() as GlobalEquipmentTypeDoc;
+            if (Array.isArray(existing?.spec_schema) && existing.spec_schema.length >= 2) {
+                return upgradeEquipmentTypeSchemaIfNeeded(existing).doc;
+            }
+        }
+    }
+
+    const registeredAndSeeded = await listRegisteredEquipmentTypes();
+    const staticHit = registeredAndSeeded.find((candidate) => {
+        if (candidate.type_key === normalizedKey || candidate.type_key === rawTypeKey) {
+            return true;
+        }
+        if (normalizeEquipmentTypeAlias(candidate.canonical_type_es) === normalizedAlias) {
+            return true;
+        }
+        return (
+            Array.isArray(candidate.type_aliases) &&
+            candidate.type_aliases.some((alias) => normalizeEquipmentTypeAlias(alias) === normalizedAlias)
+        );
+    });
+
+    return staticHit ? upgradeEquipmentTypeSchemaIfNeeded(staticHit).doc : null;
+}
+
 app.get(
     '/api/m2m/opermaq/vault/:assetId/specs',
     x402Gatekeeper({ priceMicroUSD: 20000, resourceId: 'opermaq-vault-canonical-specs' }),
     async (req: X402AuthenticatedRequest, res) => {
         try {
             const x402Ctx = req.x402Context;
-            const assetId = String(req.params.assetId || '').trim();
-            if (!assetId) {
+            const parsedParams = M2mAssetIdParamSchema.safeParse(req.params || {});
+            if (!parsedParams.success) {
                 return res.status(400).json({ error: 'Identificador de activo requerido.' });
             }
+            const { assetId } = parsedParams.data;
 
-            const docSnap = await db.collection('global_asset_catalog').doc(assetId).get();
-            if (!docSnap.exists) {
+            const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(assetId);
+            if (!hydrated.exists || !hydrated.data) {
                 return res.status(404).json({ error: 'Activo no encontrado en bóveda soberana OPERMAQ.' });
             }
 
-            const data = docSnap.data() || {};
+            const data = hydrated.data;
             const vault = (data.knowledge_vault || {}) as Record<string, any>;
             const vaultMerkleRootSha256 =
-                vault.vault_merkle_root_sha256 || computeVaultMerkleRootSha256(vault);
+                computeVaultMerkleRootSha256(vault) || vault.vault_merkle_root_sha256 || null;
+            const normalizedLists = normalizeSidebarProfileLists(data);
 
             return res.status(200).json({
                 success: true,
@@ -413,19 +545,17 @@ app.get(
                 timestamp: new Date().toISOString(),
                 settlementMode: x402Ctx?.mode || 'VERIFIED',
                 asset: {
-                    assetId: docSnap.id,
+                    assetId: hydrated.id,
                     make: data.make_oficial || data.make || 'GENÉRICO',
                     model: data.model_oficial || data.model || '',
                     categoria_equipo: data.categoria_equipo || null,
                     tipo_equipo: data.tipo_equipo || null,
                     is_sealed: Boolean(data.is_sealed),
                     vault_merkle_root_sha256: vaultMerkleRootSha256,
-                    canonical_specs: data.canonical_specs || {},
-                    caracteristicas_principales: Array.isArray(data.caracteristicas_principales)
-                        ? data.caracteristicas_principales
-                        : [],
-                    ambiente_operativo: Array.isArray(data.ambiente_operativo) ? data.ambiente_operativo : [],
-                    contexto_operativo: Array.isArray(data.contexto_operativo) ? data.contexto_operativo : [],
+                    canonical_specs: normalizedLists.canonical_specs,
+                    caracteristicas_principales: normalizedLists.caracteristicas_principales,
+                    ambiente_operativo: normalizedLists.ambiente_operativo,
+                    contexto_operativo: normalizedLists.contexto_operativo,
                     energy_consumption_profile: data.energy_consumption_profile || null,
                     physical_traits: data.physical_traits || null,
                 },
@@ -443,10 +573,11 @@ app.get(
     async (req: X402AuthenticatedRequest, res) => {
         try {
             const x402Ctx = req.x402Context;
-            const assetId = String(req.params.assetId || '').trim();
-            if (!assetId) {
+            const parsedParams = M2mAssetIdParamSchema.safeParse(req.params || {});
+            if (!parsedParams.success) {
                 return res.status(400).json({ error: 'Identificador de activo requerido.' });
             }
+            const { assetId } = parsedParams.data;
 
             const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(assetId);
             if (!hydrated.exists || !hydrated.data) {
@@ -489,15 +620,18 @@ app.get(
     async (req: X402AuthenticatedRequest, res) => {
         try {
             const x402Ctx = req.x402Context;
-            const typeKey = String(req.params.typeKey || '').trim();
-            if (typeKey.length < 2) {
+            const parsedParams = M2mTypeKeyParamSchema.safeParse(req.params || {});
+            if (!parsedParams.success) {
                 return res.status(400).json({ error: 'Identificador typeKey requerido.' });
             }
+            const { typeKey } = parsedParams.data;
 
-            const { typeDoc, reusedExistingSchema } = await resolveOrLearnEquipmentType({
-                rawTypeKey: typeKey,
-                rawTypeHint: typeKey.replace(/_/g, ' '),
-            });
+            const typeDoc = await resolveReadOnlyEquipmentTypeOntology(typeKey);
+            if (!typeDoc) {
+                return res.status(404).json({
+                    error: 'Tipo de equipo no encontrado en el registro ontológico OPERMAQ.',
+                });
+            }
 
             const traits =
                 typeDoc.physical_traits ||
@@ -527,7 +661,7 @@ app.get(
                 region: 'southamerica-west1',
                 timestamp: new Date().toISOString(),
                 settlementMode: x402Ctx?.mode || 'VERIFIED',
-                reused_existing_schema: reusedExistingSchema,
+                reused_existing_schema: true,
                 ontology: {
                     type_key: typeDoc.type_key,
                     canonical_type_es: typeDoc.canonical_type_es,

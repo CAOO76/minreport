@@ -1,10 +1,10 @@
 import { Router, type Request, type Response } from 'express';
+import { z } from 'zod';
 import {
     buildHuntTaskId,
     executeHuntWorkerTask,
     verifyCloudTasksOidc,
 } from '../services/TaskQueueService';
-import type { PillarId } from '../types/vault.types';
 
 /**
  * OPERMAQ — Worker Routes (Cloud Tasks OIDC)
@@ -13,25 +13,45 @@ import type { PillarId } from '../types/vault.types';
 
 const workerRouter = Router();
 
-workerRouter.post('/hunt-task', verifyCloudTasksOidc, async (req: Request, res: Response) => {
-    const { itemId, pillarId, globalAssetId, userId, humanCorrection } = req.body || {};
+const HuntWorkerBodySchema = z.object({
+    taskId: z.string().trim().min(1).max(256).optional(),
+    globalAssetId: z.string().trim().min(1).max(128),
+    pillarId: z.enum([
+        'ficha_tecnica',
+        'manual_operaciones',
+        'pauta_mantencion',
+        'matriz_riesgos',
+        'checklist_pre_op',
+    ]),
+    itemId: z.string().trim().min(1).max(128),
+    intent: z.enum(['INITIAL_CAPTURE', 'INCREMENTAL_UPDATE']).optional(),
+    humanCorrection: z.string().max(16000).optional(),
+    tenantId: z.string().trim().min(1).max(128).optional().default('global'),
+    actorId: z.string().trim().min(1).max(128).optional(),
+    userId: z.string().trim().min(1).max(128).optional(),
+});
 
-    if (!itemId || !pillarId || !globalAssetId) {
+workerRouter.post('/hunt-task', verifyCloudTasksOidc, async (req: Request, res: Response) => {
+    const parsed = HuntWorkerBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
         return res.status(400).json({
-            error: 'Parámetros requeridos: itemId, pillarId, globalAssetId.',
+            error: 'Parámetros requeridos inválidos en worker de caza (globalAssetId, pillarId, itemId).',
+            details: parsed.error.format(),
         });
     }
 
+    const { itemId, pillarId, globalAssetId, intent, humanCorrection, tenantId, actorId, userId } = parsed.data;
     const taskId = buildHuntTaskId(globalAssetId, pillarId, itemId);
 
     try {
         await executeHuntWorkerTask({
             taskId,
             globalAssetId,
-            pillarId: pillarId as PillarId,
+            pillarId,
             itemId,
-            tenantId: req.body?.tenantId || 'global',
-            actorId: req.body?.actorId || userId || 'cloud-tasks-worker',
+            intent,
+            tenantId,
+            actorId: actorId || userId || 'cloud-tasks-worker',
             humanCorrection,
         });
 

@@ -20,6 +20,8 @@ import {
 } from '../services/EquipmentTypeRegistryService';
 import {
     ApplyCatalogHomologationBodySchema,
+    AssetConfigurationProfileSchema,
+    CanonicalSpecSlotSchema,
     FleetUnitRegistrationBodySchema,
     HITL_CONFIRM_KEYWORD,
     ResolveAssetBodySchema,
@@ -50,6 +52,57 @@ const assetsRouter = Router();
 const uploadPrivatePhoto = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 25 * 1024 * 1024 },
+});
+
+const AssetIdParamSchema = z.object({
+    id: z.string().trim().min(1).max(128),
+});
+
+const DeletePrivatePhotoParamsSchema = z.object({
+    id: z.string().trim().min(1).max(128),
+    sha256: z.string().trim().min(8).max(128).regex(/^[a-fA-F0-9_-]+$/),
+});
+
+const CatalogLookupQuerySchema = z.object({
+    q: z.string().max(320).optional().default(''),
+    isGeneric: z.enum(['true', 'false']).optional().default('false'),
+});
+
+const PrivatePhotoUploadBodySchema = z.object({
+    caption: z.string().trim().max(160).optional(),
+    clientOriginalBytes: z.coerce.number().int().nonnegative().optional(),
+});
+
+const HitlConfirmEnvelopeSchema = z
+    .object({
+        confirmWord: z.string().optional(),
+        confirm_word: z.string().optional(),
+    })
+    .passthrough();
+
+const AddTenantCatalogBodySchema = z.object({
+    global_asset_id: z.string().trim().max(128).optional(),
+    make_oficial: z.string().trim().max(160).optional(),
+    model_oficial: z.string().trim().max(160).optional(),
+    equipment_type_key: z.string().trim().max(96).optional(),
+    archetype_id: z.string().trim().max(96).optional(),
+    categoria_equipo: z.string().trim().max(160).optional(),
+    tipo_equipo: z.string().trim().max(160).optional(),
+    configuration_profile: AssetConfigurationProfileSchema.nullable().optional(),
+    canonical_specs: z.array(CanonicalSpecSlotSchema).optional(),
+    ambiente_operativo: z.array(z.string().max(400)).max(20).optional(),
+    contexto_operativo: z.array(z.string().max(400)).max(20).optional(),
+    caracteristicas_principales: z.array(z.string().max(400)).max(30).optional(),
+    chassis_versions: z.array(z.string().max(120)).max(30).optional(),
+    official_url: z.string().trim().max(1024).optional(),
+    original_jargon: z.string().trim().max(320).optional(),
+    version: z.string().trim().max(120).optional(),
+    isGlobalOnly: z.boolean().optional().default(false),
+});
+
+const ContributeToCommonsBodySchema = z.object({
+    content: z.string().trim().max(12000).optional(),
+    text: z.string().trim().max(12000).optional(),
 });
 
 function normalizeCompactOwnershipId(raw: string): string {
@@ -348,7 +401,11 @@ assetsRouter.post('/catalog/:id/propose-homologation', async (req: ScopedRequest
             });
         }
 
-        const docId = String(req.params.id || '').trim();
+        const parsedParams = AssetIdParamSchema.safeParse(req.params || {});
+        if (!parsedParams.success) {
+            return res.status(400).json({ error: 'Identificador de activo inválido.' });
+        }
+        const docId = parsedParams.data.id;
         const docSnap = await db.collection('global_asset_catalog').doc(docId).get();
         if (!docSnap.exists) {
             return res.status(404).json({ error: 'Equipo no encontrado en el Catálogo Maestro.' });
@@ -377,6 +434,11 @@ assetsRouter.patch('/catalog/:id/apply-homologation', async (req: ScopedRequest,
             });
         }
 
+        const parsedParams = AssetIdParamSchema.safeParse(req.params || {});
+        if (!parsedParams.success) {
+            return res.status(400).json({ error: 'Identificador de activo inválido.' });
+        }
+
         const parsed = ApplyCatalogHomologationBodySchema.safeParse(req.body || {});
         if (!parsed.success) {
             return res.status(400).json({
@@ -392,7 +454,7 @@ assetsRouter.patch('/catalog/:id/apply-homologation', async (req: ScopedRequest,
             });
         }
 
-        const docId = String(req.params.id || '').trim();
+        const docId = parsedParams.data.id;
         const docRef = db.collection('global_asset_catalog').doc(docId);
         const docSnap = await docRef.get();
         if (!docSnap.exists) {
@@ -535,8 +597,15 @@ assetsRouter.patch('/catalog/:id/apply-homologation', async (req: ScopedRequest,
 assetsRouter.get('/catalog-lookup', async (req: ScopedRequest, res: Response) => {
     const start = Date.now();
     try {
-        const rawQuery = String(req.query.q || '').trim();
-        const isGeneric = String(req.query.isGeneric || 'false') === 'true';
+        const parsedQuery = CatalogLookupQuerySchema.safeParse(req.query || {});
+        if (!parsedQuery.success) {
+            return res.status(400).json({
+                error: 'Parámetros de consulta inválidos.',
+                details: parsedQuery.error.format(),
+            });
+        }
+        const rawQuery = parsedQuery.data.q.trim();
+        const isGeneric = parsedQuery.data.isGeneric === 'true';
 
         if (rawQuery.length < 2) {
             return res.status(200).json({
@@ -828,9 +897,13 @@ assetsRouter.get('/my-fleet', async (req: ScopedRequest, res: Response) => {
  */
 assetsRouter.get('/unit/:id', async (req: ScopedRequest, res: Response) => {
     try {
+        const parsedParams = AssetIdParamSchema.safeParse(req.params || {});
+        if (!parsedParams.success) {
+            return res.status(400).json({ error: 'Identificador de unidad inválido.' });
+        }
         const ctx = req.opermaqContext!;
         const fleetCol = resolveFleetCollectionName(ctx);
-        const unitSnap = await db.collection(fleetCol).doc(String(req.params.id)).get();
+        const unitSnap = await db.collection(fleetCol).doc(parsedParams.data.id).get();
         if (!unitSnap.exists) {
             return res.status(404).json({ error: 'Unidad de flota no encontrada.' });
         }
@@ -1118,6 +1191,18 @@ assetsRouter.post(
                 return res.status(403).json({ error: 'Permisos insuficientes para gestionar fotos de la unidad.' });
             }
 
+            const parsedParams = AssetIdParamSchema.safeParse(req.params || {});
+            if (!parsedParams.success) {
+                return res.status(400).json({ error: 'Identificador de unidad inválido.' });
+            }
+            const parsedBody = PrivatePhotoUploadBodySchema.safeParse(req.body || {});
+            if (!parsedBody.success) {
+                return res.status(400).json({
+                    error: 'Metadatos de fotografía inválidos.',
+                    details: parsedBody.error.format(),
+                });
+            }
+
             const file = req.file;
             if (!file || !file.buffer || !String(file.mimetype || '').startsWith('image/')) {
                 return res.status(400).json({
@@ -1126,7 +1211,7 @@ assetsRouter.post(
             }
 
             const fleetCol = resolveFleetCollectionName(ctx);
-            const unitRef = db.collection(fleetCol).doc(String(req.params.id));
+            const unitRef = db.collection(fleetCol).doc(parsedParams.data.id);
             const unitSnap = await unitRef.get();
             if (!unitSnap.exists) {
                 return res.status(404).json({ error: 'Unidad de flota no encontrada.' });
@@ -1148,13 +1233,19 @@ assetsRouter.post(
                     tenantId: targetTenant,
                     actorUid: ctx.actorId,
                     originalFilename: file.originalname || 'equipo_flota.webp',
+                    clientOriginalBytes: parsedBody.data.clientOriginalBytes,
                 }
             );
 
-            const caption = String(req.body?.caption || '').trim().slice(0, 160);
+            const caption = (parsedBody.data.caption || '').trim().slice(0, 160);
             const existingPhotos: Array<Record<string, any>> = Array.isArray(unitData.private_photos)
                 ? [...unitData.private_photos]
                 : [];
+
+            const savingsPct =
+                typeof descriptor.savingsPct === 'number'
+                    ? descriptor.savingsPct
+                    : Math.round((descriptor.savingsRatio || 0) * 1000) / 10;
 
             const alreadyIdx = existingPhotos.findIndex((p) => p.sha256 === descriptor.sha256);
             const photoEntry = {
@@ -1163,6 +1254,9 @@ assetsRouter.post(
                 caption: caption || undefined,
                 width: descriptor.width || undefined,
                 height: descriptor.height || undefined,
+                original_bytes: descriptor.originalBytes,
+                optimized_bytes: descriptor.optimizedBytes,
+                savings_pct: savingsPct,
                 uploadedAt: new Date().toISOString(),
                 uploadedBy: ctx.actorEmail,
             };
@@ -1191,7 +1285,9 @@ assetsRouter.post(
                 details: {
                     sha256: descriptor.sha256,
                     scope: 'TENANT_PRIVATE',
+                    originalBytes: descriptor.originalBytes,
                     optimizedBytes: descriptor.optimizedBytes,
+                    savingsPct,
                 },
             }).catch(() => {});
 
@@ -1209,7 +1305,7 @@ assetsRouter.post(
 
 /**
  * DELETE /api/assets/:id/private-photo/:sha256
- * Desvincula una fotografía privada de la unidad del cliente.
+ * Desvincula una fotografía privada de la unidad del cliente. Exige confirmación HITL `"ACTUALIZAR"`.
  */
 assetsRouter.delete('/:id/private-photo/:sha256', async (req: ScopedRequest, res: Response) => {
     try {
@@ -1218,8 +1314,31 @@ assetsRouter.delete('/:id/private-photo/:sha256', async (req: ScopedRequest, res
             return res.status(403).json({ error: 'Permisos insuficientes.' });
         }
 
+        const parsedParams = DeletePrivatePhotoParamsSchema.safeParse(req.params || {});
+        if (!parsedParams.success) {
+            return res.status(400).json({
+                error: 'Parámetros de ruta inválidos.',
+                details: parsedParams.error.format(),
+            });
+        }
+
+        const parsedBody = HitlConfirmEnvelopeSchema.safeParse(req.body || {});
+        const parsedQuery = HitlConfirmEnvelopeSchema.safeParse(req.query || {});
+        const confirmCandidate = String(
+            req.body?.confirmWord ||
+                req.query?.confirmWord ||
+                (parsedBody.success ? parsedBody.data.confirm_word : '') ||
+                (parsedQuery.success ? parsedQuery.data.confirm_word : '') ||
+                ''
+        )
+            .trim()
+            .toUpperCase();
+        if (confirmCandidate !== HITL_CONFIRM_KEYWORD) {
+            return res.status(400).json({ error: 'CONFIRM_WORD_MISMATCH' });
+        }
+
         const fleetCol = resolveFleetCollectionName(ctx);
-        const unitRef = db.collection(fleetCol).doc(String(req.params.id));
+        const unitRef = db.collection(fleetCol).doc(parsedParams.data.id);
         const unitSnap = await unitRef.get();
         if (!unitSnap.exists) {
             return res.status(404).json({ error: 'Unidad de flota no encontrada.' });
@@ -1231,7 +1350,7 @@ assetsRouter.delete('/:id/private-photo/:sha256', async (req: ScopedRequest, res
             return res.status(403).json({ error: 'Acceso denegado.' });
         }
 
-        const targetSha = String(req.params.sha256 || '').trim().toLowerCase();
+        const targetSha = parsedParams.data.sha256.toLowerCase();
         const remaining = (Array.isArray(unitData.private_photos) ? unitData.private_photos : []).filter(
             (p: any) => String(p?.sha256 || '').toLowerCase() !== targetSha
         );
@@ -1243,6 +1362,20 @@ assetsRouter.delete('/:id/private-photo/:sha256', async (req: ScopedRequest, res
             foto_url: nextPrimary,
             updatedAt: new Date(),
         });
+
+        await AuditLedger.record({
+            tenantId: ownerTenant || ctx.tenantId,
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            action: 'OPERMAQ_PRIVATE_PHOTO_DELETED',
+            module: 'opermaq',
+            targetEntity: unitRef.id,
+            details: {
+                sha256: targetSha,
+                remainingPhotosCount: remaining.length,
+                fleetCollection: fleetCol,
+            },
+        }).catch(() => {});
 
         return res.status(200).json({
             success: true,
@@ -1382,6 +1515,14 @@ assetsRouter.post('/resolve', async (req: ScopedRequest, res: Response) => {
 assetsRouter.post('/add-tenant-catalog', async (req: ScopedRequest, res: Response) => {
     try {
         const ctx = req.opermaqContext!;
+        const parsedBody = AddTenantCatalogBodySchema.safeParse(req.body || {});
+        if (!parsedBody.success) {
+            return res.status(400).json({
+                error: 'Payload inválido para vinculación de catálogo.',
+                details: parsedBody.error.format(),
+            });
+        }
+
         const {
             global_asset_id,
             make_oficial,
@@ -1400,11 +1541,18 @@ assetsRouter.post('/add-tenant-catalog', async (req: ScopedRequest, res: Respons
             original_jargon,
             version,
             isGlobalOnly,
-        } = req.body || {};
+        } = parsedBody.data;
 
         if (isGlobalOnly && (!ctx.capabilities.canCurateAI || ctx.isEduSandbox)) {
             return res.status(403).json({
                 error: 'Permisos insuficientes para pre-registro global de catálogos.',
+            });
+        }
+
+        if (!isGlobalOnly && !ctx.capabilities.canManageFleet) {
+            return res.status(403).json({
+                error: 'FLEET_MANAGEMENT_FORBIDDEN',
+                message: 'Permisos insuficientes para vincular equipos a la flota de la cuenta.',
             });
         }
 
@@ -1488,7 +1636,7 @@ assetsRouter.post('/add-tenant-catalog', async (req: ScopedRequest, res: Respons
                 make_oficial,
                 model_oficial,
                 categoria_equipo,
-                configuration_profile,
+                configuration_profile: configuration_profile ?? undefined,
                 ...profileData,
                 versions: Array.isArray(chassis_versions) ? chassis_versions : version ? [version] : undefined,
                 official_url,
@@ -1507,6 +1655,21 @@ assetsRouter.post('/add-tenant-catalog', async (req: ScopedRequest, res: Respons
         }
 
         if (isGlobalOnly) {
+            await AuditLedger.record({
+                tenantId: ctx.tenantId || 'GLOBAL',
+                actorUid: ctx.actorId,
+                actorEmail: ctx.actorEmail,
+                action: 'OPERMAQ_TENANT_ASSET_ADDED',
+                module: 'opermaq',
+                targetEntity: finalGlobalId,
+                details: {
+                    globalAssetId: finalGlobalId,
+                    makeOficial: make_oficial || null,
+                    modelOficial: model_oficial || null,
+                    isGlobalOnly: true,
+                },
+            }).catch(() => {});
+
             return res.status(200).json({
                 success: true,
                 global_asset_id: finalGlobalId,
@@ -1524,9 +1687,25 @@ assetsRouter.post('/add-tenant-catalog', async (req: ScopedRequest, res: Respons
 
         if (!existingQs.empty) {
             const existingDoc = existingQs.docs[0];
-            if (existingDoc.data().archived) {
+            const wasArchived = Boolean(existingDoc.data().archived);
+            if (wasArchived) {
                 await existingDoc.ref.update({ archived: false, updatedAt: new Date() });
             }
+
+            await AuditLedger.record({
+                tenantId: ctx.tenantId,
+                actorUid: ctx.actorId,
+                actorEmail: ctx.actorEmail,
+                action: 'OPERMAQ_TENANT_ASSET_ADDED',
+                module: 'opermaq',
+                targetEntity: existingDoc.id,
+                details: {
+                    globalAssetId: finalGlobalId,
+                    reactivatedFromArchive: wasArchived,
+                    fleetCollection: fleetCol,
+                },
+            }).catch(() => {});
+
             return res.status(200).json({
                 success: true,
                 tenant_asset_id: existingDoc.id,
@@ -1536,7 +1715,7 @@ assetsRouter.post('/add-tenant-catalog', async (req: ScopedRequest, res: Respons
 
         const tenantAssetDoc = await db.collection(fleetCol).add({
             global_asset_id: finalGlobalId,
-            make_model: `${make_oficial} ${model_oficial}`.trim(),
+            make_model: `${make_oficial || ''} ${model_oficial || ''}`.trim(),
             make_oficial,
             model_oficial,
             categoria_equipo: categoria_equipo || 'EQUIPAMIENTO INDUSTRIAL',
@@ -1555,6 +1734,22 @@ assetsRouter.post('/add-tenant-catalog', async (req: ScopedRequest, res: Respons
             updatedAt: new Date(),
         });
 
+        await AuditLedger.record({
+            tenantId: ctx.tenantId,
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            action: 'OPERMAQ_TENANT_ASSET_ADDED',
+            module: 'opermaq',
+            targetEntity: tenantAssetDoc.id,
+            details: {
+                globalAssetId: finalGlobalId,
+                makeOficial: make_oficial || null,
+                modelOficial: model_oficial || null,
+                version: version || 'ESTÁNDAR',
+                fleetCollection: fleetCol,
+            },
+        }).catch(() => {});
+
         return res.status(200).json({
             success: true,
             tenant_asset_id: tenantAssetDoc.id,
@@ -1568,6 +1763,7 @@ assetsRouter.post('/add-tenant-catalog', async (req: ScopedRequest, res: Respons
 /**
  * DELETE /api/assets/:id
  * Archiva lógicamente un equipo de la flota de la cuenta activa (`tenant_assets` o `edu_sandbox_fleet`).
+ * Exige confirmación HITL `"ACTUALIZAR"`.
  */
 assetsRouter.delete('/:id', async (req: ScopedRequest, res: Response) => {
     try {
@@ -1576,8 +1772,28 @@ assetsRouter.delete('/:id', async (req: ScopedRequest, res: Response) => {
             return res.status(403).json({ error: 'Permisos insuficientes para retirar equipos de flota.' });
         }
 
+        const parsedParams = AssetIdParamSchema.safeParse(req.params || {});
+        if (!parsedParams.success) {
+            return res.status(400).json({ error: 'Identificador de equipo inválido.' });
+        }
+
+        const parsedBody = HitlConfirmEnvelopeSchema.safeParse(req.body || {});
+        const parsedQuery = HitlConfirmEnvelopeSchema.safeParse(req.query || {});
+        const confirmCandidate = String(
+            req.body?.confirmWord ||
+                req.query?.confirmWord ||
+                (parsedBody.success ? parsedBody.data.confirm_word : '') ||
+                (parsedQuery.success ? parsedQuery.data.confirm_word : '') ||
+                ''
+        )
+            .trim()
+            .toUpperCase();
+        if (confirmCandidate !== HITL_CONFIRM_KEYWORD) {
+            return res.status(400).json({ error: 'CONFIRM_WORD_MISMATCH' });
+        }
+
         const fleetCol = resolveFleetCollectionName(ctx);
-        const docRef = db.collection(fleetCol).doc(String(req.params.id));
+        const docRef = db.collection(fleetCol).doc(parsedParams.data.id);
         const snap = await docRef.get();
         if (!snap.exists) {
             return res.status(404).json({ error: 'Equipo de flota no encontrado.' });
@@ -1595,6 +1811,19 @@ assetsRouter.delete('/:id', async (req: ScopedRequest, res: Response) => {
             archivedBy: ctx.actorEmail,
         });
 
+        await AuditLedger.record({
+            tenantId: String(docTenant || ctx.tenantId),
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            action: 'OPERMAQ_TENANT_ASSET_DELETED',
+            module: 'opermaq',
+            targetEntity: docRef.id,
+            details: {
+                globalAssetId: data.global_asset_id || data.globalAssetId || null,
+                fleetCollection: fleetCol,
+            },
+        }).catch(() => {});
+
         return res.status(200).json({ success: true });
     } catch (err) {
         return handleRouteError(res, err, 'Error archivando equipo de flota.');
@@ -1602,7 +1831,8 @@ assetsRouter.delete('/:id', async (req: ScopedRequest, res: Response) => {
 });
 
 const TenantOverridesSchema = z.object({
-    confirm_word: z.string(),
+    confirm_word: z.string().optional(),
+    confirmWord: z.string().optional(),
     faena_name: z.string().max(160).optional(),
     altitude_masl: z.number().min(0).max(6500).optional(),
     internal_radio_channel: z.string().max(80).optional(),
@@ -1616,11 +1846,23 @@ const TenantOverridesSchema = z.object({
 /**
  * PATCH /api/assets/:id/overrides
  * Actualiza los parámetros operativos privados (`tenant_custom_overrides`) exclusivos del cliente activo
- * sin exponerlos al catálogo global común (`COMMONS`). Exige palabra clave HITL `"ACTUALIZAR"`.
+ * sin exponerlos al catálogo global común (`COMMONS`). Exige `canManageFleet` y palabra clave HITL `"ACTUALIZAR"`.
  */
 assetsRouter.patch('/:id/overrides', async (req: ScopedRequest, res: Response) => {
     try {
         const ctx = req.opermaqContext!;
+        if (!ctx.capabilities.canManageFleet) {
+            return res.status(403).json({
+                error: 'FLEET_MANAGEMENT_FORBIDDEN',
+                message: 'Permisos insuficientes para modificar parámetros operativos privados de flota.',
+            });
+        }
+
+        const parsedParams = AssetIdParamSchema.safeParse(req.params || {});
+        if (!parsedParams.success) {
+            return res.status(400).json({ error: 'Identificador de activo inválido.' });
+        }
+
         const parsed = TenantOverridesSchema.safeParse(req.body || {});
         if (!parsed.success) {
             return res.status(400).json({
@@ -1629,14 +1871,17 @@ assetsRouter.patch('/:id/overrides', async (req: ScopedRequest, res: Response) =
             });
         }
 
-        if (parsed.data.confirm_word.trim().toUpperCase() !== HITL_CONFIRM_KEYWORD) {
+        const confirmCandidate = String(parsed.data.confirm_word || parsed.data.confirmWord || '')
+            .trim()
+            .toUpperCase();
+        if (confirmCandidate !== HITL_CONFIRM_KEYWORD) {
             return res.status(400).json({
                 error: `Confirmación HITL inválida. Debe escribir exactamente "${HITL_CONFIRM_KEYWORD}".`,
             });
         }
 
         const fleetCol = resolveFleetCollectionName(ctx);
-        const docRef = db.collection(fleetCol).doc(String(req.params.id));
+        const docRef = db.collection(fleetCol).doc(parsedParams.data.id);
         const snap = await docRef.get();
         if (!snap.exists) {
             return res.status(404).json({ error: 'Activo de flota no encontrado.' });
@@ -1648,7 +1893,7 @@ assetsRouter.patch('/:id/overrides', async (req: ScopedRequest, res: Response) =
             return res.status(403).json({ error: 'Acceso denegado: el activo pertenece a otra cuenta.' });
         }
 
-        const { confirm_word: _cw, ...cleanOverrides } = parsed.data;
+        const { confirm_word: _cw, confirmWord: _cwCamel, ...cleanOverrides } = parsed.data;
         const mergedOverrides = {
             ...(assetData.tenant_custom_overrides || {}),
             ...cleanOverrides,
@@ -1695,7 +1940,21 @@ assetsRouter.post('/:id/contribute-to-commons', async (req: ScopedRequest, res: 
                 message: 'Las cuentas académicas sandbox no modifican ni envían aportes al Catálogo Maestro común.',
             });
         }
-        const rawText = String(req.body?.content || req.body?.text || '').trim();
+
+        const parsedParams = AssetIdParamSchema.safeParse(req.params || {});
+        if (!parsedParams.success) {
+            return res.status(400).json({ error: 'Identificador de unidad inválido.' });
+        }
+
+        const parsedBody = ContributeToCommonsBodySchema.safeParse(req.body || {});
+        if (!parsedBody.success) {
+            return res.status(400).json({
+                error: 'Payload de aporte técnico inválido.',
+                details: parsedBody.error.format(),
+            });
+        }
+
+        const rawText = String(parsedBody.data.content || parsedBody.data.text || '').trim();
         if (rawText.length < 8) {
             return res.status(400).json({
                 error: 'Ingrese una observación técnica de al menos 8 caracteres.',
@@ -1703,7 +1962,7 @@ assetsRouter.post('/:id/contribute-to-commons', async (req: ScopedRequest, res: 
         }
 
         const fleetCol = resolveFleetCollectionName(ctx);
-        const docRef = db.collection(fleetCol).doc(String(req.params.id));
+        const docRef = db.collection(fleetCol).doc(parsedParams.data.id);
         const snap = await docRef.get();
         if (!snap.exists) {
             return res.status(404).json({ error: 'Unidad de flota no encontrada.' });
@@ -1740,6 +1999,20 @@ assetsRouter.post('/:id/contribute-to-commons', async (req: ScopedRequest, res: 
                 'tenant_custom_overrides.updatedAt': new Date().toISOString(),
             });
         }
+
+        await AuditLedger.record({
+            tenantId: ctx.tenantId,
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            action: 'OPERMAQ_COMMONS_CONTRIBUTION_SUBMITTED',
+            module: 'opermaq',
+            targetEntity: docRef.id,
+            details: {
+                queueId: airlockRes.queueId,
+                globalAssetId,
+                containsTenantPrivate: Boolean(airlockRes.evaluation.containsTenantPrivate),
+            },
+        }).catch(() => {});
 
         return res.status(200).json({
             success: true,

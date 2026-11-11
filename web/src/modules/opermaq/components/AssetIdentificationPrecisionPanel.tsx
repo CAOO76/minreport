@@ -157,12 +157,14 @@ export const AssetIdentificationPrecisionPanel: React.FC<AssetIdentificationPrec
                 <button
                     type="button"
                     onClick={onToggleOpen}
-                    className="bg-transparent border-0 outline-none p-0 flex items-center gap-[8px] text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] transition-colors cursor-pointer rounded-none shadow-none"
+                    aria-expanded={isOpen}
+                    className={`bg-transparent border-0 border-b ${
+                        isOpen
+                            ? 'border-[#C68346] text-[#C68346]'
+                            : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                    } outline-none py-[4px] px-0 text-[11px] font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer rounded-none shadow-none`}
                 >
-                    <span className="material-symbols-outlined text-[16px] text-[#C68346]">
-                        {isOpen ? 'expand_less' : 'add'}
-                    </span>
-                    <span>{t('registration.precision_toggle_open')}</span>
+                    {t('registration.precision_toggle_open')}
                 </button>
 
                 {ephemeralImages.length > 0 && (
@@ -208,6 +210,8 @@ export const AssetIdentificationPrecisionPanel: React.FC<AssetIdentificationPrec
                                 type="file"
                                 multiple
                                 accept="image/jpeg,image/png,image/webp"
+                                autoComplete="off"
+                                spellCheck={false}
                                 onChange={(e) => {
                                     void ingestFiles(e.target.files);
                                     e.target.value = '';
@@ -219,6 +223,8 @@ export const AssetIdentificationPrecisionPanel: React.FC<AssetIdentificationPrec
                                 type="file"
                                 accept="image/*"
                                 capture="environment"
+                                autoComplete="off"
+                                spellCheck={false}
                                 onChange={(e) => {
                                     void ingestFiles(e.target.files);
                                     e.target.value = '';
@@ -298,7 +304,7 @@ export const AssetIdentificationPrecisionPanel: React.FC<AssetIdentificationPrec
                         </div>
                     )}
 
-                    <p className="text-[11px] text-[#5A6072] dark:text-[#8A93A6] leading-snug">
+                    <p className="text-[11px] text-[#0F172A] dark:text-[#F3F4F6] leading-snug">
                         {t('registration.precision_ram_privacy_notice')}
                     </p>
                 </div>

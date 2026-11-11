@@ -344,13 +344,59 @@ class SyncQueueEngine {
                     ...raw,
                     tenantId: resolveActiveTenantId(raw.tenantId || raw.accountId),
                 });
-                const docRef = doc(db, 'tenant_assets', validated.id);
-                await setDoc(docRef, {
-                    ...validated,
-                    accountId: validated.tenantId,
-                    syncedAt: new Date().toISOString(),
-                    syncEngine: 'MINREPORT_WEB3_OFFLINE_v2'
-                }, { merge: true });
+
+                const user = auth.currentUser;
+                const devFallbackToken =
+                    typeof window !== 'undefined'
+                        ? localStorage.getItem('dev_auth_token') || localStorage.getItem('dev_vault_token')
+                        : null;
+                const idToken = user ? await user.getIdToken() : devFallbackToken;
+                if (!idToken) {
+                    throw new Error('Sesion requerida para drenar TENANT_ASSET offline');
+                }
+
+                const activeTenantId = resolveActiveTenantId(validated.tenantId);
+                if (!activeTenantId) {
+                    throw new Error('tenantId obligatorio para sincronizar TENANT_ASSET');
+                }
+
+                const rawRecord = validated as Record<string, unknown>;
+                const makeOficial = String(
+                    rawRecord.make_oficial || rawRecord.make || 'GENÉRICO'
+                ).trim();
+                const modelOficial = String(
+                    rawRecord.model_oficial ||
+                        rawRecord.model ||
+                        validated.name ||
+                        validated.code ||
+                        validated.id
+                ).trim();
+
+                const apiBody = {
+                    ...rawRecord,
+                    make_oficial: makeOficial,
+                    model_oficial: modelOficial,
+                    categoria_equipo: String(
+                        rawRecord.categoria_equipo || 'EQUIPAMIENTO INDUSTRIAL'
+                    ),
+                    isGlobalOnly: Boolean(rawRecord.isGlobalOnly),
+                };
+
+                const res = await fetch(getApiUrl('/api/assets/add-tenant-catalog'), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${idToken}`,
+                        'X-Active-Account-Id': activeTenantId,
+                    },
+                    body: JSON.stringify(apiBody),
+                });
+
+                if (!res.ok) {
+                    throw new Error(
+                        `HTTP ${res.status} al sincronizar TENANT_ASSET en /api/assets/add-tenant-catalog`
+                    );
+                }
                 break;
             }
             case 'STOCKPILE_SURVEY': {

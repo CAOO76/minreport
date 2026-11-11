@@ -440,14 +440,20 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
     const uploadOptionalPrivatePhoto = async (tenantAssetId: string, file: File) => {
         try {
             let uploadFile: File | Blob = file;
+            let preflightSha256 = '';
             try {
                 const digested = await mediaDigestorClient.digestFile(file, 'IMAGE_FIELD_EVIDENCE');
                 uploadFile = digested.blob;
+                preflightSha256 = digested.sha256;
             } catch {
                 uploadFile = file;
             }
             const form = new FormData();
             form.append('file', uploadFile, file.name || 'equipo_flota.webp');
+            form.append('clientOriginalBytes', String(file.size));
+            if (preflightSha256) {
+                form.append('sha256', preflightSha256);
+            }
             await authFetch(`${API_BASE_URL}/assets/${tenantAssetId}/private-photo`, {
                 method: 'POST',
                 headers: tenantId ? { 'X-Active-Account-Id': tenantId } : undefined,
@@ -592,6 +598,13 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                     optimisticRow,
                     ...existingOfflineFleet,
                 ]);
+                void syncQueue.saveOfflineKnowledge(
+                    `opermaq_unit_detail_${tenantId || 'default'}_${queuedId}`,
+                    {
+                        ...optimisticRow,
+                        private_photos: [],
+                    }
+                );
 
                 onSuccess({
                     tenantAssetId: queuedId,
@@ -1220,6 +1233,8 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                             ref={photoInputRef}
                                             type="file"
                                             accept="image/jpeg,image/png,image/webp"
+                                            autoComplete="off"
+                                            spellCheck={false}
                                             onChange={(e) => setPrivatePhotoFile(e.target.files?.[0] || null)}
                                             className="hidden"
                                         />

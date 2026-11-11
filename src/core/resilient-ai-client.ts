@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel as GenAIThinkingLevel, Type } from '@google/genai';
 import { z } from 'zod';
 import { db } from '../config/firebase';
 import {
@@ -7,6 +7,9 @@ import {
     resolveGeminiApiKey,
     type GeminiKeyProfile,
 } from '../config/secrets';
+import { CasStorageService } from './media/CasStorageService';
+import { MediaDigestorServer } from './media/MediaDigestorServer';
+import { ConfidentialityAirlockService } from './privacy/ConfidentialityAirlockService';
 
 export { Type };
 
@@ -83,6 +86,7 @@ export interface EmbeddingOptions {
     taskType?: EmbeddingTaskType;
     outputDimensionality?: number;
     title?: string;
+    tenantId?: string;
     bypassCache?: boolean;
 }
 
@@ -392,14 +396,22 @@ export class ResilientAIClient {
     }
 
     private static async getSDKClient(): Promise<GoogleGenAI> {
+        const gatewayBaseUrl = (process.env.AI_GATEWAY_BASE_URL || '').trim();
+        const httpOptions = gatewayBaseUrl ? { baseUrl: gatewayBaseUrl } : undefined;
+
         if (process.env.USE_VERTEX_AI === 'true') {
             const project = process.env.GCP_PROJECT_ID || 'minreport-8f2a8';
             const location = 'southamerica-west1';
-            const vertexKey = `vertex:${project}:${location}`;
+            const vertexKey = `vertex:${project}:${location}:${gatewayBaseUrl}`;
             if (!cachedGenAIClient || cachedGenAIClient.key !== vertexKey) {
                 cachedGenAIClient = {
                     key: vertexKey,
-                    client: new GoogleGenAI({ vertexai: true, project, location }),
+                    client: new GoogleGenAI({
+                        vertexai: true,
+                        project,
+                        location,
+                        ...(httpOptions ? { httpOptions } : {}),
+                    }),
                 };
             }
             return cachedGenAIClient.client;
@@ -407,10 +419,14 @@ export class ResilientAIClient {
 
         const apiKey = await resolveGeminiApiKey();
         if (apiKey) {
-            if (!cachedGenAIClient || cachedGenAIClient.key !== apiKey) {
+            const apiClientKey = `apikey:${apiKey}:${gatewayBaseUrl}`;
+            if (!cachedGenAIClient || cachedGenAIClient.key !== apiClientKey) {
                 cachedGenAIClient = {
-                    key: apiKey,
-                    client: new GoogleGenAI({ apiKey }),
+                    key: apiClientKey,
+                    client: new GoogleGenAI({
+                        apiKey,
+                        ...(httpOptions ? { httpOptions } : {}),
+                    }),
                 };
             }
             return cachedGenAIClient.client;
@@ -422,8 +438,21 @@ export class ResilientAIClient {
         );
     }
 
+    private static parseFeedbackTimestampMs(rawTs: unknown): number {
+        if (typeof rawTs === 'number' && Number.isFinite(rawTs)) return rawTs;
+        if (typeof rawTs === 'string' && rawTs.trim().length > 0) {
+            const parsed = Date.parse(rawTs);
+            return Number.isNaN(parsed) ? 0 : parsed;
+        }
+        if (rawTs && typeof (rawTs as { toMillis?: () => number }).toMillis === 'function') {
+            return Number((rawTs as { toMillis: () => number }).toMillis()) || 0;
+        }
+        return 0;
+    }
+
     /**
-     * Inyecta directivas de entrenamiento curadas por TEST-PILOTS (`status == 'APPLIED_TO_AI'`)
+     * Inyecta directivas de entrenamiento curadas por TEST-PILOTS (`status == 'APPLIED_TO_AI'`),
+     * ordenadas en memoria por fecha descendente (`appliedAt || updatedAt || timestamp`) sin exigir índice compuesto.
      */
     private static async enrichSystemInstructionWithPilotFeedback(
         module: AIModuleScope,
@@ -439,18 +468,25 @@ export class ResilientAIClient {
             try {
                 const snap = await db
                     .collection('pilot_feedback')
-                    .where('module', '==', module)
                     .where('status', '==', 'APPLIED_TO_AI')
-                    .limit(15)
                     .get();
 
                 if (!snap.empty) {
                     const rules = snap.docs
-                        .map((d) => {
-                            const data = d.data();
-                            return data.expectedAiBehavior || data.observation || '';
+                        .map((d) => d.data() || {})
+                        .filter((data) => !data.module || data.module === module)
+                        .sort((a, b) => {
+                            const tsA = this.parseFeedbackTimestampMs(
+                                a.appliedAt ?? a.updatedAt ?? a.timestamp ?? a.createdAt
+                            );
+                            const tsB = this.parseFeedbackTimestampMs(
+                                b.appliedAt ?? b.updatedAt ?? b.timestamp ?? b.createdAt
+                            );
+                            return tsB - tsA;
                         })
-                        .filter((txt: string) => txt.trim().length > 0);
+                        .map((data) => String(data.expectedAiBehavior || data.observation || '').trim())
+                        .filter((txt: string) => txt.length > 0)
+                        .slice(0, 15);
 
                     if (rules.length > 0) {
                         rulesBlock = `\n\n[DIRECTIVAS CURADAS POR EXPERTOS TEST-PILOT MINREPORT]:\n${rules
@@ -459,7 +495,7 @@ export class ResilientAIClient {
                     }
                 }
             } catch {
-                // No bloquear inferencia si el emulador aún no tiene índice compuesto
+                // No bloquear inferencia si la colección aún no está disponible
             }
             pilotRulesCache.set(module, { expiresAt: now + PILOT_RULES_TTL_MS, rulesBlock });
         }
@@ -546,11 +582,11 @@ export class ResilientAIClient {
                             ? 'medium'
                             : 'high');
 
-            const levelMap: Record<ThinkingLevel, string> = {
-                none: 'LOW',
-                low: 'LOW',
-                medium: 'MEDIUM',
-                high: 'HIGH',
+            const levelMap: Record<ThinkingLevel, GenAIThinkingLevel> = {
+                none: GenAIThinkingLevel.MINIMAL,
+                low: GenAIThinkingLevel.LOW,
+                medium: GenAIThinkingLevel.MEDIUM,
+                high: GenAIThinkingLevel.HIGH,
             };
             return { thinkingLevel: levelMap[resolvedLevel] };
         }
@@ -694,37 +730,37 @@ export class ResilientAIClient {
 
     /**
      * Esclusa Determinista Pre-Vuelo (Ley N° 19.628 y Nueva Ley N° 21.719 de Protección de Datos Personales de Chile):
-     * Purga identificadores sensibles chilenos (RUT, patentes PPU, teléfonos +56, correos, coordenadas GPS de faena
-     * y referencias contractuales OC/PO) antes de transmitir prompts de clientes o consultas de búsqueda externa.
+     * Delega de forma unificada en `ConfidentialityAirlockService.scrubDeterministicPii` para purgar RUT, patentes PPU
+     * contextualizadas, teléfonos +56, correos, coordenadas GPS/UTM, colas VIN/PIN de 17 caracteres, S/N y contratos OC/PO.
      */
     public static sanitizePromptForLey21719(rawText: string): string {
-        let s = rawText || '';
-        s = s.replace(/\b\d{1,2}\.?\d{3}\.?\d{3}-[\dkK]\b/g, '[RUT_RESERVADO]');
-        s = s.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[EMAIL_RESERVADO]');
-        s = s.replace(/(?:\+?56\s*)?(?:9\s*\d{4}\s*\d{4}|2\s*\d{4}\s*\d{4})\b/g, '[TEL_RESERVADO]');
-        s = s.replace(/[-+]?\d{1,2}\.\d{4,}\s*,\s*[-+]?\d{1,3}\.\d{4,}/g, '[COORD_FAENA_RESERVADA]');
-        s = s.replace(/\b(?:18|19)\s*[HJFG]\s+\d{6}\s+\d{7}\b/gi, '[UTM_FAENA_RESERVADA]');
-        s = s.replace(/\b(?:OC|PO|CONTRATO|LICITACI[OÓ]N)\s*[-#:]?\s*[A-Z0-9-]{3,20}\b/gi, '[REF_CONTRACTUAL_RESERVADA]');
-        s = s.replace(/\b(?:patente|ppu)\s*[:#-]?\s*[A-Z]{2,4}[-\s]?\d{2,4}\b/gi, '[PATENTE_RESERVADA]');
-        return s;
+        return ConfidentialityAirlockService.scrubDeterministicPii(rawText || '').scrubbed;
     }
 
     /**
      * Ejecución central resiliente con fallback Pro -> Flash -> Flash-Lite
-     * SEC-02: Sanitización determinista Ley N° 21.719 (`always-on`) para toda inferencia saliente.
+     * SEC-02: Sanitización determinista Ley N° 21.719 (`always-on`) sobre prompt y systemInstruction salientes.
      */
     public static async generate(rawReq: AIInferenceRequest): Promise<AIInferenceResponse> {
         const startTime = Date.now();
+        const sanitizedSystemInstruction =
+            typeof rawReq.systemInstruction === 'string'
+                ? this.sanitizePromptForLey21719(rawReq.systemInstruction)
+                : undefined;
         const req: AIInferenceRequest = {
             ...rawReq,
             prompt: this.sanitizePromptForLey21719(rawReq.prompt),
+            systemInstruction: sanitizedSystemInstruction,
         };
 
         const ai = await this.getSDKClient();
-        const effectiveSystemInstruction = await this.enrichSystemInstructionWithPilotFeedback(
+        const enrichedSys = await this.enrichSystemInstructionWithPilotFeedback(
             req.module,
             req.systemInstruction
         );
+        const effectiveSystemInstruction = enrichedSys
+            ? this.sanitizePromptForLey21719(enrichedSys)
+            : undefined;
 
         const isCacheable =
             !req.bypassCache &&
@@ -1148,10 +1184,39 @@ export class ResilientAIClient {
             const snap = await db.collection(this.CACHE_COLLECTION).doc(cacheKey).get();
             if (snap.exists) {
                 const d = snap.data() || {};
-                if (typeof d.base64Data === 'string' && d.base64Data.length > 0) {
+                let resolvedBase64: string | null =
+                    typeof d.base64Data === 'string' && d.base64Data.length > 0 ? d.base64Data : null;
+                let resolvedMimeType: string = d.mimeType || outputMimeType;
+
+                if (!resolvedBase64 && typeof d.imageSha256 === 'string' && /^[a-f0-9]{64}$/i.test(d.imageSha256)) {
+                    let storagePath =
+                        typeof d.casStoragePath === 'string' && d.casStoragePath.length > 0
+                            ? d.casStoragePath
+                            : undefined;
+
+                    if (!storagePath) {
+                        const globalHit = await CasStorageService.preflightCheck(d.imageSha256, 'GLOBAL_OEM');
+                        const symHit =
+                            globalHit || (await CasStorageService.preflightCheck(d.imageSha256, 'SYMBOLOGY_MASTER'));
+                        storagePath = symHit?.storagePath;
+                        if (symHit?.mimeType) {
+                            resolvedMimeType = symHit.mimeType;
+                        }
+                    }
+
+                    if (storagePath) {
+                        const casBlob = await CasStorageService.readCasBlob(storagePath);
+                        if (casBlob && casBlob.buffer.length > 0) {
+                            resolvedBase64 = casBlob.buffer.toString('base64');
+                            resolvedMimeType = casBlob.contentType || resolvedMimeType;
+                        }
+                    }
+                }
+
+                if (resolvedBase64) {
                     const hit: TechnicalImageResponse = {
-                        base64Data: d.base64Data,
-                        mimeType: d.mimeType || outputMimeType,
+                        base64Data: resolvedBase64,
+                        mimeType: resolvedMimeType,
                         modelUsed: d.modelUsed || IMAGE_GEN_MODELS[0],
                         latencyMs: Date.now() - startTime,
                     };
@@ -1176,20 +1241,32 @@ export class ResilientAIClient {
                 if (oldest) memoryTechnicalImageCache.delete(oldest);
             }
             memoryTechnicalImageCache.set(cacheKey, res);
-            const imageSha256 = createHash('sha256').update(res.base64Data).digest('hex');
-            db.collection(this.CACHE_COLLECTION)
-                .doc(cacheKey)
-                .set({
+
+            void (async () => {
+                const rawBuf = Buffer.from(res.base64Data, 'base64');
+                const digested = await MediaDigestorServer.digestImage(rawBuf, 'IMAGE_TECHNICAL_HD');
+                const cas = await CasStorageService.persistDigestedBinary(digested, {
+                    scope: 'GLOBAL_OEM',
+                    actorUid: 'resilient-ai-image-cache',
+                    originalFilename: `${cacheKey}.${digested.extension}`,
+                    clientOriginalBytes: rawBuf.length,
+                });
+
+                await db.collection(this.CACHE_COLLECTION).doc(cacheKey).set({
                     cacheKey,
                     module: 'opermaq',
                     modelUsed: res.modelUsed,
-                    mimeType: res.mimeType,
+                    mimeType: cas.mimeType,
                     aspectRatio,
-                    imageSha256,
-                    byteLength: Math.floor((res.base64Data.length * 3) / 4),
+                    imageSha256: cas.sha256,
+                    casStoragePath: cas.storagePath,
+                    casDownloadUrl: cas.downloadUrl,
+                    originalBytes: cas.originalBytes,
+                    optimizedBytes: cas.optimizedBytes,
+                    savingsPct: cas.savingsPct ?? 0,
                     createdAt: new Date().toISOString(),
-                })
-                .catch(() => { });
+                });
+            })().catch(() => { });
         };
 
         for (const modelName of IMAGE_GEN_MODELS) {
@@ -1290,18 +1367,24 @@ export class ResilientAIClient {
 
     /**
      * Generación de Embeddings Matryoshka (`gemini-embedding-001` @ 768 dimensiones por defecto)
-     * Incluye caché en memoria LRU + Firestore `ai_inference_cache` para latencia < 2ms en términos repetidos.
+     * Incluye sanitización determinista Ley N° 21.719 pre-inferencia y aislamiento por `tenantId`
+     * (default `'GLOBAL_VAULT'`) en la caché LRU + Firestore `ai_inference_cache`.
      */
     public static async embedText(text: string, options: EmbeddingOptions = {}): Promise<number[]> {
-        const clean = text.trim().slice(0, 16000);
+        const sanitizedInput = ConfidentialityAirlockService.scrubDeterministicPii(text || '').scrubbed;
+        const clean = sanitizedInput.slice(0, 16000);
         const dim = options.outputDimensionality || 768;
         if (!clean) {
             return new Array(dim).fill(0);
         }
 
         const taskType = options.taskType || 'SEMANTIC_SIMILARITY';
+        const effectiveTenantId = (options.tenantId || '').trim() || 'GLOBAL_VAULT';
+        const safeTitle = options.title
+            ? ConfidentialityAirlockService.scrubDeterministicPii(options.title).scrubbed.slice(0, 200)
+            : '';
         const cacheKey = `emb_${dim}_${createHash('sha256')
-            .update(`${taskType}|${options.title || ''}|${clean}`)
+            .update(`${effectiveTenantId}|${taskType}|${safeTitle}|${clean}`)
             .digest('hex')}`;
 
         if (!options.bypassCache) {
@@ -1336,8 +1419,8 @@ export class ResilientAIClient {
                     taskType,
                     outputDimensionality: dim,
                 };
-                if (options.title && taskType === 'RETRIEVAL_DOCUMENT') {
-                    config.title = options.title.slice(0, 200);
+                if (safeTitle && taskType === 'RETRIEVAL_DOCUMENT') {
+                    config.title = safeTitle;
                 }
 
                 const resp = await ai.models.embedContent({
@@ -1364,6 +1447,7 @@ export class ResilientAIClient {
                     .doc(cacheKey)
                     .set({
                         cacheKey,
+                        tenantId: effectiveTenantId,
                         module: 'core',
                         model: modelName,
                         taskType,
@@ -1387,12 +1471,18 @@ export class ResilientAIClient {
     }
 
     /**
-     * Embeddings en lote respetando caché individual
+     * Embeddings en lote respetando sanitización Ley N° 21.719 y aislamiento por `tenantId` en caché individual
      */
     public static async embedBatch(texts: string[], options: EmbeddingOptions = {}): Promise<number[][]> {
+        const effectiveTenantId = (options.tenantId || '').trim() || 'GLOBAL_VAULT';
+        const scopedOptions: EmbeddingOptions = {
+            ...options,
+            tenantId: effectiveTenantId,
+        };
         const results: number[][] = [];
         for (const txt of texts) {
-            results.push(await this.embedText(txt, options));
+            const scrubbedTxt = ConfidentialityAirlockService.scrubDeterministicPii(txt || '').scrubbed;
+            results.push(await this.embedText(scrubbedTxt, scopedOptions));
         }
         return results;
     }
@@ -1400,6 +1490,7 @@ export class ResilientAIClient {
     /**
      * Creación opcional de Context Cache explícito en Gemini para manuales extensos (>32k tokens)
      * Retorna `name` del recurso cacheado o `null` si el documento es menor al umbral mínimo.
+     * Sanitiza previamente `displayName`, `systemInstruction` y `contentsText` bajo Ley N° 21.719.
      */
     public static async createContextCache(params: {
         displayName: string;
@@ -1412,22 +1503,30 @@ export class ResilientAIClient {
         try {
             const ai = await this.getSDKClient();
             const modelName = SWARM_MODELS[params.tier || 'SECONDARY'];
+            const safeDisplayName = this.sanitizePromptForLey21719(params.displayName || '').slice(0, 120);
+            const safeSystemInstruction = params.systemInstruction
+                ? this.sanitizePromptForLey21719(params.systemInstruction)
+                : undefined;
+            const safeContentsText = params.contentsText
+                ? this.sanitizePromptForLey21719(params.contentsText)
+                : undefined;
+
             const parts: any[] = [];
             if (params.fileParts) {
                 for (const fp of params.fileParts) {
                     parts.push({ fileData: { fileUri: fp.fileUri, mimeType: fp.mimeType } });
                 }
             }
-            if (params.contentsText) {
-                parts.push({ text: params.contentsText });
+            if (safeContentsText) {
+                parts.push({ text: safeContentsText });
             }
             if (parts.length === 0) return null;
 
             const cache = await (ai as any).caches?.create?.({
                 model: modelName,
                 config: {
-                    displayName: params.displayName.slice(0, 120),
-                    systemInstruction: params.systemInstruction,
+                    displayName: safeDisplayName,
+                    systemInstruction: safeSystemInstruction,
                     contents: [{ role: 'user', parts }],
                     ttl: `${Math.max(300, params.ttlSeconds || 1800)}s`,
                 },

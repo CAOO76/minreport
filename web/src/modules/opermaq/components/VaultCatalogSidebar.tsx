@@ -44,6 +44,8 @@ export interface FotoMediaTelemetry {
     savings_pct: number;
     sha256?: string;
     updated_at?: string;
+    width?: number;
+    height?: number;
 }
 
 export function formatPhotoBytes(bytes?: number): string {
@@ -64,6 +66,29 @@ export interface SidebarCatalogPatch {
     ambiente_operativo?: string[];
     contexto_operativo?: string[];
     energy_consumption_profile?: EnergyConsumptionProfile;
+}
+
+interface SidebarProfileSnapshot {
+    equipment_type_key?: string;
+    canonical_specs?: Record<string, any>;
+    caracteristicas_principales: string[];
+    ambiente_operativo: string[];
+    contexto_operativo: string[];
+    energy_consumption_profile?: EnergyConsumptionProfile;
+    configuration_profile?: Record<string, any>;
+}
+
+interface ReframePreviewState {
+    currentUrl: string;
+    proposedUrl: string;
+    proposedSha256: string;
+    proposedMetrics: FotoMediaTelemetry;
+    isClientFallback: boolean;
+}
+
+interface ReconcilePreviewState {
+    currentProfile: SidebarProfileSnapshot;
+    proposedProfile: SidebarProfileSnapshot;
 }
 
 export interface VaultCatalogSidebarProps {
@@ -114,7 +139,11 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
     const [isPublishingCandidate, setIsPublishingCandidate] = useState(false);
     const [isManualFallbackActive, setIsManualFallbackActive] = useState(false);
     const [manualAuditRejection, setManualAuditRejection] = useState<string | null>(null);
+
     const [isReframingPhoto, setIsReframingPhoto] = useState(false);
+    const [reframePreview, setReframePreview] = useState<ReframePreviewState | null>(null);
+    const [reframeConfirmText, setReframeConfirmText] = useState('');
+    const [isConsolidatingReframe, setIsConsolidatingReframe] = useState(false);
 
     const [editingSidebarSection, setEditingSidebarSection] = useState<
         'caracteristicas' | 'ambiente' | 'contexto' | null
@@ -122,10 +151,26 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
     const [sidebarDraftText, setSidebarDraftText] = useState('');
     const [sidebarConfirmText, setSidebarConfirmText] = useState('');
     const [isReconcilingSidebar, setIsReconcilingSidebar] = useState(false);
+    const [reconcilePreview, setReconcilePreview] = useState<ReconcilePreviewState | null>(null);
+    const [reconcileApproveFields, setReconcileApproveFields] = useState<{
+        caracteristicas: boolean;
+        ambiente: boolean;
+        contexto: boolean;
+    }>({
+        caracteristicas: true,
+        ambiente: true,
+        contexto: true,
+    });
+    const [reconcileConfirmText, setReconcileConfirmText] = useState('');
+    const [isConsolidatingReconcile, setIsConsolidatingReconcile] = useState(false);
     const [isSavingSidebarHitl, setIsSavingSidebarHitl] = useState(false);
 
     useEffect(() => {
         photoHuntAttemptRef.current = 0;
+        setReframePreview(null);
+        setReframeConfirmText('');
+        setReconcilePreview(null);
+        setReconcileConfirmText('');
         if (photoHuntAbortRef.current) {
             photoHuntAbortRef.current.abort();
             photoHuntAbortRef.current = null;
@@ -152,6 +197,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
         setManualAuditRejection(null);
         setIsManualFallbackActive(false);
         setShowPhotoDeleteConfirm(false);
+        setReframePreview(null);
     }, [catalog.official_photo_candidates]);
 
     const handleStartOfficialPhotoHunt = useCallback(async () => {
@@ -176,11 +222,12 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
         setIsHuntingPhoto(true);
         setManualAuditRejection(null);
         setShowPhotoDeleteConfirm(false);
+        setReframePreview(null);
 
         const toastId = toast.loading(
             currentAttempt > 0
-                ? `Actualizando búsqueda IA de fotografía oficial OEM (intento #${currentAttempt + 1})...`
-                : 'Cazando fotografía oficial OEM en bóveda y fuentes oficiales...'
+                ? t('vault_sidebar.toast_hunting_retry', { attempt: currentAttempt + 1 })
+                : t('vault_sidebar.toast_hunting_initial')
         );
         try {
             const res = await authFetch(`${API_BASE_URL}/vault/hunt-official-photo`, {
@@ -195,7 +242,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
             const data = await res.json().catch(() => null);
             if (!res.ok) {
                 throw new Error(
-                    data?.error || data?.message || 'Error al cazar fotografía oficial'
+                    data?.error || data?.message || t('vault_sidebar.toast_hunt_error')
                 );
             }
 
@@ -226,7 +273,9 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                 onCatalogPatch({ official_photo_candidates: mergedCandidates });
                 setIsManualFallbackActive(false);
                 toast.update(toastId, {
-                    render: `${mergedCandidates.length} alternativa(s) de fotografía oficial OEM disponible(s) para elegir`,
+                    render: t('vault_sidebar.toast_candidates_found', {
+                        count: mergedCandidates.length,
+                    }),
                     type: 'success',
                     isLoading: false,
                     autoClose: 3000,
@@ -235,7 +284,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                 setPhotoCandidates([]);
                 setIsManualFallbackActive(true);
                 toast.update(toastId, {
-                    render: 'Sin fotografías oficiales en este barrido. Puede actualizar búsqueda IA o cargar archivo manual.',
+                    render: t('vault_sidebar.toast_no_candidates'),
                     type: 'info',
                     isLoading: false,
                     autoClose: 3500,
@@ -252,9 +301,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                 setIsManualFallbackActive(true);
             }
             toast.update(toastId, {
-                render:
-                    err?.message ||
-                    'Error en caza de fotos. Puede reintentar búsqueda IA o cargar manual.',
+                render: err?.message || t('vault_sidebar.toast_hunt_fallback'),
                 type: 'warning',
                 isLoading: false,
                 autoClose: 3500,
@@ -272,6 +319,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
         catalog.official_photo_candidates,
         selectedCandidateIdx,
         onCatalogPatch,
+        t,
     ]);
 
     const handleConfirmCandidate = useCallback(async () => {
@@ -286,7 +334,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
         if (!candidate) return;
 
         setIsPublishingCandidate(true);
-        const toastId = toast.loading('Publicando fotografía oficial en bóveda CAS...');
+        const toastId = toast.loading(t('vault_sidebar.toast_publishing_photo'));
         try {
             const fotoMediaTelemetry: FotoMediaTelemetry = {
                 original_bytes: candidate.original_bytes,
@@ -306,17 +354,19 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     globalAssetId: catalogId,
+                    assetId: catalogId,
                     tenantAssetId: assetId !== catalogId ? assetId : undefined,
                     imageUrl: candidate.preview_url,
                     fotoMediaTelemetry,
                     fotoVlmAuditVersion: resolvedCandidateAuditVersion,
                     officialPhotoCandidates: photoCandidates,
+                    confirmWord: 'ACTUALIZAR',
                 }),
             });
 
             if (!res.ok) {
                 const errJson = await res.json().catch(() => ({}));
-                throw new Error(errJson?.error || 'Error persistiendo fotografía oficial en bóveda');
+                throw new Error(errJson?.error || t('vault_sidebar.toast_publish_error'));
             }
 
             onCatalogPatch({
@@ -332,14 +382,16 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
             setIsManualFallbackActive(false);
 
             toast.update(toastId, {
-                render: `Fotografía oficial OEM aprobada y publicada (-${candidate.savings_pct}%)`,
+                render: t('vault_sidebar.toast_photo_published', {
+                    pct: candidate.savings_pct,
+                }),
                 type: 'success',
                 isLoading: false,
                 autoClose: 3000,
             });
         } catch (err: any) {
             toast.update(toastId, {
-                render: err?.message || 'Error al publicar fotografía oficial',
+                render: err?.message || t('vault_sidebar.toast_publish_error'),
                 type: 'error',
                 isLoading: false,
                 autoClose: 3000,
@@ -355,6 +407,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
         selectedCandidateIdx,
         assetId,
         onCatalogPatch,
+        t,
     ]);
 
     const handleDiscardCandidates = useCallback(() => {
@@ -362,20 +415,21 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
         setSelectedCandidateIdx(0);
         setCandidateConfirmText('');
         setIsManualFallbackActive(true);
-        toast.info('Panel de revisión cerrado. Las candidatas verificadas permanecen disponibles.');
-    }, []);
+        toast.info(t('vault_sidebar.toast_review_closed'));
+    }, [t]);
 
     const processManualPhotoUpload = useCallback(
         async (file: File) => {
             if (!canCurateAI || !catalogId || !file) return;
             if (!file.type.startsWith('image/')) {
-                toast.error('Seleccione un archivo de imagen válido.');
+                toast.error(t('vault_sidebar.toast_invalid_image'));
                 return;
             }
 
             setIsUploadingPhoto(true);
             setManualAuditRejection(null);
-            const toastId = toast.loading('Auditando encuadre y autenticidad OEM con VLM...');
+            setReframePreview(null);
+            const toastId = toast.loading(t('vault_sidebar.toast_auditing_vlm'));
 
             try {
                 const framed = await frameEquipmentPhotoToStudio4x3(file);
@@ -404,7 +458,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                     onCatalogPatch({ official_photo_candidates: updatedPool });
                     setIsManualFallbackActive(false);
                     toast.update(toastId, {
-                        render: 'Fotografía aprobada por el auditor OEM. Escriba ACTUALIZAR para publicar.',
+                        render: t('vault_sidebar.toast_manual_approved'),
                         type: 'success',
                         isLoading: false,
                         autoClose: 3500,
@@ -413,10 +467,10 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                     const reasons =
                         Array.isArray(data?.rejection_reasons) && data.rejection_reasons.length > 0
                             ? data.rejection_reasons.join('. ')
-                            : 'La fotografía no cumple el estándar oficial OEM.';
+                            : t('vault_sidebar.toast_manual_rejected_default');
                     setManualAuditRejection(reasons);
                     toast.update(toastId, {
-                        render: 'Fotografía rechazada por no ser oficial de la marca.',
+                        render: t('vault_sidebar.toast_manual_rejected'),
                         type: 'warning',
                         isLoading: false,
                         autoClose: 4000,
@@ -424,7 +478,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                 }
             } catch (err: any) {
                 toast.update(toastId, {
-                    render: err?.message || 'Error al procesar y auditar la fotografía.',
+                    render: err?.message || t('vault_sidebar.toast_manual_audit_error'),
                     type: 'error',
                     isLoading: false,
                     autoClose: 3000,
@@ -434,7 +488,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                 if (fileInputRef.current) fileInputRef.current.value = '';
             }
         },
-        [canCurateAI, catalogId, photoCandidates, catalog.official_photo_candidates, onCatalogPatch]
+        [canCurateAI, catalogId, photoCandidates, catalog.official_photo_candidates, onCatalogPatch, t]
     );
 
     const handlePhotoFileSelected = useCallback(
@@ -446,33 +500,57 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
         [canCurateAI, catalogId, processManualPhotoUpload]
     );
 
+    // A-04 Paso 1: Vista previa HITL de re-encuadre 88% Studio 4:3 (`previewOnly: true`)
     const handleReframeCurrentPhoto = useCallback(async () => {
         if (!canCurateAI || !catalogId || !catalog.foto_url || isReframingPhoto) return;
         setIsReframingPhoto(true);
-        const toastId = toast.loading(
-            'Re-encuadrando fotografía oficial al 88% sobre lienzo 4:3...'
-        );
+        setShowPhotoDeleteConfirm(false);
+        setReframeConfirmText('');
+        const toastId = toast.loading(t('vault_sidebar.toast_reframing_preview'));
         try {
             const res = await authFetch(`${API_BASE_URL}/vault/reframe-official-photo`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ globalAssetId: catalogId }),
+                body: JSON.stringify({
+                    globalAssetId: catalogId,
+                    assetId: catalogId,
+                    previewOnly: true,
+                }),
             });
             const data = await res.json().catch(() => null);
-            if (res.ok && data?.success && data?.foto_url) {
-                onCatalogPatch({
-                    foto_url: data.foto_url,
-                    foto_media_telemetry:
-                        data.foto_media_telemetry || catalog.foto_media_telemetry,
+            if (res.ok && data?.success && data?.proposedUrl) {
+                const rawMetrics = data.metrics || data.foto_media_telemetry || {};
+                const metrics: FotoMediaTelemetry = {
+                    original_bytes: Number(
+                        rawMetrics.original_bytes ??
+                            rawMetrics.originalBytes ??
+                            catalog.foto_media_telemetry?.original_bytes ??
+                            0
+                    ),
+                    optimized_bytes: Number(
+                        rawMetrics.optimized_bytes ?? rawMetrics.optimizedBytes ?? 0
+                    ),
+                    savings_pct: Number(rawMetrics.savings_pct ?? rawMetrics.savingsPct ?? 0),
+                    sha256: String(data.proposedSha256 || rawMetrics.sha256 || ''),
+                    width: rawMetrics.width,
+                    height: rawMetrics.height,
+                    updated_at: rawMetrics.updated_at || new Date().toISOString(),
+                };
+                setReframePreview({
+                    currentUrl: String(data.currentUrl || catalog.foto_url),
+                    proposedUrl: String(data.proposedUrl),
+                    proposedSha256: String(data.proposedSha256 || metrics.sha256 || ''),
+                    proposedMetrics: metrics,
+                    isClientFallback: false,
                 });
                 toast.update(toastId, {
-                    render: 'Fotografía oficial re-encuadrada al 88% en estudio 4:3',
-                    type: 'success',
+                    render: t('vault_sidebar.toast_reframe_preview_ready'),
+                    type: 'info',
                     isLoading: false,
                     autoClose: 3000,
                 });
             } else {
-                throw new Error(data?.error || 'Fallo en re-encuadre de servidor');
+                throw new Error(data?.error || t('vault_sidebar.toast_reframe_error'));
             }
         } catch {
             try {
@@ -492,32 +570,22 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                     sha256: digested.sha256,
                     updated_at: new Date().toISOString(),
                 };
-                const saveRes = await authFetch(`${API_BASE_URL}/vault/asset-image`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        globalAssetId: catalogId,
-                        tenantAssetId: assetId !== catalogId ? assetId : undefined,
-                        imageUrl: descriptor.downloadUrl,
-                        fotoMediaTelemetry: telemetry,
-                    }),
-                });
-                if (!saveRes.ok) {
-                    throw new Error('No se pudo persistir el re-encuadre en bóveda.');
-                }
-                onCatalogPatch({
-                    foto_url: descriptor.downloadUrl,
-                    foto_media_telemetry: telemetry,
+                setReframePreview({
+                    currentUrl: catalog.foto_url,
+                    proposedUrl: descriptor.downloadUrl,
+                    proposedSha256: digested.sha256,
+                    proposedMetrics: telemetry,
+                    isClientFallback: true,
                 });
                 toast.update(toastId, {
-                    render: 'Fotografía re-encuadrada al 88% mediante motor óptico cliente',
-                    type: 'success',
+                    render: t('vault_sidebar.toast_reframe_preview_ready'),
+                    type: 'info',
                     isLoading: false,
                     autoClose: 3000,
                 });
             } catch (clientErr: any) {
                 toast.update(toastId, {
-                    render: clientErr?.message || 'Error al re-encuadrar fotografía',
+                    render: clientErr?.message || t('vault_sidebar.toast_reframe_error'),
                     type: 'error',
                     isLoading: false,
                     autoClose: 3000,
@@ -532,8 +600,122 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
         catalog.foto_url,
         catalog.foto_media_telemetry,
         isReframingPhoto,
+        t,
+    ]);
+
+    // A-04 Paso 2: Consolidación HITL de re-encuadre 88% con `"ACTUALIZAR"`
+    const handleConfirmReframeHitl = useCallback(async () => {
+        if (
+            !canCurateAI ||
+            !catalogId ||
+            !reframePreview ||
+            isConsolidatingReframe ||
+            reframeConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'
+        ) {
+            return;
+        }
+        setIsConsolidatingReframe(true);
+        const toastId = toast.loading(t('vault_sidebar.toast_reframing_consolidate'));
+        try {
+            const res = await authFetch(`${API_BASE_URL}/vault/reframe-official-photo`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    globalAssetId: catalogId,
+                    assetId: catalogId,
+                    previewOnly: false,
+                    confirmWord: 'ACTUALIZAR',
+                    proposedUrl: reframePreview.proposedUrl,
+                    proposedSha256: reframePreview.proposedSha256,
+                    proposedMetrics: reframePreview.proposedMetrics,
+                }),
+            });
+            const data = await res.json().catch(() => null);
+            if (res.ok && data?.success) {
+                const resolvedUrl = String(
+                    data.foto_url || data.proposedUrl || reframePreview.proposedUrl
+                );
+                const resolvedTelemetry: FotoMediaTelemetry =
+                    data.foto_media_telemetry || data.metrics || reframePreview.proposedMetrics;
+
+                if (assetId && assetId !== catalogId) {
+                    await authFetch(`${API_BASE_URL}/vault/asset-image`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            globalAssetId: catalogId,
+                            assetId: catalogId,
+                            tenantAssetId: assetId,
+                            imageUrl: resolvedUrl,
+                            fotoMediaTelemetry: resolvedTelemetry,
+                            confirmWord: 'ACTUALIZAR',
+                        }),
+                    }).catch(() => undefined);
+                }
+
+                onCatalogPatch({
+                    foto_url: resolvedUrl,
+                    foto_media_telemetry: resolvedTelemetry,
+                });
+                setReframePreview(null);
+                setReframeConfirmText('');
+                toast.update(toastId, {
+                    render: t('vault_sidebar.toast_reframe_consolidated'),
+                    type: 'success',
+                    isLoading: false,
+                    autoClose: 3000,
+                });
+            } else if (reframePreview.isClientFallback) {
+                const saveRes = await authFetch(`${API_BASE_URL}/vault/asset-image`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        globalAssetId: catalogId,
+                        assetId: catalogId,
+                        tenantAssetId: assetId !== catalogId ? assetId : undefined,
+                        imageUrl: reframePreview.proposedUrl,
+                        fotoMediaTelemetry: reframePreview.proposedMetrics,
+                        confirmWord: 'ACTUALIZAR',
+                    }),
+                });
+                if (!saveRes.ok) {
+                    const saveErr = await saveRes.json().catch(() => ({}));
+                    throw new Error(saveErr?.error || t('vault_sidebar.toast_reframe_error'));
+                }
+                onCatalogPatch({
+                    foto_url: reframePreview.proposedUrl,
+                    foto_media_telemetry: reframePreview.proposedMetrics,
+                });
+                setReframePreview(null);
+                setReframeConfirmText('');
+                toast.update(toastId, {
+                    render: t('vault_sidebar.toast_reframe_consolidated'),
+                    type: 'success',
+                    isLoading: false,
+                    autoClose: 3000,
+                });
+            } else {
+                throw new Error(data?.error || t('vault_sidebar.toast_reframe_error'));
+            }
+        } catch (err: any) {
+            toast.update(toastId, {
+                render: err?.message || t('vault_sidebar.toast_reframe_error'),
+                type: 'error',
+                isLoading: false,
+                autoClose: 3000,
+            });
+        } finally {
+            setIsConsolidatingReframe(false);
+        }
+    }, [
+        canCurateAI,
+        catalogId,
+        reframePreview,
+        isConsolidatingReframe,
+        reframeConfirmText,
         assetId,
         onCatalogPatch,
+        t,
     ]);
 
     const handlePhotoDelete = useCallback(async () => {
@@ -546,7 +728,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
         }
 
         setIsUploadingPhoto(true);
-        const toastId = toast.loading('Limpiando referencia fotográfica...');
+        const toastId = toast.loading(t('vault_sidebar.toast_deleting_photo'));
 
         try {
             const delRes = await authFetch(`${API_BASE_URL}/vault/asset-image`, {
@@ -554,15 +736,17 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     globalAssetId: catalogId,
+                    assetId: catalogId,
                     tenantAssetId: assetId !== catalogId ? assetId : undefined,
                     imageUrl: null,
                     fotoMediaTelemetry: null,
+                    confirmWord: 'ACTUALIZAR',
                 }),
             });
 
             if (!delRes.ok) {
                 const errJson = await delRes.json().catch(() => ({}));
-                throw new Error(errJson?.error || 'Error al eliminar referencia fotográfica');
+                throw new Error(errJson?.error || t('vault_sidebar.toast_delete_photo_error'));
             }
 
             onCatalogPatch({
@@ -574,17 +758,18 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
             setShowPhotoDeleteConfirm(false);
             setPhotoDeleteConfirmText('');
             setPhotoCandidates([]);
+            setReframePreview(null);
             setIsManualFallbackActive(false);
 
             toast.update(toastId, {
-                render: 'Referencia fotográfica eliminada',
+                render: t('vault_sidebar.toast_photo_deleted'),
                 type: 'success',
                 isLoading: false,
                 autoClose: 3000,
             });
         } catch (err: any) {
             toast.update(toastId, {
-                render: err?.message || 'Error al eliminar la referencia fotográfica',
+                render: err?.message || t('vault_sidebar.toast_delete_photo_error'),
                 type: 'error',
                 isLoading: false,
                 autoClose: 3000,
@@ -592,40 +777,53 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
         } finally {
             setIsUploadingPhoto(false);
         }
-    }, [canCurateAI, catalogId, assetId, photoDeleteConfirmText, onCatalogPatch]);
+    }, [canCurateAI, catalogId, assetId, photoDeleteConfirmText, onCatalogPatch, t]);
 
+    // A-04 Paso 1: Vista previa HITL de reconciliación de ficha lateral (`previewOnly: true`)
     const handleReconcileSidebarProfile = useCallback(async () => {
         if (!canCurateAI || !catalogId || isReconcilingSidebar) return;
         setIsReconcilingSidebar(true);
-        const toastId = toast.loading('Sincronizando ficha lateral con 01 · Ficha Técnica OEM...');
+        setEditingSidebarSection(null);
+        setReconcileConfirmText('');
+        const toastId = toast.loading(t('vault_sidebar.toast_reconciling_preview'));
         try {
             const res = await authFetch(`${API_BASE_URL}/vault/reconcile-sidebar-profile`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ globalAssetId: catalogId }),
+                body: JSON.stringify({
+                    globalAssetId: catalogId,
+                    assetId: catalogId,
+                    previewOnly: true,
+                }),
             });
             const data = await res.json().catch(() => null);
-            if (!res.ok || !data?.success) {
-                throw new Error(data?.error || 'Error al sincronizar perfil lateral');
+            if (!res.ok || !data?.success || !data?.proposedProfile) {
+                throw new Error(data?.error || t('vault_sidebar.toast_reconcile_error'));
             }
-            onCatalogPatch({
-                caracteristicas_principales:
-                    data.caracteristicas_principales || catalog.caracteristicas_principales,
-                ambiente_operativo: data.ambiente_operativo || catalog.ambiente_operativo,
-                contexto_operativo: data.contexto_operativo || catalog.contexto_operativo,
-                energy_consumption_profile:
-                    data.energy_consumption_profile || catalog.energy_consumption_profile,
+            const fallbackCurrent: SidebarProfileSnapshot = {
+                caracteristicas_principales: catalog.caracteristicas_principales || [],
+                ambiente_operativo: catalog.ambiente_operativo || [],
+                contexto_operativo: catalog.contexto_operativo || [],
+                energy_consumption_profile: catalog.energy_consumption_profile,
+            };
+            setReconcilePreview({
+                currentProfile: data.currentProfile || fallbackCurrent,
+                proposedProfile: data.proposedProfile,
             });
-            if (onRefreshVault) void onRefreshVault();
+            setReconcileApproveFields({
+                caracteristicas: true,
+                ambiente: true,
+                contexto: true,
+            });
             toast.update(toastId, {
-                render: 'Ficha lateral sincronizada con parámetros OEM verificados',
-                type: 'success',
+                render: t('vault_sidebar.toast_reconcile_preview_ready'),
+                type: 'info',
                 isLoading: false,
                 autoClose: 3000,
             });
         } catch (err: any) {
             toast.update(toastId, {
-                render: err?.message || 'Error sincronizando perfil lateral',
+                render: err?.message || t('vault_sidebar.toast_reconcile_error'),
                 type: 'error',
                 isLoading: false,
                 autoClose: 3500,
@@ -641,8 +839,121 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
         catalog.ambiente_operativo,
         catalog.contexto_operativo,
         catalog.energy_consumption_profile,
+        t,
+    ]);
+
+    // A-04 Paso 2: Consolidación HITL granular 1 a 1 con `"ACTUALIZAR"`
+    const handleConfirmReconcileHitl = useCallback(async () => {
+        if (
+            !canCurateAI ||
+            !catalogId ||
+            !reconcilePreview ||
+            isConsolidatingReconcile ||
+            reconcileConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'
+        ) {
+            return;
+        }
+        const hasAnySelected =
+            reconcileApproveFields.caracteristicas ||
+            reconcileApproveFields.ambiente ||
+            reconcileApproveFields.contexto;
+        if (!hasAnySelected) return;
+
+        setIsConsolidatingReconcile(true);
+        const toastId = toast.loading(t('vault_sidebar.toast_reconciling_consolidate'));
+        try {
+            const approvedProfile: SidebarProfileSnapshot = {
+                ...reconcilePreview.proposedProfile,
+                caracteristicas_principales: reconcileApproveFields.caracteristicas
+                    ? reconcilePreview.proposedProfile.caracteristicas_principales
+                    : reconcilePreview.currentProfile.caracteristicas_principales,
+                ambiente_operativo: reconcileApproveFields.ambiente
+                    ? reconcilePreview.proposedProfile.ambiente_operativo
+                    : reconcilePreview.currentProfile.ambiente_operativo,
+                contexto_operativo: reconcileApproveFields.contexto
+                    ? reconcilePreview.proposedProfile.contexto_operativo
+                    : reconcilePreview.currentProfile.contexto_operativo,
+                canonical_specs: reconcileApproveFields.caracteristicas
+                    ? reconcilePreview.proposedProfile.canonical_specs
+                    : reconcilePreview.currentProfile.canonical_specs,
+                energy_consumption_profile: reconcileApproveFields.caracteristicas
+                    ? reconcilePreview.proposedProfile.energy_consumption_profile
+                    : reconcilePreview.currentProfile.energy_consumption_profile,
+                configuration_profile: reconcileApproveFields.caracteristicas
+                    ? reconcilePreview.proposedProfile.configuration_profile
+                    : reconcilePreview.currentProfile.configuration_profile,
+                equipment_type_key: reconcileApproveFields.caracteristicas
+                    ? reconcilePreview.proposedProfile.equipment_type_key
+                    : reconcilePreview.currentProfile.equipment_type_key,
+            };
+
+            const res = await authFetch(`${API_BASE_URL}/vault/reconcile-sidebar-profile`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    globalAssetId: catalogId,
+                    assetId: catalogId,
+                    previewOnly: false,
+                    confirmWord: 'ACTUALIZAR',
+                    approvedProfile,
+                }),
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data?.success) {
+                throw new Error(data?.error || t('vault_sidebar.toast_reconcile_error'));
+            }
+
+            onCatalogPatch({
+                caracteristicas_principales:
+                    data.caracteristicas_principales ||
+                    approvedProfile.caracteristicas_principales ||
+                    catalog.caracteristicas_principales,
+                ambiente_operativo:
+                    data.ambiente_operativo ||
+                    approvedProfile.ambiente_operativo ||
+                    catalog.ambiente_operativo,
+                contexto_operativo:
+                    data.contexto_operativo ||
+                    approvedProfile.contexto_operativo ||
+                    catalog.contexto_operativo,
+                energy_consumption_profile:
+                    data.energy_consumption_profile ||
+                    approvedProfile.energy_consumption_profile ||
+                    catalog.energy_consumption_profile,
+            });
+            setReconcilePreview(null);
+            setReconcileConfirmText('');
+            if (onRefreshVault) void onRefreshVault();
+            toast.update(toastId, {
+                render: t('vault_sidebar.toast_reconcile_consolidated'),
+                type: 'success',
+                isLoading: false,
+                autoClose: 3000,
+            });
+        } catch (err: any) {
+            toast.update(toastId, {
+                render: err?.message || t('vault_sidebar.toast_reconcile_error'),
+                type: 'error',
+                isLoading: false,
+                autoClose: 3500,
+            });
+        } finally {
+            setIsConsolidatingReconcile(false);
+        }
+    }, [
+        canCurateAI,
+        catalogId,
+        reconcilePreview,
+        isConsolidatingReconcile,
+        reconcileConfirmText,
+        reconcileApproveFields,
+        catalog.caracteristicas_principales,
+        catalog.ambiente_operativo,
+        catalog.contexto_operativo,
+        catalog.energy_consumption_profile,
         onCatalogPatch,
         onRefreshVault,
+        t,
     ]);
 
     const normalizedMainSpecs = React.useMemo(
@@ -693,11 +1004,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
             setSidebarDraftText(currentItems.filter((x) => !x.startsWith('[')).join('\n'));
             setSidebarConfirmText('');
         },
-        [
-            normalizedMainSpecs,
-            normalizedDesignConditions,
-            normalizedWorkContext,
-        ]
+        [normalizedMainSpecs, normalizedDesignConditions, normalizedWorkContext]
     );
 
     const handleSaveSidebarSectionHitl = useCallback(async () => {
@@ -715,11 +1022,12 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
             .map((l) => l.replace(/^[•\-*]\s*/, '').trim())
             .filter(Boolean);
         const finalLines =
-            lines.length > 0 ? lines : ['[Información técnica no declarada en ficha]'];
+            lines.length > 0 ? lines : [t('opermaq_domains.not_declared')];
 
         const payload: Record<string, any> = {
             globalAssetId: catalogId,
             confirmationKeyword: 'ACTUALIZAR',
+            confirmWord: 'ACTUALIZAR',
         };
         if (editingSidebarSection === 'caracteristicas') {
             payload.caracteristicas_principales = finalLines;
@@ -735,7 +1043,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
             });
             const data = await res.json().catch(() => null);
             if (!res.ok || !data?.success) {
-                throw new Error(data?.error || 'Error guardando actualización HITL');
+                throw new Error(data?.error || t('vault_sidebar.toast_save_section_error'));
             }
             onCatalogPatch({
                 ...(editingSidebarSection === 'caracteristicas'
@@ -751,9 +1059,9 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
             setEditingSidebarSection(null);
             setSidebarDraftText('');
             setSidebarConfirmText('');
-            toast.success('Registro lateral actualizado y auditado');
+            toast.success(t('vault_sidebar.toast_section_saved'));
         } catch (err: any) {
-            toast.error(err?.message || 'Error guardando sección lateral');
+            toast.error(err?.message || t('vault_sidebar.toast_save_section_error'));
         } finally {
             setIsSavingSidebarHitl(false);
         }
@@ -764,6 +1072,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
         sidebarConfirmText,
         sidebarDraftText,
         onCatalogPatch,
+        t,
     ]);
 
     const handleDragOver = useCallback(
@@ -797,17 +1106,35 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
             if (!file || !catalogId) return;
 
             if (!isManualFallbackActive && !catalog.foto_url) {
-                toast.info('Haga clic en CAZAR FOTO OFICIAL para búsqueda asistida por IA.');
+                toast.info(t('vault_sidebar.toast_drop_hint_hunt'));
                 return;
             }
 
             await processManualPhotoUpload(file);
         },
-        [canCurateAI, catalogId, isManualFallbackActive, catalog.foto_url, processManualPhotoUpload]
+        [canCurateAI, catalogId, isManualFallbackActive, catalog.foto_url, processManualPhotoUpload, t]
     );
 
+    const renderHitlListPreview = (items?: string[]) => {
+        const clean = Array.isArray(items) && items.length > 0 ? items : [t('opermaq_domains.not_declared')];
+        return (
+            <ul className="space-y-1 text-[10px] font-mono text-[#475569] dark:text-[#8A93A6] tabular-nums">
+                {clean.slice(0, 6).map((line, i) => (
+                    <li key={i} className="leading-tight break-words">
+                        • {line}
+                    </li>
+                ))}
+                {clean.length > 6 && (
+                    <li className="text-[#94A3B8] dark:text-[#5A6072]">
+                        +{clean.length - 6}
+                    </li>
+                )}
+            </ul>
+        );
+    };
+
     return (
-        <aside className="no-print shrink-0 w-[260px] flex flex-col border-r border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] overflow-y-auto hide-scrollbar">
+        <aside className="no-print shrink-0 w-[260px] flex flex-col border-r border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] overflow-y-auto hide-scrollbar select-none">
             <div className="shrink-0 p-[13px]">
                 <div
                     onDragOver={canCurateAI ? handleDragOver : undefined}
@@ -820,7 +1147,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                     }`}
                 >
                     {isHuntingPhoto || isUploadingPhoto || isReframingPhoto ? (
-                        <div className="w-full h-full flex flex-col items-center justify-center gap-[8px] p-2 bg-[#F8FAFC] dark:bg-[#000000]">
+                        <div className="w-full h-full flex flex-col items-center justify-center gap-[8px] p-[8px] bg-[#F8FAFC] dark:bg-[#000000]">
                             <M3CircularProgress
                                 size={24}
                                 strokeWidth={3}
@@ -828,28 +1155,27 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 tone="copper"
                                 ariaLabel={
                                     isHuntingPhoto
-                                        ? t(
-                                              'vault_dashboard.hunting_official_photo',
-                                              'Cazando fotografía oficial OEM…'
-                                          )
+                                        ? t('vault_sidebar.status_hunting_photo')
                                         : isReframingPhoto
-                                        ? t('vault_dashboard.reframe_88', 'ENCUADRAR 88%')
-                                        : 'Auditando fotografía'
+                                        ? t('vault_sidebar.status_reframing_photo')
+                                        : t('vault_sidebar.status_auditing_photo')
                                 }
                             />
                             <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] text-center">
                                 {isHuntingPhoto
-                                    ? 'BUSCANDO FOTO OFICIAL OEM…'
+                                    ? t('vault_sidebar.status_hunting_photo')
                                     : isReframingPhoto
-                                    ? 'ENCUADRANDO 88% STUDIO…'
-                                    : 'AUDITANDO VLM…'}
+                                    ? t('vault_sidebar.status_reframing_photo')
+                                    : t('vault_sidebar.status_auditing_photo')}
                             </span>
                         </div>
                     ) : photoCandidates.length > 0 ? (
-                        <div className="relative w-full h-full bg-[#FFFFFF] flex items-center justify-center">
+                        <div className="relative w-full h-full bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-center">
                             <img
                                 src={photoCandidates[selectedCandidateIdx]?.preview_url}
-                                alt={`Candidata OEM ${selectedCandidateIdx + 1}`}
+                                alt={t('vault_sidebar.candidate_alt', {
+                                    index: selectedCandidateIdx + 1,
+                                })}
                                 draggable={false}
                                 onContextMenu={(e) => e.preventDefault()}
                                 style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
@@ -857,8 +1183,8 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                             />
                             <div className="absolute top-1.5 right-1.5 px-1.5 py-0.5 bg-[#000000]/80 text-[8px] font-mono font-bold text-[#00AEEF] uppercase tracking-wider tabular-nums select-none pointer-events-none">
                                 {photoCandidates[selectedCandidateIdx]?.framing_mode === 'STUDIO_88'
-                                    ? 'OEM · 88% STUDIO'
-                                    : 'OEM · 4:3'}
+                                    ? t('vault_sidebar.badge_oem_studio_88')
+                                    : t('vault_sidebar.badge_oem_4x3')}
                             </div>
                         </div>
                     ) : catalog.foto_url ? (
@@ -882,16 +1208,16 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                             }`}
                         >
                             <span className="material-symbols-outlined !text-xl">image_search</span>
-                            <span className="text-[9px] font-bold uppercase tracking-widest text-center px-2">
+                            <span className="text-[9px] font-bold uppercase tracking-widest text-center px-[8px]">
                                 {isManualFallbackActive
-                                    ? 'SIN CANDIDATAS · CLIC PARA ACTUALIZAR BÚSQUEDA IA'
-                                    : t('vault_dashboard.hunt_official_photo', 'CAZAR FOTO OFICIAL')}
+                                    ? t('vault_sidebar.no_candidates_retry_cta')
+                                    : t('vault_sidebar.hunt_official_photo_cta')}
                             </span>
                         </div>
                     ) : (
                         <div className="w-full h-full flex items-center justify-center p-[13px] text-center">
                             <span className="text-[11px] text-[#94A3B8] dark:text-[#5A6072]">
-                                [Información técnica no declarada en ficha]
+                                {t('opermaq_domains.not_declared')}
                             </span>
                         </div>
                     )}
@@ -904,21 +1230,21 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 type="button"
                                 onClick={handleStartOfficialPhotoHunt}
                                 disabled={isUploadingPhoto || isReframingPhoto}
-                                className="flex-1 py-1.5 px-2 border border-[#C68346] bg-[#C68346]/10 hover:bg-[#C68346] text-[#C68346] hover:text-[#000000] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                                className="flex-1 py-1.5 px-[8px] border border-[#C68346] bg-[#C68346]/10 hover:bg-[#C68346] text-[#C68346] hover:text-[#000000] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                             >
                                 {isHuntingPhoto
-                                    ? 'ACTUALIZAR AHORA'
+                                    ? t('vault_sidebar.btn_updating_now')
                                     : isManualFallbackActive
-                                    ? 'ACTUALIZAR BÚSQUEDA IA'
-                                    : 'CAZAR FOTO IA'}
+                                    ? t('vault_sidebar.btn_refresh_ai_search')
+                                    : t('vault_sidebar.btn_hunt_ai_photo')}
                             </button>
                             <button
                                 type="button"
                                 onClick={() => fileInputRef.current?.click()}
                                 disabled={isHuntingPhoto || isUploadingPhoto || isReframingPhoto}
-                                className="py-1.5 px-2 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                                className="py-1.5 px-[8px] border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                             >
-                                CARGAR MANUAL
+                                {t('vault_sidebar.btn_upload_manual')}
                             </button>
                         </div>
                         {verifiedStoredCandidates.length > 0 && (
@@ -926,9 +1252,11 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 type="button"
                                 onClick={handleOpenStoredAlternatives}
                                 disabled={isHuntingPhoto || isUploadingPhoto || isReframingPhoto}
-                                className="w-full py-1 px-2 border border-[#00AEEF] text-[#00AEEF] hover:bg-[#00AEEF] hover:text-[#000000] text-[9px] font-mono font-bold uppercase tracking-wider tabular-nums rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                                className="w-full py-1 px-[8px] border border-[#00AEEF] text-[#00AEEF] hover:bg-[#00AEEF] hover:text-[#000000] text-[9px] font-mono font-bold uppercase tracking-wider tabular-nums rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                             >
-                                VER ALTERNATIVAS GUARDADAS ({verifiedStoredCandidates.length})
+                                {t('vault_sidebar.btn_view_saved_alternatives', {
+                                    count: verifiedStoredCandidates.length,
+                                })}
                             </button>
                         )}
                     </div>
@@ -936,6 +1264,42 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
 
                 {photoCandidates.length > 0 && (
                     <div className="flex flex-col gap-[8px] w-full mt-[8px]">
+                        {/* Vista comparativa [Actual] -> [Sugerido] cuando ya existe foto publicada */}
+                        {catalog.foto_url && (
+                            <div className="grid grid-cols-2 gap-[8px] p-[8px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] rounded-none">
+                                <div className="flex flex-col gap-[4px]">
+                                    <span className="text-[8px] font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
+                                        {t('vault_sidebar.hitl_label_current')}
+                                    </span>
+                                    <div className="aspect-[4/3] w-full bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-center overflow-hidden">
+                                        <img
+                                            src={catalog.foto_url}
+                                            alt={t('vault_sidebar.hitl_label_current')}
+                                            draggable={false}
+                                            onContextMenu={(e) => e.preventDefault()}
+                                            style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
+                                            className="w-full h-full object-contain select-none pointer-events-none"
+                                        />
+                                    </div>
+                                </div>
+                                <div className="flex flex-col gap-[4px]">
+                                    <span className="text-[8px] font-mono font-bold uppercase tracking-wider text-[#00AEEF]">
+                                        {t('vault_sidebar.hitl_label_proposed')}
+                                    </span>
+                                    <div className="aspect-[4/3] w-full bg-[#FFFFFF] dark:bg-[#07090D] border border-[#00AEEF] flex items-center justify-center overflow-hidden">
+                                        <img
+                                            src={photoCandidates[selectedCandidateIdx]?.preview_url}
+                                            alt={t('vault_sidebar.hitl_label_proposed')}
+                                            draggable={false}
+                                            onContextMenu={(e) => e.preventDefault()}
+                                            style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
+                                            className="w-full h-full object-contain select-none pointer-events-none"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                         <div className="flex items-center justify-between px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-[9px] font-mono tabular-nums rounded-none">
                             <button
                                 type="button"
@@ -947,15 +1311,18 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                     )
                                 }
                                 disabled={photoCandidates.length <= 1}
-                                aria-label="Candidata anterior"
-                                className="bg-transparent border-0 outline-none p-0 text-slate-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                                aria-label={t('vault_sidebar.aria_prev_candidate')}
+                                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
                             >
                                 <span className="material-symbols-outlined !text-[16px]">
                                     chevron_left
                                 </span>
                             </button>
                             <span className="text-[#475569] dark:text-[#8A93A6] font-bold tracking-wider">
-                                CANDIDATA {selectedCandidateIdx + 1} / {photoCandidates.length}
+                                {t('vault_sidebar.candidate_counter', {
+                                    current: selectedCandidateIdx + 1,
+                                    total: photoCandidates.length,
+                                })}
                             </span>
                             <button
                                 type="button"
@@ -965,8 +1332,8 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                     )
                                 }
                                 disabled={photoCandidates.length <= 1}
-                                aria-label="Candidata siguiente"
-                                className="bg-transparent border-0 outline-none p-0 text-slate-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                                aria-label={t('vault_sidebar.aria_next_candidate')}
+                                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
                             >
                                 <span className="material-symbols-outlined !text-[16px]">
                                     chevron_right
@@ -989,8 +1356,13 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                             key={cand.candidate_id || `${cand.sha256}_${idx}`}
                                             type="button"
                                             onClick={() => setSelectedCandidateIdx(idx)}
-                                            title={`Alternativa #${idx + 1} (${cand.verified_variant_summary || cand.source_label})`}
-                                            className={`relative aspect-[4/3] w-full bg-[#FFFFFF] border rounded-none shadow-none overflow-hidden cursor-pointer transition-colors p-0 ${
+                                            title={t('vault_sidebar.alternative_title', {
+                                                index: idx + 1,
+                                                source:
+                                                    cand.verified_variant_summary ||
+                                                    cand.source_label,
+                                            })}
+                                            className={`relative aspect-[4/3] w-full bg-[#FFFFFF] dark:bg-[#000000] border rounded-none shadow-none overflow-hidden cursor-pointer transition-colors p-0 ${
                                                 isSelected
                                                     ? 'border-2 border-[#C68346]'
                                                     : 'border-[#E2E8F0] dark:border-[#12151C] opacity-75 hover:opacity-100 hover:border-[#00AEEF]'
@@ -998,7 +1370,9 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         >
                                             <img
                                                 src={cand.preview_url}
-                                                alt={`Alternativa ${idx + 1}`}
+                                                alt={t('vault_sidebar.candidate_alt', {
+                                                    index: idx + 1,
+                                                })}
                                                 draggable={false}
                                                 onContextMenu={(e) => e.preventDefault()}
                                                 style={
@@ -1013,7 +1387,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                             </span>
                                             {isPublished && (
                                                 <span className="absolute top-0 right-0 px-1 bg-[#00AEEF] text-[7px] font-mono font-bold text-[#000000] uppercase select-none pointer-events-none">
-                                                    ACT
+                                                    {t('vault_sidebar.badge_active_short')}
                                                 </span>
                                             )}
                                         </button>
@@ -1029,15 +1403,17 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 disabled={isPublishingCandidate}
                                 className="flex-1 py-1 border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-[#000000] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                             >
-                                {isHuntingPhoto ? 'ACTUALIZANDO…' : 'ACTUALIZAR BÚSQUEDA IA'}
+                                {isHuntingPhoto
+                                    ? t('vault_sidebar.btn_updating_short')
+                                    : t('vault_sidebar.btn_refresh_ai_search')}
                             </button>
                             <button
                                 type="button"
                                 onClick={() => fileInputRef.current?.click()}
                                 disabled={isPublishingCandidate}
-                                className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                                className="px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                             >
-                                MANUAL
+                                {t('vault_sidebar.btn_manual_short')}
                             </button>
                         </div>
 
@@ -1045,12 +1421,9 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                             <div className="flex items-center justify-between gap-[8px]">
                                 <span className="text-[#00AEEF] font-bold uppercase truncate">
                                     {photoCandidates[selectedCandidateIdx]?.verified_variant_summary ||
-                                        t(
-                                            'registration.variant_photo_verified_badge',
-                                            'VARIANTE OEM VERIFICADA VLM'
-                                        )}
+                                        t('registration.variant_photo_verified_badge')}
                                 </span>
-                                <span className="text-[#5A6072] dark:text-[#94A3B8] shrink-0">
+                                <span className="text-[#94A3B8] dark:text-[#5A6072] shrink-0">
                                     {Math.round(
                                         (photoCandidates[selectedCandidateIdx]?.authenticity_score ||
                                             0) * 100
@@ -1064,7 +1437,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                     {formatPhotoBytes(
                                         photoCandidates[selectedCandidateIdx]?.original_bytes
                                     )}{' '}
-                                    ➔ CAS:{' '}
+                                    {'->'} CAS:{' '}
                                     {formatPhotoBytes(
                                         photoCandidates[selectedCandidateIdx]?.optimized_bytes
                                     )}
@@ -1077,7 +1450,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
 
                         <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] rounded-none">
                             <span className="text-[10px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
-                                Escriba ACTUALIZAR para publicar:
+                                {t('vault_sidebar.prompt_type_actualizar_publish')}
                             </span>
                             <input
                                 type="text"
@@ -1110,14 +1483,14 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                     }
                                     className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
                                 >
-                                    CONFIRMAR
+                                    {t('vault_sidebar.btn_confirm')}
                                 </button>
                                 <button
                                     type="button"
                                     onClick={handleDiscardCandidates}
                                     className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                                 >
-                                    CERRAR
+                                    {t('vault_sidebar.btn_close')}
                                 </button>
                             </div>
                         </div>
@@ -1128,7 +1501,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                     <div className="mt-[8px] p-[8px] border border-[#C68346] bg-[#C68346]/10 flex flex-col gap-[8px] rounded-none">
                         <div className="flex items-center gap-[8px] text-[#C68346] text-[9px] font-bold uppercase tracking-wider">
                             <span className="material-symbols-outlined !text-[14px]">warning</span>
-                            <span>Rechazo Auditor OEM</span>
+                            <span>{t('vault_sidebar.oem_auditor_rejection_title')}</span>
                         </div>
                         <p className="text-[10px] text-[#0F172A] dark:text-[#F3F4F6] font-mono leading-tight">
                             {manualAuditRejection}
@@ -1145,7 +1518,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         {formatPhotoBytes(
                                             catalog.foto_media_telemetry.original_bytes
                                         )}{' '}
-                                        ➔{' '}
+                                        {'->'}{' '}
                                         {formatPhotoBytes(
                                             catalog.foto_media_telemetry.optimized_bytes
                                         )}
@@ -1157,21 +1530,24 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                     )}
                                 </div>
                             ) : (
-                                <span className="font-mono text-[9px] text-[#5A6072] dark:text-[#94A3B8]">
+                                <span className="font-mono text-[9px] text-[#94A3B8] dark:text-[#5A6072]">
                                     CAS
                                 </span>
                             )}
 
-                            {canCurateAI && (
+                            {canCurateAI && !catalog.is_sealed && (
                                 <div className="flex items-center gap-[2px] shrink-0">
                                     <button
                                         type="button"
                                         onClick={handleStartOfficialPhotoHunt}
                                         disabled={
-                                            isHuntingPhoto || isReframingPhoto || isUploadingPhoto
+                                            isHuntingPhoto ||
+                                            isReframingPhoto ||
+                                            isUploadingPhoto ||
+                                            isConsolidatingReframe
                                         }
-                                        title="Buscar fotografía oficial OEM con IA"
-                                        aria-label="Buscar fotografía oficial OEM con IA"
+                                        title={t('vault_sidebar.aria_search_oem_photo')}
+                                        aria-label={t('vault_sidebar.aria_search_oem_photo')}
                                         className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-[#C68346] dark:hover:text-[#C68346] transition-colors cursor-pointer disabled:opacity-40 flex items-center"
                                     >
                                         <span className="material-symbols-outlined !text-[15px]">
@@ -1186,10 +1562,16 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                             disabled={
                                                 isHuntingPhoto ||
                                                 isReframingPhoto ||
-                                                isUploadingPhoto
+                                                isUploadingPhoto ||
+                                                isConsolidatingReframe
                                             }
-                                            title={`Alternativas verificadas VLM v4 (${verifiedStoredCandidates.length})`}
-                                            aria-label={`Alternativas verificadas VLM v4 (${verifiedStoredCandidates.length})`}
+                                            title={t('vault_sidebar.aria_verified_alternatives', {
+                                                count: verifiedStoredCandidates.length,
+                                            })}
+                                            aria-label={t(
+                                                'vault_sidebar.aria_verified_alternatives',
+                                                { count: verifiedStoredCandidates.length }
+                                            )}
                                             className="bg-transparent border-0 outline-none p-1 text-[#00AEEF] hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer disabled:opacity-40 flex items-center"
                                         >
                                             <span className="material-symbols-outlined !text-[15px]">
@@ -1202,16 +1584,13 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         type="button"
                                         onClick={handleReframeCurrentPhoto}
                                         disabled={
-                                            isHuntingPhoto || isReframingPhoto || isUploadingPhoto
+                                            isHuntingPhoto ||
+                                            isReframingPhoto ||
+                                            isUploadingPhoto ||
+                                            isConsolidatingReframe
                                         }
-                                        title={t(
-                                            'vault_dashboard.reframe_88',
-                                            'Encuadrar al 88% Studio 4:3'
-                                        )}
-                                        aria-label={t(
-                                            'vault_dashboard.reframe_88',
-                                            'Encuadrar al 88% Studio 4:3'
-                                        )}
+                                        title={t('vault_sidebar.aria_reframe_88')}
+                                        aria-label={t('vault_sidebar.aria_reframe_88')}
                                         className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-[#00AEEF] dark:hover:text-[#00AEEF] transition-colors cursor-pointer disabled:opacity-40 flex items-center"
                                     >
                                         <span className="material-symbols-outlined !text-[15px]">
@@ -1223,10 +1602,13 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         type="button"
                                         onClick={() => fileInputRef.current?.click()}
                                         disabled={
-                                            isHuntingPhoto || isReframingPhoto || isUploadingPhoto
+                                            isHuntingPhoto ||
+                                            isReframingPhoto ||
+                                            isUploadingPhoto ||
+                                            isConsolidatingReframe
                                         }
-                                        title="Subir fotografía oficial manualmente"
-                                        aria-label="Subir fotografía oficial manualmente"
+                                        title={t('vault_sidebar.aria_upload_manual_photo')}
+                                        aria-label={t('vault_sidebar.aria_upload_manual_photo')}
                                         className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer disabled:opacity-40 flex items-center"
                                     >
                                         <span className="material-symbols-outlined !text-[15px]">
@@ -1239,12 +1621,16 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         onClick={() => {
                                             setShowPhotoDeleteConfirm((prev) => !prev);
                                             setPhotoDeleteConfirmText('');
+                                            setReframePreview(null);
                                         }}
                                         disabled={
-                                            isHuntingPhoto || isReframingPhoto || isUploadingPhoto
+                                            isHuntingPhoto ||
+                                            isReframingPhoto ||
+                                            isUploadingPhoto ||
+                                            isConsolidatingReframe
                                         }
-                                        title="Dar de baja fotografía"
-                                        aria-label="Dar de baja fotografía"
+                                        title={t('vault_sidebar.aria_delete_photo')}
+                                        aria-label={t('vault_sidebar.aria_delete_photo')}
                                         className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-[#C68346] dark:hover:text-[#C68346] transition-colors cursor-pointer disabled:opacity-40 flex items-center"
                                     >
                                         <span className="material-symbols-outlined !text-[15px]">
@@ -1255,16 +1641,126 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                             )}
                         </div>
 
+                        {/* A-04 Panel Comparativo HITL [Actual] -> [Sugerido] para Re-encuadre 88% */}
+                        {canCurateAI && reframePreview && (
+                            <div className="flex flex-col gap-[8px] w-full mt-[8px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] rounded-none shadow-none">
+                                <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-[#00AEEF]">
+                                    {t('vault_sidebar.reframe_hitl_title')}
+                                </span>
+                                <div className="grid grid-cols-2 gap-[8px]">
+                                    <div className="flex flex-col gap-[4px]">
+                                        <span className="text-[8px] font-mono font-bold uppercase text-[#475569] dark:text-[#8A93A6]">
+                                            {t('vault_sidebar.hitl_label_current')}
+                                        </span>
+                                        <div className="aspect-[4/3] w-full bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-center overflow-hidden">
+                                            <img
+                                                src={reframePreview.currentUrl}
+                                                alt={t('vault_sidebar.hitl_label_current')}
+                                                draggable={false}
+                                                onContextMenu={(e) => e.preventDefault()}
+                                                style={
+                                                    {
+                                                        WebkitUserDrag: 'none',
+                                                    } as React.CSSProperties
+                                                }
+                                                className="w-full h-full object-contain select-none pointer-events-none"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-col gap-[4px]">
+                                        <span className="text-[8px] font-mono font-bold uppercase text-[#00AEEF]">
+                                            {t('vault_sidebar.hitl_label_proposed')}
+                                        </span>
+                                        <div className="aspect-[4/3] w-full bg-[#FFFFFF] dark:bg-[#07090D] border border-[#00AEEF] flex items-center justify-center overflow-hidden">
+                                            <img
+                                                src={reframePreview.proposedUrl}
+                                                alt={t('vault_sidebar.hitl_label_proposed')}
+                                                draggable={false}
+                                                onContextMenu={(e) => e.preventDefault()}
+                                                style={
+                                                    {
+                                                        WebkitUserDrag: 'none',
+                                                    } as React.CSSProperties
+                                                }
+                                                className="w-full h-full object-contain select-none pointer-events-none"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="flex items-center justify-between gap-[8px] font-mono tabular-nums text-[9px]">
+                                    <span className="text-[#475569] dark:text-[#8A93A6] truncate">
+                                        ORIG:{' '}
+                                        {formatPhotoBytes(
+                                            reframePreview.proposedMetrics.original_bytes
+                                        )}{' '}
+                                        {'->'} CAS:{' '}
+                                        {formatPhotoBytes(
+                                            reframePreview.proposedMetrics.optimized_bytes
+                                        )}
+                                    </span>
+                                    <span className="font-bold text-[#00AEEF] shrink-0">
+                                        -{reframePreview.proposedMetrics.savings_pct}%
+                                    </span>
+                                </div>
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
+                                    {t('vault_sidebar.prompt_type_actualizar_consolidate')}
+                                </span>
+                                <input
+                                    type="text"
+                                    value={reframeConfirmText}
+                                    onChange={(e) =>
+                                        setReframeConfirmText(e.target.value.toUpperCase())
+                                    }
+                                    onKeyDown={(e) => {
+                                        if (
+                                            e.key === 'Enter' &&
+                                            !isConsolidatingReframe &&
+                                            reframeConfirmText.trim().toUpperCase() === 'ACTUALIZAR'
+                                        ) {
+                                            e.preventDefault();
+                                            void handleConfirmReframeHitl();
+                                        }
+                                    }}
+                                    placeholder="ACTUALIZAR"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    className="w-full px-[8px] py-1 text-[11px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                                />
+                                <div className="flex gap-[8px]">
+                                    <button
+                                        type="button"
+                                        onClick={handleConfirmReframeHitl}
+                                        disabled={
+                                            isConsolidatingReframe ||
+                                            reframeConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'
+                                        }
+                                        className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
+                                    >
+                                        {t('vault_sidebar.btn_confirm')}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setReframePreview(null);
+                                            setReframeConfirmText('');
+                                        }}
+                                        disabled={isConsolidatingReframe}
+                                        className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                                    >
+                                        {t('vault_sidebar.btn_cancel')}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
                         {canCurateAI &&
                             !catalog.is_sealed &&
                             !showPhotoDeleteConfirm &&
+                            !reframePreview &&
                             isLegacyPreV4Photo && (
                                 <div className="mt-[8px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] flex flex-col gap-[8px] rounded-none shadow-none select-none">
                                     <span className="text-[10px] font-mono leading-tight text-[#475569] dark:text-[#8A93A6] tabular-nums">
-                                        {t(
-                                            'vault_dashboard.legacy_photo_audit_notice',
-                                            'Fotografía previa al filtro óptico OEM v4'
-                                        )}
+                                        {t('vault_sidebar.legacy_photo_audit_notice')}
                                     </span>
                                     <button
                                         type="button"
@@ -1274,10 +1770,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         }
                                         className="w-full py-1 px-[8px] border border-[#C68346] bg-[#C68346]/10 hover:bg-[#C68346] text-[#C68346] hover:text-[#000000] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                                     >
-                                        {t(
-                                            'vault_dashboard.replace_with_oem_photo',
-                                            'REEMPLAZAR CON FOTO OEM'
-                                        )}
+                                        {t('vault_sidebar.btn_replace_with_oem_photo')}
                                     </button>
                                 </div>
                             )}
@@ -1286,7 +1779,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                             <div className="flex flex-col gap-[8px] w-full mt-[8px]">
                                 <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] rounded-none">
                                     <span className="text-[10px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
-                                        Escriba ACTUALIZAR para confirmar baja:
+                                        {t('vault_sidebar.prompt_type_actualizar_delete')}
                                     </span>
                                     <input
                                         type="text"
@@ -1310,7 +1803,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                             }
                                             className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
                                         >
-                                            CONFIRMAR
+                                            {t('vault_sidebar.btn_confirm')}
                                         </button>
                                         <button
                                             type="button"
@@ -1320,7 +1813,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                             }}
                                             className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                                         >
-                                            CANCELAR
+                                            {t('vault_sidebar.btn_cancel')}
                                         </button>
                                     </div>
                                 </div>
@@ -1344,20 +1837,139 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
             </div>
 
             <div className="flex flex-col px-[13px] py-[21px] gap-[21px]">
+                {/* A-04 Panel Comparativo HITL [Actual] -> [Sugerido] para Reconciliación de Ficha Lateral */}
+                {canCurateAI && reconcilePreview && (
+                    <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] rounded-none shadow-none">
+                        <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-[#00AEEF]">
+                            {t('vault_sidebar.reconcile_hitl_title')}
+                        </span>
+
+                        {(
+                            [
+                                {
+                                    key: 'caracteristicas' as const,
+                                    label: t('vault_sidebar.section_main_specs'),
+                                    current:
+                                        reconcilePreview.currentProfile.caracteristicas_principales,
+                                    proposed:
+                                        reconcilePreview.proposedProfile
+                                            .caracteristicas_principales,
+                                },
+                                {
+                                    key: 'ambiente' as const,
+                                    label: t('vault_sidebar.section_design_conditions'),
+                                    current: reconcilePreview.currentProfile.ambiente_operativo,
+                                    proposed: reconcilePreview.proposedProfile.ambiente_operativo,
+                                },
+                                {
+                                    key: 'contexto' as const,
+                                    label: t('vault_sidebar.section_work_context'),
+                                    current: reconcilePreview.currentProfile.contexto_operativo,
+                                    proposed: reconcilePreview.proposedProfile.contexto_operativo,
+                                },
+                            ] as const
+                        ).map((sec) => (
+                            <div
+                                key={sec.key}
+                                className="flex flex-col gap-[4px] p-[8px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] rounded-none"
+                            >
+                                <label className="flex items-center gap-[8px] cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={reconcileApproveFields[sec.key]}
+                                        onChange={(e) =>
+                                            setReconcileApproveFields((prev) => ({
+                                                ...prev,
+                                                [sec.key]: e.target.checked,
+                                            }))
+                                        }
+                                        autoComplete="off"
+                                        spellCheck={false}
+                                        className="rounded-none accent-[#C68346] cursor-pointer"
+                                    />
+                                    <span className="text-[9px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
+                                        {sec.label}
+                                    </span>
+                                </label>
+                                <div className="flex flex-col gap-[4px] pt-[4px] border-t border-[#E2E8F0] dark:border-[#12151C]">
+                                    <span className="text-[8px] font-mono font-bold uppercase text-[#94A3B8] dark:text-[#5A6072]">
+                                        {t('vault_sidebar.hitl_label_current')}
+                                    </span>
+                                    {renderHitlListPreview(sec.current)}
+                                    <span className="text-[8px] font-mono font-bold uppercase text-[#00AEEF] mt-[4px]">
+                                        {'->'} {t('vault_sidebar.hitl_label_proposed')}
+                                    </span>
+                                    {renderHitlListPreview(sec.proposed)}
+                                </div>
+                            </div>
+                        ))}
+
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
+                            {t('vault_sidebar.prompt_type_actualizar_consolidate')}
+                        </span>
+                        <input
+                            type="text"
+                            value={reconcileConfirmText}
+                            onChange={(e) => setReconcileConfirmText(e.target.value.toUpperCase())}
+                            onKeyDown={(e) => {
+                                if (
+                                    e.key === 'Enter' &&
+                                    !isConsolidatingReconcile &&
+                                    reconcileConfirmText.trim().toUpperCase() === 'ACTUALIZAR'
+                                ) {
+                                    e.preventDefault();
+                                    void handleConfirmReconcileHitl();
+                                }
+                            }}
+                            placeholder="ACTUALIZAR"
+                            autoComplete="off"
+                            spellCheck={false}
+                            className="w-full px-[8px] py-1 text-[11px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                        />
+                        <div className="flex gap-[8px]">
+                            <button
+                                type="button"
+                                onClick={handleConfirmReconcileHitl}
+                                disabled={
+                                    isConsolidatingReconcile ||
+                                    reconcileConfirmText.trim().toUpperCase() !== 'ACTUALIZAR' ||
+                                    (!reconcileApproveFields.caracteristicas &&
+                                        !reconcileApproveFields.ambiente &&
+                                        !reconcileApproveFields.contexto)
+                                }
+                                className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
+                            >
+                                {t('vault_sidebar.btn_confirm')}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setReconcilePreview(null);
+                                    setReconcileConfirmText('');
+                                }}
+                                disabled={isConsolidatingReconcile}
+                                className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                            >
+                                {t('vault_sidebar.btn_cancel')}
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 {/* CARACTERÍSTICAS PRINCIPALES */}
                 <div className="flex flex-col">
                     <div className="flex items-center justify-between mb-[8px]">
                         <h3 className="text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider">
-                            CARACTERÍSTICAS PRINCIPALES
+                            {t('vault_sidebar.section_main_specs')}
                         </h3>
                         {canCurateAI && !catalog.is_sealed && (
                             <div className="flex items-center gap-[2px]">
                                 <button
                                     type="button"
                                     onClick={handleReconcileSidebarProfile}
-                                    disabled={isReconcilingSidebar}
-                                    title="Sincronizar con 01 · Ficha Técnica OEM"
-                                    aria-label="Sincronizar con 01 · Ficha Técnica OEM"
+                                    disabled={isReconcilingSidebar || isConsolidatingReconcile}
+                                    title={t('vault_sidebar.aria_reconcile_sidebar')}
+                                    aria-label={t('vault_sidebar.aria_reconcile_sidebar')}
                                     className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-[#00AEEF] dark:hover:text-[#00AEEF] transition-colors cursor-pointer disabled:opacity-40 flex items-center"
                                 >
                                     <span className="material-symbols-outlined !text-[14px]">
@@ -1367,8 +1979,8 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 <button
                                     type="button"
                                     onClick={() => handleOpenSidebarEditor('caracteristicas')}
-                                    title="Editar características principales (HITL)"
-                                    aria-label="Editar características principales (HITL)"
+                                    title={t('vault_sidebar.aria_edit_main_specs')}
+                                    aria-label={t('vault_sidebar.aria_edit_main_specs')}
                                     className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center"
                                 >
                                     <span className="material-symbols-outlined !text-[14px]">
@@ -1386,7 +1998,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 onChange={(e) => setSidebarDraftText(e.target.value)}
                                 autoComplete="off"
                                 spellCheck={false}
-                                placeholder="Una especificación por línea (ej. ROC: 1.678 kg)"
+                                placeholder={t('vault_sidebar.placeholder_main_specs')}
                                 className="w-full p-[8px] text-[11px] font-mono bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
                             />
                             <input
@@ -1410,14 +2022,14 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                     }
                                     className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                                 >
-                                    GUARDAR
+                                    {t('vault_sidebar.btn_save')}
                                 </button>
                                 <button
                                     type="button"
                                     onClick={() => setEditingSidebarSection(null)}
                                     className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                                 >
-                                    CANCELAR
+                                    {t('vault_sidebar.btn_cancel')}
                                 </button>
                             </div>
                         </div>
@@ -1427,7 +2039,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 normalizedMainSpecs.map((item, idx) => (
                                     <li
                                         key={idx}
-                                        className="flex items-start gap-1.5 leading-tight"
+                                        className="flex items-start gap-[8px] leading-tight"
                                     >
                                         <span className="text-[#C68346] shrink-0 mt-px text-[10px]">
                                             •
@@ -1438,7 +2050,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                             ) : (
                                 <li>
                                     <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>
-                                        [Información técnica no declarada en ficha]
+                                        {t('opermaq_domains.not_declared')}
                                     </mark>
                                 </li>
                             )}
@@ -1450,14 +2062,14 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                 <div className="flex flex-col">
                     <div className="flex items-center justify-between mb-[8px]">
                         <h3 className="text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider">
-                            CONDICIONES DE DISEÑO
+                            {t('vault_sidebar.section_design_conditions')}
                         </h3>
                         {canCurateAI && !catalog.is_sealed && (
                             <button
                                 type="button"
                                 onClick={() => handleOpenSidebarEditor('ambiente')}
-                                title="Editar condiciones de diseño (HITL)"
-                                aria-label="Editar condiciones de diseño (HITL)"
+                                title={t('vault_sidebar.aria_edit_design_conditions')}
+                                aria-label={t('vault_sidebar.aria_edit_design_conditions')}
                                 className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center"
                             >
                                 <span className="material-symbols-outlined !text-[14px]">edit</span>
@@ -1472,7 +2084,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 onChange={(e) => setSidebarDraftText(e.target.value)}
                                 autoComplete="off"
                                 spellCheck={false}
-                                placeholder="Una condición de diseño por línea"
+                                placeholder={t('vault_sidebar.placeholder_design_conditions')}
                                 className="w-full p-[8px] text-[11px] font-mono bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
                             />
                             <input
@@ -1496,14 +2108,14 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                     }
                                     className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                                 >
-                                    GUARDAR
+                                    {t('vault_sidebar.btn_save')}
                                 </button>
                                 <button
                                     type="button"
                                     onClick={() => setEditingSidebarSection(null)}
                                     className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                                 >
-                                    CANCELAR
+                                    {t('vault_sidebar.btn_cancel')}
                                 </button>
                             </div>
                         </div>
@@ -1513,7 +2125,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 normalizedDesignConditions.map((item, idx) => (
                                     <li
                                         key={idx}
-                                        className="flex items-start gap-1.5 leading-tight"
+                                        className="flex items-start gap-[8px] leading-tight"
                                     >
                                         <span className="text-[#C68346] shrink-0 mt-px text-[10px]">
                                             •
@@ -1524,7 +2136,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                             ) : (
                                 <li>
                                     <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>
-                                        [Información técnica no declarada en ficha]
+                                        {t('opermaq_domains.not_declared')}
                                     </mark>
                                 </li>
                             )}
@@ -1536,14 +2148,14 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                 <div className="flex flex-col">
                     <div className="flex items-center justify-between mb-[8px]">
                         <h3 className="text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider">
-                            CONTEXTO Y TRABAJO
+                            {t('vault_sidebar.section_work_context')}
                         </h3>
                         {canCurateAI && !catalog.is_sealed && (
                             <button
                                 type="button"
                                 onClick={() => handleOpenSidebarEditor('contexto')}
-                                title="Editar contexto y trabajo (HITL)"
-                                aria-label="Editar contexto y trabajo (HITL)"
+                                title={t('vault_sidebar.aria_edit_work_context')}
+                                aria-label={t('vault_sidebar.aria_edit_work_context')}
                                 className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center"
                             >
                                 <span className="material-symbols-outlined !text-[14px]">edit</span>
@@ -1558,7 +2170,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 onChange={(e) => setSidebarDraftText(e.target.value)}
                                 autoComplete="off"
                                 spellCheck={false}
-                                placeholder="Una aplicación o contexto por línea"
+                                placeholder={t('vault_sidebar.placeholder_work_context')}
                                 className="w-full p-[8px] text-[11px] font-mono bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
                             />
                             <input
@@ -1582,14 +2194,14 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                     }
                                     className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                                 >
-                                    GUARDAR
+                                    {t('vault_sidebar.btn_save')}
                                 </button>
                                 <button
                                     type="button"
                                     onClick={() => setEditingSidebarSection(null)}
                                     className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                                 >
-                                    CANCELAR
+                                    {t('vault_sidebar.btn_cancel')}
                                 </button>
                             </div>
                         </div>
@@ -1599,7 +2211,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 normalizedWorkContext.map((item, idx) => (
                                     <li
                                         key={idx}
-                                        className="flex items-start gap-1.5 leading-tight"
+                                        className="flex items-start gap-[8px] leading-tight"
                                     >
                                         <span className="text-[#C68346] shrink-0 mt-px text-[10px]">
                                             •
@@ -1610,7 +2222,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                             ) : (
                                 <li>
                                     <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>
-                                        [Información técnica no declarada en ficha]
+                                        {t('opermaq_domains.not_declared')}
                                     </mark>
                                 </li>
                             )}
@@ -1621,4 +2233,3 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
         </aside>
     );
 };
-

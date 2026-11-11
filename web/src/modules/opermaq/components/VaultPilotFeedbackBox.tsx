@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { toast } from 'react-toastify';
 import { API_BASE_URL } from '../firebase/config';
 import type { PillarId } from '../types/vault';
@@ -28,6 +29,7 @@ export const VaultPilotFeedbackBox: React.FC<VaultPilotFeedbackBoxProps> = ({
     isSealed = false,
     isTestPilot = false,
 }) => {
+    const { t } = useTranslation();
     const [open, setOpen] = useState(false);
     const [category, setCategory] = useState<PilotFeedbackCategory>('AI_KNOWLEDGE_TRAINING');
     const [priority, setPriority] = useState<PilotFeedbackPriority>('MEDIUM');
@@ -64,19 +66,19 @@ export const VaultPilotFeedbackBox: React.FC<VaultPilotFeedbackBoxProps> = ({
             });
             const json = await res.json().catch(() => ({}));
             if (!res.ok || !json?.success) {
-                throw new Error(json?.error || 'No se pudo registrar la observación TEST-PILOT.');
+                throw new Error(json?.error || t('pilot_feedback.error_submit'));
             }
             toast.success(
                 json.hitlCandidateId
-                    ? 'Observación registrada en pilot_feedback y cola HITL IA.'
-                    : 'Observación TEST-PILOT registrada en bóveda.'
+                    ? t('pilot_feedback.toast_success_hitl')
+                    : t('pilot_feedback.toast_success_vault')
             );
             setObservation('');
             setExpectedAiBehavior('');
             setConfirmWord('');
             setOpen(false);
         } catch (err: unknown) {
-            toast.error(err instanceof Error ? err.message : 'Error registrando retroalimentación.');
+            toast.error(err instanceof Error ? err.message : t('pilot_feedback.toast_error'));
         } finally {
             setSubmitting(false);
         }
@@ -88,15 +90,15 @@ export const VaultPilotFeedbackBox: React.FC<VaultPilotFeedbackBoxProps> = ({
                 type="button"
                 onClick={() => setOpen((prev) => !prev)}
                 disabled={isSealed}
-                className={`w-full flex items-center justify-between px-[13px] py-[6px] bg-transparent border transition-colors rounded-none shadow-none cursor-pointer disabled:opacity-40 ${
+                className={`w-full flex items-center justify-between px-[13px] py-[8px] bg-transparent border transition-colors rounded-none shadow-none cursor-pointer disabled:opacity-40 ${
                     open || isTestPilot
                         ? 'border-[#00AEEF] text-[#00AEEF]'
                         : 'border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                 }`}
-                title="Registrar observación técnica TEST-PILOT o directriz de curaduría IA"
+                title={t('pilot_feedback.toggle_title')}
             >
                 <span className="text-[10px] font-bold uppercase tracking-wider">
-                    Bitácora TEST-PILOT / HITL
+                    {t('pilot_feedback.header_title')}
                 </span>
                 <span className="font-mono text-[10px] font-bold tabular-nums">
                     {open ? '−' : '+'}
@@ -116,20 +118,20 @@ export const VaultPilotFeedbackBox: React.FC<VaultPilotFeedbackBoxProps> = ({
                             onChange={(e) => setCategory(e.target.value as PilotFeedbackCategory)}
                             className="px-[8px] py-1 text-[10px] font-mono bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none outline-none focus:border-[#C68346]"
                         >
-                            <option value="AI_KNOWLEDGE_TRAINING">ENTRENAR IA</option>
-                            <option value="FIELD_SIMULATION">TERRENO</option>
-                            <option value="CHANGE_REQUEST">CAMBIO</option>
-                            <option value="BUG_CORRECTION">CORRECCIÓN</option>
+                            <option value="AI_KNOWLEDGE_TRAINING">{t('pilot_feedback.cat_ai_training')}</option>
+                            <option value="FIELD_SIMULATION">{t('pilot_feedback.cat_field')}</option>
+                            <option value="CHANGE_REQUEST">{t('pilot_feedback.cat_change')}</option>
+                            <option value="BUG_CORRECTION">{t('pilot_feedback.cat_bug')}</option>
                         </select>
                         <select
                             value={priority}
                             onChange={(e) => setPriority(e.target.value as PilotFeedbackPriority)}
                             className="px-[8px] py-1 text-[10px] font-mono bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none outline-none focus:border-[#C68346]"
                         >
-                            <option value="LOW">BAJA</option>
-                            <option value="MEDIUM">MEDIA</option>
-                            <option value="HIGH">ALTA</option>
-                            <option value="CRITICAL">CRÍTICA</option>
+                            <option value="LOW">{t('pilot_feedback.prio_low')}</option>
+                            <option value="MEDIUM">{t('pilot_feedback.prio_medium')}</option>
+                            <option value="HIGH">{t('pilot_feedback.prio_high')}</option>
+                            <option value="CRITICAL">{t('pilot_feedback.prio_critical')}</option>
                         </select>
                     </div>
 
@@ -139,7 +141,7 @@ export const VaultPilotFeedbackBox: React.FC<VaultPilotFeedbackBoxProps> = ({
                         onChange={(e) => setObservation(e.target.value)}
                         autoComplete="off"
                         spellCheck={false}
-                        placeholder="Observación técnica verificable en este ítem..."
+                        placeholder={t('pilot_feedback.observation_placeholder')}
                         className="w-full p-[8px] text-[11px] bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none outline-none focus:border-[#C68346] select-text"
                     />
 
@@ -151,7 +153,7 @@ export const VaultPilotFeedbackBox: React.FC<VaultPilotFeedbackBoxProps> = ({
                                 onChange={(e) => setExpectedAiBehavior(e.target.value)}
                                 autoComplete="off"
                                 spellCheck={false}
-                                placeholder="Criterio técnico esperado de OPERMAQ IA..."
+                                placeholder={t('pilot_feedback.expected_ai_placeholder')}
                                 className="w-full p-[8px] text-[11px] bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none outline-none focus:border-[#00AEEF] select-text"
                             />
                             <input
@@ -178,10 +180,10 @@ export const VaultPilotFeedbackBox: React.FC<VaultPilotFeedbackBoxProps> = ({
                                     strokeWidth={2}
                                     indeterminate
                                     tone="copper"
-                                    ariaLabel="Registrando feedback"
+                                    ariaLabel={t('pilot_feedback.submitting_aria')}
                                 />
                             ) : (
-                                'REGISTRAR'
+                                t('pilot_feedback.submit_btn')
                             )}
                         </button>
                         <button
@@ -189,7 +191,7 @@ export const VaultPilotFeedbackBox: React.FC<VaultPilotFeedbackBoxProps> = ({
                             onClick={() => setOpen(false)}
                             className="flex-1 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                         >
-                            CERRAR
+                            {t('pilot_feedback.close_btn')}
                         </button>
                     </div>
                 </form>

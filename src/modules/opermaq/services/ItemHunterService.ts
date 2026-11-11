@@ -873,12 +873,12 @@ export async function huntVaultItem(options: HuntItemOptions): Promise<HuntItemR
         throw err;
     }
 
-    const hasCurrentContent = Boolean(currentItem.content && currentItem.content.trim().length > 0);
+    const hasPreviousCuratedContent = Boolean(currentItem.content && currentItem.content.trim().length > 0);
     const effectiveIntent: HuntIntent =
-        options.intent === 'INCREMENTAL_UPDATE' || (hasCurrentContent && !forceOverwrite && !humanCorrection)
+        options.intent === 'INCREMENTAL_UPDATE' || (hasPreviousCuratedContent && !forceOverwrite)
             ? 'INCREMENTAL_UPDATE'
             : 'INITIAL_CAPTURE';
-    const isIncrementalUpdate = effectiveIntent === 'INCREMENTAL_UPDATE' && hasCurrentContent;
+    const isIncrementalUpdate = effectiveIntent === 'INCREMENTAL_UPDATE' && hasPreviousCuratedContent;
     const bypassInferenceCache = effectiveIntent === 'INCREMENTAL_UPDATE' || Boolean(humanCorrection);
 
     await onProgress?.(
@@ -1256,8 +1256,7 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
 
         const hasExistingContentPreTx =
             Boolean(preTxItem && !preTxItem.is_human_locked && preTxItem.content && preTxItem.content.trim().length > 0) &&
-            !forceOverwrite &&
-            !humanCorrection;
+            !forceOverwrite;
 
         const { newlyAdded: previewNewFigures } = mergeDeduplicatedFigures(
             preTxItem?.figures || [],
@@ -1292,7 +1291,7 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
             }, 5000);
         }
 
-        const preComputedDiffs = hasExistingContentPreTx
+        const rawPreComputedDiffs = hasExistingContentPreTx
             ? await detectContentDifferences(
                 pillarId,
                 itemId,
@@ -1306,6 +1305,33 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                 if (diffHeartbeatTimer) clearInterval(diffHeartbeatTimer);
             })
             : [];
+
+        const preComputedDiffs: ProposedUpdate[] =
+            hasExistingContentPreTx &&
+            rawPreComputedDiffs.length === 0 &&
+            Boolean(humanCorrection) &&
+            annotatedMarkdownForDiffs.trim().length > 0 &&
+            annotatedMarkdownForDiffs.trim() !== (preTxItem?.content || '').trim()
+                ? [
+                      {
+                          proposal_id: `prop_hc_${itemId}_${Date.now()}`,
+                          estado_fusion: 'CONFLICTO',
+                          zona: pillarId,
+                          componente: preTxItem!.title || itemId,
+                          tipo_input: 'text_block',
+                          is_oem: Boolean((classifiedSources[0] || preAssignedSources[0])?.type === 'OEM'),
+                          valor_actual: (preTxItem!.content || '').trim(),
+                          valor_nuevo: annotatedMarkdownForDiffs.trim(),
+                          condicion_esperada: annotatedMarkdownForDiffs.trim(),
+                          detected_at: new Date().toISOString(),
+                          synthesis: `Regeneración dirigida por instrucción humana ("${String(humanCorrection).slice(0, 140)}") — requiere aprobación HITL [Actual] -> [Sugerido].`,
+                          source_url: (classifiedSources[0] || preAssignedSources[0])?.url || '',
+                          human_decision: null,
+                          fact_fingerprint: computeFactFingerprint(annotatedMarkdownForDiffs.trim(), preTxItem!.title),
+                          ...(previewNewFigures.length > 0 ? { figures: previewNewFigures } : {}),
+                      },
+                  ]
+                : rawPreComputedDiffs;
 
         const nowIso = new Date().toISOString();
 
@@ -1391,8 +1417,7 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
             const rejectedFingerprints = new Set<string>(targetItem.rejected_fact_fingerprints || []);
             const hasExistingContent =
                 Boolean(targetItem.content && targetItem.content.trim().length > 0) &&
-                !forceOverwrite &&
-                !humanCorrection;
+                !forceOverwrite;
 
             let mode: 'INITIAL_HUNT' | 'CONFLICT_BUFFER' = 'INITIAL_HUNT';
             let newConflictsCount = 0;
@@ -1402,8 +1427,8 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
             targetItem.initial_hunt_activated_at = targetItem.initial_hunt_activated_at || nowIso;
 
             if (hasExistingContent) {
-                // F-04 INMUTABILIDAD HITL ESTRICTA: Cero mutación directa sobre `content`, `figures`, `symbology_refs` ni `item_sources`.
-                // Todos los hallazgos se encapsulan exclusivamente en `pending_conflicts[]` (NUEVO / CONFLICTO) hasta aprobación 1 a 1.
+                // F-04 INMUTABILIDAD HITL ESTRICTA: Cero mutación directa sobre `content`, `figures`, `symbology_refs` ni `item_sources`
+                // incluso ante regeneración con `humanCorrection`. Todo se desvía a `CONFLICT_BUFFER` (`pending_conflicts` / `pending_conflict_proposal`).
                 mode = 'CONFLICT_BUFFER';
                 const pendingFingerprints = new Set<string>(
                     (targetItem.pending_conflicts || []).map(
@@ -1433,7 +1458,17 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                 targetItem.media_harvest_report = mediaHarvestReport
                     ? { ...mediaHarvestReport, corpus_figures: corpusFigures.length, table_chart: false, traceability: traceAnalysis.stats, evidence_docs: evidenceDocs.length, at: nowIso }
                     : { corpus_figures: corpusFigures.length, table_chart: false, traceability: traceAnalysis.stats, evidence_docs: evidenceDocs.length, at: nowIso };
-                targetItem.pending_conflicts = [...(targetItem.pending_conflicts || []), ...dedupedDiffs];
+                const sanitizedDedupedDiffs = dedupedDiffs.map((d) => {
+                    const clean: Record<string, any> = { ...d };
+                    for (const k of Object.keys(clean)) {
+                        if (clean[k] === undefined) delete clean[k];
+                    }
+                    return clean as ProposedUpdate;
+                });
+                targetItem.pending_conflicts = [...(targetItem.pending_conflicts || []), ...sanitizedDedupedDiffs];
+                if (sanitizedDedupedDiffs.length > 0) {
+                    (targetItem as any).pending_conflict_proposal = sanitizedDedupedDiffs[0];
+                }
             } else {
                 const previousSnapshot = targetItem.content;
                 existingFingerprints.add(computeFactFingerprint(markdownContent, targetItem.title));

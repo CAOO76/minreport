@@ -37,6 +37,7 @@ import { M3IconButton } from './M3IconButton';
 import { M3Button } from './M3Button';
 import { M3LinearProgress, M3CircularProgress } from './M3ProgressIndicator';
 import { useTranslation } from 'react-i18next';
+import i18n from '../locales/i18n';
 import { mediaDigestorClient } from '../../../core/media/MediaDigestorClient';
 import { syncQueueEngine } from '../../../core/offline/SyncQueueEngine';
 import { useOpermaqContext } from '../hooks/useOpermaqContext';
@@ -369,7 +370,7 @@ function highlightUndeclaredInNode(node: React.ReactNode): React.ReactNode {
           data-pending-content-slot="true"
           data-pending-fragment={matchedText}
           className={PENDING_CONTENT_HIGHLIGHT_CLASS}
-          title="Contenido pendiente de declaración — Clic para seleccionar y completar con OPERMAQ IA"
+          title={i18n.t('vault_dashboard.pending_content.slot_tooltip')}
         >
           {matchedText}
         </mark>
@@ -824,9 +825,9 @@ function PendingSectionFigureCard({
         {canAct && preview && (stage === 'PREVIEW' || stage === 'CONFIRMING') && (
           <div className="pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-col gap-[8px]">
             <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#00AEEF]">
-              {t('vault_dashboard.pending_figure.preview_title', 'Vista previa [Pendiente] ➔ [Imagen]')}
+              {t('vault_dashboard.pending_figure.preview_title', 'Vista previa [Pendiente] -> [Imagen]')}
             </span>
-            <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] p-[8px]">
+            <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] p-[8px]">
               <img
                 src={preview.previewSrc}
                 alt={description}
@@ -837,7 +838,7 @@ function PendingSectionFigureCard({
               />
             </div>
             <span className="text-[11px] font-mono tabular-nums text-[#00AEEF]">
-              ORIG: {formatPhotoBytes(preview.originalBytes)} ➔ CAS: {formatPhotoBytes(preview.optimizedBytes)} (-{preview.savingsPct}%) · SHA-256 {preview.sha256.slice(0, 12)}
+              ORIG: {formatPhotoBytes(preview.originalBytes)} -&gt; CAS: {formatPhotoBytes(preview.optimizedBytes)} (-{preview.savingsPct}%) · SHA-256 {preview.sha256.slice(0, 12)}
             </span>
             <label className="flex flex-col gap-[4px]">
               <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
@@ -847,6 +848,7 @@ function PendingSectionFigureCard({
                 value={figureType}
                 onChange={(e) => setFigureType(e.target.value as PendingFigureType)}
                 autoComplete="off"
+                spellCheck={false}
                 className="px-[8px] py-[4px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
               >
                 {PENDING_FIGURE_TYPES.map((ft) => (
@@ -928,6 +930,7 @@ function MarkdownRenderer({
   onUploadPendingFigure?: (file: File | Blob) => Promise<PendingFigureCasPreview>;
   onConfirmPendingFigure?: (payload: ConfirmPendingFigurePayload) => Promise<boolean>;
 }) {
+  const { t } = useTranslation();
 
   if (!content) return null;
   const rawClean = cleanFuentesFromMarkdown(content);
@@ -1072,7 +1075,7 @@ function MarkdownRenderer({
                             className={`px-[13px] py-[8px] text-center align-middle border border-[#E2E8F0] dark:border-[#12151C] ${interactiveCls} transition-colors duration-150`}
                           >
                             <span
-                              aria-label={ci === noCumpleColIdx ? 'Casillero No Cumple' : 'Casillero Cumple'}
+                              aria-label={ci === noCumpleColIdx ? t('vault_dashboard.markdown.checkbox_fail') : t('vault_dashboard.markdown.checkbox_pass')}
                               className="inline-flex items-center justify-center w-[14px] h-[14px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#0F172A] dark:border-[#F3F4F6] rounded-none shadow-none select-none"
                             >
                               {isChecked && <span className="w-[8px] h-[8px] bg-[#C68346] block rounded-none" />}
@@ -1165,17 +1168,17 @@ function MarkdownRenderer({
           <figure key={`img-${i}`} className="my-[21px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] p-[13px] rounded-none shadow-none">
             <img
               src={resolveMediaSrc(safeImgUrl)}
-              alt={altText || 'Figura técnica'}
+              alt={altText || t('vault_dashboard.markdown.technical_figure')}
               loading="lazy"
               draggable={false}
               onContextMenu={(e) => e.preventDefault()}
-              className="max-h-[420px] w-auto mx-auto object-contain bg-[#FFFFFF] select-none pointer-events-none"
+              className="max-h-[420px] w-auto mx-auto object-contain bg-[#FFFFFF] dark:bg-[#000000] select-none pointer-events-none"
               style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
             />
             {(captionDetail || altText || matchedFig) && (
               <figcaption className="mt-[8px] pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-col gap-[4px]">
                 <span className="text-[11px] font-mono font-bold text-[#0F172A] dark:text-[#F3F4F6] uppercase tracking-wider">
-                  {altText || 'Figura técnica'}
+                  {altText || t('vault_dashboard.markdown.technical_figure')}
                 </span>
                 {captionDetail && captionDetail !== altText && (
                   <span className="text-[12px] text-[#475569] dark:text-[#8A93A6]">
@@ -1184,7 +1187,7 @@ function MarkdownRenderer({
                 )}
                 {matchedFig && typeof matchedFig.original_bytes === 'number' && typeof matchedFig.optimized_bytes === 'number' && (
                   <span className="text-[10px] font-mono tabular-nums text-[#00AEEF]">
-                    ORIG: {formatByteWeight(matchedFig.original_bytes)} ➔ CAS: {formatByteWeight(matchedFig.optimized_bytes)} (
+                    ORIG: {formatByteWeight(matchedFig.original_bytes)} -&gt; CAS: {formatByteWeight(matchedFig.optimized_bytes)} (
                     {typeof matchedFig.savings_pct === 'number'
                       ? `-${matchedFig.savings_pct.toFixed(1)}%`
                       : matchedFig.original_bytes > 0
@@ -1218,13 +1221,14 @@ function MarkdownRenderer({
 
 // ─── Classified Sources (ITEMIZADO) ──────────────────────────────────────────
 function ItemizedSourcesBlock({ sources }: { sources: ItemizedSource[] }) {
+  const { t } = useTranslation();
   if (!sources?.length) return null;
   const groups = ['OEM', 'EXTERNO', 'YOUTUBE', 'MANUAL'] as const;
   return (
     <details className="mt-[34px] pt-[21px] border-t border-[#E2E8F0] dark:border-[#12151C] group">
-      <summary className="text-[11px] font-bold uppercase tracking-wider text-[#5A6072] dark:text-[#8A93A6] mb-[13px] cursor-pointer hover:text-[#0F172A] dark:hover:text-[#F3F4F6] transition-colors list-none flex items-center gap-[8px]">
+      <summary className="text-[11px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mb-[13px] cursor-pointer hover:text-[#0F172A] dark:hover:text-[#F3F4F6] transition-colors list-none flex items-center gap-[8px]">
         <span className="material-symbols-outlined !text-[14px] transition-transform group-open:rotate-90">chevron_right</span>
-        FUENTES VERIFICADAS ({sources.length})
+        {t('vault_dashboard.sources.verified_title')} ({sources.length})
       </summary>
       <div className="space-y-[21px] pl-[21px]">
         {groups.map(g => {
@@ -1274,6 +1278,7 @@ interface ItemContentBlockProps {
   onDiscard: () => void;
   onUnlockItem: () => Promise<void>;
   onUpdateApprovalState: (state: EstadoAprobacion, notes?: string) => Promise<void>;
+  onUpdateItemContent: (newContent: string) => Promise<void>;
   onRollbackVersion: (timestamp: string) => Promise<void>;
   catalogId: string;
 
@@ -1319,7 +1324,8 @@ function ProposalCard({
   fallbackUrl,
   children,
 }: ProposalCardProps) {
-  const [confirmingDecision, setConfirmingDecision] = useState<'APROBADO' | 'ELIMINADO' | null>(null);
+  const { t } = useTranslation();
+  const [confirmingDecision, setConfirmingDecision] = useState<'APROBADO' | 'ELIMINADO' | 'CONSOLIDAR' | null>(null);
   const [confirmText, setConfirmText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -1334,24 +1340,16 @@ function ProposalCard({
     if (!effectiveProposalId || !confirmingDecision || confirmText.trim().toUpperCase() !== 'ACTUALIZAR') return;
     setIsSubmitting(true);
     try {
-      await onDecide(effectiveProposalId, confirmingDecision);
-      handleReset();
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleDirectConsolidate = async () => {
-    if (isSealed || isSubmitting) return;
-    setIsSubmitting(true);
-    try {
-      if (onConsolidateApproved) {
-        await onConsolidateApproved();
+      if (confirmingDecision === 'CONSOLIDAR') {
+        if (onConsolidateApproved) {
+          await onConsolidateApproved();
+        } else {
+          await onDecide(effectiveProposalId, 'APROBADO');
+        }
       } else {
-        await onDecide(effectiveProposalId, 'APROBADO');
+        await onDecide(effectiveProposalId, confirmingDecision);
       }
+      handleReset();
     } catch (e) {
       console.error(e);
     } finally {
@@ -1363,45 +1361,45 @@ function ProposalCard({
 
   return (
     <div
-      className={`border p-4 transition-colors duration-300 font-atkinson rounded-none shadow-none ${isApproved
+      className={`border p-[13px] transition-colors duration-300 font-atkinson rounded-none shadow-none ${isApproved
         ? 'border-[#00AEEF] bg-[#00AEEF]/5'
         : 'border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D]'
         }`}
     >
-      <div className="flex justify-between items-start gap-4">
+      <div className="flex justify-between items-start gap-[13px]">
         <div className="flex flex-col gap-0.5">
           <span className="text-[10px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
             {proposal.zona} — {proposal.componente}
           </span>
           {proposal.detected_at && (
-            <span className="text-[10px] font-mono tabular-nums text-[#5A6072]">
-              Detectado: {new Date(proposal.detected_at).toLocaleDateString()}
+            <span className="text-[10px] font-mono tabular-nums text-[#94A3B8] dark:text-[#5A6072]">
+              {t('vault_dashboard.proposals.detected_at')}: {new Date(proposal.detected_at).toLocaleDateString()}
             </span>
           )}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-[8px]">
           {isApproved ? (
-            <div className="flex items-center gap-1.5">
-              <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[#00AEEF] border border-[#00AEEF]/30 px-2 py-0.5 rounded-none">
-                {isSubmitting ? 'Integrando...' : 'Aprobado'}
+            <div className="flex items-center gap-[8px]">
+              <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[#00AEEF] border border-[#00AEEF]/30 px-[8px] py-0.5 rounded-none">
+                {isSubmitting ? t('vault_dashboard.proposals.integrating') : t('vault_dashboard.proposals.approved')}
               </span>
               {!confirmingDecision && (
                 <>
                   <button
                     type="button"
                     disabled={isSealed || isSubmitting}
-                    onClick={handleDirectConsolidate}
-                    className="px-2 py-0.5 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none border-0 cursor-pointer disabled:opacity-40"
-                    title="Integrar inmediatamente este hallazgo aprobado al contenido del ítem"
+                    onClick={() => setConfirmingDecision('CONSOLIDAR')}
+                    className="px-[8px] py-0.5 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none border-0 cursor-pointer disabled:opacity-40"
+                    title={t('vault_dashboard.proposals.integrate_now_tooltip')}
                   >
-                    {isSubmitting ? 'Integrando...' : 'Integrar Ahora'}
+                    {isSubmitting ? t('vault_dashboard.proposals.integrating') : t('vault_dashboard.proposals.integrate_now')}
                   </button>
                   <M3IconButton
                     icon="delete"
                     onClick={() => setConfirmingDecision('ELIMINADO')}
                     variant="ghost"
-                    title="Eliminar propuesta"
+                    title={t('vault_dashboard.proposals.delete_tooltip')}
                     className="text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] !p-1 shrink-0"
                     disabled={isSealed || isSubmitting}
                   />
@@ -1409,12 +1407,12 @@ function ProposalCard({
               )}
             </div>
           ) : confirmingDecision ? (
-            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 border border-[#C68346]/40 text-[#C68346] rounded-none">
-              Confirmando...
+            <span className="text-[10px] font-bold uppercase tracking-wider px-[8px] py-0.5 border border-[#C68346]/40 text-[#C68346] rounded-none">
+              {t('vault_dashboard.proposals.confirming')}
             </span>
           ) : (
-            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-[#F8FAFC] dark:bg-[#000000] text-[#5A6072] border border-[#E2E8F0] dark:border-[#12151C] rounded-none">
-              Pendiente
+            <span className="text-[10px] font-bold uppercase tracking-wider px-[8px] py-0.5 bg-[#F8FAFC] dark:bg-[#000000] text-[#94A3B8] dark:text-[#5A6072] border border-[#E2E8F0] dark:border-[#12151C] rounded-none">
+              {t('vault_dashboard.proposals.pending')}
             </span>
           )}
 
@@ -1424,7 +1422,7 @@ function ProposalCard({
                 icon="done"
                 onClick={() => setConfirmingDecision('APROBADO')}
                 variant="ghost"
-                title="Aprobar e integrar hallazgo"
+                title={t('vault_dashboard.proposals.approve_tooltip')}
                 className="text-[#00AEEF] !p-1 shrink-0"
                 disabled={isSealed || isSubmitting}
               />
@@ -1432,7 +1430,7 @@ function ProposalCard({
                 icon="delete"
                 onClick={() => setConfirmingDecision('ELIMINADO')}
                 variant="ghost"
-                title="Eliminar propuesta"
+                title={t('vault_dashboard.proposals.delete_tooltip')}
                 className="text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] !p-1 shrink-0"
                 disabled={isSealed || isSubmitting}
               />
@@ -1441,14 +1439,14 @@ function ProposalCard({
         </div>
       </div>
 
-      <div className="mt-3">
+      <div className="mt-[13px]">
         {children}
       </div>
 
       {proposal.figures && proposal.figures.length > 0 && (
         <div className="mt-[13px] pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C]">
           <p className="text-[10px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mb-[8px] font-mono tabular-nums">
-            FIGURAS ASOCIADAS AL HALLAZGO ({proposal.figures.length})
+            {t('vault_dashboard.proposals.associated_figures')} ({proposal.figures.length})
           </p>
           <div className="grid grid-cols-2 gap-[8px]">
             {proposal.figures.map((fig) => (
@@ -1468,7 +1466,7 @@ function ProposalCard({
                   <p className="text-[11px] font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate">
                     {fig.title_es}
                   </p>
-                  <p className="text-[10px] font-mono tabular-nums text-[#5A6072] dark:text-[#8A93A6] truncate">
+                  <p className="text-[10px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6] truncate">
                     {fig.figure_type} {fig.source_page ? `· P.${fig.source_page}` : ''}
                   </p>
                 </div>
@@ -1479,7 +1477,7 @@ function ProposalCard({
       )}
 
       {(proposal.source_url || fallbackUrl) && (proposal.source_url || fallbackUrl) !== '#' && (
-        <div className="mt-2.5 flex items-center gap-1.5 text-[10px] text-[#00AEEF]">
+        <div className="mt-[8px] flex items-center gap-1.5 text-[10px] text-[#00AEEF]">
           <span className="material-symbols-outlined !text-[12px]">link</span>
           <a
             href={proposal.source_url || fallbackUrl}
@@ -1488,17 +1486,19 @@ function ProposalCard({
             className="hover:underline font-mono truncate max-w-full block"
             title={proposal.source_url || fallbackUrl}
           >
-            Ver fuente técnica original
+            {t('vault_dashboard.proposals.view_original_source')}
           </a>
         </div>
       )}
 
       {confirmingDecision && (
-        <div className="mt-3 pt-3 border-t border-[#E2E8F0] dark:border-[#12151C] space-y-2">
+        <div className="mt-[13px] pt-[13px] border-t border-[#E2E8F0] dark:border-[#12151C] space-y-[8px]">
           <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-            Escribe <span className="font-mono text-[#C68346] font-bold">"ACTUALIZAR"</span> para confirmar ({confirmingDecision === 'APROBADO' ? 'APROBAR E INTEGRAR' : 'ELIMINAR'}):
+            {confirmingDecision === 'ELIMINADO'
+              ? t('vault_dashboard.proposals.confirm_delete_prompt')
+              : t('vault_dashboard.proposals.confirm_approve_prompt')}
           </p>
-          <div className="flex gap-2">
+          <div className="flex gap-[8px]">
             <input
               type="text"
               value={confirmText}
@@ -1506,23 +1506,23 @@ function ProposalCard({
               placeholder="ACTUALIZAR"
               autoComplete="off"
               spellCheck={false}
-              className="px-2 py-1 text-[11px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none flex-1 text-[#0F172A] dark:text-[#F3F4F6] font-mono rounded-none shadow-none"
+              className="px-[8px] py-1 text-[11px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none flex-1 text-[#0F172A] dark:text-[#F3F4F6] font-mono rounded-none shadow-none"
             />
             <button
               type="button"
               disabled={confirmText.trim().toUpperCase() !== 'ACTUALIZAR' || isSubmitting}
               onClick={handleConfirm}
-              className="px-3 py-1 font-bold text-[10px] text-[#FFFFFF] bg-[#C68346] hover:bg-[#b07239] disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer"
+              className="px-[13px] py-1 font-bold text-[10px] text-[#FFFFFF] bg-[#C68346] hover:bg-[#b07239] disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer"
             >
-              {isSubmitting ? 'Integrando...' : 'Confirmar'}
+              {isSubmitting ? t('vault_dashboard.proposals.integrating') : t('common.confirm')}
             </button>
             <button
               type="button"
               onClick={handleReset}
               disabled={isSubmitting}
-              className="px-3 py-1 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none shadow-none cursor-pointer"
+              className="px-[13px] py-1 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none shadow-none cursor-pointer"
             >
-              Cancelar
+              {t('common.cancel')}
             </button>
           </div>
         </div>
@@ -1540,7 +1540,9 @@ interface NuevosHallazgosViewProps {
 }
 
 function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClose, isSealed }: NuevosHallazgosViewProps) {
+  const { t } = useTranslation();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [evolveConfirmText, setEvolveConfirmText] = useState('');
   const firstValidUrl = item.item_sources?.find(s => s.url && s.url !== '#')?.url;
 
   const proposals = (item.pending_conflicts ?? []).filter(
@@ -1555,6 +1557,7 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
     setIsSubmitting(true);
     try {
       await onEvolveItemByType('NUEVO');
+      setEvolveConfirmText('');
     } catch (e) {
       console.error(e);
     } finally {
@@ -1564,22 +1567,22 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
 
   return (
     <div className="flex-1 flex flex-col min-h-0 w-full font-atkinson">
-      <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0] dark:border-[#12151C] shrink-0">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between pb-[13px] border-b border-[#E2E8F0] dark:border-[#12151C] shrink-0">
+        <div className="flex items-center gap-[8px]">
           <button
             type="button"
             onClick={onClose}
             className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-            title="Volver al contenido"
+            title={t('vault_dashboard.proposals.back_to_content')}
           >
             <span className="material-symbols-outlined !text-[18px]">arrow_back</span>
           </button>
           <div>
             <h3 className="text-xs font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6]">
-              Nuevo Contenido
+              {t('vault_dashboard.proposals.new_content_title')}
             </h3>
             <p className="text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
-              {pendingCount} pendiente(s){approvedCount > 0 ? ` · ${approvedCount} integrándose` : ''}
+              {t('vault_dashboard.proposals.summary_counts', { pending: pendingCount, approved: approvedCount })}
             </p>
           </div>
         </div>
@@ -1588,32 +1591,44 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
           type="button"
           onClick={onClose}
           className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-          title="Cancelar y volver"
+          title={t('common.cancel')}
         >
           <span className="material-symbols-outlined !text-[18px]">close</span>
         </button>
       </div>
 
       {approvedCount > 0 && (
-        <div className="mt-3 p-3 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#00AEEF] flex items-center justify-between gap-2 shrink-0 rounded-none shadow-none">
+        <div className="mt-[13px] p-[13px] bg-[#F8FAFC] dark:bg-[#07090D] border border-[#00AEEF] flex flex-col gap-[8px] shrink-0 rounded-none shadow-none">
           <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-            Propuestas aprobadas (<span className="font-mono tabular-nums">{approvedCount}</span>) listas para consolidar en el documento:
+            {t('vault_dashboard.proposals.approved_ready_banner', { count: approvedCount })}
           </p>
-          <button
-            type="button"
-            disabled={isSealed || isSubmitting}
-            onClick={handleEvolve}
-            className="px-3 py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-[10px] uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer shrink-0"
-          >
-            {isSubmitting ? 'Integrando...' : 'Integrar Ahora'}
-          </button>
+          <div className="flex gap-[8px]">
+            <input
+              type="text"
+              value={evolveConfirmText}
+              onChange={(e) => setEvolveConfirmText(e.target.value)}
+              placeholder="ACTUALIZAR"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={isSealed || isSubmitting}
+              className="px-[8px] py-1 flex-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+            />
+            <button
+              type="button"
+              disabled={isSealed || isSubmitting || evolveConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'}
+              onClick={handleEvolve}
+              className="px-[13px] py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-[10px] uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer shrink-0"
+            >
+              {isSubmitting ? t('vault_dashboard.proposals.integrating') : t('vault_dashboard.proposals.integrate_now')}
+            </button>
+          </div>
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto mt-4 space-y-4 pr-1 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto mt-[13px] space-y-[13px] pr-1 custom-scrollbar">
         {proposals.length === 0 ? (
-          <div className="py-12 text-center text-[12px] text-[#5A6072] border border-[#E2E8F0] dark:border-[#12151C]">
-            No hay propuestas de nuevo contenido pendientes de revisión.
+          <div className="py-[34px] text-center text-[12px] text-[#94A3B8] dark:text-[#5A6072] border border-[#E2E8F0] dark:border-[#12151C]">
+            {t('vault_dashboard.proposals.empty_new_content')}
           </div>
         ) : (
           proposals.map((prop, pIdx) => (
@@ -1626,18 +1641,34 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
               isSealed={isSealed}
               fallbackUrl={firstValidUrl}
             >
-              <div className="space-y-2 text-[11px] leading-relaxed">
+              <div className="space-y-[8px] text-[11px] leading-relaxed">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-[13px] pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C]">
+                  <div className="space-y-1">
+                    <span className="text-[9px] font-bold text-[#94A3B8] dark:text-[#5A6072] uppercase tracking-wide">
+                      {t('vault_dashboard.proposals.col_current')}
+                    </span>
+                    <div className="p-[8px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-[#475569] dark:text-[#8A93A6] leading-relaxed font-mono break-all max-h-32 overflow-y-auto custom-scrollbar">
+                      {prop.valor_actual ? (
+                        highlightUndeclaredInNode(prop.valor_actual)
+                      ) : (
+                        <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>{t('opermaq_domains.not_declared')}</mark>
+                      )}
+                    </div>
+                  </div>
+                  <div className="space-y-1 md:border-l md:border-[#E2E8F0] md:dark:border-[#12151C] md:pl-[13px]">
+                    <span className="text-[9px] font-bold text-[#00AEEF] uppercase tracking-wide">
+                      {t('vault_dashboard.proposals.col_suggested')}
+                    </span>
+                    <div className="p-[8px] border border-[#00AEEF]/30 bg-[#00AEEF]/5 text-[#0F172A] dark:text-[#F3F4F6] leading-relaxed font-mono break-all max-h-32 overflow-y-auto custom-scrollbar">
+                      {prop.valor_nuevo || prop.condicion_esperada}
+                    </div>
+                  </div>
+                </div>
                 {prop.synthesis && (
-                  <p className="text-[#0F172A] dark:text-[#F3F4F6] font-medium bg-[#F8FAFC] dark:bg-[#000000] p-2 border-l-2 border-[#C68346]">
+                  <p className="text-[#0F172A] dark:text-[#F3F4F6] font-medium bg-[#F8FAFC] dark:bg-[#000000] p-[8px] border-l-2 border-[#C68346]">
                     {prop.synthesis}
                   </p>
                 )}
-                <div className="mt-2 text-[#475569] dark:text-[#8A93A6]">
-                  <span className="font-bold text-[#0F172A] dark:text-[#F3F4F6] block mb-0.5">Dato Propuesto:</span>
-                  <div className="font-mono bg-[#F8FAFC] dark:bg-[#000000] p-2 border border-[#E2E8F0] dark:border-[#12151C] break-all max-h-32 overflow-y-auto custom-scrollbar">
-                    {prop.valor_nuevo || prop.condicion_esperada}
-                  </div>
-                </div>
               </div>
             </ProposalCard>
           ))
@@ -1656,7 +1687,9 @@ interface ConflictosViewProps {
 }
 
 function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, isSealed }: ConflictosViewProps) {
+  const { t } = useTranslation();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [evolveConfirmText, setEvolveConfirmText] = useState('');
   const firstValidUrl = item.item_sources?.find(s => s.url && s.url !== '#')?.url;
 
   const proposals = (item.pending_conflicts ?? []).filter(
@@ -1671,6 +1704,7 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
     setIsSubmitting(true);
     try {
       await onEvolveItemByType('CONFLICTO');
+      setEvolveConfirmText('');
     } catch (e) {
       console.error(e);
     } finally {
@@ -1680,22 +1714,22 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
 
   return (
     <div className="flex-1 flex flex-col min-h-0 w-full font-atkinson">
-      <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0] dark:border-[#12151C] shrink-0">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between pb-[13px] border-b border-[#E2E8F0] dark:border-[#12151C] shrink-0">
+        <div className="flex items-center gap-[8px]">
           <button
             type="button"
             onClick={onClose}
             className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-            title="Volver al contenido"
+            title={t('vault_dashboard.proposals.back_to_content')}
           >
             <span className="material-symbols-outlined !text-[18px]">arrow_back</span>
           </button>
           <div>
             <h3 className="text-xs font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6]">
-              Contenido en Conflicto
+              {t('vault_dashboard.proposals.conflict_content_title')}
             </h3>
             <p className="text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
-              {pendingCount} pendiente(s){approvedCount > 0 ? ` · ${approvedCount} integrándose` : ''}
+              {t('vault_dashboard.proposals.summary_counts', { pending: pendingCount, approved: approvedCount })}
             </p>
           </div>
         </div>
@@ -1704,32 +1738,44 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
           type="button"
           onClick={onClose}
           className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-          title="Cancelar y volver"
+          title={t('common.cancel')}
         >
           <span className="material-symbols-outlined !text-[18px]">close</span>
         </button>
       </div>
 
       {approvedCount > 0 && (
-        <div className="mt-3 p-3 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#C68346] flex items-center justify-between gap-2 shrink-0 rounded-none shadow-none">
+        <div className="mt-[13px] p-[13px] bg-[#F8FAFC] dark:bg-[#07090D] border border-[#C68346] flex flex-col gap-[8px] shrink-0 rounded-none shadow-none">
           <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-            Conflictos resueltos (<span className="font-mono tabular-nums">{approvedCount}</span>) listos para consolidar en el documento:
+            {t('vault_dashboard.proposals.conflicts_ready_banner', { count: approvedCount })}
           </p>
-          <button
-            type="button"
-            disabled={isSealed || isSubmitting}
-            onClick={handleEvolve}
-            className="px-3 py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-[10px] uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer shrink-0"
-          >
-            {isSubmitting ? 'Integrando...' : 'Integrar Ahora'}
-          </button>
+          <div className="flex gap-[8px]">
+            <input
+              type="text"
+              value={evolveConfirmText}
+              onChange={(e) => setEvolveConfirmText(e.target.value)}
+              placeholder="ACTUALIZAR"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={isSealed || isSubmitting}
+              className="px-[8px] py-1 flex-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+            />
+            <button
+              type="button"
+              disabled={isSealed || isSubmitting || evolveConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'}
+              onClick={handleEvolve}
+              className="px-[13px] py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-[10px] uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer shrink-0"
+            >
+              {isSubmitting ? t('vault_dashboard.proposals.integrating') : t('vault_dashboard.proposals.integrate_now')}
+            </button>
+          </div>
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto mt-4 space-y-4 pr-1 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto mt-[13px] space-y-[13px] pr-1 custom-scrollbar">
         {proposals.length === 0 ? (
-          <div className="py-12 text-center text-[12px] text-[#5A6072] border border-[#E2E8F0] dark:border-[#12151C]">
-            No hay propuestas de conflicto pendientes de revisión.
+          <div className="py-[34px] text-center text-[12px] text-[#94A3B8] dark:text-[#5A6072] border border-[#E2E8F0] dark:border-[#12151C]">
+            {t('vault_dashboard.proposals.empty_conflicts')}
           </div>
         ) : (
           proposals.map((prop, pIdx) => (
@@ -1742,28 +1788,32 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
               isSealed={isSealed}
               fallbackUrl={firstValidUrl}
             >
-              <div className="space-y-2 text-[11px] leading-relaxed">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pb-2 border-b border-[#E2E8F0] dark:border-[#12151C]">
+              <div className="space-y-[8px] text-[11px] leading-relaxed">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-[13px] pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C]">
                   <div className="space-y-1">
-                    <span className="text-[9px] font-bold text-[#5A6072] uppercase tracking-wide">Contenido Actual</span>
-                    <div className="p-2 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-[#475569] dark:text-[#8A93A6] leading-relaxed font-mono break-all max-h-32 overflow-y-auto custom-scrollbar">
+                    <span className="text-[9px] font-bold text-[#94A3B8] dark:text-[#5A6072] uppercase tracking-wide">
+                      {t('vault_dashboard.proposals.col_current')}
+                    </span>
+                    <div className="p-[8px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-[#475569] dark:text-[#8A93A6] leading-relaxed font-mono break-all max-h-32 overflow-y-auto custom-scrollbar">
                       {prop.valor_actual ? (
                         highlightUndeclaredInNode(prop.valor_actual)
                       ) : (
-                        <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>[Información técnica no declarada en ficha]</mark>
+                        <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>{t('opermaq_domains.not_declared')}</mark>
                       )}
                     </div>
                   </div>
-                  <div className="space-y-1 md:border-l md:border-[#E2E8F0] md:dark:border-[#12151C] md:pl-3">
-                    <span className="text-[9px] font-bold text-[#C68346] uppercase tracking-wide">Hallazgo Propuesto</span>
-                    <div className="p-2 border border-[#C68346]/30 bg-[#C68346]/5 text-[#0F172A] dark:text-[#F3F4F6] leading-relaxed font-mono break-all max-h-32 overflow-y-auto custom-scrollbar">
+                  <div className="space-y-1 md:border-l md:border-[#E2E8F0] md:dark:border-[#12151C] md:pl-[13px]">
+                    <span className="text-[9px] font-bold text-[#C68346] uppercase tracking-wide">
+                      {t('vault_dashboard.proposals.col_suggested')}
+                    </span>
+                    <div className="p-[8px] border border-[#C68346]/30 bg-[#C68346]/5 text-[#0F172A] dark:text-[#F3F4F6] leading-relaxed font-mono break-all max-h-32 overflow-y-auto custom-scrollbar">
                       {prop.valor_nuevo}
                     </div>
                   </div>
                 </div>
 
                 {prop.synthesis && (
-                  <p className="text-[#0F172A] dark:text-[#F3F4F6] font-medium bg-[#F8FAFC] dark:bg-[#000000] p-2 border-l-2 border-[#C68346]">
+                  <p className="text-[#0F172A] dark:text-[#F3F4F6] font-medium bg-[#F8FAFC] dark:bg-[#000000] p-[8px] border-l-2 border-[#C68346]">
                     {prop.synthesis}
                   </p>
                 )}
@@ -1789,6 +1839,7 @@ function ItemContentBlock({
   onDiscard,
   onUnlockItem,
   onUpdateApprovalState,
+  onUpdateItemContent,
   onRollbackVersion,
   pillarId,
   activeProposalView,
@@ -1819,6 +1870,10 @@ function ItemContentBlock({
   const [showUnlockConfirm, setShowUnlockConfirm] = useState(false);
   const [showApprovalConfirm, setShowApprovalConfirm] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [isEditingManualContent, setIsEditingManualContent] = useState(false);
+  const [manualEditBuffer, setManualEditBuffer] = useState('');
+  const [manualEditConfirmInput, setManualEditConfirmInput] = useState('');
+  const [isSavingManualContent, setIsSavingManualContent] = useState(false);
 
   const chatFeedRef = useRef<HTMLDivElement>(null);
   const contentContainerRef = useRef<HTMLDivElement>(null);
@@ -1927,12 +1982,12 @@ function ItemContentBlock({
 
     if (correctionText.trim() === 'ACTUALIZAR') {
       if (!latestDraftContent) {
-        toast.warning('No hay ningún borrador de cambios pendiente para aprobar.');
+        toast.warning(t('vault_dashboard.chat.no_pending_draft'));
         return;
       }
 
       setIsSending(true);
-      const toastId = toast.loading('Aplicando propuesta de cambios...');
+      const toastId = toast.loading(t('vault_dashboard.chat.applying_draft'));
       try {
         const userEmail = effectiveCuratorEmail;
         const res = await authFetch(`${API_BASE_URL}/vault/apply-assist-proposal`, {
@@ -1947,6 +2002,7 @@ function ItemContentBlock({
             intent: latestDraftIntent,
             sessionId,
             messageId: latestDraftMessage?.id,
+            confirmWord: 'ACTUALIZAR',
           }),
         });
         if (res.ok) {
@@ -1955,16 +2011,16 @@ function ItemContentBlock({
               m.id === latestDraftMessage?.id ? { ...m, draftStatus: 'APPLIED' as const } : m
             )
           );
-          toast.update(toastId, { render: 'Cambios aplicados exitosamente.', type: 'success', isLoading: false, autoClose: 3000 });
+          toast.update(toastId, { render: t('vault_dashboard.chat.draft_applied_success'), type: 'success', isLoading: false, autoClose: 3000 });
           setCorrectionText('');
           setDraftConfirmInput('');
           setSelectedFragment(null);
         } else {
           const json = await res.json();
-          toast.update(toastId, { render: `Error: ${json.error || 'No se pudieron aplicar los cambios.'}`, type: 'error', isLoading: false, autoClose: 5000 });
+          toast.update(toastId, { render: `${t('common.error')}: ${json.error || t('vault_dashboard.chat.draft_apply_failed')}`, type: 'error', isLoading: false, autoClose: 5000 });
         }
       } catch (_err) {
-        toast.update(toastId, { render: 'Error de red al aplicar cambios.', type: 'error', isLoading: false, autoClose: 5000 });
+        toast.update(toastId, { render: t('vault_dashboard.chat.network_error_apply'), type: 'error', isLoading: false, autoClose: 5000 });
       } finally {
         setIsSending(false);
       }
@@ -1990,7 +2046,7 @@ function ItemContentBlock({
       });
       const resp = await res.json();
       if (!res.ok || !resp.success) {
-        toast.error(resp?.error || 'Error al enviar el mensaje.');
+        toast.error(resp?.error || t('vault_dashboard.chat.send_error'));
       } else {
         setCorrectionText('');
         setSelectedFragment(null);
@@ -2132,7 +2188,7 @@ function ItemContentBlock({
               ? t('vault_dashboard.pending_figure.locked_saved', 'Imagen registrada como propuesta del ítem aprobado.')
               : `${t('vault_dashboard.pending_figure.success', 'Imagen integrada en la sección')} (${formatPhotoBytes(
                 payload.cas.originalBytes
-              )} ➔ ${formatPhotoBytes(payload.cas.optimizedBytes)}, -${payload.cas.savingsPct}%).`,
+              )} -> ${formatPhotoBytes(payload.cas.optimizedBytes)}, -${payload.cas.savingsPct}%).`,
           type: 'success',
           isLoading: false,
           autoClose: 3500,
@@ -2172,8 +2228,119 @@ function ItemContentBlock({
               isSealed={isSealed}
             />
           )
+        ) : isEditingManualContent && canCurateAI && !isSealed && !item.is_human_locked ? (
+          <div className="space-y-[13px] border border-[#C68346] bg-[#FFFFFF] dark:bg-[#07090D] p-[21px] rounded-none shadow-none select-none">
+            <div className="flex items-center justify-between gap-[8px] pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C]">
+              <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-[#C68346]">
+                {t('vault_dashboard.item_actions.surgical_edit_title')}
+              </span>
+              <button
+                type="button"
+                disabled={isSavingManualContent}
+                onClick={() => {
+                  setIsEditingManualContent(false);
+                  setManualEditConfirmInput('');
+                }}
+                title={t('common.cancel')}
+                aria-label={t('common.cancel')}
+                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+              >
+                <span className="material-symbols-outlined !text-[16px]">close</span>
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-[13px]">
+              <div className="space-y-[8px]">
+                <span className="block text-[10px] font-mono font-bold uppercase tracking-wider text-[#94A3B8] dark:text-[#5A6072]">
+                  {t('vault_dashboard.proposals.col_current')}
+                </span>
+                <div className="p-[13px] max-h-[360px] overflow-y-auto border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-[11px] font-mono text-[#475569] dark:text-[#8A93A6] whitespace-pre-wrap select-text custom-scrollbar">
+                  {item.content || t('opermaq_domains.not_declared')}
+                </div>
+              </div>
+              <div className="space-y-[8px]">
+                <span className="block text-[10px] font-mono font-bold uppercase tracking-wider text-[#00AEEF]">
+                  {t('vault_dashboard.proposals.col_suggested')}
+                </span>
+                <textarea
+                  value={manualEditBuffer}
+                  onChange={(e) => setManualEditBuffer(e.target.value)}
+                  rows={14}
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={isSavingManualContent}
+                  className="w-full p-[13px] min-h-[300px] border border-[#00AEEF]/40 focus:border-[#C68346] bg-[#FFFFFF] dark:bg-[#000000] text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] outline-none resize-y rounded-none shadow-none select-text custom-scrollbar"
+                />
+              </div>
+            </div>
+            <div className="pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] space-y-[8px]">
+              <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                {t('vault_dashboard.item_actions.surgical_edit_confirm_prompt')}
+              </p>
+              <div className="flex gap-[8px]">
+                <input
+                  type="text"
+                  value={manualEditConfirmInput}
+                  onChange={(e) => setManualEditConfirmInput(e.target.value)}
+                  placeholder="ACTUALIZAR"
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={isSavingManualContent}
+                  className="px-[13px] py-[8px] flex-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                />
+                <button
+                  type="button"
+                  disabled={
+                    isSavingManualContent ||
+                    !manualEditBuffer.trim() ||
+                    manualEditConfirmInput.trim() !== 'ACTUALIZAR'
+                  }
+                  onClick={async () => {
+                    setIsSavingManualContent(true);
+                    try {
+                      await onUpdateItemContent(manualEditBuffer);
+                      setIsEditingManualContent(false);
+                      setManualEditConfirmInput('');
+                    } finally {
+                      setIsSavingManualContent(false);
+                    }
+                  }}
+                  className="px-[21px] py-[8px] bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[10px] font-bold uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
+                >
+                  {isSavingManualContent ? t('common.saving') : t('common.confirm')}
+                </button>
+                <button
+                  type="button"
+                  disabled={isSavingManualContent}
+                  onClick={() => {
+                    setIsEditingManualContent(false);
+                    setManualEditConfirmInput('');
+                  }}
+                  className="px-[21px] py-[8px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                >
+                  {t('common.cancel')}
+                </button>
+              </div>
+            </div>
+          </div>
         ) : item.content ? (
           <div className="space-y-6">
+            {canCurateAI && !isSealed && !item.is_human_locked && (
+              <div className="flex justify-end select-none">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setManualEditBuffer(item.content || '');
+                    setManualEditConfirmInput('');
+                    setIsEditingManualContent(true);
+                  }}
+                  title={t('vault_dashboard.item_actions.surgical_edit_content')}
+                  aria-label={t('vault_dashboard.item_actions.surgical_edit_content')}
+                  className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                >
+                  <span className="material-symbols-outlined !text-[16px]">edit</span>
+                </button>
+              </div>
+            )}
             <>
               <MarkdownRenderer
                 content={sanitizeSpeculativeSymbolMarkers(item.content, pillarId)}
@@ -2208,7 +2375,7 @@ function ItemContentBlock({
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="flex flex-col gap-1">
                 {item.approved_by && (
-                  <span className="text-[10px] text-[#5A6072] font-mono tabular-nums">
+                  <span className="text-[10px] text-[#94A3B8] dark:text-[#5A6072] font-mono tabular-nums">
                     {t('vault_dashboard.labels.by')} {item.approved_by} · {item.approved_at ? new Date(item.approved_at).toLocaleDateString() : ''}
                   </span>
                 )}
@@ -2217,8 +2384,8 @@ function ItemContentBlock({
           </div>
         ) : (
           <div className="py-[21px] px-[21px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-center space-y-[8px] rounded-none shadow-none">
-            <p className="text-[11px] font-mono font-bold text-[#5A6072]">
-              [Información técnica no declarada en ficha]
+            <p className="text-[11px] font-mono font-bold text-[#94A3B8] dark:text-[#5A6072]">
+              {t('opermaq_domains.not_declared')}
             </p>
             {canCurateAI && (
               <p className="text-[11px] text-[#475569] dark:text-[#8A93A6]">
@@ -2230,7 +2397,7 @@ function ItemContentBlock({
             )}
             {canCurateAI && item.content_status === 'ERROR' && item.hunt_error && (
               <p className="text-[10px] font-mono font-bold text-[#C68346]">
-                ERROR: {item.hunt_error}
+                {t('common.error')}: {item.hunt_error}
               </p>
             )}
           </div>
@@ -2241,17 +2408,17 @@ function ItemContentBlock({
         <div className="w-full lg:w-[38.2%] lg:max-w-[380px] shrink-0 flex flex-col justify-between border-t lg:border-t-0 lg:border-l border-[#E2E8F0] dark:border-[#12151C] pt-[13px] lg:pt-0 lg:pl-[13px] pb-2 h-full min-h-0 overflow-hidden select-none">
           <div className="flex-1 flex flex-col min-h-0 pb-2 gap-2 overflow-hidden">
             <div className="flex items-center justify-between mb-0.5 shrink-0">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-[#475569] dark:text-[#8A93A6]">OPERMAQ IA</span>
+              <span className="text-[10px] font-bold uppercase tracking-widest text-[#475569] dark:text-[#8A93A6]">{t('vault_dashboard.chat.header_title')}</span>
               <div className="flex items-center gap-1">
                 {isSearching && (
-                  <M3CircularProgress size={12} strokeWidth={2} indeterminate tone="copper" ariaLabel="Generando respuesta IA" />
+                  <M3CircularProgress size={12} strokeWidth={2} indeterminate tone="copper" ariaLabel={t('vault_dashboard.chat.generating_aria')} />
                 )}
                 {messages.length > 0 && !isSending && (
                   <button
                     type="button"
                     onClick={handleResetChatSession}
-                    title="Reiniciar sesión de chat de este ítem"
-                    aria-label="Reiniciar sesión de chat de este ítem"
+                    title={t('vault_dashboard.chat.reset_session')}
+                    aria-label={t('vault_dashboard.chat.reset_session')}
                     className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                   >
                     <span className="material-symbols-outlined !text-[15px]">restart_alt</span>
@@ -2270,9 +2437,9 @@ function ItemContentBlock({
             >
               {messages.length === 0 ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
-                  <span className="material-symbols-outlined !text-[28px] text-[#5A6072] mb-2">forum</span>
+                  <span className="material-symbols-outlined !text-[28px] text-[#94A3B8] dark:text-[#5A6072] mb-2">forum</span>
                   <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] leading-relaxed">
-                    Ingrese instrucciones técnicas para consultar o curar este ítem con OPERMAQ IA.
+                    {t('vault_dashboard.chat.empty_guidance')}
                   </p>
                 </div>
               ) : (
@@ -2295,8 +2462,8 @@ function ItemContentBlock({
                       key={msg.id || index}
                       className={`flex flex-col gap-1 max-w-[90%] shrink-0 ${isUser ? 'self-end items-end' : 'self-start items-start'}`}
                     >
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-[#5A6072]">
-                        {isUser ? 'Operador' : 'OPERMAQ IA'}
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-[#94A3B8] dark:text-[#5A6072]">
+                        {isUser ? t('vault_dashboard.chat.role_operator') : t('vault_dashboard.chat.header_title')}
                       </span>
 
                       <div
@@ -2311,19 +2478,19 @@ function ItemContentBlock({
                       {msg.highlightText && (
                         <div className="flex items-center gap-1 mt-0.5 text-[9px] text-[#C68346] font-bold shrink-0">
                           <span className="material-symbols-outlined !text-[12px]">local_library</span>
-                          Destaque activo en pantalla
+                          {t('vault_dashboard.chat.active_highlight')}
                         </div>
                       )}
 
                       {msg.draftContent && msg.draftStatus === 'APPLIED' && (
                         <div className="mt-1 px-2 py-1 border border-[#00AEEF]/40 bg-[#00AEEF]/10 text-[#00AEEF] text-[9px] font-mono font-bold uppercase tracking-wider rounded-none shadow-none shrink-0">
-                          [BORRADOR APLICADO EN CATÁLOGO]
+                          {t('vault_dashboard.chat.draft_applied_badge')}
                         </div>
                       )}
 
                       {msg.draftContent && msg.draftStatus === 'DISCARDED' && (
-                        <div className="mt-1 px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-[#5A6072] text-[9px] font-mono font-bold uppercase tracking-wider rounded-none shadow-none shrink-0">
-                          [BORRADOR DESCARTADO]
+                        <div className="mt-1 px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-[#94A3B8] dark:text-[#5A6072] text-[9px] font-mono font-bold uppercase tracking-wider rounded-none shadow-none shrink-0">
+                          {t('vault_dashboard.chat.draft_discarded_badge')}
                         </div>
                       )}
 
@@ -2332,13 +2499,13 @@ function ItemContentBlock({
                           <div className="flex items-center justify-between gap-1.5 text-[9px] font-bold uppercase tracking-wider text-[#00AEEF]">
                             <span className="flex items-center gap-1">
                               <span className="material-symbols-outlined !text-[14px]">edit_document</span>
-                              Vista Comparativa [Actual ➔ Sugerido]
+                              {t('vault_dashboard.chat.comparative_title')}
                             </span>
                             <button
                               type="button"
                               onClick={() => handleDismissDraft(msg.id)}
-                              title="Descartar propuesta de borrador"
-                              aria-label="Descartar propuesta de borrador"
+                              title={t('vault_dashboard.chat.dismiss_draft_tooltip')}
+                              aria-label={t('vault_dashboard.chat.dismiss_draft_tooltip')}
                               className="bg-transparent border-0 outline-none p-0.5 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                             >
                               <span className="material-symbols-outlined !text-[13px]">close</span>
@@ -2346,16 +2513,16 @@ function ItemContentBlock({
                           </div>
                           <div className="grid grid-cols-1 gap-[8px]">
                             <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] p-1.5">
-                              <span className="block text-[8px] font-mono font-bold uppercase tracking-wider text-[#5A6072] mb-0.5">
-                                [ACTUAL]
+                              <span className="block text-[8px] font-mono font-bold uppercase tracking-wider text-[#94A3B8] dark:text-[#5A6072] mb-0.5">
+                                [{t('vault_dashboard.proposals.col_current')}]
                               </span>
                               <div className="max-h-16 overflow-y-auto text-[9px] font-mono text-[#475569] dark:text-[#8A93A6] custom-scrollbar select-text">
-                                <pre className="whitespace-pre-wrap">{selectedFragment || item.content || '[Información técnica no declarada en ficha]'}</pre>
+                                <pre className="whitespace-pre-wrap">{selectedFragment || item.content || t('opermaq_domains.not_declared')}</pre>
                               </div>
                             </div>
                             <div className="border border-[#00AEEF]/40 bg-[#F8FAFC] dark:bg-[#000000] p-1.5">
                               <span className="block text-[8px] font-mono font-bold uppercase tracking-wider text-[#00AEEF] mb-0.5">
-                                [SUGERIDO IA]
+                                [{t('vault_dashboard.proposals.col_suggested')}]
                               </span>
                               <div className="max-h-24 overflow-y-auto text-[9px] font-mono text-[#0F172A] dark:text-[#F3F4F6] custom-scrollbar select-text">
                                 <pre className="whitespace-pre-wrap">{msg.draftContent}</pre>
@@ -2363,7 +2530,7 @@ function ItemContentBlock({
                             </div>
                           </div>
                           <p className="text-[10px] text-[#475569] dark:text-[#8A93A6] leading-snug">
-                            Escribe <span className="font-mono font-bold text-[#C68346]">"ACTUALIZAR"</span> para aplicar estos cambios en el catálogo:
+                            {t('vault_dashboard.chat.confirm_draft_prompt')}
                           </p>
                           <input
                             type="text"
@@ -2380,7 +2547,7 @@ function ItemContentBlock({
                               disabled={isSealed || isSending || draftConfirmInput.trim() !== 'ACTUALIZAR'}
                               onClick={async () => {
                                 setIsSending(true);
-                                const toastId = toast.loading('Aplicando propuesta de cambios...');
+                                const toastId = toast.loading(t('vault_dashboard.chat.applying_draft'));
                                 try {
                                   const userEmail = effectiveCuratorEmail;
                                   const res = await authFetch(`${API_BASE_URL}/vault/apply-assist-proposal`, {
@@ -2395,6 +2562,7 @@ function ItemContentBlock({
                                       intent: msg.intent || 'EDIT_PROPOSAL',
                                       sessionId,
                                       messageId: msg.id,
+                                      confirmWord: 'ACTUALIZAR',
                                     }),
                                   });
                                   if (res.ok) {
@@ -2403,21 +2571,21 @@ function ItemContentBlock({
                                         m.id === msg.id ? { ...m, draftStatus: 'APPLIED' as const } : m
                                       )
                                     );
-                                    toast.update(toastId, { render: 'Cambios aplicados exitosamente.', type: 'success', isLoading: false, autoClose: 3000 });
+                                    toast.update(toastId, { render: t('vault_dashboard.chat.draft_applied_success'), type: 'success', isLoading: false, autoClose: 3000 });
                                     setDraftConfirmInput('');
                                   } else {
                                     const json = await res.json();
-                                    toast.update(toastId, { render: `Error: ${json.error || 'No se pudieron aplicar los cambios.'}`, type: 'error', isLoading: false, autoClose: 5000 });
+                                    toast.update(toastId, { render: `${t('common.error')}: ${json.error || t('vault_dashboard.chat.draft_apply_failed')}`, type: 'error', isLoading: false, autoClose: 5000 });
                                   }
                                 } catch (_err) {
-                                  toast.update(toastId, { render: 'Error de red al aplicar cambios.', type: 'error', isLoading: false, autoClose: 5000 });
+                                  toast.update(toastId, { render: t('vault_dashboard.chat.network_error_apply'), type: 'error', isLoading: false, autoClose: 5000 });
                                 } finally {
                                   setIsSending(false);
                                 }
                               }}
                               className="bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[10px] py-1.5 font-bold uppercase tracking-wider transition-colors disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
                             >
-                              Aprobar
+                              {t('common.approve')}
                             </button>
                             <button
                               type="button"
@@ -2425,7 +2593,7 @@ function ItemContentBlock({
                               onClick={() => handleDismissDraft(msg.id)}
                               className="bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#0F172A] dark:hover:border-[#F3F4F6] text-[#475569] dark:text-[#8A93A6] text-[10px] py-1.5 font-bold uppercase tracking-wider transition-colors rounded-none shadow-none cursor-pointer"
                             >
-                              Descartar
+                              {t('common.discard')}
                             </button>
                           </div>
                         </div>
@@ -2437,8 +2605,8 @@ function ItemContentBlock({
 
               {isSending && (
                 <div className="flex items-center gap-1.5 py-1 justify-start text-[10px] text-[#C68346] shrink-0">
-                  <M3CircularProgress size={14} strokeWidth={2} indeterminate tone="copper" ariaLabel="Procesando consulta" />
-                  <span>Procesando consulta...</span>
+                  <M3CircularProgress size={14} strokeWidth={2} indeterminate tone="copper" ariaLabel={t('vault_dashboard.chat.processing_query')} />
+                  <span>{t('vault_dashboard.chat.processing_query')}</span>
                 </div>
               )}
             </div>
@@ -2448,7 +2616,7 @@ function ItemContentBlock({
             {selectedFragment && (
               <div className="mb-[8px] bg-[#C68346]/5 border border-[#C68346]/30 p-[8px] text-[10px] flex items-start gap-[8px] shrink-0 rounded-none">
                 <div className="flex-1 min-w-0">
-                  <span className="font-bold text-[#C68346] uppercase block text-[8px] tracking-wider mb-0.5">Fragmento Seleccionado</span>
+                  <span className="font-bold text-[#C68346] uppercase block text-[8px] tracking-wider mb-0.5">{t('vault_dashboard.chat.selected_fragment')}</span>
                   <p className="text-[#475569] dark:text-[#8A93A6] truncate max-w-full">
                     "{selectedFragment}"
                   </p>
@@ -2477,16 +2645,16 @@ function ItemContentBlock({
                     }}
                     disabled={isSending || isGenerating || isSealed}
                     rows={2}
-                    placeholder={latestDraftContent ? 'Escribe ACTUALIZAR para aplicar el borrador...' : 'Ingrese instrucciones técnicas a OPERMAQ'}
+                    placeholder={latestDraftContent ? t('vault_dashboard.chat.placeholder_apply_draft') : t('vault_dashboard.chat.placeholder_instruction')}
                     autoComplete="off"
                     spellCheck={false}
-                    className="w-full bg-transparent resize-none focus:outline-none text-[12px] text-[#0F172A] dark:text-[#F3F4F6] placeholder-[#5A6072] custom-scrollbar px-1"
+                    className="w-full bg-transparent resize-none focus:outline-none text-[12px] text-[#0F172A] dark:text-[#F3F4F6] placeholder-[#94A3B8] dark:placeholder-[#5A6072] custom-scrollbar px-1"
                   />
                   <div className="flex justify-end items-center gap-[8px] mt-1">
                     <button
                       type="button"
-                      onClick={() => toast.info('Función de dictado disponible próximamente.')}
-                      title="Dictado por voz"
+                      onClick={() => toast.info(t('vault_dashboard.chat.voice_soon'))}
+                      title={t('vault_dashboard.chat.voice_tooltip')}
                       className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                       disabled={isSending || isGenerating || isSealed}
                     >
@@ -2496,10 +2664,10 @@ function ItemContentBlock({
                       type="button"
                       disabled={!correctionText.trim() || isSending || isSealed || isGenerating}
                       onClick={handleSendMessage}
-                      title="Enviar instrucción"
+                      title={t('vault_dashboard.chat.send_tooltip')}
                       className={`bg-transparent border-0 outline-none p-1 transition-colors cursor-pointer ${correctionText.trim() && !isSending && !isSealed && !isGenerating
                         ? 'text-[#C68346] hover:text-[#b07239]'
-                        : 'text-[#5A6072] opacity-40 cursor-not-allowed'
+                        : 'text-[#94A3B8] dark:text-[#5A6072] opacity-40 cursor-not-allowed'
                         }`}
                     >
                       <span className="material-symbols-outlined !text-[18px]">
@@ -2522,7 +2690,10 @@ function ItemContentBlock({
                   }`}
                 title={
                   pendingContentSummary.total > 0
-                    ? `${t('vault_dashboard.pending_content.tooltip', 'Contenido Pendiente')}: ${pendingContentSummary.undeclaredFieldsCount} dato(s) no declarado(s) · ${pendingContentSummary.pendingFiguresCount} imagen(es) pendiente(s). Clic para localizar en el documento.`
+                    ? t('vault_dashboard.pending_content.summary_tooltip', {
+                        undeclared: pendingContentSummary.undeclaredFieldsCount,
+                        figures: pendingContentSummary.pendingFiguresCount,
+                      })
                     : t('vault_dashboard.pending_content.completed_tooltip', 'Sin contenido pendiente en este ítem')
                 }
               >
@@ -2552,9 +2723,9 @@ function ItemContentBlock({
                   ? 'text-[#00AEEF] font-bold border-[#00AEEF]'
                   : 'text-[#475569] dark:text-[#8A93A6] border-[#E2E8F0] dark:border-[#12151C] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                   }`}
-                title="Nuevo Contenido"
+                title={t('vault_dashboard.proposals.new_content_title')}
               >
-                <span className="text-[10px] font-bold uppercase tracking-wider">Nuevo Contenido</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider">{t('vault_dashboard.proposals.new_content_title')}</span>
                 <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-none font-mono tabular-nums text-[#00AEEF]">
                   {(item.pending_conflicts ?? []).filter(p => p.estado_fusion === 'NUEVO' && p.human_decision !== 'ELIMINADO' && p.human_decision !== 'APROBADO').length}
                 </span>
@@ -2573,9 +2744,9 @@ function ItemContentBlock({
                   ? 'text-[#C68346] font-bold border-[#C68346]'
                   : 'text-[#475569] dark:text-[#8A93A6] border-[#E2E8F0] dark:border-[#12151C] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                   }`}
-                title="Contenido en Conflicto"
+                title={t('vault_dashboard.proposals.conflict_content_title')}
               >
-                <span className="text-[10px] font-bold uppercase tracking-wider">Contenido en Conflicto</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider">{t('vault_dashboard.proposals.conflict_content_title')}</span>
                 <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-none font-mono tabular-nums text-[#C68346]">
                   {(item.pending_conflicts ?? []).filter(p => p.estado_fusion === 'CONFLICTO' && p.human_decision !== 'ELIMINADO' && p.human_decision !== 'APROBADO').length}
                 </span>
@@ -2587,21 +2758,21 @@ function ItemContentBlock({
               <button
                 type="button"
                 disabled={isSending || isGenerating || isSealed}
-                onClick={() => onOpenStudio ? onOpenStudio('INGESTION') : toast.info('Ingesta documental no disponible.')}
+                onClick={() => onOpenStudio ? onOpenStudio('INGESTION') : toast.info(t('vault_dashboard.item_actions.ingestion_unavailable'))}
                 className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
-                title="Ingesta documental / multimedia (PDF, ETT, esquemas, fotos)"
+                title={t('vault_dashboard.item_actions.upload_files_tooltip')}
               >
-                Subir Archivos
+                {t('vault_dashboard.item_actions.upload_files')}
               </button>
 
               <button
                 type="button"
                 disabled={isSending || isGenerating}
-                onClick={() => onOpenStudio ? onOpenStudio('MANUAL_PUBLISHER') : toast.info('Exportación PDF no disponible.')}
+                onClick={() => onOpenStudio ? onOpenStudio('MANUAL_PUBLISHER') : toast.info(t('vault_dashboard.item_actions.pdf_export_unavailable'))}
                 className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
-                title="Manuales ilustrados y diagramación vectorial"
+                title={t('vault_dashboard.item_actions.generate_manual_tooltip')}
               >
-                Generar Manual Ilustrado
+                {t('vault_dashboard.item_actions.generate_manual')}
               </button>
 
               <button
@@ -2679,7 +2850,7 @@ function ItemContentBlock({
                       }}
                       className="px-2 py-1 bg-[#C68346] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
                     >
-                      Confirmar
+                      {t('common.confirm')}
                     </button>
                     <button
                       type="button"
@@ -2689,7 +2860,7 @@ function ItemContentBlock({
                       }}
                       className="px-2 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[10px] rounded-none shadow-none cursor-pointer"
                     >
-                      Cancelar
+                      {t('common.cancel')}
                     </button>
                   </div>
                 </div>
@@ -2699,14 +2870,29 @@ function ItemContentBlock({
                 type="button"
                 onClick={() => setShowHistoryModal(true)}
                 className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
-                title="Historial de Cambios"
+                title={t('vault_dashboard.history.title')}
               >
-                Historial de Cambios
+                {t('vault_dashboard.history.title')}
               </button>
             </div>
 
             {/* Bloque 3: Gobernanza y Cierre HITL del Ítem (Orden Vertical 8 a 9) */}
             <div className="flex flex-col gap-[8px] pt-[8px] mt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C]">
+              {!item.is_human_locked && (
+                <button
+                  type="button"
+                  disabled={isSealed || isGenerating}
+                  onClick={() => {
+                    setManualEditBuffer(item.content || '');
+                    setManualEditConfirmInput('');
+                    setIsEditingManualContent((prev) => !prev);
+                  }}
+                  className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                >
+                  {t('vault_dashboard.item_actions.surgical_edit_content')}
+                </button>
+              )}
+
               {item.is_human_locked ? (
                 <button
                   type="button"
@@ -2714,7 +2900,7 @@ function ItemContentBlock({
                   onClick={() => setShowUnlockConfirm(!showUnlockConfirm)}
                   className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#C68346] transition-colors text-[#C68346] hover:bg-[#C68346] hover:text-[#FFFFFF] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                 >
-                  Editar Ítem
+                  {t('vault_dashboard.item_actions.unlock_item')}
                 </button>
               ) : (
                 <button
@@ -2723,13 +2909,13 @@ function ItemContentBlock({
                   onClick={() => setShowApprovalConfirm(!showApprovalConfirm)}
                   className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#00AEEF] transition-colors text-[#00AEEF] hover:bg-[#00AEEF] hover:text-[#FFFFFF] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                 >
-                  Aprobar Ítem
+                  {t('vault_dashboard.item_actions.approve_item')}
                 </button>
               )}
 
               {showUnlockConfirm && (
                 <div className="p-[8px] border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-[8px] rounded-none shadow-none">
-                  <p className="text-[10px] text-[#C68346] font-bold">Escribe "ACTUALIZAR" para confirmar el desbloqueo:</p>
+                  <p className="text-[10px] text-[#C68346] font-bold">{t('vault_dashboard.item_actions.confirm_unlock_prompt')}</p>
                   <input
                     type="text"
                     value={confirmUnlockInput}
@@ -2750,7 +2936,7 @@ function ItemContentBlock({
                       }}
                       className="px-2 py-1 bg-[#C68346] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
                     >
-                      Confirmar
+                      {t('common.confirm')}
                     </button>
                     <button
                       type="button"
@@ -2760,7 +2946,7 @@ function ItemContentBlock({
                       }}
                       className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none shadow-none cursor-pointer"
                     >
-                      Cancelar
+                      {t('common.cancel')}
                     </button>
                   </div>
                 </div>
@@ -2777,7 +2963,7 @@ function ItemContentBlock({
                       })}
                     </p>
                   )}
-                  <p className="text-[10px] text-[#00AEEF] font-bold">Escribe "ACTUALIZAR" para confirmar la aprobación:</p>
+                  <p className="text-[10px] text-[#00AEEF] font-bold">{t('vault_dashboard.item_actions.confirm_approval_prompt')}</p>
                   <input
                     type="text"
                     value={confirmApprovalInput}
@@ -2798,7 +2984,7 @@ function ItemContentBlock({
                       }}
                       className="px-2 py-1 bg-[#00AEEF] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
                     >
-                      Confirmar
+                      {t('common.confirm')}
                     </button>
                     <button
                       type="button"
@@ -2808,7 +2994,7 @@ function ItemContentBlock({
                       }}
                       className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none shadow-none cursor-pointer"
                     >
-                      Cancelar
+                      {t('common.cancel')}
                     </button>
                   </div>
                 </div>
@@ -2818,9 +3004,9 @@ function ItemContentBlock({
                 type="button"
                 disabled={isSealed || isGenerating || item.is_human_locked}
                 onClick={onDiscard}
-                className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#0F172A] dark:hover:border-[#F3F4F6] transition-colors text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#0F172A] dark:hover:border-[#F3F4F6] transition-colors text-[#94A3B8] dark:text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
               >
-                Descartar Ítem
+                {t('vault_dashboard.item_actions.discard_item')}
               </button>
             </div>
 
@@ -2843,7 +3029,7 @@ function ItemContentBlock({
 
             <div className="flex items-center justify-between pb-4 border-b border-[#E2E8F0] dark:border-[#12151C]">
               <div>
-                <h3 className="text-sm font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6]">Historial de Cambios</h3>
+                <h3 className="text-sm font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6]">{t('vault_dashboard.history.title')}</h3>
                 <p className="text-[11px] text-[#475569] dark:text-[#8A93A6]">{item.title}</p>
               </div>
               <M3IconButton
@@ -2858,7 +3044,7 @@ function ItemContentBlock({
 
             <div className="flex-1 overflow-y-auto py-4 space-y-4 custom-scrollbar">
               {!item.historial_cambios || item.historial_cambios.length === 0 ? (
-                <p className="text-[12px] text-[#5A6072] text-center py-8">[Sin registros de auditoría en el historial de este ítem]</p>
+                <p className="text-[12px] text-[#94A3B8] dark:text-[#5A6072] text-center py-8">{t('vault_dashboard.history.empty')}</p>
               ) : (
                 [...item.historial_cambios].reverse().map((log: HistorialAuditoria, index) => (
                   <div key={index} className="p-3 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] space-y-2 rounded-none">
@@ -2868,7 +3054,7 @@ function ItemContentBlock({
                           {log.accion.replace(/_/g, ' ')}
                         </span>
                         <div className="text-[10px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                          {log.actor} · <span className="font-mono tabular-nums text-[9px] text-[#5A6072]">{new Date(log.fecha).toLocaleString()}</span>
+                          {log.actor} · <span className="font-mono tabular-nums text-[9px] text-[#94A3B8] dark:text-[#5A6072]">{new Date(log.fecha).toLocaleString()}</span>
                         </div>
                       </div>
                       {log.snapshot_anterior !== undefined && (
@@ -2881,14 +3067,14 @@ function ItemContentBlock({
                           }}
                           className="text-[#C68346] text-[10px]"
                         >
-                          Restaurar Versión
+                          {t('vault_dashboard.history.restore_version')}
                         </M3Button>
                       )}
                     </div>
                     {rollbackConfirmTimestamp === log.fecha && (
                       <div className="p-2 border border-[#C68346] bg-[#FFFFFF] dark:bg-[#07090D] space-y-2">
                         <p className="text-[10px] font-bold text-[#C68346]">
-                          Escribe "ACTUALIZAR" para restaurar esta versión histórica:
+                          {t('vault_dashboard.history.confirm_restore_prompt')}
                         </p>
                         <div className="flex gap-2">
                           <input
@@ -2911,7 +3097,7 @@ function ItemContentBlock({
                             }}
                             className="px-3 py-1 bg-[#C68346] text-[#FFFFFF] text-[10px] font-bold disabled:opacity-40 rounded-none border-0 cursor-pointer"
                           >
-                            Confirmar
+                            {t('common.confirm')}
                           </button>
                           <button
                             type="button"
@@ -2921,7 +3107,7 @@ function ItemContentBlock({
                             }}
                             className="px-3 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none cursor-pointer"
                           >
-                            Cancelar
+                            {t('common.cancel')}
                           </button>
                         </div>
                       </div>
@@ -2933,9 +3119,9 @@ function ItemContentBlock({
                     )}
                     {log.snapshot_anterior !== undefined && (
                       <details className="group border-t border-[#E2E8F0] dark:border-[#12151C] pt-2">
-                        <summary className="text-[9px] font-bold text-[#5A6072] uppercase tracking-widest cursor-pointer hover:text-[#0F172A] dark:hover:text-[#F3F4F6] list-none flex items-center gap-1">
+                        <summary className="text-[9px] font-bold text-[#94A3B8] dark:text-[#5A6072] uppercase tracking-widest cursor-pointer hover:text-[#0F172A] dark:hover:text-[#F3F4F6] list-none flex items-center gap-1">
                           <span className="material-symbols-outlined !text-[12px] transition-transform group-open:rotate-90">chevron_right</span>
-                          Ver contenido de esta versión
+                          {t('vault_dashboard.history.view_snapshot')}
                         </summary>
                         <div className="mt-2 p-3 bg-[#FFFFFF] dark:bg-[#07090D] max-h-60 overflow-y-auto border border-[#E2E8F0] dark:border-[#12151C] custom-scrollbar text-[11px] text-[#0F172A] dark:text-[#F3F4F6]">
                           <MarkdownRenderer content={log.snapshot_anterior} resolvedSymbology={resolvedSymbology} />
@@ -2949,7 +3135,7 @@ function ItemContentBlock({
 
             <div className="pt-4 border-t border-[#E2E8F0] dark:border-[#12151C] flex justify-end">
               <M3Button onClick={() => setShowHistoryModal(false)} className="text-[10px]">
-                Cerrar
+                {t('common.close')}
               </M3Button>
             </div>
 
@@ -2979,6 +3165,7 @@ interface ItemizedItemsListProps {
   isSealed: boolean;
   onUnlockItem: (itemId: string) => Promise<void>;
   onUpdateApprovalState: (itemId: string, state: EstadoAprobacion, notes?: string) => Promise<void>;
+  onUpdateItemContent: (itemId: string, newContent: string) => Promise<void>;
   onRollbackVersion: (itemId: string, timestamp: string) => Promise<void>;
   catalogId: string;
 
@@ -2996,7 +3183,7 @@ interface ItemizedItemsListProps {
 function ItemizedItemsList({
   items, canCurateAI, onHunt, onAiAssist, onApplyAssist, isAssistingItemId: assistingItemId, huntProgressByItem, huntStageByItem,
   expandedItems, onToggleExpand, onDiscard: _onDiscard, onReactivate, isArchive, isSealed,
-  onUnlockItem, onUpdateApprovalState, onRollbackVersion, catalogId,
+  onUnlockItem, onUpdateApprovalState, onUpdateItemContent, onRollbackVersion, catalogId,
   pillarId, activeProposalView, onSetProposalView, onDecideProposal, onEvolveItemByType,
   resolveItemSymbology, onOpenStudio
 }: ItemizedItemsListProps) {
@@ -3070,20 +3257,20 @@ function ItemizedItemsList({
                             }}
                             title={
                               activeProposalView?.itemId === item.item_id
-                                ? 'Volver al contenido del ítem'
-                                : 'Volver al listado de ítems'
+                                ? t('vault_dashboard.proposals.back_to_content')
+                                : t('vault_dashboard.actions.back_to_list')
                             }
                             aria-label={
                               activeProposalView?.itemId === item.item_id
-                                ? 'Volver al contenido del ítem'
-                                : 'Volver al listado de ítems'
+                                ? t('vault_dashboard.proposals.back_to_content')
+                                : t('vault_dashboard.actions.back_to_list')
                             }
                             className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none"
                           >
                             <span className="material-symbols-outlined !text-[20px]">arrow_back</span>
                           </button>
                         )}
-                        <span className="text-[11px] font-mono tabular-nums text-[#5A6072]">{String(item.order).padStart(2, '0')}</span>
+                        <span className="text-[11px] font-mono tabular-nums text-[#94A3B8] dark:text-[#5A6072]">{String(item.order).padStart(2, '0')}</span>
                       </div>
 
                       <div className="flex-1 min-w-0">
@@ -3092,7 +3279,7 @@ function ItemizedItemsList({
                           <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] mt-0.5">{item.rationale}</p>
                           {!hasContent && !canCurateAI && (
                             <p className="mt-1">
-                              <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>[Información técnica no declarada en ficha]</mark>
+                              <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>{t('opermaq_domains.not_declared')}</mark>
                             </p>
                           )}
                         </div>
@@ -3122,8 +3309,8 @@ function ItemizedItemsList({
                                 }}
                                 title={
                                   canCurateAI
-                                    ? 'Procesamiento IA en curso — Clic para reanudar si se interrumpió'
-                                    : 'Procesamiento IA en curso'
+                                    ? t('vault_dashboard.item_actions.ai_processing_resume_tooltip')
+                                    : t('vault_dashboard.item_actions.ai_processing_tooltip')
                                 }
                                 className="bg-transparent border-0 outline-none flex items-center gap-[8px] h-8 px-1.5 text-[12px] font-mono tabular-nums font-bold text-[#C68346] select-none cursor-pointer rounded-none"
                                 aria-live="polite"
@@ -3134,7 +3321,7 @@ function ItemizedItemsList({
                                   value={displayPct}
                                   indeterminate={displayPct <= 0}
                                   tone="copper"
-                                  ariaLabel="Progreso de captura IA"
+                                  ariaLabel={t('vault_dashboard.item_actions.ai_progress_aria')}
                                 />
                                 <span>{displayPct}%</span>
                               </button>
@@ -3143,7 +3330,7 @@ function ItemizedItemsList({
                             {canCurateAI && pendingProposalsCount > 0 && (
                               <span
                                 className="flex items-center gap-[4px] h-6 px-[6px] shrink-0 bg-[#00AEEF]/10 dark:bg-[#00AEEF]/15 text-[#00AEEF] border border-[#00AEEF] rounded-none"
-                                title={`${pendingProposalsCount} hallazgo(s) pendiente(s) de revisión (Nuevo Contenido / Conflicto)`}
+                                title={t('vault_dashboard.proposals.pending_badge_tooltip', { count: pendingProposalsCount })}
                               >
                                 <span className="material-symbols-outlined !text-[14px]">release_alert</span>
                                 <span className="text-[11px] font-mono tabular-nums font-bold">{pendingProposalsCount}</span>
@@ -3157,7 +3344,10 @@ function ItemizedItemsList({
                               return totalItemPending > 0 ? (
                                 <span
                                   className="flex items-center gap-[4px] h-6 px-[6px] shrink-0 bg-[#C68346]/15 dark:bg-[#C68346]/20 text-[#C68346] border border-[#C68346] rounded-none"
-                                  title={`${t('vault_dashboard.pending_content.label', 'Contenido Pendiente')}: ${pendingTextCount} dato(s) no declarado(s) · ${pendingFigCount} imagen(es) pendiente(s)`}
+                                  title={t('vault_dashboard.pending_content.badge_tooltip', {
+                                    undeclared: pendingTextCount,
+                                    figures: pendingFigCount,
+                                  })}
                                 >
                                   <span className="material-symbols-outlined !text-[14px]">pending_actions</span>
                                   <span className="text-[11px] font-mono tabular-nums font-bold">{totalItemPending}</span>
@@ -3167,7 +3357,7 @@ function ItemizedItemsList({
 
                             {item.is_human_locked ? (
                               <span className="flex items-center justify-center w-8 h-8 shrink-0">
-                                <span className="material-symbols-outlined !text-[20px] text-[#00AEEF]" title="Verificado">verified</span>
+                                <span className="material-symbols-outlined !text-[20px] text-[#00AEEF]" title={t('vault_dashboard.labels.verified')}>verified</span>
                               </span>
                             ) : canCurateAI && isInitialHuntActivated && !isExpanded && !isGenerating ? (
                               <button
@@ -3199,8 +3389,8 @@ function ItemizedItemsList({
                                   icon="text_ad_off"
                                   onClick={(e) => { e.stopPropagation(); if (!isSealed) setConfirmDiscardId(item.item_id); }}
                                   variant="ghost"
-                                  title="Descartar ítem"
-                                  className={`text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] ${isSealed ? 'opacity-20 cursor-not-allowed' : ''}`}
+                                  title={t('vault_dashboard.item_actions.discard_item')}
+                                  className={`text-[#94A3B8] dark:text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] ${isSealed ? 'opacity-20 cursor-not-allowed' : ''}`}
                                   disabled={isSealed || item.is_human_locked}
                                 />
                               </>
@@ -3214,13 +3404,13 @@ function ItemizedItemsList({
                               className={`text-[10px] text-[#00AEEF] ${isSealed ? 'opacity-40 cursor-not-allowed' : ''}`}
                               disabled={isSealed}
                             >
-                              {isSealed ? (t('vault_dashboard.bloqueado') || 'BLOQUEADO').toUpperCase() : (t('vault_dashboard.reactivate') || 'REACTIVAR').toUpperCase()}
+                              {isSealed ? t('vault_dashboard.bloqueado').toUpperCase() : t('vault_dashboard.reactivate').toUpperCase()}
                             </M3Button>
                           )
                         )}
 
                         {canCurateAI && !isArchive && item.content_status === 'ERROR' && item.hunt_error && (
-                          <p className="text-[9px] text-[#C68346] font-bold uppercase tracking-tight">ERROR: {item.hunt_error}</p>
+                          <p className="text-[9px] text-[#C68346] font-bold uppercase tracking-tight">{t('common.error')}: {item.hunt_error}</p>
                         )}
 
                       </div>
@@ -3229,7 +3419,7 @@ function ItemizedItemsList({
                     {/* Confirmación Descarte Inline */}
                     {canCurateAI && confirmDiscardId === item.item_id && (
                       <div className="mt-3 p-3 bg-[#F8FAFC] dark:bg-[#000000] border border-[#C68346] space-y-2 w-full text-left rounded-none">
-                        <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">¿Descartar este ítem del catálogo visible? Escribe <span className="font-mono text-[#C68346]">"ACTUALIZAR"</span> para confirmar:</p>
+                        <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">{t('vault_dashboard.item_actions.confirm_discard_prompt')}</p>
                         <div className="flex gap-2">
                           <input
                             type="text"
@@ -3250,7 +3440,7 @@ function ItemizedItemsList({
                             }}
                             className="px-3 py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold disabled:opacity-40 text-[11px] rounded-none border-0 cursor-pointer"
                           >
-                            Confirmar
+                            {t('common.confirm')}
                           </button>
                           <button
                             type="button"
@@ -3260,7 +3450,7 @@ function ItemizedItemsList({
                             }}
                             className="px-3 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[11px] rounded-none cursor-pointer"
                           >
-                            Cancelar
+                            {t('common.cancel')}
                           </button>
                         </div>
                       </div>
@@ -3269,7 +3459,7 @@ function ItemizedItemsList({
                     {/* Confirmación Reactivación Inline */}
                     {canCurateAI && confirmReactivateId === item.item_id && (
                       <div className="mt-3 p-3 bg-[#F8FAFC] dark:bg-[#000000] border border-[#00AEEF] space-y-2 w-full text-left rounded-none">
-                        <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">¿Reactivar este ítem en el listado activo? Escribe <span className="font-mono text-[#C68346]">"ACTUALIZAR"</span> para confirmar:</p>
+                        <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">{t('vault_dashboard.item_actions.confirm_reactivate_prompt')}</p>
                         <div className="flex gap-2">
                           <input
                             type="text"
@@ -3290,7 +3480,7 @@ function ItemizedItemsList({
                             }}
                             className="px-3 py-1 bg-[#00AEEF] text-[#FFFFFF] font-bold disabled:opacity-40 text-[11px] rounded-none border-0 cursor-pointer"
                           >
-                            Confirmar
+                            {t('common.confirm')}
                           </button>
                           <button
                             type="button"
@@ -3300,7 +3490,7 @@ function ItemizedItemsList({
                             }}
                             className="px-3 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[11px] rounded-none cursor-pointer"
                           >
-                            Cancelar
+                            {t('common.cancel')}
                           </button>
                         </div>
                       </div>
@@ -3323,6 +3513,7 @@ function ItemizedItemsList({
                           onDiscard={() => setConfirmDiscardId(item.item_id)}
                           onUnlockItem={() => onUnlockItem(item.item_id)}
                           onUpdateApprovalState={(state, notes) => onUpdateApprovalState(item.item_id, state, notes)}
+                          onUpdateItemContent={(newContent) => onUpdateItemContent(item.item_id, newContent)}
                           onRollbackVersion={(timestamp) => onRollbackVersion(item.item_id, timestamp)}
                           pillarId={pillarId}
                           activeProposalView={activeProposalView}
@@ -3357,6 +3548,7 @@ interface ComplementarySuggestionCardProps {
 const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = ({
   index, suggestion, onConfirm, onIgnore
 }) => {
+  const { t } = useTranslation();
   const [showConfirmBar, setShowConfirmBar] = useState(false);
   const [confirmInput, setConfirmInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -3385,8 +3577,8 @@ const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = 
               {suggestion.section}
             </span>
             {source && (source.author || source.url) && (
-              <span className="text-[10px] font-mono text-[#5A6072] flex items-center gap-1">
-                <span>· {source.author || 'Fuente'}</span>
+              <span className="text-[10px] font-mono text-[#94A3B8] dark:text-[#5A6072] flex items-center gap-1">
+                <span>· {source.author || t('vault_dashboard.suggestions.source_fallback')}</span>
                 {source.description && (
                   <span className="truncate max-w-[360px]">"{source.description}"</span>
                 )}
@@ -3397,7 +3589,7 @@ const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = 
                     rel="noopener noreferrer"
                     className="text-[#00AEEF] hover:underline font-bold ml-1"
                   >
-                    [Fuente]
+                    [{t('vault_dashboard.suggestions.source_fallback')}]
                   </a>
                 )}
               </span>
@@ -3410,7 +3602,7 @@ const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = 
             icon="add_circle"
             onClick={() => setShowConfirmBar((prev) => !prev)}
             variant="ghost"
-            title="Incorporar ítem complementario al pilar"
+            title={t('vault_dashboard.suggestions.add_tooltip')}
             className="text-[#00AEEF] hover:text-[#C68346]"
             disabled={isSubmitting}
           />
@@ -3418,8 +3610,8 @@ const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = 
             icon="text_ad_off"
             onClick={onIgnore}
             variant="ghost"
-            title="Descartar sugerencia"
-            className="text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]"
+            title={t('vault_dashboard.suggestions.discard_tooltip')}
+            className="text-[#94A3B8] dark:text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]"
             disabled={isSubmitting}
           />
         </div>
@@ -3429,7 +3621,7 @@ const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = 
       {showConfirmBar && (
         <div className="mt-3 p-3 bg-[#F8FAFC] dark:bg-[#000000] border border-[#C68346] space-y-2 w-full text-left rounded-none">
           <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-            ¿Incorporar este ítem complementario al listado del pilar? Escribe <span className="font-mono text-[#C68346]">"ACTUALIZAR"</span> para confirmar:
+            {t('vault_dashboard.suggestions.confirm_add_prompt')}
           </p>
           <div className="flex gap-2">
             <input
@@ -3457,7 +3649,7 @@ const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = 
               }}
               className="px-3 py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold disabled:opacity-40 text-[11px] rounded-none border-0 cursor-pointer"
             >
-              {isSubmitting ? 'Actualizando...' : 'Confirmar'}
+              {isSubmitting ? t('common.saving') : t('common.confirm')}
             </button>
             <button
               type="button"
@@ -3467,7 +3659,7 @@ const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = 
               }}
               className="px-3 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[11px] rounded-none cursor-pointer"
             >
-              Cancelar
+              {t('common.cancel')}
             </button>
           </div>
         </div>
@@ -3500,6 +3692,8 @@ interface PillarTabContentProps {
   isSealed: boolean;
   onUnlockItem: (itemId: string) => Promise<void>;
   onUpdateApprovalState: (itemId: string, state: EstadoAprobacion, notes?: string) => Promise<void>;
+  onUpdateItemContent: (itemId: string, newContent: string) => Promise<void>;
+  onBulkApprovePillar: (pillarId: PillarId) => Promise<void>;
   onRollbackVersion: (itemId: string, timestamp: string) => Promise<void>;
 
   // Nuevos:
@@ -3522,7 +3716,7 @@ interface PillarTabContentProps {
 
 const PillarTabContent: React.FC<PillarTabContentProps> = ({
   pillarMeta, pillar, catalogId, canCurateAI, onItemize, onHuntItem, onAiAssistItem, onApplyAssistItem, onCreateItem, itemizing, huntProgressByItem, huntStageByItem, assistingItemId, expandedItems, onToggleExpand, onDiscardItem, onReactivateItem,
-  isSealed, onUnlockItem, onUpdateApprovalState, onRollbackVersion,
+  isSealed, onUnlockItem, onUpdateApprovalState, onUpdateItemContent, onBulkApprovePillar, onRollbackVersion,
   activeProposalView, onSetProposalView, onDecideProposal, onEvolveItemByType,
   resolveItemSymbology, onOpenStudio, prerequisitePillar, onNavigateToPillar
 }) => {
@@ -3537,6 +3731,9 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
   const [isCorrecting, setIsCorrecting] = useState(false);
   const [correctionResult, setCorrectionResult] = useState<{ title: string; rationale: string; section: string } | null>(null);
   const [registerConfirmation, setRegisterConfirmation] = useState('');
+  const [showBulkApproveConfirm, setShowBulkApproveConfirm] = useState(false);
+  const [bulkApproveConfirmText, setBulkApproveConfirmText] = useState('');
+  const [isBulkApproving, setIsBulkApproving] = useState(false);
 
   // Estados para búsqueda complementaria
   const [isComplementarySearching, setIsComplementarySearching] = useState(false);
@@ -3562,7 +3759,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
         }
       } else {
         const json = await response.json();
-        toast.update(toastId, { render: `Error: ${json.error || t('vault_dashboard.status.failed_to_search_suggestions', 'Error al obtener sugerencias.')}`, type: 'error', isLoading: false, autoClose: 5000 });
+        toast.update(toastId, { render: `${t('common.error')}: ${json.error || t('vault_dashboard.status.failed_to_search_suggestions', 'Error al obtener sugerencias.')}`, type: 'error', isLoading: false, autoClose: 5000 });
       }
     } catch (_err) {
       toast.update(toastId, { render: t('vault_dashboard.status.network_error'), type: 'error', isLoading: false, autoClose: 5000 });
@@ -3591,7 +3788,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
         toast.update(toastId, { render: t('vault_dashboard.status.suggestion_discarded', 'Sugerencia descartada y archivada.'), type: 'success', isLoading: false, autoClose: 3000 });
       } else {
         const json = await response.json();
-        toast.update(toastId, { render: `Error: ${json.error || t('vault_dashboard.status.failed_to_discard_suggestion', 'Error al descartar sugerencia.')}`, type: 'error', isLoading: false, autoClose: 5000 });
+        toast.update(toastId, { render: `${t('common.error')}: ${json.error || t('vault_dashboard.status.failed_to_discard_suggestion', 'Error al descartar sugerencia.')}`, type: 'error', isLoading: false, autoClose: 5000 });
       }
     } catch (_err) {
       toast.update(toastId, { render: t('vault_dashboard.status.network_error'), type: 'error', isLoading: false, autoClose: 5000 });
@@ -3610,6 +3807,9 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
   const isStuck = itemizeStatus === 'GENERATING' && (startedTime <= 0 || Date.now() - startedTime > 45 * 1000);
   const isItemizing = itemizing || (itemizeStatus === 'GENERATING' && !isStuck);
   const completedItems = activeItems.filter(it => it.content_status === 'COMPLETADO').length;
+  const unapprovedCompletedCount = activeItems.filter(
+    (it) => it.content_status === 'COMPLETADO' && !it.is_human_locked
+  ).length;
   const totalItems = activeItems.length;
   const activeHuntsCount = activeItems.filter(
     (it) => it.content_status === 'GENERANDO' || huntProgressByItem[`${pillarMeta.id}:${it.item_id}`] !== undefined
@@ -3639,8 +3839,8 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                   expandedItems.forEach((id) => onToggleExpand(id));
                 }
               }}
-              title={activeProposalView ? 'Volver al contenido del ítem' : 'Volver al listado de ítems'}
-              aria-label={activeProposalView ? 'Volver al contenido del ítem' : 'Volver al listado de ítems'}
+              title={activeProposalView ? t('vault_dashboard.proposals.back_to_content') : t('vault_dashboard.actions.back_to_list')}
+              aria-label={activeProposalView ? t('vault_dashboard.proposals.back_to_content') : t('vault_dashboard.actions.back_to_list')}
               className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none"
             >
               <span className="material-symbols-outlined !text-[20px]">arrow_back</span>
@@ -3657,12 +3857,15 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
               onClick={() => onItemize(pillarMeta.id)}
               title={
                 isSequenceBlocked && prerequisitePillar
-                  ? `Debe itemizar primero ${prerequisitePillar.stepCode} ${prerequisitePillar.label}`
-                  : 'Completar estructura elástica del pilar conservando los capítulos ya ingeridos'
+                  ? t('vault_dashboard.pillar_flow.must_itemize_prereq', {
+                      step: prerequisitePillar.stepCode,
+                      label: t(`vault_dashboard.pillars.${prerequisitePillar.id}`, prerequisitePillar.label),
+                    })
+                  : t('vault_dashboard.pillar_flow.complete_structure_tooltip')
               }
               className="px-[13px] py-[8px] border border-[#C68346] bg-transparent hover:bg-[#C68346] text-[#C68346] hover:text-[#FFFFFF] text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Completar Estructura del Pilar
+              {t('vault_dashboard.pillar_flow.complete_structure_btn')}
             </button>
           )}
 
@@ -3673,12 +3876,15 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
               onClick={() => onItemize(pillarMeta.id)}
               title={
                 prerequisitePillar
-                  ? `El pilar precedente (${prerequisitePillar.stepCode} ${prerequisitePillar.label}) evolucionó estructuralmente. Sincronizar capítulos faltantes sin perder avances.`
-                  : 'Sincronizar estructura con pilar precedente'
+                  ? t('vault_dashboard.pillar_flow.sync_prereq_evolved_tooltip', {
+                      step: prerequisitePillar.stepCode,
+                      label: t(`vault_dashboard.pillars.${prerequisitePillar.id}`, prerequisitePillar.label),
+                    })
+                  : t('vault_dashboard.pillar_flow.sync_prereq_btn')
               }
               className="px-[13px] py-[8px] border border-[#00AEEF] bg-transparent hover:bg-[#00AEEF] text-[#00AEEF] hover:text-[#FFFFFF] text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Sincronizar con Pilar Precedente
+              {t('vault_dashboard.pillar_flow.sync_prereq_btn')}
             </button>
           )}
 
@@ -3696,11 +3902,27 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                   strokeWidth={2.5}
                   indeterminate
                   tone="copper"
-                  ariaLabel="Buscando ítems complementarios"
+                  ariaLabel={t('vault_dashboard.actions.search_complementary_items')}
                 />
               ) : (
                 <span className="material-symbols-outlined !text-[18px]">autorenew</span>
               )}
+            </button>
+          )}
+
+          {canCurateAI && unapprovedCompletedCount > 0 && expandedItems.size === 0 && (
+            <button
+              type="button"
+              disabled={isSealed || isBulkApproving}
+              onClick={() => {
+                setBulkApproveConfirmText('');
+                setShowBulkApproveConfirm((prev) => !prev);
+              }}
+              title={t('vault_dashboard.actions.bulk_approve_pillar', { count: unapprovedCompletedCount })}
+              aria-label={t('vault_dashboard.actions.bulk_approve_pillar', { count: unapprovedCompletedCount })}
+              className="bg-transparent border-0 outline-none p-1 text-[#00AEEF] hover:text-[#C68346] transition-colors cursor-pointer disabled:opacity-40"
+            >
+              <span className="material-symbols-outlined !text-[18px]">done_all</span>
             </button>
           )}
 
@@ -3731,7 +3953,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                 title={t('vault_dashboard.actions.create_item', 'Crear ítem')}
                 className={`bg-transparent border-0 outline-none p-1 shrink-0 transition-colors cursor-pointer ${newManualItemTitle.trim() && !isSealed
                   ? 'text-[#C68346] hover:text-[#b07239]'
-                  : 'text-[#5A6072] opacity-40 cursor-not-allowed'
+                  : 'text-[#94A3B8] dark:text-[#5A6072] opacity-40 cursor-not-allowed'
                   }`}
               >
                 <span className="material-symbols-outlined !text-[20px]">add_circle</span>
@@ -3744,7 +3966,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
         <div className="flex items-center gap-[13px] shrink-0 ml-auto">
           {activeHuntsCount > 0 && (
             <span className="text-[10px] font-mono tabular-nums font-bold uppercase tracking-wider text-[#C68346] border border-[#C68346]/40 px-[8px] py-[4px] select-none">
-              SEGUNDO PLANO ({activeHuntsCount}) · NAVEGACIÓN Y BÚSQUEDAS HABILITADAS
+              {t('vault_dashboard.pillar_flow.background_tasks_badge', { count: activeHuntsCount })}
             </span>
           )}
           {hasItems && totalItems > 0 && (
@@ -3762,12 +3984,60 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
             </div>
           )}
           {pillar?.itemized_at && (
-            <span className="text-[10px] text-[#5A6072] font-mono tabular-nums">
+            <span className="text-[10px] text-[#94A3B8] dark:text-[#5A6072] font-mono tabular-nums">
               {new Date(pillar.itemized_at).toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' })}
             </span>
           )}
         </div>
       </div>
+
+      {canCurateAI && showBulkApproveConfirm && expandedItems.size === 0 && (
+        <div className="shrink-0 px-5 py-3 border-b border-[#00AEEF] bg-[#F8FAFC] dark:bg-[#07090D] flex flex-wrap items-center justify-between gap-[13px]">
+          <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+            {t('vault_dashboard.actions.bulk_approve_confirm_prompt', { count: unapprovedCompletedCount })}
+          </p>
+          <div className="flex items-center gap-[8px]">
+            <input
+              type="text"
+              value={bulkApproveConfirmText}
+              onChange={(e) => setBulkApproveConfirmText(e.target.value)}
+              placeholder="ACTUALIZAR"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={isBulkApproving}
+              className="px-[8px] py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+            />
+            <button
+              type="button"
+              disabled={isBulkApproving || bulkApproveConfirmText.trim() !== 'ACTUALIZAR'}
+              onClick={async () => {
+                setIsBulkApproving(true);
+                try {
+                  await onBulkApprovePillar(pillarMeta.id);
+                  setShowBulkApproveConfirm(false);
+                  setBulkApproveConfirmText('');
+                } finally {
+                  setIsBulkApproving(false);
+                }
+              }}
+              className="px-[13px] py-1 bg-[#00AEEF] text-[#FFFFFF] text-[10px] font-bold uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
+            >
+              {isBulkApproving ? t('common.saving') : t('common.confirm')}
+            </button>
+            <button
+              type="button"
+              disabled={isBulkApproving}
+              onClick={() => {
+                setShowBulkApproveConfirm(false);
+                setBulkApproveConfirmText('');
+              }}
+              className="px-[13px] py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+            >
+              {t('common.cancel')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* M3 Linear Progress Indeterminate durante itemización */}
       {isItemizing && (
@@ -3775,7 +4045,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
           indeterminate
           tone="copper"
           className="w-full shrink-0"
-          ariaLabel="Itemizando estructura del pilar"
+          ariaLabel={t('vault_dashboard.pillar_flow.itemizing_aria')}
         />
       )}
 
@@ -3825,20 +4095,20 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
           {canCurateAI && showCreateForm && (
             <div className="mb-6 p-4 border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] rounded-none shadow-none">
               <h3 className="text-[12px] font-bold uppercase tracking-wider text-[#C68346] mb-3 font-atkinson">
-                Crear Nuevo Ítem Manualmente
+                {t('vault_dashboard.manual_create.title')}
               </h3>
 
               {!correctionResult ? (
                 <div className="space-y-3">
                   <div>
                     <label className="block text-[10px] font-bold text-[#475569] dark:text-[#8A93A6] uppercase tracking-widest mb-1">
-                      Título del ítem
+                      {t('vault_dashboard.manual_create.item_title_label')}
                     </label>
                     <input
                       type="text"
                       value={createFormTitle}
                       onChange={(e) => setCreateFormTitle(e.target.value)}
-                      placeholder="Escriba el nombre del ítem..."
+                      placeholder={t('vault_dashboard.manual_create.item_title_placeholder')}
                       autoComplete="off"
                       spellCheck={false}
                       className="w-full h-9 px-3 text-[12px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[#0F172A] dark:text-[#F3F4F6] font-atkinson rounded-none"
@@ -3847,12 +4117,12 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
 
                   <div>
                     <label className="block text-[10px] font-bold text-[#475569] dark:text-[#8A93A6] uppercase tracking-widest mb-1">
-                      Breve descripción de contenidos (Rationale)
+                      {t('vault_dashboard.manual_create.rationale_label')}
                     </label>
                     <textarea
                       value={createFormRationale}
                       onChange={(e) => setCreateFormRationale(e.target.value)}
-                      placeholder="Escriba una breve descripción..."
+                      placeholder={t('vault_dashboard.manual_create.rationale_placeholder')}
                       autoComplete="off"
                       spellCheck={false}
                       rows={3}
@@ -3870,7 +4140,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                       }}
                       className="px-3 py-1.5 text-[11px] font-bold bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] cursor-pointer rounded-none"
                     >
-                      Cancelar
+                      {t('common.cancel')}
                     </button>
                     <button
                       type="button"
@@ -3888,51 +4158,52 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                               pillarId: pillarMeta.id,
                             })
                           });
+                          const defaultSection = t('vault_dashboard.manual_create.default_section');
                           if (response.ok) {
                             const data = await response.json();
                             if (data.corrected) {
                               setCorrectionResult({
                                 title: data.corrected.title || createFormTitle,
                                 rationale: data.corrected.rationale || createFormRationale,
-                                section: data.corrected.section || 'ESPECIFICACIÓN TÉCNICA',
+                                section: data.corrected.section || defaultSection,
                               });
                             } else {
-                              setCorrectionResult({ title: createFormTitle, rationale: createFormRationale, section: 'ESPECIFICACIÓN TÉCNICA' });
+                              setCorrectionResult({ title: createFormTitle, rationale: createFormRationale, section: defaultSection });
                             }
                           } else {
-                            setCorrectionResult({ title: createFormTitle, rationale: createFormRationale, section: 'ESPECIFICACIÓN TÉCNICA' });
+                            setCorrectionResult({ title: createFormTitle, rationale: createFormRationale, section: defaultSection });
                           }
                         } catch (_err) {
-                          setCorrectionResult({ title: createFormTitle, rationale: createFormRationale, section: 'ESPECIFICACIÓN TÉCNICA' });
+                          setCorrectionResult({ title: createFormTitle, rationale: createFormRationale, section: t('vault_dashboard.manual_create.default_section') });
                         } finally {
                           setIsCorrecting(false);
                         }
                       }}
                       className="px-3 py-1.5 text-[11px] font-bold bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] disabled:opacity-50 border-0 cursor-pointer rounded-none"
                     >
-                      {isCorrecting ? 'Validando con IA...' : 'Validar con IA'}
+                      {isCorrecting ? t('vault_dashboard.manual_create.validating_ai') : t('vault_dashboard.manual_create.validate_ai')}
                     </button>
                   </div>
                 </div>
               ) : (
                 <div className="space-y-4">
                   <div className="p-3 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] space-y-3 rounded-none">
-                    <p className="text-[11px] font-bold text-[#C68346] uppercase tracking-wider mb-2">Revisión de IA (Original vs Sugerido)</p>
+                    <p className="text-[11px] font-bold text-[#C68346] uppercase tracking-wider mb-2">{t('vault_dashboard.manual_create.review_header')}</p>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-1">
-                        <p className="text-[9px] font-bold text-[#5A6072] uppercase">Título Original</p>
+                        <p className="text-[9px] font-bold text-[#94A3B8] dark:text-[#5A6072] uppercase">{t('vault_dashboard.manual_create.original_title')}</p>
                         <p className="text-[11px] line-through text-[#475569] dark:text-[#8A93A6]">{createFormTitle}</p>
-                        <p className="text-[9px] font-bold text-[#00AEEF] uppercase mt-2">Título Sugerido</p>
+                        <p className="text-[9px] font-bold text-[#00AEEF] uppercase mt-2">{t('vault_dashboard.manual_create.suggested_title')}</p>
                         <p className="text-[12px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">{correctionResult.title}</p>
-                        <p className="text-[9px] font-bold text-[#00AEEF] uppercase mt-2">Sección Técnica Asignada</p>
+                        <p className="text-[9px] font-bold text-[#00AEEF] uppercase mt-2">{t('vault_dashboard.manual_create.assigned_section')}</p>
                         <p className="text-[11px] font-mono font-bold text-[#C68346]">{correctionResult.section}</p>
                       </div>
 
                       <div className="space-y-1">
-                        <p className="text-[9px] font-bold text-[#5A6072] uppercase">Descripción Original</p>
+                        <p className="text-[9px] font-bold text-[#94A3B8] dark:text-[#5A6072] uppercase">{t('vault_dashboard.manual_create.original_description')}</p>
                         <p className="text-[11px] line-through text-[#475569] dark:text-[#8A93A6]">{createFormRationale}</p>
-                        <p className="text-[9px] font-bold text-[#00AEEF] uppercase mt-2">Descripción Sugerida</p>
+                        <p className="text-[9px] font-bold text-[#00AEEF] uppercase mt-2">{t('vault_dashboard.manual_create.suggested_description')}</p>
                         <p className="text-[11px] text-[#0F172A] dark:text-[#F3F4F6]">{correctionResult.rationale}</p>
                       </div>
                     </div>
@@ -3940,7 +4211,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
 
                   <div className="space-y-2">
                     <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                      Escriba <span className="font-mono text-[#C68346]">"ACTUALIZAR"</span> para autorizar el ingreso del nuevo ítem:
+                      {t('vault_dashboard.manual_create.confirm_prompt')}
                     </p>
                     <div className="flex gap-2">
                       <input
@@ -3959,7 +4230,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                           await onCreateItem(
                             pillarMeta.id,
                             correctionResult.title,
-                            correctionResult.section || 'ESPECIFICACIÓN TÉCNICA',
+                            correctionResult.section || t('vault_dashboard.manual_create.default_section'),
                             correctionResult.rationale
                           );
                           setShowCreateForm(false);
@@ -3970,7 +4241,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                         }}
                         className="px-4 h-9 bg-[#C68346] hover:bg-[#b0743e] text-[#FFFFFF] font-bold disabled:opacity-40 text-[11px] transition-colors border-0 cursor-pointer rounded-none"
                       >
-                        Confirmar y Actualizar
+                        {t('vault_dashboard.manual_create.confirm_btn')}
                       </button>
                       <button
                         type="button"
@@ -3980,7 +4251,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                         }}
                         className="px-4 h-9 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[11px] transition-colors cursor-pointer rounded-none"
                       >
-                        Volver
+                        {t('actions.back')}
                       </button>
                     </div>
                   </div>
@@ -4008,6 +4279,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                 isSealed={isSealed}
                 onUnlockItem={onUnlockItem}
                 onUpdateApprovalState={onUpdateApprovalState}
+                onUpdateItemContent={onUpdateItemContent}
                 onRollbackVersion={onRollbackVersion}
                 pillarId={pillarMeta.id}
                 activeProposalView={activeProposalView}
@@ -4030,7 +4302,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
             <M3Button
               variant="ghost"
               onClick={() => setShowArchive(!showArchive)}
-              className="text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]"
+              className="text-[#94A3B8] dark:text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]"
             >
               {t('vault_dashboard.discarded_items_archive')} (<span className="font-mono tabular-nums">{discardedItems.length}</span>)
             </M3Button>
@@ -4053,6 +4325,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                   isSealed={isSealed}
                   onUnlockItem={async () => { }}
                   onUpdateApprovalState={async () => { }}
+                  onUpdateItemContent={async () => { }}
                   onRollbackVersion={async () => { }}
                   pillarId={pillarMeta.id}
                   activeProposalView={null}
@@ -4076,7 +4349,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                   strokeWidth={3}
                   indeterminate
                   tone="copper"
-                  ariaLabel="En proceso"
+                  ariaLabel={t('vault_dashboard.pillar_flow.in_progress_aria')}
                 />
                 {canCurateAI && !itemizing && (
                   <button
@@ -4085,21 +4358,21 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                     onClick={() => onItemize(pillarMeta.id)}
                     className="mt-[8px] bg-transparent border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-[#FFFFFF] px-[21px] py-[8px] text-[10px] font-bold uppercase tracking-wider font-mono transition-colors rounded-none shadow-none cursor-pointer"
                   >
-                    Reintentar Itemización del Pilar
+                    {t('vault_dashboard.pillar_flow.retry_itemize_btn')}
                   </button>
                 )}
               </div>
             ) : canCurateAI ? (
               isSequenceBlocked && prerequisitePillar ? (
                 <div className="flex flex-col items-center max-w-lg p-[21px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-center gap-[13px] rounded-none shadow-none">
-                  <span className="material-symbols-outlined !text-[24px] text-[#5A6072]">lock</span>
+                  <span className="material-symbols-outlined !text-[24px] text-[#94A3B8] dark:text-[#5A6072]">lock</span>
                   <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6] uppercase tracking-widest font-mono">
-                    SECUENCIA LÓGICA DE 5 PILARES BLOQUEADA
+                    {t('vault_dashboard.pillar_flow.sequence_locked_title')}
                   </p>
                   <p className="text-[12px] text-[#475569] dark:text-[#8A93A6] leading-relaxed">
-                    Para evitar estructuras vacías y heredar la ontología confirmada del activo, debe itemizar primero el pilar precedente:{' '}
+                    {t('vault_dashboard.pillar_flow.sequence_locked_desc')}{' '}
                     <span className="font-bold font-mono text-[#C68346]">
-                      [{prerequisitePillar.stepCode} · {prerequisitePillar.label}]
+                      [{prerequisitePillar.stepCode} · {t(`vault_dashboard.pillars.${prerequisitePillar.id}`, prerequisitePillar.label)}]
                     </span>.
                   </p>
                   {onNavigateToPillar && (
@@ -4108,7 +4381,10 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                       onClick={() => onNavigateToPillar(prerequisitePillar.id)}
                       className="px-[21px] py-[8px] border border-[#C68346] bg-transparent hover:bg-[#C68346] text-[#C68346] hover:text-[#FFFFFF] text-[10px] font-bold uppercase tracking-wider font-mono rounded-none shadow-none transition-colors cursor-pointer"
                     >
-                      IR A {prerequisitePillar.stepCode} · {prerequisitePillar.label.toUpperCase()}
+                      {t('vault_dashboard.pillar_flow.go_to_prereq_btn', {
+                        step: prerequisitePillar.stepCode,
+                        label: t(`vault_dashboard.pillars.${prerequisitePillar.id}`, prerequisitePillar.label).toUpperCase(),
+                      })}
                     </button>
                   )}
                 </div>
@@ -4130,10 +4406,10 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                     <div className="flex flex-col items-center max-w-md px-6 text-center">
                       <span className="material-symbols-outlined !text-xl text-[#C68346] mb-1">warning</span>
                       <p className="text-[10px] font-bold text-[#C68346] uppercase tracking-widest mb-1">
-                        Proceso interrumpido
+                        {t('vault_dashboard.pillar_flow.interrupted_title')}
                       </p>
                       <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] leading-relaxed font-medium">
-                        El proceso de itemización anterior falló o se interrumpió. Puedes reiniciarlo.
+                        {t('vault_dashboard.pillar_flow.interrupted_desc')}
                       </p>
                     </div>
                   )}
@@ -4145,19 +4421,19 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                     className="bg-transparent border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-[#FFFFFF] px-[21px] py-[13px] text-[11px] font-bold uppercase tracking-wider transition-colors rounded-none shadow-none cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
                     title={
                       isStuck
-                        ? 'Proceso interrumpido — Reiniciar itemización'
+                        ? t('vault_dashboard.pillar_flow.restart_itemize_btn')
                         : pillar?.itemize_status === 'ERROR'
-                          ? 'Reintentar itemización'
-                          : 'Iniciar itemización del pilar'
+                          ? t('vault_dashboard.pillar_flow.retry_itemize_btn')
+                          : t('vault_dashboard.pillar_flow.start_itemize_btn')
                     }
                   >
-                    {isStuck ? 'Reiniciar Itemización del Pilar' : 'Itemizar Estructura del Pilar'}
+                    {isStuck ? t('vault_dashboard.pillar_flow.restart_itemize_btn') : t('vault_dashboard.pillar_flow.start_itemize_btn')}
                   </button>
                 </>
               )
             ) : (
-              <p className="text-[13px] text-[#5A6072]">
-                [Información técnica no declarada en ficha]
+              <p className="text-[13px] text-[#94A3B8] dark:text-[#5A6072]">
+                {t('opermaq_domains.not_declared')}
               </p>
             )}
           </div>
@@ -4191,6 +4467,9 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
   const [studioTab, setStudioTab] = useState<StudioTabId>(canCurateAI ? 'INGESTION' : 'MANUAL_PUBLISHER');
   const [showSymbologyInfo, setShowSymbologyInfo] = useState<boolean>(false);
   const [showCostMatrixInfo, setShowCostMatrixInfo] = useState<boolean>(false);
+  const [showSealConfirm, setShowSealConfirm] = useState<boolean>(false);
+  const [sealConfirmText, setSealConfirmText] = useState<string>('');
+  const [isTogglingSeal, setIsTogglingSeal] = useState<boolean>(false);
   const initializedVaultIdsRef = useRef<Set<string>>(new Set());
   const tenantOverridesRef = useRef<Record<string, any> | undefined>(undefined);
   const openStudio = useCallback((tab: StudioTabId) => {
@@ -4344,7 +4623,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         contexto_operativo: effectiveOverrides?.contexto_operativo || data?.contexto_operativo || [],
         caracteristicas_principales: data?.caracteristicas_principales || [],
         physical_traits: data?.physical_traits || undefined,
-        version: effectiveOverrides?.version || data?.version || 'ESTÁNDAR',
+        version: effectiveOverrides?.version || data?.version || t('vault_dashboard.labels.standard_version'),
         official_url: effectiveOverrides?.official_url || data?.official_url || '',
         foto_url: effectiveOverrides?.foto_url || data?.foto_url || '',
         foto_vlm_audit_version:
@@ -4638,7 +4917,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
             void refreshHydratedVault(catalogId);
           } else if (data.status === 'FAILED' || data.status === 'ERROR') {
             const errMsg = data.error || t('vault_dashboard.status.async_research_failed');
-            toast.error(`Error: ${errMsg}`, {
+            toast.error(`${t('common.error')}: ${errMsg}`, {
               autoClose: 5000,
               style: { borderRadius: '0', boxShadow: 'none' },
             });
@@ -4713,7 +4992,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
           json.code === 'SECUENCIA_PILAR_BLOQUEADA' ||
           json.error === 'PREREQUISITE_PILLAR_NOT_ITEMIZED')
       ) {
-        toast.update(toastId, { ...resetToastStyle, render: json.message || 'Debe itemizar el pilar precedente en la secuencia lógica.', type: 'warning', isLoading: false, autoClose: 6000 });
+        toast.update(toastId, { ...resetToastStyle, render: json.message || t('vault_dashboard.pillar_flow.sequence_blocked_toast'), type: 'warning', isLoading: false, autoClose: 6000 });
       } else if (res.status === 422 && json.error === 'PERFIL_INCOMPLETO') {
         toast.update(toastId, { ...resetToastStyle, render: `${t('vault_dashboard.status.incomplete_profile', 'Perfil incompleto')}: ${(json.missingFields ?? []).join(', ')}`, type: 'warning', isLoading: false, autoClose: 6000 });
       } else if (res.status === 429) {
@@ -4766,7 +5045,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       }
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      toast.error(`Error: ${errorMessage}`, {
+      toast.error(`${t('common.error')}: ${errorMessage}`, {
         autoClose: 5000,
         style: { borderRadius: '0', boxShadow: 'none' },
       });
@@ -4799,7 +5078,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         toast.update(toastId, { render: t('vault_dashboard.status.proposal_generated'), type: 'success', isLoading: false, autoClose: 2000 });
         return json as AiAssistResponse;
       } else {
-        toast.update(toastId, { render: `Error: ${json.error || t('vault_dashboard.status.assistant_failed')}`, type: 'error', isLoading: false, autoClose: 5000 });
+        toast.update(toastId, { render: `${t('common.error')}: ${json.error || t('vault_dashboard.status.assistant_failed')}`, type: 'error', isLoading: false, autoClose: 5000 });
         return null;
       }
     } catch (_err) {
@@ -4815,14 +5094,14 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       const userEmail = effectiveCuratorEmail;
       const res = await authFetch(`${API_BASE_URL}/vault/apply-assist-proposal`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, finalContent, userEmail, intent }),
+        body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, finalContent, userEmail, intent, confirmWord: 'ACTUALIZAR' }),
       });
       if (res.ok) {
         toast.update(toastId, { render: t('vault_dashboard.status.changes_persisted_success'), type: 'success', isLoading: false, autoClose: 3000 });
         void refreshHydratedVault(catalogId);
       } else {
         const json = await res.json();
-        toast.update(toastId, { render: `Error: ${json.error || t('vault_dashboard.status.could_not_apply')}`, type: 'error', isLoading: false, autoClose: 5000 });
+        toast.update(toastId, { render: `${t('common.error')}: ${json.error || t('vault_dashboard.status.could_not_apply')}`, type: 'error', isLoading: false, autoClose: 5000 });
       }
     } catch (_err) {
       toast.update(toastId, { render: t('vault_dashboard.status.network_error'), type: 'error', isLoading: false, autoClose: 5000 });
@@ -4851,7 +5130,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         void refreshHydratedVault(catalogId);
       } else {
         const json = await res.json();
-        toast.update(toastId, { render: `Error: ${json.error || t('vault_dashboard.status.failed_to_create')}`, type: 'error', isLoading: false, autoClose: 5000 });
+        toast.update(toastId, { render: `${t('common.error')}: ${json.error || t('vault_dashboard.status.failed_to_create')}`, type: 'error', isLoading: false, autoClose: 5000 });
       }
     } catch (_err) {
       toast.update(toastId, { render: t('vault_dashboard.status.network_error'), type: 'error', isLoading: false, autoClose: 5000 });
@@ -4880,7 +5159,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         void refreshHydratedVault(catalogId);
       } else {
         const json = await res.json();
-        toast.update(toastId, { render: `Error: ${json.error ?? t('vault_dashboard.status.unknown_failure')}`, type: 'error', isLoading: false, autoClose: 5000 });
+        toast.update(toastId, { render: `${t('common.error')}: ${json.error ?? t('vault_dashboard.status.unknown_failure')}`, type: 'error', isLoading: false, autoClose: 5000 });
       }
     } catch (_e) {
       toast.update(toastId, { render: t('vault_dashboard.status.network_error_discard_item'), type: 'error', isLoading: false, autoClose: 5000 });
@@ -4902,7 +5181,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         void refreshHydratedVault(catalogId);
       } else {
         const json = await res.json();
-        toast.update(toastId, { render: `Error: ${json.error ?? t('vault_dashboard.status.unknown_failure')}`, type: 'error', isLoading: false, autoClose: 5000 });
+        toast.update(toastId, { render: `${t('common.error')}: ${json.error ?? t('vault_dashboard.status.unknown_failure')}`, type: 'error', isLoading: false, autoClose: 5000 });
       }
     } catch (_e) {
       toast.update(toastId, { render: t('vault_dashboard.status.network_error_reactivate_item'), type: 'error', isLoading: false, autoClose: 5000 });
@@ -4918,14 +5197,14 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     if (!canCurateAI || !catalogId) return;
     const toastId = toast.loading(
       decision === 'APROBADO'
-        ? 'Aprobando e integrando propuesta al contenido del ítem…'
-        : 'Eliminando propuesta…'
+        ? t('vault_dashboard.status.deciding_proposal_approve')
+        : t('vault_dashboard.status.deciding_proposal_delete')
     );
     try {
       const res = await authFetch(`${API_BASE_URL}/vault/decide-proposal`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, proposalId, decision }),
+        body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, proposalId, decision, confirmWord: 'ACTUALIZAR' }),
       });
       const json = await res.json().catch(() => ({}));
       if (res.ok && json.success) {
@@ -4985,8 +5264,8 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         toast.update(toastId, {
           render:
             decision === 'APROBADO'
-              ? 'Propuesta aprobada e integrada en el contenido del ítem.'
-              : 'Propuesta eliminada.',
+              ? t('vault_dashboard.status.proposal_approved_success')
+              : t('vault_dashboard.status.proposal_deleted_success'),
           type: 'success',
           isLoading: false,
           autoClose: 3000,
@@ -4994,16 +5273,16 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         void refreshHydratedVault(catalogId);
       } else {
         toast.update(toastId, {
-          render: `Error: ${json.error || 'No se pudo registrar la decisión.'}`,
+          render: `${t('common.error')}: ${json.error || t('vault_dashboard.status.decide_proposal_failed')}`,
           type: 'error',
           isLoading: false,
           autoClose: 5000,
         });
       }
     } catch (_e) {
-      toast.update(toastId, { render: 'Error de red al registrar decisión.', type: 'error', isLoading: false, autoClose: 5000 });
+      toast.update(toastId, { render: t('vault_dashboard.status.network_error'), type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [canCurateAI, catalogId, activeProposalView, refreshHydratedVault]);
+  }, [canCurateAI, catalogId, activeProposalView, refreshHydratedVault, t]);
 
   const handleEvolveItemByType = useCallback(async (
     pillarId: PillarId,
@@ -5011,12 +5290,12 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     filterType: 'NUEVO' | 'CONFLICTO'
   ) => {
     if (!canCurateAI || !catalogId) return;
-    const toastId = toast.loading(`Integrando propuestas aprobadas (${filterType}) en el contenido…`);
+    const toastId = toast.loading(t('vault_dashboard.status.evolving_item', { type: filterType }));
     try {
       const res = await authFetch(`${API_BASE_URL}/vault/evolve-item`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, filterType }),
+        body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, filterType, confirmWord: 'ACTUALIZAR' }),
       });
       const json = await res.json().catch(() => ({}));
       if (res.ok && json.success) {
@@ -5049,84 +5328,162 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
           };
         });
         setActiveProposalView(null);
-        toast.update(toastId, { render: 'Ítem actualizado con los hallazgos aprobados.', type: 'success', isLoading: false, autoClose: 3000 });
+        toast.update(toastId, { render: t('vault_dashboard.status.evolve_item_success'), type: 'success', isLoading: false, autoClose: 3000 });
         void refreshHydratedVault(catalogId);
       } else {
-        toast.update(toastId, { render: `Error: ${json.error || 'No se pudo evolucionar la redacción.'}`, type: 'error', isLoading: false, autoClose: 5000 });
+        toast.update(toastId, { render: `${t('common.error')}: ${json.error || t('vault_dashboard.status.evolve_item_failed')}`, type: 'error', isLoading: false, autoClose: 5000 });
       }
     } catch (_e) {
-      toast.update(toastId, { render: 'Error de red al evolucionar ítem.', type: 'error', isLoading: false, autoClose: 5000 });
+      toast.update(toastId, { render: t('vault_dashboard.status.network_error'), type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [canCurateAI, catalogId, refreshHydratedVault]);
+  }, [canCurateAI, catalogId, refreshHydratedVault, t]);
 
   const handleUnlockItem = useCallback(async (pillarId: PillarId, itemId: string) => {
     if (!canCurateAI || !catalogId) return;
-    const toastId = toast.loading('Desbloqueando ítem…');
+    const toastId = toast.loading(t('vault_dashboard.status.unlocking_item'));
     try {
       const res = await authFetch(`${API_BASE_URL}/vault/unlock-item`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId }),
+        body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, confirmWord: 'ACTUALIZAR' }),
       });
       if (res.ok) {
-        toast.update(toastId, { render: 'Ítem desbloqueado.', type: 'success', isLoading: false, autoClose: 3000 });
+        toast.update(toastId, { render: t('vault_dashboard.status.item_unlocked_success'), type: 'success', isLoading: false, autoClose: 3000 });
         void refreshHydratedVault(catalogId);
       } else {
         const json = await res.json();
-        toast.update(toastId, { render: `Error: ${json.error || 'No se pudo desbloquear el ítem.'}`, type: 'error', isLoading: false, autoClose: 5000 });
+        toast.update(toastId, { render: `${t('common.error')}: ${json.error || t('vault_dashboard.status.unlock_item_failed')}`, type: 'error', isLoading: false, autoClose: 5000 });
       }
     } catch (_e) {
-      toast.update(toastId, { render: 'Error de red al desbloquear.', type: 'error', isLoading: false, autoClose: 5000 });
+      toast.update(toastId, { render: t('vault_dashboard.status.network_error'), type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [canCurateAI, catalogId, refreshHydratedVault]);
+  }, [canCurateAI, catalogId, refreshHydratedVault, t]);
 
   const handleUpdateItemApprovalState = useCallback(async (pillarId: PillarId, itemId: string, nuevo_estado: EstadoAprobacion, review_notes?: string) => {
     if (!canCurateAI || !catalogId) return;
-    const toastId = toast.loading('Actualizando estado de aprobación…');
+    const toastId = toast.loading(t('vault_dashboard.status.updating_approval_state'));
     try {
       const res = await authFetch(`${API_BASE_URL}/vault/update-item-approval-state`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, nuevo_estado, review_notes }),
+        body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, nuevo_estado, review_notes, confirmWord: 'ACTUALIZAR' }),
       });
       if (res.ok) {
-        toast.update(toastId, { render: 'Estado de aprobación actualizado.', type: 'success', isLoading: false, autoClose: 3000 });
+        toast.update(toastId, { render: t('vault_dashboard.status.approval_state_updated'), type: 'success', isLoading: false, autoClose: 3000 });
         void refreshHydratedVault(catalogId);
       } else {
         const json = await res.json();
-        toast.update(toastId, { render: `Error: ${json.error || 'No se pudo actualizar el estado de aprobación.'}`, type: 'error', isLoading: false, autoClose: 5000 });
+        toast.update(toastId, { render: `${t('common.error')}: ${json.error || t('vault_dashboard.status.approval_state_failed')}`, type: 'error', isLoading: false, autoClose: 5000 });
       }
     } catch (_e) {
-      toast.update(toastId, { render: 'Error de red al actualizar estado de aprobación.', type: 'error', isLoading: false, autoClose: 5000 });
+      toast.update(toastId, { render: t('vault_dashboard.status.network_error'), type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [canCurateAI, catalogId, refreshHydratedVault]);
+  }, [canCurateAI, catalogId, refreshHydratedVault, t]);
+
+  const handleUpdateItemContent = useCallback(async (pillarId: PillarId, itemId: string, newContent: string) => {
+    if (!canCurateAI || !catalogId) return;
+    const toastId = toast.loading(t('vault_dashboard.status.applying_changes').concat('…'));
+    try {
+      const res = await authFetch(`${API_BASE_URL}/vault/update-item-content`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, newContent, confirmWord: 'ACTUALIZAR' }),
+      });
+      if (res.ok) {
+        toast.update(toastId, { render: t('vault_dashboard.status.changes_persisted_success'), type: 'success', isLoading: false, autoClose: 3000 });
+        void refreshHydratedVault(catalogId);
+      } else {
+        const json = await res.json().catch(() => ({}));
+        toast.update(toastId, { render: `${t('common.error')}: ${json.error || t('vault_dashboard.status.could_not_apply')}`, type: 'error', isLoading: false, autoClose: 5000 });
+      }
+    } catch (_e) {
+      toast.update(toastId, { render: t('vault_dashboard.status.network_error'), type: 'error', isLoading: false, autoClose: 5000 });
+    }
+  }, [canCurateAI, catalogId, refreshHydratedVault, t]);
+
+  const handleBulkApprovePillar = useCallback(async (pillarId: PillarId) => {
+    if (!canCurateAI || !catalogId) return;
+    const toastId = toast.loading(t('vault_dashboard.status.bulk_approving_pillar'));
+    try {
+      const res = await authFetch(`${API_BASE_URL}/vault/bulk-approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ globalAssetId: catalogId, pillarId, confirmWord: 'ACTUALIZAR' }),
+      });
+      if (res.ok) {
+        toast.update(toastId, { render: t('vault_dashboard.status.bulk_approve_success'), type: 'success', isLoading: false, autoClose: 3000 });
+        void refreshHydratedVault(catalogId);
+      } else {
+        const json = await res.json().catch(() => ({}));
+        toast.update(toastId, { render: `${t('common.error')}: ${json.error || t('vault_dashboard.status.approval_state_failed')}`, type: 'error', isLoading: false, autoClose: 5000 });
+      }
+    } catch (_e) {
+      toast.update(toastId, { render: t('vault_dashboard.status.network_error'), type: 'error', isLoading: false, autoClose: 5000 });
+    }
+  }, [canCurateAI, catalogId, refreshHydratedVault, t]);
+
+  const handleToggleVaultSeal = useCallback(async () => {
+    if (!canCurateAI || !catalogId || sealConfirmText.trim() !== 'ACTUALIZAR' || isTogglingSeal) return;
+    setIsTogglingSeal(true);
+    const isCurrentlySealed = Boolean(catalog?.is_sealed);
+    const endpoint = isCurrentlySealed ? 'unseal' : 'seal';
+    const toastId = toast.loading(
+      isCurrentlySealed ? t('vault_dashboard.status.unsealing_vault') : t('vault_dashboard.status.sealing_vault')
+    );
+    try {
+      const res = await authFetch(`${API_BASE_URL}/vault/${endpoint}/${encodeURIComponent(catalogId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmWord: 'ACTUALIZAR' }),
+      });
+      if (res.ok) {
+        setCatalog((prev) => (prev ? { ...prev, is_sealed: !isCurrentlySealed } : prev));
+        setShowSealConfirm(false);
+        setSealConfirmText('');
+        toast.update(toastId, {
+          render: isCurrentlySealed ? t('vault_dashboard.status.vault_unsealed_success') : t('vault_dashboard.status.vault_sealed_success'),
+          type: 'success',
+          isLoading: false,
+          autoClose: 3000,
+        });
+        void refreshHydratedVault(catalogId);
+      } else {
+        const json = await res.json().catch(() => ({}));
+        toast.update(toastId, { render: `${t('common.error')}: ${json.error || t('vault_dashboard.status.seal_toggle_failed')}`, type: 'error', isLoading: false, autoClose: 5000 });
+      }
+    } catch (_e) {
+      toast.update(toastId, { render: t('vault_dashboard.status.network_error'), type: 'error', isLoading: false, autoClose: 5000 });
+    } finally {
+      setIsTogglingSeal(false);
+    }
+  }, [canCurateAI, catalogId, catalog?.is_sealed, sealConfirmText, isTogglingSeal, refreshHydratedVault, t]);
 
   const handleRollbackItemVersion = useCallback(async (pillarId: PillarId, itemId: string, timestamp: string) => {
     if (!canCurateAI || !catalogId) return;
-    const toastId = toast.loading('Restaurando versión histórica del ítem…');
+    const toastId = toast.loading(t('vault_dashboard.status.restoring_version'));
     try {
       const res = await authFetch(`${API_BASE_URL}/vault/rollback-item-version`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, timestamp }),
+        body: JSON.stringify({ globalAssetId: catalogId, pillarId, itemId, timestamp, confirmWord: 'ACTUALIZAR' }),
       });
       if (res.ok) {
-        toast.update(toastId, { render: 'Versión restaurada.', type: 'success', isLoading: false, autoClose: 3000 });
+        toast.update(toastId, { render: t('vault_dashboard.status.version_restored_success'), type: 'success', isLoading: false, autoClose: 3000 });
         void refreshHydratedVault(catalogId);
       } else {
         const json = await res.json();
-        toast.update(toastId, { render: `Error: ${json.error || 'No se pudo restaurar la versión.'}`, type: 'error', isLoading: false, autoClose: 5000 });
+        toast.update(toastId, { render: `${t('common.error')}: ${json.error || t('vault_dashboard.status.restore_version_failed')}`, type: 'error', isLoading: false, autoClose: 5000 });
       }
     } catch (_e) {
-      toast.update(toastId, { render: 'Error de red al restaurar versión.', type: 'error', isLoading: false, autoClose: 5000 });
+      toast.update(toastId, { render: t('vault_dashboard.status.network_error'), type: 'error', isLoading: false, autoClose: 5000 });
     }
-  }, [canCurateAI, catalogId, refreshHydratedVault]);
+  }, [canCurateAI, catalogId, refreshHydratedVault, t]);
 
   const activePillarMeta = PILLARS.find(p => p.id === activeTab)!;
 
   if (loading) return (
     <div className="h-full w-full bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-center">
-      <M3CircularProgress size={40} strokeWidth={4} indeterminate tone="copper" ariaLabel="Cargando bóveda técnica" />
+      <M3CircularProgress size={40} strokeWidth={4} indeterminate tone="copper" ariaLabel={t('vault_dashboard.labels.loading_vault_aria')} />
     </div>
   );
   if (!catalog) return (
@@ -5155,7 +5512,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
               <span className="text-[12px] text-[#475569] dark:text-[#8A93A6] uppercase tracking-wider">/ {catalog.tipo_equipo}</span>
             )}
             <span className="text-[12px] text-[#475569] dark:text-[#8A93A6] uppercase tracking-wider">
-              / {catalog.categoria_equipo || 'MAQUINARIA'}
+              / {catalog.categoria_equipo || t('vault_dashboard.labels.machinery_default')}
             </span>
           </div>
           {catalog.is_sealed && (
@@ -5166,14 +5523,30 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
           )}
         </div>
 
-        {/* Acciones de Estudio de Ingeniería (Iconos planos: upload_file para Ingesta PDF/ETT · draw para Manuales Ilustrados) */}
+        {/* Acciones de Estudio de Ingeniería (Iconos planos: lock/lock_open · upload_file · draw) */}
         <div className="flex items-center gap-[8px] shrink-0">
           {canCurateAI && (
             <button
               type="button"
+              onClick={() => {
+                setSealConfirmText('');
+                setShowSealConfirm((prev) => !prev);
+              }}
+              title={catalog.is_sealed ? t('vault_dashboard.actions.unseal_vault') : t('vault_dashboard.actions.seal_vault')}
+              aria-label={catalog.is_sealed ? t('vault_dashboard.actions.unseal_vault') : t('vault_dashboard.actions.seal_vault')}
+              className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none shadow-none"
+            >
+              <span className="material-symbols-outlined text-[20px]">
+                {catalog.is_sealed ? 'lock_open' : 'lock'}
+              </span>
+            </button>
+          )}
+          {canCurateAI && (
+            <button
+              type="button"
               onClick={() => openStudio('INGESTION')}
-              title="Ingesta PDF / ETT"
-              aria-label="Ingesta PDF / ETT"
+              title={t('vault_dashboard.actions.ingestion_studio')}
+              aria-label={t('vault_dashboard.actions.ingestion_studio')}
               className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none shadow-none"
             >
               <span className="material-symbols-outlined text-[20px]">upload_file</span>
@@ -5182,14 +5555,55 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
           <button
             type="button"
             onClick={() => openStudio('MANUAL_PUBLISHER')}
-            title="Manuales Ilustrados"
-            aria-label="Manuales Ilustrados"
+            title={t('vault_dashboard.actions.manual_publisher')}
+            aria-label={t('vault_dashboard.actions.manual_publisher')}
             className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none shadow-none"
           >
             <span className="material-symbols-outlined text-[20px]">draw</span>
           </button>
         </div>
       </div>
+
+      {canCurateAI && showSealConfirm && (
+        <div className="no-print shrink-0 px-[21px] py-[8px] border-b border-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D] flex flex-wrap items-center justify-between gap-[13px]">
+          <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+            {catalog.is_sealed
+              ? t('vault_dashboard.actions.confirm_unseal_prompt')
+              : t('vault_dashboard.actions.confirm_seal_prompt')}
+          </p>
+          <div className="flex items-center gap-[8px]">
+            <input
+              type="text"
+              value={sealConfirmText}
+              onChange={(e) => setSealConfirmText(e.target.value)}
+              placeholder="ACTUALIZAR"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={isTogglingSeal}
+              className="px-[8px] py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+            />
+            <button
+              type="button"
+              disabled={isTogglingSeal || sealConfirmText.trim() !== 'ACTUALIZAR'}
+              onClick={() => void handleToggleVaultSeal()}
+              className="px-[13px] py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[10px] font-bold uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
+            >
+              {isTogglingSeal ? t('common.saving') : t('common.confirm')}
+            </button>
+            <button
+              type="button"
+              disabled={isTogglingSeal}
+              onClick={() => {
+                setShowSealConfirm(false);
+                setSealConfirmText('');
+              }}
+              className="px-[13px] py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+            >
+              {t('common.cancel')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── BODY: Columna catálogo + Área de pilares ────────────────────────── */}
       <div className="flex-1 flex min-h-0 overflow-hidden">
@@ -5255,11 +5669,11 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                     }`}
                   title={
                     isFullyCaptured
-                      ? `${t(`vault_dashboard.pillars.${p.id}`, p.label)} — Contenidos 100% capturados`
+                      ? `${t(`vault_dashboard.pillars.${p.id}`, p.label)} — ${t('vault_dashboard.nav.fully_captured')}`
                       : isItemized
-                        ? `${t(`vault_dashboard.pillars.${p.id}`, p.label)} — Itemizado`
+                        ? `${t(`vault_dashboard.pillars.${p.id}`, p.label)} — ${t('vault_dashboard.nav.itemized')}`
                         : isLockedInSequence && prereqId
-                          ? `${t(`vault_dashboard.pillars.${p.id}`, p.label)} — Pendiente del pilar anterior`
+                          ? `${t(`vault_dashboard.pillars.${p.id}`, p.label)} — ${t('vault_dashboard.nav.pending_previous')}`
                           : t(`vault_dashboard.pillars.${p.id}`, p.label)
                   }
                 >
@@ -5300,7 +5714,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                     ? `${infoBorderClass} bg-[#F8FAFC] dark:bg-[#07090D]`
                     : '!border-b-transparent hover:bg-[#F8FAFC]/50 dark:hover:bg-[#07090D]/50'
                     }`}
-                  title="Simbología técnica aplicada al equipo (compilada de contenidos cazados)"
+                  title={t('vault_dashboard.nav.symbology_tab_tooltip')}
                 >
                   <span className={`material-symbols-outlined !text-[20px] transition-colors ${infoColorClass}`}>
                     info
@@ -5346,7 +5760,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                     ? `${costBorderClass} bg-[#F8FAFC] dark:bg-[#07090D]`
                     : '!border-b-transparent hover:bg-[#F8FAFC]/50 dark:hover:bg-[#07090D]/50'
                     }`}
-                  title="Matriz automática de consumos, insumos y base de costos (compilada de Ficha Técnica y Pauta de Mantención)"
+                  title={t('vault_dashboard.nav.cost_matrix_tab_tooltip')}
                 >
                   <span className={`material-symbols-outlined !text-[20px] transition-colors ${costColorClass}`}>
                     package_2
@@ -5427,6 +5841,8 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                   isSealed={catalog.is_sealed || false}
                   onUnlockItem={(itemId) => handleUnlockItem(activeTab, itemId)}
                   onUpdateApprovalState={(itemId, state, notes) => handleUpdateItemApprovalState(activeTab, itemId, state, notes)}
+                  onUpdateItemContent={(itemId, newContent) => handleUpdateItemContent(activeTab, itemId, newContent)}
+                  onBulkApprovePillar={handleBulkApprovePillar}
                   onRollbackVersion={(itemId, timestamp) => handleRollbackItemVersion(activeTab, itemId, timestamp)}
                   activeProposalView={activeProposalView}
                   onSetProposalView={setActiveProposalView}

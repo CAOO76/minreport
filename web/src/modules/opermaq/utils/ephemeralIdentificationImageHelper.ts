@@ -73,35 +73,41 @@ export async function prepareEphemeralIdentificationImage(
     const canvas = document.createElement('canvas');
     canvas.width = dstW;
     canvas.height = dstH;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-        throw new Error('Contexto gráfico 2D no disponible.');
-    }
-    ctx.drawImage(img, 0, 0, dstW, dstH);
+    let encodedBlob: Blob;
+    try {
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+            throw new Error('Contexto gráfico 2D no disponible.');
+        }
+        ctx.drawImage(img, 0, 0, dstW, dstH);
 
-    const encodedBlob: Blob = await new Promise((resolve, reject) => {
-        canvas.toBlob(
-            (webpBlob) => {
-                if (webpBlob && webpBlob.size > 0) {
-                    resolve(webpBlob);
-                    return;
-                }
-                canvas.toBlob(
-                    (jpegBlob) => {
-                        if (jpegBlob && jpegBlob.size > 0) {
-                            resolve(jpegBlob);
-                        } else {
-                            reject(new Error('No se pudo comprimir la imagen en memoria.'));
-                        }
-                    },
-                    'image/jpeg',
-                    WEBP_QUALITY
-                );
-            },
-            'image/webp',
-            WEBP_QUALITY
-        );
-    });
+        encodedBlob = await new Promise<Blob>((resolve, reject) => {
+            canvas.toBlob(
+                (webpBlob) => {
+                    if (webpBlob && webpBlob.size > 0) {
+                        resolve(webpBlob);
+                        return;
+                    }
+                    canvas.toBlob(
+                        (jpegBlob) => {
+                            if (jpegBlob && jpegBlob.size > 0) {
+                                resolve(jpegBlob);
+                            } else {
+                                reject(new Error('No se pudo comprimir la imagen en memoria.'));
+                            }
+                        },
+                        'image/jpeg',
+                        WEBP_QUALITY
+                    );
+                },
+                'image/webp',
+                WEBP_QUALITY
+            );
+        });
+    } finally {
+        canvas.width = 0;
+        canvas.height = 0;
+    }
 
     const resolvedMime: 'image/jpeg' | 'image/png' | 'image/webp' =
         encodedBlob.type === 'image/webp'

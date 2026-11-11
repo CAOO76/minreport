@@ -22,6 +22,24 @@ import {
     type BenchmarkMetricKind,
     CollectiveBenchmarkService,
 } from '../services/CollectiveBenchmarkService';
+import { enrichCatalogProfile } from '../services/CatalogProfileEnricher';
+import {
+    isValidHitlConfirmWord,
+    HitlConfirmWordSchema,
+    PilotHitlConsolidateBodySchema,
+    ReconcileSidebarProfileBodySchema,
+    ReframeOfficialPhotoBodySchema,
+    VaultApplyAssistProposalBodySchema,
+    VaultBulkApproveBodySchema,
+    VaultCreateItemBodySchema,
+    VaultMutateItemHitlBodySchema,
+    VaultPillarIdSchema,
+    VaultResolveConflictBodySchema,
+    VaultRollbackVersionBodySchema,
+    VaultUpdateAssetImageBodySchema,
+    VaultUpdateItemContentBodySchema,
+} from '../../../contracts/opermaq.contracts';
+import { resolveOrLearnEquipmentType } from '../services/EquipmentTypeRegistryService';
 import { buildAndPersistAssetSymbologyPack } from '../services/EquipmentSymbologyPackBuilder';
 import {
     buildAndPersistEquipmentCostMatrix,
@@ -32,6 +50,15 @@ import {
     reconcileAssetSidebarProfileFromVault,
     scheduleDebouncedAssetSymbologyPackRebuild,
 } from '../services/ItemHunterService';
+import {
+    type CanonicalSpecSlot,
+    deriveEnergyConsumptionProfile,
+    hasOnlyGenericOrMissingContextItems,
+    normalizeCanonicalSlotsByResolvedEnergy,
+    sanitizeDesignAndWorkContextItems,
+    serializeCanonicalSlotsToSpecsArray,
+} from '../utils/canonicalArchetypeSpecs';
+import { inferAssetConfigurationProfile } from '../utils/lockedVariantDirective';
 import {
     computePillarContentDigestSha256,
     computePillarStructureDigestSha256,
@@ -166,9 +193,400 @@ function handleVaultError(res: Response, err: unknown, fallbackMessage: string) 
     });
 }
 
+function sendConfirmWordMismatch(res: Response) {
+    return res.status(400).json({
+        error: 'CONFIRM_WORD_MISMATCH',
+        message: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".`,
+    });
+}
+
+function sendZodBadRequest(res: Response, error: z.ZodError, fallbackMessage: string) {
+    const hasConfirmMismatch = error.issues.some(
+        (iss) =>
+            iss.message === 'CONFIRM_WORD_MISMATCH' ||
+            iss.path.includes('confirmWord')
+    );
+    if (hasConfirmMismatch) {
+        return sendConfirmWordMismatch(res);
+    }
+    return res.status(400).json({
+        error: error.issues[0]?.message || fallbackMessage,
+        details: error.issues,
+    });
+}
+
+function scrubUnknownStringsDeep(value: unknown): unknown {
+    if (typeof value === 'string') {
+        return ConfidentialityAirlockService.scrubDeterministicPii(value).scrubbed;
+    }
+    if (Array.isArray(value)) {
+        return value.map((entry) => scrubUnknownStringsDeep(entry));
+    }
+    if (value && typeof value === 'object') {
+        const out: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+            out[k] = scrubUnknownStringsDeep(v);
+        }
+        return out;
+    }
+    return value;
+}
+
+interface SidebarProfileSnapshot {
+    equipment_type_key: string;
+    canonical_specs: CanonicalSpecSlot[];
+    caracteristicas_principales: string[];
+    ambiente_operativo: string[];
+    contexto_operativo: string[];
+    energy_consumption_profile: Record<string, any> | null;
+    configuration_profile: Record<string, any> | null;
+}
+
+async function computeSidebarProfilePreviewFromVault(
+    globalAssetId: string,
+    options?: { allowGroundedEnrichmentIfNeeded?: boolean; preferVaultMarkdownOverExisting?: boolean }
+): Promise<{
+    currentProfile: SidebarProfileSnapshot;
+    proposedProfile: SidebarProfileSnapshot;
+    canonicalTypeLabel: string;
+} | null> {
+    const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);
+    if (!hydrated.exists || !hydrated.data) return null;
+    const data = hydrated.data;
+
+    const makeOficial = String(data.make_oficial || data.make || 'GENÉRICO').trim();
+    const modelOficial = String(data.model_oficial || data.model || globalAssetId).trim();
+
+    const fichaItems: any[] = Array.isArray(data.knowledge_vault?.ficha_tecnica?.items)
+        ? data.knowledge_vault.ficha_tecnica.items.filter((it: any) => !it?.is_discarded)
+        : [];
+    const fullMarkdown = fichaItems
+        .map((it) => `${it.title}\n${it.content || ''}`)
+        .join('\n\n');
+
+    const typeRes = await resolveOrLearnEquipmentType({
+        rawTypeKey: data.equipment_type_key,
+        rawTypeHint: data.tipo_equipo,
+        rawCategoryHint: data.categoria_equipo,
+        assetQueryContext: `${makeOficial} ${modelOficial}`,
+    });
+    const typeDoc = typeRes.typeDoc;
+
+    const existingSlots: CanonicalSpecSlot[] = Array.isArray(data.canonical_specs)
+        ? [...data.canonical_specs]
+        : [];
+    const existingByKey = new Map<string, CanonicalSpecSlot>();
+    for (const s of existingSlots) {
+        if (s && s.axis_key) existingByKey.set(s.axis_key, s);
+    }
+
+    const primaryVerifiedUrl =
+        String(data.official_url || '').trim() ||
+        fichaItems.find((it) => Array.isArray(it.item_sources) && it.item_sources.length > 0)?.item_sources?.[0]
+            ?.url ||
+        null;
+
+    const profile = deriveEnergyConsumptionProfile({
+        tipo_equipo: data.tipo_equipo || typeDoc.canonical_type_es,
+        categoria_equipo: data.categoria_equipo || typeDoc.categoria_equipo,
+        canonical_specs: existingSlots,
+        caracteristicas_principales: data.caracteristicas_principales,
+        fichaTecnicaMarkdown: fullMarkdown,
+        official_url: primaryVerifiedUrl,
+        existingProfile: data.energy_consumption_profile,
+    });
+
+    const preliminaryConfig = inferAssetConfigurationProfile({
+        make_oficial: makeOficial,
+        model_oficial: modelOficial,
+        tipo_equipo: data.tipo_equipo || typeDoc.canonical_type_es,
+        categoria_equipo: data.categoria_equipo || typeDoc.categoria_equipo,
+        version: data.version,
+        physical_traits: data.physical_traits,
+        canonical_specs: existingSlots,
+        caracteristicas_principales: data.caracteristicas_principales,
+        chassis_versions: data.chassis_versions,
+        extra_evidence_text: fullMarkdown.slice(0, 6000),
+        existing_profile: data.configuration_profile,
+    });
+
+    const preferMarkdown = Boolean(options?.preferVaultMarkdownOverExisting);
+    const mergedSlots: CanonicalSpecSlot[] = typeDoc.spec_schema.map((schemaAxis) => {
+        const prev = existingByKey.get(schemaAxis.axis_key);
+        if (!preferMarkdown && prev && prev.value_si && !prev.value_si.startsWith('[')) {
+            return {
+                ...prev,
+                label_es: schemaAxis.label_es,
+                unit_si: schemaAxis.unit_si,
+                mandatory: schemaAxis.mandatory,
+                is_differentiator: schemaAxis.is_differentiator,
+                value_kind: schemaAxis.value_kind,
+            };
+        }
+
+        let rescuedValue: string | null = null;
+        if (schemaAxis.axis_key === 'fuente_energia' && profile.energy_source !== 'NO_DECLARADO') {
+            const mapLabel: Record<string, string> = {
+                DIESEL: 'Diésel',
+                GASOLINA: 'Gasolina',
+                ELECTRICO_RED_AC: 'Eléctrico Red AC',
+                ELECTRICO_BATERIA_BEV: 'Eléctrico Batería (BEV)',
+                HIBRIDO_DIESEL_ELECTRICO: 'Híbrido Diésel-Eléctrico',
+                HIBRIDO_GASOLINA_ELECTRICO: 'Híbrido Gasolina-Eléctrico',
+                DUAL_FUEL_DIESEL_GAS: 'Dual-Fuel Diésel-Gas',
+                GLP_GNV: 'GLP / GNV',
+                NEUMATICO_AIRE_COMPRIMIDO: 'Neumático (Aire Comprimido)',
+            };
+            rescuedValue = profile.energy_spec_label || mapLabel[profile.energy_source] || null;
+        } else if (schemaAxis.axis_key === 'transmision_caja') {
+            rescuedValue = preliminaryConfig.transmission_model_spec || null;
+        } else if (
+            schemaAxis.axis_key === 'traccion_ejes' ||
+            schemaAxis.axis_key === 'traccion' ||
+            schemaAxis.axis_key === 'configuracion_rodaje'
+        ) {
+            rescuedValue = preliminaryConfig.axle_or_undercarriage_config || null;
+        } else if (schemaAxis.axis_key === 'consumo_energetico_nominal') {
+            rescuedValue =
+                profile.hourly_consumption_by_load.medium_load_50_65pct ||
+                profile.road_haul_efficiency.km_per_liter ||
+                profile.road_haul_efficiency.liters_per_100km ||
+                profile.pneumatic_or_hydraulic_flow ||
+                profile.specific_consumption_bsfc_gkwh ||
+                null;
+        } else if (schemaAxis.axis_key === 'capacidad_energetica_autonomia') {
+            rescuedValue = profile.storage_and_autonomy.tank_or_battery_capacity || null;
+        } else if (schemaAxis.axis_key === 'caudal_presion_hidraulica_aux' && fullMarkdown) {
+            const flowMatch = fullMarkdown.match(
+                /(?:caudal\s+hidr[aá]ulico(?:\s+auxiliar|\s+xhp|\s+m[aá]ximo)?|high\s+flow|xhp)[^\n]{0,65}?(\d{2,3}(?:[.,]\d+)?\s*L\/min)/i
+            );
+            const pressMatch = fullMarkdown.match(
+                /(?:presi[oó]n\s+hidr[aá]ulica(?:\s+auxiliar|\s+xhp|\s+de\s+alivio)?|xhp)[^\n]{0,65}?(\d{2,3}(?:[.,]\d+)?\s*bar)/i
+            );
+            if (flowMatch && pressMatch) {
+                rescuedValue = `${flowMatch[1].trim()} @ ${pressMatch[1].trim()}`;
+            } else if (flowMatch) {
+                rescuedValue = flowMatch[1].trim();
+            }
+        } else if (schemaAxis.axis_key === 'carga_vuelco_estatica' && fullMarkdown) {
+            const tipMatch = fullMarkdown.match(
+                /(?:carga\s+(?:est[aá]tica\s+de\s+)?vuelco|tipping\s+load)[^\n]{0,60}?(\d{1,2}[.,]\d{3}\s*kg|\d{3,5}\s*kg)/i
+            );
+            if (tipMatch) {
+                rescuedValue = tipMatch[1].trim();
+            }
+        } else if (schemaAxis.axis_key === 'peso_operativo' && fullMarkdown) {
+            const weightMatch = fullMarkdown.match(
+                /(?:peso\s+operativo|operating\s+weight)[^\n]{0,60}?(\d{1,3}(?:[.,]\d{3})+\s*kg|\d{3,6}\s*kg)/i
+            );
+            if (weightMatch) {
+                rescuedValue = weightMatch[1].trim();
+            }
+        } else if (schemaAxis.axis_key === 'potencia_neta' && fullMarkdown) {
+            const powerMatch = fullMarkdown.match(
+                /(?:potencia\s+neta|net\s+power)[^\n]{0,60}?(\d{1,4}(?:[.,]\d+)?\s*kW(?:\s*\(\s*\d{1,4}\s*HP\s*\))?)/i
+            );
+            if (powerMatch) {
+                rescuedValue = powerMatch[1].trim();
+            }
+        } else if (schemaAxis.axis_key === 'roc_capacidad_nominal' && fullMarkdown) {
+            const rocMatch = fullMarkdown.match(
+                /(?:capacidad\s+operativa\s+nominal|\broc\b)[^\n]{0,60}?(\d{1,2}[.,]\d{3}\s*kg|\d{3,5}\s*kg)/i
+            );
+            if (rocMatch) {
+                rescuedValue = rocMatch[1].trim();
+            }
+        }
+
+        const finalVal =
+            rescuedValue || (prev && prev.value_si && !prev.value_si.startsWith('[') ? prev.value_si : null);
+
+        return {
+            axis_key: schemaAxis.axis_key,
+            label_es: schemaAxis.label_es,
+            value_si: finalVal,
+            unit_si: schemaAxis.unit_si,
+            mandatory: schemaAxis.mandatory,
+            is_differentiator: schemaAxis.is_differentiator,
+            value_kind: schemaAxis.value_kind,
+            ...(schemaAxis.allowed_enum_values ? { allowed_enum_values: schemaAxis.allowed_enum_values } : {}),
+            source_url: rescuedValue ? profile.source_url || primaryVerifiedUrl : prev?.source_url || null,
+            verbatim_evidence: prev?.verbatim_evidence || null,
+        };
+    });
+
+    const canonicalTypeLabel = String(data.tipo_equipo || typeDoc.canonical_type_es || '').trim();
+    let nextAmbiente = sanitizeDesignAndWorkContextItems(data.ambiente_operativo, undefined, {
+        canonicalTypeEs: canonicalTypeLabel,
+    });
+    let nextContexto = sanitizeDesignAndWorkContextItems(data.contexto_operativo, undefined, {
+        canonicalTypeEs: canonicalTypeLabel,
+    });
+    let finalSlots = mergedSlots;
+
+    const needsContextUpgrade =
+        hasOnlyGenericOrMissingContextItems(data.ambiente_operativo, { canonicalTypeEs: canonicalTypeLabel }) ||
+        hasOnlyGenericOrMissingContextItems(data.contexto_operativo, { canonicalTypeEs: canonicalTypeLabel });
+    const missingDiffAxes = finalSlots.filter((s) => s.is_differentiator && !s.value_si).length;
+
+    if (Boolean(options?.allowGroundedEnrichmentIfNeeded) && (needsContextUpgrade || missingDiffAxes > 0)) {
+        try {
+            const enriched = await enrichCatalogProfile(
+                makeOficial,
+                modelOficial,
+                {
+                    equipment_type_key: typeDoc.type_key,
+                    tipo_equipo: typeDoc.canonical_type_es,
+                    categoria_equipo: data.categoria_equipo || typeDoc.categoria_equipo,
+                    ambiente_operativo: nextAmbiente,
+                    contexto_operativo: nextContexto,
+                },
+                Boolean(data.is_generic),
+                {
+                    globalAssetId,
+                    preResolvedTypeDoc: typeDoc,
+                }
+            );
+
+            if (
+                !hasOnlyGenericOrMissingContextItems(enriched.ambiente_operativo, {
+                    canonicalTypeEs: canonicalTypeLabel,
+                })
+            ) {
+                nextAmbiente = sanitizeDesignAndWorkContextItems(enriched.ambiente_operativo, undefined, {
+                    canonicalTypeEs: canonicalTypeLabel,
+                });
+            }
+            if (
+                !hasOnlyGenericOrMissingContextItems(enriched.contexto_operativo, {
+                    canonicalTypeEs: canonicalTypeLabel,
+                })
+            ) {
+                nextContexto = sanitizeDesignAndWorkContextItems(enriched.contexto_operativo, undefined, {
+                    canonicalTypeEs: canonicalTypeLabel,
+                });
+            }
+            if (Array.isArray(enriched.canonical_specs)) {
+                finalSlots = finalSlots.map((slot) => {
+                    if (slot.value_si && !slot.value_si.startsWith('[')) return slot;
+                    const found = enriched.canonical_specs?.find((e) => e.axis_key === slot.axis_key);
+                    return found && found.value_si ? { ...slot, ...found } : slot;
+                });
+            }
+        } catch {
+            // Conservar slots y listas sanitizadas locales si el enriquecedor falla
+        }
+    }
+
+    finalSlots = normalizeCanonicalSlotsByResolvedEnergy(finalSlots, {
+        typeContextText: canonicalTypeLabel,
+        primaryEnergy: data.physical_traits?.primary_energy || null,
+        energyValueText:
+            profile.energy_spec_label ||
+            (profile.energy_source !== 'NO_DECLARADO' ? profile.energy_source : null),
+    });
+
+    const nextCaracteristicas = serializeCanonicalSlotsToSpecsArray(finalSlots);
+    const nextConfigProfile = inferAssetConfigurationProfile({
+        make_oficial: makeOficial,
+        model_oficial: modelOficial,
+        tipo_equipo: data.tipo_equipo || typeDoc.canonical_type_es,
+        categoria_equipo: data.categoria_equipo || typeDoc.categoria_equipo,
+        version: data.version,
+        physical_traits: data.physical_traits,
+        canonical_specs: finalSlots,
+        caracteristicas_principales: nextCaracteristicas,
+        chassis_versions: data.chassis_versions,
+        extra_evidence_text: fullMarkdown.slice(0, 6000),
+        existing_profile: data.configuration_profile,
+    });
+
+    const currentProfile: SidebarProfileSnapshot = {
+        equipment_type_key: String(data.equipment_type_key || typeDoc.type_key),
+        canonical_specs: existingSlots,
+        caracteristicas_principales: Array.isArray(data.caracteristicas_principales)
+            ? data.caracteristicas_principales.map((s: unknown) => String(s))
+            : [],
+        ambiente_operativo: Array.isArray(data.ambiente_operativo)
+            ? data.ambiente_operativo.map((s: unknown) => String(s))
+            : [],
+        contexto_operativo: Array.isArray(data.contexto_operativo)
+            ? data.contexto_operativo.map((s: unknown) => String(s))
+            : [],
+        energy_consumption_profile: data.energy_consumption_profile || null,
+        configuration_profile: data.configuration_profile || null,
+    };
+
+    const proposedProfile: SidebarProfileSnapshot = {
+        equipment_type_key: typeDoc.type_key,
+        canonical_specs: finalSlots,
+        caracteristicas_principales: nextCaracteristicas,
+        ambiente_operativo: nextAmbiente,
+        contexto_operativo: nextContexto,
+        energy_consumption_profile: profile,
+        configuration_profile: nextConfigProfile,
+    };
+
+    return { currentProfile, proposedProfile, canonicalTypeLabel };
+}
+
+function mergeApprovedSidebarProfile(
+    approvedProfile: Record<string, unknown>,
+    baseProposed: SidebarProfileSnapshot
+): SidebarProfileSnapshot {
+    const cleanStringArray = (raw: unknown, fallback: string[]): string[] => {
+        if (!Array.isArray(raw)) return fallback;
+        return raw
+            .map((entry) =>
+                ConfidentialityAirlockService.scrubDeterministicPii(String(entry ?? '')).scrubbed.trim()
+            )
+            .filter(Boolean);
+    };
+
+    const nextSlots: CanonicalSpecSlot[] = Array.isArray(approvedProfile.canonical_specs)
+        ? (scrubUnknownStringsDeep(approvedProfile.canonical_specs) as CanonicalSpecSlot[])
+        : baseProposed.canonical_specs;
+
+    const nextCaracteristicas = Array.isArray(approvedProfile.caracteristicas_principales)
+        ? cleanStringArray(approvedProfile.caracteristicas_principales, baseProposed.caracteristicas_principales)
+        : Array.isArray(approvedProfile.canonical_specs)
+          ? serializeCanonicalSlotsToSpecsArray(nextSlots)
+          : baseProposed.caracteristicas_principales;
+
+    return {
+        equipment_type_key:
+            typeof approvedProfile.equipment_type_key === 'string' &&
+            approvedProfile.equipment_type_key.trim().length > 0
+                ? ConfidentialityAirlockService.scrubDeterministicPii(
+                      approvedProfile.equipment_type_key.trim()
+                  ).scrubbed
+                : baseProposed.equipment_type_key,
+        canonical_specs: nextSlots,
+        caracteristicas_principales: nextCaracteristicas,
+        ambiente_operativo: cleanStringArray(approvedProfile.ambiente_operativo, baseProposed.ambiente_operativo),
+        contexto_operativo: cleanStringArray(approvedProfile.contexto_operativo, baseProposed.contexto_operativo),
+        energy_consumption_profile:
+            approvedProfile.energy_consumption_profile &&
+            typeof approvedProfile.energy_consumption_profile === 'object' &&
+            !Array.isArray(approvedProfile.energy_consumption_profile)
+                ? (scrubUnknownStringsDeep(approvedProfile.energy_consumption_profile) as Record<string, any>)
+                : baseProposed.energy_consumption_profile,
+        configuration_profile:
+            approvedProfile.configuration_profile &&
+            typeof approvedProfile.configuration_profile === 'object' &&
+            !Array.isArray(approvedProfile.configuration_profile)
+                ? (scrubUnknownStringsDeep(approvedProfile.configuration_profile) as Record<string, any>)
+                : baseProposed.configuration_profile,
+    };
+}
+
 async function checkVaultNotSealed(req: ScopedRequest, res: Response, next: NextFunction) {
     const globalAssetId =
-        req.body?.globalAssetId || req.params?.globalAssetId || req.query?.globalAssetId;
+        req.body?.globalAssetId ||
+        req.body?.assetId ||
+        req.params?.globalAssetId ||
+        req.query?.globalAssetId ||
+        req.query?.assetId;
     if (!globalAssetId || typeof globalAssetId !== 'string') {
         return next();
     }
@@ -176,6 +594,9 @@ async function checkVaultNotSealed(req: ScopedRequest, res: Response, next: Next
     try {
         const snap = await db.collection('global_asset_catalog').doc(globalAssetId).get();
         (req as any).catalogDocSnap = snap;
+        if (req.body?.previewOnly === true) {
+            return next();
+        }
         const data = snap.data();
         if (
             snap.exists &&
@@ -308,16 +729,22 @@ async function propagateItemContentMutationEffects(params: {
 
 // ── ETAPA 2: INICIALIZACIÓN E ITEMIZADO ON-DEMAND POR PILAR ──────────────────
 
+const InitializeVaultBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+});
+
 vaultRouter.post('/initialize-vault', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
-    const { globalAssetId } = req.body || {};
-    if (!globalAssetId) {
-        return res.status(400).json({ error: 'globalAssetId es requerido.' });
+    const ctx = req.opermaqContext!;
+    const parsed = InitializeVaultBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(res, parsed.error, 'globalAssetId es requerido.');
     }
+    const { globalAssetId } = parsed.data;
 
     try {
-        const docRef = db.collection('global_asset_catalog').doc(String(globalAssetId));
+        const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
         const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
-            String(globalAssetId),
+            globalAssetId,
             (req as any).catalogDocSnap
         );
         if (!hydrated.exists || !hydrated.data) {
@@ -328,6 +755,9 @@ vaultRouter.post('/initialize-vault', requireCurateAI, checkVaultNotSealed, asyn
         const hasVaultKeys =
             data.knowledge_vault &&
             VALID_PILLAR_IDS.some((pid) => Boolean(data.knowledge_vault?.[pid]));
+
+        let healedFicha = false;
+        let healedPauta = false;
 
         if (!hasVaultKeys) {
             const makeModel =
@@ -354,9 +784,10 @@ vaultRouter.post('/initialize-vault', requireCurateAI, checkVaultNotSealed, asyn
                         : [],
                 });
                 if (healed.modified) {
+                    healedFicha = true;
                     const structureDigest = computePillarStructureDigestSha256(healed.items, null) || '';
                     await VaultPersistenceService.savePillarDocument({
-                        globalAssetId: String(globalAssetId),
+                        globalAssetId,
                         pillarId: 'ficha_tecnica',
                         pillarDoc: {
                             ...fichaDoc,
@@ -385,13 +816,14 @@ vaultRouter.post('/initialize-vault', requireCurateAI, checkVaultNotSealed, asyn
                         : [],
                 });
                 if (healedPm.modified) {
+                    healedPauta = true;
                     const pmStructureDigest =
                         computePillarStructureDigestSha256(
                             healedPm.items,
                             pmDoc?.parent_pillar_digest_sha256 || null
                         ) || '';
                     await VaultPersistenceService.savePillarDocument({
-                        globalAssetId: String(globalAssetId),
+                        globalAssetId,
                         pillarId: 'pauta_mantencion',
                         pillarDoc: {
                             ...pmDoc,
@@ -406,8 +838,23 @@ vaultRouter.post('/initialize-vault', requireCurateAI, checkVaultNotSealed, asyn
         }
 
         if (!data.is_sealed && !data.isSealed && !data.knowledge_vault?.is_sealed) {
-            await buildAndPersistEquipmentCostMatrix(String(globalAssetId)).catch(() => null);
+            await buildAndPersistEquipmentCostMatrix(globalAssetId).catch(() => null);
         }
+
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_INITIALIZED',
+            targetEntity: `global_asset_catalog/${globalAssetId}`,
+            details: {
+                globalAssetId,
+                createdEmptyVault: !hasVaultKeys,
+                healedFicha,
+                healedPauta,
+            },
+        }).catch(() => undefined);
 
         return res.status(200).json({
             success: true,
@@ -421,24 +868,21 @@ vaultRouter.post('/initialize-vault', requireCurateAI, checkVaultNotSealed, asyn
 vaultRouter.post('/itemize-pillar', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
     const schema = z.object({
-        globalAssetId: z.string().min(1),
-        pillarId: z.enum([
-            'ficha_tecnica',
-            'manual_operaciones',
-            'pauta_mantencion',
-            'matriz_riesgos',
-            'checklist_pre_op',
-        ]),
+        globalAssetId: z.string().trim().min(1).max(160),
+        pillarId: VaultPillarIdSchema,
         forceSmartMerge: z.boolean().optional(),
         confirmWord: z.string().optional(),
     });
 
-    const parsed = schema.safeParse(req.body);
+    const parsed = schema.safeParse(req.body || {});
     if (!parsed.success) {
-        return res.status(400).json({ error: 'Parámetros inválidos (globalAssetId, pillarId).' });
+        return sendZodBadRequest(res, parsed.error, 'Parámetros inválidos (globalAssetId, pillarId).');
     }
 
     const { globalAssetId, pillarId, forceSmartMerge, confirmWord } = parsed.data;
+    if (forceSmartMerge === true && !isValidHitlConfirmWord(confirmWord)) {
+        return sendConfirmWordMismatch(res);
+    }
 
     try {
         const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
@@ -459,9 +903,7 @@ vaultRouter.post('/itemize-pillar', requireCurateAI, checkVaultNotSealed, async 
         }
 
         const pillar = data.knowledge_vault?.[pillarId];
-        const isAuthorizedSmartMerge =
-            forceSmartMerge === true &&
-            String(confirmWord || '').trim().toUpperCase() === HITL_CONFIRM_KEYWORD;
+        const isAuthorizedSmartMerge = forceSmartMerge === true && isValidHitlConfirmWord(confirmWord);
 
         // Compuerta de secuencia lógica de 5 pilares (`01 ➔ 02 ➔ 03 ➔ 04 ➔ 05`)
         const prerequisitePillarId = PILLAR_PREREQUISITE_MAP[pillarId];
@@ -508,6 +950,24 @@ vaultRouter.post('/itemize-pillar', requireCurateAI, checkVaultNotSealed, async 
             actorEmail: ctx.actorEmail,
             forceSmartMerge: isAuthorizedSmartMerge,
         });
+
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_PILLAR_ITEMIZED',
+            targetEntity: `global_asset_catalog/${globalAssetId}/pillars/${pillarId}`,
+            details: {
+                globalAssetId,
+                pillarId,
+                totalItems: result.totalItems,
+                preservedItemsCount: result.preservedItemsCount ?? 0,
+                addedItemsCount: result.addedItemsCount ?? result.totalItems,
+                forceSmartMerge: isAuthorizedSmartMerge,
+            },
+        }).catch(() => undefined);
+
         return res.status(200).json({
             success: true,
             items: result.items,
@@ -527,24 +987,20 @@ vaultRouter.post(
     checkVaultNotSealed,
     async (req: ScopedRequest, res: Response) => {
         const ctx = req.opermaqContext!;
-        const schema = z.object({
-            globalAssetId: z.string().min(1),
-            tenantAssetId: z.string().optional(),
-            imageUrl: z.string().nullable(),
-            imagePath: z.string().nullable().optional(),
-            imageMetadata: z.record(z.string(), z.any()).nullable().optional(),
-            fotoMediaTelemetry: z.record(z.string(), z.any()).nullable().optional(),
-            fotoVlmAuditVersion: z.number().int().nullable().optional(),
-            officialPhotoCandidates: z.array(z.record(z.string(), z.any())).optional(),
-        });
+        const rawConfirmWord = req.body?.confirmWord ?? req.query?.confirmWord;
+        if (!isValidHitlConfirmWord(rawConfirmWord)) {
+            return sendConfirmWordMismatch(res);
+        }
 
-        const parsed = schema.safeParse(req.body);
+        const parsed = VaultUpdateAssetImageBodySchema.safeParse({
+            ...(req.body || {}),
+            confirmWord: String(rawConfirmWord),
+        });
         if (!parsed.success) {
-            return res.status(400).json({ error: 'Parámetros de imagen inválidos.' });
+            return sendZodBadRequest(res, parsed.error, 'Parámetros de imagen inválidos.');
         }
 
         const {
-            globalAssetId,
             tenantAssetId,
             imageUrl,
             imagePath,
@@ -553,6 +1009,8 @@ vaultRouter.post(
             fotoVlmAuditVersion,
             officialPhotoCandidates,
         } = parsed.data;
+        const globalAssetId = String(parsed.data.globalAssetId || parsed.data.assetId);
+
         try {
             const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
             const snap = await docRef.get();
@@ -574,20 +1032,24 @@ vaultRouter.post(
             const mergedCandidates: Record<string, any>[] = [];
             const seenShas = new Set<string>();
             for (const cand of [...incomingPool, ...existingPool]) {
-                const sha = String(cand?.sha256 || '').trim();
-                const preview = String(cand?.preview_url || '').trim();
+                const sha = String((cand as any)?.sha256 || '').trim();
+                const preview = String((cand as any)?.preview_url || '').trim();
                 if (sha && preview && !seenShas.has(sha) && mergedCandidates.length < 12) {
                     seenShas.add(sha);
-                    mergedCandidates.push(cand);
+                    mergedCandidates.push(cand as Record<string, any>);
                 }
             }
+
+            const telemetrySha =
+                fotoMediaTelemetry && typeof (fotoMediaTelemetry as any).sha256 === 'string'
+                    ? String((fotoMediaTelemetry as any).sha256)
+                    : null;
 
             const matchedAuditCandidate = imageUrl
                 ? mergedCandidates.find(
                       (c) =>
                           c &&
-                          (c.preview_url === imageUrl ||
-                              (fotoMediaTelemetry?.sha256 && c.sha256 === fotoMediaTelemetry.sha256))
+                          (c.preview_url === imageUrl || (telemetrySha && c.sha256 === telemetrySha))
                   )
                 : null;
             const resolvedPhotoAuditVersion: number | null = !imageUrl
@@ -641,30 +1103,51 @@ vaultRouter.post(
                 },
             }).catch(() => undefined);
 
-            return res.status(200).json({ success: true, specifications: nextSpecs });
+            return res.status(200).json({ ok: true, success: true, specifications: nextSpecs });
         } catch (err) {
             return handleVaultError(res, err, 'Error actualizando fotografía oficial del activo.');
         }
     }
 );
 
+const HuntOfficialPhotoBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    refreshAttempt: z.number().int().min(0).max(50).optional().default(0),
+    excludeSha256s: z.array(z.string().trim().max(128)).max(100).optional().default([]),
+});
+
 vaultRouter.post(
     '/hunt-official-photo',
     requireCurateAI,
     checkVaultNotSealed,
     async (req: ScopedRequest, res: Response) => {
-        const { globalAssetId, refreshAttempt, excludeSha256s } = req.body || {};
-        if (!globalAssetId || typeof globalAssetId !== 'string') {
-            return res.status(400).json({ error: 'globalAssetId es requerido.' });
+        const ctx = req.opermaqContext!;
+        const parsed = HuntOfficialPhotoBodySchema.safeParse(req.body || {});
+        if (!parsed.success) {
+            return sendZodBadRequest(res, parsed.error, 'globalAssetId es requerido.');
         }
+        const { globalAssetId, refreshAttempt, excludeSha256s } = parsed.data;
         try {
             const candidates = await OfficialEquipmentPhotoService.huntOfficialEquipmentPhotos({
                 globalAssetId,
-                actorId: req.opermaqContext?.actorId,
-                actorEmail: req.opermaqContext?.actorEmail,
-                refreshAttempt: typeof refreshAttempt === 'number' ? refreshAttempt : 0,
-                excludeSha256s: Array.isArray(excludeSha256s) ? excludeSha256s : [],
+                actorId: ctx.actorId,
+                actorEmail: ctx.actorEmail,
+                refreshAttempt,
+                excludeSha256s,
             });
+            void AuditLedger.record({
+                tenantId: ctx.tenantId || 'GLOBAL_OEM',
+                actorUid: ctx.actorId,
+                actorEmail: ctx.actorEmail,
+                module: 'opermaq',
+                action: 'VAULT_OFFICIAL_PHOTO_HUNTED',
+                targetEntity: `global_asset_catalog/${globalAssetId}`,
+                details: {
+                    globalAssetId,
+                    refreshAttempt,
+                    candidatesFound: Array.isArray(candidates) ? candidates.length : 0,
+                },
+            }).catch(() => undefined);
             return res.status(200).json({ success: true, candidates });
         } catch (err) {
             return handleVaultError(res, err, 'Error ejecutando caza asistida de fotografía oficial.');
@@ -672,16 +1155,26 @@ vaultRouter.post(
     }
 );
 
+const VerifyManualPhotoInputSchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    imageUrl: z.string().trim().max(2048).optional(),
+});
+
 vaultRouter.post(
     '/verify-manual-official-photo',
     requireCurateAI,
     checkVaultNotSealed,
     upload.single('file'),
     async (req: ScopedRequest, res: Response) => {
-        const globalAssetId = (req.body?.globalAssetId || req.query?.globalAssetId) as string;
-        if (!globalAssetId) {
-            return res.status(400).json({ error: 'globalAssetId es requerido.' });
+        const ctx = req.opermaqContext!;
+        const parsed = VerifyManualPhotoInputSchema.safeParse({
+            globalAssetId: req.body?.globalAssetId ?? req.query?.globalAssetId,
+            imageUrl: req.body?.imageUrl,
+        });
+        if (!parsed.success) {
+            return sendZodBadRequest(res, parsed.error, 'globalAssetId es requerido.');
         }
+        const { globalAssetId, imageUrl: rawBodyImageUrl } = parsed.data;
 
         let fileBuffer: Buffer | null = null;
         let mimeType = 'image/jpeg';
@@ -691,9 +1184,8 @@ vaultRouter.post(
             fileBuffer = req.file.buffer;
             mimeType = req.file.mimetype || 'image/jpeg';
             fileName = req.file.originalname || 'manual_photo.webp';
-        } else if (req.body?.imageUrl && typeof req.body.imageUrl === 'string') {
-            const rawUrl = req.body.imageUrl.trim();
-            const safeUrl = await assertSafeExternalUrl(rawUrl).catch(() => null);
+        } else if (rawBodyImageUrl) {
+            const safeUrl = await assertSafeExternalUrl(rawBodyImageUrl).catch(() => null);
             if (safeUrl) {
                 const fetched = await safeFetchExternal(safeUrl.toString(), {
                     maxBytes: 12 * 1024 * 1024,
@@ -718,8 +1210,22 @@ vaultRouter.post(
                 fileBuffer,
                 mimeType,
                 fileName,
-                actorId: req.opermaqContext?.actorId,
+                actorId: ctx.actorId,
             });
+            void AuditLedger.record({
+                tenantId: ctx.tenantId || 'GLOBAL_OEM',
+                actorUid: ctx.actorId,
+                actorEmail: ctx.actorEmail,
+                module: 'opermaq',
+                action: 'VAULT_MANUAL_PHOTO_VERIFIED',
+                targetEntity: `global_asset_catalog/${globalAssetId}`,
+                details: {
+                    globalAssetId,
+                    fileName,
+                    mimeType,
+                    inputBytes: fileBuffer.length,
+                },
+            }).catch(() => undefined);
             return res.status(200).json({ success: true, ...result });
         } catch (err) {
             return handleVaultError(res, err, 'Error auditando fotografía manual.');
@@ -732,28 +1238,144 @@ vaultRouter.post(
     requireCurateAI,
     checkVaultNotSealed,
     async (req: ScopedRequest, res: Response) => {
-        const { globalAssetId } = req.body || {};
-        if (!globalAssetId || typeof globalAssetId !== 'string') {
-            return res.status(400).json({ error: 'globalAssetId es requerido.' });
+        const ctx = req.opermaqContext!;
+        const parsed = ReframeOfficialPhotoBodySchema.safeParse(req.body || {});
+        if (!parsed.success) {
+            return sendZodBadRequest(res, parsed.error, 'assetId o globalAssetId es requerido.');
+        }
+
+        const { previewOnly, confirmWord, proposedUrl, proposedSha256, proposedMetrics } = parsed.data;
+        const targetAssetId = String(parsed.data.assetId || parsed.data.globalAssetId);
+
+        if (!previewOnly && !isValidHitlConfirmWord(confirmWord)) {
+            return sendConfirmWordMismatch(res);
         }
 
         try {
-            const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
+            const docRef = db.collection('global_asset_catalog').doc(targetAssetId);
             const snap = await docRef.get();
             if (!snap.exists) {
                 return res.status(404).json({ error: 'Activo no encontrado.' });
             }
 
             const data = snap.data() || {};
-            const currentUrl = data.foto_url;
+            const currentUrl = String(data.foto_url || '').trim();
             if (!currentUrl) {
                 return res.status(400).json({ error: 'El activo no tiene fotografía cargada para re-encuadrar.' });
             }
 
+            // Camino de consolidación directa desde vista previa CAS aprobada por humano (`previewOnly === false` + `proposedUrl`)
+            if (!previewOnly && proposedUrl) {
+                if (/^(?:blob:|data:|javascript:)/i.test(proposedUrl)) {
+                    return res.status(400).json({
+                        error: 'URL propuesta rechazada (blob:/data: prohibidos en persistencia).',
+                    });
+                }
+
+                let resolvedUrl = proposedUrl;
+                let resolvedSha = proposedSha256 || '';
+                let origBytes = Number(
+                    proposedMetrics?.original_bytes ??
+                        proposedMetrics?.originalBytes ??
+                        data.foto_media_telemetry?.original_bytes ??
+                        0
+                );
+                let optBytes = Number(
+                    proposedMetrics?.optimized_bytes ?? proposedMetrics?.optimizedBytes ?? 0
+                );
+                let savingsPct = Number(
+                    proposedMetrics?.savings_pct ?? proposedMetrics?.savingsPct ?? 0
+                );
+                let widthVal = proposedMetrics?.width;
+                let heightVal = proposedMetrics?.height;
+
+                if (proposedSha256) {
+                    const casDescriptor = await CasStorageService.preflightCheck(
+                        proposedSha256,
+                        'GLOBAL_OEM'
+                    ).catch(() => null);
+                    if (!casDescriptor) {
+                        return res.status(422).json({
+                            error: 'El SHA-256 propuesto no existe en el registro CAS (GLOBAL_OEM).',
+                        });
+                    }
+                    const expectedGateway = CasStorageService.buildGatewayUrl(
+                        'GLOBAL_OEM',
+                        casDescriptor.sha256,
+                        casDescriptor.extension
+                    );
+                    if (proposedUrl !== casDescriptor.downloadUrl && proposedUrl !== expectedGateway) {
+                        return res.status(422).json({
+                            error: 'La URL propuesta no coincide con el registro CAS.',
+                        });
+                    }
+                    resolvedUrl = casDescriptor.downloadUrl;
+                    resolvedSha = casDescriptor.sha256;
+                    origBytes = origBytes > 0 ? origBytes : casDescriptor.originalBytes;
+                    optBytes = casDescriptor.optimizedBytes;
+                    savingsPct =
+                        casDescriptor.savingsPct ??
+                        Math.max(
+                            0,
+                            Math.round(((origBytes - optBytes) / Math.max(1, origBytes)) * 100)
+                        );
+                    widthVal = casDescriptor.width ?? widthVal;
+                    heightVal = casDescriptor.height ?? heightVal;
+                }
+
+                const nowIso = new Date().toISOString();
+                const consolidatedTelemetry = {
+                    original_bytes: origBytes,
+                    optimized_bytes: optBytes,
+                    savings_pct: savingsPct,
+                    originalBytes: origBytes,
+                    optimizedBytes: optBytes,
+                    savingsPct,
+                    sha256: resolvedSha,
+                    ...(widthVal ? { width: widthVal } : {}),
+                    ...(heightVal ? { height: heightVal } : {}),
+                    updated_at: nowIso,
+                };
+
+                await docRef.update({
+                    foto_url: resolvedUrl,
+                    foto_media_telemetry: consolidatedTelemetry,
+                    updatedAt: Date.now(),
+                });
+
+                void AuditLedger.record({
+                    tenantId: 'GLOBAL_OEM',
+                    actorUid: ctx.actorId || 'system',
+                    actorEmail: ctx.actorEmail || 'curador@minreport.com',
+                    module: 'opermaq',
+                    action: 'VAULT_ASSET_IMAGE_REFRAMED_STUDIO_88',
+                    targetEntity: `global_asset_catalog/${targetAssetId}`,
+                    details: {
+                        globalAssetId: targetAssetId,
+                        previousUrl: currentUrl,
+                        proposedUrl: resolvedUrl,
+                        sha256: resolvedSha,
+                        telemetry: consolidatedTelemetry,
+                    },
+                }).catch(() => undefined);
+
+                return res.status(200).json({
+                    ok: true,
+                    success: true,
+                    previewOnly: false,
+                    currentUrl,
+                    proposedUrl: resolvedUrl,
+                    proposedSha256: resolvedSha,
+                    metrics: consolidatedTelemetry,
+                    foto_url: resolvedUrl,
+                    foto_media_telemetry: consolidatedTelemetry,
+                });
+            }
+
             // Descargar imagen actual (CAS por ruta directa, proxy /api/media/blob o URL externa)
             let imgBuffer: Buffer | null = null;
-            const casDirectMatch = String(currentUrl).match(/(cas_blobs\/[^?#]+)/);
-            const casProxyMatch = String(currentUrl).match(/\/api\/media\/blob\/([^/?#]+)\/([^/?#]+)/);
+            const casDirectMatch = currentUrl.match(/(cas_blobs\/[^?#]+)/);
+            const casProxyMatch = currentUrl.match(/\/api\/media\/blob\/([^/?#]+)\/([^/?#]+)/);
             const resolvedCasPath = casDirectMatch
                 ? casDirectMatch[1]
                 : casProxyMatch
@@ -778,7 +1400,9 @@ vaultRouter.post(
             }
 
             if (!imgBuffer) {
-                return res.status(422).json({ error: 'No se pudo obtener el binario de la imagen actual para re-encuadrar.' });
+                return res.status(422).json({
+                    error: 'No se pudo obtener el binario de la imagen actual para re-encuadrar.',
+                });
             }
 
             const storedOrigBytes = Number(data.foto_media_telemetry?.original_bytes || 0);
@@ -806,22 +1430,40 @@ vaultRouter.post(
                 },
                 {
                     scope: 'GLOBAL_OEM',
-                    actorUid: req.opermaqContext?.actorId,
+                    actorUid: ctx.actorId,
                     originalFilename: 'reframed_photo_studio88.webp',
                     clientOriginalBytes: baseOriginalBytes,
                 }
             );
 
+            const savingsPct = Math.max(
+                0,
+                Math.round(((baseOriginalBytes - framed.buffer.length) / Math.max(1, baseOriginalBytes)) * 100)
+            );
             const fotoMediaTelemetry = {
                 original_bytes: baseOriginalBytes,
                 optimized_bytes: framed.buffer.length,
-                savings_pct: Math.max(
-                    0,
-                    Math.round(((baseOriginalBytes - framed.buffer.length) / Math.max(1, baseOriginalBytes)) * 100)
-                ),
+                savings_pct: savingsPct,
+                originalBytes: baseOriginalBytes,
+                optimizedBytes: framed.buffer.length,
+                savingsPct,
                 sha256: framed.sha256,
+                width: framed.width,
+                height: framed.height,
                 updated_at: new Date().toISOString(),
             };
+
+            if (previewOnly) {
+                return res.status(200).json({
+                    ok: true,
+                    success: true,
+                    previewOnly: true,
+                    currentUrl,
+                    proposedUrl: descriptor.downloadUrl,
+                    proposedSha256: framed.sha256,
+                    metrics: fotoMediaTelemetry,
+                });
+            }
 
             await docRef.update({
                 foto_url: descriptor.downloadUrl,
@@ -831,20 +1473,27 @@ vaultRouter.post(
 
             void AuditLedger.record({
                 tenantId: 'GLOBAL_OEM',
-                actorUid: req.opermaqContext?.actorId || 'system',
-                actorEmail: req.opermaqContext?.actorEmail || 'curador@minreport.com',
+                actorUid: ctx.actorId || 'system',
+                actorEmail: ctx.actorEmail || 'curador@minreport.com',
                 module: 'opermaq',
                 action: 'VAULT_ASSET_IMAGE_REFRAMED_STUDIO_88',
-                targetEntity: `global_asset_catalog/${globalAssetId}`,
+                targetEntity: `global_asset_catalog/${targetAssetId}`,
                 details: {
-                    globalAssetId,
+                    globalAssetId: targetAssetId,
+                    previousUrl: currentUrl,
                     sha256: framed.sha256,
                     telemetry: fotoMediaTelemetry,
                 },
             }).catch(() => undefined);
 
             return res.status(200).json({
+                ok: true,
                 success: true,
+                previewOnly: false,
+                currentUrl,
+                proposedUrl: descriptor.downloadUrl,
+                proposedSha256: framed.sha256,
+                metrics: fotoMediaTelemetry,
                 foto_url: descriptor.downloadUrl,
                 foto_media_telemetry: fotoMediaTelemetry,
             });
@@ -859,37 +1508,78 @@ vaultRouter.post(
     requireCurateAI,
     checkVaultNotSealed,
     async (req: ScopedRequest, res: Response) => {
-        const { globalAssetId } = req.body || {};
-        if (!globalAssetId || typeof globalAssetId !== 'string') {
-            return res.status(400).json({ error: 'globalAssetId es requerido.' });
+        const ctx = req.opermaqContext!;
+        const parsed = ReconcileSidebarProfileBodySchema.safeParse(req.body || {});
+        if (!parsed.success) {
+            return sendZodBadRequest(res, parsed.error, 'assetId o globalAssetId es requerido.');
+        }
+
+        const { previewOnly, confirmWord, approvedProfile } = parsed.data;
+        const targetAssetId = String(parsed.data.assetId || parsed.data.globalAssetId);
+
+        if (!previewOnly && !isValidHitlConfirmWord(confirmWord)) {
+            return sendConfirmWordMismatch(res);
         }
 
         try {
-            const reconciled = await reconcileAssetSidebarProfileFromVault(globalAssetId, {
-                allowGroundedEnrichmentIfNeeded: true,
+            const previewComputed = await computeSidebarProfilePreviewFromVault(targetAssetId, {
+                allowGroundedEnrichmentIfNeeded: !approvedProfile,
             });
-            if (!reconciled) {
-                return res.status(404).json({ error: 'No se encontró el activo para reconciliar su perfil lateral.' });
+            if (!previewComputed) {
+                return res.status(404).json({
+                    error: 'No se encontró el activo para reconciliar su perfil lateral.',
+                });
             }
+
+            if (previewOnly) {
+                return res.status(200).json({
+                    ok: true,
+                    success: true,
+                    previewOnly: true,
+                    currentProfile: previewComputed.currentProfile,
+                    proposedProfile: previewComputed.proposedProfile,
+                });
+            }
+
+            const finalProfile = approvedProfile
+                ? mergeApprovedSidebarProfile(approvedProfile, previewComputed.proposedProfile)
+                : previewComputed.proposedProfile;
+
+            const docRef = db.collection('global_asset_catalog').doc(targetAssetId);
+            await docRef.update({
+                equipment_type_key: finalProfile.equipment_type_key,
+                canonical_specs: finalProfile.canonical_specs,
+                caracteristicas_principales: finalProfile.caracteristicas_principales,
+                ambiente_operativo: finalProfile.ambiente_operativo,
+                contexto_operativo: finalProfile.contexto_operativo,
+                energy_consumption_profile: finalProfile.energy_consumption_profile,
+                configuration_profile: finalProfile.configuration_profile,
+                updatedAt: Date.now(),
+            });
 
             void AuditLedger.record({
                 tenantId: 'GLOBAL_OEM',
-                actorUid: req.opermaqContext?.actorId || 'system',
-                actorEmail: req.opermaqContext?.actorEmail || 'curador@minreport.com',
+                actorUid: ctx.actorId || 'system',
+                actorEmail: ctx.actorEmail || 'curador@minreport.com',
                 module: 'opermaq',
                 action: 'VAULT_SIDEBAR_PROFILE_RECONCILED',
-                targetEntity: `global_asset_catalog/${globalAssetId}`,
+                targetEntity: `global_asset_catalog/${targetAssetId}`,
                 details: {
-                    globalAssetId,
-                    caracteristicasCount: reconciled.caracteristicas_principales.length,
-                    ambienteCount: reconciled.ambiente_operativo.length,
-                    contextoCount: reconciled.contexto_operativo.length,
+                    globalAssetId: targetAssetId,
+                    usedGranularApprovedProfile: Boolean(approvedProfile),
+                    caracteristicasCount: finalProfile.caracteristicas_principales.length,
+                    ambienteCount: finalProfile.ambiente_operativo.length,
+                    contextoCount: finalProfile.contexto_operativo.length,
                 },
             }).catch(() => undefined);
 
             return res.status(200).json({
+                ok: true,
                 success: true,
-                ...reconciled,
+                previewOnly: false,
+                currentProfile: previewComputed.currentProfile,
+                proposedProfile: finalProfile,
+                ...finalProfile,
             });
         } catch (err) {
             return handleVaultError(res, err, 'Error reconciliando perfil lateral del equipo.');
@@ -903,30 +1593,34 @@ vaultRouter.post(
     checkVaultNotSealed,
     async (req: ScopedRequest, res: Response) => {
         const schema = z.object({
-            globalAssetId: z.string().min(1),
-            confirmationKeyword: z.string().min(1),
+            globalAssetId: z.string().trim().min(1).max(160),
+            confirmationKeyword: z.string().optional(),
+            confirmWord: z.string().optional(),
             caracteristicas_principales: z.array(z.string()).optional(),
             ambiente_operativo: z.array(z.string()).optional(),
             contexto_operativo: z.array(z.string()).optional(),
         });
 
-        const parsed = schema.safeParse(req.body);
+        const parsed = schema.safeParse(req.body || {});
         if (!parsed.success) {
-            return res.status(400).json({ error: 'Parámetros inválidos para actualización quirúrgica del perfil lateral.' });
+            return sendZodBadRequest(
+                res,
+                parsed.error,
+                'Parámetros inválidos para actualización quirúrgica del perfil lateral.'
+            );
         }
 
         const {
             globalAssetId,
             confirmationKeyword,
+            confirmWord,
             caracteristicas_principales,
             ambiente_operativo,
             contexto_operativo,
         } = parsed.data;
 
-        if (confirmationKeyword.trim().toUpperCase() !== 'ACTUALIZAR') {
-            return res.status(400).json({
-                error: 'Confirmación HITL inválida. Debe escribir exactamente ACTUALIZAR.',
-            });
+        if (!isValidHitlConfirmWord(confirmWord ?? confirmationKeyword)) {
+            return sendConfirmWordMismatch(res);
         }
 
         try {
@@ -939,19 +1633,19 @@ vaultRouter.post(
             const updates: Record<string, any> = { updatedAt: Date.now() };
             if (Array.isArray(caracteristicas_principales)) {
                 updates.caracteristicas_principales = caracteristicas_principales
-                    .map((s) => s.trim())
+                    .map((s) => ConfidentialityAirlockService.scrubDeterministicPii(s).scrubbed.trim())
                     .filter(Boolean);
                 updates.sidebar_caracteristicas_human_curated = true;
             }
             if (Array.isArray(ambiente_operativo)) {
                 updates.ambiente_operativo = ambiente_operativo
-                    .map((s) => s.trim())
+                    .map((s) => ConfidentialityAirlockService.scrubDeterministicPii(s).scrubbed.trim())
                     .filter(Boolean);
                 updates.sidebar_ambiente_human_curated = true;
             }
             if (Array.isArray(contexto_operativo)) {
                 updates.contexto_operativo = contexto_operativo
-                    .map((s) => s.trim())
+                    .map((s) => ConfidentialityAirlockService.scrubDeterministicPii(s).scrubbed.trim())
                     .filter(Boolean);
                 updates.sidebar_contexto_human_curated = true;
             }
@@ -972,6 +1666,7 @@ vaultRouter.post(
             }).catch(() => undefined);
 
             return res.status(200).json({
+                ok: true,
                 success: true,
                 ...updates,
             });
@@ -981,15 +1676,21 @@ vaultRouter.post(
     }
 );
 
+const SuggestComplementaryItemsBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    pillarId: VaultPillarIdSchema,
+});
+
 vaultRouter.post(
     '/suggest-complementary-items',
     requireCurateAI,
     checkVaultNotSealed,
     async (req: ScopedRequest, res: Response) => {
-        const { globalAssetId, pillarId } = req.body || {};
-        if (!globalAssetId || !VALID_PILLAR_IDS.includes(pillarId)) {
-            return res.status(400).json({ error: 'globalAssetId y pillarId válido son requeridos.' });
+        const parsed = SuggestComplementaryItemsBodySchema.safeParse(req.body || {});
+        if (!parsed.success) {
+            return sendZodBadRequest(res, parsed.error, 'globalAssetId y pillarId válido son requeridos.');
         }
+        const { globalAssetId, pillarId } = parsed.data;
 
         try {
             const suggestions = await suggestComplementaryPillarItems(globalAssetId, pillarId as PillarId);
@@ -1003,26 +1704,24 @@ vaultRouter.post(
 // ── ETAPA 3: CAZA PROFUNDA POR ÍTEM (SINCRÓNICA Y ASÍNCRONA) ─────────────────
 
 vaultRouter.post('/hunt-item', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
+    const ctx = req.opermaqContext!;
     const schema = z.object({
-        globalAssetId: z.string().min(1),
-        pillarId: z.enum([
-            'ficha_tecnica',
-            'manual_operaciones',
-            'pauta_mantencion',
-            'matriz_riesgos',
-            'checklist_pre_op',
-        ]),
-        itemId: z.string().min(1),
+        globalAssetId: z.string().trim().min(1).max(160),
+        pillarId: VaultPillarIdSchema,
+        itemId: z.string().trim().min(1).max(160),
         intent: z.enum(['INITIAL_CAPTURE', 'INCREMENTAL_UPDATE']).optional(),
-        humanCorrection: z.string().optional(),
+        humanCorrection: z.string().max(4000).optional(),
     });
 
-    const parsed = schema.safeParse(req.body);
+    const parsed = schema.safeParse(req.body || {});
     if (!parsed.success) {
-        return res.status(400).json({ error: 'Parámetros inválidos (globalAssetId, pillarId, itemId).' });
+        return sendZodBadRequest(res, parsed.error, 'Parámetros inválidos (globalAssetId, pillarId, itemId).');
     }
 
     const { globalAssetId, pillarId, itemId, intent, humanCorrection } = parsed.data;
+    const cleanHumanCorrection = humanCorrection
+        ? ConfidentialityAirlockService.scrubDeterministicPii(humanCorrection).scrubbed.trim()
+        : undefined;
 
     try {
         const result = await huntVaultItem({
@@ -1030,12 +1729,27 @@ vaultRouter.post('/hunt-item', requireCurateAI, checkVaultNotSealed, async (req:
             pillarId,
             itemId,
             intent,
-            humanCorrection,
+            humanCorrection: cleanHumanCorrection,
         });
 
         if (!result.success) {
             return res.status(500).json({ error: result.error || 'Fallo en caza técnica del ítem.' });
         }
+
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_ITEM_HUNT_EXECUTED',
+            targetEntity: `global_asset_catalog/${globalAssetId}/pillars/${pillarId}/${itemId}`,
+            details: {
+                pillarId,
+                itemId,
+                intent: intent || 'INITIAL_CAPTURE',
+                mode: result.mode || null,
+            },
+        }).catch(() => undefined);
 
         return res.status(200).json({
             success: true,
@@ -1055,26 +1769,23 @@ vaultRouter.post('/hunt-item', requireCurateAI, checkVaultNotSealed, async (req:
 vaultRouter.post('/hunt-item-async', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
     const schema = z.object({
-        globalAssetId: z.string().min(1),
-        pillarId: z.enum([
-            'ficha_tecnica',
-            'manual_operaciones',
-            'pauta_mantencion',
-            'matriz_riesgos',
-            'checklist_pre_op',
-        ]),
-        itemId: z.string().min(1),
+        globalAssetId: z.string().trim().min(1).max(160),
+        pillarId: VaultPillarIdSchema,
+        itemId: z.string().trim().min(1).max(160),
         intent: z.enum(['INITIAL_CAPTURE', 'INCREMENTAL_UPDATE']).optional(),
-        humanCorrection: z.string().optional(),
+        humanCorrection: z.string().max(4000).optional(),
         forceRestart: z.boolean().optional(),
     });
 
-    const parsed = schema.safeParse(req.body);
+    const parsed = schema.safeParse(req.body || {});
     if (!parsed.success) {
-        return res.status(400).json({ error: 'Parámetros requeridos: globalAssetId, pillarId, itemId.' });
+        return sendZodBadRequest(res, parsed.error, 'Parámetros requeridos: globalAssetId, pillarId, itemId.');
     }
 
     const { globalAssetId, pillarId, itemId, intent, humanCorrection, forceRestart } = parsed.data;
+    const cleanHumanCorrection = humanCorrection
+        ? ConfidentialityAirlockService.scrubDeterministicPii(humanCorrection).scrubbed.trim()
+        : undefined;
     const taskId = buildHuntTaskId(globalAssetId, pillarId, itemId);
 
     try {
@@ -1140,9 +1851,26 @@ vaultRouter.post('/hunt-item-async', requireCurateAI, checkVaultNotSealed, async
             intent,
             tenantId: ctx.tenantId,
             actorId: ctx.actorId,
-            humanCorrection,
+            humanCorrection: cleanHumanCorrection,
             forceRestart: Boolean(forceRestart),
         });
+
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_ITEM_HUNT_ENQUEUED',
+            targetEntity: `global_asset_catalog/${globalAssetId}/pillars/${pillarId}/${itemId}`,
+            details: {
+                taskId: enqueued.taskId,
+                pillarId,
+                itemId,
+                intent: intent || 'INITIAL_CAPTURE',
+                dispatchMode: enqueued.dispatchMode,
+                forceRestart: Boolean(forceRestart),
+            },
+        }).catch(() => undefined);
 
         return res.status(202).json({
             success: true,
@@ -1155,9 +1883,17 @@ vaultRouter.post('/hunt-item-async', requireCurateAI, checkVaultNotSealed, async
     }
 });
 
+const HuntStatusParamsSchema = z.object({
+    taskId: z.string().trim().min(1).max(240),
+});
+
 vaultRouter.get('/hunt-status/:taskId', async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const taskId = String(req.params.taskId);
+    const parsedParams = HuntStatusParamsSchema.safeParse(req.params);
+    if (!parsedParams.success) {
+        return sendZodBadRequest(res, parsedParams.error, 'taskId inválido.');
+    }
+    const { taskId } = parsedParams.data;
     const docRef = db.collection('task_status').doc(taskId);
 
     try {
@@ -1213,16 +1949,32 @@ vaultRouter.get('/hunt-status/:taskId', async (req: ScopedRequest, res: Response
 
 // ── ETAPA 4: ASISTENCIA IA, CHAT CONVERSACIONAL Y CURADURÍA HITL ─────────────
 
+const AiAssistItemBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    pillarId: VaultPillarIdSchema,
+    itemId: z.string().trim().min(1).max(160),
+    userRequest: z.string().trim().min(1).max(12000),
+});
+
 vaultRouter.post('/ai-assist-item', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
-    const { globalAssetId, pillarId, itemId, userRequest } = req.body || {};
-    if (!globalAssetId || !pillarId || !itemId || !userRequest) {
-        return res.status(400).json({
-            error: 'Parámetros requeridos: globalAssetId, pillarId, itemId, userRequest.',
-        });
+    const parsed = AiAssistItemBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(
+            res,
+            parsed.error,
+            'Parámetros requeridos: globalAssetId, pillarId, itemId, userRequest.'
+        );
     }
+    const { globalAssetId, pillarId, itemId, userRequest } = parsed.data;
+    const cleanUserRequest = ConfidentialityAirlockService.scrubDeterministicPii(userRequest).scrubbed.trim();
 
     try {
-        const result = await assistItemEdit({ globalAssetId, pillarId, itemId, userRequest });
+        const result = await assistItemEdit({
+            globalAssetId,
+            pillarId,
+            itemId,
+            userRequest: cleanUserRequest,
+        });
         if (!result.success) {
             return res.status(500).json({ error: result.error || 'Error en edición asistida.' });
         }
@@ -1232,15 +1984,32 @@ vaultRouter.post('/ai-assist-item', requireCurateAI, checkVaultNotSealed, async 
     }
 });
 
+const AiAssistChatBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    pillarId: VaultPillarIdSchema,
+    itemId: z.string().trim().min(1).max(160),
+    sessionId: z.string().trim().min(1).max(160),
+    userRequest: z.string().trim().min(1).max(16000),
+    selectedFragment: z.string().max(16000).optional(),
+});
+
 vaultRouter.post('/ai-assist-chat', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const { globalAssetId, pillarId, itemId, sessionId, userRequest, selectedFragment } = req.body || {};
-
-    if (!globalAssetId || !pillarId || !itemId || !sessionId || !userRequest) {
-        return res.status(400).json({
-            error: 'Parámetros requeridos: globalAssetId, pillarId, itemId, sessionId, userRequest.',
-        });
+    const parsed = AiAssistChatBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(
+            res,
+            parsed.error,
+            'Parámetros requeridos: globalAssetId, pillarId, itemId, sessionId, userRequest.'
+        );
     }
+    const { globalAssetId, pillarId, itemId, sessionId, userRequest, selectedFragment } = parsed.data;
+
+    // Ley N° 21.719 (A-06): Sanitización determinista PII ANTES de enviar a IA y ANTES de persistir en `vault_chats`
+    const sanitizedUserRequest = ConfidentialityAirlockService.scrubDeterministicPii(userRequest).scrubbed.trim();
+    const sanitizedSelectedFragment = selectedFragment
+        ? ConfidentialityAirlockService.scrubDeterministicPii(selectedFragment).scrubbed
+        : undefined;
 
     try {
         const sessionRef = db
@@ -1258,9 +2027,9 @@ vaultRouter.post('/ai-assist-chat', requireCurateAI, checkVaultNotSealed, async 
             globalAssetId,
             pillarId,
             itemId,
-            userRequest,
+            userRequest: sanitizedUserRequest,
             history,
-            selectedFragment,
+            selectedFragment: sanitizedSelectedFragment,
             userEmail: ctx.actorEmail,
         });
 
@@ -1271,7 +2040,7 @@ vaultRouter.post('/ai-assist-chat', requireCurateAI, checkVaultNotSealed, async 
         const userMsg: ChatMessage = {
             id: `msg_user_${Date.now()}`,
             role: 'user',
-            content: userRequest,
+            content: sanitizedUserRequest,
             timestamp: new Date().toISOString(),
         };
 
@@ -1312,11 +2081,19 @@ vaultRouter.post('/ai-assist-chat', requireCurateAI, checkVaultNotSealed, async 
     }
 });
 
+const AiAssistSessionCloseBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    itemId: z.string().trim().min(1).max(160),
+    sessionId: z.string().trim().min(1).max(160),
+});
+
 vaultRouter.post('/ai-assist-session-close', requireCurateAI, async (req: ScopedRequest, res: Response) => {
-    const { globalAssetId, itemId, sessionId } = req.body || {};
-    if (!globalAssetId || !itemId || !sessionId) {
-        return res.status(400).json({ error: 'Parámetros requeridos: globalAssetId, itemId, sessionId.' });
+    const ctx = req.opermaqContext!;
+    const parsed = AiAssistSessionCloseBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(res, parsed.error, 'Parámetros requeridos: globalAssetId, itemId, sessionId.');
     }
+    const { globalAssetId, itemId, sessionId } = parsed.data;
 
     try {
         await db
@@ -1328,28 +2105,49 @@ vaultRouter.post('/ai-assist-session-close', requireCurateAI, async (req: Scoped
             .doc(sessionId)
             .set({ closedAt: new Date().toISOString() }, { merge: true });
 
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_CHAT_SESSION_CLOSED',
+            targetEntity: `global_asset_catalog/${globalAssetId}/vault_chats/${itemId}/sessions/${sessionId}`,
+            details: { globalAssetId, itemId, sessionId },
+        }).catch(() => undefined);
+
         return res.status(200).json({ success: true });
     } catch (err) {
         return handleVaultError(res, err, 'Error cerrando sesión de chat.');
     }
 });
 
-vaultRouter.get('/ai-assist-chat/history', async (req: ScopedRequest, res: Response) => {
-    const { globalAssetId, itemId, sessionId } = req.query;
-    if (!globalAssetId || !itemId) {
-        return res.status(400).json({ error: 'Parámetros requeridos: globalAssetId, itemId.' });
+const AiAssistChatHistoryQuerySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    itemId: z.string().trim().min(1).max(160),
+    sessionId: z.string().trim().min(1).max(160).optional(),
+});
+
+vaultRouter.get('/ai-assist-chat/history', requireCurateAI, async (req: ScopedRequest, res: Response) => {
+    const parsed = AiAssistChatHistoryQuerySchema.safeParse({
+        globalAssetId: req.query?.globalAssetId,
+        itemId: req.query?.itemId,
+        sessionId: req.query?.sessionId || undefined,
+    });
+    if (!parsed.success) {
+        return sendZodBadRequest(res, parsed.error, 'Parámetros requeridos: globalAssetId, itemId.');
     }
+    const { globalAssetId, itemId, sessionId } = parsed.data;
 
     try {
         const sessionsColl = db
             .collection('global_asset_catalog')
-            .doc(String(globalAssetId))
+            .doc(globalAssetId)
             .collection('vault_chats')
-            .doc(String(itemId))
+            .doc(itemId)
             .collection('sessions');
 
         if (sessionId) {
-            const snap = await sessionsColl.doc(String(sessionId)).get();
+            const snap = await sessionsColl.doc(sessionId).get();
             if (!snap.exists) return res.status(404).json({ error: 'Sesión no encontrada.' });
             return res.status(200).json(snap.data());
         }
@@ -1365,16 +2163,32 @@ vaultRouter.get('/ai-assist-chat/history', async (req: ScopedRequest, res: Respo
     }
 });
 
+const AiAssistRejectionBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    pillarId: VaultPillarIdSchema,
+    itemId: z.string().trim().min(1).max(160),
+    rejectionNote: z.string().trim().min(1).max(8000),
+});
+
 vaultRouter.post('/ai-assist-rejection', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
-    const { globalAssetId, pillarId, itemId, rejectionNote } = req.body || {};
-    if (!globalAssetId || !pillarId || !itemId || !rejectionNote) {
-        return res.status(400).json({
-            error: 'Parámetros requeridos: globalAssetId, pillarId, itemId, rejectionNote.',
-        });
+    const parsed = AiAssistRejectionBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(
+            res,
+            parsed.error,
+            'Parámetros requeridos: globalAssetId, pillarId, itemId, rejectionNote.'
+        );
     }
+    const { globalAssetId, pillarId, itemId, rejectionNote } = parsed.data;
+    const cleanRejectionNote = ConfidentialityAirlockService.scrubDeterministicPii(rejectionNote).scrubbed.trim();
 
     try {
-        const result = await assistRejection({ globalAssetId, pillarId, itemId, rejectionNote });
+        const result = await assistRejection({
+            globalAssetId,
+            pillarId,
+            itemId,
+            rejectionNote: cleanRejectionNote,
+        });
         if (!result.success) {
             return res.status(500).json({ error: result.error || 'Error asistiendo corrección.' });
         }
@@ -1386,11 +2200,18 @@ vaultRouter.post('/ai-assist-rejection', requireCurateAI, checkVaultNotSealed, a
 
 vaultRouter.post('/apply-assist-proposal', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const { globalAssetId, pillarId, itemId, finalContent, intent, sessionId, messageId } = req.body || {};
-
-    if (!globalAssetId || !pillarId || !itemId || !finalContent) {
-        return res.status(400).json({ error: 'Parámetros requeridos: globalAssetId, pillarId, itemId, finalContent.' });
+    if (!isValidHitlConfirmWord(req.body?.confirmWord)) {
+        return sendConfirmWordMismatch(res);
     }
+    const parsed = VaultApplyAssistProposalBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(
+            res,
+            parsed.error,
+            'Parámetros requeridos: globalAssetId, pillarId, itemId, finalContent, confirmWord.'
+        );
+    }
+    const { globalAssetId, pillarId, itemId, finalContent, intent, sessionId, messageId } = parsed.data;
 
     try {
         const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
@@ -1495,6 +2316,7 @@ vaultRouter.post('/apply-assist-proposal', requireCurateAI, checkVaultNotSealed,
         }
 
         return res.status(200).json({
+            ok: true,
             success: true,
             content: sanitized.content,
             symbology_refs: sanitized.symbologyRefs,
@@ -1506,20 +2328,29 @@ vaultRouter.post('/apply-assist-proposal', requireCurateAI, checkVaultNotSealed,
     }
 });
 
+const DismissAssistProposalBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    itemId: z.string().trim().min(1).max(160),
+    sessionId: z.string().trim().min(1).max(160),
+    messageId: z.string().trim().max(160).optional(),
+});
+
 vaultRouter.post('/dismiss-assist-proposal', requireCurateAI, async (req: ScopedRequest, res: Response) => {
-    const { globalAssetId, itemId, sessionId, messageId } = req.body || {};
-    if (!globalAssetId || !itemId || !sessionId) {
-        return res.status(400).json({ error: 'Parámetros requeridos: globalAssetId, itemId, sessionId.' });
+    const ctx = req.opermaqContext!;
+    const parsed = DismissAssistProposalBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(res, parsed.error, 'Parámetros requeridos: globalAssetId, itemId, sessionId.');
     }
+    const { globalAssetId, itemId, sessionId, messageId } = parsed.data;
 
     try {
         const sessionRef = db
             .collection('global_asset_catalog')
-            .doc(String(globalAssetId))
+            .doc(globalAssetId)
             .collection('vault_chats')
-            .doc(String(itemId))
+            .doc(itemId)
             .collection('sessions')
-            .doc(String(sessionId));
+            .doc(sessionId);
 
         const sessionSnap = await sessionRef.get();
         if (!sessionSnap.exists) {
@@ -1540,6 +2371,17 @@ vaultRouter.post('/dismiss-assist-proposal', requireCurateAI, async (req: Scoped
         });
 
         await sessionRef.set({ messages: updatedHistory, updatedAt: nowIso }, { merge: true });
+
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_ASSIST_PROPOSAL_DISMISSED',
+            targetEntity: `global_asset_catalog/${globalAssetId}/vault_chats/${itemId}/sessions/${sessionId}`,
+            details: { globalAssetId, itemId, sessionId, messageId: messageId || null },
+        }).catch(() => undefined);
+
         return res.status(200).json({ success: true });
     } catch (err) {
         return handleVaultError(res, err, 'Error descartando propuesta de borrador.');
@@ -1560,11 +2402,9 @@ const PENDING_FIGURE_TYPES = [
 
 const ResolvePendingFigureSchema = z.object({
     globalAssetId: z.string().min(1),
-    pillarId: z.enum(['ficha_tecnica', 'manual_operaciones', 'pauta_mantencion', 'matriz_riesgos', 'checklist_pre_op']),
+    pillarId: VaultPillarIdSchema,
     itemId: z.string().min(1),
-    confirmWord: z.string().refine((w) => w.trim().toUpperCase() === HITL_CONFIRM_KEYWORD, {
-        message: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".`,
-    }),
+    confirmWord: HitlConfirmWordSchema,
     pendingMarkerLine: z.string().max(1200).optional(),
     pendingDescription: z.string().max(600).optional(),
     figure: z.object({
@@ -1588,12 +2428,16 @@ vaultRouter.post(
     checkVaultNotSealed,
     async (req: ScopedRequest, res: Response) => {
         const ctx = req.opermaqContext!;
-        const parsed = ResolvePendingFigureSchema.safeParse(req.body);
+        if (!isValidHitlConfirmWord(req.body?.confirmWord)) {
+            return sendConfirmWordMismatch(res);
+        }
+        const parsed = ResolvePendingFigureSchema.safeParse(req.body || {});
         if (!parsed.success) {
-            return res.status(400).json({
-                error: parsed.error.issues[0]?.message || 'Parámetros inválidos para resolución de figura pendiente.',
-                details: parsed.error.issues,
-            });
+            return sendZodBadRequest(
+                res,
+                parsed.error,
+                'Parámetros inválidos para resolución de figura pendiente.'
+            );
         }
 
         const { globalAssetId, pillarId, itemId, pendingMarkerLine, pendingDescription, figure } = parsed.data;
@@ -1869,34 +2713,44 @@ vaultRouter.post(
     }
 );
 
+const CorrectManualItemBodySchema = z.object({
+    title: z.string().trim().min(1).max(400),
+    rationale: z.string().trim().min(1).max(4000),
+    globalAssetId: z.string().trim().max(160).optional(),
+    pillarId: VaultPillarIdSchema.optional(),
+});
+
 vaultRouter.post('/correct-manual-item', requireCurateAI, async (req: ScopedRequest, res: Response) => {
-    const { title, rationale, globalAssetId, pillarId } = req.body || {};
-    if (!title || !rationale) {
-        return res.status(400).json({ error: 'title y rationale son requeridos.' });
+    const parsed = CorrectManualItemBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(res, parsed.error, 'title y rationale son requeridos.');
     }
+    const { title, rationale, globalAssetId, pillarId } = parsed.data;
+    const cleanTitle = ConfidentialityAirlockService.scrubDeterministicPii(title).scrubbed.trim();
+    const cleanRationale = ConfidentialityAirlockService.scrubDeterministicPii(rationale).scrubbed.trim();
 
     try {
         let makeModel: string | undefined;
         let tipoEquipo: string | undefined;
         if (globalAssetId) {
-            const snap = await db.collection('global_asset_catalog').doc(String(globalAssetId)).get();
+            const snap = await db.collection('global_asset_catalog').doc(globalAssetId).get();
             if (snap.exists) {
                 const d = snap.data() || {};
                 makeModel = d.make_model || `${d.make_oficial || d.make || ''} ${d.model_oficial || d.model || ''}`.trim();
                 tipoEquipo = d.tipo_equipo;
             }
         }
-        const corrected = await correctManualItemText(String(title), String(rationale), {
+        const corrected = await correctManualItemText(cleanTitle, cleanRationale, {
             makeModel,
             tipoEquipo,
-            pillarId: VALID_PILLAR_IDS.includes(pillarId) ? (pillarId as PillarId) : undefined,
+            pillarId: pillarId as PillarId | undefined,
         });
         return res.status(200).json({ corrected });
     } catch {
         return res.status(200).json({
             corrected: {
-                title: String(title),
-                rationale: String(rationale),
+                title: cleanTitle,
+                rationale: cleanRationale,
                 section: 'ESPECIFICACIÓN TÉCNICA',
             },
         });
@@ -1905,18 +2759,18 @@ vaultRouter.post('/correct-manual-item', requireCurateAI, async (req: ScopedRequ
 
 vaultRouter.post('/create-item', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const { globalAssetId, pillarId, title, section, rationale, priority, itemSource, confirmWord } = req.body || {};
-
-    if (!globalAssetId || !pillarId || !title || !section) {
-        return res.status(400).json({
-            error: 'Parámetros requeridos: globalAssetId, pillarId, title, section.',
-        });
+    if (!isValidHitlConfirmWord(req.body?.confirmWord)) {
+        return sendConfirmWordMismatch(res);
     }
-    if (confirmWord !== undefined && String(confirmWord).trim().toUpperCase() !== HITL_CONFIRM_KEYWORD) {
-        return res.status(400).json({
-            error: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".`,
-        });
+    const parsed = VaultCreateItemBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(
+            res,
+            parsed.error,
+            'Parámetros requeridos: globalAssetId, pillarId, title, section, confirmWord.'
+        );
     }
+    const { globalAssetId, pillarId, title, section, rationale, priority, itemSource } = parsed.data;
 
     try {
         const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
@@ -1961,10 +2815,10 @@ vaultRouter.post('/create-item', requireCurateAI, checkVaultNotSealed, async (re
             item_sources: [
                 itemSource
                     ? {
-                          type: itemSource.type,
-                          author: itemSource.author,
-                          description: itemSource.description,
-                          url: itemSource.url,
+                          type: String((itemSource as any).type || 'IA'),
+                          author: String((itemSource as any).author || ctx.actorEmail),
+                          description: String((itemSource as any).description || cleanRationale || cleanTitle),
+                          url: String((itemSource as any).url || ''),
                       }
                     : {
                           type: 'MANUAL',
@@ -2020,7 +2874,7 @@ vaultRouter.post('/create-item', requireCurateAI, checkVaultNotSealed, async (re
             },
         }).catch(() => undefined);
 
-        return res.status(200).json({ success: true, item: newItem });
+        return res.status(200).json({ ok: true, success: true, item: newItem });
     } catch (err) {
         return handleVaultError(res, err, 'Error creando ítem en pilar.');
     }
@@ -2028,14 +2882,18 @@ vaultRouter.post('/create-item', requireCurateAI, checkVaultNotSealed, async (re
 
 vaultRouter.post('/discard-item', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const { globalAssetId, pillarId, itemId, confirmWord } = req.body || {};
-
-    if (!globalAssetId || !pillarId || !itemId) {
-        return res.status(400).json({ error: 'Parámetros requeridos: globalAssetId, pillarId, itemId.' });
+    if (!isValidHitlConfirmWord(req.body?.confirmWord)) {
+        return sendConfirmWordMismatch(res);
     }
-    if (confirmWord !== undefined && String(confirmWord).trim().toUpperCase() !== HITL_CONFIRM_KEYWORD) {
-        return res.status(400).json({ error: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".` });
+    const parsed = VaultMutateItemHitlBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(
+            res,
+            parsed.error,
+            'Parámetros requeridos: globalAssetId, pillarId, itemId, confirmWord.'
+        );
     }
+    const { globalAssetId, pillarId, itemId } = parsed.data;
 
     try {
         const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
@@ -2099,19 +2957,33 @@ vaultRouter.post('/discard-item', requireCurateAI, checkVaultNotSealed, async (r
             },
         }).catch(() => undefined);
 
-        return res.status(200).json({ success: true });
+        return res.status(200).json({ ok: true, success: true });
     } catch (err) {
         return handleVaultError(res, err, 'Error descartando ítem.');
     }
 });
 
+const DiscardSuggestedItemBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    pillarId: VaultPillarIdSchema,
+    title: z.string().trim().min(1).max(400),
+    section: z.string().trim().min(1).max(240),
+    rationale: z.string().max(4000).optional(),
+    source: z.record(z.string(), z.unknown()).optional(),
+});
+
 vaultRouter.post('/discard-suggested-item', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const { globalAssetId, pillarId, title, section, rationale, source } = req.body || {};
-
-    if (!globalAssetId || !pillarId || !title || !section) {
-        return res.status(400).json({ error: 'Parámetros requeridos: globalAssetId, pillarId, title, section.' });
+    const parsed = DiscardSuggestedItemBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(res, parsed.error, 'Parámetros requeridos: globalAssetId, pillarId, title, section.');
     }
+    const { globalAssetId, pillarId, title, section, rationale, source } = parsed.data;
+    const cleanTitle = ConfidentialityAirlockService.scrubDeterministicPii(title).scrubbed.trim();
+    const cleanSection = ConfidentialityAirlockService.scrubDeterministicPii(section).scrubbed.trim();
+    const cleanRationale = rationale
+        ? ConfidentialityAirlockService.scrubDeterministicPii(rationale).scrubbed.trim()
+        : 'Sugerencia descartada.';
 
     try {
         const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
@@ -2129,9 +3001,9 @@ vaultRouter.post('/discard-suggested-item', requireCurateAI, checkVaultNotSealed
 
         const newItem = {
             item_id: `manual_${randomUUID().substring(0, 8)}`,
-            title,
-            section,
-            rationale: rationale || 'Sugerencia descartada.',
+            title: cleanTitle,
+            section: cleanSection,
+            rationale: cleanRationale,
             priority: 'IMPORTANTE',
             order: 999,
             content_status: 'PENDIENTE',
@@ -2146,11 +3018,18 @@ vaultRouter.post('/discard-suggested-item', requireCurateAI, checkVaultNotSealed
                     fecha: new Date().toISOString(),
                     accion: 'DESCARTE_SUGERENCIA_IA',
                     actor: ctx.actorEmail,
-                    detalle: `Sugerencia descartada: "${title}".`,
+                    detalle: `Sugerencia descartada: "${cleanTitle}".`,
                 },
             ],
             item_sources: source
-                ? [{ type: source.type, author: source.author, description: source.description, url: source.url }]
+                ? [
+                      {
+                          type: String((source as any).type || 'IA'),
+                          author: String((source as any).author || ''),
+                          description: String((source as any).description || ''),
+                          url: String((source as any).url || ''),
+                      },
+                  ]
                 : [],
         };
 
@@ -2176,7 +3055,7 @@ vaultRouter.post('/discard-suggested-item', requireCurateAI, checkVaultNotSealed
             targetEntity: `global_asset_catalog/${globalAssetId}/knowledge_vault/${pillarId}/${newItem.item_id}`,
             details: {
                 pillarId,
-                title,
+                title: cleanTitle,
                 actorEmail: ctx.actorEmail,
             },
         }).catch(() => undefined);
@@ -2189,13 +3068,18 @@ vaultRouter.post('/discard-suggested-item', requireCurateAI, checkVaultNotSealed
 
 vaultRouter.post('/reactivate-item', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const { globalAssetId, pillarId, itemId, confirmWord } = req.body || {};
-    if (!globalAssetId || !pillarId || !itemId) {
-        return res.status(400).json({ error: 'Parámetros requeridos: globalAssetId, pillarId, itemId.' });
+    if (!isValidHitlConfirmWord(req.body?.confirmWord)) {
+        return sendConfirmWordMismatch(res);
     }
-    if (confirmWord !== undefined && String(confirmWord).trim().toUpperCase() !== HITL_CONFIRM_KEYWORD) {
-        return res.status(400).json({ error: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".` });
+    const parsed = VaultMutateItemHitlBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(
+            res,
+            parsed.error,
+            'Parámetros requeridos: globalAssetId, pillarId, itemId, confirmWord.'
+        );
     }
+    const { globalAssetId, pillarId, itemId } = parsed.data;
 
     try {
         const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
@@ -2258,10 +3142,17 @@ vaultRouter.post('/reactivate-item', requireCurateAI, checkVaultNotSealed, async
             },
         }).catch(() => undefined);
 
-        return res.status(200).json({ success: true });
+        return res.status(200).json({ ok: true, success: true });
     } catch (err) {
         return handleVaultError(res, err, 'Error reactivando ítem.');
     }
+});
+
+const AttachImageBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    activeTab: z.string().trim().min(1).max(120),
+    targetIndex: z.coerce.number().int().min(0).max(5000),
+    imageUrl: z.string().trim().max(2048).optional(),
 });
 
 vaultRouter.post(
@@ -2271,13 +3162,14 @@ vaultRouter.post(
     upload.single('image'),
     async (req: ScopedRequest, res: Response) => {
         const file = req.file;
-        const { globalAssetId, activeTab, targetIndex, imageUrl } = req.body || {};
-
-        if ((!file && !imageUrl) || !globalAssetId || !activeTab || targetIndex === undefined) {
+        const parsed = AttachImageBodySchema.safeParse(req.body || {});
+        if (!parsed.success || (!file && !parsed.data.imageUrl)) {
             return res.status(400).json({
                 error: 'Parámetros requeridos: archivo image (o imageUrl HTTPS segura), globalAssetId, activeTab, targetIndex.',
+                ...(parsed.success ? {} : { details: parsed.error.issues }),
             });
         }
+        const { globalAssetId, activeTab, targetIndex, imageUrl } = parsed.data;
 
         try {
             const ctx = req.opermaqContext!;
@@ -2323,6 +3215,28 @@ vaultRouter.post(
                 }
             );
 
+            const resolvedSavingsPct =
+                descriptor.savingsPct ?? Number((descriptor.savingsRatio * 100).toFixed(1));
+
+            void AuditLedger.record({
+                tenantId: ctx.tenantId || 'GLOBAL_OEM',
+                actorUid: ctx.actorId,
+                actorEmail: ctx.actorEmail,
+                module: 'opermaq',
+                action: 'VAULT_TECHNICAL_IMAGE_ATTACHED',
+                targetEntity: `global_asset_catalog/${globalAssetId}`,
+                details: {
+                    globalAssetId,
+                    activeTab,
+                    targetIndex,
+                    sha256: descriptor.sha256,
+                    originalBytes: descriptor.originalBytes,
+                    optimizedBytes: descriptor.optimizedBytes,
+                    savingsPct: resolvedSavingsPct,
+                    deduplicatedHit: descriptor.deduplicatedHit,
+                },
+            }).catch(() => undefined);
+
             return res.status(200).json({
                 success: true,
                 imageUrl: descriptor.downloadUrl,
@@ -2330,7 +3244,7 @@ vaultRouter.post(
                 originalBytes: descriptor.originalBytes,
                 optimizedBytes: descriptor.optimizedBytes,
                 savingsRatio: descriptor.savingsRatio,
-                savingsPct: descriptor.savingsPct ?? Number((descriptor.savingsRatio * 100).toFixed(1)),
+                savingsPct: resolvedSavingsPct,
                 deduplicatedHit: descriptor.deduplicatedHit,
             });
         } catch (err) {
@@ -2341,24 +3255,22 @@ vaultRouter.post(
 
 vaultRouter.post(
     '/update-item-approval-state',
+    requireCurateAI,
     checkVaultNotSealed,
     async (req: ScopedRequest, res: Response) => {
         const ctx = req.opermaqContext!;
-        if (!ctx.capabilities.canCurateAI) {
-            return res.status(403).json({ error: 'Permisos insuficientes para aprobación HITL.' });
-        }
 
         const schema = z.object({
-            globalAssetId: z.string().min(1),
-            pillarId: z.string().min(1),
-            itemId: z.string().min(1),
+            globalAssetId: z.string().trim().min(1).max(160),
+            pillarId: VaultPillarIdSchema,
+            itemId: z.string().trim().min(1).max(160),
             nuevo_estado: z.enum(['REQUIERE_CAMBIOS', 'APROBADO_HUMANO', 'GENERADO_IA']),
-            review_notes: z.string().optional(),
+            review_notes: z.string().max(8000).optional(),
         });
 
-        const parsed = schema.safeParse(req.body);
+        const parsed = schema.safeParse(req.body || {});
         if (!parsed.success) {
-            return res.status(400).json({ error: 'Parámetros inválidos.', details: parsed.error.format() });
+            return sendZodBadRequest(res, parsed.error, 'Parámetros inválidos.');
         }
 
         const { globalAssetId, pillarId, itemId, nuevo_estado, review_notes } = parsed.data;
@@ -2382,10 +3294,13 @@ vaultRouter.post(
             item.historial_cambios = item.historial_cambios || [];
 
             if (nuevo_estado === 'REQUIERE_CAMBIOS') {
-                if (!review_notes?.trim()) {
+                const cleanNotes = review_notes
+                    ? ConfidentialityAirlockService.scrubDeterministicPii(review_notes).scrubbed.trim()
+                    : '';
+                if (!cleanNotes) {
                     return res.status(400).json({ error: 'review_notes es requerido para REQUIERE_CAMBIOS.' });
                 }
-                item.review_notes = review_notes.trim();
+                item.review_notes = cleanNotes;
                 delete item.approved_by;
                 delete item.approved_at;
                 item.is_human_locked = false;
@@ -2393,7 +3308,7 @@ vaultRouter.post(
                     fecha: new Date().toISOString(),
                     accion: 'SOLICITUD_CORRECCION',
                     actor: ctx.actorEmail,
-                    detalle: review_notes.trim(),
+                    detalle: cleanNotes,
                 });
             } else if (nuevo_estado === 'APROBADO_HUMANO') {
                 delete item.review_notes;
@@ -2438,30 +3353,15 @@ vaultRouter.post(
     }
 );
 
-vaultRouter.post('/bulk-approve', checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
+vaultRouter.post('/bulk-approve', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    if (!ctx.capabilities.canCurateAI) {
-        return res.status(403).json({ error: 'Permisos insuficientes para aprobación masiva HITL.' });
+    if (!isValidHitlConfirmWord(req.body?.confirmWord)) {
+        return sendConfirmWordMismatch(res);
     }
 
-    const schema = z.object({
-        confirmWord: z.string().optional(),
-        items: z.array(
-            z.object({
-                globalAssetId: z.string(),
-                pillarId: z.string(),
-                itemId: z.string(),
-            })
-        ),
-    });
-
-    const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Formato inválido.' });
-    if (
-        parsed.data.confirmWord !== undefined &&
-        parsed.data.confirmWord.trim().toUpperCase() !== HITL_CONFIRM_KEYWORD
-    ) {
-        return res.status(400).json({ error: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".` });
+    const parsed = VaultBulkApproveBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(res, parsed.error, 'Formato inválido.');
     }
 
     const { items } = parsed.data;
@@ -2543,7 +3443,7 @@ vaultRouter.post('/bulk-approve', checkVaultNotSealed, async (req: ScopedRequest
             }).catch(() => undefined);
         }
 
-        return res.status(200).json({ success: true, approved });
+        return res.status(200).json({ ok: true, success: true, approved });
     } catch (err) {
         return handleVaultError(res, err, 'Error en aprobación HITL por lote.');
     }
@@ -2551,21 +3451,16 @@ vaultRouter.post('/bulk-approve', checkVaultNotSealed, async (req: ScopedRequest
 
 vaultRouter.post('/update-item-content', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const schema = z.object({
-        globalAssetId: z.string(),
-        pillarId: z.string(),
-        itemId: z.string(),
-        newContent: z.string(),
-        confirmWord: z.string().optional(),
-    });
-
-    const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Parámetros inválidos.' });
-
-    const { globalAssetId, pillarId, itemId, newContent, confirmWord } = parsed.data;
-    if (confirmWord !== undefined && confirmWord.trim().toUpperCase() !== HITL_CONFIRM_KEYWORD) {
-        return res.status(400).json({ error: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".` });
+    if (!isValidHitlConfirmWord(req.body?.confirmWord)) {
+        return sendConfirmWordMismatch(res);
     }
+
+    const parsed = VaultUpdateItemContentBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(res, parsed.error, 'Parámetros inválidos.');
+    }
+
+    const { globalAssetId, pillarId, itemId, newContent } = parsed.data;
 
     try {
         const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
@@ -2630,7 +3525,7 @@ vaultRouter.post('/update-item-content', requireCurateAI, checkVaultNotSealed, a
             details: { pillarId, itemId },
         }).catch(() => undefined);
 
-        return res.status(200).json({ success: true, content: sanitized.content });
+        return res.status(200).json({ ok: true, success: true, content: sanitized.content });
     } catch (err) {
         return handleVaultError(res, err, 'Error guardando contenido del ítem.');
     }
@@ -2638,14 +3533,14 @@ vaultRouter.post('/update-item-content', requireCurateAI, checkVaultNotSealed, a
 
 vaultRouter.post('/resolve-item-conflict', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const { globalAssetId, pillarId, itemId, action, proposal } = req.body || {};
-
-    if (!globalAssetId || !pillarId || !itemId || !action || !proposal) {
-        return res.status(400).json({ error: 'Parámetros requeridos incompletos.' });
+    if (!isValidHitlConfirmWord(req.body?.confirmWord)) {
+        return sendConfirmWordMismatch(res);
     }
-    if (!['ACCEPT', 'REJECT'].includes(action)) {
-        return res.status(400).json({ error: 'action debe ser ACCEPT o REJECT.' });
+    const parsed = VaultResolveConflictBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(res, parsed.error, 'Parámetros requeridos incompletos.');
     }
+    const { globalAssetId, pillarId, itemId, action, proposal } = parsed.data;
 
     try {
         const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
@@ -2690,7 +3585,7 @@ vaultRouter.post('/resolve-item-conflict', requireCurateAI, checkVaultNotSealed,
                     fecha: new Date().toISOString(),
                     accion: 'PROPUESTA_ACEPTADA',
                     actor: ctx.actorEmail,
-                    detalle: `Propuesta autorizada para ${proposal.componente}.`,
+                    detalle: `Propuesta autorizada para ${proposal.componente || 'componente'}.`,
                 },
             ];
         }
@@ -2719,6 +3614,7 @@ vaultRouter.post('/resolve-item-conflict', requireCurateAI, checkVaultNotSealed,
         }).catch(() => undefined);
 
         return res.status(200).json({
+            ok: true,
             success: true,
             pendingCount: finalPending.length,
             authorizedCount: action === 'ACCEPT' ? 1 : 0,
@@ -2735,15 +3631,31 @@ vaultRouter.post(
     async (req: ScopedRequest, res: Response) => {
         const ctx = req.opermaqContext!;
         const schema = z.object({
-            globalAssetId: z.string().min(1),
-            pillarId: z.string().min(1),
-            itemId: z.string().min(1),
+            globalAssetId: z.string().trim().min(1).max(160),
+            pillarId: VaultPillarIdSchema,
+            itemId: z.string().trim().min(1).max(160),
             action: z.enum(['ACCEPT', 'REJECT']),
-            proposals: z.array(z.any()),
+            proposals: z
+                .array(
+                    z
+                        .object({
+                            proposal_id: z.string().optional(),
+                            componente: z.string().optional(),
+                            zona: z.string().optional(),
+                        })
+                        .passthrough()
+                )
+                .max(200),
+            confirmWord: HitlConfirmWordSchema,
         });
 
-        const parsed = schema.safeParse(req.body);
-        if (!parsed.success) return res.status(400).json({ error: 'Parámetros inválidos.' });
+        if (!isValidHitlConfirmWord(req.body?.confirmWord)) {
+            return sendConfirmWordMismatch(res);
+        }
+        const parsed = schema.safeParse(req.body || {});
+        if (!parsed.success) {
+            return sendZodBadRequest(res, parsed.error, 'Parámetros inválidos.');
+        }
 
         const { globalAssetId, pillarId, itemId, action, proposals } = parsed.data;
 
@@ -2787,7 +3699,7 @@ vaultRouter.post(
                         fecha: new Date().toISOString(),
                         accion: 'PROPUESTA_ACEPTADA',
                         actor: ctx.actorEmail,
-                        detalle: `Propuesta autorizada para ${proposal.componente}.`,
+                        detalle: `Propuesta autorizada para ${proposal.componente || 'componente'}.`,
                     });
                 }
                 item.authorized_delta_buffer = buffer;
@@ -2817,6 +3729,7 @@ vaultRouter.post(
             }).catch(() => undefined);
 
             return res.status(200).json({
+                ok: true,
                 success: true,
                 pendingCount: finalPending.length,
                 authorizedCount: action === 'ACCEPT' ? proposals.length : 0,
@@ -2851,18 +3764,24 @@ function matchPendingProposalIndex(pendingList: any[], proposalId: string): numb
     return withoutIdxMatch;
 }
 
+const VaultGlobalAssetIdParamSchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+});
+
 vaultRouter.post('/decide-proposal', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
     const schema = z.object({
-        globalAssetId: z.string().min(1),
-        pillarId: z.string().min(1),
-        itemId: z.string().min(1),
-        proposalId: z.string().min(1),
+        globalAssetId: z.string().trim().min(1).max(160),
+        pillarId: VaultPillarIdSchema,
+        itemId: z.string().trim().min(1).max(160),
+        proposalId: z.string().trim().min(1).max(240),
         decision: z.enum(['APROBADO', 'ELIMINADO']),
     });
 
-    const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Parámetros inválidos.' });
+    const parsed = schema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(res, parsed.error, 'Parámetros inválidos.');
+    }
 
     const { globalAssetId, pillarId, itemId, proposalId, decision } = parsed.data;
 
@@ -2936,6 +3855,23 @@ vaultRouter.post('/decide-proposal', requireCurateAI, checkVaultNotSealed, async
                 updatedItems: items,
                 existingVault: data.knowledge_vault,
             });
+
+            void AuditLedger.record({
+                tenantId: ctx.tenantId || 'GLOBAL_OEM',
+                actorUid: ctx.actorId,
+                actorEmail: ctx.actorEmail,
+                module: 'opermaq',
+                action: 'VAULT_PROPOSAL_DECIDED',
+                targetEntity: `global_asset_catalog/${globalAssetId}/pillars/${pillarId}/${itemId}`,
+                details: {
+                    pillarId,
+                    itemId,
+                    proposalId,
+                    decision,
+                    targetFusionType,
+                    autoConsolidated: false,
+                },
+            }).catch(() => undefined);
 
             const remainingCount = remainingPending.filter(
                 (p: any) => p.estado_fusion === targetFusionType && p.human_decision !== 'ELIMINADO' && p.human_decision !== 'APROBADO'
@@ -3036,6 +3972,24 @@ vaultRouter.post('/decide-proposal', requireCurateAI, checkVaultNotSealed, async
             existingVault: data.knowledge_vault,
         });
 
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_PROPOSAL_DECIDED',
+            targetEntity: `global_asset_catalog/${globalAssetId}/pillars/${pillarId}/${itemId}`,
+            details: {
+                pillarId,
+                itemId,
+                proposalId,
+                decision,
+                targetFusionType,
+                deltasConsolidated: deltas.length,
+                autoConsolidated: true,
+            },
+        }).catch(() => undefined);
+
         const remainingCount = remainingPending.filter(
             (p: any) => p.estado_fusion === targetFusionType && p.human_decision !== 'ELIMINADO' && p.human_decision !== 'APROBADO'
         ).length;
@@ -3056,14 +4010,16 @@ vaultRouter.post('/decide-proposal', requireCurateAI, checkVaultNotSealed, async
 vaultRouter.post('/evolve-item', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
     const schema = z.object({
-        globalAssetId: z.string().min(1),
-        pillarId: z.string().min(1),
-        itemId: z.string().min(1),
+        globalAssetId: z.string().trim().min(1).max(160),
+        pillarId: VaultPillarIdSchema,
+        itemId: z.string().trim().min(1).max(160),
         filterType: z.enum(['NUEVO', 'CONFLICTO']),
     });
 
-    const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Parámetros inválidos.' });
+    const parsed = schema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(res, parsed.error, 'Parámetros inválidos.');
+    }
 
     const { globalAssetId, pillarId, itemId, filterType } = parsed.data;
 
@@ -3181,6 +4137,21 @@ vaultRouter.post('/evolve-item', requireCurateAI, checkVaultNotSealed, async (re
             existingVault: data.knowledge_vault,
         });
 
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_ITEM_EVOLVED',
+            targetEntity: `global_asset_catalog/${globalAssetId}/pillars/${pillarId}/${itemId}`,
+            details: {
+                pillarId,
+                itemId,
+                filterType,
+                deltasConsolidated: deltas.length,
+            },
+        }).catch(() => undefined);
+
         return res.status(200).json({ success: true, evolvedContent: sanitized.content });
     } catch (err) {
         return handleVaultError(res, err, 'Error evolucionando contenido del ítem.');
@@ -3189,10 +4160,16 @@ vaultRouter.post('/evolve-item', requireCurateAI, checkVaultNotSealed, async (re
 
 vaultRouter.post('/cancel-evolution', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const { globalAssetId, pillarId, itemId } = req.body || {};
-    if (!globalAssetId || !pillarId || !itemId) {
-        return res.status(400).json({ error: 'Parámetros requeridos: globalAssetId, pillarId, itemId.' });
+    const schema = z.object({
+        globalAssetId: z.string().trim().min(1).max(160),
+        pillarId: VaultPillarIdSchema,
+        itemId: z.string().trim().min(1).max(160),
+    });
+    const parsed = schema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(res, parsed.error, 'Parámetros requeridos: globalAssetId, pillarId, itemId.');
     }
+    const { globalAssetId, pillarId, itemId } = parsed.data;
 
     try {
         const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
@@ -3232,25 +4209,33 @@ vaultRouter.post('/cancel-evolution', requireCurateAI, checkVaultNotSealed, asyn
                 updated_at: new Date().toISOString(),
             },
         });
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_ITEM_EVOLUTION_CANCELLED',
+            targetEntity: `global_asset_catalog/${globalAssetId}/pillars/${pillarId}/${itemId}`,
+            details: { pillarId, itemId, discardedBufferCount: count },
+        }).catch(() => undefined);
         return res.status(200).json({ success: true });
     } catch (err) {
         return handleVaultError(res, err, 'Error cancelando evolución.');
     }
 });
 
-vaultRouter.post('/unlock-item', checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
+vaultRouter.post('/unlock-item', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    if (!ctx.capabilities.canCurateAI) {
-        return res.status(403).json({ error: 'Permisos insuficientes para desbloquear ítems.' });
+
+    if (!isValidHitlConfirmWord(req.body?.confirmWord)) {
+        return sendConfirmWordMismatch(res);
     }
 
-    const { globalAssetId, pillarId, itemId, confirmWord } = req.body || {};
-    if (!globalAssetId || !pillarId || !itemId) {
-        return res.status(400).json({ error: 'Parámetros requeridos: globalAssetId, pillarId, itemId.' });
+    const parsed = VaultMutateItemHitlBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(res, parsed.error, 'Parámetros requeridos: globalAssetId, pillarId, itemId, confirmWord.');
     }
-    if (confirmWord !== undefined && String(confirmWord).trim().toUpperCase() !== HITL_CONFIRM_KEYWORD) {
-        return res.status(400).json({ error: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".` });
-    }
+    const { globalAssetId, pillarId, itemId } = parsed.data;
 
     try {
         const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
@@ -3307,12 +4292,20 @@ vaultRouter.post('/unlock-item', checkVaultNotSealed, async (req: ScopedRequest,
 
 vaultRouter.post('/rollback-item-version', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const { globalAssetId, pillarId, itemId, timestamp } = req.body || {};
-    if (!globalAssetId || !pillarId || !itemId || !timestamp) {
-        return res.status(400).json({
-            error: 'Parámetros requeridos: globalAssetId, pillarId, itemId, timestamp.',
-        });
+
+    if (!isValidHitlConfirmWord(req.body?.confirmWord)) {
+        return sendConfirmWordMismatch(res);
     }
+
+    const parsed = VaultRollbackVersionBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(
+            res,
+            parsed.error,
+            'Parámetros requeridos: globalAssetId, pillarId, itemId, timestamp, confirmWord.'
+        );
+    }
+    const { globalAssetId, pillarId, itemId, timestamp } = parsed.data;
 
     try {
         const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(
@@ -3393,17 +4386,18 @@ vaultRouter.post('/rollback-item-version', requireCurateAI, checkVaultNotSealed,
 
 // ── SELLADO Y LECTURA DEL CATÁLOGO CON SIMBOLOGÍA RESUELTA ───────────────────
 
-vaultRouter.post('/seal/:globalAssetId', async (req: ScopedRequest, res: Response) => {
+vaultRouter.post('/seal/:globalAssetId', requireCurateAI, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    if (!ctx.capabilities.canCurateAI) {
-        return res.status(403).json({ error: 'Permisos insuficientes para sellar bóvedas maestras.' });
+    const paramsParsed = VaultGlobalAssetIdParamSchema.safeParse(req.params);
+    if (!paramsParsed.success) {
+        return sendZodBadRequest(res, paramsParsed.error, 'globalAssetId inválido.');
     }
-    const confirmWord = req.body?.confirmWord;
-    if (confirmWord !== undefined && String(confirmWord).trim().toUpperCase() !== HITL_CONFIRM_KEYWORD) {
-        return res.status(400).json({ error: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".` });
+    const bodyParsed = z.object({ confirmWord: HitlConfirmWordSchema }).safeParse(req.body || {});
+    if (!bodyParsed.success) {
+        return sendConfirmWordMismatch(res);
     }
 
-    const globalAssetId = String(req.params.globalAssetId);
+    const { globalAssetId } = paramsParsed.data;
     try {
         await db.collection('global_asset_catalog').doc(globalAssetId).set(
             {
@@ -3431,17 +4425,18 @@ vaultRouter.post('/seal/:globalAssetId', async (req: ScopedRequest, res: Respons
     }
 });
 
-vaultRouter.post('/unseal/:globalAssetId', async (req: ScopedRequest, res: Response) => {
+vaultRouter.post('/unseal/:globalAssetId', requireCurateAI, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    if (!ctx.capabilities.canCurateAI) {
-        return res.status(403).json({ error: 'Permisos insuficientes para desbloquear bóvedas selladas.' });
+    const paramsParsed = VaultGlobalAssetIdParamSchema.safeParse(req.params);
+    if (!paramsParsed.success) {
+        return sendZodBadRequest(res, paramsParsed.error, 'globalAssetId inválido.');
     }
-    const confirmWord = req.body?.confirmWord;
-    if (confirmWord !== undefined && String(confirmWord).trim().toUpperCase() !== HITL_CONFIRM_KEYWORD) {
-        return res.status(400).json({ error: `Debe confirmar escribiendo "${HITL_CONFIRM_KEYWORD}".` });
+    const bodyParsed = z.object({ confirmWord: HitlConfirmWordSchema }).safeParse(req.body || {});
+    if (!bodyParsed.success) {
+        return sendConfirmWordMismatch(res);
     }
 
-    const globalAssetId = String(req.params.globalAssetId);
+    const { globalAssetId } = paramsParsed.data;
     try {
         await db.collection('global_asset_catalog').doc(globalAssetId).set(
             {
@@ -3470,7 +4465,11 @@ vaultRouter.post('/unseal/:globalAssetId', async (req: ScopedRequest, res: Respo
 });
 
 vaultRouter.get('/asset/:globalAssetId', async (req: ScopedRequest, res: Response) => {
-    const globalAssetId = String(req.params.globalAssetId);
+    const paramsParsed = VaultGlobalAssetIdParamSchema.safeParse(req.params);
+    if (!paramsParsed.success) {
+        return sendZodBadRequest(res, paramsParsed.error, 'globalAssetId inválido.');
+    }
+    const { globalAssetId } = paramsParsed.data;
     try {
         const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);
         if (!hydrated.exists || !hydrated.data) {
@@ -3537,6 +4536,7 @@ const SymbologyRegisterVariantSchema = z.object({
 
 const SymbologyUploadStandardSchema = z.object({
     conceptId: z.string().trim().min(1).max(120),
+    confirmWord: HitlConfirmWordSchema,
 });
 
 const SymbologySeedUniversalSchema = z.object({
@@ -3545,6 +4545,31 @@ const SymbologySeedUniversalSchema = z.object({
 
 const SymbologyPackRebuildSchema = z.object({
     globalAssetId: z.string().trim().min(1).max(160),
+});
+
+const emptyStringToUndefined = (val: unknown) =>
+    typeof val === 'string' && val.trim() === '' ? undefined : val;
+
+const VaultIngestDocumentBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    visibilityScope: z.preprocess(
+        emptyStringToUndefined,
+        z.enum(['COMMONS_OEM', 'TENANT_ONLY']).optional().default('COMMONS_OEM')
+    ),
+    documentCategory: z.preprocess(
+        emptyStringToUndefined,
+        z
+            .enum(['OEM_MANUAL', 'CATALOG_BROCHURE', 'ETT_SPEC_SHEET', 'TECHNICAL_CHART_PHOTO'])
+            .optional()
+    ),
+    maxWindowsPerRun: z.preprocess(
+        emptyStringToUndefined,
+        z.coerce.number().int().min(1).max(30).optional()
+    ),
+    clientOriginalBytes: z.preprocess(
+        emptyStringToUndefined,
+        z.coerce.number().int().positive().optional()
+    ),
 });
 
 vaultRouter.get('/symbology/concepts', async (_req: ScopedRequest, res: Response) => {
@@ -3566,13 +4591,27 @@ vaultRouter.get('/symbology/pending', async (_req: ScopedRequest, res: Response)
 });
 
 vaultRouter.post('/symbology/search-iso-icon', requireCurateAI, async (req: ScopedRequest, res: Response) => {
-    const parsed = SymbologySearchSchema.safeParse(req.body);
+    const ctx = req.opermaqContext!;
+    const parsed = SymbologySearchSchema.safeParse(req.body || {});
     if (!parsed.success) {
-        return res.status(400).json({ error: 'conceptId e isoReference son requeridos.', details: parsed.error.format() });
+        return sendZodBadRequest(res, parsed.error, 'conceptId e isoReference son requeridos.');
     }
 
     try {
         const url = await searchIsoIconFromWikimedia(parsed.data.conceptId, parsed.data.isoReference);
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'SYMBOLOGY_ISO_ICON_SEARCHED',
+            targetEntity: `master_symbology_vault/${parsed.data.conceptId}`,
+            details: {
+                conceptId: parsed.data.conceptId,
+                isoReference: parsed.data.isoReference,
+                found: Boolean(url),
+            },
+        }).catch(() => undefined);
         return res.status(200).json({ success: true, url, temp_standard_icon_url: url });
     } catch (err) {
         return handleVaultError(res, err, 'Error buscando pictograma ISO en Wikimedia Commons.');
@@ -3581,19 +4620,28 @@ vaultRouter.post('/symbology/search-iso-icon', requireCurateAI, async (req: Scop
 
 vaultRouter.post('/symbology/register-standard', requireCurateAI, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const parsed = SymbologyRegisterStandardSchema.safeParse(req.body);
+    if (!isValidHitlConfirmWord(req.body?.confirmWord)) {
+        return sendConfirmWordMismatch(res);
+    }
+    const parsed = SymbologyRegisterStandardSchema.safeParse(req.body || {});
     if (!parsed.success) {
-        return res.status(400).json({ error: 'conceptId y confirmWord son requeridos.', details: parsed.error.format() });
+        return sendZodBadRequest(res, parsed.error, 'conceptId y confirmWord son requeridos.');
     }
     if (!isValidHitlSymbologyWord(parsed.data.confirmWord)) {
-        return res.status(400).json({
-            error: 'CONFIRM_WORD_MISMATCH',
-            message: `Ingrese la palabra exacta "${HITL_CONFIRM_KEYWORD}" para confirmar.`,
-        });
+        return sendConfirmWordMismatch(res);
     }
 
     try {
         const updated = await registerStandardIcon(parsed.data.conceptId, ctx.actorEmail, parsed.data.confirmWord);
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'SYMBOLOGY_STANDARD_REGISTERED',
+            targetEntity: `master_symbology_vault/${parsed.data.conceptId}`,
+            details: { conceptId: parsed.data.conceptId },
+        }).catch(() => undefined);
         return res.status(200).json(updated);
     } catch (err) {
         return handleVaultError(res, err, 'Error consolidando pictograma estándar.');
@@ -3602,13 +4650,25 @@ vaultRouter.post('/symbology/register-standard', requireCurateAI, async (req: Sc
 
 vaultRouter.post('/symbology/draw-standard', requireCurateAI, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const parsed = SymbologyDrawStandardSchema.safeParse(req.body);
+    const parsed = SymbologyDrawStandardSchema.safeParse(req.body || {});
     if (!parsed.success) {
-        return res.status(400).json({ error: 'conceptId válido es requerido.', details: parsed.error.format() });
+        return sendZodBadRequest(res, parsed.error, 'conceptId válido es requerido.');
     }
 
     try {
         const url = await drawStandardIcon(parsed.data.conceptId, parsed.data.candidateIndex, ctx.actorEmail);
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'SYMBOLOGY_STANDARD_VECTORIZED',
+            targetEntity: `master_symbology_vault/${parsed.data.conceptId}`,
+            details: {
+                conceptId: parsed.data.conceptId,
+                candidateIndex: parsed.data.candidateIndex,
+            },
+        }).catch(() => undefined);
         return res.status(200).json({ success: true, temp_standard_icon_url: url });
     } catch (err) {
         return handleVaultError(res, err, 'Error vectorizando pictograma estándar.');
@@ -3617,13 +4677,25 @@ vaultRouter.post('/symbology/draw-standard', requireCurateAI, async (req: Scoped
 
 vaultRouter.post('/symbology/generate-variant', requireCurateAI, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const parsed = SymbologyBrandVariantSchema.safeParse(req.body);
+    const parsed = SymbologyBrandVariantSchema.safeParse(req.body || {});
     if (!parsed.success) {
-        return res.status(400).json({ error: 'conceptId y brand son requeridos.', details: parsed.error.format() });
+        return sendZodBadRequest(res, parsed.error, 'conceptId y brand son requeridos.');
     }
 
     try {
         const result = await generateBrandVariant(parsed.data.conceptId, parsed.data.brand, ctx.actorEmail);
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'SYMBOLOGY_OEM_VARIANT_GENERATED',
+            targetEntity: `master_symbology_vault/${parsed.data.conceptId}`,
+            details: {
+                conceptId: parsed.data.conceptId,
+                brand: parsed.data.brand,
+            },
+        }).catch(() => undefined);
         return res.status(200).json(result);
     } catch (err) {
         return handleVaultError(res, err, 'Error generando variante OEM.');
@@ -3632,15 +4704,15 @@ vaultRouter.post('/symbology/generate-variant', requireCurateAI, async (req: Sco
 
 vaultRouter.post('/symbology/register-variant', requireCurateAI, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const parsed = SymbologyRegisterVariantSchema.safeParse(req.body);
+    if (!isValidHitlConfirmWord(req.body?.confirmWord)) {
+        return sendConfirmWordMismatch(res);
+    }
+    const parsed = SymbologyRegisterVariantSchema.safeParse(req.body || {});
     if (!parsed.success) {
-        return res.status(400).json({ error: 'conceptId, brand y confirmWord son requeridos.', details: parsed.error.format() });
+        return sendZodBadRequest(res, parsed.error, 'conceptId, brand y confirmWord son requeridos.');
     }
     if (!isValidHitlSymbologyWord(parsed.data.confirmWord)) {
-        return res.status(400).json({
-            error: 'CONFIRM_WORD_MISMATCH',
-            message: `Ingrese la palabra exacta "${HITL_CONFIRM_KEYWORD}" para confirmar.`,
-        });
+        return sendConfirmWordMismatch(res);
     }
 
     try {
@@ -3650,6 +4722,18 @@ vaultRouter.post('/symbology/register-variant', requireCurateAI, async (req: Sco
             ctx.actorEmail,
             parsed.data.confirmWord
         );
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'SYMBOLOGY_OEM_VARIANT_REGISTERED',
+            targetEntity: `master_symbology_vault/${parsed.data.conceptId}`,
+            details: {
+                conceptId: parsed.data.conceptId,
+                brand: parsed.data.brand,
+            },
+        }).catch(() => undefined);
         return res.status(200).json(updated);
     } catch (err) {
         return handleVaultError(res, err, 'Error consolidando variante OEM.');
@@ -3662,15 +4746,22 @@ vaultRouter.post(
     upload.single('file'),
     async (req: ScopedRequest, res: Response) => {
         const ctx = req.opermaqContext!;
-        const parsed = SymbologyRegisterVariantSchema.safeParse(req.body);
+        const rawConfirmWord = req.body?.confirmWord ?? req.query?.confirmWord;
+        if (!isValidHitlConfirmWord(rawConfirmWord)) {
+            return sendConfirmWordMismatch(res);
+        }
+        const parsed = SymbologyRegisterVariantSchema.safeParse({
+            ...(req.body || {}),
+            confirmWord: String(rawConfirmWord),
+        });
         if (!parsed.success || !req.file) {
-            return res.status(400).json({ error: 'conceptId, brand, confirmWord y archivo son requeridos.' });
+            return res.status(400).json({
+                error: 'conceptId, brand, confirmWord y archivo son requeridos.',
+                details: parsed.success ? undefined : parsed.error.issues,
+            });
         }
         if (!isValidHitlSymbologyWord(parsed.data.confirmWord)) {
-            return res.status(400).json({
-                error: 'CONFIRM_WORD_MISMATCH',
-                message: `Ingrese la palabra exacta "${HITL_CONFIRM_KEYWORD}" para confirmar.`,
-            });
+            return sendConfirmWordMismatch(res);
         }
 
         try {
@@ -3681,6 +4772,19 @@ vaultRouter.post(
                 ctx.actorEmail,
                 parsed.data.confirmWord
             );
+            void AuditLedger.record({
+                tenantId: ctx.tenantId || 'GLOBAL_OEM',
+                actorUid: ctx.actorId,
+                actorEmail: ctx.actorEmail,
+                module: 'opermaq',
+                action: 'SYMBOLOGY_OEM_VARIANT_UPLOADED',
+                targetEntity: `master_symbology_vault/${parsed.data.conceptId}`,
+                details: {
+                    conceptId: parsed.data.conceptId,
+                    brand: parsed.data.brand,
+                    originalBytes: req.file.size,
+                },
+            }).catch(() => undefined);
             return res.status(200).json(updated);
         } catch (err) {
             return handleVaultError(res, err, 'Error subiendo variante manual.');
@@ -3694,13 +4798,40 @@ vaultRouter.post(
     upload.single('file'),
     async (req: ScopedRequest, res: Response) => {
         const ctx = req.opermaqContext!;
-        const parsed = SymbologyUploadStandardSchema.safeParse(req.body);
+        const rawConfirmWord = req.body?.confirmWord ?? req.query?.confirmWord;
+        if (!isValidHitlConfirmWord(rawConfirmWord)) {
+            return sendConfirmWordMismatch(res);
+        }
+        const parsed = SymbologyUploadStandardSchema.safeParse({
+            ...(req.body || {}),
+            confirmWord: String(rawConfirmWord),
+        });
         if (!parsed.success || !req.file) {
-            return res.status(400).json({ error: 'conceptId y archivo son requeridos.' });
+            return res.status(400).json({
+                error: 'conceptId, confirmWord y archivo son requeridos.',
+                details: parsed.success ? undefined : parsed.error.issues,
+            });
         }
 
         try {
-            const updated = await uploadStandardIcon(parsed.data.conceptId, req.file.buffer, ctx.actorEmail);
+            const updated = await uploadStandardIcon(
+                parsed.data.conceptId,
+                req.file.buffer,
+                ctx.actorEmail,
+                parsed.data.confirmWord
+            );
+            void AuditLedger.record({
+                tenantId: ctx.tenantId || 'GLOBAL_OEM',
+                actorUid: ctx.actorId,
+                actorEmail: ctx.actorEmail,
+                module: 'opermaq',
+                action: 'SYMBOLOGY_STANDARD_UPLOADED',
+                targetEntity: `master_symbology_vault/${parsed.data.conceptId}`,
+                details: {
+                    conceptId: parsed.data.conceptId,
+                    originalBytes: req.file.size,
+                },
+            }).catch(() => undefined);
             return res.status(200).json(updated);
         } catch (err) {
             return handleVaultError(res, err, 'Error subiendo icono estándar.');
@@ -3717,37 +4848,21 @@ vaultRouter.post(
     async (req: ScopedRequest, res: Response) => {
         const ctx = req.opermaqContext!;
         const file = req.file;
-        const globalAssetId = String(req.body?.globalAssetId || '').trim();
-
-        if (!file || !globalAssetId) {
+        const parsed = VaultIngestDocumentBodySchema.safeParse(req.body || {});
+        if (!file || !parsed.success) {
             return res.status(400).json({
-                error: 'Parámetros requeridos: archivo (file) y globalAssetId.',
+                error: 'Parámetros requeridos: archivo (file) y globalAssetId válido.',
+                details: parsed.success ? undefined : parsed.error.issues,
             });
         }
 
-        const visibilityScope =
-            req.body?.visibilityScope === 'TENANT_ONLY' ? 'TENANT_ONLY' : 'COMMONS_OEM';
-
-        const documentCategory = (
-            ['OEM_MANUAL', 'CATALOG_BROCHURE', 'ETT_SPEC_SHEET', 'TECHNICAL_CHART_PHOTO'].includes(
-                req.body?.documentCategory
-            )
-                ? req.body.documentCategory
-                : undefined
-        ) as
-            | 'OEM_MANUAL'
-            | 'CATALOG_BROCHURE'
-            | 'ETT_SPEC_SHEET'
-            | 'TECHNICAL_CHART_PHOTO'
-            | undefined;
-
-        const maxWindowsPerRun = req.body?.maxWindowsPerRun
-            ? Math.max(1, Math.min(30, Number(req.body.maxWindowsPerRun)))
-            : undefined;
-        const clientOriginalBytes =
-            req.body?.clientOriginalBytes && Number(req.body.clientOriginalBytes) > 0
-                ? Math.round(Number(req.body.clientOriginalBytes))
-                : undefined;
+        const {
+            globalAssetId,
+            visibilityScope,
+            documentCategory,
+            maxWindowsPerRun,
+            clientOriginalBytes,
+        } = parsed.data;
 
         try {
             const result = await withDocumentIngestSemaphore(() =>
@@ -3798,8 +4913,11 @@ vaultRouter.post(
 );
 
 vaultRouter.get('/corpus/:globalAssetId', requireCurateAI, async (req: ScopedRequest, res: Response) => {
-    const globalAssetId = String(req.params.globalAssetId || '').trim();
-    if (!globalAssetId) return res.status(400).json({ error: 'globalAssetId requerido.' });
+    const paramsParsed = VaultGlobalAssetIdParamSchema.safeParse(req.params);
+    if (!paramsParsed.success) {
+        return sendZodBadRequest(res, paramsParsed.error, 'globalAssetId requerido.');
+    }
+    const { globalAssetId } = paramsParsed.data;
 
     try {
         const assetRef = db.collection('global_asset_catalog').doc(globalAssetId);
@@ -3829,8 +4947,11 @@ vaultRouter.get('/corpus/:globalAssetId', requireCurateAI, async (req: ScopedReq
  * (`estado_aprobacion === 'APROBADO_HUMANO'`), ocultando borradores crudos de IA y metadatos internos.
  */
 vaultRouter.get('/published/:globalAssetId', async (req: ScopedRequest, res: Response) => {
-    const globalAssetId = String(req.params.globalAssetId || '').trim();
-    if (!globalAssetId) return res.status(400).json({ error: 'globalAssetId requerido.' });
+    const paramsParsed = VaultGlobalAssetIdParamSchema.safeParse(req.params);
+    if (!paramsParsed.success) {
+        return sendZodBadRequest(res, paramsParsed.error, 'globalAssetId requerido.');
+    }
+    const { globalAssetId } = paramsParsed.data;
 
     try {
         const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);
@@ -3914,6 +5035,36 @@ vaultRouter.get('/published/:globalAssetId', async (req: ScopedRequest, res: Res
     }
 });
 
+const VaultClientContributePdfBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    tenantAssetId: z.preprocess(emptyStringToUndefined, z.string().trim().max(160).optional()),
+    clientOriginalBytes: z.preprocess(
+        emptyStringToUndefined,
+        z.coerce.number().int().positive().optional()
+    ),
+});
+
+const VaultContributionsQuerySchema = z.object({
+    globalAssetId: z.preprocess(emptyStringToUndefined, z.string().trim().max(160).optional()),
+    status: z.preprocess(emptyStringToUndefined, z.string().trim().max(64).optional()),
+});
+
+const VaultContributionIdParamSchema = z.object({
+    contributionId: z.string().trim().min(1).max(160),
+});
+
+const VaultPilotCandidateIdParamSchema = z.object({
+    candidateId: z.string().trim().min(1).max(160),
+});
+
+const BenchmarkMetricKindSchema = z.enum([
+    'FUEL_CONSUMPTION_LH',
+    'HYDRAULIC_FILTER_LIFE_H',
+    'TIRE_OR_TRACK_LIFE_H',
+    'PM_AVAILABILITY_PCT',
+    'MATERIAL_BULK_DENSITY_TM3',
+]);
+
 /**
  * POST /api/vault/client-contribute-pdf
  * Subida segura de PDF desde Control de Flota (Clientes B2B / EDU):
@@ -3939,20 +5090,17 @@ vaultRouter.post(
         }
 
         const file = req.file;
-        const globalAssetId = String(req.body?.globalAssetId || '').trim();
-        const tenantAssetId = req.body?.tenantAssetId ? String(req.body.tenantAssetId).trim() : undefined;
-
-        if (!file || !globalAssetId) {
+        const parsed = VaultClientContributePdfBodySchema.safeParse(req.body || {});
+        if (!file || !parsed.success) {
             return res.status(400).json({
                 error: 'Adjunte un archivo PDF válido e indique el equipo destino (`globalAssetId`).',
+                details: parsed.success ? undefined : parsed.error.issues,
             });
         }
 
+        const { globalAssetId, tenantAssetId, clientOriginalBytes } = parsed.data;
+
         try {
-            const clientOriginalBytes =
-                req.body?.clientOriginalBytes && Number(req.body.clientOriginalBytes) > 0
-                    ? Math.round(Number(req.body.clientOriginalBytes))
-                    : undefined;
             const result = await withDocumentIngestSemaphore(() =>
                 SegmentedDocumentProcessorService.ingestClientPdfToQuarantine({
                     globalAssetId,
@@ -3998,8 +5146,12 @@ vaultRouter.post(
  */
 vaultRouter.get('/my-contributions/:globalAssetId', async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const globalAssetId = String(req.params.globalAssetId || '').trim();
-    if (!globalAssetId || !ctx.tenantId) {
+    const paramsParsed = VaultGlobalAssetIdParamSchema.safeParse(req.params);
+    if (!paramsParsed.success) {
+        return sendZodBadRequest(res, paramsParsed.error, 'globalAssetId inválido.');
+    }
+    const { globalAssetId } = paramsParsed.data;
+    if (!ctx.tenantId) {
         return res.status(200).json({ items: [] });
     }
 
@@ -4035,8 +5187,12 @@ vaultRouter.get('/my-contributions/:globalAssetId', async (req: ScopedRequest, r
  * para revisar aportes PDF en cuarentena sin exponer razones sociales entre clientes.
  */
 vaultRouter.get('/contributions', requireCurateAI, async (req: ScopedRequest, res: Response) => {
-    const filterAssetId = String(req.query.globalAssetId || '').trim();
-    const filterStatus = String(req.query.status || '').trim();
+    const queryParsed = VaultContributionsQuerySchema.safeParse(req.query || {});
+    if (!queryParsed.success) {
+        return sendZodBadRequest(res, queryParsed.error, 'Filtros de consulta inválidos.');
+    }
+    const filterAssetId = queryParsed.data.globalAssetId || '';
+    const filterStatus = queryParsed.data.status || '';
 
     try {
         let q: FirebaseFirestore.Query = db.collection('knowledge_contributions');
@@ -4082,20 +5238,18 @@ vaultRouter.post(
     requireCurateAI,
     async (req: ScopedRequest, res: Response) => {
         const ctx = req.opermaqContext!;
-        const contributionId = String(req.params.contributionId || '').trim();
+        const paramsParsed = VaultContributionIdParamSchema.safeParse(req.params);
+        if (!paramsParsed.success) {
+            return sendZodBadRequest(res, paramsParsed.error, 'contributionId inválido.');
+        }
+        if (!isValidHitlConfirmWord(req.body?.confirmWord)) {
+            return sendConfirmWordMismatch(res);
+        }
         const parsed = ReviewContributionBodySchema.safeParse(req.body || {});
-        if (!parsed.success || !contributionId) {
-            return res.status(400).json({
-                error: 'Parámetros de revisión HITL inválidos.',
-                details: parsed.success ? undefined : parsed.error.format(),
-            });
+        if (!parsed.success) {
+            return sendZodBadRequest(res, parsed.error, 'Parámetros de revisión HITL inválidos.');
         }
-
-        if (parsed.data.confirmWord.trim().toUpperCase() !== HITL_CONFIRM_KEYWORD) {
-            return res.status(400).json({
-                error: `Confirmación obligatoria inválida. Escriba "${HITL_CONFIRM_KEYWORD}" para consolidar.`,
-            });
-        }
+        const { contributionId } = paramsParsed.data;
 
         try {
             const outcome = await SegmentedDocumentProcessorService.consolidateHumanReviewedContribution({
@@ -4103,7 +5257,9 @@ vaultRouter.post(
                 acceptedProposalIds: parsed.data.acceptedProposalIds,
                 rejectedProposalIds: parsed.data.rejectedProposalIds,
                 publishApprovedItems: parsed.data.publishApprovedItems,
-                reviewNotes: parsed.data.reviewNotes,
+                reviewNotes: parsed.data.reviewNotes
+                    ? ConfidentialityAirlockService.scrubDeterministicPii(parsed.data.reviewNotes).scrubbed
+                    : undefined,
                 reviewerUid: ctx.actorId,
                 reviewerEmail: ctx.actorEmail,
             });
@@ -4131,20 +5287,19 @@ vaultRouter.post(
     }
 );
 
-vaultRouter.post('/acknowledge-locked-advisory', async (req: ScopedRequest, res: Response) => {
+vaultRouter.post('/acknowledge-locked-advisory', requireCurateAI, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    if (!ctx.capabilities.canCurateAI) {
-        return res.status(403).json({ error: 'Permisos insuficientes para gestionar avisos HITL.' });
-    }
 
     const schema = z.object({
-        globalAssetId: z.string().min(1),
-        pillarId: z.string().min(1),
-        itemId: z.string().min(1),
-        advisoryId: z.string().min(1),
+        globalAssetId: z.string().trim().min(1).max(160),
+        pillarId: VaultPillarIdSchema,
+        itemId: z.string().trim().min(1).max(160),
+        advisoryId: z.string().trim().min(1).max(200),
     });
-    const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Parámetros inválidos.' });
+    const parsed = schema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(res, parsed.error, 'Parámetros inválidos.');
+    }
 
     const { globalAssetId, pillarId, itemId, advisoryId } = parsed.data;
     try {
@@ -4197,7 +5352,11 @@ vaultRouter.post('/acknowledge-locked-advisory', async (req: ScopedRequest, res:
 // ── v3.0: PAQUETE AD-HOC DE SIMBOLOGÍA VECTORIAL + MANUALES AD-HOC + FEEDBACK TEST-PILOT ──
 
 vaultRouter.get('/symbology-pack/:globalAssetId', async (req: ScopedRequest, res: Response) => {
-    const globalAssetId = String(req.params.globalAssetId || '').trim();
+    const paramsParsed = VaultGlobalAssetIdParamSchema.safeParse(req.params);
+    if (!paramsParsed.success) {
+        return sendZodBadRequest(res, paramsParsed.error, 'globalAssetId inválido.');
+    }
+    const { globalAssetId } = paramsParsed.data;
     try {
         const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);
         if (!hydrated.exists || !hydrated.data) return res.status(404).json({ error: 'Activo no encontrado.' });
@@ -4215,11 +5374,26 @@ vaultRouter.get('/symbology-pack/:globalAssetId', async (req: ScopedRequest, res
 });
 
 vaultRouter.post('/symbology-pack/rebuild', requireCurateAI, async (req: ScopedRequest, res: Response) => {
-    const parsed = SymbologyPackRebuildSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'globalAssetId requerido.', details: parsed.error.format() });
+    const ctx = req.opermaqContext!;
+    const parsed = SymbologyPackRebuildSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(res, parsed.error, 'globalAssetId requerido.');
+    }
 
     try {
         const pack = await buildAndPersistAssetSymbologyPack(parsed.data.globalAssetId);
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'SYMBOLOGY_PACK_REBUILT',
+            targetEntity: `global_asset_catalog/${parsed.data.globalAssetId}`,
+            details: {
+                globalAssetId: parsed.data.globalAssetId,
+                totalSymbols: pack?.total_symbols ?? 0,
+            },
+        }).catch(() => undefined);
         return res.status(200).json({ success: true, pack });
     } catch (err) {
         return handleVaultError(res, err, 'Error reconstruyendo paquete de simbología.');
@@ -4227,10 +5401,23 @@ vaultRouter.post('/symbology-pack/rebuild', requireCurateAI, async (req: ScopedR
 });
 
 vaultRouter.post('/symbology/seed-universal', requireCurateAI, async (req: ScopedRequest, res: Response) => {
+    const ctx = req.opermaqContext!;
     const parsed = SymbologySeedUniversalSchema.safeParse(req.body || {});
-    const fullIso7010 = parsed.success ? parsed.data.forceFullIso7010 : false;
+    if (!parsed.success) {
+        return sendZodBadRequest(res, parsed.error, 'Parámetros de semilla universal inválidos.');
+    }
+    const fullIso7010 = parsed.data.forceFullIso7010;
     try {
         const result = await ensureUniversalSymbologySeeded(fullIso7010);
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'SYMBOLOGY_UNIVERSAL_SEEDED',
+            targetEntity: 'master_symbology_vault',
+            details: { forceFullIso7010: fullIso7010 },
+        }).catch(() => undefined);
         return res.status(200).json({ success: true, ...result });
     } catch (err) {
         return handleVaultError(res, err, 'Error sembrando catálogo vectorial universal.');
@@ -4239,15 +5426,7 @@ vaultRouter.post('/symbology/seed-universal', requireCurateAI, async (req: Scope
 
 const VaultPilotFeedbackSchema = z.object({
     globalAssetId: z.string().trim().min(1).max(160),
-    pillarId: z
-        .enum([
-            'ficha_tecnica',
-            'manual_operaciones',
-            'pauta_mantencion',
-            'matriz_riesgos',
-            'checklist_pre_op',
-        ])
-        .optional(),
+    pillarId: VaultPillarIdSchema.optional(),
     itemId: z.string().trim().max(120).optional(),
     category: z
         .enum(['AI_KNOWLEDGE_TRAINING', 'CHANGE_REQUEST', 'BUG_CORRECTION', 'FIELD_SIMULATION'])
@@ -4262,10 +5441,7 @@ vaultRouter.post('/pilot-feedback', requireCurateAI, async (req: ScopedRequest, 
     const ctx = req.opermaqContext!;
     const parsed = VaultPilotFeedbackSchema.safeParse(req.body || {});
     if (!parsed.success) {
-        return res.status(400).json({
-            error: parsed.error.issues[0]?.message || 'Parámetros de feedback TEST-PILOT inválidos.',
-            details: parsed.error.format(),
-        });
+        return sendZodBadRequest(res, parsed.error, 'Parámetros de feedback TEST-PILOT inválidos.');
     }
 
     try {
@@ -4359,23 +5535,175 @@ vaultRouter.post('/pilot-feedback', requireCurateAI, async (req: ScopedRequest, 
     }
 });
 
+/**
+ * POST /api/vault/pilot-hitl/:candidateId/consolidate
+ * Cierra el bucle TEST-PILOT (`hitl_candidates` -> `pilot_feedback` con `status: 'APPLIED_TO_AI'`),
+ * habilitando su inyección inmediata por `ResilientAIClient.enrichSystemInstructionWithPilotFeedback`.
+ */
+vaultRouter.post(
+    '/pilot-hitl/:candidateId/consolidate',
+    requireCurateAI,
+    async (req: ScopedRequest, res: Response) => {
+        const ctx = req.opermaqContext!;
+        const paramsParsed = VaultPilotCandidateIdParamSchema.safeParse(req.params);
+        if (!paramsParsed.success) {
+            return sendZodBadRequest(res, paramsParsed.error, 'candidateId inválido.');
+        }
+
+        if (!isValidHitlConfirmWord(req.body?.confirmWord)) {
+            return sendConfirmWordMismatch(res);
+        }
+
+        const parsed = PilotHitlConsolidateBodySchema.safeParse(req.body || {});
+        if (!parsed.success) {
+            return sendZodBadRequest(res, parsed.error, 'Payload de consolidación TEST-PILOT inválido.');
+        }
+
+        const { candidateId } = paramsParsed.data;
+        const { decision, approvedFields, curatedDirective } = parsed.data;
+
+        try {
+            const candRef = db.collection('hitl_candidates').doc(candidateId);
+            const candSnap = await candRef.get();
+            if (!candSnap.exists) {
+                return res.status(404).json({
+                    error: 'CANDIDATE_NOT_FOUND',
+                    message: 'Candidato HITL no encontrado.',
+                });
+            }
+
+            const candidate = candSnap.data() || {};
+            const nowIso = new Date().toISOString();
+            const sanitizedApprovedFields = (scrubUnknownStringsDeep(approvedFields || {}) || {}) as Record<
+                string,
+                unknown
+            >;
+            const cleanCuratedDirective = curatedDirective
+                ? ConfidentialityAirlockService.scrubDeterministicPii(curatedDirective).scrubbed.trim()
+                : '';
+
+            let promotedFeedbackId: string | null = candidate.feedbackId
+                ? String(candidate.feedbackId).trim()
+                : null;
+
+            await candRef.set(
+                {
+                    status: decision,
+                    approvedFields: sanitizedApprovedFields,
+                    reviewedByUid: ctx.actorId,
+                    reviewedByEmail: ctx.actorEmail,
+                    reviewedAt: nowIso,
+                    ...(cleanCuratedDirective ? { curatedDirective: cleanCuratedDirective } : {}),
+                },
+                { merge: true }
+            );
+
+            if (decision === 'APPROVED') {
+                const candidateModule = String(candidate.module || 'opermaq').trim() || 'opermaq';
+                const cleanObservation = ConfidentialityAirlockService.scrubDeterministicPii(
+                    String(candidate.observation || '')
+                ).scrubbed.trim();
+                const rawDirectiveFallback = String(
+                    candidate.expectedAiBehavior || candidate.proposedContent || candidate.observation || ''
+                );
+                const effectiveDirective =
+                    cleanCuratedDirective ||
+                    ConfidentialityAirlockService.scrubDeterministicPii(rawDirectiveFallback).scrubbed.trim();
+
+                const feedbackRef = promotedFeedbackId
+                    ? db.collection('pilot_feedback').doc(promotedFeedbackId)
+                    : db.collection('pilot_feedback').doc();
+                promotedFeedbackId = feedbackRef.id;
+
+                const feedbackSnap = await feedbackRef.get();
+                if (feedbackSnap.exists) {
+                    await feedbackRef.set(
+                        {
+                            status: 'APPLIED_TO_AI',
+                            ...(cleanObservation ? { observation: cleanObservation } : {}),
+                            expectedAiBehavior: effectiveDirective,
+                            appliedAt: nowIso,
+                            updatedAt: nowIso,
+                            appliedByUid: ctx.actorId,
+                            appliedByEmail: ctx.actorEmail,
+                        },
+                        { merge: true }
+                    );
+                } else {
+                    await feedbackRef.set({
+                        id: feedbackRef.id,
+                        feedbackId: feedbackRef.id,
+                        tenantId: String(candidate.tenantId || ctx.tenantId || 'dev-master-sandbox'),
+                        authorUid: String(candidate.authorUid || ctx.actorId),
+                        authorEmail: String(candidate.authorEmail || ctx.actorEmail),
+                        module: candidateModule,
+                        executionMode: 'integrated',
+                        category: 'AI_KNOWLEDGE_TRAINING',
+                        priority: 'HIGH',
+                        assetOrSurveyId: candidate.globalAssetId || null,
+                        pillarId: candidate.pillarId || null,
+                        itemId: candidate.itemId || null,
+                        observation: cleanObservation || effectiveDirective,
+                        expectedAiBehavior: effectiveDirective,
+                        status: 'APPLIED_TO_AI',
+                        timestamp: nowIso,
+                        createdAt: Date.now(),
+                        appliedAt: nowIso,
+                        updatedAt: nowIso,
+                        appliedByUid: ctx.actorId,
+                        appliedByEmail: ctx.actorEmail,
+                    });
+                }
+
+                if (!candidate.feedbackId) {
+                    await candRef.set({ feedbackId: promotedFeedbackId }, { merge: true });
+                }
+            }
+
+            await AuditLedger.record({
+                tenantId: ctx.tenantId || 'GLOBAL_OEM',
+                actorUid: ctx.actorId,
+                actorEmail: ctx.actorEmail,
+                module: 'opermaq',
+                action: 'OPERMAQ_PILOT_HITL_CONSOLIDATED',
+                targetEntity: `hitl_candidates/${candidateId}`,
+                details: {
+                    candidateId,
+                    decision,
+                    feedbackId: promotedFeedbackId,
+                    feedbackPromoted: decision === 'APPROVED',
+                },
+            }).catch(() => undefined);
+
+            return res.status(200).json({
+                ok: true,
+                candidateId,
+                status: decision,
+                feedbackPromoted: decision === 'APPROVED',
+            });
+        } catch (err) {
+            return handleVaultError(res, err, 'Error consolidando candidato HITL TEST-PILOT.');
+        }
+    }
+);
+
 vaultRouter.post('/compile-manual', async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
     const schema = z.object({
-        globalAssetId: z.string().min(1),
+        globalAssetId: z.string().trim().min(1).max(160),
         profileId: z.enum([
             'MASTER_5_PILLARS',
             'OPERATOR_POCKET_GUIDE',
             'WORKSHOP_PM_MANUAL',
             'REGULATORY_DS132_LOTO',
         ]),
-        tenantAssetId: z.string().optional(),
+        tenantAssetId: z.string().trim().max(160).optional(),
         includeTenantOverrides: z.boolean().optional().default(false),
     });
 
-    const parsed = schema.safeParse(req.body);
+    const parsed = schema.safeParse(req.body || {});
     if (!parsed.success) {
-        return res.status(400).json({ error: 'Parámetros inválidos.', details: parsed.error.format() });
+        return sendZodBadRequest(res, parsed.error, 'Parámetros inválidos.');
     }
 
     try {
@@ -4389,6 +5717,20 @@ vaultRouter.post('/compile-manual', async (req: ScopedRequest, res: Response) =>
             actorEmail: ctx.actorEmail,
         });
 
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: 'opermaq',
+            action: 'VAULT_ADHOC_MANUAL_COMPILED',
+            targetEntity: `global_asset_catalog/${parsed.data.globalAssetId}`,
+            details: {
+                globalAssetId: parsed.data.globalAssetId,
+                profileId: parsed.data.profileId,
+                includeTenantOverrides: parsed.data.includeTenantOverrides,
+            },
+        }).catch(() => undefined);
+
         return res.status(200).json({ success: true, ...compiled });
     } catch (err) {
         return handleVaultError(res, err, 'Error compilando manual ad-hoc ilustrado.');
@@ -4396,7 +5738,11 @@ vaultRouter.post('/compile-manual', async (req: ScopedRequest, res: Response) =>
 });
 
 vaultRouter.get('/manuals/:globalAssetId', async (req: ScopedRequest, res: Response) => {
-    const globalAssetId = String(req.params.globalAssetId || '').trim();
+    const paramsParsed = VaultGlobalAssetIdParamSchema.safeParse(req.params);
+    if (!paramsParsed.success) {
+        return sendZodBadRequest(res, paramsParsed.error, 'globalAssetId inválido.');
+    }
+    const { globalAssetId } = paramsParsed.data;
     try {
         const snap = await db
             .collection('global_asset_catalog')
@@ -4427,21 +5773,17 @@ vaultRouter.post('/benchmarks/record', async (req: ScopedRequest, res: Response)
     }
     const schema = z.object({
         module: z.enum(['opermaq', 'stockpile']),
-        targetCanonicalId: z.string().min(1),
-        metricKind: z.enum([
-            'FUEL_CONSUMPTION_LH',
-            'HYDRAULIC_FILTER_LIFE_H',
-            'TIRE_OR_TRACK_LIFE_H',
-            'PM_AVAILABILITY_PCT',
-            'MATERIAL_BULK_DENSITY_TM3',
-        ]),
+        targetCanonicalId: z.string().trim().min(1).max(160),
+        metricKind: BenchmarkMetricKindSchema,
         numericValue: z.number().positive(),
-        unitSi: z.string().min(1),
-        operatingContextTag: z.string().optional(),
+        unitSi: z.string().trim().min(1).max(32),
+        operatingContextTag: z.string().trim().max(120).optional(),
     });
 
-    const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: 'Parámetros inválidos.' });
+    const parsed = schema.safeParse(req.body || {});
+    if (!parsed.success) {
+        return sendZodBadRequest(res, parsed.error, 'Parámetros inválidos.');
+    }
 
     try {
         const recorded = await CollectiveBenchmarkService.recordAnonymousMetricEvent({
@@ -4453,6 +5795,19 @@ vaultRouter.post('/benchmarks/record', async (req: ScopedRequest, res: Response)
             unitSi: parsed.data.unitSi,
             operatingContextTag: parsed.data.operatingContextTag,
         });
+        void AuditLedger.record({
+            tenantId: ctx.tenantId || 'GLOBAL_OEM',
+            actorUid: ctx.actorId,
+            actorEmail: ctx.actorEmail,
+            module: parsed.data.module,
+            action: 'OPERMAQ_ANONYMOUS_BENCHMARK_RECORDED',
+            targetEntity: parsed.data.targetCanonicalId,
+            details: {
+                module: parsed.data.module,
+                metricKind: parsed.data.metricKind,
+                unitSi: parsed.data.unitSi,
+            },
+        }).catch(() => undefined);
         return res.status(200).json({ success: true, ...recorded });
     } catch (err) {
         return handleVaultError(res, err, 'Error registrando telemetría anónima.');
@@ -4460,10 +5815,19 @@ vaultRouter.post('/benchmarks/record', async (req: ScopedRequest, res: Response)
 });
 
 vaultRouter.get('/benchmarks/:targetCanonicalId/:metricKind', async (req: ScopedRequest, res: Response) => {
+    const paramsParsed = z
+        .object({
+            targetCanonicalId: z.string().trim().min(1).max(160),
+            metricKind: BenchmarkMetricKindSchema,
+        })
+        .safeParse(req.params);
+    if (!paramsParsed.success) {
+        return sendZodBadRequest(res, paramsParsed.error, 'Parámetros de benchmark inválidos.');
+    }
     try {
         const summary = await CollectiveBenchmarkService.getAnonymousBenchmarkSummary(
-            String(req.params.targetCanonicalId),
-            String(req.params.metricKind) as BenchmarkMetricKind
+            paramsParsed.data.targetCanonicalId,
+            paramsParsed.data.metricKind as BenchmarkMetricKind
         );
         return res.status(200).json(summary);
     } catch (err) {

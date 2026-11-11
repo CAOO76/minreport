@@ -2,8 +2,10 @@
  * ItemFiguresAndAdvisoriesBlock — Galería CAS de Figuras Técnicas Reales y Avisos sobre Ítems con Candado Humano
  */
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { toast } from 'react-toastify';
 import { API_BASE_URL } from '../firebase/config';
+import i18n from '../locales/i18n';
 import { authFetch } from '../utils/authFetch';
 import type {
   ExtractedFigureRef,
@@ -36,7 +38,7 @@ export function resolveMediaSrc(storageUrl: string): string {
 
 export function formatByteWeight(bytes?: number): string {
   if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) {
-    return '[No declarado]';
+    return i18n.t('item_figures.not_declared');
   }
   if (bytes >= 1024 * 1024) {
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
@@ -74,6 +76,7 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
   figures = [],
   advisories = [],
 }) => {
+  const { t } = useTranslation();
   const [acknowledgingId, setAcknowledgingId] = useState<string | null>(null);
 
   const pendingAdvisories = advisories.filter((a) => !a.acknowledged);
@@ -95,11 +98,11 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        throw new Error(json.error || 'No se pudo acusar recibo.');
+        throw new Error(json.error || t('item_figures.ack_error_fallback'));
       }
-      toast.success('Aviso técnico marcado como revisado.');
+      toast.success(t('item_figures.toast_ack_success'));
     } catch (err: any) {
-      toast.error(err?.message || 'Error confirmando aviso.');
+      toast.error(err?.message || t('item_figures.toast_ack_error'));
     } finally {
       setAcknowledgingId(null);
     }
@@ -117,10 +120,10 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
           <div className="flex items-center justify-between gap-[13px] pb-[13px] border-b border-[#E2E8F0] dark:border-[#12151C]">
             <div>
               <p className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#C68346]">
-                AVISOS DE ACTUALIZACIÓN OEM SOBRE ÍTEM CON CANDADO HUMANO
+                {t('item_figures.advisories_title')}
               </p>
               <p className="text-[13px] text-[#475569] dark:text-[#8A93A6] mt-[4px]">
-                El texto aprobado no fue modificado. Revise la evidencia entrante si desea desbloquear e integrar.
+                {t('item_figures.advisories_desc')}
               </p>
             </div>
             <span className="font-mono tabular-nums text-[13px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
@@ -136,20 +139,21 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
               >
                 <div className="flex items-center justify-between gap-[13px]">
                   <span className="font-mono tabular-nums text-[11px] font-bold text-[#00AEEF]">
-                    FUENTE: {adv.source_label} · {new Date(adv.detected_at).toLocaleDateString()}
+                    {t('item_figures.source_prefix')}: {adv.source_label} · {new Date(adv.detected_at).toLocaleDateString()}
                   </span>
                   <button
                     type="button"
                     disabled={acknowledgingId === adv.advisory_id}
                     onClick={() => handleAcknowledgeAdvisory(adv.advisory_id)}
-                    title="Marcar aviso como revisado"
+                    title={t('item_figures.mark_reviewed_title')}
+                    aria-label={t('item_figures.mark_reviewed_title')}
                     className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                   >
                     <span className="material-symbols-outlined">done_all</span>
                   </button>
                 </div>
                 {adv.kind === 'PENDING_FIGURE' && adv.figure?.storage_url ? (
-                  <figure className="mt-[8px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] p-[8px] rounded-none shadow-none">
+                  <figure className="mt-[8px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] p-[8px] rounded-none shadow-none">
                     <img
                       src={resolveMediaSrc(adv.figure.storage_url)}
                       alt={adv.figure.title_es}
@@ -160,7 +164,7 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
                       style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
                     />
                     <figcaption className="mt-[8px] text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
-                      {adv.summary} · ORIG {adv.figure.original_bytes ?? 0} B ➔ CAS {adv.figure.optimized_bytes ?? 0} B (-{adv.figure.savings_pct ?? 0}%)
+                      {adv.summary} · ORIG {adv.figure.original_bytes ?? 0} B -&gt; CAS {adv.figure.optimized_bytes ?? 0} B (-{adv.figure.savings_pct ?? 0}%)
                     </figcaption>
                   </figure>
                 ) : (
@@ -180,10 +184,10 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
           <div className="flex flex-wrap items-center justify-between gap-[13px] pb-[13px] border-b border-[#E2E8F0] dark:border-[#12151C]">
             <div>
               <h4 className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6]">
-                FIGURAS TÉCNICAS OEM Y GRÁFICOS DE DATOS VERIFICADOS (<span className="font-mono tabular-nums">{validFigures.length}</span>)
+                {t('item_figures.gallery_title')} (<span className="font-mono tabular-nums">{validFigures.length}</span>)
               </h4>
               <p className="text-[13px] text-[#475569] dark:text-[#8A93A6]">
-                Activos extraídos de documentación técnica y optimizados en almacenamiento CAS deduplicado (SHA-256 / dHash).
+                {t('item_figures.gallery_desc')}
               </p>
             </div>
           </div>
@@ -196,7 +200,7 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
               >
                 <div className="flex flex-col lg:flex-row gap-[21px]">
                   {/* Área Mayor (61.8%): Visor de figura blindado */}
-                  <div className="lg:w-[61.8%] bg-[#FFFFFF] border border-[#E2E8F0] dark:border-[#12151C] p-[13px] flex items-center justify-center">
+                  <div className="lg:w-[61.8%] bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-[13px] flex items-center justify-center">
                     <img
                       src={resolveMediaSrc(fig.storage_url)}
                       alt={fig.title_es}
@@ -213,7 +217,7 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
                     <div className="flex flex-col gap-[8px]">
                       <span className="font-mono tabular-nums text-[11px] font-bold uppercase text-[#C68346]">
                         {fig.figure_type.replace(/_/g, ' ')}
-                        {fig.source_page ? ` · PÁG. ${fig.source_page} OEM` : ''}
+                        {fig.source_page ? ` · ${t('item_figures.page_oem', { page: fig.source_page })}` : ''}
                       </span>
                       <h5 className="text-[15px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                         {fig.title_es}
@@ -230,10 +234,10 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
                             <thead>
                               <tr className="bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C]">
                                 <th className="px-[8px] py-[6px] text-left text-[11px] text-[#475569] dark:text-[#8A93A6]">
-                                  REF
+                                  {t('item_figures.col_ref')}
                                 </th>
                                 <th className="px-[8px] py-[6px] text-left text-[11px] text-[#475569] dark:text-[#8A93A6]">
-                                  COMPONENTE / ESPECIFICACIÓN
+                                  {t('item_figures.col_component_spec')}
                                 </th>
                               </tr>
                             </thead>
@@ -258,11 +262,11 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
                       )}
                     </div>
 
-                    <div className="pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center justify-between gap-[8px] font-mono tabular-nums text-[11px] text-[#5A6072] select-text">
+                    <div className="pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center justify-between gap-[8px] font-mono tabular-nums text-[11px] text-[#94A3B8] dark:text-[#5A6072] select-text">
                       <span>SHA-256: {fig.sha256.slice(0, 16)}…</span>
                       {typeof fig.original_bytes === 'number' && typeof fig.optimized_bytes === 'number' && (
                         <span className="text-[#00AEEF] font-bold">
-                          ORIG: {formatByteWeight(fig.original_bytes)} ➔ CAS: {formatByteWeight(fig.optimized_bytes)} (
+                          ORIG: {formatByteWeight(fig.original_bytes)} -&gt; CAS: {formatByteWeight(fig.optimized_bytes)} (
                           {typeof fig.savings_pct === 'number'
                             ? `-${fig.savings_pct.toFixed(1)}%`
                             : fig.original_bytes > 0

@@ -2,6 +2,7 @@ import { db } from '../../../config/firebase';
 import { ConfidentialityAirlockService } from '../../../core/privacy/ConfidentialityAirlockService';
 import { ResilientAIClient, Type } from '../../../core/resilient-ai-client';
 import { ChatMessage, PillarDocument, PillarId, PillarItem, ProposedUpdate, SEQUENTIAL_PILLAR_ORDER } from '../types/vault.types';
+import { sanitizePositivePresenceMarkdown } from '../utils/canonicalArchetypeSpecs';
 import { computeFactFingerprint, verifyAndNormalizeTechnicalUnits } from './NeuroSymbolicVerifier';
 import { getPillarEditGovernancePrompt, PILLAR_AGENTS } from './pillarAgents';
 import { extractConfirmedSpecsSummaryFromMarkdown } from './TextSimilarityUtils';
@@ -43,44 +44,74 @@ export interface VaultChatResponse {
     draftContent?: string;
     selectedFragmentTarget?: string;
     promptImage?: string;
+    sanitizedUserRequest?: string;
     error?: string;
+}
+
+/**
+ * Sanitiza determinísticamente un mensaje de chat antes de cualquier persistencia (Ley N° 21.719).
+ */
+export function sanitizeChatMessageForPersistence(msg: ChatMessage): ChatMessage {
+    return {
+        ...msg,
+        content: ConfidentialityAirlockService.scrubDeterministicPii(msg.content || '').scrubbed,
+        ...(msg.highlightText
+            ? { highlightText: ConfidentialityAirlockService.scrubDeterministicPii(msg.highlightText).scrubbed }
+            : {}),
+        ...(msg.draftContent
+            ? { draftContent: ConfidentialityAirlockService.scrubDeterministicPii(msg.draftContent).scrubbed }
+            : {}),
+        ...(msg.selectedFragmentTarget
+            ? {
+                  selectedFragmentTarget: ConfidentialityAirlockService.scrubDeterministicPii(
+                      msg.selectedFragmentTarget
+                  ).scrubbed,
+              }
+            : {}),
+    };
 }
 
 /**
  * Ensambla de forma quirúrgica y determinista (`0% deriva fuera de foco`) el reemplazo de un
  * fragmento seleccionado (`selectedFragment`) sobre el documento original (`currentContent`),
- * preservando byte a byte el resto del capítulo y normalizando tablas/unidades SI.
+ * preservando byte a byte el resto del capítulo, normalizando tablas/unidades SI y aplicando presencia positiva v9.6.
  */
 export function applySurgicalFragmentSplice(params: {
     currentContent: string | null | undefined;
     selectedFragment?: string;
     fragmentReplacement?: string;
     fallbackFullDraft?: string;
+    pillarId?: PillarId;
 }): string | undefined {
     const baseContent = String(params.currentContent || '');
     const targetFrag = String(params.selectedFragment || '').trim();
     const replacementFrag = String(params.fragmentReplacement || '').trim();
     const fullDraft = String(params.fallbackFullDraft || '').trim();
+    const presenceOpts = params.pillarId ? { pillarId: params.pillarId } : undefined;
 
     if (targetFrag && replacementFrag && baseContent) {
         if (baseContent.includes(targetFrag)) {
             const spliced = baseContent.replace(targetFrag, replacementFrag);
-            return verifyAndNormalizeTechnicalUnits(spliced).normalizedMarkdown;
+            const normalized = verifyAndNormalizeTechnicalUnits(spliced).normalizedMarkdown;
+            return sanitizePositivePresenceMarkdown(normalized, presenceOpts);
         }
         const trimmedTarget = targetFrag.replace(/\r\n/g, '\n');
         const normalizedBase = baseContent.replace(/\r\n/g, '\n');
         if (normalizedBase.includes(trimmedTarget)) {
             const spliced = normalizedBase.replace(trimmedTarget, replacementFrag);
-            return verifyAndNormalizeTechnicalUnits(spliced).normalizedMarkdown;
+            const normalized = verifyAndNormalizeTechnicalUnits(spliced).normalizedMarkdown;
+            return sanitizePositivePresenceMarkdown(normalized, presenceOpts);
         }
     }
 
     if (fullDraft) {
-        return verifyAndNormalizeTechnicalUnits(fullDraft).normalizedMarkdown;
+        const normalized = verifyAndNormalizeTechnicalUnits(fullDraft).normalizedMarkdown;
+        return sanitizePositivePresenceMarkdown(normalized, presenceOpts);
     }
 
     if (replacementFrag && !baseContent.trim()) {
-        return verifyAndNormalizeTechnicalUnits(replacementFrag).normalizedMarkdown;
+        const normalized = verifyAndNormalizeTechnicalUnits(replacementFrag).normalizedMarkdown;
+        return sanitizePositivePresenceMarkdown(normalized, presenceOpts);
     }
 
     return undefined;
@@ -314,6 +345,7 @@ REGLAS ESTRICTAS DE INTENCIÓN (MODO SOBERANO LEY 21.719):
                 systemInstruction: `${agent.systemPrompt}\n${pillarGovernance}`,
                 temperature: 0.1,
                 useGoogleSearch: shouldUseExternalSearch,
+                requireGroundedEvidence: true,
                 prompt: `${assistPrompt}\n\nResponde estrictamente en JSON puro:\n{\n  "intent": "CHAT",\n  "message": "Respuesta técnica concisa",\n  "highlightText": "",\n  "fragmentReplacement": "",\n  "draftContent": "",\n  "promptImage": ""\n}`,
             });
             parsed = JSON.parse(ResilientAIClient.extractJsonString(aiRes.text));
@@ -325,24 +357,37 @@ REGLAS ESTRICTAS DE INTENCIÓN (MODO SOBERANO LEY 21.719):
             ? (parsed.intent as VaultChatResponse['intent'])
             : 'CHAT';
 
-        const assembledDraft =
+        const rawAssembledDraft =
             resolvedIntent === 'EDIT_PROPOSAL'
                 ? applySurgicalFragmentSplice({
                     currentContent: item.content,
                     selectedFragment: safeSelectedFragment,
                     fragmentReplacement: parsed.fragmentReplacement,
                     fallbackFullDraft: parsed.draftContent,
+                    pillarId,
                 })
                 : undefined;
+        const assembledDraft = rawAssembledDraft
+            ? ConfidentialityAirlockService.scrubDeterministicPii(rawAssembledDraft).scrubbed
+            : undefined;
+        const cleanReplyMessage = ConfidentialityAirlockService.scrubDeterministicPii(
+            String(parsed.message || 'Procesado.')
+        ).scrubbed;
+        const cleanHighlight = parsed.highlightText
+            ? ConfidentialityAirlockService.scrubDeterministicPii(parsed.highlightText).scrubbed
+            : undefined;
 
         const finalResponse: VaultChatResponse = {
             success: true,
-            message: String(parsed.message || 'Procesado.').trim(),
+            message: cleanReplyMessage || 'Procesado.',
             intent: resolvedIntent,
-            highlightText: parsed.highlightText || undefined,
+            highlightText: cleanHighlight || undefined,
             draftContent: assembledDraft || undefined,
             ...(safeSelectedFragment && assembledDraft ? { selectedFragmentTarget: safeSelectedFragment } : {}),
-            promptImage: parsed.promptImage || undefined,
+            promptImage: parsed.promptImage
+                ? ConfidentialityAirlockService.scrubDeterministicPii(parsed.promptImage).scrubbed
+                : undefined,
+            sanitizedUserRequest: safeUserRequest,
         };
 
         if (finalResponse.intent === 'RESEARCH_WEB') {
@@ -382,12 +427,24 @@ Extrae propuestas técnicas puntuales ("NUEVO" si agrega datos ausentes, "CONFLI
             const nowIso = new Date().toISOString();
 
             const newProposals: ProposedUpdate[] = (extracted.proposals || [])
-                .filter((p) => p?.valor_nuevo && p.valor_nuevo.trim().length > 0)
-                .map((prop, idx) => {
+                .map((prop, idx): ProposedUpdate | null => {
+                    if (!prop?.valor_nuevo || !prop.valor_nuevo.trim()) return null;
                     const srcUrl =
                         prop.source_url && prop.source_url.startsWith('http') ? prop.source_url : fallbackUrl;
-                    const normalizedNewVal = verifyAndNormalizeTechnicalUnits(prop.valor_nuevo).normalizedMarkdown;
-                    const fp = computeFactFingerprint(normalizedNewVal, `${itemId}:${prop.synthesis || ''}`);
+                    const normalizedUnits = verifyAndNormalizeTechnicalUnits(prop.valor_nuevo).normalizedMarkdown;
+                    const positiveCleanNewVal = ConfidentialityAirlockService.scrubDeterministicPii(
+                        sanitizePositivePresenceMarkdown(normalizedUnits, { pillarId })
+                    ).scrubbed;
+                    if (!positiveCleanNewVal.trim()) return null;
+
+                    const cleanActual = prop.valor_actual
+                        ? ConfidentialityAirlockService.scrubDeterministicPii(prop.valor_actual).scrubbed
+                        : '';
+                    const cleanSynthesis =
+                        ConfidentialityAirlockService.scrubDeterministicPii(
+                            prop.synthesis || 'Hallazgo técnico obtenido mediante búsqueda web.'
+                        ).scrubbed || 'Hallazgo técnico obtenido mediante búsqueda web.';
+                    const fp = computeFactFingerprint(positiveCleanNewVal, `${itemId}:${cleanSynthesis}`);
                     return {
                         proposal_id: `prop_${itemId}_${Date.now()}_${idx}`,
                         estado_fusion: prop.estado_fusion === 'CONFLICTO' ? 'CONFLICTO' : 'NUEVO',
@@ -395,16 +452,17 @@ Extrae propuestas técnicas puntuales ("NUEVO" si agrega datos ausentes, "CONFLI
                         componente: itemId,
                         tipo_input: 'text_block',
                         is_oem: Boolean(brandLower && srcUrl.toLowerCase().includes(brandLower)),
-                        valor_actual: prop.valor_actual || '',
-                        valor_nuevo: normalizedNewVal,
-                        condicion_esperada: normalizedNewVal,
+                        valor_actual: cleanActual,
+                        valor_nuevo: positiveCleanNewVal,
+                        condicion_esperada: positiveCleanNewVal,
                         detected_at: nowIso,
-                        synthesis: prop.synthesis || 'Hallazgo técnico obtenido mediante búsqueda web.',
+                        synthesis: cleanSynthesis,
                         source_url: srcUrl,
                         human_decision: null,
                         fact_fingerprint: fp,
                     };
-                });
+                })
+                .filter((p): p is ProposedUpdate => p !== null);
 
             if (newProposals.length > 0) {
                 const freshHydrated = await VaultPersistenceService.loadHydratedAssetCatalog(globalAssetId);

@@ -114,6 +114,23 @@ const RequireAdminRole: React.FC<{
     return children;
 };
 
+const RequireModuleAccess: React.FC<{
+    moduleKey: 'opermaq' | 'stockpile';
+    children: React.ReactElement;
+}> = ({ moduleKey, children }) => {
+    const { session, isLoaded, hasModuleAccess } = useMinReportSession();
+
+    if (!isLoaded) return null;
+    if (session?.isDevRoot || session?.isSuperAdmin || session?.isTestPilot) {
+        return children;
+    }
+    if (!hasModuleAccess(moduleKey)) {
+        return <Navigate to="/dashboard" replace />;
+    }
+
+    return children;
+};
+
 const DashboardRouter = () => {
     const { profile, currentAccount, user } = useAuth();
     const { session } = useMinReportSession();
@@ -172,8 +189,22 @@ const AppRoutes = () => {
             {/* Rutas Protegidas de Cliente (4º B2B y 5º EDU) */}
             <Route element={<RequireAuthLayout />}>
                 <Route path="/dashboard" element={<DashboardRouter />} />
-                <Route path="/opermaq" element={<OpermaqModule domainMode="FLEET" />} />
-                <Route path="/opermaq/simbologia" element={<OpermaqModule domainMode="SYMBOLOGY" />} />
+                <Route
+                    path="/opermaq"
+                    element={
+                        <RequireModuleAccess moduleKey="opermaq">
+                            <OpermaqModule domainMode="FLEET" />
+                        </RequireModuleAccess>
+                    }
+                />
+                <Route
+                    path="/opermaq/simbologia"
+                    element={
+                        <RequireModuleAccess moduleKey="opermaq">
+                            <OpermaqModule domainMode="SYMBOLOGY" />
+                        </RequireModuleAccess>
+                    }
+                />
                 <Route path="/stockpile" element={<StockpileModule />} />
                 <Route
                     path="/job-profiles"

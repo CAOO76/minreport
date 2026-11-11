@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { PillarDocument, PillarId, PillarItem } from '../types/vault';
 import { extractExplicitSymbolIds, isTrustedMasterSymbol } from '../utils/symbologyExplicitMention';
 import { M3LinearProgress } from './M3ProgressIndicator';
@@ -45,6 +46,7 @@ export function useLiveHuntedSymbology(params: {
     masterSymbols: Record<string, any>;
     pillars: ReadonlyArray<PillarMetaLite>;
 }): LiveHuntedSymbologyResult {
+    const { t } = useTranslation();
     const { knowledgeVault, make, compiledEntries, masterSymbols, pillars } = params;
 
     return useMemo(() => {
@@ -69,7 +71,7 @@ export function useLiveHuntedSymbology(params: {
             const cleanLine = (
                 matchedLine ||
                 lines[0] ||
-                `Aplicado en contenido técnico de "${fallbackTitle}" (${pillarLabel})`
+                t('symbology_readonly.applied_fallback', { title: fallbackTitle, pillar: pillarLabel })
             )
                 .replace(/\[[sS][íÍiI][mM][bB][oO][lL][oO]:\s*[a-zA-Z0-9_-]+\]/g, '')
                 .replace(/\*\*|\*|`/g, '')
@@ -137,7 +139,7 @@ export function useLiveHuntedSymbology(params: {
                     symData?.action_operator_es ||
                     symData?.description_es ||
                     packFallback?.description_es ||
-                    '[Información técnica no declarada en ficha]',
+                    t('opermaq_domains.not_declared'),
                 icon_url: iconUrl,
                 source_mode: hasBrandUrl ? 'BRAND_VARIANT' : 'STANDARD_ISO_FALLBACK',
                 applications: [
@@ -188,7 +190,7 @@ export function useLiveHuntedSymbology(params: {
             huntedItemsCount,
             totalActiveItemsCount,
         };
-    }, [knowledgeVault, make, compiledEntries, masterSymbols, pillars]);
+    }, [knowledgeVault, make, compiledEntries, masterSymbols, pillars, t]);
 }
 
 export interface VaultSymbologyReadOnlyPanelProps {
@@ -198,6 +200,7 @@ export interface VaultSymbologyReadOnlyPanelProps {
 export const VaultSymbologyReadOnlyPanel: React.FC<VaultSymbologyReadOnlyPanelProps> = ({
     liveHuntedSymbology,
 }) => {
+    const { t } = useTranslation();
     const { entries, huntedItemsCount, totalActiveItemsCount } = liveHuntedSymbology;
 
     return (
@@ -205,17 +208,20 @@ export const VaultSymbologyReadOnlyPanel: React.FC<VaultSymbologyReadOnlyPanelPr
             <div className="shrink-0 flex flex-wrap items-center justify-between gap-[13px] px-[21px] py-[13px] border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
                 <div className="flex items-center gap-[13px] min-w-0">
                     <h1 className="text-[13px] font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6] leading-none">
-                        SIMBOLOGÍA TÉCNICA APLICADA AL EQUIPO
+                        {t('symbology_readonly.title')}
                     </h1>
-                    <span className="font-mono tabular-nums text-[10px] font-bold uppercase text-[#5A6072]">
-                        [SOLO LECTURA · ACTUALIZACIÓN AUTOMÁTICA POR CAZA DE CONTENIDOS]
+                    <span className="font-mono tabular-nums text-[10px] font-bold uppercase text-[#94A3B8] dark:text-[#5A6072]">
+                        {t('symbology_readonly.readonly_badge')}
                     </span>
                 </div>
 
                 <div className="flex items-center gap-[13px] shrink-0 ml-auto">
                     <div
                         className="flex items-center gap-[8px]"
-                        title={`Ítems con contenido cazado analizados: ${huntedItemsCount}/${totalActiveItemsCount}`}
+                        title={t('symbology_readonly.progress_tooltip', {
+                            hunted: huntedItemsCount,
+                            total: totalActiveItemsCount,
+                        })}
                     >
                         <M3LinearProgress
                             value={
@@ -230,11 +236,14 @@ export const VaultSymbologyReadOnlyPanel: React.FC<VaultSymbologyReadOnlyPanelPr
                                     : 'copper'
                             }
                             className="w-[89px]"
-                            ariaLabel="Ítems cazados procesados"
+                            ariaLabel={t('symbology_readonly.progress_aria')}
                         />
                         <span className="text-[10px] font-bold font-mono tabular-nums text-[#00AEEF]">
-                            {entries.length} SÍMBOLO(S) · {huntedItemsCount}/{totalActiveItemsCount}{' '}
-                            ÍTEMS CAZADOS
+                            {t('symbology_readonly.counter_summary', {
+                                symbols: entries.length,
+                                hunted: huntedItemsCount,
+                                total: totalActiveItemsCount,
+                            })}
                         </span>
                     </div>
                 </div>
@@ -242,23 +251,21 @@ export const VaultSymbologyReadOnlyPanel: React.FC<VaultSymbologyReadOnlyPanelPr
 
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-[21px] py-[21px]">
                 {huntedItemsCount === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center py-16 text-center max-w-lg mx-auto gap-[13px]">
-                        <span className="material-symbols-outlined !text-[24px] text-[#5A6072]">
+                    <div className="h-full flex flex-col items-center justify-center py-[55px] text-center max-w-lg mx-auto gap-[13px]">
+                        <span className="material-symbols-outlined !text-[24px] text-[#94A3B8] dark:text-[#5A6072]">
                             info
                         </span>
                         <p className="text-[12px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6] font-mono">
-                            [SIN CONTENIDOS CAZADOS REGISTRADOS]
+                            {t('symbology_readonly.empty_hunted_title')}
                         </p>
                         <p className="text-[12px] text-[#475569] dark:text-[#8A93A6] leading-relaxed">
-                            Esta sección es de solo lectura y se actualiza automáticamente a medida
-                            que se ejecuta la caza de contenidos de cada ítem. Los títulos del
-                            itemizado no generan simbología.
+                            {t('symbology_readonly.empty_hunted_desc')}
                         </p>
                     </div>
                 ) : entries.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center py-16 text-center">
-                        <p className="text-[13px] text-[#5A6072]">
-                            [Información técnica no declarada en ficha]
+                    <div className="h-full flex flex-col items-center justify-center py-[55px] text-center">
+                        <p className="text-[13px] text-[#94A3B8] dark:text-[#5A6072]">
+                            {t('opermaq_domains.not_declared')}
                         </p>
                     </div>
                 ) : (
@@ -267,16 +274,16 @@ export const VaultSymbologyReadOnlyPanel: React.FC<VaultSymbologyReadOnlyPanelPr
                             <thead>
                                 <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D]">
                                     <th className="p-[13px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] w-[89px]">
-                                        SÍMBOLO
+                                        {t('symbology_readonly.col_symbol')}
                                     </th>
                                     <th className="p-[13px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] w-[190px]">
-                                        CÓDIGO / NORMA
+                                        {t('symbology_readonly.col_code')}
                                     </th>
                                     <th className="p-[13px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] w-[260px]">
-                                        SIGNIFICADO TÉCNICO
+                                        {t('symbology_readonly.col_meaning')}
                                     </th>
                                     <th className="p-[13px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                                        APLICACIÓN ESPECÍFICA EN EL EQUIPO (CAZA DE CONTENIDOS)
+                                        {t('symbology_readonly.col_application')}
                                     </th>
                                 </tr>
                             </thead>
@@ -287,7 +294,7 @@ export const VaultSymbologyReadOnlyPanel: React.FC<VaultSymbologyReadOnlyPanelPr
                                         className="border-b border-[#E2E8F0] dark:border-[#12151C] last:border-b-0 align-top"
                                     >
                                         <td className="p-[13px]">
-                                            <div className="w-[55px] h-[55px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] p-[8px] flex items-center justify-center rounded-none shadow-none">
+                                            <div className="w-[55px] h-[55px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] p-[8px] flex items-center justify-center rounded-none shadow-none">
                                                 <img
                                                     src={entry.icon_url}
                                                     alt={entry.technical_name_es}
@@ -309,10 +316,10 @@ export const VaultSymbologyReadOnlyPanel: React.FC<VaultSymbologyReadOnlyPanelPr
                                             <p className="text-[11px] text-[#C68346] font-bold mt-[4px]">
                                                 {entry.iso_code || entry.category}
                                             </p>
-                                            <p className="text-[10px] text-[#5A6072] mt-[4px]">
+                                            <p className="text-[10px] text-[#94A3B8] dark:text-[#5A6072] mt-[4px]">
                                                 {entry.source_mode === 'BRAND_VARIANT'
-                                                    ? 'OEM VERIFICADO'
-                                                    : 'ESTÁNDAR ISO'}
+                                                    ? t('symbology_readonly.mode_oem_verified')
+                                                    : t('symbology_readonly.mode_iso_standard')}
                                             </p>
                                         </td>
                                         <td className="p-[13px]">

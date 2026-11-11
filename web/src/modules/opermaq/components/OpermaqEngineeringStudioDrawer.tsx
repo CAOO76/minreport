@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { toast } from 'react-toastify';
 import { mediaDigestorClient } from '../../../core/media/MediaDigestorClient';
 import { API_BASE_URL } from '../firebase/config';
@@ -53,30 +54,30 @@ interface CompiledManualState {
   compiledAt: string;
 }
 
-const MANUAL_PROFILES: Array<{
+const MANUAL_PROFILE_KEYS: Array<{
   id: AdHocManualProfileId;
-  title: string;
-  scope: string;
+  titleKey: string;
+  scopeKey: string;
 }> = [
   {
     id: 'MASTER_5_PILLARS',
-    title: 'MANUAL TÉCNICO MAESTRO INTEGRAL (5 PILARES)',
-    scope: 'Ficha SI + Operación + Pauta PM + Matriz de Riesgos + Pre-Uso + Planos SVG + Simbología Completa',
+    titleKey: 'engineering_studio.profile_master_title',
+    scopeKey: 'engineering_studio.profile_master_scope',
   },
   {
     id: 'OPERATOR_POCKET_GUIDE',
-    title: 'GUÍA OPERATIVA DE CABINA Y CARTILLA DE TESTIGOS',
-    scope: 'Controles + Significado de Testigos Luminosos + EPP + Inspección 360° Walk-Around',
+    titleKey: 'engineering_studio.profile_pocket_title',
+    scopeKey: 'engineering_studio.profile_pocket_scope',
   },
   {
     id: 'WORKSHOP_PM_MANUAL',
-    title: 'MANUAL DE TALLER, FLUIDOS Y PAUTA HOROMÉTRICA PM',
-    scope: 'Capacidades SI + Torques + Matriz 10h–2000h + Puntos de Aislamiento',
+    titleKey: 'engineering_studio.profile_workshop_title',
+    scopeKey: 'engineering_studio.profile_workshop_scope',
   },
   {
     id: 'REGULATORY_DS132_LOTO',
-    title: 'DOSSIER DE SEGURIDAD MINERA DS 132 Y ENERGÍA CERO (LOTO)',
-    scope: 'Matriz de Riesgos + Placa ISO 3864/7010 + Estaciones LOTO + Sello Criptográfico AuditLedger',
+    titleKey: 'engineering_studio.profile_regulatory_title',
+    scopeKey: 'engineering_studio.profile_regulatory_scope',
   },
 ];
 
@@ -107,6 +108,7 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
   isSealed = false,
   onClose,
 }) => {
+  const { t } = useTranslation();
   const { capabilities } = useOpermaqContext();
   const canCurateAI = capabilities.canCurateAI;
   const resolvedInitialTab: StudioTabId =
@@ -185,7 +187,7 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
     if (!rawFile || !catalogId) return;
 
     setIsIngesting(true);
-    setDigestStatusText('1/2 Ejecutando MinreportMediaDigestor local (compresión sin pérdida técnica)...');
+    setDigestStatusText(t('engineering_studio.digest_step1'));
 
     try {
       // Pre-optimizar en cliente con `MediaDigestorClient` antes de transmitir por red
@@ -214,9 +216,7 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
         });
       }
 
-      setDigestStatusText(
-        `2/2 Extrayendo capítulos, recortando figuras (box_2d) y repartiendo entre los 5 pilares...`
-      );
+      setDigestStatusText(t('engineering_studio.digest_step2'));
 
       const form = new FormData();
       form.append('file', uploadBlob, uploadFilename);
@@ -231,7 +231,7 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
       });
       const json = await res.json();
       if (!res.ok) {
-        throw new Error(json.error || 'Error en procesamiento segmentado.');
+        throw new Error(json.error || t('engineering_studio.error_segmented'));
       }
 
       // Conservar peso crudo original previo a la digestión cliente para reflejar ahorro extremo real
@@ -252,14 +252,17 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
       await fetchCorpus();
 
       if (json.deduplicatedDocumentHit) {
-        toast.info('Documento ya registrado en CAS: 0 duplicados y $0 re-procesamiento.');
+        toast.info(t('engineering_studio.toast_dedup_hit'));
       } else {
         toast.success(
-          `Ingesta completada: ${json.extractedChaptersCount} capítulo(s), ${json.extractedFiguresCount} figura(s) CAS.`
+          t('engineering_studio.toast_ingest_done', {
+            chapters: json.extractedChaptersCount,
+            figures: json.extractedFiguresCount,
+          })
         );
       }
     } catch (err: any) {
-      toast.error(err?.message || 'Error procesando documento.');
+      toast.error(err?.message || t('engineering_studio.toast_ingest_error'));
     } finally {
       setIsIngesting(false);
       setDigestStatusText('');
@@ -280,12 +283,12 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
         }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Error compilando manual ad-hoc.');
+      if (!res.ok) throw new Error(json.error || t('engineering_studio.error_compile'));
       setActiveManual(json);
       await fetchManuals();
-      toast.success('Manual Ad-Hoc ilustrado compilado y sellado en AuditLedger.');
+      toast.success(t('engineering_studio.toast_compile_done'));
     } catch (err: any) {
-      toast.error(err?.message || 'Error compilando manual.');
+      toast.error(err?.message || t('engineering_studio.toast_compile_error'));
     } finally {
       setIsCompilingManual(false);
     }
@@ -310,7 +313,7 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
           <div className="flex items-center gap-[21px]">
             <div>
               <span className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#C68346]">
-                ESTUDIO DE INGENIERÍA MULTIMODAL OPERMAQ
+                {t('engineering_studio.header_badge')}
               </span>
               <h2 className="text-[17px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                 {makeModel}
@@ -322,11 +325,11 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                 [
                   ...(canCurateAI
                     ? ([
-                        ['INGESTION', 'INGESTA PDF / ETT / MULTIMEDIA'],
-                        ['CONTRIBUTIONS_REVIEW', 'COLA ESCLUSA APORTES CLIENTES'],
+                        ['INGESTION', t('engineering_studio.tab_ingestion')],
+                        ['CONTRIBUTIONS_REVIEW', t('engineering_studio.tab_contributions')],
                       ] as Array<[StudioTabId, string]>)
                     : []),
-                  ['MANUAL_PUBLISHER', 'EDITORIAL MANUALES AD-HOC'],
+                  ['MANUAL_PUBLISHER', t('engineering_studio.tab_publisher')],
                 ] as Array<[StudioTabId, string]>
               ).map(([tabId, label]) => (
                 <button
@@ -348,7 +351,8 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
           <button
             type="button"
             onClick={onClose}
-            title="Cerrar estudio"
+            title={t('engineering_studio.close_title')}
+            aria-label={t('engineering_studio.close_title')}
             className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
           >
             <span className="material-symbols-outlined">close</span>
@@ -363,10 +367,10 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
               <aside className="lg:w-[38.2%] border-b lg:border-b-0 lg:border-r border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-[21px] overflow-y-auto flex flex-col gap-[21px]">
                 <div>
                   <h3 className="text-[15px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
-                    Procesador de Manuales Extensos y Digestor CAS
+                    {t('engineering_studio.ingest_title')}
                   </h3>
                   <p className="text-[13px] text-[#475569] dark:text-[#8A93A6] mt-[8px]">
-                    Comprime PDFs, planos, fotos y videos antes de persistir, descarta páginas repetidas (`FastCDC`), recorta figuras (`box_2d`) y distribuye hechos en los 5 pilares.
+                    {t('engineering_studio.ingest_desc')}
                   </p>
                 </div>
 
@@ -378,24 +382,24 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                 >
                   <label className="flex flex-col gap-[8px]">
                     <span className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                      NATURALEZA DEL DOCUMENTO
+                      {t('engineering_studio.doc_nature_label')}
                     </span>
                     <select
                       value={docCategory}
                       onChange={(e) => setDocCategory(e.target.value as any)}
                       className="px-[13px] py-[8px] bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] text-[13px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none outline-none"
                     >
-                      <option value="OEM_MANUAL">Manual Oficial Operación / Taller OEM (PDF Extenso)</option>
-                      <option value="ETT_SPEC_SHEET">Especificación Técnica / ETT / Ficha Nominal</option>
-                      <option value="CATALOG_BROCHURE">Catálogo Técnico / Folleto de Dimensiones</option>
-                      <option value="TECHNICAL_CHART_PHOTO">Lámina de Carga, Esquema o Video Técnico</option>
+                      <option value="OEM_MANUAL">{t('engineering_studio.doc_cat_oem_manual')}</option>
+                      <option value="ETT_SPEC_SHEET">{t('engineering_studio.doc_cat_ett')}</option>
+                      <option value="CATALOG_BROCHURE">{t('engineering_studio.doc_cat_brochure')}</option>
+                      <option value="TECHNICAL_CHART_PHOTO">{t('engineering_studio.doc_cat_chart')}</option>
                     </select>
                   </label>
 
                   <M3Switch
                     checked={privateTenantOnly}
                     onChange={setPrivateTenantOnly}
-                    label="Restringir solo a mi empresa (No aportar a Bóveda Común)"
+                    label={t('engineering_studio.private_tenant_switch')}
                   />
 
                   <input
@@ -414,7 +418,7 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                     onClick={() => docInputRef.current?.click()}
                     className="w-full py-[13px] px-[21px] bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[11px] font-bold uppercase tracking-[0.05em] rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                   >
-                    {isIngesting ? 'PROCESANDO Y OPTIMIZANDO...' : 'SELECCIONAR PDF / ETT / IMAGEN / VIDEO'}
+                    {isIngesting ? t('engineering_studio.btn_ingesting') : t('engineering_studio.btn_select_media')}
                   </button>
 
                   {digestStatusText && (
@@ -427,29 +431,29 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                 {lastIngestionReport && (
                   <div className="border border-[#00AEEF] bg-[#FFFFFF] dark:bg-[#000000] p-[21px] flex flex-col gap-[13px] rounded-none shadow-none">
                     <span className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#00AEEF]">
-                      RESULTADO DE DIGESTIÓN E INGESTA
+                      {t('engineering_studio.report_heading')}
                     </span>
                     <div className="grid grid-cols-2 gap-[13px] font-mono tabular-nums text-[13px]">
                       <div>
-                        <span className="block text-[11px] text-[#475569] dark:text-[#8A93A6]">PESO ORIGINAL</span>
+                        <span className="block text-[11px] text-[#475569] dark:text-[#8A93A6]">{t('engineering_studio.report_orig_weight')}</span>
                         <strong className="text-[#0F172A] dark:text-[#F3F4F6]">
                           {formatKbMb(lastIngestionReport.trueOriginalBytes)}
                         </strong>
                       </div>
                       <div>
-                        <span className="block text-[11px] text-[#475569] dark:text-[#8A93A6]">PESO CAS OPTIMIZADO</span>
+                        <span className="block text-[11px] text-[#475569] dark:text-[#8A93A6]">{t('engineering_studio.report_cas_weight')}</span>
                         <strong className="text-[#C68346]">
                           {formatKbMb(lastIngestionReport.finalOptimizedBytes)} (-{lastIngestionReport.totalSavingsPct}%)
                         </strong>
                       </div>
                       <div>
-                        <span className="block text-[11px] text-[#475569] dark:text-[#8A93A6]">PÁGINAS (TOTAL / SALTADAS)</span>
+                        <span className="block text-[11px] text-[#475569] dark:text-[#8A93A6]">{t('engineering_studio.report_pages')}</span>
                         <strong className="text-[#0F172A] dark:text-[#F3F4F6]">
                           {lastIngestionReport.totalPages} / {lastIngestionReport.skippedUnchangedPages}
                         </strong>
                       </div>
                       <div>
-                        <span className="block text-[11px] text-[#475569] dark:text-[#8A93A6]">FIGURAS / SÍMBOLOS SVG</span>
+                        <span className="block text-[11px] text-[#475569] dark:text-[#8A93A6]">{t('engineering_studio.report_figures_symbols')}</span>
                         <strong className="text-[#0F172A] dark:text-[#F3F4F6]">
                           {lastIngestionReport.extractedFiguresCount} / {lastIngestionReport.vectorizedSymbolsCount}
                         </strong>
@@ -462,24 +466,24 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
               {/* Área Mayor (61.8%): Registro Histórico CAS y Distribución en 5 Pilares */}
               <section className="lg:w-[61.8%] p-[34px] overflow-y-auto bg-[#FFFFFF] dark:bg-[#000000] flex flex-col gap-[21px]">
                 <h3 className="text-[17px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
-                  Corpus Técnico Indexado en CAS (<span className="font-mono tabular-nums">{corpusFiles.length}</span>)
+                  {t('engineering_studio.corpus_heading')} (<span className="font-mono tabular-nums">{corpusFiles.length}</span>)
                 </h3>
 
                 {corpusFiles.length === 0 ? (
-                  <p className="text-[13px] text-[#5A6072]">
-                    [Pendiente de registro] — Aún no se han ingerido manuales PDF, ETT ni láminas técnicas para este activo.
+                  <p className="text-[13px] text-[#94A3B8] dark:text-[#5A6072]">
+                    {t('opermaq_domains.pending_record')} — {t('engineering_studio.corpus_empty')}
                   </p>
                 ) : (
                   <table className="w-full border-collapse text-[13px] font-mono tabular-nums">
                     <thead>
                       <tr className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C]">
-                        <th className="p-[13px] text-left text-[11px] text-[#475569] dark:text-[#8A93A6]">DOCUMENTO</th>
-                        <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">PESO ORIGINAL</th>
-                        <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">GUARDADO CAS</th>
-                        <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">% OPTIMIZACIÓN</th>
-                        <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">PÁGS</th>
-                        <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">CAPÍTULOS</th>
-                        <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">FIGURAS</th>
+                        <th className="p-[13px] text-left text-[11px] text-[#475569] dark:text-[#8A93A6]">{t('engineering_studio.col_document')}</th>
+                        <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">{t('engineering_studio.col_orig_weight')}</th>
+                        <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">{t('engineering_studio.col_cas_saved')}</th>
+                        <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">{t('engineering_studio.col_savings_pct')}</th>
+                        <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">{t('engineering_studio.col_pages')}</th>
+                        <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">{t('engineering_studio.col_chapters')}</th>
+                        <th className="p-[13px] text-right text-[11px] text-[#475569] dark:text-[#8A93A6]">{t('engineering_studio.col_figures')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -499,7 +503,7 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                           >
                             <td className="p-[13px] font-atkinson text-[#0F172A] dark:text-[#F3F4F6]">
                               <div className="font-semibold">{f.originalFilename}</div>
-                              <div className="font-mono text-[11px] text-[#5A6072] select-text">
+                              <div className="font-mono text-[11px] text-[#94A3B8] dark:text-[#5A6072] select-text">
                                 SHA-256: {f.sha256.slice(0, 14)}… · {f.documentCategory}
                               </div>
                             </td>
@@ -546,15 +550,15 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
               <aside className="lg:w-[38.2%] border-b lg:border-b-0 lg:border-r border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-[21px] overflow-y-auto flex flex-col gap-[21px]">
                 <div>
                   <h3 className="text-[15px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
-                    Compilador de Manuales Ad-Hoc Propios
+                    {t('engineering_studio.publisher_title')}
                   </h3>
                   <p className="text-[13px] text-[#475569] dark:text-[#8A93A6] mt-[8px]">
-                    Integra texto curado de los 5 pilares, diagramas recortados CAS, planos paramétricos SVG y la cartilla completa de simbología normativa en una edición PDF + Imprimible A4.
+                    {t('engineering_studio.publisher_desc')}
                   </p>
                 </div>
 
                 <div className="flex flex-col gap-[13px]">
-                  {MANUAL_PROFILES.map((prof) => (
+                  {MANUAL_PROFILE_KEYS.map((prof) => (
                     <button
                       key={prof.id}
                       type="button"
@@ -566,10 +570,10 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                       }`}
                     >
                       <div className="text-[12px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                        {prof.title}
+                        {t(prof.titleKey)}
                       </div>
                       <div className="text-[11px] text-[#475569] dark:text-[#8A93A6] mt-[4px]">
-                        {prof.scope}
+                        {t(prof.scopeKey)}
                       </div>
                     </button>
                   ))}
@@ -579,7 +583,7 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                   <M3Switch
                     checked={includeTenantOverrides}
                     onChange={setIncludeTenantOverrides}
-                    label="Fusionar estándares internos privados de mi faena"
+                    label={t('engineering_studio.merge_tenant_switch')}
                   />
                 )}
 
@@ -589,13 +593,13 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                   onClick={handleCompileManual}
                   className="py-[13px] px-[21px] bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[11px] font-bold uppercase tracking-[0.05em] rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                 >
-                  {isCompilingManual ? 'COMPILANDO EDICIÓN ILUSTRADA...' : 'COMPILAR MANUAL AD-HOC AHORA'}
+                  {isCompilingManual ? t('engineering_studio.btn_compiling') : t('engineering_studio.btn_compile_now')}
                 </button>
 
                 {manualHistory.length > 0 && (
                   <div className="flex flex-col gap-[8px] pt-[13px] border-t border-[#E2E8F0] dark:border-[#12151C]">
                     <span className="text-[11px] font-bold uppercase text-[#475569] dark:text-[#8A93A6]">
-                      EDICIONES RECIENTES EN CAS
+                      {t('engineering_studio.recent_editions')}
                     </span>
                     {manualHistory.map((m) => (
                       <a
@@ -609,7 +613,7 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                           {m.profileTitleEs}
                         </span>
                         <span className="font-mono tabular-nums text-[11px] text-[#00AEEF]">
-                          {m.pageCount} págs · {formatKbMb(m.optimizedBytes)}
+                          {m.pageCount} {t('engineering_studio.pages_abbr')} · {formatKbMb(m.optimizedBytes)}
                         </span>
                       </a>
                     ))}
@@ -621,8 +625,8 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
               <section className="lg:w-[61.8%] p-[21px] overflow-hidden bg-[#FFFFFF] dark:bg-[#000000] flex flex-col gap-[13px]">
                 {!activeManual ? (
                   <div className="flex-1 flex items-center justify-center border border-[#E2E8F0] dark:border-[#12151C] p-[34px]">
-                    <p className="text-[13px] text-[#5A6072]">
-                      Seleccione un perfil editorial y presione COMPILAR MANUAL AD-HOC AHORA para generar la edición ilustrada con planos vectoriales y simbología.
+                    <p className="text-[13px] text-[#94A3B8] dark:text-[#5A6072]">
+                      {t('engineering_studio.publisher_empty')}
                     </p>
                   </div>
                 ) : (
@@ -633,7 +637,7 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                           LEDGER ID: {activeManual.ledgerEntryId} · SHA-256: {activeManual.pdfSha256.slice(0, 14)}…
                         </span>
                         <h4 className="text-[15px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
-                          {activeManual.profileTitleEs} ({activeManual.pageCount} págs · {formatKbMb(activeManual.optimizedBytes)})
+                          {activeManual.profileTitleEs} ({activeManual.pageCount} {t('engineering_studio.pages_abbr')} · {formatKbMb(activeManual.optimizedBytes)})
                         </h4>
                       </div>
                       <div className="flex items-center gap-[13px]">
@@ -642,7 +646,7 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                           onClick={handlePrintHtmlEdition}
                           className="px-[13px] py-[8px] border border-[#0F172A] dark:border-[#F3F4F6] text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none cursor-pointer"
                         >
-                          IMPRIMIR EDICIÓN A4
+                          {t('engineering_studio.btn_print_a4')}
                         </button>
                         <a
                           href={resolveDownloadHref(activeManual.pdfDownloadUrl)}
@@ -650,7 +654,7 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                           rel="noopener noreferrer"
                           className="px-[13px] py-[8px] bg-[#C68346] text-[#FFFFFF] text-[11px] font-bold uppercase rounded-none"
                         >
-                          DESCARGAR PDF CAS
+                          {t('engineering_studio.btn_download_pdf')}
                         </a>
                       </div>
                     </div>
@@ -659,7 +663,7 @@ export const OpermaqEngineeringStudioDrawer: React.FC<OpermaqEngineeringStudioDr
                       <iframe
                         title={activeManual.profileTitleEs}
                         srcDoc={activeManual.htmlEdition}
-                        className="flex-1 w-full border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF]"
+                        className="flex-1 w-full border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D]"
                       />
                     )}
                   </>

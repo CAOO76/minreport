@@ -11,8 +11,6 @@ import type { PillarDocument, PillarId } from '../types/vault';
 import { classifyFrontendEnergyKind } from '../utils/opermaqDomainProjection';
 import { M3LinearProgress } from './M3ProgressIndicator';
 
-const MISSING_SPEC_TEXT = '[Información técnica no declarada en ficha]';
-
 export interface EquipmentCostMatrixPanelProps {
   makeModel: string;
   tipoEquipo?: string;
@@ -24,38 +22,22 @@ export interface EquipmentCostMatrixPanelProps {
   knowledgeVault?: Partial<Record<PillarId, PillarDocument>>;
 }
 
-const DEFAULT_TAXONOMY_META: CostMatrixTaxonomyMeta = {
-  family_key: 'INDUSTRIAL_GENERAL',
-  family_label_es: 'Activo Industrial',
-  material_icon: 'precision_manufacturing',
-  wear_section_visible: true,
-  wear_section_title_es: 'Elementos de Desgaste Operacional y Trabajo',
-  wear_col_1_label_es: 'Elemento / Repuesto de Desgaste',
-  wear_col_2_label_es: 'Subsistema / Zona de Trabajo',
-  wear_empty_hint_es:
-    '[Información técnica no declarada en ficha] — Sin elementos de desgaste cazados en Pauta de Mantención.',
-  support_section_visible: true,
-  support_section_title_es: 'Sistema de Rodado, Apoyo o Sujeción',
-  support_col_spec_label_es: 'Medida / Especificación OEM',
-  support_col_pressure_label_es: 'Presión / Tensión / Precarga Nominal',
-  support_empty_hint_es:
-    '[Información técnica no declarada en ficha] — Sin componentes de rodado o apoyo cazados en Pauta de Mantención.',
-  supports_road_km_efficiency: false,
-  supports_hourly_load_table: true,
-  primary_tco_unit: '$ / h',
-};
-
-function valOrMissing(raw: string | null | undefined): { text: string; isMissing: boolean } {
+function valOrMissing(raw: string | null | undefined, missingText: string): { text: string; isMissing: boolean } {
   const trimmed = String(raw ?? '').trim();
+  const lower = trimmed.toLowerCase();
   if (
     !trimmed ||
     trimmed === '-' ||
     trimmed === '—' ||
-    trimmed.toLowerCase().includes('no declarada en ficha') ||
-    trimmed.toLowerCase().includes('no declarado en ficha') ||
-    trimmed.toLowerCase().includes('pendiente de registro')
+    lower.includes('no declarada en ficha') ||
+    lower.includes('no declarado en ficha') ||
+    lower.includes('pendiente de registro') ||
+    lower.includes('not declared in sheet') ||
+    lower.includes('pending registration') ||
+    lower.includes('não declarada na ficha') ||
+    lower.includes('pendente de registro')
   ) {
-    return { text: MISSING_SPEC_TEXT, isMissing: true };
+    return { text: missingText, isMissing: true };
   }
   return { text: trimmed, isMissing: false };
 }
@@ -64,7 +46,8 @@ const DataValueCell: React.FC<{ value: string | null | undefined; mono?: boolean
   value,
   mono = true,
 }) => {
-  const { text, isMissing } = valOrMissing(value);
+  const { t } = useTranslation();
+  const { text, isMissing } = valOrMissing(value, t('opermaq_domains.not_declared'));
   if (isMissing) {
     return <span className="text-[12px] text-[#94A3B8] dark:text-[#5A6072]">{text}</span>;
   }
@@ -88,13 +71,34 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
   energyConsumptionProfile,
 }) => {
   const { t } = useTranslation();
+  const missingSpecText = t('opermaq_domains.not_declared');
   const matrix = operationalCostMatrix;
   const effectiveTraits = physicalTraits;
+
+  const defaultTaxonomyMeta: CostMatrixTaxonomyMeta = {
+    family_key: 'INDUSTRIAL_GENERAL',
+    family_label_es: t('cost_matrix.default_family'),
+    material_icon: 'precision_manufacturing',
+    wear_section_visible: true,
+    wear_section_title_es: t('cost_matrix.sec5_default_title'),
+    wear_col_1_label_es: t('cost_matrix.sec5_col1_default'),
+    wear_col_2_label_es: t('cost_matrix.sec5_col2_default'),
+    wear_empty_hint_es: `${missingSpecText} — ${t('cost_matrix.sec5_empty_default')}`,
+    support_section_visible: true,
+    support_section_title_es: t('cost_matrix.sec6_default_title'),
+    support_col_spec_label_es: t('cost_matrix.sec6_col_spec_default'),
+    support_col_pressure_label_es: t('cost_matrix.sec6_col_pressure_default'),
+    support_empty_hint_es: `${missingSpecText} — ${t('cost_matrix.sec6_empty_default')}`,
+    supports_road_km_efficiency: false,
+    supports_hourly_load_table: true,
+    primary_tco_unit: '$ / h',
+  };
+
   const taxonomy: CostMatrixTaxonomyMeta = {
-    ...DEFAULT_TAXONOMY_META,
+    ...defaultTaxonomyMeta,
     ...(effectiveTraits
       ? {
-          material_icon: effectiveTraits.material_symbol_icon || DEFAULT_TAXONOMY_META.material_icon,
+          material_icon: effectiveTraits.material_symbol_icon || defaultTaxonomyMeta.material_icon,
           support_section_visible:
             effectiveTraits.mobility === 'SELF_PROPELLED_WHEELED' ||
             effectiveTraits.mobility === 'SELF_PROPELLED_TRACKED' ||
@@ -187,7 +191,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
             </span>
             <div className="min-w-0">
               <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                MATRIZ DETERMINISTA DE CONSUMOS, DESGASTE Y COSTOS DIRECTOS · {taxonomy.family_label_es}
+                {t('cost_matrix.header_subtitle')} · {taxonomy.family_label_es}
               </div>
               <h1 className="text-[17px] font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate">
                 {makeModel} {tipoEquipo ? `· ${tipoEquipo}` : ''}
@@ -198,7 +202,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
           <div className="flex items-center gap-[21px]">
             <div className="text-right">
               <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                UNIDAD BASE TCO
+                {t('cost_matrix.base_tco_unit')}
               </div>
               <div className="text-[15px] font-bold font-mono tabular-nums text-[#C68346]">
                 {taxonomy.primary_tco_unit}
@@ -206,12 +210,12 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
             </div>
             <div className="text-right">
               <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                 VECTOR ENERGÉTICO
+                {t('cost_matrix.energy_vector')}
               </div>
               <div className="text-[13px] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
                 {energy?.energy_source && energy.energy_source !== 'NO_DECLARADO'
                   ? `${energy.energy_source} · ${energy.cost_driver_unit}`
-                  : MISSING_SPEC_TEXT}
+                  : missingSpecText}
               </div>
             </div>
           </div>
@@ -222,14 +226,14 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
             value={progressPct}
             tone={progressPct >= 100 ? 'cyan' : 'copper'}
             className="flex-1"
-            ariaLabel="Cobertura verificada de matriz de costos"
+            ariaLabel={t('cost_matrix.progress_aria')}
           />
           <span className="text-[11px] font-bold uppercase tracking-[0.05em] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
             {completenessStatus === 'COMPLETE'
-              ? 'COBERTURA VERIFICADA'
+              ? t('cost_matrix.status_complete')
               : completenessStatus === 'PARTIAL'
-              ? 'DATOS PARCIALES EN BÓVEDA'
-              : 'PENDIENTE DE CAZA EN PILARES 01 Y 03'}
+              ? t('cost_matrix.status_partial')
+              : t('cost_matrix.status_empty')}
           </span>
         </div>
       </header>
@@ -284,11 +288,11 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
                   <div className="mt-[8px] flex flex-col gap-[4px] font-mono tabular-nums text-[13px] text-[#0F172A] dark:text-[#F3F4F6]">
                     <span>
                       {t('cost_matrix_energy.scr_proportion')}:{' '}
-                      {energy?.def_adblue_consumption?.consumption_pct_of_fuel || MISSING_SPEC_TEXT}
+                      {energy?.def_adblue_consumption?.consumption_pct_of_fuel || missingSpecText}
                     </span>
                     <span className="text-[12px] text-[#475569] dark:text-[#8A93A6]">
                       {t('cost_matrix_energy.scr_tank')}:{' '}
-                      {energy?.def_adblue_consumption?.tank_capacity_liters || MISSING_SPEC_TEXT}
+                      {energy?.def_adblue_consumption?.tank_capacity_liters || missingSpecText}
                     </span>
                   </div>
                 </div>
@@ -301,10 +305,10 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
                 <table className="w-full border-collapse text-left font-mono tabular-nums text-[13px]">
                   <thead>
                     <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-[11px] uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                      <th className="py-[8px] pr-[13px]">RALENTÍ / PTO AUXILIAR</th>
-                      <th className="py-[8px] px-[13px]">CARGA BAJA (25–35%)</th>
-                      <th className="py-[8px] px-[13px]">CARGA MEDIA (50–65%)</th>
-                      <th className="py-[8px] pl-[13px]">CARGA ALTA (80–100%)</th>
+                      <th className="py-[8px] pr-[13px]">{t('cost_matrix.load_idle')}</th>
+                      <th className="py-[8px] px-[13px]">{t('cost_matrix.load_low')}</th>
+                      <th className="py-[8px] px-[13px]">{t('cost_matrix.load_medium')}</th>
+                      <th className="py-[8px] pl-[13px]">{t('cost_matrix.load_high')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -331,64 +335,64 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
             {hasRoadData && (
               <div className="mt-[21px] pt-[13px] border-t border-[#E2E8F0] dark:border-[#12151C] overflow-x-auto">
                 <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#00AEEF] mb-[8px]">
-                  RENDIMIENTO VIAL EN CARRETERA Y TRÁNSITO FUERA DE CARRETERA (ENTRE PUNTOS DE ENTREGA)
+                  {t('cost_matrix.road_heading')}
                 </div>
-              <table className="w-full border-collapse text-left font-mono tabular-nums text-[13px]">
-                <thead>
-                  <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-[11px] uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                    <th className="py-[8px] pr-[13px]">CARRETERA / RUTA PAVIMENTADA</th>
-                    <th className="py-[8px] px-[13px]">FAENA / FUERA DE CARRETERA</th>
-                    <th className="py-[8px] px-[13px]">PROMEDIO COMBINADO</th>
-                    <th className="py-[8px] pl-[13px]">AUTONOMÍA VIAL ESTIMADA</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-b border-[#E2E8F0] dark:border-[#12151C]">
-                    <td className="py-[13px] pr-[13px]">
-                      <DataValueCell
-                        value={
-                          energy?.road_haul_efficiency?.highway_km_per_liter ||
-                          energy?.road_haul_efficiency?.highway_liters_per_100km
-                        }
-                      />
-                    </td>
-                    <td className="py-[13px] px-[13px]">
-                      <DataValueCell
-                        value={
-                          energy?.road_haul_efficiency?.offroad_km_per_liter ||
-                          energy?.road_haul_efficiency?.offroad_liters_per_100km
-                        }
-                      />
-                    </td>
-                    <td className="py-[13px] px-[13px]">
-                      <DataValueCell
-                        value={
-                          energy?.road_haul_efficiency?.km_per_liter ||
-                          energy?.road_haul_efficiency?.liters_per_100km ||
-                          energy?.road_haul_efficiency?.kwh_per_100km
-                        }
-                      />
-                    </td>
-                    <td className="py-[13px] pl-[13px]">
-                      <DataValueCell value={energy?.road_haul_efficiency?.estimated_range_km} />
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          )}
+                <table className="w-full border-collapse text-left font-mono tabular-nums text-[13px]">
+                  <thead>
+                    <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-[11px] uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                      <th className="py-[8px] pr-[13px]">{t('cost_matrix.road_highway')}</th>
+                      <th className="py-[8px] px-[13px]">{t('cost_matrix.road_offroad')}</th>
+                      <th className="py-[8px] px-[13px]">{t('cost_matrix.road_combined')}</th>
+                      <th className="py-[8px] pl-[13px]">{t('cost_matrix.road_range')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b border-[#E2E8F0] dark:border-[#12151C]">
+                      <td className="py-[13px] pr-[13px]">
+                        <DataValueCell
+                          value={
+                            energy?.road_haul_efficiency?.highway_km_per_liter ||
+                            energy?.road_haul_efficiency?.highway_liters_per_100km
+                          }
+                        />
+                      </td>
+                      <td className="py-[13px] px-[13px]">
+                        <DataValueCell
+                          value={
+                            energy?.road_haul_efficiency?.offroad_km_per_liter ||
+                            energy?.road_haul_efficiency?.offroad_liters_per_100km
+                          }
+                        />
+                      </td>
+                      <td className="py-[13px] px-[13px]">
+                        <DataValueCell
+                          value={
+                            energy?.road_haul_efficiency?.km_per_liter ||
+                            energy?.road_haul_efficiency?.liters_per_100km ||
+                            energy?.road_haul_efficiency?.kwh_per_100km
+                          }
+                        />
+                      </td>
+                      <td className="py-[13px] pl-[13px]">
+                        <DataValueCell value={energy?.road_haul_efficiency?.estimated_range_km} />
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         )}
 
         {/* II. BASE CAPEX Y VIDA ECONÓMICA */}
         <section className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-[21px] rounded-none shadow-none">
           <h2 className="text-[13px] font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6] pb-[13px] border-b border-[#E2E8F0] dark:border-[#12151C]">
-            II. PARÁMETROS BASE DE INVERSIÓN (CAPEX), VIDA ÚTIL Y DOTACIÓN DE FÁBRICA
+            {t('cost_matrix.sec2_title')}
           </h2>
           <div className="mt-[13px] grid grid-cols-1 md:grid-cols-4 gap-[13px]">
             <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[13px]">
               <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                VALOR REFERENCIAL NUEVO
+                {t('cost_matrix.capex_ref_price')}
               </div>
               <div className="mt-[8px]">
                 <DataValueCell
@@ -398,7 +402,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
             </div>
             <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[13px]">
               <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                VIDA ÚTIL ECONÓMICA OEM
+                {t('cost_matrix.capex_economic_life')}
               </div>
               <div className="mt-[8px]">
                 <DataValueCell
@@ -412,7 +416,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
             </div>
             <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[13px]">
               <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                VALOR RESIDUAL / DEPRECIACIÓN BASE
+                {t('cost_matrix.capex_residual_dep')}
               </div>
               <div className="mt-[8px]">
                 <DataValueCell
@@ -422,7 +426,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
             </div>
             <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[13px]">
               <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                DOTACIÓN ESTÁNDAR OEM
+                {t('cost_matrix.capex_standard_equip')}
               </div>
               <div className="mt-[8px]">
                 <DataValueCell
@@ -437,21 +441,21 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
         {/* III. LUBRICANTES, FLUIDOS Y REFRIGERANTES */}
         <section className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-[21px] rounded-none shadow-none">
           <h2 className="text-[13px] font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6] pb-[13px] border-b border-[#E2E8F0] dark:border-[#12151C]">
-            III. FLUIDOS, LUBRICANTES Y CAPACIDADES DE RECAMBIO PERIÓDICO
+            {t('cost_matrix.sec3_title')}
           </h2>
           {periodicFluids.length === 0 ? (
             <div className="pt-[13px] text-[12px] text-[#94A3B8] dark:text-[#5A6072]">
-              {MISSING_SPEC_TEXT} — Sin tabla de capacidades y lubricantes verificada en Pilares 01 / 03.
+              {missingSpecText} — {t('cost_matrix.sec3_empty')}
             </div>
           ) : (
             <div className="mt-[13px] overflow-x-auto">
               <table className="w-full border-collapse text-left text-[13px]">
                 <thead>
                   <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                    <th className="py-[8px] pr-[13px]">COMPARTIMENTO / SISTEMA</th>
-                    <th className="py-[8px] px-[13px]">ESPECIFICACIÓN / VISCOSIDAD</th>
-                    <th className="py-[8px] px-[13px]">CAPACIDAD</th>
-                    <th className="py-[8px] pl-[13px]">INTERVALO CAMBIO</th>
+                    <th className="py-[8px] pr-[13px]">{t('cost_matrix.col_compartment')}</th>
+                    <th className="py-[8px] px-[13px]">{t('cost_matrix.col_spec_viscosity')}</th>
+                    <th className="py-[8px] px-[13px]">{t('cost_matrix.col_capacity')}</th>
+                    <th className="py-[8px] pl-[13px]">{t('cost_matrix.col_change_interval')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -487,22 +491,22 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
         {/* IV. FILTROS, KITS Y SELLOS PERIÓDICOS */}
         <section className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-[21px] rounded-none shadow-none">
           <h2 className="text-[13px] font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6] pb-[13px] border-b border-[#E2E8F0] dark:border-[#12151C]">
-            IV. FILTROS, ELEMENTOS SELLANTES Y KITS DE MANTENCIÓN PREVENTIVA
+            {t('cost_matrix.sec4_title')}
           </h2>
           {periodicFilters.length === 0 ? (
             <div className="pt-[13px] text-[12px] text-[#94A3B8] dark:text-[#5A6072]">
-              {MISSING_SPEC_TEXT} — Sin filtros ni kits periódicos verificados en Pilar 03.
+              {missingSpecText} — {t('cost_matrix.sec4_empty')}
             </div>
           ) : (
             <div className="mt-[13px] overflow-x-auto">
               <table className="w-full border-collapse text-left text-[13px]">
                 <thead>
                   <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                    <th className="py-[8px] pr-[13px]">ELEMENTO / FILTRO</th>
-                    <th className="py-[8px] px-[13px]">N° PARTE OEM</th>
-                    <th className="py-[8px] px-[13px]">CANT.</th>
-                    <th className="py-[8px] px-[13px]">INTERVALO</th>
-                    <th className="py-[8px] pl-[13px]">PAUTA PM</th>
+                    <th className="py-[8px] pr-[13px]">{t('cost_matrix.col_element_filter')}</th>
+                    <th className="py-[8px] px-[13px]">{t('cost_matrix.col_oem_part')}</th>
+                    <th className="py-[8px] px-[13px]">{t('cost_matrix.col_qty')}</th>
+                    <th className="py-[8px] px-[13px]">{t('cost_matrix.col_interval')}</th>
+                    <th className="py-[8px] pl-[13px]">{t('cost_matrix.col_pm_stage')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -549,10 +553,10 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
                     <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                       <th className="py-[8px] pr-[13px]">{taxonomy.wear_col_1_label_es}</th>
                       <th className="py-[8px] px-[13px]">{taxonomy.wear_col_2_label_es}</th>
-                      <th className="py-[8px] px-[13px]">CÓDIGO / ESPECIFICACIÓN OEM</th>
-                      <th className="py-[8px] px-[13px]">CANT.</th>
-                      <th className="py-[8px] px-[13px]">VIDA ESTIMADA</th>
-                      <th className="py-[8px] pl-[13px]">LÍMITE DE CONDENA</th>
+                      <th className="py-[8px] px-[13px]">{t('cost_matrix.col_oem_code_spec')}</th>
+                      <th className="py-[8px] px-[13px]">{t('cost_matrix.col_qty')}</th>
+                      <th className="py-[8px] px-[13px]">{t('cost_matrix.col_estimated_life')}</th>
+                      <th className="py-[8px] pl-[13px]">{t('cost_matrix.col_condemnation_limit')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -601,12 +605,12 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
                 <table className="w-full border-collapse text-left text-[13px]">
                   <thead>
                     <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                      <th className="py-[8px] pr-[13px]">COMPONENTE</th>
+                      <th className="py-[8px] pr-[13px]">{t('cost_matrix.col_component')}</th>
                       <th className="py-[8px] px-[13px]">{taxonomy.support_col_spec_label_es}</th>
-                      <th className="py-[8px] px-[13px]">CANT.</th>
+                      <th className="py-[8px] px-[13px]">{t('cost_matrix.col_qty')}</th>
                       <th className="py-[8px] px-[13px]">{taxonomy.support_col_pressure_label_es}</th>
-                      <th className="py-[8px] px-[13px]">VIDA ESTIMADA</th>
-                      <th className="py-[8px] pl-[13px]">LÍMITE DE CONDENA</th>
+                      <th className="py-[8px] px-[13px]">{t('cost_matrix.col_estimated_life')}</th>
+                      <th className="py-[8px] pl-[13px]">{t('cost_matrix.col_condemnation_limit')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -644,17 +648,17 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
         {pmKits.length > 0 && (
           <section className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-[21px] rounded-none shadow-none">
             <h2 className="text-[13px] font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6] pb-[13px] border-b border-[#E2E8F0] dark:border-[#12151C]">
-              VII. CONSOLIDADO DE KITS POR ESCALÓN DE MANTENCIÓN PROGRAMADA (PM)
+              {t('cost_matrix.sec7_title')}
             </h2>
             <div className="mt-[13px] overflow-x-auto">
               <table className="w-full border-collapse text-left text-[13px]">
                 <thead>
                   <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                    <th className="py-[8px] pr-[13px]">PAUTA</th>
-                    <th className="py-[8px] px-[13px]">FRECUENCIA</th>
-                    <th className="py-[8px] px-[13px]">FLUIDOS ASOCIADOS</th>
-                    <th className="py-[8px] px-[13px]">FILTROS / SELLOS</th>
-                    <th className="py-[8px] pl-[13px]">DESGASTE / APOYO</th>
+                    <th className="py-[8px] pr-[13px]">{t('cost_matrix.col_schedule')}</th>
+                    <th className="py-[8px] px-[13px]">{t('cost_matrix.col_frequency')}</th>
+                    <th className="py-[8px] px-[13px]">{t('cost_matrix.col_assoc_fluids')}</th>
+                    <th className="py-[8px] px-[13px]">{t('cost_matrix.col_filters_seals')}</th>
+                    <th className="py-[8px] pl-[13px]">{t('cost_matrix.col_wear_support')}</th>
                   </tr>
                 </thead>
                 <tbody>

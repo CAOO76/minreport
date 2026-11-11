@@ -1,5 +1,5 @@
-import admin, { db, storage } from '../../../config/firebase';
-import { env } from '../../../config/env';
+import { convertBuffer } from '@visioncortex/vtracer';
+import admin, { db } from '../../../config/firebase';
 import { CasStorageService } from '../../../core/media/CasStorageService';
 import { MediaDigestorServer } from '../../../core/media/MediaDigestorServer';
 import { ResilientAIClient } from '../../../core/resilient-ai-client';
@@ -12,27 +12,209 @@ import {
 } from './NeuroSymbolicVerifier';
 
 export { getCachedMasterSymbologyIndex };
-import {
-    ensureUniversalSymbologySeeded,
-    vectorizeRasterSymbolToSvg,
-} from './UniversalSymbologySeedService';
 
 /**
- * SYMBOLOGY SERVICE — BÓVEDA GLOBAL DE SIMBOLOGÍA ISO 7000 / IEC 60417 (Etapa 4)
+ * SYMBOLOGY SERVICE — BÓVEDA GLOBAL DE SIMBOLOGÍA ISO 7000 / IEC 60417 (Consolidación 100% CAS)
  *
- * Pipeline:
+ * Pipeline (`MINREPORT-MEDIA-DIGESTOR-CAS` en `southamerica-west1`):
  * 1. Búsqueda directa en API pública de Wikimedia Commons + fallback Gemini con Google Search.
- * 2. Descarga y almacenamiento en Cloud Storage (`southamerica-west1` / Storage Emulator `:9195`).
- * 3. Redibujo vectorial limpio con Imagen 4.0 (`ResilientAIClient.generateTechnicalImage`) para ícono estándar o variante OEM.
+ * 2. Digestión obligatoria por `MediaDigestorServer` (`digestSvg` o `digestImage(..., 'IMAGE_ISO_SYMBOL')` / `vtracer`)
+ *    y persistencia deduplicada en `CasStorageService.persistDigestedBinary(..., { scope: 'SYMBOLOGY_MASTER' })`.
+ * 3. Persistencia exclusiva de URL liviana CAS (`/api/media/blob/symbology/...`) junto con telemetría auditable
+ *    `original_bytes`, `optimized_bytes` y `savings_pct`.
  * 4. Confirmación humana obligatoria (`"ACTUALIZAR"`, estándar `GEMINI.md` §3.8).
  */
 
 const WIKI_HEADERS = {
-    'User-Agent': 'MINREPORT-OPERMAQ-Symbology/3.0 (https://minreport-access.web.app)',
+    'User-Agent': 'MINREPORT-OPERMAQ-Symbology/4.0 (https://minreport-access.web.app)',
 };
 
-function getBucket() {
-    return storage.bucket(env.STORAGE_BUCKET);
+interface SymbologyCasAssetResult {
+    downloadUrl: string;
+    sha256: string;
+    originalBytes: number;
+    optimizedBytes: number;
+    savingsPct: number;
+    svgInline?: string;
+    wasVectorized: boolean;
+}
+
+async function digestAndPersistSymbologyBuffer(
+    rawBuffer: Buffer,
+    params: {
+        actorUid: string;
+        originalFilename: string;
+        preferVectorizeRaster?: boolean;
+    }
+): Promise<SymbologyCasAssetResult> {
+    const clientOriginalBytes = rawBuffer.length;
+    const rawHead = rawBuffer.subarray(0, 512).toString('utf8');
+    const isSvg = /<svg\b/i.test(rawHead);
+    const cleanBaseName = (params.originalFilename || 'symbol')
+        .replace(/\.[a-z0-9]+$/i, '')
+        .slice(0, 180);
+
+    if (isSvg) {
+        const digestedSvg = await MediaDigestorServer.digestSvg(rawBuffer);
+        const cas = await CasStorageService.persistDigestedBinary(digestedSvg, {
+            scope: 'SYMBOLOGY_MASTER',
+            actorUid: params.actorUid,
+            originalFilename: `${cleanBaseName}.svg`,
+            clientOriginalBytes,
+        });
+        const svgStr = digestedSvg.buffer.toString('utf8');
+        return {
+            downloadUrl: cas.downloadUrl,
+            sha256: cas.sha256,
+            originalBytes: cas.originalBytes,
+            optimizedBytes: cas.optimizedBytes,
+            savingsPct: cas.savingsPct ?? 0,
+            svgInline: svgStr.length <= 24000 ? svgStr : undefined,
+            wasVectorized: false,
+        };
+    }
+
+    if (params.preferVectorizeRaster !== false) {
+        try {
+            const rawSvg = convertBuffer(new Uint8Array(rawBuffer), {
+                preset: 'poster',
+                clustering: 'color-cluster',
+                mode: 'spline',
+                filterSpeckle: 6,
+                cornerThreshold: 55,
+                simplify: 1.4,
+                maxColors: 5,
+                optimize: 2,
+            });
+            const digestedSvg = await MediaDigestorServer.digestSvg(rawSvg);
+            const cas = await CasStorageService.persistDigestedBinary(digestedSvg, {
+                scope: 'SYMBOLOGY_MASTER',
+                actorUid: params.actorUid,
+                originalFilename: `${cleanBaseName}.svg`,
+                clientOriginalBytes,
+            });
+            const svgStr = digestedSvg.buffer.toString('utf8');
+            return {
+                downloadUrl: cas.downloadUrl,
+                sha256: cas.sha256,
+                originalBytes: cas.originalBytes,
+                optimizedBytes: cas.optimizedBytes,
+                savingsPct: cas.savingsPct ?? 0,
+                svgInline: svgStr.length <= 24000 ? svgStr : undefined,
+                wasVectorized: true,
+            };
+        } catch {
+            // Fallback determinista hacia IMAGE_ISO_SYMBOL en CAS
+        }
+    }
+
+    const digestedImg = await MediaDigestorServer.digestImage(rawBuffer, 'IMAGE_ISO_SYMBOL');
+    const cas = await CasStorageService.persistDigestedBinary(digestedImg, {
+        scope: 'SYMBOLOGY_MASTER',
+        actorUid: params.actorUid,
+        originalFilename: `${cleanBaseName}.${digestedImg.extension}`,
+        clientOriginalBytes,
+    });
+    return {
+        downloadUrl: cas.downloadUrl,
+        sha256: cas.sha256,
+        originalBytes: cas.originalBytes,
+        optimizedBytes: cas.optimizedBytes,
+        savingsPct: cas.savingsPct ?? 0,
+        wasVectorized: false,
+    };
+}
+
+async function resolveCasTelemetryFromDraft(params: {
+    draftUrl: string;
+    actorUid: string;
+    fallbackFilename: string;
+    knownSha256?: string;
+    knownOriginalBytes?: number;
+    knownOptimizedBytes?: number;
+    knownSavingsPct?: number;
+}): Promise<{
+    downloadUrl: string;
+    sha256: string;
+    originalBytes: number;
+    optimizedBytes: number;
+    savingsPct: number;
+}> {
+    const cleanUrl = (params.draftUrl || '').trim();
+    if (cleanUrl.startsWith('/api/media/blob/symbology/')) {
+        const hashMatch = cleanUrl.match(/\/api\/media\/blob\/symbology\/([a-f0-9]{64})\./i);
+        const sha256 = (params.knownSha256 || hashMatch?.[1] || '').toLowerCase();
+        if (
+            typeof params.knownOriginalBytes === 'number' &&
+            params.knownOriginalBytes > 0 &&
+            typeof params.knownOptimizedBytes === 'number' &&
+            params.knownOptimizedBytes > 0
+        ) {
+            const orig = params.knownOriginalBytes;
+            const opt = params.knownOptimizedBytes;
+            const pct =
+                typeof params.knownSavingsPct === 'number'
+                    ? params.knownSavingsPct
+                    : orig > 0 && opt < orig
+                      ? Number((((orig - opt) / orig) * 100).toFixed(1))
+                      : 0;
+            return {
+                downloadUrl: cleanUrl,
+                sha256,
+                originalBytes: orig,
+                optimizedBytes: opt,
+                savingsPct: pct,
+            };
+        }
+
+        if (sha256) {
+            const hit = await CasStorageService.preflightCheck(sha256, 'SYMBOLOGY_MASTER');
+            if (hit) {
+                return {
+                    downloadUrl: hit.downloadUrl,
+                    sha256: hit.sha256,
+                    originalBytes: hit.originalBytes,
+                    optimizedBytes: hit.optimizedBytes,
+                    savingsPct: hit.savingsPct ?? 0,
+                };
+            }
+        }
+
+        return {
+            downloadUrl: cleanUrl,
+            sha256,
+            originalBytes: params.knownOriginalBytes || 0,
+            optimizedBytes: params.knownOptimizedBytes || 0,
+            savingsPct: params.knownSavingsPct || 0,
+        };
+    }
+
+    // Migración transparente hacia CAS si existía una URL proxy heredada
+    const pathParamMatch = cleanUrl.match(/[?&]path=([^&]+)/);
+    if (pathParamMatch?.[1]) {
+        const legacyPath = decodeURIComponent(pathParamMatch[1]).replace(/^\/+/, '');
+        if (
+            !legacyPath.includes('..') &&
+            (legacyPath.startsWith('assets/symbology/') || legacyPath.startsWith('cas_blobs/symbology/'))
+        ) {
+            const legacyBlob = await CasStorageService.readCasBlob(legacyPath);
+            if (legacyBlob && legacyBlob.buffer.length > 0) {
+                const migrated = await digestAndPersistSymbologyBuffer(legacyBlob.buffer, {
+                    actorUid: params.actorUid,
+                    originalFilename: params.fallbackFilename,
+                });
+                return {
+                    downloadUrl: migrated.downloadUrl,
+                    sha256: migrated.sha256,
+                    originalBytes: migrated.originalBytes,
+                    optimizedBytes: migrated.optimizedBytes,
+                    savingsPct: migrated.savingsPct,
+                };
+            }
+        }
+    }
+
+    throw new Error('No existe ícono borrador válido en almacenamiento CAS. Ejecute la búsqueda o generación primero.');
 }
 
 function extractIsoSearchQuery(isoRef: string): string | null {
@@ -208,8 +390,14 @@ Usa Google Search. Devuelve ÚNICAMENTE hasta 3 nombres de archivo exactos (ej. 
             return null;
         }
 
-        const bucket = getBucket();
-        const candidates: Array<{ url: string; source_filename: string }> = [];
+        const candidates: Array<{
+            url: string;
+            source_filename: string;
+            cas_sha256: string;
+            original_bytes: number;
+            optimized_bytes: number;
+            savings_pct: number;
+        }> = [];
 
         for (let i = 0; i < candidateFilenames.slice(0, 3).length; i++) {
             const filename = candidateFilenames[i];
@@ -243,42 +431,20 @@ Usa Google Search. Devuelve ÚNICAMENTE hasta 3 nombres de archivo exactos (ej. 
                 const buffer = Buffer.from(await downloadRes.arrayBuffer());
                 if (buffer.length < 120) continue;
 
-                if (isSvgSource) {
-                    const digestedSvg = await MediaDigestorServer.digestSvg(buffer);
-                    const cas = await CasStorageService.persistDigestedBinary(digestedSvg, {
-                        scope: 'SYMBOLOGY_MASTER',
-                        actorUid: 'wikimedia-svg-harvester',
-                        originalFilename: filename,
-                    });
-                    // Además dejar copia compatible en ruta temporal tradicional por si registerStandardIcon se invoca
-                    const tempGcsPath = `assets/symbology/${conceptId}/standard_temp_${i}.svg`;
-                    await bucket.file(tempGcsPath).save(digestedSvg.buffer, {
-                        contentType: 'image/svg+xml',
-                    });
-                    candidates.push({ url: cas.downloadUrl, source_filename: filename });
-                } else {
-                    // Vectorizar raster automáticamente con vtracer WASM hacia SVG escalable
-                    try {
-                        const vectorized = await vectorizeRasterSymbolToSvg(buffer);
-                        const tempGcsPath = `assets/symbology/${conceptId}/standard_temp_${i}.svg`;
-                        await bucket.file(tempGcsPath).save(Buffer.from(vectorized.svgString, 'utf8'), {
-                            contentType: 'image/svg+xml',
-                        });
-                        candidates.push({ url: vectorized.descriptorUrl, source_filename: `${filename} (Vectorizado SVG)` });
-                    } catch {
-                        const digestedImg = await MediaDigestorServer.digestImage(buffer, 'IMAGE_ISO_SYMBOL');
-                        const cas = await CasStorageService.persistDigestedBinary(digestedImg, {
-                            scope: 'SYMBOLOGY_MASTER',
-                            actorUid: 'wikimedia-raster-harvester',
-                            originalFilename: filename,
-                        });
-                        const tempGcsPath = `assets/symbology/${conceptId}/standard_temp_${i}.png`;
-                        await bucket.file(tempGcsPath).save(digestedImg.buffer, {
-                            contentType: digestedImg.mimeType,
-                        });
-                        candidates.push({ url: cas.downloadUrl, source_filename: filename });
-                    }
-                }
+                const casRes = await digestAndPersistSymbologyBuffer(buffer, {
+                    actorUid: isSvgSource ? 'wikimedia-svg-harvester' : 'wikimedia-raster-harvester',
+                    originalFilename: filename,
+                    preferVectorizeRaster: !isSvgSource,
+                });
+
+                candidates.push({
+                    url: casRes.downloadUrl,
+                    source_filename: casRes.wasVectorized ? `${filename} (Vectorizado SVG)` : filename,
+                    cas_sha256: casRes.sha256,
+                    original_bytes: casRes.originalBytes,
+                    optimized_bytes: casRes.optimizedBytes,
+                    savings_pct: casRes.savingsPct,
+                });
             } catch (candErr) {
                 console.warn(`[SymbologyService] Error procesando candidato ${filename}:`, candErr);
             }
@@ -293,14 +459,19 @@ Usa Google Search. Devuelve ÚNICAMENTE hasta 3 nombres de archivo exactos (ej. 
             return null;
         }
 
+        const primary = candidates[0];
         await docRef.update({
             temp_icon_candidates: candidates,
-            temp_standard_icon_url: candidates[0].url,
+            temp_standard_icon_url: primary.url,
+            temp_cas_sha256: primary.cas_sha256,
+            temp_original_bytes: primary.original_bytes,
+            temp_optimized_bytes: primary.optimized_bytes,
+            temp_savings_pct: primary.savings_pct,
             standard_icon_status: 'pendiente_confirmacion_humana',
             updated_at: new Date().toISOString(),
         });
 
-        return candidates[0].url;
+        return primary.url;
     } catch (err) {
         console.error(`[SymbologyService] Falló búsqueda Wikimedia para ${conceptId}:`, err);
         await docRef
@@ -312,6 +483,8 @@ Usa Google Search. Devuelve ÚNICAMENTE hasta 3 nombres de archivo exactos (ej. 
         return null;
     }
 }
+
+export const searchIsoIconCandidates = searchIsoIconFromWikimedia;
 
 export async function drawStandardIcon(
     conceptId: string,
@@ -344,23 +517,25 @@ Rules: Pure solid white background (#FFFFFF), clean flat black geometric ISO 700
     });
 
     const buffer = Buffer.from(imageOut.base64Data, 'base64');
-    const bucket = getBucket();
-    const tempGcsPath = `assets/symbology/${conceptId}/standard_temp.png`;
-    await bucket.file(tempGcsPath).save(buffer, {
-        contentType: imageOut.mimeType,
-        metadata: { metadata: { conceptId, generatedBy: userEmail } },
+    const casRes = await digestAndPersistSymbologyBuffer(buffer, {
+        actorUid: userEmail,
+        originalFilename: `${conceptId}_standard_draft.png`,
+        preferVectorizeRaster: true,
     });
 
-    const tempUrl = `/api/public/simbologia/image-proxy?path=${encodeURIComponent(tempGcsPath)}&t=${Date.now()}`;
-
     await docRef.update({
-        temp_standard_icon_url: tempUrl,
+        temp_standard_icon_url: casRes.downloadUrl,
+        temp_cas_sha256: casRes.sha256,
+        temp_original_bytes: casRes.originalBytes,
+        temp_optimized_bytes: casRes.optimizedBytes,
+        temp_savings_pct: casRes.savingsPct,
+        ...(casRes.svgInline ? { temp_svg_inline: casRes.svgInline } : {}),
         temp_icon_candidates: admin.firestore.FieldValue.delete(),
         standard_icon_status: 'pendiente_confirmacion_humana',
         updated_at: new Date().toISOString(),
     });
 
-    return tempUrl;
+    return casRes.downloadUrl;
 }
 
 export async function registerStandardIcon(
@@ -377,44 +552,41 @@ export async function registerStandardIcon(
     if (!snap.exists) throw new Error(`Concepto '${conceptId}' no encontrado.`);
     const currentData = snap.data() || {};
 
-    // Si ya cuenta con URL CAS vectorial en `temp_standard_icon_url`, consolidar directamente
-    if (
-        typeof currentData.temp_standard_icon_url === 'string' &&
-        currentData.temp_standard_icon_url.startsWith('/api/media/blob/symbology/')
-    ) {
-        await docRef.update({
-            standard_icon_url: currentData.temp_standard_icon_url,
-            temp_standard_icon_url: admin.firestore.FieldValue.delete(),
-            temp_icon_candidates: admin.firestore.FieldValue.delete(),
-            standard_icon_status: 'encontrado',
-            verified_by: userEmail,
-            updated_at: new Date().toISOString(),
-        });
-        invalidateMasterSymbologyCache();
-        const updatedDirect = await docRef.get();
-        return {
-            concept_id: updatedDirect.id,
-            ...(updatedDirect.data() as Omit<MasterSymbologyItem, 'concept_id'>),
-        };
+    const draftUrl = typeof currentData.temp_standard_icon_url === 'string' ? currentData.temp_standard_icon_url : '';
+    if (!draftUrl) {
+        throw new Error('No existe ícono borrador en CAS. Ejecute la búsqueda o redibujo primero.');
     }
 
-    const bucket = getBucket();
-    const tempFile = bucket.file(`assets/symbology/${conceptId}/standard_temp.png`);
-    const finalGcsPath = `assets/symbology/${conceptId}/standard.png`;
-    const finalFile = bucket.file(finalGcsPath);
+    const matchedCandidate = Array.isArray(currentData.temp_icon_candidates)
+        ? currentData.temp_icon_candidates.find((c: any) => c?.url === draftUrl)
+        : undefined;
 
-    const [exists] = await tempFile.exists();
-    if (!exists) {
-        throw new Error('No existe ícono temporal en Storage. Ejecute la búsqueda o redibujo primero.');
-    }
-
-    await tempFile.move(finalFile);
-    const permanentUrl = `/api/public/simbologia/image-proxy?path=${encodeURIComponent(finalGcsPath)}`;
+    const consolidated = await resolveCasTelemetryFromDraft({
+        draftUrl,
+        actorUid: userEmail,
+        fallbackFilename: `${conceptId}_standard`,
+        knownSha256: matchedCandidate?.cas_sha256 || currentData.temp_cas_sha256,
+        knownOriginalBytes: matchedCandidate?.original_bytes ?? currentData.temp_original_bytes,
+        knownOptimizedBytes: matchedCandidate?.optimized_bytes ?? currentData.temp_optimized_bytes,
+        knownSavingsPct: matchedCandidate?.savings_pct ?? currentData.temp_savings_pct,
+    });
 
     await docRef.update({
-        standard_icon_url: permanentUrl,
+        standard_icon_url: consolidated.downloadUrl,
+        cas_sha256: consolidated.sha256,
+        original_bytes: consolidated.originalBytes,
+        optimized_bytes: consolidated.optimizedBytes,
+        savings_pct: consolidated.savingsPct,
+        ...(typeof currentData.temp_svg_inline === 'string' && currentData.temp_svg_inline
+            ? { svg_inline: currentData.temp_svg_inline }
+            : {}),
         temp_standard_icon_url: admin.firestore.FieldValue.delete(),
         temp_icon_candidates: admin.firestore.FieldValue.delete(),
+        temp_cas_sha256: admin.firestore.FieldValue.delete(),
+        temp_original_bytes: admin.firestore.FieldValue.delete(),
+        temp_optimized_bytes: admin.firestore.FieldValue.delete(),
+        temp_savings_pct: admin.firestore.FieldValue.delete(),
+        temp_svg_inline: admin.firestore.FieldValue.delete(),
         standard_icon_status: 'encontrado',
         verified_by: userEmail,
         updated_at: new Date().toISOString(),
@@ -429,7 +601,13 @@ export async function generateBrandVariant(
     conceptId: string,
     brand: string,
     userEmail: string
-): Promise<{ temp_storage_url: string }> {
+): Promise<{
+    temp_storage_url: string;
+    cas_sha256: string;
+    original_bytes: number;
+    optimized_bytes: number;
+    savings_pct: number;
+}> {
     const normBrand = brand.toLowerCase().trim();
     const docRef = db.collection('master_symbology_vault').doc(conceptId);
     const snap = await docRef.get();
@@ -453,18 +631,25 @@ Rules: Solid white background (#FFFFFF), clean flat industrial pictogram, zero t
     });
 
     const buffer = Buffer.from(imageOut.base64Data, 'base64');
-    const bucket = getBucket();
-    const tempGcsPath = `assets/symbology/${conceptId}/${normBrand}_temp.png`;
-    await bucket.file(tempGcsPath).save(buffer, {
-        contentType: imageOut.mimeType,
-        metadata: { metadata: { conceptId, brand: normBrand, generatedBy: userEmail } },
+    const casRes = await digestAndPersistSymbologyBuffer(buffer, {
+        actorUid: userEmail,
+        originalFilename: `${conceptId}_${normBrand}_draft.png`,
+        preferVectorizeRaster: true,
     });
 
-    const tempUrl = `/api/public/simbologia/image-proxy?path=${encodeURIComponent(tempGcsPath)}&t=${Date.now()}`;
-    const variantObj: Partial<MasterSymbologyVariant> = {
+    const variantObj: Partial<MasterSymbologyVariant> & {
+        cas_sha256: string;
+        original_bytes: number;
+        optimized_bytes: number;
+        savings_pct: number;
+    } = {
         verified_by_human: false,
-        temp_storage_url: tempUrl,
-        style_notes: `Borrador generado para fabricante ${brand}.`,
+        temp_storage_url: casRes.downloadUrl,
+        cas_sha256: casRes.sha256,
+        original_bytes: casRes.originalBytes,
+        optimized_bytes: casRes.optimizedBytes,
+        savings_pct: casRes.savingsPct,
+        style_notes: `Borrador generado y consolidado en CAS para fabricante ${brand}.`,
     };
 
     await docRef.update({
@@ -472,7 +657,13 @@ Rules: Solid white background (#FFFFFF), clean flat industrial pictogram, zero t
         updated_at: new Date().toISOString(),
     });
 
-    return { temp_storage_url: tempUrl };
+    return {
+        temp_storage_url: casRes.downloadUrl,
+        cas_sha256: casRes.sha256,
+        original_bytes: casRes.originalBytes,
+        optimized_bytes: casRes.optimizedBytes,
+        savings_pct: casRes.savingsPct,
+    };
 }
 
 export async function registerBrandVariant(
@@ -490,29 +681,45 @@ export async function registerBrandVariant(
     const snap = await docRef.get();
     if (!snap.exists) throw new Error(`Concepto '${conceptId}' no encontrado.`);
 
-    const bucket = getBucket();
-    const tempFile = bucket.file(`assets/symbology/${conceptId}/${normBrand}_temp.png`);
-    const finalGcsPath = `assets/symbology/${conceptId}/${normBrand}.png`;
-    const finalFile = bucket.file(finalGcsPath);
+    const currentData = snap.data() || {};
+    const currentVariant = (currentData.brands_variants || {})[normBrand] || {};
+    const draftUrl = typeof currentVariant.temp_storage_url === 'string' ? currentVariant.temp_storage_url : '';
+    if (!draftUrl) {
+        throw new Error(`No existe borrador temporal en CAS para la marca '${brand}'.`);
+    }
 
-    const [exists] = await tempFile.exists();
-    if (!exists) throw new Error(`No existe borrador temporal para la marca '${brand}'.`);
+    const consolidated = await resolveCasTelemetryFromDraft({
+        draftUrl,
+        actorUid: userEmail,
+        fallbackFilename: `${conceptId}_${normBrand}`,
+        knownSha256: currentVariant.cas_sha256,
+        knownOriginalBytes: currentVariant.original_bytes,
+        knownOptimizedBytes: currentVariant.optimized_bytes,
+        knownSavingsPct: currentVariant.savings_pct,
+    });
 
-    await tempFile.move(finalFile);
-    const permanentUrl = `/api/public/simbologia/image-proxy?path=${encodeURIComponent(finalGcsPath)}`;
-
-    const updatedVariant: MasterSymbologyVariant = {
+    const updatedVariant: MasterSymbologyVariant & {
+        cas_sha256: string;
+        original_bytes: number;
+        optimized_bytes: number;
+        savings_pct: number;
+    } = {
         verified_by_human: true,
         verified_by: userEmail,
         verified_at: new Date().toISOString(),
-        asset_storage_url: permanentUrl,
-        style_notes: `Variante verificada para ${brand}.`,
+        asset_storage_url: consolidated.downloadUrl,
+        cas_sha256: consolidated.sha256,
+        original_bytes: consolidated.originalBytes,
+        optimized_bytes: consolidated.optimizedBytes,
+        savings_pct: consolidated.savingsPct,
+        style_notes: `Variante verificada en CAS para ${brand}.`,
     };
 
     await docRef.update({
         [`brands_variants.${normBrand}`]: updatedVariant,
         updated_at: new Date().toISOString(),
     });
+    invalidateMasterSymbologyCache();
 
     const updated = await docRef.get();
     return { concept_id: updated.id, ...(updated.data() as Omit<MasterSymbologyItem, 'concept_id'>) };
@@ -534,45 +741,34 @@ export async function uploadManualVariant(
     const snap = await docRef.get();
     if (!snap.exists) throw new Error(`Concepto '${conceptId}' no encontrado.`);
 
-    const rawTextHead = buffer.subarray(0, 200).toString('utf8');
-    const isSvg = /<svg\b/i.test(rawTextHead);
+    const casRes = await digestAndPersistSymbologyBuffer(buffer, {
+        actorUid: userEmail,
+        originalFilename: `${conceptId}_${normBrand}`,
+        preferVectorizeRaster: true,
+    });
 
-    let permanentUrl: string;
-    if (isSvg) {
-        const digestedSvg = await MediaDigestorServer.digestSvg(buffer);
-        const cas = await CasStorageService.persistDigestedBinary(digestedSvg, {
-            scope: 'SYMBOLOGY_MASTER',
-            actorUid: userEmail,
-            originalFilename: `${conceptId}_${normBrand}.svg`,
-        });
-        permanentUrl = cas.downloadUrl;
-    } else {
-        try {
-            const vectorized = await vectorizeRasterSymbolToSvg(buffer);
-            permanentUrl = vectorized.descriptorUrl;
-        } catch {
-            const digestedImg = await MediaDigestorServer.digestImage(buffer, 'IMAGE_ISO_SYMBOL');
-            const cas = await CasStorageService.persistDigestedBinary(digestedImg, {
-                scope: 'SYMBOLOGY_MASTER',
-                actorUid: userEmail,
-                originalFilename: `${conceptId}_${normBrand}.webp`,
-            });
-            permanentUrl = cas.downloadUrl;
-        }
-    }
-
-    const updatedVariant: MasterSymbologyVariant = {
+    const updatedVariant: MasterSymbologyVariant & {
+        cas_sha256: string;
+        original_bytes: number;
+        optimized_bytes: number;
+        savings_pct: number;
+    } = {
         verified_by_human: true,
         verified_by: userEmail,
         verified_at: new Date().toISOString(),
-        asset_storage_url: permanentUrl,
-        style_notes: 'Variante OEM optimizada y vectorizada en CAS.',
+        asset_storage_url: casRes.downloadUrl,
+        cas_sha256: casRes.sha256,
+        original_bytes: casRes.originalBytes,
+        optimized_bytes: casRes.optimizedBytes,
+        savings_pct: casRes.savingsPct,
+        style_notes: 'Variante OEM optimizada y consolidada en CAS.',
     };
 
     await docRef.update({
         [`brands_variants.${normBrand}`]: updatedVariant,
         updated_at: new Date().toISOString(),
     });
+    invalidateMasterSymbologyCache();
 
     const updated = await docRef.get();
     return { concept_id: updated.id, ...(updated.data() as Omit<MasterSymbologyItem, 'concept_id'>) };
@@ -581,45 +777,32 @@ export async function uploadManualVariant(
 export async function uploadStandardIcon(
     conceptId: string,
     buffer: Buffer,
-    userEmail: string
+    userEmail: string,
+    confirmWord?: string
 ): Promise<MasterSymbologyItem> {
+    if (confirmWord !== undefined && !isValidHitlSymbologyWord(confirmWord)) {
+        throw new Error('CONFIRM_WORD_MISMATCH: Debe ingresar "ACTUALIZAR" para confirmar el registro.');
+    }
+
     const docRef = db.collection('master_symbology_vault').doc(conceptId);
     const snap = await docRef.get();
     if (!snap.exists) throw new Error(`Concepto '${conceptId}' no encontrado.`);
 
-    const rawTextHead = buffer.subarray(0, 200).toString('utf8');
-    const isSvg = /<svg\b/i.test(rawTextHead);
-
-    let permanentUrl: string;
-    let svgInline: string | undefined;
-    if (isSvg) {
-        const digestedSvg = await MediaDigestorServer.digestSvg(buffer);
-        svgInline = digestedSvg.buffer.toString('utf8');
-        const cas = await CasStorageService.persistDigestedBinary(digestedSvg, {
-            scope: 'SYMBOLOGY_MASTER',
-            actorUid: userEmail,
-            originalFilename: `${conceptId}_standard.svg`,
-        });
-        permanentUrl = cas.downloadUrl;
-    } else {
-        try {
-            const vectorized = await vectorizeRasterSymbolToSvg(buffer);
-            permanentUrl = vectorized.descriptorUrl;
-            svgInline = vectorized.svgString.length <= 24000 ? vectorized.svgString : undefined;
-        } catch {
-            const digestedImg = await MediaDigestorServer.digestImage(buffer, 'IMAGE_ISO_SYMBOL');
-            const cas = await CasStorageService.persistDigestedBinary(digestedImg, {
-                scope: 'SYMBOLOGY_MASTER',
-                actorUid: userEmail,
-                originalFilename: `${conceptId}_standard.webp`,
-            });
-            permanentUrl = cas.downloadUrl;
-        }
-    }
+    const casRes = await digestAndPersistSymbologyBuffer(buffer, {
+        actorUid: userEmail,
+        originalFilename: `${conceptId}_standard`,
+        preferVectorizeRaster: true,
+    });
 
     await docRef.update({
-        standard_icon_url: permanentUrl,
-        ...(svgInline ? { svg_inline: svgInline } : {}),
+        standard_icon_url: casRes.downloadUrl,
+        cas_sha256: casRes.sha256,
+        original_bytes: casRes.originalBytes,
+        optimized_bytes: casRes.optimizedBytes,
+        savings_pct: casRes.savingsPct,
+        ...(casRes.svgInline ? { svg_inline: casRes.svgInline } : {}),
+        temp_standard_icon_url: admin.firestore.FieldValue.delete(),
+        temp_icon_candidates: admin.firestore.FieldValue.delete(),
         standard_icon_status: 'encontrado',
         verified_by: userEmail,
         updated_at: new Date().toISOString(),
@@ -628,6 +811,18 @@ export async function uploadStandardIcon(
 
     const updated = await docRef.get();
     return { concept_id: updated.id, ...(updated.data() as Omit<MasterSymbologyItem, 'concept_id'>) };
+}
+
+export async function uploadCustomStandardIcon(
+    conceptId: string,
+    buffer: Buffer,
+    userEmail: string,
+    confirmWord: string
+): Promise<MasterSymbologyItem> {
+    if (!isValidHitlSymbologyWord(confirmWord)) {
+        throw new Error('CONFIRM_WORD_MISMATCH: Debe ingresar "ACTUALIZAR" para confirmar el registro.');
+    }
+    return uploadStandardIcon(conceptId, buffer, userEmail, confirmWord);
 }
 
 export async function downloadSymbologyAssetBuffer(gcsPath: string): Promise<{ buffer: Buffer; contentType: string }> {
@@ -640,18 +835,17 @@ export async function downloadSymbologyAssetBuffer(gcsPath: string): Promise<{ b
         err.statusCode = 403;
         throw err;
     }
-    const file = getBucket().file(safePath);
-    const [exists] = await file.exists();
-    if (!exists) {
-        const err: any = new Error('Imagen no encontrada en Storage.');
+
+    const blob = await CasStorageService.readCasBlob(safePath);
+    if (!blob) {
+        const err: any = new Error('Imagen no encontrada en almacenamiento CAS.');
         err.statusCode = 404;
         throw err;
     }
-    const [metadata] = await file.getMetadata();
-    const [buffer] = await file.download();
+
     return {
-        buffer,
-        contentType: metadata.contentType || 'image/png',
+        buffer: blob.buffer,
+        contentType: blob.contentType || 'image/png',
     };
 }
 
