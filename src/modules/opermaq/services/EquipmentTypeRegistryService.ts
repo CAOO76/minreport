@@ -16,8 +16,11 @@ import {
     ACCESSORY_HISTORICAL_SPEC_REGEX,
     buildUniversalEnergySpecAxesForType,
     cleanDynamicAxisValue,
+    ensureUniversalDifferentiatorAxesInSpecSchema,
     ensureUniversalEnergyAxesInSpecSchema,
     FORBIDDEN_MARKETING_OR_UNVERIFIED_CLAIM_REGEX,
+    normalizeCanonicalSlotsByResolvedEnergy,
+    resolveEnergyAxisSemantics,
     resolveMachineryArchetype,
     validateCrossAxisPhysicalPlausibility,
 } from '../utils/canonicalArchetypeSpecs';
@@ -29,7 +32,7 @@ import { verifyAndNormalizeTechnicalUnits } from './NeuroSymbolicVerifier';
  */
 
 export const GLOBAL_EQUIPMENT_TYPES_COLLECTION = 'global_equipment_types';
-export const EQUIPMENT_TYPE_SCHEMA_VERSION = 7;
+export const EQUIPMENT_TYPE_SCHEMA_VERSION = 9;
 const MEMORY_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export function buildDedicatedConsumptionCoreChapter(
@@ -132,13 +135,27 @@ export function upgradeEquipmentTypeSchemaIfNeeded(doc: GlobalEquipmentTypeDoc):
                 c.title_es === expectedWearChapter.title_es
         );
 
+    const typeContextText = `${doc.type_key} ${doc.canonical_type_es} ${doc.categoria_equipo || ''}`;
+    const energySemantics = resolveEnergyAxisSemantics({
+        primaryEnergy: inferredTraits.primary_energy,
+        typeContextText,
+    });
+    const hasLegacyHybridEnergyLabel = existingAxes.some((a) =>
+        /\b(estanque\s*\/\s*bater[ií]a|estanque\s*\/\s*carga|consumo\s+nominal|consumo\s+auxiliar\s*\/\s*tracci[oó]n)\b/i.test(
+            a.label_es || ''
+        )
+    );
+    const hasInapplicableCapacityAxis = !energySemantics.includeCapacityAxis && hasCapacity;
+
     const needsUpgrade =
         (doc.schema_version ?? 1) < EQUIPMENT_TYPE_SCHEMA_VERSION ||
         !doc.physical_traits ||
         !doc.cost_schema_blueprint ||
-        !hasEnergySource ||
-        !hasConsumption ||
-        !hasCapacity ||
+        (energySemantics.includeEnergySourceAxis && !hasEnergySource) ||
+        (energySemantics.includeConsumptionAxis && !hasConsumption) ||
+        (energySemantics.includeCapacityAxis && !hasCapacity) ||
+        hasLegacyHybridEnergyLabel ||
+        hasInapplicableCapacityAxis ||
         !hasDedicatedConsumptionChapter ||
         !hasDedicatedCapexChapter ||
         !hasDedicatedWearRodadoChapter;
@@ -147,8 +164,16 @@ export function upgradeEquipmentTypeSchemaIfNeeded(doc: GlobalEquipmentTypeDoc):
         return { doc, modified: false };
     }
 
-    const typeContextText = `${doc.type_key} ${doc.canonical_type_es} ${doc.categoria_equipo || ''}`;
-    const upgradedSchema = ensureUniversalEnergyAxesInSpecSchema([...existingAxes], typeContextText);
+    const withDifferentiators = ensureUniversalDifferentiatorAxesInSpecSchema(
+        [...existingAxes],
+        inferredTraits,
+        typeContextText
+    );
+    const upgradedSchema = ensureUniversalEnergyAxesInSpecSchema(
+        withDifferentiators,
+        typeContextText,
+        inferredTraits.primary_energy
+    );
 
     const upgradedDoc: GlobalEquipmentTypeDoc = {
         ...doc,
@@ -1361,17 +1386,24 @@ function blueprintToDoc(bp: SeedTypeBlueprint): GlobalEquipmentTypeDoc {
     const aliases = Array.from(
         new Set([bp.type_key.replace(/_/g, ' '), ...bp.type_aliases.map(normalizeEquipmentTypeAlias)])
     ).filter(Boolean);
-    const enrichedSchema = ensureUniversalEnergyAxesInSpecSchema(
-        bp.spec_schema,
-        `${bp.type_key} ${bp.canonical_type_es} ${bp.categoria_equipo}`
-    );
+    const typeContextText = `${bp.type_key} ${bp.canonical_type_es} ${bp.categoria_equipo}`;
     const physicalTraits = AssetOntologyEngine.inferAssetPhysicalTraits({
         type_key: bp.type_key,
         canonical_type_es: bp.canonical_type_es,
         categoria_equipo: bp.categoria_equipo,
         archetype_id: bp.archetype_id,
-        spec_schema: enrichedSchema,
+        spec_schema: bp.spec_schema,
     });
+    const withDifferentiators = ensureUniversalDifferentiatorAxesInSpecSchema(
+        bp.spec_schema,
+        physicalTraits,
+        typeContextText
+    );
+    const enrichedSchema = ensureUniversalEnergyAxesInSpecSchema(
+        withDifferentiators,
+        typeContextText,
+        physicalTraits.primary_energy
+    );
     const costSchemaBlueprint = AssetOntologyEngine.buildDynamicCostMatrixTaxonomy(
         physicalTraits,
         bp.canonical_type_es
@@ -1655,18 +1687,25 @@ async function persistTypeDocWithEmbedding(
         }
     }
 
-    const enrichedSchema = ensureUniversalEnergyAxesInSpecSchema(
-        doc.spec_schema || [],
-        `${doc.type_key} ${doc.canonical_type_es} ${doc.categoria_equipo}`
-    );
+    const typeContextText = `${doc.type_key} ${doc.canonical_type_es} ${doc.categoria_equipo}`;
     const physicalTraits = AssetOntologyEngine.inferAssetPhysicalTraits({
         type_key: doc.type_key,
         canonical_type_es: doc.canonical_type_es,
         categoria_equipo: doc.categoria_equipo,
         archetype_id: doc.archetype_id,
-        spec_schema: enrichedSchema,
+        spec_schema: doc.spec_schema || [],
         existing_traits: doc.physical_traits,
     });
+    const withDifferentiators = ensureUniversalDifferentiatorAxesInSpecSchema(
+        doc.spec_schema || [],
+        physicalTraits,
+        typeContextText
+    );
+    const enrichedSchema = ensureUniversalEnergyAxesInSpecSchema(
+        withDifferentiators,
+        typeContextText,
+        physicalTraits.primary_energy
+    );
     const costSchemaBlueprint = AssetOntologyEngine.buildDynamicCostMatrixTaxonomy(
         physicalTraits,
         doc.canonical_type_es
@@ -2194,7 +2233,10 @@ export function buildVerifiedSlotsForEquipmentType(params: {
         }
     }
 
-    return slots;
+    return normalizeCanonicalSlotsByResolvedEnergy(slots, {
+        typeContextText: `${typeDoc.type_key} ${typeDoc.canonical_type_es} ${typeDoc.categoria_equipo || ''}`,
+        primaryEnergy: typeDoc.physical_traits?.primary_energy || null,
+    });
 }
 
 /**

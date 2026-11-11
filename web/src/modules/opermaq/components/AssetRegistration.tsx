@@ -1,15 +1,31 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { AssetPhysicalTraits } from '../../../contracts';
+import type {
+    AssetConfigurationProfile,
+    AssetPhysicalTraits,
+    DisambiguationFacetGroup,
+    OpticalIdentificationSummary,
+} from '../../../contracts';
 import { syncQueue } from '../../../core/offline/SyncQueueEngine';
 import { API_BASE_URL } from '../firebase/config';
 import { useOpermaqContext } from '../hooks/useOpermaqContext';
 import { authFetch } from '../utils/authFetch';
 import {
+    type EphemeralIdentificationImagePreview,
+    revokeEphemeralImagePreviews,
+    toEphemeralApiPayload,
+} from '../utils/ephemeralIdentificationImageHelper';
+import {
     buildEquipmentShortDescription,
     type CanonicalSpecSlot,
     cleanMachineryTypeLabel,
 } from '../utils/opermaqDomainProjection';
+import {
+    AssetIdentificationPrecisionPanel,
+    candidateMatchesFacetSelections,
+    extractConfigurationBadges,
+    OpticalAndFacetsStrip,
+} from './AssetIdentificationPrecisionPanel';
 import { M3CircularProgress } from './M3ProgressIndicator';
 import { M3TextField } from './M3TextField';
 
@@ -25,6 +41,7 @@ interface ResolvedAsset {
     archetype_id?: string;
     canonical_specs?: CanonicalSpecSlot[];
     physical_traits?: AssetPhysicalTraits;
+    configuration_profile?: AssetConfigurationProfile;
     ambiente_operativo?: string[];
     contexto_operativo?: string[];
     versions?: string[];
@@ -53,6 +70,11 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
     const [mode, setMode] = useState<'brand' | 'generic'>('brand');
     const [jerga, setJerga] = useState('');
     const [clarificationInput, setClarificationInput] = useState('');
+    const [precisionOpen, setPrecisionOpen] = useState(false);
+    const [ephemeralImages, setEphemeralImages] = useState<EphemeralIdentificationImagePreview[]>([]);
+    const [opticalSummary, setOpticalSummary] = useState<OpticalIdentificationSummary | null>(null);
+    const [disambiguationFacets, setDisambiguationFacets] = useState<DisambiguationFacetGroup[]>([]);
+    const [selectedFacets, setSelectedFacets] = useState<Record<string, string>>({});
     const [candidates, setCandidates] = useState<ResolvedAsset[]>([]);
     const [candidateFilter, setCandidateFilter] = useState('');
     const [isResolving, setIsResolving] = useState(false);
@@ -66,10 +88,13 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
     const [selectedVersion, setSelectedVersion] = useState<string>('');
 
     const abortRef = useRef<AbortController | null>(null);
+    const ephemeralRef = useRef<EphemeralIdentificationImagePreview[]>([]);
+    ephemeralRef.current = ephemeralImages;
 
     useEffect(() => {
         return () => {
             abortRef.current?.abort();
+            revokeEphemeralImagePreviews(ephemeralRef.current);
         };
     }, []);
 
@@ -86,14 +111,18 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
 
     const filteredCandidates = useMemo(() => {
         const q = candidateFilter.trim().toLowerCase();
-        if (!q) return candidates;
         return candidates.filter((c) => {
+            if (!candidateMatchesFacetSelections(c, selectedFacets)) {
+                return false;
+            }
+            if (!q) return true;
             const haystack = [
                 c.make_oficial,
                 c.model_oficial,
                 c.tipo_equipo || '',
                 c.categoria_equipo || '',
                 buildEquipmentShortDescription(c),
+                ...extractConfigurationBadges(c.configuration_profile),
                 ...(c.versions || []),
                 ...(c.chassis_versions || []),
                 ...(c.caracteristicas_principales || []),
@@ -102,7 +131,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                 .toLowerCase();
             return haystack.includes(q);
         });
-    }, [candidates, candidateFilter]);
+    }, [candidates, candidateFilter, selectedFacets]);
 
     const abortActiveSearch = () => {
         if (abortRef.current) {
@@ -117,6 +146,11 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
             abortActiveSearch();
             return;
         }
+        revokeEphemeralImagePreviews(ephemeralImages);
+        setEphemeralImages([]);
+        setOpticalSummary(null);
+        setDisambiguationFacets([]);
+        setSelectedFacets({});
         setJerga('');
         setClarificationInput('');
         setCandidates([]);
@@ -156,7 +190,8 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
         explicitClarification?: string
     ) => {
         const searchInput = (overrideJerga ?? jerga).trim();
-        if (searchInput.length < 2) return;
+        const hasEphemeral = ephemeralImages.length > 0;
+        if (searchInput.length < 2 && !hasEphemeral) return;
 
         const effectiveClarification = (explicitClarification ?? clarificationInput).trim();
 
@@ -166,6 +201,8 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
 
         setCandidates([]);
         setCandidateFilter('');
+        setSelectedFacets({});
+        setDisambiguationFacets([]);
         setErrorMsg(null);
         setClarificationMsg(null);
         setOfflineFallbackAvailable(false);
@@ -186,7 +223,9 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                     jerga: searchInput,
                     isGeneric: mode === 'generic',
                     clarificationContext: effectiveClarification || undefined,
-                    forceWebDiscovery: forceWebDiscovery || Boolean(effectiveClarification),
+                    forceWebDiscovery: forceWebDiscovery || Boolean(effectiveClarification) || hasEphemeral,
+                    ephemeralImages: hasEphemeral ? toEphemeralApiPayload(ephemeralImages) : undefined,
+                    includeEnvelope: true,
                 }),
             });
 
@@ -210,7 +249,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                     setCandidates([
                         {
                             make_oficial: '',
-                            model_oficial: searchInput.toUpperCase(),
+                            model_oficial: (searchInput || 'ACTIVO').toUpperCase(),
                             categoria_equipo: '',
                             isNew: false,
                             is_pertinent: false,
@@ -242,13 +281,29 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                     requires_clarification?: boolean;
                     clarification_message?: string;
                     candidates?: ResolvedAsset[];
+                    optical_identification_summary?: OpticalIdentificationSummary | null;
+                    disambiguation_facets?: DisambiguationFacetGroup[];
                 };
+                setOpticalSummary(obj.optical_identification_summary || null);
+                setDisambiguationFacets(Array.isArray(obj.disambiguation_facets) ? obj.disambiguation_facets : []);
+
                 if (obj.requires_clarification) {
+                    setPrecisionOpen(true);
                     setClarificationMsg(obj.clarification_message || t('registration.family_desc'));
                     return;
                 }
                 if (Array.isArray(obj.candidates) && obj.candidates.length > 0) {
-                    if (overrideJerga) setJerga(overrideJerga);
+                    if (overrideJerga) {
+                        setJerga(overrideJerga);
+                    } else if (
+                        !searchInput &&
+                        obj.optical_identification_summary?.detected_make &&
+                        obj.optical_identification_summary?.detected_model_or_series
+                    ) {
+                        setJerga(
+                            `${obj.optical_identification_summary.detected_make} ${obj.optical_identification_summary.detected_model_or_series}`.trim()
+                        );
+                    }
                     setCandidates(obj.candidates);
                     return;
                 }
@@ -293,6 +348,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
             archetype_id: c.archetype_id,
             canonical_specs: c.canonical_specs,
             physical_traits: c.physical_traits,
+            configuration_profile: c.configuration_profile,
             ambiente_operativo: c.ambiente_operativo || [],
             contexto_operativo: c.contexto_operativo || [],
             caracteristicas_principales: c.caracteristicas_principales || [],
@@ -403,9 +459,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
         'bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none shadow-none';
 
     const selectedCandidateVersions = selectedCandidate ? getCandidateVersions(selectedCandidate) : [];
-    const showClarificationSection = Boolean(
-        clarificationMsg || (candidates.length > 0 && candidates[0]?.is_pertinent !== false)
-    );
+    const canSubmitIdentification = jerga.trim().length >= 2 || ephemeralImages.length > 0;
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 dark:bg-black/85 p-[13px] sm:p-[21px] select-none">
@@ -482,7 +536,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                             autoComplete="off"
                         />
                         <div className="absolute right-[13px] top-1/2 -translate-y-1/2 flex items-center gap-[8px]">
-                            {(jerga.length > 0 || isResolving) && (
+                            {(jerga.length > 0 || ephemeralImages.length > 0 || isResolving) && (
                                 <button
                                     type="button"
                                     onClick={handleClearOrAbort}
@@ -504,7 +558,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                             ) : (
                                 <button
                                     type="submit"
-                                    disabled={jerga.trim().length < 2}
+                                    disabled={!canSubmitIdentification}
                                     aria-label={t('registration.identifying')}
                                     title={t('registration.identifying')}
                                     className="bg-transparent border-0 outline-none p-1 text-[#C68346] disabled:text-[#94A3B8] dark:disabled:text-[#5A6072] hover:opacity-80 transition-opacity cursor-pointer disabled:cursor-not-allowed rounded-none shadow-none"
@@ -514,6 +568,49 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                             )}
                         </div>
                     </form>
+
+                    {/* Barra Inicial Multimodal RAM-Only + Especificaciones Diferenciadoras (Sin Restricción País) */}
+                    <AssetIdentificationPrecisionPanel
+                        isOpen={precisionOpen}
+                        onToggleOpen={() => setPrecisionOpen((prev) => !prev)}
+                        clarificationInput={clarificationInput}
+                        onClarificationChange={setClarificationInput}
+                        ephemeralImages={ephemeralImages}
+                        onAddEphemeralImages={(newItems) => {
+                            setEphemeralImages((prev) => [...prev, ...newItems]);
+                            setPrecisionOpen(true);
+                        }}
+                        onRemoveEphemeralImage={(id) => {
+                            setEphemeralImages((prev) => {
+                                const target = prev.find((item) => item.id === id);
+                                if (target) revokeEphemeralImagePreviews([target]);
+                                return prev.filter((item) => item.id !== id);
+                            });
+                        }}
+                        onApplyPrecisionSearch={() => void handleSearch(undefined, true, clarificationInput.trim())}
+                        isBusy={isResolving}
+                        canTriggerSearch={canSubmitIdentification}
+                        onError={setErrorMsg}
+                    />
+
+                    {/* Tira de Evidencia Óptica Verificada + Chips de Desambiguación en 1 Clic */}
+                    {!isResolving && (
+                        <OpticalAndFacetsStrip
+                            opticalSummary={opticalSummary}
+                            facets={disambiguationFacets}
+                            selectedFacets={selectedFacets}
+                            onSelectFacetOption={(facetKey, val) =>
+                                setSelectedFacets((prev) => ({ ...prev, [facetKey]: val }))
+                            }
+                            onResetFacets={() => setSelectedFacets({})}
+                            onQuickModelFamilySelect={(quickVal) => {
+                                const combined = jerga.trim()
+                                    ? `${jerga.trim()} ${quickVal}`.trim()
+                                    : quickVal;
+                                void handleSearch(combined, true);
+                            }}
+                        />
+                    )}
 
                     {/* Aviso de Especificación Requerida */}
                     {clarificationMsg && !isResolving && (
@@ -672,6 +769,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                                     c.tipo_equipo || c.categoria_equipo
                                                 );
                                                 const operationalDesc = buildEquipmentShortDescription(c);
+                                                const configBadges = extractConfigurationBadges(c.configuration_profile);
 
                                                 return (
                                                     <div
@@ -694,6 +792,18 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                                                     {cleanType}
                                                                 </span>
                                                             </div>
+                                                            {configBadges.length > 0 && (
+                                                                <div className="flex flex-wrap gap-[8px]">
+                                                                    {configBadges.map((badge) => (
+                                                                        <span
+                                                                            key={badge}
+                                                                            className="px-[8px] py-[2px] border border-[#E2E8F0] dark:border-[#12151C] text-[11px] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6]"
+                                                                        >
+                                                                            {badge}
+                                                                        </span>
+                                                                    ))}
+                                                                </div>
+                                                            )}
                                                             <p className="text-[13px] font-mono tabular-nums leading-[1.35] text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
                                                                 {operationalDesc}
                                                             </p>
@@ -725,43 +835,6 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                 </>
                             )}
                         </div>
-                    )}
-
-                    {/* Campo Aclaratorio Progresivo (Presente cuando los candidatos requieren precisión o cuando el sistema solicita aclaración) */}
-                    {showClarificationSection && !isResolving && (
-                        <form
-                            onSubmit={(e) => {
-                                e.preventDefault();
-                                if (clarificationInput.trim().length > 0) {
-                                    void handleSearch(undefined, true, clarificationInput.trim());
-                                }
-                            }}
-                            autoComplete="off"
-                            spellCheck={false}
-                            className="pt-[13px] border-t border-[#E2E8F0] dark:border-[#12151C] shrink-0 flex flex-col gap-[8px]"
-                        >
-                            <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                                {t('registration.clarification_toggle_label')}
-                            </label>
-                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-[13px]">
-                                <input
-                                    type="text"
-                                    value={clarificationInput}
-                                    onChange={(e) => setClarificationInput(e.target.value)}
-                                    placeholder={t('registration.clarification_input_placeholder')}
-                                    autoComplete="off"
-                                    spellCheck={false}
-                                    className="flex-1 h-10 px-[13px] text-[13px] font-mono tabular-nums bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] text-[#0F172A] dark:text-[#F3F4F6] placeholder:text-[#94A3B8] dark:placeholder:text-[#5A6072] outline-none rounded-none shadow-none select-text"
-                                />
-                                <button
-                                    type="submit"
-                                    disabled={clarificationInput.trim().length < 2 || isResolving}
-                                    className="px-[21px] h-10 border border-[#00AEEF] bg-transparent hover:bg-[#00AEEF]/10 disabled:opacity-40 text-[#00AEEF] text-[11px] font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer disabled:cursor-not-allowed rounded-none shadow-none shrink-0"
-                                >
-                                    {t('registration.clarification_apply_btn')}
-                                </button>
-                            </div>
-                        </form>
                     )}
                 </div>
 
@@ -860,6 +933,20 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                         selectedCandidate.tipo_equipo || selectedCandidate.categoria_equipo
                                     )}
                                 </p>
+                                {extractConfigurationBadges(selectedCandidate.configuration_profile).length > 0 && (
+                                    <div className="flex flex-wrap gap-[8px] pt-[4px]">
+                                        {extractConfigurationBadges(selectedCandidate.configuration_profile).map(
+                                            (badge) => (
+                                                <span
+                                                    key={badge}
+                                                    className="px-[8px] py-[4px] border border-[#C68346] text-[11px] font-mono tabular-nums font-bold text-[#0F172A] dark:text-[#F3F4F6]"
+                                                >
+                                                    {badge}
+                                                </span>
+                                            )
+                                        )}
+                                    </div>
+                                )}
                             </div>
 
                             {/* Selector Plano de Versión / Configuración */}

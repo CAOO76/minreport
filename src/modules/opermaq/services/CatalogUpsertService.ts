@@ -1,6 +1,6 @@
 import admin, { db } from '../../../config/firebase';
 import { AssetOntologyEngine } from './AssetOntologyEngine';
-import type { AssetPhysicalTraits } from '../types/vault.types';
+import type { AssetConfigurationProfile, AssetPhysicalTraits } from '../types/vault.types';
 import {
     BRAND_SYNONYM_TO_OFFICIAL,
     buildCatalogSearchMetadata,
@@ -19,6 +19,7 @@ import {
     type MachineryArchetypeId,
 } from '../utils/canonicalArchetypeSpecs';
 import { normalizeCatalogKey, validateIndustrialDomain } from '../utils/domainGuard';
+import { inferAssetConfigurationProfile } from '../utils/lockedVariantDirective';
 
 /**
  * CATALOG UPSERT SERVICE — ETAPA 1 PURA (100% Independiente de los 5 Pilares)
@@ -39,6 +40,7 @@ export interface UpsertCatalogParams {
     categoria_equipo?: string;
     tipo_equipo?: string;
     physical_traits?: AssetPhysicalTraits;
+    configuration_profile?: AssetConfigurationProfile;
     canonical_specs?: CanonicalSpecSlot[];
     ambiente_operativo?: string[];
     contexto_operativo?: string[];
@@ -130,6 +132,23 @@ export async function upsertGlobalAssetCatalog(params: UpsertCatalogParams): Pro
                     categoria_equipo: existingData.categoria_equipo || params.categoria_equipo || '',
                     canonical_specs: existingData.canonical_specs || params.canonical_specs || [],
                 });
+        }
+        if (!existingData.configuration_profile) {
+            updatePatch.configuration_profile = inferAssetConfigurationProfile({
+                make_oficial: existingData.make_oficial || cleanMake,
+                model_oficial: existingData.model_oficial || cleanModel,
+                tipo_equipo: existingData.tipo_equipo || params.tipo_equipo || '',
+                categoria_equipo: existingData.categoria_equipo || params.categoria_equipo || '',
+                version: existingData.version || params.version,
+                versions: Array.isArray(existingData.versions) ? existingData.versions : incomingVersionsToMerge,
+                canonical_specs: existingData.canonical_specs || params.canonical_specs || [],
+                caracteristicas_principales:
+                    existingData.caracteristicas_principales || params.caracteristicas_principales || [],
+                ambiente_operativo: existingData.ambiente_operativo || params.ambiente_operativo || [],
+                contexto_operativo: existingData.contexto_operativo || params.contexto_operativo || [],
+                physical_traits: updatePatch.physical_traits || existingData.physical_traits || null,
+                existing_profile: params.configuration_profile || null,
+            });
         }
         if (Object.keys(updatePatch).length > 0) {
             await db
@@ -238,8 +257,12 @@ export async function upsertGlobalAssetCatalog(params: UpsertCatalogParams): Pro
               tipo_equipo: resolvedCanonicalTipo || params.tipo_equipo!,
               categoria_equipo: (params.categoria_equipo || 'EQUIPAMIENTO INDUSTRIAL').toUpperCase(),
               canonical_specs: preExtracted.slots,
-              ambiente_operativo: sanitizeDesignAndWorkContextItems(params.ambiente_operativo),
-              contexto_operativo: sanitizeDesignAndWorkContextItems(params.contexto_operativo),
+              ambiente_operativo: sanitizeDesignAndWorkContextItems(params.ambiente_operativo, undefined, {
+                  canonicalTypeEs: resolvedCanonicalTipo || params.tipo_equipo,
+              }),
+              contexto_operativo: sanitizeDesignAndWorkContextItems(params.contexto_operativo, undefined, {
+                  canonicalTypeEs: resolvedCanonicalTipo || params.tipo_equipo,
+              }),
               caracteristicas_principales: serializeCanonicalSlotsToSpecsArray(preExtracted.slots),
           };
 
@@ -268,6 +291,20 @@ export async function upsertGlobalAssetCatalog(params: UpsertCatalogParams): Pro
         corpusText: `${cleanMake} ${cleanModel} ${(enriched.ambiente_operativo || []).join(' ')} ${(enriched.contexto_operativo || []).join(' ')}`,
         existingTraits: params.physical_traits || null,
     });
+    const configurationProfile = inferAssetConfigurationProfile({
+        make_oficial: cleanMake,
+        model_oficial: cleanModel,
+        tipo_equipo: enriched.tipo_equipo,
+        categoria_equipo: enriched.categoria_equipo,
+        version: params.version,
+        versions: chassisVersions,
+        canonical_specs: enriched.canonical_specs || [],
+        caracteristicas_principales: enriched.caracteristicas_principales,
+        ambiente_operativo: enriched.ambiente_operativo,
+        contexto_operativo: enriched.contexto_operativo,
+        physical_traits: physicalTraits,
+        existing_profile: params.configuration_profile || null,
+    });
     const newCatalogDoc: Record<string, any> = {
         catalog_key: catalogKey,
         make: cleanMake,
@@ -283,10 +320,15 @@ export async function upsertGlobalAssetCatalog(params: UpsertCatalogParams): Pro
         categoria_equipo: enriched.categoria_equipo,
         tipo_equipo: enriched.tipo_equipo,
         physical_traits: physicalTraits,
+        configuration_profile: configurationProfile,
         canonical_specs: enriched.canonical_specs || [],
         energy_consumption_profile: energyProfile,
-        ambiente_operativo: sanitizeDesignAndWorkContextItems(enriched.ambiente_operativo),
-        contexto_operativo: sanitizeDesignAndWorkContextItems(enriched.contexto_operativo),
+        ambiente_operativo: sanitizeDesignAndWorkContextItems(enriched.ambiente_operativo, undefined, {
+            canonicalTypeEs: enriched.tipo_equipo,
+        }),
+        contexto_operativo: sanitizeDesignAndWorkContextItems(enriched.contexto_operativo, undefined, {
+            canonicalTypeEs: enriched.tipo_equipo,
+        }),
         caracteristicas_principales: enriched.caracteristicas_principales,
         alias_detectados: params.original_jargon ? [params.original_jargon] : [],
         ecosystem_dependencies: [],

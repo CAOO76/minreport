@@ -8,6 +8,7 @@ import {
     deriveEnergyConsumptionProfile,
     MISSING_FULL_TECH_SPEC,
 } from '../utils/canonicalArchetypeSpecs';
+import { inferAssetConfigurationProfile } from '../utils/lockedVariantDirective';
 import { AssetOntologyEngine } from './AssetOntologyEngine';
 import { VaultPersistenceService } from './VaultPersistenceService';
 
@@ -1111,17 +1112,31 @@ export async function buildAndPersistEquipmentCostMatrix(
     });
 
     if (hydrated.exists) {
+        const physicalTraits = AssetOntologyEngine.inferAssetPhysicalTraits({
+            type_key: assetData.equipment_type_key,
+            canonical_type_es: assetData.tipo_equipo,
+            categoria_equipo: assetData.categoria_equipo,
+            archetype_id: assetData.archetype_id,
+            make_oficial: assetData.make_oficial || assetData.make,
+            model_oficial: assetData.model_oficial || assetData.model,
+            existing_traits: assetData.physical_traits,
+        });
+        const configurationProfile = inferAssetConfigurationProfile({
+            make_oficial: assetData.make_oficial || assetData.make,
+            model_oficial: assetData.model_oficial || assetData.model,
+            tipo_equipo: assetData.tipo_equipo,
+            categoria_equipo: assetData.categoria_equipo,
+            version: assetData.version,
+            physical_traits: physicalTraits,
+            canonical_specs: assetData.canonical_specs,
+            caracteristicas_principales: assetData.caracteristicas_principales,
+            chassis_versions: assetData.chassis_versions,
+            existing_profile: assetData.configuration_profile,
+        });
         await VaultPersistenceService.saveDerivedCostMatrix(globalAssetId, matrix, {
             energy_consumption_profile: matrix.energy_consumption,
-            physical_traits: AssetOntologyEngine.inferAssetPhysicalTraits({
-                type_key: assetData.equipment_type_key,
-                canonical_type_es: assetData.tipo_equipo,
-                categoria_equipo: assetData.categoria_equipo,
-                archetype_id: assetData.archetype_id,
-                make_oficial: assetData.make_oficial || assetData.make,
-                model_oficial: assetData.model_oficial || assetData.model,
-                existing_traits: assetData.physical_traits,
-            }),
+            physical_traits: physicalTraits,
+            configuration_profile: configurationProfile,
         });
     }
 

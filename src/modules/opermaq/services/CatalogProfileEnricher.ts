@@ -85,13 +85,13 @@ const PASS2_TYPE_EXTRACTION_SCHEMA = {
             type: Type.ARRAY,
             items: { type: Type.STRING },
             description:
-                'CONDICIONES DE DISEÑO (2 a 4 viñetas técnicas concretas verificadas en la evidencia): certificaciones de cabina/estructura (ROPS/FOPS, presurización), régimen hidráulico/térmico/altitud/emisiones y configuración de tracción/rodado/terreno. Prohibido usar palabras sueltas como "Superficie".',
+                'CONDICIONES DE DISEÑO (2 a 4 viñetas telegráficas <= 12 palabras cada una, 100% presencia positiva verificada): motorización/norma exacta de fábrica (ej. "Motor Cat C3.8 DIT — EPA Tier 4 Interim / EU Stage IIIB"), certificaciones de estructura/cabina (ROPS ISO 3471 / FOPS ISO 3449, presurización) y circuito hidráulico/térmico real. PROHIBIDO escribir qué subsistemas NO equipa ("sin SCR/AdBlue", "no aplica"), PROHIBIDO usar marketing ("confort del operador", "alto rendimiento", "alta demanda") y PROHIBIDO repetir tautológicamente el TIPO del equipo.',
         },
         contexto_operativo: {
             type: Type.ARRAY,
             items: { type: Type.STRING },
             description:
-                'CONTEXTO Y TRABAJO (2 a 4 viñetas técnicas concretas verificadas en la evidencia): aplicaciones operativas reales en minería, construcción o industria e implementos compatibles. Prohibido usar frases vacías como "Operación Técnica" u "Operación Industrial".',
+                'CONTEXTO Y TRABAJO (2 a 3 viñetas telegráficas <= 12 palabras cada una, 100% verificadas en fuente OEM): labores específicas e implementos/herramientas compatibles reales. PROHIBIDO inventar duraciones de turno ("ciclos de 8 a 10 horas", "factores de carga medios") o usar frases vacías ("Operación Técnica", "Operación Industrial").',
         },
         extracted_axes: {
             type: Type.ARRAY,
@@ -381,8 +381,8 @@ TAREA EXCLUSIVA — BÚSQUEDA DIRIGIDA POR TIPO DE EQUIPO:
 Para un equipo de tipo "${typeDoc.canonical_type_es}", busca y reporta en español técnico conciso:
 A) Las cifras reales comprobadas de estos ${typeDoc.spec_schema.length} parámetros específicos de su clase (incluyendo diferenciadores de sufijo OEM como XHP, XE, VHP, LGP, LC y consumos energéticos):
 ${requestedAxesGuide}
-B) CONDICIONES DE DISEÑO (ambiente_operativo): certificaciones de cabina/estructura (ROPS/FOPS, presurización), régimen hidráulico/térmico/emisiones (Tier/Stage) y configuración de tracción/rodado/superficie de trabajo.
-C) CONTEXTO Y TRABAJO (contexto_operativo): aplicaciones operativas reales en minería, construcción o industria y familia de herramientas/implementos compatibles.
+B) CONDICIONES DE DISEÑO (ambiente_operativo): motor/norma de fábrica, certificaciones estructurales (ROPS/FOPS, presurización, IP) y régimen hidráulico/térmico real equipado (100% presencia positiva: PROHIBIDO listar subsistemas que NO equipa como "sin SCR/AdBlue", PROHIBIDO usar "confort" o repetir el nombre del TIPO).
+C) CONTEXTO Y TRABAJO (contexto_operativo): labores técnicas reales e implementos compatibles declarados por el OEM (PROHIBIDO inventar turnos de "8 a 10 horas" o factores de carga genéricos).
 
 REGLAS ESTRICTAS:
 1. NO busques ni reportes parámetros ajenos a "${typeDoc.canonical_type_es}".
@@ -435,8 +435,12 @@ REGLAS ESTRICTAS:
                 .trim()
                 .toUpperCase(),
             canonical_specs: emptySlots,
-            ambiente_operativo: sanitizeDesignAndWorkContextItems(seedHint?.ambiente_operativo),
-            contexto_operativo: sanitizeDesignAndWorkContextItems(seedHint?.contexto_operativo),
+            ambiente_operativo: sanitizeDesignAndWorkContextItems(seedHint?.ambiente_operativo, undefined, {
+                canonicalTypeEs: typeDoc.canonical_type_es,
+            }),
+            contexto_operativo: sanitizeDesignAndWorkContextItems(seedHint?.contexto_operativo, undefined, {
+                canonicalTypeEs: typeDoc.canonical_type_es,
+            }),
             caracteristicas_principales: [MISSING_FULL_TECH_SPEC],
             grounded_sources: [],
         };
@@ -473,8 +477,8 @@ REGLAS INVIOLABLES FAIL-CLOSED:
 1. PROHIBIDO usar conocimiento externo o memoria interna fuera del bloque EVIDENCIA DOCUMENTAL RECUPERADA.
 2. Si un eje ("axis_key") NO tiene cifra o configuración explícita en la evidencia adjunta (o dice "NO DECLARADO"), DEBES devolver "value_si": null, "source_url": null, "verbatim_evidence": null.
 3. En "value_si" escribe ÚNICAMENTE la magnitud numérica con su unidad métrica SI (ej. "136 kW (183 HP)", "150 L/min @ 280 bar", "3.700 mm", "8,5 m³/min", "7 bar", "15.800 kg") o el valor exacto del enum técnico permitido. JAMÁS incluyas el nombre de la etiqueta dentro de "value_si".
-4. En "ambiente_operativo" (CONDICIONES DE DISEÑO) devuelve 2 a 4 viñetas técnicas concretas verificadas (certificaciones ROPS/FOPS, circuito hidráulico/térmico/emisiones, tracción y terreno). Prohibido devolver palabras genéricas como "Superficie".
-5. En "contexto_operativo" (CONTEXTO Y TRABAJO) devuelve 2 a 4 viñetas técnicas concretas verificadas (aplicaciones operativas en minería/construcción/industria e implementos compatibles). Prohibido devolver frases vacías como "Operación Técnica" u "Operación Industrial".
+4. En "ambiente_operativo" (CONDICIONES DE DISEÑO) devuelve 2 a 4 viñetas telegráficas (<= 12 palabras) de presencia 100% positiva (normas ISO/ROPS/FOPS, motor/emisiones reales, circuito hidráulico/térmico). PROHIBIDO mencionar qué subsistemas NO posee el equipo ("sin SCR/AdBlue", "no aplica"), PROHIBIDO usar términos subjetivos ("confort", "alto rendimiento", "alta demanda") y PROHIBIDO repetir tautológicamente "${typeDoc.canonical_type_es}".
+5. En "contexto_operativo" (CONTEXTO Y TRABAJO) devuelve 2 a 3 viñetas telegráficas (<= 12 palabras) con aplicaciones reales e implementos compatibles comprobados. PROHIBIDO inventar duraciones de turno ("ciclos de 8 a 10 horas", "turno estándar") o usar frases vacías ("Operación Técnica").
 6. PROHIBIDO escribir eslóganes comerciales, adjetivos promocionales o afirmaciones operacionales.
 7. "source_url" DEBE ser exactamente una de las URLs listadas en FUENTES VERIFICADAS DISPONIBLES.`;
 
@@ -523,11 +527,13 @@ REGLAS INVIOLABLES FAIL-CLOSED:
             canonical_specs: canonicalSlots,
             ambiente_operativo: sanitizeDesignAndWorkContextItems(
                 data.ambiente_operativo,
-                seedHint?.ambiente_operativo
+                seedHint?.ambiente_operativo,
+                { canonicalTypeEs: typeDoc.canonical_type_es }
             ),
             contexto_operativo: sanitizeDesignAndWorkContextItems(
                 data.contexto_operativo,
-                seedHint?.contexto_operativo
+                seedHint?.contexto_operativo,
+                { canonicalTypeEs: typeDoc.canonical_type_es }
             ),
             caracteristicas_principales: serializeCanonicalSlotsToSpecsArray(canonicalSlots),
             grounded_sources: collectedGroundingSources.map((s) => s.uri),
@@ -551,8 +557,12 @@ REGLAS INVIOLABLES FAIL-CLOSED:
                 .trim()
                 .toUpperCase(),
             canonical_specs: emptySlots,
-            ambiente_operativo: sanitizeDesignAndWorkContextItems(seedHint?.ambiente_operativo),
-            contexto_operativo: sanitizeDesignAndWorkContextItems(seedHint?.contexto_operativo),
+            ambiente_operativo: sanitizeDesignAndWorkContextItems(seedHint?.ambiente_operativo, undefined, {
+                canonicalTypeEs: typeDoc.canonical_type_es,
+            }),
+            contexto_operativo: sanitizeDesignAndWorkContextItems(seedHint?.contexto_operativo, undefined, {
+                canonicalTypeEs: typeDoc.canonical_type_es,
+            }),
             caracteristicas_principales: [MISSING_FULL_TECH_SPEC],
             grounded_sources: collectedGroundingSources.map((s) => s.uri),
         };

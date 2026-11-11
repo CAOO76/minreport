@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import type {
   AssetPhysicalTraits,
   CanonicalSpecSlot,
@@ -7,6 +8,7 @@ import type {
   OperationalCostMatrix,
 } from '../../../contracts';
 import type { PillarDocument, PillarId } from '../types/vault';
+import { classifyFrontendEnergyKind } from '../utils/opermaqDomainProjection';
 import { M3LinearProgress } from './M3ProgressIndicator';
 
 const MISSING_SPEC_TEXT = '[Información técnica no declarada en ficha]';
@@ -80,10 +82,12 @@ const DataValueCell: React.FC<{ value: string | null | undefined; mono?: boolean
 export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> = ({
   makeModel,
   tipoEquipo,
+  categoriaEquipo,
   physicalTraits,
   operationalCostMatrix,
   energyConsumptionProfile,
 }) => {
+  const { t } = useTranslation();
   const matrix = operationalCostMatrix;
   const effectiveTraits = physicalTraits;
   const taxonomy: CostMatrixTaxonomyMeta = {
@@ -130,6 +134,47 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
       energy?.def_adblue_consumption?.consumption_pct_of_fuel ||
       energy?.def_adblue_consumption?.tank_capacity_liters
   );
+
+  const energyKind = classifyFrontendEnergyKind({
+    primaryEnergy: energy?.energy_source || effectiveTraits?.primary_energy || null,
+    energyValueText: energy?.energy_spec_label || null,
+    typeContextText: `${tipoEquipo || ''} ${categoriaEquipo || ''}`,
+  });
+
+  const showEnergySection =
+    energyKind !== 'MANUAL_MECHANICAL' && energyKind !== 'TOWED_PASSIVE';
+
+  const showStorageCapacityCard =
+    energyKind === 'THERMAL_FUEL' ||
+    energyKind === 'BATTERY_BEV' ||
+    energyKind === 'HYBRID';
+
+  const storageCardTitle =
+    energyKind === 'BATTERY_BEV'
+      ? t('cost_matrix_energy.storage_battery_bank')
+      : energyKind === 'HYBRID'
+      ? t('cost_matrix_energy.storage_hybrid')
+      : t('cost_matrix_energy.storage_fuel_tank');
+
+  const autonomyOrDemandCardTitle =
+    energyKind === 'GRID_AC'
+      ? t('cost_matrix_energy.demand_grid_ac')
+      : energyKind === 'PNEUMATIC_AIR'
+      ? t('cost_matrix_energy.demand_pneumatic')
+      : energyKind === 'HYDRAULIC_AUX'
+      ? t('cost_matrix_energy.demand_hydraulic')
+      : energyKind === 'BATTERY_BEV'
+      ? t('cost_matrix_energy.autonomy_battery')
+      : t('cost_matrix_energy.autonomy_thermal');
+
+  const visibleEnergyCardsCount =
+    (showStorageCapacityCard ? 1 : 0) + 1 + (requiresDef ? 1 : 0);
+  const energyGridColsClass =
+    visibleEnergyCardsCount >= 3
+      ? 'md:grid-cols-3'
+      : visibleEnergyCardsCount === 2
+      ? 'md:grid-cols-2'
+      : 'md:grid-cols-1';
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-y-auto bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] select-none">
@@ -190,105 +235,104 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
       </header>
 
       <div className="p-[21px] flex flex-col gap-[34px]">
-        {/* I. ENERGÍA, RENDIMIENTO Y AUTONOMÍA */}
-        <section className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-[21px] rounded-none shadow-none">
-          <div className="flex items-center justify-between gap-[13px] pb-[13px] border-b border-[#E2E8F0] dark:border-[#12151C]">
-            <h2 className="text-[13px] font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6]">
-              I. CONSUMO ENERGÉTICO, AUTONOMÍA Y POST-TRATAMIENTO
-            </h2>
-            <span className="text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
-              UNIDAD CONDUCTORA: {energy?.cost_driver_unit || 'L/h'}
-            </span>
-          </div>
-
-          <div className="mt-[13px] grid grid-cols-1 md:grid-cols-3 gap-[13px]">
-            <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[13px]">
-              <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                CAPACIDAD ESTANQUE / BANCO ENERGÍA
-              </div>
-              <div className="mt-[8px]">
-                <DataValueCell value={energy?.storage_and_autonomy?.tank_or_battery_capacity} />
-              </div>
+        {/* I. ENERGÍA, RENDIMIENTO Y AUTONOMÍA (PRESENCIA POSITIVA ESTRICTA) */}
+        {showEnergySection && (
+          <section className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-[21px] rounded-none shadow-none">
+            <div className="flex items-center justify-between gap-[13px] pb-[13px] border-b border-[#E2E8F0] dark:border-[#12151C]">
+              <h2 className="text-[13px] font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6]">
+                {requiresDef
+                  ? t('cost_matrix_energy.section_title_with_scr')
+                  : t('cost_matrix_energy.section_title_base')}
+              </h2>
+              <span className="text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                {t('cost_matrix_energy.driver_unit_label')}: {energy?.cost_driver_unit || 'L/h'}
+              </span>
             </div>
 
-            <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[13px]">
-              <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                AUTONOMÍA / CAUDAL O PRESIÓN AUXILIAR
-              </div>
-              <div className="mt-[8px]">
-                <DataValueCell
-                  value={
-                    energy?.storage_and_autonomy?.estimated_autonomy ||
-                    energy?.pneumatic_or_hydraulic_flow ||
-                    energy?.specific_consumption_bsfc_gkwh
-                  }
-                />
-              </div>
-            </div>
+            <div className={`mt-[13px] grid grid-cols-1 ${energyGridColsClass} gap-[13px]`}>
+              {showStorageCapacityCard && (
+                <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[13px] rounded-none shadow-none">
+                  <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                    {storageCardTitle}
+                  </div>
+                  <div className="mt-[8px]">
+                    <DataValueCell value={energy?.storage_and_autonomy?.tank_or_battery_capacity} />
+                  </div>
+                </div>
+              )}
 
-            <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[13px]">
-              <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                SISTEMA SCR / ADBLUE (DEF ISO 22241)
+              <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[13px] rounded-none shadow-none">
+                <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                  {autonomyOrDemandCardTitle}
+                </div>
+                <div className="mt-[8px]">
+                  <DataValueCell
+                    value={
+                      energy?.storage_and_autonomy?.estimated_autonomy ||
+                      energy?.pneumatic_or_hydraulic_flow ||
+                      energy?.specific_consumption_bsfc_gkwh
+                    }
+                  />
+                </div>
               </div>
-              <div className="mt-[8px]">
-                {requiresDef ? (
-                  <div className="flex flex-col gap-[4px] font-mono tabular-nums text-[13px] text-[#0F172A] dark:text-[#F3F4F6]">
+
+              {requiresDef && (
+                <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[13px] rounded-none shadow-none">
+                  <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                    {t('cost_matrix_energy.scr_card_title')}
+                  </div>
+                  <div className="mt-[8px] flex flex-col gap-[4px] font-mono tabular-nums text-[13px] text-[#0F172A] dark:text-[#F3F4F6]">
                     <span>
-                      Proporción:{' '}
+                      {t('cost_matrix_energy.scr_proportion')}:{' '}
                       {energy?.def_adblue_consumption?.consumption_pct_of_fuel || MISSING_SPEC_TEXT}
                     </span>
                     <span className="text-[12px] text-[#475569] dark:text-[#8A93A6]">
-                      Estanque DEF:{' '}
+                      {t('cost_matrix_energy.scr_tank')}:{' '}
                       {energy?.def_adblue_consumption?.tank_capacity_liters || MISSING_SPEC_TEXT}
                     </span>
                   </div>
-                ) : (
-                  <span className="text-[12px] font-mono text-[#94A3B8] dark:text-[#5A6072]">
-                    No aplica según motorización / sin sistema SCR declarado
-                  </span>
-                )}
-              </div>
+                </div>
+              )}
             </div>
-          </div>
 
-          {/* Tabla Horaria por Régimen de Carga */}
-          {taxonomy.supports_hourly_load_table && (
-            <div className="mt-[21px] overflow-x-auto">
-              <table className="w-full border-collapse text-left font-mono tabular-nums text-[13px]">
-                <thead>
-                  <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-[11px] uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                    <th className="py-[8px] pr-[13px]">RALENTÍ / PTO AUXILIAR</th>
-                    <th className="py-[8px] px-[13px]">CARGA BAJA (25–35%)</th>
-                    <th className="py-[8px] px-[13px]">CARGA MEDIA (50–65%)</th>
-                    <th className="py-[8px] pl-[13px]">CARGA ALTA (80–100%)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-b border-[#E2E8F0] dark:border-[#12151C]">
-                    <td className="py-[13px] pr-[13px]">
-                      <DataValueCell value={energy?.hourly_consumption_by_load?.idle_or_pto} />
-                    </td>
-                    <td className="py-[13px] px-[13px]">
-                      <DataValueCell value={energy?.hourly_consumption_by_load?.low_load_25_35pct} />
-                    </td>
-                    <td className="py-[13px] px-[13px]">
-                      <DataValueCell value={energy?.hourly_consumption_by_load?.medium_load_50_65pct} />
-                    </td>
-                    <td className="py-[13px] pl-[13px]">
-                      <DataValueCell value={energy?.hourly_consumption_by_load?.high_load_80_100pct} />
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* Tabla de Rendimiento por Kilómetro (Ruta / Faena) */}
-          {hasRoadData && (
-            <div className="mt-[21px] pt-[13px] border-t border-[#E2E8F0] dark:border-[#12151C] overflow-x-auto">
-              <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#00AEEF] mb-[8px]">
-                RENDIMIENTO VIAL EN CARRETERA Y TRÁNSITO FUERA DE CARRETERA (ENTRE PUNTOS DE ENTREGA)
+            {/* Tabla Horaria por Régimen de Carga */}
+            {taxonomy.supports_hourly_load_table && (
+              <div className="mt-[21px] overflow-x-auto">
+                <table className="w-full border-collapse text-left font-mono tabular-nums text-[13px]">
+                  <thead>
+                    <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-[11px] uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                      <th className="py-[8px] pr-[13px]">RALENTÍ / PTO AUXILIAR</th>
+                      <th className="py-[8px] px-[13px]">CARGA BAJA (25–35%)</th>
+                      <th className="py-[8px] px-[13px]">CARGA MEDIA (50–65%)</th>
+                      <th className="py-[8px] pl-[13px]">CARGA ALTA (80–100%)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b border-[#E2E8F0] dark:border-[#12151C]">
+                      <td className="py-[13px] pr-[13px]">
+                        <DataValueCell value={energy?.hourly_consumption_by_load?.idle_or_pto} />
+                      </td>
+                      <td className="py-[13px] px-[13px]">
+                        <DataValueCell value={energy?.hourly_consumption_by_load?.low_load_25_35pct} />
+                      </td>
+                      <td className="py-[13px] px-[13px]">
+                        <DataValueCell value={energy?.hourly_consumption_by_load?.medium_load_50_65pct} />
+                      </td>
+                      <td className="py-[13px] pl-[13px]">
+                        <DataValueCell value={energy?.hourly_consumption_by_load?.high_load_80_100pct} />
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
+            )}
+
+            {/* Tabla de Rendimiento por Kilómetro (Ruta / Faena) */}
+            {hasRoadData && (
+              <div className="mt-[21px] pt-[13px] border-t border-[#E2E8F0] dark:border-[#12151C] overflow-x-auto">
+                <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#00AEEF] mb-[8px]">
+                  RENDIMIENTO VIAL EN CARRETERA Y TRÁNSITO FUERA DE CARRETERA (ENTRE PUNTOS DE ENTREGA)
+                </div>
               <table className="w-full border-collapse text-left font-mono tabular-nums text-[13px]">
                 <thead>
                   <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-[11px] uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
@@ -333,7 +377,8 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
               </table>
             </div>
           )}
-        </section>
+          </section>
+        )}
 
         {/* II. BASE CAPEX Y VIDA ECONÓMICA */}
         <section className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-[21px] rounded-none shadow-none">

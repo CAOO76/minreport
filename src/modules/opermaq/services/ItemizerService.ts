@@ -34,10 +34,12 @@ import { createEmptyKnowledgeVault, PILLAR_AGENTS, PILLAR_LABELS } from './pilla
 import { classifySourcesByAuthorship } from './SourceClassifierService';
 import {
     extractConfirmedSpecsSummaryFromMarkdown,
+    extractPositivelyConfirmedSubsystems,
     normalizeComparableTitle,
     tokenJaccardSimilarity,
 } from './TextSimilarityUtils';
 import { VaultPersistenceService } from './VaultPersistenceService';
+import { buildLockedVariantDirective } from '../utils/lockedVariantDirective';
 
 /**
  * ITEMIZER SERVICE v9.1 — ETAPA 2 ON-DEMAND CON ONTOLOGÍA ELÁSTICA EN 2 ANILLOS (`TIPO`-FIRST)
@@ -151,9 +153,92 @@ async function loadSovereignLocalCorpusForPillar(
 }
 
 /**
+ * Cortafuegos determinista de presencia positiva sobre capítulos candidatos de itemizado:
+ * Bloquea la creación o aprendizaje de capítulos dedicados a subsistemas inexistentes ("No aplica",
+ * "Ausencia de...", SCR/AdBlue en unidades eléctricas o motores sin SCR, embrague manual en automáticas/hidrostáticas).
+ */
+function filterPositivePresenceItemCandidates<
+    T extends { title?: string; section?: string; rationale?: string }
+>(
+    candidates: T[],
+    assetData: Record<string, any> | null | undefined,
+    typeDoc: Pick<GlobalEquipmentTypeDoc, 'physical_traits'> | null | undefined
+): T[] {
+    if (!Array.isArray(candidates) || candidates.length === 0) return [];
+
+    const primaryEnergy = typeDoc?.physical_traits?.primary_energy;
+    const isNonThermalEnergy =
+        primaryEnergy === 'ELECTRICO_RED_AC' ||
+        primaryEnergy === 'ELECTRICO_BATERIA_BEV' ||
+        primaryEnergy === 'NEUMATICO_AIRE_COMPRIMIDO' ||
+        primaryEnergy === 'HIDRAULICO_AUXILIAR' ||
+        primaryEnergy === 'MANUAL_MECANICO' ||
+        primaryEnergy === 'REMOLCADO_SIN_PROPULSION_PROPIA';
+
+    const emissionCorpus = [
+        assetData?.configuration_profile?.factory_emission_or_grid_spec || '',
+        ...(Array.isArray(assetData?.ambiente_operativo) ? assetData.ambiente_operativo : []),
+        ...(Array.isArray(assetData?.caracteristicas_principales) ? assetData.caracteristicas_principales : []),
+    ].join(' ');
+
+    const isExplicitlyWithoutScr =
+        isNonThermalEnergy ||
+        /\b(?:sin\s+(?:sistema\s+)?(?:scr|adblue|def)|tier\s*[0123]\b|stage\s*iii\s*a\b|euro\s*(?:i|ii|iii)\b)\b/i.test(
+            emissionCorpus
+        );
+
+    const txCategory = assetData?.configuration_profile?.transmission_category;
+    const isClutchlessTransmission =
+        txCategory === 'AUTOMATIC_PLANETARY_CONVERTER' ||
+        txCategory === 'HYDROSTATIC' ||
+        txCategory === 'AUTOMATED_MANUAL_AMT';
+
+    return candidates.filter((item) => {
+        const title = String(item?.title || '').trim();
+        const rationale = String(item?.rationale || '').trim();
+        if (!title) return false;
+
+        if (
+            /\b(?:no\s+aplica|inexistencia\s+de|ausencia\s+de|exenci[oó]n\s+de|carencia\s+de|sin\s+sistema\b|sin\s+adblue\b|sin\s+scr\b)\b/i.test(
+                title
+            )
+        ) {
+            return false;
+        }
+
+        if (
+            /\b(?:no\s+aplica\s+a\s+este\s+(?:equipo|activo|modelo)|(?:equipo|activo|modelo)\s+no\s+(?:posee|equipa|incorpora|requiere)|ausencia\s+de\s+este\s+subsistema)\b/i.test(
+                rationale
+            )
+        ) {
+            return false;
+        }
+
+        if (
+            isExplicitlyWithoutScr &&
+            /\b(?:sistema\s+scr|adblue|fluido\s+def|dosificaci[oó]n\s+def|urea\s+automotriz)\b/i.test(title) &&
+            !/\b(?:motorizaci[oó]n|planta\s+motriz|consumos?\s+horarios|lubricantes\s+y\s+fluidos)\b/i.test(title)
+        ) {
+            return false;
+        }
+
+        if (
+            isClutchlessTransmission &&
+            /\b(?:pedal\s+de\s+embrague|reglaje\s+de\s+embrague|doble\s+embrague|caja\s+manual\s+fuller|roadranger)\b/i.test(
+                title
+            )
+        ) {
+            return false;
+        }
+
+        return true;
+    });
+}
+
+/**
  * Construye el contexto estructural y de contenidos confirmados acumulativo de los pilares previos ya itemizados/cazados
  * siguiendo la secuencia obligatoria: `01 Ficha Técnica ➔ 02 Manual de Operaciones ➔ 03 Pauta de Mantención ➔ 04 Matriz de Riesgos ➔ 05 Checklist Pre-Op`.
- * Incluye síntesis de parámetros reales cazados (`it.content`) y subsistemas especializados para trazabilidad 1 a 1 (`CAD-01`).
+ * Aplica cortafuegos de presencia positiva para impedir que subsistemas negados ("sin SCR", "No aplica") contagien pilares derivados (`CAD-01`).
  */
 function buildCumulativePriorPillarsContext(
     vault: Record<string, any> | undefined,
@@ -167,27 +252,24 @@ function buildCumulativePriorPillarsContext(
     const specializedAndCriticalHighlights: string[] = [];
     const seenHighlights = new Set<string>();
 
-    const SPECIALIZED_CONTENT_KEYWORDS_REGEX =
-        /\b(XHP|HIGH\s*FLOW|ALTO\s*CAUDAL|SAHR|FRENO\s*H[ÚU]MEDO|AFEX|ANSUL|SUPRESI[ÓO]N\s*DE\s*INCENDIO|AUTOLUBE|LUBRICACI[ÓO]N\s*AUTOM[ÁA]TICA|VIMS|TPMS|PTO|TOMA\s*DE\s*FUERZA|LOCK[\s-]*UP|RETARDO\s*DIN[ÁA]MICO|ARC|ACUMULADOR\s*HIDR[ÁA]ULICO|RIDE\s*CONTROL|QUICK\s*COUPLER|ACOPLE\s*R[ÁA]PIDO|DPF|SCR|DEF|ADBLUE|QUINTA\s*RUEDA|ROPS|FOPS)\b/gi;
-
     for (let i = 0; i < targetIdx; i++) {
         const pid = SEQUENTIAL_PILLAR_ORDER[i];
         const pLabel = PILLAR_LABELS[pid] || pid;
         const pItems: PillarItem[] = Array.isArray(vault[pid]?.items)
-            ? vault[pid].items.filter((it: any) => !it?.is_discarded)
+            ? vault[pid].items.filter(
+                  (it: any) =>
+                      !it?.is_discarded &&
+                      !/\b(?:no\s+aplica|inexistencia\s+de|ausencia\s+de|exenci[oó]n\s+de|sin\s+sistema\s+scr|sin\s+adblue)\b/i.test(
+                          String(it?.title || '')
+                      )
+              )
             : [];
         if (pItems.length === 0) continue;
 
         for (const it of pItems) {
             const sec = String(it.section || '').toUpperCase();
             const contentStr = String(it.content || '');
-            const matchedSubsystems = Array.from(
-                new Set(
-                    (contentStr.match(SPECIALIZED_CONTENT_KEYWORDS_REGEX) || []).map((m) =>
-                        m.toUpperCase().replace(/\s+/g, ' ')
-                    )
-                )
-            );
+            const matchedSubsystems = extractPositivelyConfirmedSubsystems(contentStr);
 
             if (
                 it.priority === 'CRÍTICO' ||
@@ -196,7 +278,7 @@ function buildCumulativePriorPillarsContext(
             ) {
                 const subTag =
                     matchedSubsystems.length > 0
-                        ? ` [Subsistemas en contenido: ${matchedSubsystems.slice(0, 6).join(', ')}]`
+                        ? ` [Subsistemas físicos confirmados: ${matchedSubsystems.slice(0, 6).join(', ')}]`
                         : '';
                 const highlightLine = `  • [0${i + 1} · ${pLabel}] "${it.title}" (${it.section || 'GENERAL'})${subTag}`;
                 if (specializedAndCriticalHighlights.length < 22 && !seenHighlights.has(highlightLine)) {
@@ -207,7 +289,10 @@ function buildCumulativePriorPillarsContext(
         }
 
         const lines = pItems.map((it, idx) => {
-            const rationale = String(it.rationale || '').trim().slice(0, 120);
+            const rationale = String(it.rationale || '')
+                .replace(/\(\s*sin\s+[^)]*\)/gi, '')
+                .trim()
+                .slice(0, 120);
             const confirmedSpecs = extractConfirmedSpecsSummaryFromMarkdown(it.content || undefined, 260);
             return `  ${idx + 1}. [${it.section || 'GENERAL'}] "${it.title}" (${it.priority}) — ${rationale}${
                 confirmedSpecs ? ` | DATOS CAZADOS CONFIRMADOS: ${confirmedSpecs}` : ''
@@ -220,7 +305,7 @@ function buildCumulativePriorPillarsContext(
 
     if (specializedAndCriticalHighlights.length > 0) {
         blocks.unshift(
-            `MATRIZ DE SUBSISTEMAS ESPECIALIZADOS Y CRÍTICOS DETECTADOS EN PILARES Y CONTENIDOS PREVIOS (COBERTURA 1 A 1 OBLIGATORIA):\n${specializedAndCriticalHighlights.join('\n')}`
+            `MATRIZ DE SUBSISTEMAS FÍSICOS CONFIRMADOS EN PILARES PREVIOS (COBERTURA 1 A 1 EXCLUSIVA DE EQUIPAMIENTO REALMENTE INSTALADO):\n${specializedAndCriticalHighlights.join('\n')}`
         );
     }
 
@@ -1158,6 +1243,8 @@ export async function itemizeSinglePillar(
                   .join('\n')
             : '';
 
+        const lockedVariantDirective = buildLockedVariantDirective(assetData);
+
         const profileSummary = [
             `- Marca / Modelo Oficial: ${makeModel}`,
             `- TIPO Canónico de Equipo (Ontología MINREPORT): ${typeDoc.canonical_type_es} (key: ${typeDoc.type_key})`,
@@ -1168,6 +1255,7 @@ export async function itemizeSinglePillar(
             verifiedSpecsLines
                 ? `\nEJES FÍSICOS DIFERENCIADORES DEL TIPO (${typeDoc.canonical_type_es}) RESUELTOS EN ETAPA 1:\n${verifiedSpecsLines}`
                 : '',
+            lockedVariantDirective ? `\n${lockedVariantDirective}` : '',
             cumulativePriorContext
                 ? `\nHERENCIA ACUMULATIVA DE PILARES PREVIOS CONFIRMADOS (OBLIGATORIO MANTENER TRAZABILIDAD 1 A 1 CON ESTOS SUBSISTEMAS):\n${cumulativePriorContext}`
                 : '',
@@ -1185,6 +1273,10 @@ export async function itemizeSinglePillar(
             .join('\n');
 
         const pass1ResearchPrompt = `${agent.taskItemize(makeModel, profileSummary)}
+
+REGLA DE PRESENCIA POSITIVA ESTRICTA (CERO CAPÍTULOS DE SUBSISTEMAS INEXISTENTES):
+- Crea capítulos EXCLUSIVAMENTE para sistemas, órganos de trabajo, transmisiones y postratamientos físicamente instalados en "${makeModel}".
+- PROHIBIDO crear capítulos para declarar que un subsistema "No aplica", "No posee" o está ausente (ej. jamás crear capítulos de SCR/DEF/AdBlue en motores sin SCR o equipos eléctricos/neumáticos; jamás crear capítulos de embrague manual en cajas automáticas/hidrostáticas; jamás crear capítulos de cabina en herramientas o unidades sin cabina).
 
 REGLA DE CARDINALIDAD ELÁSTICA POR COMPLEJIDAD REAL DEL MODELO (${minItems} a ${maxItems} capítulos):
 - NO apliques un número fijo de capítulos. La cantidad total de capítulos debe reflejar fielmente la complejidad física real de "${makeModel}":
@@ -1364,6 +1456,8 @@ Combina la evidencia local de la bóveda con Google Search (en español, inglés
 
             rawItems = Array.isArray(parsed.items) ? parsed.items : [];
         }
+
+        rawItems = filterPositivePresenceItemCandidates(rawItems, assetData, typeDoc);
 
         if (rawItems.length === 0) {
             throw new Error(`El agente especialista de ${pillarId} no devolvió capítulos válidos.`);
@@ -1762,7 +1856,11 @@ Usa Google Search para contrastar contra el manual oficial OEM y fichas técnica
         prompt: `Extrae hasta 3 sugerencias de capítulos técnicos complementarios para "${makeModel}" desde el análisis siguiente. No inventes URLs; referencia en "source_index" el índice [0..${Math.max(0, verifiedSourcesPool.length - 1)}] de la fuente real que lo respalda:\n\nAnálisis:\n"""\n${aiText.slice(0, 10000)}\n"""\n\nFuentes verificadas:\n${poolContext || '[0] Fuente técnica verificada'}`,
     });
 
-    const rawSuggestions = Array.isArray(structured.suggestions) ? structured.suggestions : [];
+    const rawSuggestions = filterPositivePresenceItemCandidates(
+        Array.isArray(structured.suggestions) ? structured.suggestions : [],
+        assetData,
+        typeResolution.typeDoc
+    );
     const updatedPending = [...currentPending];
 
     for (const s of rawSuggestions.slice(0, 4)) {

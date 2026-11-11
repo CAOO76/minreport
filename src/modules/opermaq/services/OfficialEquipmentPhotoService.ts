@@ -12,22 +12,25 @@ import {
     type MachineryArchetypeId,
     resolveMachineryArchetype,
 } from '../utils/canonicalArchetypeSpecs';
+import { inferAssetConfigurationProfile } from '../utils/lockedVariantDirective';
 import { renderPdfPageToPng } from './SegmentedDocumentProcessorService';
 
 /**
- * OFFICIAL EQUIPMENT PHOTO SERVICE v3.2
+ * OFFICIAL EQUIPMENT PHOTO SERVICE v4.0 (Forensic VLM Variant & Brand Shield)
  *
  * Motor Soberano Universal de Caza Asistida por IA para CUALQUIER Arquetipo de Maquinaria (OPERMAQ / MINREPORT):
- * - Adapta dinámicamente la búsqueda y el criterio VLM según el arquetipo mecánico real del activo
- *   (`resolveMachineryArchetype`: CAEX, Excavadoras, Cargadores/LHD, Bulldozers, Motoniveladoras,
- *   Perforadoras/Jumbos, Grúas/Manipuladores, Compactadores, Compresores/Generadores, Minicargadores,
- *   Vehículos Livianos, Chancadores y Equipos Industriales).
- * - Rechaza accesorios ajenos a la minería (fresadoras de pavimento asfáltico / cold planers,
- *   desbrozadoras forestales, barredoras urbanas, quitanieves, implementos agrícolas/jardinería)
- *   y modelos a escala/juguetes (1:50, diecast).
- * - Bloquea fotos de faena con barro, stickers de contratistas, patentes PPU chilenas o personas (Ley N° 21.719).
- * - Aplica Bounding Box bimodal y centrado al 88% sobre lienzo 4:3 (1600x1200 WebP HD) conforme a GEMINI.md.
+ * - Exige correspondencia exacta de variante mecánica (`matches_exact_variant_configuration`: conteo real de ejes
+ *   `8x4` vs `6x4`, carrocería `Tolva` vs `Tracto` / `Mixer`, rodado `Orugas` vs `Neumáticos`).
+ * - Bloquea 100% imágenes sintéticas generadas por IA (`is_authentic_real_photograph`: exceso o fusión de ruedas,
+ *   llantas deformes, emblemas/textos ilegibles o artefactos de difusión).
+ * - Bloquea marcas ajenas y marcas hermanas del mismo grupo corporativo en el fondo o concesionario
+ *   (`is_free_of_other_manufacturer_and_dealer_branding`: p. ej. bloquea letreros/banderas `VOLVO` tras un `MACK`).
+ * - Exige contexto exclusivo de Estudio OEM neutro/blanco o contexto real limpio de Minería / Construcción / Industria
+ *   (`is_valid_industrial_or_studio_context`).
+ * - Bloquea patentes PPU, números de serie y personas (Ley N° 21.719) y encuadra al 88% sobre lienzo 4:3 WebP Zero-Inflation.
  */
+
+export const CURRENT_VLM_AUDIT_VERSION = 4;
 
 export interface OfficialPhotoCandidate {
     candidate_id: string;
@@ -45,6 +48,8 @@ export interface OfficialPhotoCandidate {
     width: number;
     height: number;
     framing_mode: 'STUDIO_88' | 'VLM_BOX_4X3' | 'CENTER_4X3';
+    vlm_audit_version?: number;
+    verified_variant_summary?: string;
 }
 
 export interface ManualPhotoVerificationResult {
@@ -55,14 +60,18 @@ export interface ManualPhotoVerificationResult {
 }
 
 const VlmPhotoVerdictSchema = z.object({
+    is_authentic_real_photograph: z.boolean(),
     is_exact_make_and_model: z.boolean(),
+    matches_exact_variant_configuration: z.boolean(),
     is_mining_appropriate_configuration: z.boolean(),
-    is_official_oem_quality: z.boolean(),
-    is_free_of_third_party_branding: z.boolean(),
+    is_valid_industrial_or_studio_context: z.boolean(),
+    is_free_of_other_manufacturer_and_dealer_branding: z.boolean(),
     is_free_of_pii_and_plates: z.boolean(),
     is_clean_unweathered_machine: z.boolean(),
     authenticity_score: z.number().min(0).max(1),
     subject_box_2d: z.tuple([z.number(), z.number(), z.number(), z.number()]).nullable().optional().default(null),
+    observed_axle_or_track_layout: z.string().default(''),
+    observed_body_or_attachment: z.string().default(''),
     detected_model_description: z.string(),
     rejection_reasons: z.array(z.string()).default([]),
 });
@@ -89,14 +98,20 @@ function normalizeVlmVerdictPayload(raw: any): VlmPhotoVerdict {
         : [];
 
     return VlmPhotoVerdictSchema.parse({
+        is_authentic_real_photograph: Boolean(obj.is_authentic_real_photograph),
         is_exact_make_and_model: Boolean(obj.is_exact_make_and_model),
+        matches_exact_variant_configuration: Boolean(obj.matches_exact_variant_configuration),
         is_mining_appropriate_configuration: Boolean(obj.is_mining_appropriate_configuration),
-        is_official_oem_quality: Boolean(obj.is_official_oem_quality),
-        is_free_of_third_party_branding: Boolean(obj.is_free_of_third_party_branding),
+        is_valid_industrial_or_studio_context: Boolean(obj.is_valid_industrial_or_studio_context),
+        is_free_of_other_manufacturer_and_dealer_branding: Boolean(
+            obj.is_free_of_other_manufacturer_and_dealer_branding ?? obj.is_free_of_third_party_branding
+        ),
         is_free_of_pii_and_plates: Boolean(obj.is_free_of_pii_and_plates),
         is_clean_unweathered_machine: Boolean(obj.is_clean_unweathered_machine),
         authenticity_score: score,
         subject_box_2d: box,
+        observed_axle_or_track_layout: String(obj.observed_axle_or_track_layout || '').trim(),
+        observed_body_or_attachment: String(obj.observed_body_or_attachment || '').trim(),
         detected_model_description: String(obj.detected_model_description || 'Sin descripción'),
         rejection_reasons: reasons,
     });
@@ -106,10 +121,13 @@ const IGNORED_IMAGE_URL_PATTERNS =
     /(?:logo|avatar|icon|sprite|pixel|tracker|analytics|banner-ad|badge|favicon|social|facebook|linkedin|twitter|instagram|youtube\.com\/img|placeholder|spacer|blank\.gif|flag|map-pin|dealer-locator|button|arrow|1x1|spinner|loader)/i;
 
 const NON_MINING_OR_TOY_PATTERNS =
-    /(?:cold[-_\s]?planer|asphalt[-_\s]?cutter|pavement[-_\s]?miller|mulcher|brush[-_\s]?cutter|flail[-_\s]?mower|snow[-_\s]?blower|snow[-_\s]?push|snow[-_\s]?blade|snow[-_\s]?wing|street[-_\s]?sweeper|angle[-_\s]?broom|pickup[-_\s]?broom|bale[-_\s]?spear|stump[-_\s]?grinder|landscape[-_\s]?tiller|lawn[-_\s]?mower|tree[-_\s]?spade|log[-_\s]?grapple|tree[-_\s]?harvester|1[:/-]50|1[:/-]32|1[:/-]64|1[:/-]87|diecast|scale[-_\s]?model|toy|lego|bruder|norscot|diecastmasters)/i;
+    /(?:cold[-_\s]?planer|asphalt[-_\s]?cutter|pavement[-_\s]?miller|mulcher|brush[-_\s]?cutter|flail[-_\s]?mower|snow[-_\s]?blower|snow[-_\s]?push|snow[-_\s]?blade|snow[-_\s]?wing|street[-_\s]?sweeper|angle[-_\s]?broom|pickup[-_\s]?broom|bale[-_\s]?spear|stump[-_\s]?grinder|landscape[-_\s]?tiller|lawn[-_\s]?mower|tree[-_\s]?spade|log[-_\s]?grapple|tree[-_\s]?harvester|1[:/-]50|1[:/-]32|1[:/-]64|1[:/-]87|diecast|scale[-_\s]?model|toy|lego|bruder|norscot|diecastmasters|rc[-_\s]?truck|tamiya|farm[-_\s]?sim|ats[-_\s]?mod|ets2[-_\s]?mod|snowrunner|beamng)/i;
 
-const AUCTION_WATERMARK_SITE_PATTERNS =
-    /(?:purplewave\.com|bigiron\.com|rbauction\.com|ironplanet\.com|machinio\.com|truckpaper\.com|marketbook\.|alibaba\.com|aliexpress\.com|ebay\.|craigslist\.|pinterest\.|tiktok\.com)/i;
+const AUCTION_AND_AI_SYNTHETIC_SITE_PATTERNS =
+    /(?:purplewave\.com|bigiron\.com|rbauction\.com|ironplanet\.com|machinio\.com|truckpaper\.com|marketbook\.|commercialtrucktrader\.com|machinerytrader\.com|autoline\.|truck1\.|mascus\.|alibaba\.com|aliexpress\.com|ebay\.|craigslist\.|pinterest\.|tiktok\.com|stockcake\.com|freepik\.com|vecteezy\.com|lexica\.art|openart\.ai|civitai\.com|nightcafe\.studio|playground\.com|playgroundai\.com|craiyon\.com|arthub\.ai|prompthero\.com|deviantart\.com|midjourney\.com|ideogram\.ai|stablediffusionweb\.com|seaart\.ai|tensor\.art|leonardo\.ai|krea\.ai|lummi\.ai|pixai\.art|bing\.com\/images\/create|shutterstock\.com|gettyimages\.|istockphoto\.com|alamy\.com|123rf\.com|depositphotos\.com|dreamstime\.com)/i;
+
+const SYNTHETIC_AI_TEXT_PATTERNS =
+    /\b(?:ai[-_\s]?generated|generated[-_\s]?by[-_\s]?ai|midjourney|stable[-_\s]?diffusion|dall[-_\s]?e|flux[-_\s]?ai|ai[-_\s]?art|prompt[-_\s]?gallery|synthetic[-_\s]?render|concept[-_\s]?art[-_\s]?ai|stockcake)\b/i;
 
 const BROWSER_COMPAT_HEADERS: Record<string, string> = {
     'User-Agent':
@@ -294,13 +312,427 @@ function withHardTimeout<T>(promise: Promise<T>, ms: number, fallback: T, label:
 }
 
 function deriveBaseModelSeries(model: string): string {
-    // Ej. "272D XHP" -> "272D", "320D2 L" -> "320D2", "PC200-8M0" -> "PC200"
-    const clean = model.trim();
-    const parts = clean.split(/\s+/);
+    // Ej. "272D XHP" -> "272D", "320D2 L" -> "320D2", "GU813 (8x4 · Tolva)" -> "GU813"
+    const withoutParens = String(model || '')
+        .replace(/\([^)]*\)/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const parts = withoutParens.split(/\s+/);
     if (parts.length > 1 && parts[0].length >= 3) {
         return parts[0];
     }
-    return clean;
+    return withoutParens || model.trim();
+}
+
+interface BrandDomainAndRivalPolicy {
+    allowedOemDomainsRegex: RegExp;
+    forbiddenOtherBrandRegex: RegExp | null;
+    forbiddenBrandListEs: string;
+    negativeBrandQueryTokens: string;
+}
+
+const KNOWN_OEM_BRAND_POLICIES: Array<{
+    key: string;
+    matchMake: RegExp;
+    officialDomains: string[];
+    extraSisterNegativeTokens?: string;
+}> = [
+    {
+        key: 'MACK',
+        matchMake: /\bmack\b/i,
+        officialDomains: ['macktrucks\\.com', 'macktrucks\\.cl', 'macktrucks\\.com\\.au'],
+        extraSisterNegativeTokens: '-volvo -renault -freightliner -kenworth -scania',
+    },
+    {
+        key: 'VOLVO',
+        matchMake: /\bvolvo\b/i,
+        officialDomains: ['volvoce\\.com', 'volvotrucks\\.', 'volvogroup\\.com'],
+        extraSisterNegativeTokens: '-mack -renault -scania -mercedes',
+    },
+    {
+        key: 'CATERPILLAR',
+        matchMake: /\b(?:caterpillar|cat)\b/i,
+        officialDomains: ['cat\\.com', 'scene7\\.com\\/is\\/image\\/Caterpillar', 'finning\\.com', 'holtcat\\.com'],
+        extraSisterNegativeTokens: '-komatsu -deere -bobcat -case',
+    },
+    {
+        key: 'KOMATSU',
+        matchMake: /\bkomatsu\b/i,
+        officialDomains: ['komatsu\\.com', 'komatsu\\.cl', 'komatsu\\.eu', 'komatsuamerica\\.com'],
+        extraSisterNegativeTokens: '-caterpillar -hitachi',
+    },
+    {
+        key: 'SANDVIK',
+        matchMake: /\bsandvik\b/i,
+        officialDomains: ['rocktechnology\\.sandvik', 'sandvik\\.com'],
+        extraSisterNegativeTokens: '-epiroc',
+    },
+    {
+        key: 'EPIROC',
+        matchMake: /\bepiroc\b/i,
+        officialDomains: ['epiroc\\.com'],
+        extraSisterNegativeTokens: '-sandvik',
+    },
+    {
+        key: 'LIEBHERR',
+        matchMake: /\bliebherr\b/i,
+        officialDomains: ['liebherr\\.com'],
+    },
+    {
+        key: 'JOHN DEERE',
+        matchMake: /\b(?:john\s+deere|deere)\b/i,
+        officialDomains: ['deere\\.com'],
+    },
+    {
+        key: 'HITACHI',
+        matchMake: /\bhitachi\b/i,
+        officialDomains: ['hitachicm\\.com', 'hitachicm\\.eu', 'hitachicm\\.us'],
+    },
+    {
+        key: 'SCANIA',
+        matchMake: /\bscania\b/i,
+        officialDomains: ['scania\\.com'],
+        extraSisterNegativeTokens: '-volvo -mercedes -man',
+    },
+    {
+        key: 'MERCEDES-BENZ',
+        matchMake: /\b(?:mercedes|daimler)\b/i,
+        officialDomains: ['mercedes-benz-trucks\\.com', 'mercedes-benz\\.com'],
+        extraSisterNegativeTokens: '-volvo -scania -man -freightliner',
+    },
+    {
+        key: 'FREIGHTLINER',
+        matchMake: /\bfreightliner\b/i,
+        officialDomains: ['freightliner\\.com'],
+        extraSisterNegativeTokens: '-kenworth -peterbilt -mack -volvo',
+    },
+    {
+        key: 'KENWORTH',
+        matchMake: /\bkenworth\b/i,
+        officialDomains: ['kenworth\\.com'],
+        extraSisterNegativeTokens: '-peterbilt -freightliner -mack -volvo',
+    },
+    {
+        key: 'PETERBILT',
+        matchMake: /\bpeterbilt\b/i,
+        officialDomains: ['peterbilt\\.com'],
+        extraSisterNegativeTokens: '-kenworth -freightliner -mack -volvo',
+    },
+    {
+        key: 'INTERNATIONAL',
+        matchMake: /\b(?:international|navistar)\b/i,
+        officialDomains: ['internationaltrucks\\.com'],
+        extraSisterNegativeTokens: '-freightliner -kenworth -mack -volvo',
+    },
+    {
+        key: 'CASE',
+        matchMake: /\bcase\b/i,
+        officialDomains: ['casece\\.com'],
+        extraSisterNegativeTokens: '-"new holland" -caterpillar -deere',
+    },
+    {
+        key: 'NEW HOLLAND',
+        matchMake: /\bnew\s+holland\b/i,
+        officialDomains: ['construction\\.newholland\\.com', 'newholland\\.com'],
+        extraSisterNegativeTokens: '-case -caterpillar -deere',
+    },
+    {
+        key: 'BOBCAT',
+        matchMake: /\bbobcat\b/i,
+        officialDomains: ['bobcat\\.com'],
+        extraSisterNegativeTokens: '-caterpillar -jcb -case',
+    },
+    {
+        key: 'JCB',
+        matchMake: /\bjcb\b/i,
+        officialDomains: ['jcb\\.com'],
+    },
+    {
+        key: 'DOOSAN / DEVELON',
+        matchMake: /\b(?:doosan|develon)\b/i,
+        officialDomains: ['develon-ce\\.com', 'doosanequipment\\.com'],
+    },
+    {
+        key: 'WIRTGEN / HAMM / VOGELE',
+        matchMake: /\b(?:wirtgen|hamm|vogele|vögele|kleemann)\b/i,
+        officialDomains: ['wirtgen-group\\.com'],
+    },
+    {
+        key: 'METSO',
+        matchMake: /\bmetso\b/i,
+        officialDomains: ['metso\\.com'],
+    },
+    {
+        key: 'NORMET',
+        matchMake: /\bnormet\b/i,
+        officialDomains: ['normet\\.com'],
+    },
+    {
+        key: 'ATLAS COPCO',
+        matchMake: /\batlas\s*copco\b/i,
+        officialDomains: ['atlascopco\\.com'],
+    },
+];
+
+const ALL_MAJOR_COMPETITOR_BRAND_TOKENS: Array<{ label: string; tokenRegex: string; matchMake: RegExp }> = [
+    { label: 'VOLVO', tokenRegex: 'volvo', matchMake: /\bvolvo\b/i },
+    { label: 'MACK', tokenRegex: 'mack\\s*trucks|\\bmack\\b', matchMake: /\bmack\b/i },
+    { label: 'RENAULT TRUCKS', tokenRegex: 'renault\\s*trucks', matchMake: /\brenault\b/i },
+    { label: 'UD TRUCKS', tokenRegex: 'ud\\s*trucks', matchMake: /\bud\s*trucks\b/i },
+    { label: 'CATERPILLAR', tokenRegex: 'caterpillar|holtcat|finning', matchMake: /\b(?:caterpillar|cat)\b/i },
+    { label: 'KOMATSU', tokenRegex: 'komatsu', matchMake: /\bkomatsu\b/i },
+    { label: 'SCANIA', tokenRegex: 'scania', matchMake: /\bscania\b/i },
+    { label: 'MERCEDES-BENZ', tokenRegex: 'mercedes[-\\s]?benz|actros|arocs', matchMake: /\b(?:mercedes|daimler)\b/i },
+    { label: 'MAN', tokenRegex: 'man\\s*trucks', matchMake: /\bman\b/i },
+    { label: 'FREIGHTLINER', tokenRegex: 'freightliner', matchMake: /\bfreightliner\b/i },
+    { label: 'WESTERN STAR', tokenRegex: 'western\\s*star', matchMake: /\bwestern\s*star\b/i },
+    { label: 'KENWORTH', tokenRegex: 'kenworth', matchMake: /\bkenworth\b/i },
+    { label: 'PETERBILT', tokenRegex: 'peterbilt', matchMake: /\bpeterbilt\b/i },
+    { label: 'INTERNATIONAL', tokenRegex: 'international\\s*trucks|navistar', matchMake: /\b(?:international|navistar)\b/i },
+    { label: 'IVECO', tokenRegex: 'iveco', matchMake: /\biveco\b/i },
+    { label: 'DAF', tokenRegex: 'daf\\s*trucks', matchMake: /\bdaf\b/i },
+    { label: 'SINOTRUK / HOWO', tokenRegex: 'sinotruk|howo', matchMake: /\b(?:sinotruk|howo)\b/i },
+    { label: 'SHACMAN', tokenRegex: 'shacman', matchMake: /\bshacman\b/i },
+    { label: 'FAW', tokenRegex: 'faw\\s*trucks', matchMake: /\bfaw\b/i },
+    { label: 'FOTON', tokenRegex: 'foton', matchMake: /\bfoton\b/i },
+    { label: 'JOHN DEERE', tokenRegex: 'john\\s*deere|\\bdeere\\b', matchMake: /\b(?:john\s*deere|deere)\b/i },
+    { label: 'HITACHI', tokenRegex: 'hitachi', matchMake: /\bhitachi\b/i },
+    { label: 'LIEBHERR', tokenRegex: 'liebherr', matchMake: /\bliebherr\b/i },
+    { label: 'SANDVIK', tokenRegex: 'sandvik', matchMake: /\bsandvik\b/i },
+    { label: 'EPIROC', tokenRegex: 'epiroc', matchMake: /\bepiroc\b/i },
+    { label: 'BOBCAT', tokenRegex: 'bobcat', matchMake: /\bbobcat\b/i },
+    { label: 'JCB', tokenRegex: '\\bjcb\\b', matchMake: /\bjcb\b/i },
+    { label: 'NEW HOLLAND', tokenRegex: 'new\\s*holland', matchMake: /\bnew\s*holland\b/i },
+];
+
+function resolveBrandDomainAndRivalPolicy(make: string): BrandDomainAndRivalPolicy {
+    const cleanMake = String(make || '').trim();
+    const matchedPolicy = KNOWN_OEM_BRAND_POLICIES.find((p) => p.matchMake.test(cleanMake));
+
+    const neutralSpecDomains = ['ritchiespecs\\.com', 'lectura-specs\\.com'];
+    const allowedPatterns = matchedPolicy
+        ? [...matchedPolicy.officialDomains, ...neutralSpecDomains]
+        : neutralSpecDomains;
+    const allowedOemDomainsRegex = new RegExp(`(?:${allowedPatterns.join('|')})`, 'i');
+
+    const forbiddenEntries = ALL_MAJOR_COMPETITOR_BRAND_TOKENS.filter(
+        (entry) => !entry.matchMake.test(cleanMake)
+    );
+    const forbiddenOtherBrandRegex =
+        forbiddenEntries.length > 0
+            ? new RegExp(`\\b(?:${forbiddenEntries.map((e) => e.tokenRegex).join('|')})\\b`, 'i')
+            : null;
+
+    const forbiddenBrandListEs = forbiddenEntries
+        .slice(0, 14)
+        .map((e) => e.label)
+        .join(', ');
+
+    return {
+        allowedOemDomainsRegex,
+        forbiddenOtherBrandRegex,
+        forbiddenBrandListEs,
+        negativeBrandQueryTokens: matchedPolicy?.extraSisterNegativeTokens || '',
+    };
+}
+
+interface VariantPhotoRequirements {
+    cleanModelDesignator: string;
+    requiredAxleCode: string | null;
+    requiredBodyType:
+        | 'DUMP_TOLVA'
+        | 'TRACTOR_FIFTH_WHEEL'
+        | 'WATER_ALJIBE'
+        | 'MIXER'
+        | 'CRANE_BOOM'
+        | null;
+    requiredUndercarriage: 'TRACKED' | 'WHEELED' | null;
+    variantSearchFocusEn: string;
+    variantSearchFocusEs: string;
+    negativeVariantTokens: string;
+    contradictoryTitleRegex: RegExp | null;
+    vlmVariantMandateEs: string;
+    summaryBadgePrefix: string;
+}
+
+function extractVariantPhotoRequirements(
+    assetData: Record<string, any>,
+    make: string,
+    model: string,
+    archetypeProfile: ArchetypePhotoSearchProfile
+): VariantPhotoRequirements {
+    const configProfile = inferAssetConfigurationProfile({
+        make_oficial: make,
+        model_oficial: model,
+        tipo_equipo: assetData.tipo_equipo,
+        categoria_equipo: assetData.categoria_equipo,
+        version: assetData.version,
+        physical_traits: assetData.physical_traits,
+        canonical_specs: assetData.canonical_specs,
+        caracteristicas_principales: assetData.caracteristicas_principales,
+        chassis_versions: assetData.chassis_versions,
+        existing_profile: assetData.configuration_profile,
+    });
+
+    // Limpiar designador de modelo para búsquedas de imagen (removiendo paréntesis de desambiguación y prosa de caja/volumen)
+    const cleanModelDesignator =
+        String(model || '')
+            .replace(/\([^)]*\)/g, ' ')
+            .replace(
+                /\b(?:10x6|10x4|8x8|8x6|8x4|6x6|6x4|6x2|4x4|4x2|tolva|volquete|batea|tractocamion|aljibe|mixer|automatic[ao]|automatizada|manual|fuller|allison|mdrive|i-shift|\d+(?:[.,]\d+)?\s*(?:m3|m³|litros))\b/gi,
+                ' '
+            )
+            .replace(/\s+/g, ' ')
+            .trim() || deriveBaseModelSeries(model);
+
+    const combinedCorpus = [
+        model,
+        assetData.version || '',
+        assetData.tipo_equipo || '',
+        configProfile.axle_or_undercarriage_config || '',
+        configProfile.work_body_or_implement || '',
+    ].join(' ');
+
+    const axleMatch = combinedCorpus.match(/\b(10x6|10x4|8x8|8x6|8x4|6x6|6x4|6x2|4x4|4x2)\b/i);
+    const requiredAxleCode = axleMatch ? axleMatch[1].toLowerCase() : null;
+
+    let requiredBodyType: VariantPhotoRequirements['requiredBodyType'] = null;
+    if (/\b(tolva|volquete|batea|dump|tipper)\b/i.test(combinedCorpus)) {
+        requiredBodyType = 'DUMP_TOLVA';
+    } else if (/\b(tractocamion|tracto\b|quinta\s+rueda|fifth[\s-]?wheel)\b/i.test(combinedCorpus)) {
+        requiredBodyType = 'TRACTOR_FIFTH_WHEEL';
+    } else if (/\b(aljibe|cisterna|water\s+truck)\b/i.test(combinedCorpus)) {
+        requiredBodyType = 'WATER_ALJIBE';
+    } else if (/\b(mixer|betonera|hormigonera|concrete\s+mixer)\b/i.test(combinedCorpus)) {
+        requiredBodyType = 'MIXER';
+    } else if (/\b(camion\s+pluma|grua\s+articulada|boom\s+truck)\b/i.test(combinedCorpus)) {
+        requiredBodyType = 'CRANE_BOOM';
+    }
+
+    let requiredUndercarriage: VariantPhotoRequirements['requiredUndercarriage'] = null;
+    const mobility = assetData.physical_traits?.mobility;
+    if (mobility === 'SELF_PROPELLED_TRACKED' || /\b(orugas?|crawler|compact\s+track)\b/i.test(combinedCorpus)) {
+        requiredUndercarriage = 'TRACKED';
+    } else if (mobility === 'SELF_PROPELLED_WHEELED' || Boolean(requiredAxleCode)) {
+        requiredUndercarriage = 'WHEELED';
+    }
+
+    const focusEnParts: string[] = [];
+    const focusEsParts: string[] = [];
+    const negParts: string[] = ['-ai', '-generated', '-midjourney', '-stockcake'];
+    const contradictoryPatterns: string[] = [];
+    const mandateLines: string[] = [];
+    const badgeParts: string[] = [];
+
+    if (requiredAxleCode) {
+        focusEnParts.push(requiredAxleCode);
+        focusEsParts.push(requiredAxleCode);
+        badgeParts.push(requiredAxleCode.toUpperCase());
+
+        const allAxles = ['4x2', '4x4', '6x2', '6x4', '6x6', '8x4', '8x6', '8x8', '10x4', '10x6'];
+        const rivalAxles = allAxles.filter((ax) => ax !== requiredAxleCode);
+        for (const rAx of rivalAxles.slice(0, 5)) {
+            negParts.push(`-${rAx}`);
+        }
+        contradictoryPatterns.push(...rivalAxles);
+
+        if (requiredAxleCode === '8x4' || requiredAxleCode === '8x6' || requiredAxleCode === '8x8') {
+            mandateLines.push(
+                `- CONTEO ANATÓMICO OBLIGATORIO DE EJES (${requiredAxleCode.toUpperCase()}): El equipo en la fotografía DEBE ser un chasis de 4 EJES con DOBLE EJE DIRECCIONAL DELANTERO (2 ejes delanteros gemelos + 2 ejes traseros en tándem = 4 ruedas visibles por costado). Si la foto muestra solo 1 eje direccional delantero (chasis 6x4 de 3 ejes o 4x2 de 2 ejes), o si muestra 5 o más ejes irreales, DEBES marcar matches_exact_variant_configuration=false.`
+            );
+        } else if (requiredAxleCode === '6x4' || requiredAxleCode === '6x6' || requiredAxleCode === '6x2') {
+            mandateLines.push(
+                `- CONTEO ANATÓMICO OBLIGATORIO DE EJES (${requiredAxleCode.toUpperCase()}): El equipo en la fotografía DEBE ser un chasis de 3 EJES (1 eje direccional delantero simple + 2 ejes traseros en tándem = 3 ruedas visibles por costado). Si la foto muestra doble eje delantero (chasis 8x4 de 4 ejes) o eje trasero simple (4x2), DEBES marcar matches_exact_variant_configuration=false.`
+            );
+        } else if (requiredAxleCode === '4x2' || requiredAxleCode === '4x4') {
+            mandateLines.push(
+                `- CONTEO ANATÓMICO OBLIGATORIO DE EJES (${requiredAxleCode.toUpperCase()}): El equipo DEBE tener exactamente 2 ejes (1 delantero + 1 trasero). Rechazar chasis tándem 6x4 u 8x4.`
+            );
+        } else {
+            mandateLines.push(
+                `- CONFIGURACIÓN DE EJES OBLIGATORIA: Debe corresponder visualmente a chasis ${requiredAxleCode.toUpperCase()}.`
+            );
+        }
+    }
+
+    if (requiredBodyType === 'DUMP_TOLVA') {
+        focusEnParts.push('dump truck tipper');
+        focusEsParts.push('camion tolva');
+        badgeParts.push('Tolva');
+        negParts.push('-tractor', '-"fifth wheel"', '-semi', '-mixer', '-concrete');
+        contradictoryPatterns.push('tractor', 'tractocamion', 'fifth[\\s-]?wheel', 'mixer', 'betonera', 'hormigonera');
+        mandateLines.push(
+            '- CARROCERÍA OBLIGATORIA (TOLVA / VOLQUETE): El camión DEBE tener instalada una TOLVA / BATEA de volteo minero o movimiento de tierra. Si es un tractocamión con quinta rueda sin tolva, un chasis cabinado desnudo (cab-chassis), un camión mixer hormigonero o un camión aljibe, DEBES marcar matches_exact_variant_configuration=false.'
+        );
+    } else if (requiredBodyType === 'TRACTOR_FIFTH_WHEEL') {
+        focusEnParts.push('tractor truck');
+        focusEsParts.push('tractocamion');
+        badgeParts.push('Tracto');
+        negParts.push('-dump', '-tipper', '-mixer');
+        contradictoryPatterns.push('dump\\s*truck', 'tipper', 'camion\\s*tolva', 'mixer', 'betonera');
+        mandateLines.push(
+            '- CARROCERÍA OBLIGATORIA (TRACTOCAMIÓN): Debe ser unidad tractocamión de quinta rueda, rechazando camiones tolva rígidos o mixers.'
+        );
+    } else if (requiredBodyType === 'WATER_ALJIBE') {
+        focusEnParts.push('water truck tank');
+        focusEsParts.push('camion aljibe');
+        badgeParts.push('Aljibe');
+        negParts.push('-tractor', '-mixer');
+        contradictoryPatterns.push('tractor', 'mixer', 'betonera');
+        mandateLines.push(
+            '- CARROCERÍA OBLIGATORIA (ALJIBE / CISTERNA): Debe portar estanque cisterna regador/aljibe industrial o minero.'
+        );
+    } else if (requiredBodyType === 'MIXER') {
+        focusEnParts.push('concrete mixer truck');
+        focusEsParts.push('camion mixer');
+        badgeParts.push('Mixer');
+        negParts.push('-tractor', '-dump');
+        mandateLines.push(
+            '- CARROCERÍA OBLIGATORIA (MIXER): Debe portar tambor hormigonero / mixer.'
+        );
+    } else if (requiredBodyType === 'CRANE_BOOM') {
+        focusEnParts.push('boom crane truck');
+        focusEsParts.push('camion pluma');
+        badgeParts.push('Pluma');
+        mandateLines.push(
+            '- CARROCERÍA OBLIGATORIA (PLUMA): Debe portar grúa articulada / pluma hidráulica.'
+        );
+    }
+
+    if (!requiredAxleCode && requiredUndercarriage === 'TRACKED') {
+        mandateLines.push(
+            '- RODADO OBLIGATORIO SOBRE ORUGAS: El equipo DEBE desplazarse sobre orugas/cadenas. Rechazar versiones sobre neumáticos.'
+        );
+    } else if (!requiredAxleCode && requiredUndercarriage === 'WHEELED') {
+        mandateLines.push(
+            '- RODADO OBLIGATORIO SOBRE NEUMÁTICOS: El equipo DEBE desplazarse sobre neumáticos/ruedas. Rechazar versiones sobre orugas.'
+        );
+    }
+
+    if (mandateLines.length === 0) {
+        mandateLines.push(
+            `- CORRESPONDENCIA DE VARIANTE: Debe corresponder visualmente a la configuración nominal de fábrica del modelo "${make} ${cleanModelDesignator}" (${archetypeProfile.archetypeLabelEs}).`
+        );
+    }
+
+    const contradictoryTitleRegex =
+        contradictoryPatterns.length > 0
+            ? new RegExp(`\\b(?:${contradictoryPatterns.join('|')})\\b`, 'i')
+            : null;
+
+    return {
+        cleanModelDesignator,
+        requiredAxleCode,
+        requiredBodyType,
+        requiredUndercarriage,
+        variantSearchFocusEn:
+            focusEnParts.length > 0 ? focusEnParts.join(' ') : archetypeProfile.primarySearchFocusEn,
+        variantSearchFocusEs: focusEsParts.join(' '),
+        negativeVariantTokens: negParts.join(' '),
+        contradictoryTitleRegex,
+        vlmVariantMandateEs: mandateLines.join('\n'),
+        summaryBadgePrefix: badgeParts.join(' · '),
+    };
 }
 
 function upgradeOemCdnImageUrl(rawUrl: string): string {
@@ -378,13 +810,15 @@ function extractHeroImagesFromOemHtml(
     html: string,
     baseUrl: URL,
     make: string,
-    model: string
+    model: string,
+    brandPolicy?: BrandDomainAndRivalPolicy,
+    variantReqs?: VariantPhotoRequirements
 ): { images: ExtractedHtmlImageCandidate[]; pdfUrls: string[] } {
     const images: ExtractedHtmlImageCandidate[] = [];
     const pdfUrls = new Set<string>();
     const seenUrls = new Set<string>();
     const baseSeries = deriveBaseModelSeries(model);
-    const modelTokens = `${make} ${model} ${baseSeries}`
+    const modelTokens = `${make} ${variantReqs?.cleanModelDesignator || model} ${baseSeries}`
         .toLowerCase()
         .split(/[^a-z0-9]+/)
         .filter((t) => t.length >= 2);
@@ -402,18 +836,40 @@ function extractHeroImagesFromOemHtml(
             const resolved = upgradeOemCdnImageUrl(new URL(cleaned, baseUrl).toString());
             if (!resolved.startsWith('https://')) return;
             if (IGNORED_IMAGE_URL_PATTERNS.test(resolved)) return;
-            if (NON_MINING_OR_TOY_PATTERNS.test(`${resolved} ${hintText}`)) return;
+            const combinedMeta = `${resolved} ${hintText}`;
+            if (NON_MINING_OR_TOY_PATTERNS.test(combinedMeta)) return;
+            if (AUCTION_AND_AI_SYNTHETIC_SITE_PATTERNS.test(resolved)) return;
+            if (SYNTHETIC_AI_TEXT_PATTERNS.test(combinedMeta)) return;
+            if (
+                brandPolicy?.forbiddenOtherBrandRegex &&
+                brandPolicy.forbiddenOtherBrandRegex.test(combinedMeta) &&
+                !brandPolicy.allowedOemDomainsRegex.test(resolved)
+            ) {
+                return;
+            }
+            if (
+                variantReqs?.contradictoryTitleRegex &&
+                variantReqs.contradictoryTitleRegex.test(combinedMeta) &&
+                !(variantReqs.requiredAxleCode && combinedMeta.toLowerCase().includes(variantReqs.requiredAxleCode))
+            ) {
+                return;
+            }
             if (/\.svg(?:\?|$)/i.test(resolved)) return;
             if (seenUrls.has(resolved)) return;
             seenUrls.add(resolved);
 
             let priority = basePriority;
-            const combinedLower = `${resolved} ${hintText}`.toLowerCase();
+            const combinedLower = combinedMeta.toLowerCase();
             for (const tok of modelTokens) {
                 if (combinedLower.includes(tok)) priority += 2;
             }
-            if (/scene7\.com\/is\/image|\/content\/dam\/|hero|product|gallery|studio|overview|machine|ritchiespecs|lectura/i.test(combinedLower)) {
-                priority += 3;
+            if (variantReqs?.requiredAxleCode && combinedLower.includes(variantReqs.requiredAxleCode)) {
+                priority += 4;
+            }
+            if (brandPolicy?.allowedOemDomainsRegex.test(resolved)) {
+                priority += 4;
+            } else if (/scene7\.com\/is\/image|\/content\/dam\/|hero|product|gallery|studio|overview/i.test(combinedLower)) {
+                priority += 2;
             }
 
             images.push({
@@ -535,24 +991,39 @@ function buildDiversifiedCandidatePool(
 export class OfficialEquipmentPhotoService {
     /**
      * Canal Directo Resiliente Anti-WAF (< 1.5s):
-     * Adapta la consulta al arquetipo real del equipo (`profile.primarySearchFocusEn` + `profile.negativeQueryTokens`),
-     * extrayendo tanto la URL original (`murl`) como el espejo CDN libre de bloqueo WAF (`turl`).
+     * Preserva estrictamente los rasgos diferenciadores de variante (`8x4`, `Tolva`, etc.),
+     * bloquea portales de IA sintética y filtra marcas ajenas o hermanas (`VOLVO` cuando la marca es `MACK`).
      */
     private static async searchDirectWebImageCandidates(
         make: string,
-        model: string,
         baseSeries: string,
         profile: ArchetypePhotoSearchProfile,
+        brandPolicy: BrandDomainAndRivalPolicy,
+        variantReqs: VariantPhotoRequirements,
         refreshAttempt: number = 0
     ): Promise<ExtractedHtmlImageCandidate[]> {
         const results: ExtractedHtmlImageCandidate[] = [];
         const seenUrls = new Set<string>();
 
+        const cleanModel = variantReqs.cleanModelDesignator || baseSeries;
+        const focusEn = variantReqs.variantSearchFocusEn || profile.primarySearchFocusEn;
+        const combinedNegatives = [
+            profile.negativeQueryTokens,
+            variantReqs.negativeVariantTokens,
+            brandPolicy.negativeBrandQueryTokens,
+        ]
+            .filter(Boolean)
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
         const queries = [
-            `${make} ${model} ${profile.primarySearchFocusEn} ${profile.negativeQueryTokens}`.trim(),
-            `${make} ${baseSeries} ${profile.primarySearchFocusEn} white background ${profile.negativeQueryTokens}`.trim(),
-            `${make} ${baseSeries} ${profile.primarySearchFocusEn} studio catalog ${profile.negativeQueryTokens}`.trim(),
-            `${make} ${model} ${profile.primarySearchFocusEn} product photo ${profile.negativeQueryTokens}`.trim(),
+            `${make} ${cleanModel} ${focusEn} ${combinedNegatives}`.trim(),
+            `${make} ${cleanModel} ${focusEn} white background studio ${combinedNegatives}`.trim(),
+            variantReqs.variantSearchFocusEs
+                ? `${make} ${cleanModel} ${variantReqs.variantSearchFocusEs} mineria construccion ${combinedNegatives}`.trim()
+                : `${make} ${baseSeries} ${focusEn} studio catalog ${combinedNegatives}`.trim(),
+            `${make} ${baseSeries} ${focusEn} official brochure ${combinedNegatives}`.trim(),
         ];
         const baseOffset = 1 + ((refreshAttempt % 4) * 5);
 
@@ -563,7 +1034,7 @@ export class OfficialEquipmentPhotoService {
                     searchUrl.searchParams.set('q', q);
                     searchUrl.searchParams.set('first', String(baseOffset + qIdx * 2));
                     searchUrl.searchParams.set('count', '18');
-                    searchUrl.searchParams.set('qft', '+filterui:imagesize-large');
+                    searchUrl.searchParams.set('qft', '+filterui:imagesize-large+filterui:photo-photo');
 
                     const res = await safeFetchExternal(searchUrl.toString(), {
                         maxBytes: 2 * 1024 * 1024,
@@ -597,15 +1068,36 @@ export class OfficialEquipmentPhotoService {
 
                             if (NON_MINING_OR_TOY_PATTERNS.test(titleDesc)) continue;
                             if (IGNORED_IMAGE_URL_PATTERNS.test(murl)) continue;
-                            if (AUCTION_WATERMARK_SITE_PATTERNS.test(`${murl} ${purl}`)) continue;
+                            if (AUCTION_AND_AI_SYNTHETIC_SITE_PATTERNS.test(`${murl} ${purl}`)) continue;
+                            if (SYNTHETIC_AI_TEXT_PATTERNS.test(titleDesc)) continue;
+
+                            const isOfficialBrandDomain = brandPolicy.allowedOemDomainsRegex.test(`${murl} ${purl}`);
+                            if (
+                                !isOfficialBrandDomain &&
+                                brandPolicy.forbiddenOtherBrandRegex &&
+                                brandPolicy.forbiddenOtherBrandRegex.test(titleDesc)
+                            ) {
+                                continue;
+                            }
+
+                            if (
+                                variantReqs.contradictoryTitleRegex &&
+                                variantReqs.contradictoryTitleRegex.test(titleDesc) &&
+                                !(
+                                    variantReqs.requiredAxleCode &&
+                                    titleDesc.toLowerCase().includes(variantReqs.requiredAxleCode)
+                                )
+                            ) {
+                                continue;
+                            }
 
                             const primaryUrl = murl.startsWith('https://')
                                 ? upgradeOemCdnImageUrl(murl)
                                 : turl.startsWith('https://')
-                                ? turl
-                                : rawTurl.startsWith('https://')
-                                ? rawTurl
-                                : '';
+                                  ? turl
+                                  : rawTurl.startsWith('https://')
+                                    ? rawTurl
+                                    : '';
                             if (!primaryUrl || seenUrls.has(primaryUrl)) continue;
                             seenUrls.add(primaryUrl);
 
@@ -626,8 +1118,14 @@ export class OfficialEquipmentPhotoService {
                                 // Mantener etiqueta por defecto
                             }
 
-                            let priority = qIdx === 0 ? 14 : qIdx === 1 ? 13 : 12;
-                            if (/cat\.com|scene7\.com|ritchiespecs|lectura-specs|holtcat|finning|komatsu|sandvik|epiroc|liebherr|volvo|deere|hitachi|wirtgen|metso|normet/i.test(titleDesc)) {
+                            let priority = qIdx === 0 ? 14 : qIdx === 1 ? 14 : 12;
+                            if (isOfficialBrandDomain) {
+                                priority += 5;
+                            }
+                            if (
+                                variantReqs.requiredAxleCode &&
+                                titleDesc.toLowerCase().includes(variantReqs.requiredAxleCode)
+                            ) {
                                 priority += 3;
                             }
 
@@ -652,21 +1150,24 @@ export class OfficialEquipmentPhotoService {
     }
 
     /**
-     * Canal abierto complementario: consulta la API pública de Wikimedia Commons para obtener
-     * fotografías reales de alta resolución del modelo o su serie base, filtrando accesorios no mineros.
+     * Canal abierto complementario: consulta la API pública de Wikimedia Commons preservando
+     * configuración de ejes/carrocería y filtrando marcas ajenas o variantes contradictorias.
      */
     private static async searchWikimediaCommonsCandidates(
         make: string,
-        model: string
+        baseSeries: string,
+        brandPolicy: BrandDomainAndRivalPolicy,
+        variantReqs: VariantPhotoRequirements
     ): Promise<ExtractedHtmlImageCandidate[]> {
         const results: ExtractedHtmlImageCandidate[] = [];
         const seenUrls = new Set<string>();
-        const baseSeries = deriveBaseModelSeries(model);
+        const cleanModel = variantReqs.cleanModelDesignator || baseSeries;
+        const axleToken = variantReqs.requiredAxleCode ? ` ${variantReqs.requiredAxleCode}` : '';
         const queries = Array.from(
             new Set(
                 [
-                    `${make} ${model}`.trim(),
-                    `${make} ${baseSeries}`.trim(),
+                    `${make} ${cleanModel}${axleToken}`.trim(),
+                    `${make} ${baseSeries}${axleToken}`.trim(),
                 ].filter((q) => q.length >= 4)
             )
         );
@@ -698,6 +1199,15 @@ export class OfficialEquipmentPhotoService {
                 for (const page of Object.values(pages) as any[]) {
                     const title = String(page?.title || '');
                     if (NON_MINING_OR_TOY_PATTERNS.test(title)) continue;
+                    if (SYNTHETIC_AI_TEXT_PATTERNS.test(title)) continue;
+                    if (brandPolicy.forbiddenOtherBrandRegex?.test(title)) continue;
+                    if (
+                        variantReqs.contradictoryTitleRegex &&
+                        variantReqs.contradictoryTitleRegex.test(title) &&
+                        !(variantReqs.requiredAxleCode && title.toLowerCase().includes(variantReqs.requiredAxleCode))
+                    ) {
+                        continue;
+                    }
 
                     const info = page?.imageinfo?.[0];
                     const imgUrl = info?.thumburl || info?.url;
@@ -770,11 +1280,13 @@ export class OfficialEquipmentPhotoService {
     }
 
     /**
-     * Caza asistida por IA de fotografías oficiales OEM (v3.2 — Universal por Arquetipo):
-     * 1. Detecta el arquetipo mecánico del activo (`resolveArchetypePhotoProfile`).
-     * 2. Recolecta fuentes multi-pilar (`classified_sources_itemized` + `item_sources`) y PDFs locales.
-     * 3. Ejecuta búsqueda directa de imágenes web anti-WAF (< 1.5s) + Wikimedia Commons + inspección de folletos PDF.
-     * 4. Audita en paralelo con VLM (`gemini-3-flash-preview`, `is_mining_appropriate_configuration`) y encuadra al 88%.
+     * Caza asistida por IA de fotografías oficiales OEM (v4.0 — Forensic VLM Variant & Brand Shield):
+     * 1. Detecta el arquetipo mecánico, la política estricta de marca (`resolveBrandDomainAndRivalPolicy`)
+     *    y los requisitos diferenciadores de variante (`extractVariantPhotoRequirements`: `8x4` vs `6x4`, `Tolva`, etc.).
+     * 2. Recolecta fuentes multi-pilar y PDFs locales bloqueando semillas contaminadas por marcas hermanas/rivales.
+     * 3. Ejecuta búsqueda directa de imágenes web anti-WAF + Wikimedia Commons + inspección de folletos PDF.
+     * 4. Audita con VLM Forense (`preferredTier: 'PRIMARY'`, `thinkingLevel: 'medium'`), bloquea renders IA de múltiples ruedas,
+     *    fondos de otras marcas (ej. `VOLVO` tras `MACK`) y variantes equivocadas, encuadrando al 88% sobre 4:3 WebP.
      */
     public static async huntOfficialEquipmentPhotos(params: {
         globalAssetId: string;
@@ -788,7 +1300,9 @@ export class OfficialEquipmentPhotoService {
             actorId = 'system',
             actorEmail = 'curador@minreport.com',
             refreshAttempt = 0,
+            excludeSha256s = [],
         } = params;
+        const excludedShaSet = new Set(excludeSha256s.map((s) => String(s || '').trim()).filter(Boolean));
 
         const assetRef = db.collection('global_asset_catalog').doc(globalAssetId);
         const assetSnap = await assetRef.get();
@@ -818,9 +1332,11 @@ export class OfficialEquipmentPhotoService {
         }
 
         const archetypeProfile = resolveArchetypePhotoProfile(tipoEquipo, categoriaEquipo, make, model);
+        const brandPolicy = resolveBrandDomainAndRivalPolicy(make);
+        const variantReqs = extractVariantPhotoRequirements(data, make, model, archetypeProfile);
 
         console.info(
-            `[OfficialPhotoService] [Paso 1/4] Iniciando caza de foto oficial v3.2 para "${make} ${model}" [arquetipo: ${archetypeProfile.archetypeId} | serie base: ${baseSeries}] (${globalAssetId})...`
+            `[OfficialPhotoService] [Paso 1/4] Iniciando caza forense v4.0 para "${make} ${model}" [arquetipo: ${archetypeProfile.archetypeId} | variante: ${variantReqs.summaryBadgePrefix || 'estándar'} | serie: ${baseSeries}] (${globalAssetId})...`
         );
 
         const candidateBuffers: RawCandidateBuffer[] = [];
@@ -876,23 +1392,31 @@ export class OfficialEquipmentPhotoService {
             const trimmed = rawUrl.trim();
             if (!trimmed.startsWith('https://') || trimmed.startsWith('https://#')) return;
             if (seenSeedUrls.has(trimmed)) return;
+            if (AUCTION_AND_AI_SYNTHETIC_SITE_PATTERNS.test(trimmed)) return;
+
+            const combined = `${trimmed} ${hintDesc}`;
+            if (SYNTHETIC_AI_TEXT_PATTERNS.test(combined)) return;
+            const isAllowedBrandDomain = brandPolicy.allowedOemDomainsRegex.test(trimmed);
+            if (
+                !isAllowedBrandDomain &&
+                brandPolicy.forbiddenOtherBrandRegex &&
+                brandPolicy.forbiddenOtherBrandRegex.test(combined)
+            ) {
+                return;
+            }
+
             seenSeedUrls.add(trimmed);
 
-            const lower = `${trimmed} ${hintDesc}`.toLowerCase();
             if (/\.pdf(?:[?#]|$)|scene7\.com\/is\/content\//i.test(trimmed)) {
                 discoveredPdfUrls.add(trimmed);
                 prioritizedSeedUrls.push(trimmed);
             } else if (/scene7\.com\/is\/image\/|\.(?:jpg|jpeg|png|webp)(?:[?#]|$)/i.test(trimmed)) {
                 htmlImageCandidates.push({
                     url: upgradeOemCdnImageUrl(trimmed),
-                    priority: 14,
+                    priority: isAllowedBrandDomain ? 15 : 12,
                     sourceHost: 'vault-verified-img',
                 });
-            } else if (
-                /cat\.com|holtcat\.com|finning\.com|komatsu|sandvik|epiroc|liebherr|volvo|deere|ritchiespecs|lectura-specs|constructionequipmentguide|scene7\.com/i.test(
-                    lower
-                )
-            ) {
+            } else if (isAllowedBrandDomain) {
                 prioritizedSeedUrls.push(trimmed);
             } else {
                 secondarySeedUrls.push(trimmed);
@@ -947,8 +1471,8 @@ export class OfficialEquipmentPhotoService {
                 const itemSourceList = Array.isArray(it?.item_sources)
                     ? it.item_sources
                     : Array.isArray(it?.sources)
-                    ? it.sources
-                    : [];
+                      ? it.sources
+                      : [];
                 for (const src of itemSourceList) {
                     registerSeedUrl(
                         src?.url || src?.url_limpia || src?.url_original,
@@ -960,18 +1484,25 @@ export class OfficialEquipmentPhotoService {
 
         // ── 3. Búsqueda Directa de Imágenes Anti-WAF (< 2s) + Wikimedia Commons en Paralelo ──
         console.info(
-            `[OfficialPhotoService] [Paso 2/4] Consultando canales directos para "${make} ${model}" (${archetypeProfile.archetypeLabelEs}, ${prioritizedSeedUrls.length} semillas OEM en bóveda, intento #${refreshAttempt + 1})...`
+            `[OfficialPhotoService] [Paso 2/4] Consultando canales directos para "${make} ${variantReqs.cleanModelDesignator}" (${variantReqs.summaryBadgePrefix || archetypeProfile.archetypeLabelEs}, ${prioritizedSeedUrls.length} semillas OEM en bóveda, intento #${refreshAttempt + 1})...`
         );
 
         const [directWebCandidates, wikimediaCandidates] = await Promise.all([
             withHardTimeout(
-                this.searchDirectWebImageCandidates(make, model, baseSeries, archetypeProfile, refreshAttempt),
+                this.searchDirectWebImageCandidates(
+                    make,
+                    baseSeries,
+                    archetypeProfile,
+                    brandPolicy,
+                    variantReqs,
+                    refreshAttempt
+                ),
                 5500,
                 [],
                 'searchDirectWebImageCandidates'
             ),
             withHardTimeout(
-                this.searchWikimediaCommonsCandidates(make, model),
+                this.searchWikimediaCommonsCandidates(make, baseSeries, brandPolicy, variantReqs),
                 5000,
                 [],
                 'searchWikimediaCommonsCandidates'
@@ -987,7 +1518,7 @@ export class OfficialEquipmentPhotoService {
 
         // Solo si no se obtuvieron suficientes candidatos directos ni semillas de bóveda, lanzar 1 consulta Grounding acotada a 6.5s
         if (htmlImageCandidates.length < 4 && prioritizedSeedUrls.length < 2) {
-            const quickSearchPrompt = `Localiza URLs de imágenes oficiales de catálogo (.jpg, .png, .webp, scene7) y fichas técnicas para "${make} ${baseSeries}" / "${make} ${model}" (${equipmentType}) en configuración estándar minera.`;
+            const quickSearchPrompt = `Localiza URLs directas oficiales del fabricante "${make}" (folletos PDF o páginas oficiales de producto) exclusivamente para el modelo "${make} ${variantReqs.cleanModelDesignator}" ${variantReqs.summaryBadgePrefix ? `en variante exacta ${variantReqs.summaryBadgePrefix}` : ''} (${equipmentType}). Excluye concesionarios multimarca, subastas y portales de imágenes IA.`;
             const aiSearchRes = await withHardTimeout(
                 ResilientAIClient.generate({
                     prompt: quickSearchPrompt,
@@ -1060,15 +1591,15 @@ export class OfficialEquipmentPhotoService {
                 const imgBuf = Buffer.from(ab);
 
                 const rawSha = createHash('sha256').update(imgBuf).digest('hex');
-                if (seenRawBufferShas.has(rawSha)) {
+                if (seenRawBufferShas.has(rawSha) || excludedShaSet.has(rawSha)) {
                     return;
                 }
 
                 const meta = await sharp(imgBuf).metadata().catch(() => null);
                 if (!meta?.width || !meta?.height) continue;
-                if (meta.width < 240 || meta.height < 160) continue;
+                if (meta.width < 280 || meta.height < 180) continue;
                 const aspect = meta.width / meta.height;
-                if (aspect > 3.8 || aspect < 0.28) continue;
+                if (aspect > 3.6 || aspect < 0.32) continue;
 
                 seenRawBufferShas.add(rawSha);
                 const phashHex = await MediaDigestorServer.computePerceptualHash64(imgBuf).catch(() => '');
@@ -1127,9 +1658,9 @@ export class OfficialEquipmentPhotoService {
 
                 if (cType.startsWith('image/') && !cType.includes('svg')) {
                     const rawSha = createHash('sha256').update(buf).digest('hex');
-                    if (seenRawBufferShas.has(rawSha)) return;
+                    if (seenRawBufferShas.has(rawSha) || excludedShaSet.has(rawSha)) return;
                     const meta = await sharp(buf).metadata().catch(() => null);
-                    if (meta?.width && meta?.height && meta.width >= 240 && meta.height >= 160) {
+                    if (meta?.width && meta?.height && meta.width >= 280 && meta.height >= 180) {
                         seenRawBufferShas.add(rawSha);
                         const phashHex = await MediaDigestorServer.computePerceptualHash64(buf).catch(() => '');
                         candidateBuffers.push({
@@ -1168,7 +1699,14 @@ export class OfficialEquipmentPhotoService {
 
                 if (cType.includes('html') && buf.byteLength <= 3_500_000) {
                     const html = buf.toString('utf8');
-                    const extracted = extractHeroImagesFromOemHtml(html, finalUrl, make, model);
+                    const extracted = extractHeroImagesFromOemHtml(
+                        html,
+                        finalUrl,
+                        make,
+                        model,
+                        brandPolicy,
+                        variantReqs
+                    );
                     for (const img of extracted.images.slice(0, 4)) {
                         await downloadCandidateImage(img).catch(() => {});
                     }
@@ -1186,15 +1724,15 @@ export class OfficialEquipmentPhotoService {
             await Promise.all(seedWorkers);
         }
 
-        // Ordenar por prioridad y construir pool diversificado de hasta 12 candidatas por fuente
+        // Ordenar por prioridad y construir pool diversificado de hasta 10 candidatas por fuente
         candidateBuffers.sort((a, b) => (b.priority_score || 8) - (a.priority_score || 8));
-        const poolToInspect = buildDiversifiedCandidatePool(candidateBuffers, 12);
+        const poolToInspect = buildDiversifiedCandidatePool(candidateBuffers, 10);
 
         console.info(
-            `[OfficialPhotoService] [Paso 4/4] Candidatas únicas descargadas: ${candidateBuffers.length} -> Auditando ${poolToInspect.length} en paralelo con VLM Minero (${archetypeProfile.archetypeId})...`
+            `[OfficialPhotoService] [Paso 4/4] Candidatas únicas descargadas: ${candidateBuffers.length} -> Auditando ${poolToInspect.length} en paralelo con VLM Forense v4.0 (${archetypeProfile.archetypeId})...`
         );
 
-        // ── 5. Auditoría Multimodal VLM en Paralelo (Concurrencia = 3, Timeout = 22s) con Filtro Minero por Arquetipo y Auto-Encuadre 88% ──
+        // ── 5. Auditoría Multimodal VLM Forense v4.0 en Paralelo (Concurrencia = 3, Timeout = 28s) ──
         const approvedCandidates: OfficialPhotoCandidate[] = [];
         const seenShas = new Set<string>();
 
@@ -1209,18 +1747,24 @@ export class OfficialEquipmentPhotoService {
                         model,
                         equipmentType,
                         archetypeProfile,
+                        brandPolicy,
+                        variantReqs,
                         isFullDocumentPage: Boolean(candidate.is_full_document_page),
                     }),
-                    22000,
+                    28000,
                     {
+                        is_authentic_real_photograph: false,
                         is_exact_make_and_model: false,
+                        matches_exact_variant_configuration: false,
                         is_mining_appropriate_configuration: false,
-                        is_official_oem_quality: false,
-                        is_free_of_third_party_branding: false,
+                        is_valid_industrial_or_studio_context: false,
+                        is_free_of_other_manufacturer_and_dealer_branding: false,
                         is_free_of_pii_and_plates: false,
                         is_clean_unweathered_machine: false,
                         authenticity_score: 0,
                         subject_box_2d: null,
+                        observed_axle_or_track_layout: '',
+                        observed_body_or_attachment: '',
                         detected_model_description: 'Timeout VLM',
                         rejection_reasons: ['Tiempo de auditoría VLM excedido'],
                     },
@@ -1228,17 +1772,20 @@ export class OfficialEquipmentPhotoService {
                 );
 
                 const isAcceptable =
+                    verdict.is_authentic_real_photograph &&
                     verdict.is_exact_make_and_model &&
+                    verdict.matches_exact_variant_configuration &&
                     verdict.is_mining_appropriate_configuration &&
-                    verdict.is_free_of_third_party_branding &&
+                    verdict.is_valid_industrial_or_studio_context &&
+                    verdict.is_free_of_other_manufacturer_and_dealer_branding &&
                     verdict.is_free_of_pii_and_plates &&
-                    (verdict.is_official_oem_quality || verdict.is_clean_unweathered_machine) &&
-                    verdict.authenticity_score >= 0.6;
+                    verdict.is_clean_unweathered_machine &&
+                    verdict.authenticity_score >= 0.78;
 
                 console.info(
-                    `[OfficialPhotoService] Veredicto VLM [${candidate.source_label}]: approved=${isAcceptable}, miningConfig=${verdict.is_mining_appropriate_configuration}, score=${verdict.authenticity_score.toFixed(
+                    `[OfficialPhotoService] Veredicto VLM v4 [${candidate.source_label}]: approved=${isAcceptable}, real=${verdict.is_authentic_real_photograph}, exactVar=${verdict.matches_exact_variant_configuration}, noOtherBrand=${verdict.is_free_of_other_manufacturer_and_dealer_branding}, context=${verdict.is_valid_industrial_or_studio_context}, score=${verdict.authenticity_score.toFixed(
                         2
-                    )}, desc="${verdict.detected_model_description}"${
+                    )}, obs="${verdict.observed_axle_or_track_layout} | ${verdict.observed_body_or_attachment}", desc="${verdict.detected_model_description}"${
                         !isAcceptable && verdict.rejection_reasons.length > 0
                             ? `, motivos=${verdict.rejection_reasons.join('; ')}`
                             : ''
@@ -1256,7 +1803,7 @@ export class OfficialEquipmentPhotoService {
                     return null;
                 });
 
-                if (!framed || seenShas.has(framed.sha256)) continue;
+                if (!framed || seenShas.has(framed.sha256) || excludedShaSet.has(framed.sha256)) continue;
 
                 const framedPhash = await MediaDigestorServer.computePerceptualHash64(framed.buffer).catch(
                     () => candidate.phash_hex || ''
@@ -1271,6 +1818,14 @@ export class OfficialEquipmentPhotoService {
                 if (isDuplicateApproved) continue;
 
                 seenShas.add(framed.sha256);
+
+                const verifiedVariantSummary =
+                    [verdict.observed_axle_or_track_layout, verdict.observed_body_or_attachment]
+                        .map((s) => String(s || '').trim())
+                        .filter((s) => s.length > 0 && s.length <= 42)
+                        .join(' · ') ||
+                    variantReqs.summaryBadgePrefix ||
+                    archetypeProfile.archetypeLabelEs;
 
                 const descriptor = await CasStorageService.persistDigestedBinary(
                     {
@@ -1293,7 +1848,7 @@ export class OfficialEquipmentPhotoService {
                     {
                         scope: 'GLOBAL_OEM',
                         actorUid: actorId,
-                        originalFilename: `${globalAssetId}__${candidate.original_filename || 'candidate.webp'}`,
+                        originalFilename: `${globalAssetId}__v4__${candidate.original_filename || 'candidate.webp'}`,
                         clientOriginalBytes: candidate.buffer.length,
                     }
                 );
@@ -1321,6 +1876,8 @@ export class OfficialEquipmentPhotoService {
                     width: framed.width,
                     height: framed.height,
                     framing_mode: framed.framing_mode,
+                    vlm_audit_version: CURRENT_VLM_AUDIT_VERSION,
+                    verified_variant_summary: verifiedVariantSummary,
                 });
             }
         });
@@ -1329,39 +1886,22 @@ export class OfficialEquipmentPhotoService {
 
         approvedCandidates.sort((a, b) => b.authenticity_score - a.authenticity_score);
 
-        // ── 6. Fusión con el Pool Persistente de Alternativas (`official_photo_candidates`) sin bloquear candidatos previos ──
+        // ── 6. Fusión Exclusiva con Candidatas Certificadas VLM v4.0 (Purgando candidatas legacy pre-v4 contaminadas) ──
         const existingPoolRaw = Array.isArray(data.official_photo_candidates)
             ? (data.official_photo_candidates as OfficialPhotoCandidate[])
             : [];
-
-        // Si ya existe una foto publicada (`foto_url`), garantizar que también forme parte del pool de alternativas
-        const currentFotoUrl = String(data.foto_url || '').trim();
-        const currentTelemetry = data.foto_media_telemetry || {};
-        const currentFotoSha = String(currentTelemetry.sha256 || '').trim();
-        if (currentFotoUrl && currentFotoSha && !existingPoolRaw.some((c) => c?.sha256 === currentFotoSha)) {
-            existingPoolRaw.unshift({
-                candidate_id: `cand_pub_${currentFotoSha.slice(0, 8)}`,
-                preview_url: currentFotoUrl,
-                storage_path: `cas_blobs/global_oem/${currentFotoSha}.webp`,
-                source_type: 'OEM_DOMAIN',
-                source_label: 'Foto Oficial Publicada',
-                authenticity_score: 0.95,
-                subject_box_2d: null,
-                original_bytes: Number(currentTelemetry.original_bytes || 0),
-                optimized_bytes: Number(currentTelemetry.optimized_bytes || 0),
-                savings_pct: Number(currentTelemetry.savings_pct || 0),
-                sha256: currentFotoSha,
-                width: 1200,
-                height: 900,
-                framing_mode: 'STUDIO_88',
-            });
-        }
+        const existingPoolV4 = existingPoolRaw.filter(
+            (cand) =>
+                cand &&
+                cand.vlm_audit_version === CURRENT_VLM_AUDIT_VERSION &&
+                !excludedShaSet.has(cand.sha256)
+        );
 
         const recoveredFromCas = await this.recoverVerifiedCasAlternatives(globalAssetId).catch(() => []);
 
         const mergedAlternatives: OfficialPhotoCandidate[] = [];
         const pushUniqueAlternative = (cand: OfficialPhotoCandidate) => {
-            if (!cand || !cand.preview_url || !cand.sha256) return;
+            if (!cand || !cand.preview_url || !cand.sha256 || excludedShaSet.has(cand.sha256)) return;
             const isDup = mergedAlternatives.some(
                 (existing) =>
                     existing.sha256 === cand.sha256 ||
@@ -1374,12 +1914,11 @@ export class OfficialEquipmentPhotoService {
             }
         };
 
-        // Primero las nuevas alternativas descubiertas en este barrido, luego las acumuladas en búsquedas previas y CAS
         for (const cand of approvedCandidates) pushUniqueAlternative(cand);
-        for (const cand of existingPoolRaw) pushUniqueAlternative(cand);
+        for (const cand of existingPoolV4) pushUniqueAlternative(cand);
         for (const cand of recoveredFromCas) pushUniqueAlternative(cand);
 
-        if (mergedAlternatives.length > 0) {
+        if (mergedAlternatives.length > 0 || existingPoolRaw.length !== existingPoolV4.length) {
             await assetRef
                 .set(
                     {
@@ -1394,7 +1933,7 @@ export class OfficialEquipmentPhotoService {
         }
 
         console.info(
-            `[OfficialPhotoService] Caza finalizada para "${make} ${model}" (${archetypeProfile.archetypeId}): ${approvedCandidates.length} nueva(s) aprobada(s) | ${mergedAlternatives.length} alternativa(s) totales disponibles.`
+            `[OfficialPhotoService] Caza v4.0 finalizada para "${make} ${model}" (${archetypeProfile.archetypeId}): ${approvedCandidates.length} nueva(s) aprobada(s) | ${mergedAlternatives.length} alternativa(s) v4 certificada(s) | ${existingPoolRaw.length - existingPoolV4.length} legacy purgada(s).`
         );
 
         void AuditLedger.record({
@@ -1408,6 +1947,8 @@ export class OfficialEquipmentPhotoService {
                 make,
                 model,
                 archetypeId: archetypeProfile.archetypeId,
+                variantBadge: variantReqs.summaryBadgePrefix || null,
+                vlmAuditVersion: CURRENT_VLM_AUDIT_VERSION,
                 totalInspected: poolToInspect.length,
                 approvedCount: approvedCandidates.length,
                 totalAlternativesPool: mergedAlternatives.length,
@@ -1418,14 +1959,14 @@ export class OfficialEquipmentPhotoService {
     }
 
     /**
-     * Recupera alternativas oficiales previamente verificadas por VLM y almacenadas en `media_registry` / CAS
-     * para garantizar que ningún candidato aprobado se pierda entre sesiones.
+     * Recupera exclusivamente alternativas oficiales auditadas bajo VLM Forense v4.0 (`__v4__`)
+     * almacenadas en `media_registry` / CAS, descartando registros pre-v4 sin auditoría de variante/marca.
      */
     public static async recoverVerifiedCasAlternatives(
         globalAssetId: string
     ): Promise<OfficialPhotoCandidate[]> {
         const recovered: OfficialPhotoCandidate[] = [];
-        const prefix = `${globalAssetId}__`;
+        const v4Prefix = `${globalAssetId}__v4__`;
 
         const taggedSnap = await db
             .collection('media_registry')
@@ -1438,7 +1979,7 @@ export class OfficialEquipmentPhotoService {
             for (const docSnap of taggedSnap.docs) {
                 const reg = docSnap.data() || {};
                 const origName = String(reg.originalFilename || '');
-                if (!origName.startsWith(prefix)) continue;
+                if (!origName.startsWith(v4Prefix)) continue;
                 const sha = String(reg.sha256 || docSnap.id);
                 if (recovered.some((r) => r.sha256 === sha)) continue;
                 const origBytes = Number(reg.originalBytes || reg.optimizedBytes || 85000);
@@ -1452,7 +1993,7 @@ export class OfficialEquipmentPhotoService {
                     preview_url: String(reg.downloadUrl || `/api/media/blob/global_oem/${sha}.webp`),
                     storage_path: String(reg.storagePath || `cas_blobs/global_oem/${sha}.webp`),
                     source_type: 'OEM_DOMAIN',
-                    source_label: origName.slice(prefix.length) || 'Catálogo CAS OEM',
+                    source_label: origName.slice(v4Prefix.length) || 'Catálogo CAS OEM',
                     authenticity_score: 0.9,
                     subject_box_2d: null,
                     original_bytes: origBytes,
@@ -1463,6 +2004,7 @@ export class OfficialEquipmentPhotoService {
                     width: Number(reg.width || 1600),
                     height: Number(reg.height || 1200),
                     framing_mode: 'STUDIO_88',
+                    vlm_audit_version: CURRENT_VLM_AUDIT_VERSION,
                 });
             }
         }
@@ -1471,8 +2013,8 @@ export class OfficialEquipmentPhotoService {
     }
 
     /**
-     * Auditoría y Verificación de Carga Manual de Contingencia:
-     * Si no se hallaron candidatas, el usuario puede subir una foto pero debe pasar el mismo juez VLM.
+     * Auditoría y Verificación de Carga Manual de Contingencia (VLM Forense v4.0):
+     * Exige los mismos 8 filtros de variante exacta, autenticidad anti-IA y ausencia de marcas ajenas.
      */
     public static async verifyManualOfficialEquipmentPhoto(params: {
         globalAssetId: string;
@@ -1502,6 +2044,8 @@ export class OfficialEquipmentPhotoService {
         const categoriaEquipo = String(data.categoria_equipo || '').trim();
         const equipmentType = tipoEquipo || categoriaEquipo || 'Maquinaria Minera';
         const archetypeProfile = resolveArchetypePhotoProfile(tipoEquipo, categoriaEquipo, make, model);
+        const brandPolicy = resolveBrandDomainAndRivalPolicy(make);
+        const variantReqs = extractVariantPhotoRequirements(data, make, model, archetypeProfile);
 
         const verdict = await this.auditImageWithVlm({
             imageBuffer: fileBuffer,
@@ -1509,35 +2053,67 @@ export class OfficialEquipmentPhotoService {
             model,
             equipmentType,
             archetypeProfile,
+            brandPolicy,
+            variantReqs,
         });
 
         const rejectionReasons: string[] = [...verdict.rejection_reasons];
 
+        if (!verdict.is_authentic_real_photograph) {
+            rejectionReasons.push(
+                'La imagen presenta indicios de generación sintética por IA, distorsión anatómica de ruedas/ejes o emblemas artificiales.'
+            );
+        }
         if (!verdict.is_exact_make_and_model) {
             rejectionReasons.push(`El equipo en la foto no corresponde a la marca/modelo declarado (${make} ${model}).`);
         }
-        if (!verdict.is_mining_appropriate_configuration) {
+        if (!verdict.matches_exact_variant_configuration) {
             rejectionReasons.push(
-                `El equipo muestra un accesorio o configuración ajena al contexto minero para ${archetypeProfile.archetypeLabelEs}.`
+                `El equipo no coincide con la configuración mecánica exacta registrada (${variantReqs.summaryBadgePrefix || model}).`
             );
         }
-        if (!verdict.is_free_of_third_party_branding) {
-            rejectionReasons.push('Se detectaron calcomanías, logos de empresas contratistas o marcas de agua de terceros.');
+        if (!verdict.is_mining_appropriate_configuration) {
+            rejectionReasons.push(
+                `El equipo muestra un accesorio o configuración ajena al contexto minero/industrial para ${archetypeProfile.archetypeLabelEs}.`
+            );
+        }
+        if (!verdict.is_valid_industrial_or_studio_context) {
+            rejectionReasons.push(
+                'El entorno no corresponde a un estudio neutro OEM ni a un contexto limpio de minería, construcción o industria.'
+            );
+        }
+        if (!verdict.is_free_of_other_manufacturer_and_dealer_branding) {
+            rejectionReasons.push(
+                `Se detectaron marcas de otros fabricantes o concesionarios en el fondo/equipo, calcomanías de contratistas o marcas de agua.`
+            );
         }
         if (!verdict.is_free_of_pii_and_plates) {
-            rejectionReasons.push('Se detectaron personas, rostros o patentes vehiculares en el encuadre (Infracción Ley N° 21.719).');
+            rejectionReasons.push(
+                'Se detectaron personas, rostros o patentes vehiculares en el encuadre (Infracción Ley N° 21.719).'
+            );
         }
-        if (!verdict.is_clean_unweathered_machine && !verdict.is_official_oem_quality) {
-            rejectionReasons.push('La calidad visual o estado del equipo no corresponde a un estándar oficial de catálogo.');
+        if (!verdict.is_clean_unweathered_machine) {
+            rejectionReasons.push(
+                'El estado visual del equipo no cumple estándar oficial de catálogo (suciedad severa, óxido o daño estructural).'
+            );
         }
 
-        const approved = rejectionReasons.length === 0 && verdict.authenticity_score >= 0.6;
+        const approved =
+            verdict.is_authentic_real_photograph &&
+            verdict.is_exact_make_and_model &&
+            verdict.matches_exact_variant_configuration &&
+            verdict.is_mining_appropriate_configuration &&
+            verdict.is_valid_industrial_or_studio_context &&
+            verdict.is_free_of_other_manufacturer_and_dealer_branding &&
+            verdict.is_free_of_pii_and_plates &&
+            verdict.is_clean_unweathered_machine &&
+            verdict.authenticity_score >= 0.78;
 
         if (!approved) {
             return {
                 approved: false,
                 authenticity_score: verdict.authenticity_score,
-                rejection_reasons: rejectionReasons,
+                rejection_reasons: Array.from(new Set(rejectionReasons)),
             };
         }
 
@@ -1547,6 +2123,13 @@ export class OfficialEquipmentPhotoService {
         });
 
         const framedPhash = await MediaDigestorServer.computePerceptualHash64(framed.buffer).catch(() => '');
+        const verifiedVariantSummary =
+            [verdict.observed_axle_or_track_layout, verdict.observed_body_or_attachment]
+                .map((s) => String(s || '').trim())
+                .filter((s) => s.length > 0 && s.length <= 42)
+                .join(' · ') ||
+            variantReqs.summaryBadgePrefix ||
+            archetypeProfile.archetypeLabelEs;
 
         const descriptor = await CasStorageService.persistDigestedBinary(
             {
@@ -1566,7 +2149,7 @@ export class OfficialEquipmentPhotoService {
             {
                 scope: 'GLOBAL_OEM',
                 actorUid: actorId,
-                originalFilename: fileName,
+                originalFilename: `${globalAssetId}__v4__${fileName}`,
                 clientOriginalBytes: fileBuffer.length,
             }
         );
@@ -1576,7 +2159,7 @@ export class OfficialEquipmentPhotoService {
             preview_url: descriptor.downloadUrl,
             storage_path: descriptor.storagePath,
             source_type: 'OEM_DOMAIN',
-            source_label: 'Carga Manual Verificada VLM',
+            source_label: 'Carga Manual Verificada VLM v4',
             authenticity_score: verdict.authenticity_score,
             subject_box_2d: verdict.subject_box_2d,
             original_bytes: fileBuffer.length,
@@ -1590,15 +2173,17 @@ export class OfficialEquipmentPhotoService {
             width: framed.width,
             height: framed.height,
             framing_mode: framed.framing_mode,
+            vlm_audit_version: CURRENT_VLM_AUDIT_VERSION,
+            verified_variant_summary: verifiedVariantSummary,
         };
 
-        const existingPoolRaw = Array.isArray(data.official_photo_candidates)
-            ? (data.official_photo_candidates as OfficialPhotoCandidate[])
-            : [];
-        const updatedPool = [
-            candidate,
-            ...existingPoolRaw.filter((c) => c?.sha256 !== candidate.sha256),
-        ].slice(0, 12);
+        const existingPoolV4 = (
+            Array.isArray(data.official_photo_candidates)
+                ? (data.official_photo_candidates as OfficialPhotoCandidate[])
+                : []
+        ).filter((c) => c?.vlm_audit_version === CURRENT_VLM_AUDIT_VERSION && c?.sha256 !== candidate.sha256);
+
+        const updatedPool = [candidate, ...existingPoolV4].slice(0, 12);
         await assetRef
             .set({ official_photo_candidates: updatedPool, updatedAt: Date.now() }, { merge: true })
             .catch(() => {});
@@ -1612,7 +2197,9 @@ export class OfficialEquipmentPhotoService {
     }
 
     /**
-     * Auditor VLM centralizado adaptable a los 14 arquetipos mecánicos de OPERMAQ (`gemini-3-flash-preview`).
+     * Juez Forense VLM v4.0 (`preferredTier: 'PRIMARY'`, `thinkingLevel: 'medium'`):
+     * Evalúa autenticidad fotográfica anti-IA, variante exacta de ejes/carrocería/rodado,
+     * ausencia total de marcas ajenas o hermanas en el fondo y contexto minero/construcción/industrial o estudio OEM.
      */
     private static async auditImageWithVlm(params: {
         imageBuffer: Buffer;
@@ -1620,6 +2207,8 @@ export class OfficialEquipmentPhotoService {
         model: string;
         equipmentType: string;
         archetypeProfile: ArchetypePhotoSearchProfile;
+        brandPolicy: BrandDomainAndRivalPolicy;
+        variantReqs: VariantPhotoRequirements;
         isFullDocumentPage?: boolean;
     }): Promise<VlmPhotoVerdict> {
         const {
@@ -1628,59 +2217,91 @@ export class OfficialEquipmentPhotoService {
             model,
             equipmentType,
             archetypeProfile,
+            brandPolicy,
+            variantReqs,
             isFullDocumentPage = false,
         } = params;
         const baseSeries = deriveBaseModelSeries(model);
 
         const previewBuffer = await sharp(imageBuffer)
             .rotate()
-            .resize(1024, 1024, { fit: 'inside', withoutEnlargement: true })
-            .jpeg({ quality: 82 })
+            .resize(1280, 1280, { fit: 'inside', withoutEnlargement: true })
+            .jpeg({ quality: 86 })
             .toBuffer();
 
         const base64Data = previewBuffer.toString('base64');
 
-        const systemInstruction = `Eres el Auditor VLM Universal de Autenticidad Visual y Control de Catálogos Oficiales Mineros de MINREPORT (OPERMAQ).
-Tu rol es evaluar si la imagen contiene una FOTOGRAFÍA OFICIAL O DE CATÁLOGO LIMPIA para la maquinaria "${make} ${model}" (Serie base: ${baseSeries} | Tipo: ${equipmentType} | Arquetipo: ${archetypeProfile.archetypeLabelEs}).
+        const systemInstruction = `Eres el Auditor Forense VLM v4.0 de Autenticidad Visual y Control de Catálogos Oficiales de Maquinaria de MINREPORT (OPERMAQ).
+Tu misión es auditar con rigor quirúrgico si la imagen es una FOTOGRAFÍA OFICIAL OEM REAL Y EXACTA para el equipo "${make} ${model}" (Designador base: "${variantReqs.cleanModelDesignator}" | Serie: "${baseSeries}" | Tipo: "${equipmentType}" | Arquetipo: "${archetypeProfile.archetypeLabelEs}").
 
-REGLAS DE EVALUACIÓN OBLIGATORIAS:
-1. is_exact_make_and_model: ¿El equipo visible es una máquina o unidad real a escala 1:1 (NO un juguete ni modelo a escala 1:50) que corresponde a la marca "${make}" y al modelo "${model}" o a su serie directa "${baseSeries}" (${equipmentType})?
-   - IMPORTANTE: Si el equipo visible corresponde claramente a la serie "${baseSeries}" de "${make}" (incluso si el ángulo de la foto no permite leer el sufijo de sub-variante como XHP, XE, LC, CR o es un modelo hermano de idéntico chasis exterior de la serie "${baseSeries}"), marca is_exact_make_and_model=true.
-   - Marca false únicamente si es de otra marca, otra categoría de máquina distinta, un juguete a escala, un accesorio suelto sin máquina o un diagrama/tabla sin fotografía del equipo.
-2. is_mining_appropriate_configuration: ¿El equipo se presenta en la CONFIGURACIÓN ESTÁNDAR MINERA / INDUSTRIAL correspondiente a su arquetipo (${archetypeProfile.archetypeLabelEs})?
-   - CRITERIO ESPECÍFICO DEL ARQUETIPO: ${archetypeProfile.vlmExpectedConfigEs}
-3. is_official_oem_quality: ¿Es una fotografía de estudio, render de catálogo, fotografía de ficha técnica/folleto OEM o fotografía oficial de demostración limpia de la máquina completa? (Tanto fondos blancos/neutros de estudio como entornos limpios de demostración oficial del fabricante son válidos y deben marcarse true). ${
-            isFullDocumentPage
-                ? `NOTA CRÍTICA PARA PÁGINA DE FOLLETO PDF: Esta imagen es una página completa de folleto PDF. Si la página contiene varias fotografías de la máquina, selecciona y delimita en subject_box_2d EXCLUSIVAMENTE la fotografía que cumpla el criterio de configuración estándar minera para ${archetypeProfile.archetypeLabelEs}, excluyendo títulos, tablas y bloques de texto. Si la única foto visible en esta página tiene un accesorio ajeno al contexto minero, marca is_mining_appropriate_configuration=false.`
-                : ''
-        }
-4. is_free_of_third_party_branding: ¿Está libre de logotipos de empresas contratistas, códigos internos de alquiler/subasta o marcas de agua invasivas cruzando la máquina? (El logo oficial "${make}" y el código de modelo "${baseSeries}" sobre el chasis SÍ están permitidos).
-5. is_free_of_pii_and_plates: ¿Está libre de rostros humanos reconocibles en primer plano y de placas patentes vehiculares (PPU) legibles? (Cumplimiento Ley N° 21.719).
-6. is_clean_unweathered_machine: ¿La máquina se presenta en buen estado visual de catálogo o demostración (sin barro espeso cubriendo el chasis, sin óxido severo ni daños estructurales)?
-7. subject_box_2d: Delimita con máxima precisión el Bounding Box normalizado [ymin, xmin, ymax, xmax] en escala 0..1000 que encierra únicamente al equipo completo elegido sin cortar ningún extremo y excluyendo textos o gráficos de folleto.`;
+EVALÚA LOS 8 CORTES FORENSES OBLIGATORIOS (SI FALLA UNO SOLO, MARCA SU BOOLEANO EN FALSE Y EXPLICA EN rejection_reasons):
 
-        const prompt = `Audita esta imagen para el equipo ${make} ${model} (serie base ${baseSeries}, ${equipmentType}, arquetipo ${archetypeProfile.archetypeLabelEs}). Verifica que cumpla: "${archetypeProfile.vlmExpectedConfigEs}". Devuelve el diagnóstico JSON estricto con authenticity_score en escala 0.0 a 1.0 y subject_box_2d [ymin, xmin, ymax, xmax].`;
+1. is_authentic_real_photograph (BLOQUEO ANTI-IA GENERATIVA Y RENDERS SINTÉTICOS):
+   - Debe ser una fotografía óptica real de fábrica/catálogo OEM (100% real, escala 1:1).
+   - RECHAZA INMEDIATAMENTE (false) cualquier imagen generada por IA (Midjourney, Stable Diffusion, DALL-E, StockCake, Flux) o render sintético defectuoso:
+     * Exceso anatómico o incoherente de ruedas/ejes (ej. camiones con 5, 6 o más ejes seguidos irreales, neumáticos fusionados o flotantes).
+     * Llantas deformes, tuercas derretidas, geometría asimétrica de cabina/parrilla/espejos o cilindros hidráulicos que no conectan mecánicamente.
+     * Emblemas de marca o textos laterales con letras ilegibles, deformadas o pseudo-alfabeto típico de IA generativa.
+     * Modelos a escala (1:50, diecast, juguetes) o capturas de videojuegos/simuladores.
+
+2. is_exact_make_and_model:
+   - El equipo principal DEBE corresponder inequívocamente al fabricante "${make}" y al modelo/familia "${variantReqs.cleanModelDesignator}" (${baseSeries}).
+   - Verifica parrilla frontal, cabina, geometría de capó/contrapeso y emblema oficial "${make}". Si es otro fabricante u otro modelo distinto, marca false.
+
+3. matches_exact_variant_configuration (EXACTITUD ESTRICTA DE VARIANTE MECÁNICA — PROHIBIDO ACEPTAR VERSIONES HERMANAS EQUIVOCADAS):
+${variantReqs.vlmVariantMandateEs}
+   - Registra obligatoriamente en observed_axle_or_track_layout qué configuración de ejes o rodado contaste visualmente (ej. "8x4 (4 ejes)", "6x4 (3 ejes)", "Orugas", "4x4") y en observed_body_or_attachment qué carrocería o implemento observaste (ej. "Tolva minera", "Tractocamión quinta rueda", "Balde excavación").
+
+4. is_mining_appropriate_configuration:
+   - CRITERIO DEL ARQUETIPO (${archetypeProfile.archetypeLabelEs}): ${archetypeProfile.vlmExpectedConfigEs}
+
+5. is_valid_industrial_or_studio_context (CONTEXTO VISUAL PERMITIDO):
+   - ÚNICAMENTE se aprueban (true) dos contextos:
+     a) Estudio fotográfico oficial OEM con fondo blanco puro, gris neutro uniforme o recorte limpio de ficha técnica.
+     b) Operación o demostración limpia en contexto real de MINERÍA (rajo, cantera, acopio), CONSTRUCCIÓN PESADA / MOVIMIENTO DE TIERRA o PLANTA INDUSTRIAL.
+   - RECHAZA (false) estacionamientos comerciales o patios de concesionarios abarrotados de otros vehículos, patios de subasta/chatarra, talleres desordenados, calles urbanas residenciales, carreteras con tráfico civil o jardines domésticos.
+
+6. is_free_of_other_manufacturer_and_dealer_branding (CERO MARCAS DE OTROS FABRICANTES O CONCESIONARIOS EN EL FONDO O EQUIPO):
+   - Inspecciona TANTO la máquina COMO TODO EL FONDO (edificios, fachadas de concesionarios, tótems, banderas, pancartas, letreros luminosos, vehículos estacionados atrás y marcas de agua).
+   - ÚNICAMENTE se permite el emblema oficial "${make}" sobre el propio equipo.
+   - Si aparece CUALQUIER logotipo, texto, edificio o bandera de otra marca o marca hermana del mismo grupo corporativo (${brandPolicy.forbiddenBrandListEs} — por ejemplo, un camión MACK fotografiado frente a un edificio o letrero VOLVO, o viceversa), o logos de concesionarios comerciales, empresas contratistas, alquiler o marcas de agua de portales web, DEBES marcar is_free_of_other_manufacturer_and_dealer_branding=false.
+
+7. is_free_of_pii_and_plates (LEY N° 21.719):
+   - Libre de rostros humanos reconocibles, personas posando junto a la máquina y placas patentes vehiculares (PPU) legibles.
+
+8. is_clean_unweathered_machine:
+   - Unidad nueva o en condición impecable de catálogo OEM, sin barro espeso, abolladuras, corrosión ni desgaste severo de faena.
+
+${
+    isFullDocumentPage
+        ? `NOTA PARA PÁGINA DE FOLLETO PDF: Esta imagen es una página completa de folleto OEM. Si contiene una fotografía limpia que cumpla TODOS los 8 puntos anteriores, delimita en subject_box_2d EXCLUSIVAMENTE la fotografía de esa máquina excluyendo textos, tablas y márgenes del documento.`
+        : 'Delimita en subject_box_2d el Bounding Box [ymin, xmin, ymax, xmax] (0..1000) que encierra únicamente al equipo completo sin cortar ruedas, tolva ni pluma.'
+}`;
+
+        const prompt = `Ejecuta auditoría forense VLM v4.0 sobre esta imagen candidata para "${make} ${model}" (${equipmentType}). Cuenta los ejes/ruedas reales, verifica la carrocería/implemento, inspecciona el fondo completo en busca de letreros de otras marcas (prohibidos: ${brandPolicy.forbiddenBrandListEs}) y descarta cualquier imagen generada por IA. Devuelve JSON estricto.`;
 
         try {
             const { data } = await ResilientAIClient.generateStructured<VlmPhotoVerdict>({
                 prompt,
                 systemInstruction,
                 module: 'opermaq',
-                preferredTier: 'SECONDARY',
-                thinkingLevel: 'low',
+                preferredTier: 'PRIMARY',
+                thinkingLevel: 'medium',
                 media: [{ mimeType: 'image/jpeg', dataBase64: base64Data }],
                 responseSchema: {
                     type: 'object',
                     properties: {
+                        is_authentic_real_photograph: { type: 'boolean' },
                         is_exact_make_and_model: { type: 'boolean' },
+                        matches_exact_variant_configuration: { type: 'boolean' },
                         is_mining_appropriate_configuration: { type: 'boolean' },
-                        is_official_oem_quality: { type: 'boolean' },
-                        is_free_of_third_party_branding: { type: 'boolean' },
+                        is_valid_industrial_or_studio_context: { type: 'boolean' },
+                        is_free_of_other_manufacturer_and_dealer_branding: { type: 'boolean' },
                         is_free_of_pii_and_plates: { type: 'boolean' },
                         is_clean_unweathered_machine: { type: 'boolean' },
                         authenticity_score: {
                             type: 'number',
-                            description: 'Puntaje de autenticidad entre 0.0 y 1.0',
+                            description: 'Puntaje forense de autenticidad entre 0.0 y 1.0 (mínimo aprobatorio 0.78)',
                         },
                         subject_box_2d: {
                             type: 'array',
@@ -1688,18 +2309,30 @@ REGLAS DE EVALUACIÓN OBLIGATORIAS:
                             items: { type: 'number' },
                             description: '[ymin, xmin, ymax, xmax] en escala 0..1000',
                         },
+                        observed_axle_or_track_layout: {
+                            type: 'string',
+                            description: 'Ej: "8x4 (4 ejes)", "6x4 (3 ejes)", "Orugas", "4x4"',
+                        },
+                        observed_body_or_attachment: {
+                            type: 'string',
+                            description: 'Ej: "Tolva minera", "Tractocamión", "Balde estándar"',
+                        },
                         detected_model_description: { type: 'string' },
                         rejection_reasons: { type: 'array', items: { type: 'string' } },
                     },
                     required: [
+                        'is_authentic_real_photograph',
                         'is_exact_make_and_model',
+                        'matches_exact_variant_configuration',
                         'is_mining_appropriate_configuration',
-                        'is_official_oem_quality',
-                        'is_free_of_third_party_branding',
+                        'is_valid_industrial_or_studio_context',
+                        'is_free_of_other_manufacturer_and_dealer_branding',
                         'is_free_of_pii_and_plates',
                         'is_clean_unweathered_machine',
                         'authenticity_score',
                         'subject_box_2d',
+                        'observed_axle_or_track_layout',
+                        'observed_body_or_attachment',
                         'detected_model_description',
                         'rejection_reasons',
                     ],
@@ -1709,16 +2342,20 @@ REGLAS DE EVALUACIÓN OBLIGATORIAS:
 
             return normalizeVlmVerdictPayload(data);
         } catch (err) {
-            console.warn('[OfficialPhotoService] Fallo VLM audit:', err);
+            console.warn('[OfficialPhotoService] Fallo VLM v4.0 audit:', err);
             return {
+                is_authentic_real_photograph: false,
                 is_exact_make_and_model: false,
+                matches_exact_variant_configuration: false,
                 is_mining_appropriate_configuration: false,
-                is_official_oem_quality: false,
-                is_free_of_third_party_branding: false,
+                is_valid_industrial_or_studio_context: false,
+                is_free_of_other_manufacturer_and_dealer_branding: false,
                 is_free_of_pii_and_plates: false,
                 is_clean_unweathered_machine: false,
                 authenticity_score: 0.0,
                 subject_box_2d: null,
+                observed_axle_or_track_layout: '',
+                observed_body_or_attachment: '',
                 detected_model_description: 'Error en inferencia VLM',
                 rejection_reasons: ['Error de análisis visual en el enjambre de inferencia.'],
             };

@@ -1,4 +1,6 @@
 import React, { Suspense, lazy } from 'react';
+import './locales/i18n';
+import './index.css';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
 import type { OpermaqDomainMode } from './components/AssetList';
 import { M3CircularProgress } from './components/M3ProgressIndicator';

@@ -27,7 +27,11 @@ import {
     buildAndPersistEquipmentCostMatrix,
     compileEquipmentCostMatrixFromPillars,
 } from '../services/EquipmentCostMatrixCompiler';
-import { huntVaultItem, reconcileAssetSidebarProfileFromVault } from '../services/ItemHunterService';
+import {
+    huntVaultItem,
+    reconcileAssetSidebarProfileFromVault,
+    scheduleDebouncedAssetSymbologyPackRebuild,
+} from '../services/ItemHunterService';
 import {
     computePillarContentDigestSha256,
     computePillarStructureDigestSha256,
@@ -297,6 +301,8 @@ async function propagateItemContentMutationEffects(params: {
         await buildAndPersistEquipmentCostMatrix(globalAssetId).catch(() => null);
     }
 
+    scheduleDebouncedAssetSymbologyPackRebuild(globalAssetId);
+
     return { contentDigestSha256, vaultMerkleRootSha256 };
 }
 
@@ -528,6 +534,7 @@ vaultRouter.post(
             imagePath: z.string().nullable().optional(),
             imageMetadata: z.record(z.string(), z.any()).nullable().optional(),
             fotoMediaTelemetry: z.record(z.string(), z.any()).nullable().optional(),
+            fotoVlmAuditVersion: z.number().int().nullable().optional(),
             officialPhotoCandidates: z.array(z.record(z.string(), z.any())).optional(),
         });
 
@@ -543,6 +550,7 @@ vaultRouter.post(
             imagePath,
             imageMetadata,
             fotoMediaTelemetry,
+            fotoVlmAuditVersion,
             officialPhotoCandidates,
         } = parsed.data;
         try {
@@ -574,10 +582,29 @@ vaultRouter.post(
                 }
             }
 
+            const matchedAuditCandidate = imageUrl
+                ? mergedCandidates.find(
+                      (c) =>
+                          c &&
+                          (c.preview_url === imageUrl ||
+                              (fotoMediaTelemetry?.sha256 && c.sha256 === fotoMediaTelemetry.sha256))
+                  )
+                : null;
+            const resolvedPhotoAuditVersion: number | null = !imageUrl
+                ? null
+                : typeof fotoVlmAuditVersion === 'number'
+                ? fotoVlmAuditVersion
+                : typeof matchedAuditCandidate?.vlm_audit_version === 'number'
+                ? matchedAuditCandidate.vlm_audit_version
+                : typeof data.foto_vlm_audit_version === 'number'
+                ? data.foto_vlm_audit_version
+                : null;
+
             const nowMs = Date.now();
             const updatePayload: Record<string, any> = {
                 foto_url: imageUrl ?? '',
                 foto_media_telemetry: fotoMediaTelemetry ?? imageMetadata ?? null,
+                foto_vlm_audit_version: resolvedPhotoAuditVersion,
                 specifications: nextSpecs,
                 updatedAt: nowMs,
             };
@@ -593,6 +620,7 @@ vaultRouter.post(
                     .update({
                         foto_url: imageUrl ?? '',
                         foto_media_telemetry: fotoMediaTelemetry ?? imageMetadata ?? null,
+                        foto_vlm_audit_version: resolvedPhotoAuditVersion,
                         updatedAt: nowMs,
                     })
                     .catch(() => undefined);
@@ -913,16 +941,19 @@ vaultRouter.post(
                 updates.caracteristicas_principales = caracteristicas_principales
                     .map((s) => s.trim())
                     .filter(Boolean);
+                updates.sidebar_caracteristicas_human_curated = true;
             }
             if (Array.isArray(ambiente_operativo)) {
                 updates.ambiente_operativo = ambiente_operativo
                     .map((s) => s.trim())
                     .filter(Boolean);
+                updates.sidebar_ambiente_human_curated = true;
             }
             if (Array.isArray(contexto_operativo)) {
                 updates.contexto_operativo = contexto_operativo
                     .map((s) => s.trim())
                     .filter(Boolean);
+                updates.sidebar_contexto_human_curated = true;
             }
 
             await docRef.update(updates);
@@ -982,6 +1013,7 @@ vaultRouter.post('/hunt-item', requireCurateAI, checkVaultNotSealed, async (req:
             'checklist_pre_op',
         ]),
         itemId: z.string().min(1),
+        intent: z.enum(['INITIAL_CAPTURE', 'INCREMENTAL_UPDATE']).optional(),
         humanCorrection: z.string().optional(),
     });
 
@@ -990,13 +1022,14 @@ vaultRouter.post('/hunt-item', requireCurateAI, checkVaultNotSealed, async (req:
         return res.status(400).json({ error: 'Parámetros inválidos (globalAssetId, pillarId, itemId).' });
     }
 
-    const { globalAssetId, pillarId, itemId, humanCorrection } = parsed.data;
+    const { globalAssetId, pillarId, itemId, intent, humanCorrection } = parsed.data;
 
     try {
         const result = await huntVaultItem({
             globalAssetId,
             pillarId,
             itemId,
+            intent,
             humanCorrection,
         });
 
@@ -1011,6 +1044,8 @@ vaultRouter.post('/hunt-item', requireCurateAI, checkVaultNotSealed, async (req:
             hunted_at: result.hunted_at,
             mode: result.mode,
             newConflictsCount: result.newConflictsCount,
+            addedNewCount: result.addedNewCount,
+            addedConflictCount: result.addedConflictCount,
         });
     } catch (err) {
         return handleVaultError(res, err, 'Error ejecutando caza técnica por ítem.');
@@ -1019,12 +1054,27 @@ vaultRouter.post('/hunt-item', requireCurateAI, checkVaultNotSealed, async (req:
 
 vaultRouter.post('/hunt-item-async', requireCurateAI, checkVaultNotSealed, async (req: ScopedRequest, res: Response) => {
     const ctx = req.opermaqContext!;
-    const { globalAssetId, pillarId, itemId, humanCorrection, forceRestart } = req.body || {};
+    const schema = z.object({
+        globalAssetId: z.string().min(1),
+        pillarId: z.enum([
+            'ficha_tecnica',
+            'manual_operaciones',
+            'pauta_mantencion',
+            'matriz_riesgos',
+            'checklist_pre_op',
+        ]),
+        itemId: z.string().min(1),
+        intent: z.enum(['INITIAL_CAPTURE', 'INCREMENTAL_UPDATE']).optional(),
+        humanCorrection: z.string().optional(),
+        forceRestart: z.boolean().optional(),
+    });
 
-    if (!globalAssetId || !VALID_PILLAR_IDS.includes(pillarId) || !itemId) {
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
         return res.status(400).json({ error: 'Parámetros requeridos: globalAssetId, pillarId, itemId.' });
     }
 
+    const { globalAssetId, pillarId, itemId, intent, humanCorrection, forceRestart } = parsed.data;
     const taskId = buildHuntTaskId(globalAssetId, pillarId, itemId);
 
     try {
@@ -1041,9 +1091,10 @@ vaultRouter.post('/hunt-item-async', requireCurateAI, checkVaultNotSealed, async
             }
         }
 
-        // Marcar ítem en GENERANDO mediante transacción atómica sobre `pillars/{pillarId}` + resumen raíz
+        // Marcar ítem en GENERANDO y sellar `initial_hunt_activated_at` desde su primera activación mediante transacción atómica
         const docRef = db.collection('global_asset_catalog').doc(globalAssetId);
         const pillarRef = docRef.collection('pillars').doc(pillarId);
+        const nowIso = new Date().toISOString();
         const lockedTitle = await db.runTransaction(async (tx) => {
             const [snap, pillarSnap] = await Promise.all([tx.get(docRef), tx.get(pillarRef)]);
             if (!snap.exists) return null;
@@ -1057,7 +1108,12 @@ vaultRouter.post('/hunt-item-async', requireCurateAI, checkVaultNotSealed, async
             if (items[idx].is_human_locked === true) {
                 return String(items[idx].title || itemId);
             }
-            items[idx] = { ...items[idx], content_status: 'GENERANDO', hunt_error: null };
+            items[idx] = {
+                ...items[idx],
+                initial_hunt_activated_at: items[idx].initial_hunt_activated_at || nowIso,
+                content_status: 'GENERANDO',
+                hunt_error: null,
+            };
             VaultPersistenceService.writePillarInTransaction(tx, {
                 globalAssetId,
                 pillarId: pillarId as PillarId,
@@ -1065,7 +1121,7 @@ vaultRouter.post('/hunt-item-async', requireCurateAI, checkVaultNotSealed, async
                     ...(rawPillar as any),
                     pillar_id: pillarId as PillarId,
                     items,
-                    updated_at: new Date().toISOString(),
+                    updated_at: nowIso,
                 },
             });
             return null;
@@ -1081,6 +1137,7 @@ vaultRouter.post('/hunt-item-async', requireCurateAI, checkVaultNotSealed, async
             globalAssetId,
             pillarId: pillarId as PillarId,
             itemId,
+            intent,
             tenantId: ctx.tenantId,
             actorId: ctx.actorId,
             humanCorrection,
@@ -2845,6 +2902,16 @@ vaultRouter.post('/decide-proposal', requireCurateAI, checkVaultNotSealed, async
             proposal.estado_fusion === 'CONFLICTO' ? 'CONFLICTO' : 'NUEVO';
 
         if (decision === 'ELIMINADO') {
+            const rejectedFp =
+                proposal.fact_fingerprint ||
+                computeFactFingerprint(proposal.valor_nuevo || '', item.title || proposal.componente || '');
+            const prevRejected: string[] = Array.isArray(item.rejected_fact_fingerprints)
+                ? item.rejected_fact_fingerprints
+                : [];
+            if (rejectedFp && !prevRejected.includes(rejectedFp)) {
+                item.rejected_fact_fingerprints = [...prevRejected.slice(-199), rejectedFp];
+            }
+
             const remainingPending = currentPending.filter(
                 (p: any, i: number) => i !== pIdx && p.human_decision !== 'ELIMINADO'
             );

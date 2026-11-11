@@ -15,6 +15,7 @@ import {
 } from './NeuroSymbolicVerifier';
 import { PILLAR_LABELS } from './pillarAgents';
 import { VaultPersistenceService } from './VaultPersistenceService';
+import { inferAssetConfigurationProfile } from '../utils/lockedVariantDirective';
 
 export type EquipmentArchetype = string;
 
@@ -35,6 +36,19 @@ export function inferEquipmentArchetypeAndTags(assetData: Record<string, any>): 
         existing_traits: assetData.physical_traits,
     });
 
+    const configProfile = inferAssetConfigurationProfile({
+        make_oficial: assetData.make_oficial || assetData.make,
+        model_oficial: assetData.model_oficial || assetData.model,
+        tipo_equipo: assetData.tipo_equipo,
+        categoria_equipo: assetData.categoria_equipo,
+        version: assetData.version,
+        physical_traits: traits,
+        canonical_specs: assetData.canonical_specs,
+        caracteristicas_principales: assetData.caracteristicas_principales,
+        chassis_versions: assetData.chassis_versions,
+        existing_profile: assetData.configuration_profile,
+    });
+
     const tags = new Set<string>([
         traits.mobility,
         traits.primary_energy,
@@ -44,6 +58,27 @@ export function inferEquipmentArchetypeAndTags(assetData: Record<string, any>): 
     if (traits.has_hydraulic_system) tags.add('HYDRAULIC_SYSTEM');
     if (traits.has_compressed_air_system) tags.add('PNEUMATIC_SYSTEM');
     if (traits.requires_metrology_calibration) tags.add('METROLOGY_CALIBRATION');
+
+    if (configProfile.transmission_category) {
+        tags.add(`TX_${configProfile.transmission_category}`);
+    }
+    if (configProfile.axle_or_undercarriage_config) {
+        const axMatch = configProfile.axle_or_undercarriage_config.match(/\b(\d{1,2}x\d{1,2})\b/i);
+        if (axMatch) {
+            tags.add(`AXLE_${axMatch[1].toUpperCase()}`);
+        }
+    }
+    if (configProfile.work_body_or_implement && /\btolva\b/i.test(configProfile.work_body_or_implement)) {
+        tags.add('BODY_DUMP_TOLVA');
+    }
+    if (configProfile.factory_emission_or_grid_spec) {
+        if (/\bdpf\b|tier\s*4|stage\s*(?:iiib|iv|v)|euro\s*vi/i.test(configProfile.factory_emission_or_grid_spec)) {
+            tags.add('AFTERTREATMENT_DPF');
+        }
+        if (/\bscr\b|adblue|\bdef\b|euro\s*v/i.test(configProfile.factory_emission_or_grid_spec)) {
+            tags.add('AFTERTREATMENT_SCR_DEF');
+        }
+    }
 
     return {
         archetype: `${traits.functional_domain}:${traits.iso_14224_equipment_class}`,

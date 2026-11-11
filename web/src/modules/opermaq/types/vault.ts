@@ -43,6 +43,9 @@ export const PILLAR_PREREQUISITE_MAP: Record<PillarId, PillarId | null> = {
 /** Estado de generación del pilar. */
 export type PillarStatus = 'IDLE' | 'GENERATING' | 'COMPLETED' | 'ERROR';
 
+/** Intención operativa explícita: captura inicial única en listado vs. actualización incremental dentro del ítem. */
+export type HuntIntent = 'INITIAL_CAPTURE' | 'INCREMENTAL_UPDATE';
+
 
 /** Fuente técnica clasificada por autoría (FABRICANTE / EXTERNOS / YOUTUBE). */
 export interface SourceItem {
@@ -100,6 +103,8 @@ export interface PillarItem {
   created_by?: string;
 
   // ── Campos de CAZA (Etapa 2) — opcionales, retrocompatibles ────────────────
+  /** Timestamp de la primera activación de "Cazar contenido" (desaparece del listado tras activarse). */
+  initial_hunt_activated_at?: string | null;
   /** Timestamp de la última caza exitosa de este ítem. */
   hunted_at?: string | null;
   /** Fuentes del ítem clasificadas por autoría (OEM / EXTERNO / YOUTUBE). */
@@ -154,6 +159,7 @@ export interface PillarItem {
   // ── v4.0: Figuras técnicas CAS, Huellas de hechos y Avisos HITL ──────────
   figures?: ExtractedFigureRef[];
   fact_fingerprints?: string[];
+  rejected_fact_fingerprints?: string[];
   locked_item_advisories?: LockedItemAdvisory[];
 }
 
@@ -254,10 +260,17 @@ export interface EquipmentSymbologyPack {
 }
 
 export type {
+  AssetConfigurationProfile,
   AssetPhysicalTraits,
+  CanonicalSpecSlot,
   CostMatrixTaxonomyMeta,
+  DisambiguationFacetGroup,
+  DisambiguationFacetKey,
   EnergyConsumptionProfile,
+  EphemeralIdentificationImageInput,
   OperationalCostMatrix,
+  OpticalIdentificationSummary,
+  TransmissionCategory,
 } from '../../../contracts/opermaq.contracts';
 
 export type AdHocManualProfileId =
@@ -377,6 +390,8 @@ export interface GlobalAssetCatalog {
   /** D. Características principales y esenciales del equipo (capacidades, peso operativo, etc.).
    *  Ej: ["MOTOR CAT C18 ACERT (587 HP)", "PESO OPERATIVO: 47748 KG", "CAPACIDAD DE PALA: 22 M3"] */
   caracteristicas_principales?: string[];
+  configuration_profile?: import('../../../contracts/opermaq.contracts').AssetConfigurationProfile;
+  canonical_specs?: import('../../../contracts/opermaq.contracts').CanonicalSpecSlot[];
 
   // Ecosistema de dependencias (consumibles, repuestos)
   ecosystem_dependencies: string[];

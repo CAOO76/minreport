@@ -79,7 +79,7 @@ export interface ArchetypeDefinition {
  * Cortafuegos determinista contra prosa de marketing, eslóganes de folletos y afirmaciones falsas o subjetivas.
  */
 export const FORBIDDEN_MARKETING_OR_UNVERIFIED_CLAIM_REGEX =
-    /\b(carga\s+(f[aá]cil\s+)?de\s+camiones|cargu[ií]o\s+de\s+camiones|easier\s+truck\s+loading|truck\s+loading|mayor\s+alcance|alcance\s+extendido|l[ií]der\s+en|insuperable|mejor\s+de\s+su\s+clase|best[- ]in[- ]class|alta\s+eficiencia|m[aá]xima\s+eficiencia|m[aá]xima\s+productividad|[oó]ptimo\s+rendimiento|rendimiento\s+superior|excelente\s+estabilidad|gran\s+versatilidad|dise[ñn]ad[oa]\s+para\s+maximizar|proporciona\s+mayor|ofrece\s+mayor|permite\s+cargar\s+camiones|ideal\s+para|f[aá]cil\s+mantenimiento|comodidad\s+del\s+operador|confort\s+superior)\b/i;
+    /\b(carga\s+(?:f[aá]cil\s+)?de\s+camiones|cargu[ií]o\s+de\s+camiones|easier\s+truck\s+loading|truck\s+loading|mayor\s+alcance|alcance\s+extendido|l[ií]der\s+en|insuperable|mejor\s+de\s+su\s+clase|best[- ]in[- ]class|alta\s+eficiencia|m[aá]xima\s+eficiencia|m[aá]xima\s+productividad|[oó]ptimo\s+rendimiento|rendimiento\s+superior|excelente\s+(?:estabilidad|desempe[ñn]o)|gran\s+versatilidad|dise[ñn]ad[oa]\s+para\s+maximizar|proporciona\s+mayor|ofrece\s+mayor|permite\s+cargar\s+camiones|ideal\s+para|f[aá]cil\s+mantenimiento|comodidad\s+del\s+operador|confort(?:\s+superior|\s+del\s+operador)?|aplicaciones\s+de\s+alta\s+demanda|ciclos?\s+de\s+trabajo\s+continuos?\s+de\s+\d+\s*(?:a|-|–)\s*\d+\s*(?:horas?|h\b)|turno\s+est[aá]ndar\s+de\s+\d+\s*(?:a|-|–)\s*\d+\s*(?:horas?|h\b)|no\s+incurre\s+en\s+costos|directiva\s+de\s+c[aá]lculo)\b/i;
 
 export const ACCESSORY_HISTORICAL_SPEC_REGEX =
     /per[ií]odo\s+de\s+(producci[oó]n|fabricaci[oó]n)|a[ñn]os?\s+de\s+(producci[oó]n|fabricaci[oó]n|lanzamiento|comercializaci[oó]n)|introducid[oa]\s+en|fabricad[oa]\s+(entre|desde|en)|lanzad[oa]\s+en|primera\s+generaci[oó]n|evoluci[oó]n\s+serie|reemplaz[ao]\s+al|sucesor\s+de|antecesor\s+de|pa[ií]s\s+de\s+origen|\b(19|20)\d{2}\s*[-–—/]\s*((19|20)\d{2}|presente|actualidad|hoy)\b|\b(19|20)\d{2}\+\b/i;
@@ -128,18 +128,18 @@ const ARCHETYPE_UNIVERSAL_ENERGY_AXES: ArchetypeAxisDefinition[] = [
     },
     {
         axis_key: 'consumo_energetico_nominal',
-        label_es: 'Consumo nominal',
-        unit_hint: 'L/h / km/L (L/100 km) / g/kWh / kWh/h / L/s',
+        label_es: 'Consumo horario combustible',
+        unit_hint: 'L/h · g/kWh',
         mandatory: false,
-        legacyKeyPattern: /\b(consumo\s+(?:energ[eé]tico|nominal|de\s+combustible|espec[ií]fico|horario|el[eé]ctrico|de\s+aire)|rendimiento\s+de\s+combustible|bsfc)\b/i,
+        legacyKeyPattern: /\b(consumo\s+(?:energ[eé]tico|nominal|de\s+combustible|espec[ií]fico|horario|el[eé]ctrico|de\s+aire)|rendimiento\s+de\s+combustible|potencia\s+el[eé]ctrica\s+absorbida|bsfc)\b/i,
         validValuePattern: NUM_UNIT_ENERGY_CONSUMPTION,
     },
     {
         axis_key: 'capacidad_energetica_autonomia',
-        label_es: 'Capacidad estanque / batería',
-        unit_hint: 'L / kWh (Autonomía h / km)',
+        label_es: 'Capacidad estanque combustible',
+        unit_hint: 'L',
         mandatory: false,
-        legacyKeyPattern: /\b(capacidad\s+(?:de\s+)?(?:estanque|tanque\s+de\s+combustible|bater[ií]a)|estanque\s+de\s+combustible|autonom[ií]a)\b/i,
+        legacyKeyPattern: /\b(capacidad\s+(?:de\s+)?(?:estanque|tanque\s+de\s+combustible|banco\s+bater[ií]as|bater[ií]a)|estanque\s+(?:de\s+)?combustible|autonom[ií]a)\b/i,
         validValuePattern: NUM_UNIT_ENERGY_CAPACITY,
     },
 ];
@@ -848,6 +848,70 @@ function normalizeCanonicalEnergyEnumLabel(rawVal: string): string | null {
     return null;
 }
 
+export function normalizeCanonicalTransmissionSlotValue(rawVal: string): string | null {
+    const clean = String(rawVal || '').replace(/\s+/g, ' ').trim();
+    const norm = stripTextAccents(clean);
+    if (!norm) return null;
+
+    if (/\ballison\b/.test(norm)) {
+        const modelMatch = clean.match(/\ballison\s*[a-z0-9 -]{0,24}/i);
+        return modelMatch
+            ? `Automática (${modelMatch[0].replace(/\s+/g, ' ').trim()})`.slice(0, 72)
+            : 'Automática (Allison)';
+    }
+    if (/\b(m-?drive|i-?shift|opticruise|traxon|as[- ]?tronic|ultrashift|endurant|dt12)\b/.test(norm)) {
+        const amtMatch = clean.match(
+            /\b((?:mack\s+)?m-?drive(?:\s+hd|\s+tmd\w+)?|(?:volvo\s+)?i-?shift|(?:scania\s+)?opticruise|(?:zf\s+)?(?:traxon|as[- ]?tronic)|(?:eaton\s+)?(?:ultrashift|endurant)|detroit\s+dt12)\b/i
+        );
+        return amtMatch
+            ? `Automatizada AMT (${amtMatch[1].replace(/\s+/g, ' ').trim()})`.slice(0, 72)
+            : 'Automatizada (AMT)';
+    }
+    if (/\b(fuller|roadranger|rtlo-?\d{4,5})\b/.test(norm)) {
+        const velMatch = clean.match(/\b(\d{1,2}\s*vel(?:ocidades)?|rtlo-?\d{4,5}[a-z]?)\b/i);
+        return velMatch
+            ? `Manual Eaton Fuller (${velMatch[1].replace(/\s+/g, ' ').trim()})`.slice(0, 72)
+            : 'Manual Eaton Fuller';
+    }
+    if (/\bhidrostatic/.test(norm)) {
+        const velMatch = clean.match(/\b\d\s*(?:vel(?:ocidades)?|marchas|rangos)\b/i);
+        return velMatch ? `Hidrostática (${velMatch[0].trim()})` : 'Hidrostática';
+    }
+    if (/\b(powershift|power\s+shift|servotransmision|torqflow)\b/.test(norm)) {
+        const fgMatch = clean.match(/\b\d+f\s*\/?\s*\d+r\b/i);
+        return fgMatch ? `Powershift (${fgMatch[0].toUpperCase()})` : 'Powershift';
+    }
+    if (/\b(electrica\s+ac|ac\s+drive|traccion\s+electrica)\b/.test(norm)) {
+        return 'Eléctrica AC';
+    }
+    if (/\b(cvt|e-cvt)\b/.test(norm)) {
+        return 'CVT';
+    }
+    if (/\b(automatizada|\bamt\b)\b/.test(norm)) {
+        const velMatch = clean.match(/\b\d{1,2}\s*(?:vel(?:ocidades)?|marchas)\b/i);
+        return velMatch ? `Automatizada AMT (${velMatch[0].trim()})` : 'Automatizada (AMT)';
+    }
+    if (/\b(automatic[ao]|convertidor\s+de\s+par|\b\d{1,2}\s*at\b)\b/.test(norm)) {
+        const velMatch = clean.match(/\b\d{1,2}\s*(?:vel(?:ocidades)?|marchas|at)\b/i);
+        return velMatch ? `Automática (${velMatch[0].trim()})` : 'Automática (Convertidor)';
+    }
+    if (/\b(manual|mecanica|\b\d{1,2}\s*mt\b|sincronizada)\b/.test(norm)) {
+        const velMatch = clean.match(/\b\d{1,2}\s*(?:vel(?:ocidades)?|marchas|mt)\b/i);
+        return velMatch ? `Manual (${velMatch[0].trim()})` : 'Manual sincronizada';
+    }
+    return null;
+}
+
+export function normalizeCanonicalAxleSlotValue(rawVal: string): string | null {
+    const norm = stripTextAccents(rawVal);
+    if (!norm) return null;
+    const m = norm.match(/\b(10x6|10x4|8x8|8x6|8x4|6x6|6x4|6x2|4x4|4x2|awd|fwd|rwd)\b/i);
+    if (!m) return null;
+    const tok = m[1].toLowerCase();
+    if (tok === 'awd' || tok === 'fwd' || tok === 'rwd') return tok.toUpperCase();
+    return tok;
+}
+
 /**
  * Limpia y valida un valor contra un eje dinámico por `TIPO` (`EquipmentTypeAxisSchemaItem` o `CanonicalSpecSlot` auto-descriptivo).
  * - Rechaza cualquier prosa publicitaria o años históricos de producción.
@@ -892,6 +956,20 @@ export function cleanDynamicAxisValue(
     if (axisMeta?.axis_key === 'fuente_energia' || (axisMeta?.value_kind === 'CLOSED_ENUM' && ENERGY_SOURCE_VALUE_REGEX.test(valueOnly))) {
         const canonEnergy = normalizeCanonicalEnergyEnumLabel(valueOnly);
         if (canonEnergy) return canonEnergy;
+    }
+
+    if (
+        axisMeta?.axis_key === 'transmision_caja' ||
+        axisMeta?.axis_key === 'tipo_transmision' ||
+        axisMeta?.axis_key === 'caja_cambios'
+    ) {
+        const canonTx = normalizeCanonicalTransmissionSlotValue(valueOnly);
+        if (canonTx) return canonTx;
+    }
+
+    if (axisMeta?.axis_key === 'traccion_ejes' || axisMeta?.axis_key === 'traccion') {
+        const canonAxle = normalizeCanonicalAxleSlotValue(valueOnly);
+        if (canonAxle) return canonAxle;
     }
 
     if (axisMeta?.value_kind === 'CLOSED_ENUM') {
@@ -1159,7 +1237,7 @@ export function extractHomologousAxisValues(record: {
         }
     }
 
-    const slots: CanonicalSpecSlot[] = archetype.axes.map((axis) => {
+    const rawSlots: CanonicalSpecSlot[] = archetype.axes.map((axis) => {
         const hit = byKey.get(axis.axis_key);
         return {
             axis_key: axis.axis_key,
@@ -1170,6 +1248,10 @@ export function extractHomologousAxisValues(record: {
             source_url: hit?.source_url || null,
             verbatim_evidence: hit?.verbatim_evidence || null,
         };
+    });
+
+    const slots = normalizeCanonicalSlotsByResolvedEnergy(rawSlots, {
+        typeContextText: `${record.equipment_type_key || ''} ${record.tipo_equipo || ''} ${record.categoria_equipo || ''}`,
     });
 
     return { archetype, slots };
@@ -1190,7 +1272,7 @@ export function buildHomologousEquipmentDescription(record: {
     canonical_specs?: CanonicalSpecSlot[] | Record<string, any> | null;
     caracteristicas_principales?: string[];
 }): string {
-    const { archetype, slots } = extractHomologousAxisValues(record);
+    const { slots } = extractHomologousAxisValues(record);
 
     const hasAnyVerifiedValue = slots.some((s) => Boolean(s.value_si));
     if (!hasAnyVerifiedValue) {
@@ -1198,13 +1280,11 @@ export function buildHomologousEquipmentDescription(record: {
     }
 
     const renderedParts: string[] = [];
-    for (let i = 0; i < archetype.axes.length; i++) {
-        const axisDef = archetype.axes[i];
-        const slot = slots[i];
-        if (axisDef.mandatory) {
-            renderedParts.push(`${axisDef.label_es}: ${slot.value_si || MISSING_AXIS_VALUE}`);
+    for (const slot of slots) {
+        if (slot.mandatory) {
+            renderedParts.push(`${slot.label_es}: ${slot.value_si || MISSING_AXIS_VALUE}`);
         } else if (slot.value_si) {
-            renderedParts.push(`${axisDef.label_es}: ${slot.value_si}`);
+            renderedParts.push(`${slot.label_es}: ${slot.value_si}`);
         }
     }
 
@@ -1213,10 +1293,15 @@ export function buildHomologousEquipmentDescription(record: {
 
 /**
  * Serializa los `CanonicalSpecSlot[]` verificados hacia `caracteristicas_principales: string[]`
- * para mantener compatibilidad limpia con los 5 pilares de la bóveda (`Itemizer` / `ItemHunter`).
+ * resolviendo dinámicamente la semántica energética real del activo (cero etiquetas híbridas
+ * `Capacidad estanque / batería` en equipos diésel o eléctricos).
  */
-export function serializeCanonicalSlotsToSpecsArray(slots: CanonicalSpecSlot[]): string[] {
-    const valid = slots
+export function serializeCanonicalSlotsToSpecsArray(
+    slots: CanonicalSpecSlot[],
+    context?: { typeContextText?: string | null; primaryEnergy?: string | null }
+): string[] {
+    const normalizedSlots = normalizeCanonicalSlotsByResolvedEnergy(slots, context);
+    const valid = normalizedSlots
         .filter((s) => Boolean(s.value_si))
         .map((s) => `${s.label_es}: ${s.value_si}`);
     return valid.length > 0 ? valid : [MISSING_FULL_TECH_SPEC];
@@ -1284,84 +1369,468 @@ export function validateCrossAxisPhysicalPlausibility(
     };
 }
 
-/**
- * Construye los 3 ejes canónicos obligatorios de Matriz Energética, Consumo y Capacidad/Autonomía
- * adaptados a la naturaleza física del `TIPO` de equipo (vehículo vial/tolva, maquinaria pesada,
- * planta estacionaria/eléctrica o equipo neumático/hidráulico).
- */
-export function buildUniversalEnergySpecAxesForType(typeContextText: string): EquipmentTypeAxisSchemaItem[] {
-    const norm = stripTextAccents(typeContextText || '');
-    const isTowedNonSelfPropelled =
+export type CanonicalResolvedEnergyKind =
+    | 'THERMAL_FUEL'
+    | 'BATTERY_BEV'
+    | 'HYBRID'
+    | 'GRID_AC'
+    | 'PNEUMATIC_AIR'
+    | 'HYDRAULIC_AUX'
+    | 'TOWED_PASSIVE'
+    | 'MANUAL_MECHANICAL';
+
+export interface ResolvedEnergyAxisSemantics {
+    energyKind: CanonicalResolvedEnergyKind;
+    includeEnergySourceAxis: boolean;
+    includeConsumptionAxis: boolean;
+    includeCapacityAxis: boolean;
+    consumptionLabelEs: string;
+    consumptionUnitSi: string;
+    consumptionKeywords: string[];
+    capacityLabelEs: string | null;
+    capacityUnitSi: string | null;
+    capacityKeywords: string[];
+}
+
+export function classifyCanonicalEnergyKind(params?: {
+    primaryEnergy?: string | null;
+    energyValueText?: string | null;
+    typeContextText?: string | null;
+}): CanonicalResolvedEnergyKind {
+    const valNorm = stripTextAccents(params?.energyValueText || '');
+    const primaryNorm = String(params?.primaryEnergy || '').trim().toUpperCase();
+    const ctxNorm = stripTextAccents(params?.typeContextText || '');
+
+    // 1. Prioridad máxima: valor explícito de `fuente_energia` en el activo
+    if (valNorm && !valNorm.startsWith('[')) {
+        if (/\b(manual|mecanico|sin\s+energia\s+externa)\b/.test(valNorm)) return 'MANUAL_MECHANICAL';
+        if (/\b(remolcado|sin\s+propulsion\s+propia)\b/.test(valNorm) && !/\b(diesel|gasolina)\b/.test(valNorm)) {
+            return 'TOWED_PASSIVE';
+        }
+        if (/\b(hidraulico\s+auxiliar|electrohidraulico|700\s*bar)\b/.test(valNorm) && !/\b(diesel|gasolina)\b/.test(valNorm)) {
+            return 'HYDRAULIC_AUX';
+        }
+        if (/\b(neumatico|aire\s+comprimido)\b/.test(valNorm) && !/\b(diesel|gasolina)\b/.test(valNorm)) {
+            return 'PNEUMATIC_AIR';
+        }
+        if (/\bhibrid/.test(valNorm)) return 'HYBRID';
+        if (/\b(bateria|bev|li-?ion|lfp)\b/.test(valNorm) && !/\b(diesel|gasolina|remolcado|auxiliar\s+12v)\b/.test(valNorm)) {
+            return 'BATTERY_BEV';
+        }
+        if (/\b(electrico\s+red|red\s+ac|trifasic|monofasic|corriente\s+alterna)\b/.test(valNorm) && !/\b(diesel|gasolina)\b/.test(valNorm)) {
+            return 'GRID_AC';
+        }
+        if (/\b(diesel|gasolina|bencina|glp|gnv|gnl|dual[- ]?fuel|combustible)\b/.test(valNorm)) {
+            return 'THERMAL_FUEL';
+        }
+    }
+
+    // 2. Rasgo físico ontológico (`AssetPhysicalTraits.primary_energy` o `energy_consumption_profile.energy_source`)
+    if (primaryNorm) {
+        if (primaryNorm === 'MANUAL_MECANICO') return 'MANUAL_MECHANICAL';
+        if (primaryNorm === 'REMOLCADO_SIN_PROPULSION_PROPIA') return 'TOWED_PASSIVE';
+        if (primaryNorm === 'HIDRAULICO_AUXILIAR') return 'HYDRAULIC_AUX';
+        if (primaryNorm === 'NEUMATICO_AIRE_COMPRIMIDO') return 'PNEUMATIC_AIR';
+        if (primaryNorm === 'ELECTRICO_RED_AC') return 'GRID_AC';
+        if (primaryNorm === 'ELECTRICO_BATERIA_BEV') return 'BATTERY_BEV';
+        if (primaryNorm === 'HIBRIDO_DIESEL_ELECTRICO' || primaryNorm === 'HIBRIDO_GASOLINA_ELECTRICO') {
+            return 'HYBRID';
+        }
+        if (
+            primaryNorm === 'DIESEL' ||
+            primaryNorm === 'GASOLINA' ||
+            primaryNorm === 'GLP_GNV' ||
+            primaryNorm === 'DUAL_FUEL_DIESEL_GAS'
+        ) {
+            return 'THERMAL_FUEL';
+        }
+    }
+
+    // 3. Inferencia determinista por contexto de `TIPO`
+    if (
+        /\b(torquimetro\s+manual|tecle\s+manual|polipasto\s+manual|gata\s+mecanica|herramienta\s+manual)\b/.test(
+            ctxNorm
+        )
+    ) {
+        return 'MANUAL_MECHANICAL';
+    }
+    if (
         /\b(carro\s+de\s+arrastre|remolque|semirremolque|cama\s+baja|lowboy|acoplado|estanque\s+(?:movil\s+)?remolcado|cisterna\s+remolcada|implemento\s+remolcado|dolly|sin\s+propulsion\s+propia)\b/.test(
-            norm
-        ) && !/\b(autopropulsad|motor\s+diesel|tractocamion)\b/.test(norm);
-    const isRoadOrDumpOrUtilityVehicle =
-        /\b(camion\s+tolva|tractocamion|camioneta|pick\s*up|automovil|suv|furgon|van|bus|minibus|vehiculo|motocicleta|volquete)\b/.test(
-            norm
-        );
-    const isPneumaticOrHandTool =
-        /\b(perforadora\s+neumatica|jackleg|stoper|martillo\s+neumatico|herramienta\s+neumatica)\b/.test(
-            norm
-        );
-    const isStationaryPlantOrElectric =
-        /\b(grupo\s+electrogeno|generador|compresor|molino|bomba|motobomba|soldadora|planta\s+fija|planta\s+estacionaria)\b/.test(
-            norm
-        );
+            ctxNorm
+        ) &&
+        !/\b(autopropulsad|motor\s+diesel|tractocamion)\b/.test(ctxNorm)
+    ) {
+        return 'TOWED_PASSIVE';
+    }
+    if (
+        /\b(llave\s+(?:de\s+)?torque\s+hidraulic|700\s*bar|cilindro\s+hidraulico\s+portatil|tensor\s+hidraulico)\b/.test(
+            ctxNorm
+        )
+    ) {
+        return 'HYDRAULIC_AUX';
+    }
+    if (/\b(perforadora\s+neumatica|jackleg|stoper|martillo\s+neumatico|herramienta\s+neumatica)\b/.test(ctxNorm)) {
+        return 'PNEUMATIC_AIR';
+    }
+    if (/\b(dron|rpas|uav|bev|a\s+bateria|inalambric)\b/.test(ctxNorm) && !/\b(diesel|gasolina)\b/.test(ctxNorm)) {
+        return 'BATTERY_BEV';
+    }
+    if (
+        /\b(pala\s+electrica\s+de\s+cables|bomba\s+sumergible|chancador\s+fijo|molino\s+sag|molino\s+de\s+bolas|harnero\s+estacionario|soldadora\s+inverter|compresor\s+estacionario\s+electrico|motor\s+electrico\s+trifasico)\b/.test(
+            ctxNorm
+        ) &&
+        !/\b(diesel|motobomba\s+diesel)\b/.test(ctxNorm)
+    ) {
+        return 'GRID_AC';
+    }
 
-    const consumptionUnitSi = isTowedNonSelfPropelled
-        ? '0 L/h tracción (Auxiliar L/min / W / A @ 12V-24V)'
-        : isPneumaticOrHandTool
-            ? 'L/s (m³/min) / kWh/h'
-            : isRoadOrDumpOrUtilityVehicle
-                ? 'km/L (L/100 km) / L/h / kWh/100 km'
-                : isStationaryPlantOrElectric
-                    ? 'L/h (50%/75%/100%) / kWh/h / g/kWh'
-                    : 'L/h (Bajo/Medio/Alto) / g/kWh / kWh/h';
+    return 'THERMAL_FUEL';
+}
 
-    const consumptionKeywords = isTowedNonSelfPropelled
-        ? [
-            'bomba de trasvasije',
-            'consumo auxiliar',
-            'caudal dispensador',
-            'L/min',
-            '12V',
-            '24V',
-            'sin propulsión propia',
-            'remolcado',
-        ]
-        : isPneumaticOrHandTool
-            ? ['consumo de aire', 'air consumption', 'L/s', 'm³/min', 'cfm', 'potencia absorbida', 'kWh/h']
-            : isRoadOrDumpOrUtilityVehicle
-                ? [
-                    'consumo de combustible',
-                    'rendimiento de combustible',
-                    'fuel consumption',
-                    'km/L',
-                    'L/100 km',
-                    'L/h',
-                    'g/kWh',
-                    'kWh/100 km',
-                    'mpg',
-                ]
-                : [
-                    'consumo de combustible',
-                    'fuel consumption',
-                    'consumo horario',
-                    'L/h',
-                    'gal/h',
-                    'consumo específico',
-                    'BSFC',
-                    'g/kWh',
-                    'kWh/h',
-                ];
+export function resolveEnergyAxisSemantics(params?: {
+    primaryEnergy?: string | null;
+    energyValueText?: string | null;
+    typeContextText?: string | null;
+}): ResolvedEnergyAxisSemantics {
+    const energyKind = classifyCanonicalEnergyKind(params);
+    const ctxNorm = stripTextAccents(params?.typeContextText || '');
+    const isRoadOrUtilityVehicle =
+        /\b(camion\s+tolva|tractocamion|camion\s+aljibe|camion\s+pluma|camion\s+lubricador|camion\s+mixer|camioneta|pick\s*up|automovil|suv|furgon|van|bus|minibus|vehiculo|motocicleta|volquete)\b/.test(
+            ctxNorm
+        ) && !/\b(caex|camion\s+de\s+extraccion|ultra\s*class)\b/.test(ctxNorm);
+    const isDroneOrCyclicBattery = /\b(dron|rpas|uav|herramienta\s+inalambrica)\b/.test(ctxNorm);
 
-    return [
-        {
+    switch (energyKind) {
+        case 'MANUAL_MECHANICAL':
+            return {
+                energyKind,
+                includeEnergySourceAxis: true,
+                includeConsumptionAxis: false,
+                includeCapacityAxis: false,
+                consumptionLabelEs: 'Consumo energético',
+                consumptionUnitSi: '0 W',
+                consumptionKeywords: [],
+                capacityLabelEs: null,
+                capacityUnitSi: null,
+                capacityKeywords: [],
+            };
+        case 'TOWED_PASSIVE':
+            return {
+                energyKind,
+                includeEnergySourceAxis: true,
+                includeConsumptionAxis: false,
+                includeCapacityAxis: false,
+                consumptionLabelEs: 'Demanda auxiliar remolque',
+                consumptionUnitSi: '12V / 24V',
+                consumptionKeywords: ['sistema eléctrico 12V', '24V', 'remolcado'],
+                capacityLabelEs: null,
+                capacityUnitSi: null,
+                capacityKeywords: [],
+            };
+        case 'GRID_AC':
+            return {
+                energyKind,
+                includeEnergySourceAxis: true,
+                includeConsumptionAxis: true,
+                includeCapacityAxis: false,
+                consumptionLabelEs: 'Potencia eléctrica absorbida',
+                consumptionUnitSi: 'kW · kWh/h',
+                consumptionKeywords: ['potencia absorbida', 'consumo eléctrico', 'corriente nominal', 'kW', 'kVA', 'kWh/h'],
+                capacityLabelEs: null,
+                capacityUnitSi: null,
+                capacityKeywords: [],
+            };
+        case 'PNEUMATIC_AIR':
+            return {
+                energyKind,
+                includeEnergySourceAxis: true,
+                includeConsumptionAxis: true,
+                includeCapacityAxis: false,
+                consumptionLabelEs: 'Consumo de aire requerido',
+                consumptionUnitSi: 'L/s (m³/min @ bar)',
+                consumptionKeywords: ['consumo de aire', 'air consumption', 'L/s', 'm³/min', 'cfm', 'bar'],
+                capacityLabelEs: null,
+                capacityUnitSi: null,
+                capacityKeywords: [],
+            };
+        case 'HYDRAULIC_AUX':
+            return {
+                energyKind,
+                includeEnergySourceAxis: true,
+                includeConsumptionAxis: true,
+                includeCapacityAxis: false,
+                consumptionLabelEs: 'Caudal / presión hidráulica req.',
+                consumptionUnitSi: 'L/min @ bar',
+                consumptionKeywords: ['caudal requerido', 'presión máxima de trabajo', '700 bar', 'L/min', 'bar'],
+                capacityLabelEs: null,
+                capacityUnitSi: null,
+                capacityKeywords: [],
+            };
+        case 'BATTERY_BEV':
+            return {
+                energyKind,
+                includeEnergySourceAxis: true,
+                includeConsumptionAxis: true,
+                includeCapacityAxis: true,
+                consumptionLabelEs: isRoadOrUtilityVehicle
+                    ? 'Consumo eléctrico nominal'
+                    : isDroneOrCyclicBattery
+                    ? 'Autonomía por carga'
+                    : 'Consumo eléctrico horario',
+                consumptionUnitSi: isRoadOrUtilityVehicle
+                    ? 'kWh/100 km'
+                    : isDroneOrCyclicBattery
+                    ? 'min · Wh'
+                    : 'kWh/h',
+                consumptionKeywords: isRoadOrUtilityVehicle
+                    ? ['consumo eléctrico', 'kWh/100 km', 'autonomía WLTP', 'autonomía km']
+                    : isDroneOrCyclicBattery
+                    ? ['tiempo máximo de vuelo', 'max flight time', 'autonomía', 'min', 'Wh']
+                    : ['consumo eléctrico', 'kWh/h', 'autonomía operativa'],
+                capacityLabelEs: 'Capacidad banco baterías',
+                capacityUnitSi: 'kWh · Wh',
+                capacityKeywords: ['capacidad batería', 'battery capacity', 'banco de baterías', 'kWh', 'Wh', 'Ah'],
+            };
+        case 'HYBRID':
+            return {
+                energyKind,
+                includeEnergySourceAxis: true,
+                includeConsumptionAxis: true,
+                includeCapacityAxis: true,
+                consumptionLabelEs: isRoadOrUtilityVehicle ? 'Rendimiento combinado' : 'Consumo horario combinado',
+                consumptionUnitSi: isRoadOrUtilityVehicle ? 'km/L · kWh/100 km' : 'L/h · kWh/h',
+                consumptionKeywords: ['consumo combinado', 'rendimiento combustible', 'L/h', 'km/L', 'kWh'],
+                capacityLabelEs: 'Capacidad estanque + batería HV',
+                capacityUnitSi: 'L + kWh',
+                capacityKeywords: ['capacidad estanque', 'fuel tank capacity', 'capacidad batería', 'kWh', 'litros'],
+            };
+        case 'THERMAL_FUEL':
+        default:
+            return {
+                energyKind: 'THERMAL_FUEL',
+                includeEnergySourceAxis: true,
+                includeConsumptionAxis: true,
+                includeCapacityAxis: true,
+                consumptionLabelEs: isRoadOrUtilityVehicle
+                    ? 'Rendimiento / consumo combustible'
+                    : 'Consumo horario combustible',
+                consumptionUnitSi: isRoadOrUtilityVehicle ? 'km/L (L/100 km) · L/h' : 'L/h · g/kWh',
+                consumptionKeywords: isRoadOrUtilityVehicle
+                    ? [
+                          'consumo de combustible',
+                          'rendimiento de combustible',
+                          'fuel consumption',
+                          'km/L',
+                          'L/100 km',
+                          'L/h',
+                          'g/kWh',
+                      ]
+                    : [
+                          'consumo de combustible',
+                          'fuel consumption',
+                          'consumo horario',
+                          'L/h',
+                          'gal/h',
+                          'consumo específico',
+                          'BSFC',
+                          'g/kWh',
+                      ],
+                capacityLabelEs: 'Capacidad estanque combustible',
+                capacityUnitSi: 'L',
+                capacityKeywords: [
+                    'capacidad tanque de combustible',
+                    'capacidad estanque',
+                    'fuel tank capacity',
+                    'estanque diésel',
+                    'fuel capacity',
+                    'litros',
+                ],
+            };
+    }
+}
+
+const HYBRID_LEGACY_CAPACITY_LABEL_REGEX =
+    /\b(estanque\s*\/\s*bater[ií]a|estanque\s*\/\s*carga|tanque\s*\/\s*bater[ií]a|combustible\s*\/\s*bater[ií]a)\b/i;
+const HYBRID_LEGACY_CONSUMPTION_LABEL_REGEX =
+    /^(consumo\s+nominal|consumo\s*\/\s*demanda.*|consumo\s+auxiliar\s*\/\s*tracci[oó]n)$/i;
+
+/**
+ * Normaliza determinísticamente los `CanonicalSpecSlot[]` de un activo según su vector energético real:
+ * 1. Elimina ejes de estanque/batería o consumo cuando el equipo no posee físicamente ese subsistema
+ *    (ej. equipos eléctricos conectados a red AC, neumáticos, hidráulicos auxiliares o manuales).
+ * 2. Sustituye cualquier etiqueta híbrida heredada (`Capacidad estanque / batería`) por la denominación
+ *    física exacta (`Capacidad estanque combustible` en Diésel/Gasolina/GLP, `Capacidad banco baterías` en BEV).
+ */
+export function normalizeCanonicalSlotsByResolvedEnergy(
+    slots: CanonicalSpecSlot[] | null | undefined,
+    context?: {
+        typeContextText?: string | null;
+        primaryEnergy?: string | null;
+        energyValueText?: string | null;
+    }
+): CanonicalSpecSlot[] {
+    if (!Array.isArray(slots) || slots.length === 0) return [];
+
+    const sourceSlot = slots.find(
+        (s) =>
+            s &&
+            (ENERGY_SOURCE_AXIS_KEY_ALIASES.has(s.axis_key) ||
+                /\bfuente\s+(?:de\s+)?energ[ií]a\b/i.test(s.label_es || '')) &&
+            s.value_si &&
+            !s.value_si.startsWith('[')
+    );
+
+    const semantics = resolveEnergyAxisSemantics({
+        energyValueText: context?.energyValueText || sourceSlot?.value_si || null,
+        primaryEnergy: context?.primaryEnergy || null,
+        typeContextText: context?.typeContextText || null,
+    });
+
+    const out: CanonicalSpecSlot[] = [];
+    for (const slot of slots) {
+        if (!slot) continue;
+        const isConsumption =
+            CONSUMPTION_AXIS_KEY_ALIASES.has(slot.axis_key) ||
+            HYBRID_LEGACY_CONSUMPTION_LABEL_REGEX.test((slot.label_es || '').trim());
+        const isCapacity =
+            ENERGY_CAPACITY_AXIS_KEY_ALIASES.has(slot.axis_key) ||
+            HYBRID_LEGACY_CAPACITY_LABEL_REGEX.test(slot.label_es || '');
+
+        if (isConsumption) {
+            if (!semantics.includeConsumptionAxis) continue;
+            const shouldRewriteConsumptionLabel =
+                slot.axis_key === 'consumo_energetico_nominal' ||
+                HYBRID_LEGACY_CONSUMPTION_LABEL_REGEX.test((slot.label_es || '').trim()) ||
+                (semantics.energyKind === 'THERMAL_FUEL' && /\bel[eé]ctric/i.test(slot.label_es || '')) ||
+                (semantics.energyKind === 'BATTERY_BEV' && /\bcombustible\b/i.test(slot.label_es || ''));
+            out.push({
+                ...slot,
+                label_es: shouldRewriteConsumptionLabel ? semantics.consumptionLabelEs : slot.label_es,
+                unit_si: shouldRewriteConsumptionLabel ? semantics.consumptionUnitSi : slot.unit_si,
+            });
+            continue;
+        }
+
+        if (isCapacity) {
+            if (!semantics.includeCapacityAxis || !semantics.capacityLabelEs) continue;
+            const shouldRewriteCapacityLabel =
+                slot.axis_key === 'capacidad_energetica_autonomia' ||
+                HYBRID_LEGACY_CAPACITY_LABEL_REGEX.test(slot.label_es || '') ||
+                (semantics.energyKind === 'THERMAL_FUEL' && /\bbater[ií]a\b/i.test(slot.label_es || '')) ||
+                (semantics.energyKind === 'BATTERY_BEV' && /\b(estanque|tanque|combustible)\b/i.test(slot.label_es || ''));
+            out.push({
+                ...slot,
+                label_es: shouldRewriteCapacityLabel ? semantics.capacityLabelEs : slot.label_es,
+                unit_si:
+                    shouldRewriteCapacityLabel && semantics.capacityUnitSi
+                        ? semantics.capacityUnitSi
+                        : slot.unit_si,
+            });
+            continue;
+        }
+
+        out.push(slot);
+    }
+
+    return out;
+}
+
+/**
+ * Normaliza líneas planas de `caracteristicas_principales` ya persistidas en Firestore,
+ * corrigiendo al vuelo etiquetas híbridas (`Capacidad estanque / batería: 122 L` -> `Capacidad estanque combustible: 122 L`)
+ * y purgando líneas de estanque/batería en activos conectados a red, neumáticos o manuales.
+ */
+export function normalizeLegacySpecLinesByEnergy(
+    rawLines: unknown,
+    context?: {
+        energyValueText?: string | null;
+        primaryEnergy?: string | null;
+        typeContextText?: string | null;
+    }
+): string[] {
+    if (!Array.isArray(rawLines)) return [];
+    const lines = rawLines.map((l) => String(l || '').trim()).filter(Boolean);
+    if (lines.length === 0) return [];
+
+    let detectedEnergyFromLines = context?.energyValueText || null;
+    if (!detectedEnergyFromLines) {
+        for (const line of lines) {
+            const m = line.match(/^fuente\s+(?:de\s+)?energ[ií]a\s*:\s*(.+)$/i);
+            if (m && m[1]) {
+                detectedEnergyFromLines = m[1].trim();
+                break;
+            }
+        }
+    }
+
+    const semantics = resolveEnergyAxisSemantics({
+        energyValueText: detectedEnergyFromLines,
+        primaryEnergy: context?.primaryEnergy || null,
+        typeContextText: context?.typeContextText || null,
+    });
+
+    const out: string[] = [];
+    for (const line of lines) {
+        const colonIdx = line.indexOf(':');
+        if (colonIdx <= 0) {
+            out.push(line);
+            continue;
+        }
+        const rawLabel = line.slice(0, colonIdx).trim();
+        const rawVal = line.slice(colonIdx + 1).trim();
+
+        if (
+            HYBRID_LEGACY_CAPACITY_LABEL_REGEX.test(rawLabel) ||
+            (semantics.energyKind === 'THERMAL_FUEL' && /^capacidad\s+.*bater[ií]a$/i.test(rawLabel)) ||
+            (semantics.energyKind === 'BATTERY_BEV' && /^capacidad\s+(?:de\s+)?(?:estanque|tanque)/i.test(rawLabel))
+        ) {
+            if (!semantics.includeCapacityAxis || !semantics.capacityLabelEs) continue;
+            out.push(`${semantics.capacityLabelEs}: ${rawVal}`);
+            continue;
+        }
+
+        if (!semantics.includeCapacityAxis && /^capacidad\s+(?:de\s+)?(?:estanque|tanque|bater[ií]a)/i.test(rawLabel)) {
+            continue;
+        }
+
+        if (HYBRID_LEGACY_CONSUMPTION_LABEL_REGEX.test(rawLabel)) {
+            if (!semantics.includeConsumptionAxis) continue;
+            out.push(`${semantics.consumptionLabelEs}: ${rawVal}`);
+            continue;
+        }
+
+        out.push(line);
+    }
+
+    return out;
+}
+
+/**
+ * Construye los ejes canónicos de Matriz Energética, Consumo y Capacidad/Autonomía
+ * adaptados estrictamente al vector energético real del `TIPO` (omitiendo ejes inexistentes
+ * como estanque/batería en activos conectados a red AC, neumáticos, hidráulicos o manuales).
+ */
+export function buildUniversalEnergySpecAxesForType(
+    typeContextText: string,
+    primaryEnergyHint?: string | null
+): EquipmentTypeAxisSchemaItem[] {
+    const semantics = resolveEnergyAxisSemantics({
+        primaryEnergy: primaryEnergyHint || null,
+        typeContextText,
+    });
+
+    const axes: EquipmentTypeAxisSchemaItem[] = [];
+
+    if (semantics.includeEnergySourceAxis) {
+        axes.push({
             axis_key: 'fuente_energia',
             label_es: 'Fuente energía',
-            unit_si: isTowedNonSelfPropelled
-                ? 'Remolcado / Auxiliar 12V-24V / Manual'
-                : 'Diésel | Gasolina | Eléctrico | Híbrido | GLP/GNV | Neumático',
+            unit_si:
+                semantics.energyKind === 'TOWED_PASSIVE'
+                    ? 'Remolcado / Auxiliar 12V-24V'
+                    : semantics.energyKind === 'MANUAL_MECHANICAL'
+                    ? 'Manual / Mecánico'
+                    : 'Diésel | Gasolina | Eléctrico | Híbrido | GLP/GNV | Neumático',
             value_kind: 'CLOSED_ENUM',
             allowed_enum_values: UNIVERSAL_ENERGY_SOURCE_ENUM_VALUES,
             search_keywords: [
@@ -1375,41 +1844,37 @@ export function buildUniversalEnergySpecAxesForType(typeContextText: string): Eq
                 'híbrido',
                 'GLP',
                 'aire comprimido',
-                'remolcado',
-                'auxiliar 12V',
             ],
             mandatory: true,
             is_differentiator: false,
-        },
-        {
+        });
+    }
+
+    if (semantics.includeConsumptionAxis) {
+        axes.push({
             axis_key: 'consumo_energetico_nominal',
-            label_es: isTowedNonSelfPropelled ? 'Consumo auxiliar / Tracción' : 'Consumo nominal',
-            unit_si: consumptionUnitSi,
+            label_es: semantics.consumptionLabelEs,
+            unit_si: semantics.consumptionUnitSi,
             value_kind: 'PHYSICAL_MAGNITUDE',
-            search_keywords: consumptionKeywords,
-            mandatory: !isTowedNonSelfPropelled,
+            search_keywords: semantics.consumptionKeywords,
+            mandatory: true,
             is_differentiator: true,
-        },
-        {
+        });
+    }
+
+    if (semantics.includeCapacityAxis && semantics.capacityLabelEs && semantics.capacityUnitSi) {
+        axes.push({
             axis_key: 'capacidad_energetica_autonomia',
-            label_es: isTowedNonSelfPropelled ? 'Capacidad estanque / Carga útil' : 'Capacidad estanque / batería',
-            unit_si: isTowedNonSelfPropelled ? 'L / m³ / kg' : 'L / kWh',
+            label_es: semantics.capacityLabelEs,
+            unit_si: semantics.capacityUnitSi,
             value_kind: 'PHYSICAL_MAGNITUDE',
-            search_keywords: [
-                'capacidad tanque de combustible',
-                'capacidad estanque',
-                'fuel tank capacity',
-                'DEF tank',
-                'AdBlue',
-                'capacidad batería',
-                'kWh',
-                'litros',
-                'autonomía',
-            ],
+            search_keywords: semantics.capacityKeywords,
             mandatory: true,
             is_differentiator: false,
-        },
-    ];
+        });
+    }
+
+    return axes;
 }
 
 const CONSUMPTION_AXIS_KEY_ALIASES = new Set([
@@ -1437,43 +1902,259 @@ const ENERGY_CAPACITY_AXIS_KEY_ALIASES = new Set([
 ]);
 
 /**
- * Inyecta de forma idempotente los ejes universales de Energía, Consumo y Capacidad/Autonomía
- * en cualquier `spec_schema` de `GlobalEquipmentTypeDoc`, respetando ejes equivalentes ya existentes.
+ * Inyecta y sanea de forma idempotente los ejes universales de Energía, Consumo y Capacidad/Autonomía
+ * en cualquier `spec_schema` de `GlobalEquipmentTypeDoc`:
+ * - Reemplaza etiquetas híbridas heredadas (`Capacidad estanque / batería`, `Consumo nominal`) por etiquetas exactas.
+ * - Elimina ejes de estanque/batería o consumo cuando no corresponden a la física energética del `TIPO`.
  */
 export function ensureUniversalEnergyAxesInSpecSchema(
     existingSchema: EquipmentTypeAxisSchemaItem[],
-    typeContextText: string
+    typeContextText: string,
+    primaryEnergyHint?: string | null
 ): EquipmentTypeAxisSchemaItem[] {
-    const base = Array.isArray(existingSchema) ? [...existingSchema] : [];
-    const universalAxes = buildUniversalEnergySpecAxesForType(typeContextText);
+    const semantics = resolveEnergyAxisSemantics({
+        primaryEnergy: primaryEnergyHint || null,
+        typeContextText,
+    });
+    const universalAxes = buildUniversalEnergySpecAxesForType(typeContextText, primaryEnergyHint);
+    const universalByKey = new Map(universalAxes.map((ax) => [ax.axis_key, ax]));
 
-    const hasEnergySource = base.some(
+    // 1. Limpiar y actualizar ejes existentes en sitio
+    const cleanedBase: EquipmentTypeAxisSchemaItem[] = [];
+    for (const ax of Array.isArray(existingSchema) ? existingSchema : []) {
+        if (!ax) continue;
+        const isConsumption =
+            CONSUMPTION_AXIS_KEY_ALIASES.has(ax.axis_key) ||
+            HYBRID_LEGACY_CONSUMPTION_LABEL_REGEX.test((ax.label_es || '').trim());
+        const isCapacity =
+            ENERGY_CAPACITY_AXIS_KEY_ALIASES.has(ax.axis_key) ||
+            HYBRID_LEGACY_CAPACITY_LABEL_REGEX.test(ax.label_es || '');
+
+        if (isConsumption) {
+            if (!semantics.includeConsumptionAxis) continue;
+            const targetConsumption = universalByKey.get('consumo_energetico_nominal');
+            if (
+                targetConsumption &&
+                (ax.axis_key === 'consumo_energetico_nominal' ||
+                    HYBRID_LEGACY_CONSUMPTION_LABEL_REGEX.test((ax.label_es || '').trim()))
+            ) {
+                cleanedBase.push({
+                    ...ax,
+                    label_es: targetConsumption.label_es,
+                    unit_si: targetConsumption.unit_si,
+                    search_keywords: targetConsumption.search_keywords,
+                });
+            } else {
+                cleanedBase.push({ ...ax });
+            }
+            continue;
+        }
+
+        if (isCapacity) {
+            if (!semantics.includeCapacityAxis) continue;
+            const targetCapacity = universalByKey.get('capacidad_energetica_autonomia');
+            if (
+                targetCapacity &&
+                (ax.axis_key === 'capacidad_energetica_autonomia' ||
+                    HYBRID_LEGACY_CAPACITY_LABEL_REGEX.test(ax.label_es || '') ||
+                    (semantics.energyKind === 'THERMAL_FUEL' && /\bbater[ií]a\b/i.test(ax.label_es || '')) ||
+                    (semantics.energyKind === 'BATTERY_BEV' && /\b(estanque|tanque|combustible)\b/i.test(ax.label_es || '')))
+            ) {
+                cleanedBase.push({
+                    ...ax,
+                    label_es: targetCapacity.label_es,
+                    unit_si: targetCapacity.unit_si,
+                    search_keywords: targetCapacity.search_keywords,
+                });
+            } else {
+                cleanedBase.push({ ...ax });
+            }
+            continue;
+        }
+
+        cleanedBase.push({ ...ax });
+    }
+
+    // 2. Insertar únicamente los ejes energéticos requeridos que aún falten
+    const hasEnergySource = cleanedBase.some(
         (ax) =>
             ENERGY_SOURCE_AXIS_KEY_ALIASES.has(ax.axis_key) ||
             /\b(fuente\s+.*energ|tipo\s+.*combustible|combustible)\b/i.test(ax.label_es)
     );
-    const hasConsumption = base.some(
+    const hasConsumption = cleanedBase.some(
         (ax) =>
             CONSUMPTION_AXIS_KEY_ALIASES.has(ax.axis_key) ||
-            /\b(consumo|rendimiento\s+.*combustible|bsfc)\b/i.test(ax.label_es)
+            /\b(consumo|rendimiento\s+.*combustible|potencia\s+el[eé]ctrica\s+absorbida|autonom[ií]a\s+por\s+carga|caudal\s*\/\s*presi[oó]n|bsfc)\b/i.test(
+                ax.label_es
+            )
     );
-    const hasCapacity = base.some(
+    const hasCapacity = cleanedBase.some(
         (ax) =>
             ENERGY_CAPACITY_AXIS_KEY_ALIASES.has(ax.axis_key) ||
-            /\b(estanque|tanque\s+.*combustible|bater[ií]a|autonom[ií]a)\b/i.test(ax.label_es)
+            /\b(estanque|tanque\s+.*combustible|banco\s+bater[ií]as|bater[ií]a)\b/i.test(ax.label_es)
     );
 
-    if (!hasEnergySource) {
-        base.push(universalAxes[0]);
+    const energyAxis = universalByKey.get('fuente_energia');
+    const consumptionAxis = universalByKey.get('consumo_energetico_nominal');
+    const capacityAxis = universalByKey.get('capacidad_energetica_autonomia');
+
+    if (semantics.includeEnergySourceAxis && !hasEnergySource && energyAxis) {
+        cleanedBase.push(energyAxis);
     }
-    if (!hasConsumption) {
-        base.push(universalAxes[1]);
+    if (semantics.includeConsumptionAxis && !hasConsumption && consumptionAxis) {
+        cleanedBase.push(consumptionAxis);
     }
-    if (!hasCapacity && !/\b(perforadora\s+neumatica|jackleg|stoper|martillo\s+neumatico)\b/i.test(stripTextAccents(typeContextText))) {
-        base.push(universalAxes[2]);
+    if (semantics.includeCapacityAxis && !hasCapacity && capacityAxis) {
+        cleanedBase.push(capacityAxis);
     }
 
-    return base.slice(0, 10);
+    return cleanedBase.slice(0, 14);
+}
+
+/**
+ * Ontología v8.0: Inyecta determinísticamente los ejes diferenciadores universales de tren motriz,
+ * configuración de ejes/rodaje y montaje según los rasgos físicos (`AssetPhysicalTraits`) del equipo,
+ * garantizando que variantes críticas (ej. 8x4 vs 6x4, Automática Allison vs mDRIVE vs Manual Fuller,
+ * Powershift vs Hidrostática, Orugas LGP vs Estándar) se capturen siempre desde el registro inicial.
+ */
+export function ensureUniversalDifferentiatorAxesInSpecSchema(
+    existingSchema: EquipmentTypeAxisSchemaItem[],
+    physicalTraits: {
+        mobility?: string;
+        functional_domain?: string;
+        duty_travel_regime?: string;
+    } | null | undefined,
+    typeContextText: string
+): EquipmentTypeAxisSchemaItem[] {
+    const base = Array.isArray(existingSchema) ? existingSchema.map((ax) => ({ ...ax })) : [];
+    const normCtx = stripTextAccents(typeContextText || '');
+    const mobility = physicalTraits?.mobility || '';
+    const domain = physicalTraits?.functional_domain || '';
+
+    const isSelfPropelledWheeled = mobility === 'SELF_PROPELLED_WHEELED';
+    const isSelfPropelledTracked = mobility === 'SELF_PROPELLED_TRACKED';
+    const isTruckOrRoadVehicle =
+        /\b(camion|tractocamion|volquete|aljibe|mixer|betonera|pluma|camioneta|pick[- ]?up|suv|furgon|van|bus|minibus)\b/.test(
+            normCtx
+        ) ||
+        (isSelfPropelledWheeled &&
+            (domain === 'HAULAGE_AND_TRANSPORT' || domain === 'VOCATIONAL_SERVICE_SUPPORT'));
+
+    // 1. Promover y normalizar eje de tracción/configuración de ejes en vehículos sobre neumáticos
+    if (isTruckOrRoadVehicle) {
+        const isLightVehicle = /\b(camioneta|pick[- ]?up|suv|automovil|sedan|hatchback|furgon|van)\b/.test(normCtx);
+        const existingAxleIdx = base.findIndex(
+            (ax) =>
+                ax.axis_key === 'traccion_ejes' ||
+                ax.axis_key === 'traccion' ||
+                /\b(configuracion\s+ejes|traccion)\b/i.test(stripTextAccents(ax.label_es))
+        );
+        const heavyEnums = ['4x2', '4x4', '6x2', '6x4', '6x6', '8x4', '8x6', '8x8'];
+        const lightEnums = ['4x2', '4x4', 'AWD', 'FWD', 'RWD'];
+        if (existingAxleIdx >= 0) {
+            base[existingAxleIdx] = {
+                ...base[existingAxleIdx],
+                mandatory: true,
+                is_differentiator: true,
+                allowed_enum_values: isLightVehicle ? lightEnums : heavyEnums,
+                unit_si: isLightVehicle ? lightEnums.join(' | ') : '4x2 | 6x4 | 8x4 | 6x6 | 8x8',
+            };
+        } else {
+            base.push({
+                axis_key: 'traccion_ejes',
+                label_es: isLightVehicle ? 'Tracción' : 'Configuración ejes',
+                unit_si: isLightVehicle ? lightEnums.join(' | ') : '4x2 | 6x4 | 8x4 | 6x6 | 8x8',
+                value_kind: 'CLOSED_ENUM',
+                allowed_enum_values: isLightVehicle ? lightEnums : heavyEnums,
+                search_keywords: isLightVehicle
+                    ? ['tracción', 'drive type', '4x4', '4x2', 'AWD']
+                    : ['configuración de ejes', 'axle configuration', '4x2', '6x2', '6x4', '6x6', '8x4', '8x6', '8x8'],
+                mandatory: true,
+                is_differentiator: true,
+            });
+        }
+    }
+
+    // 2. Eje universal de Transmisión / Caja en maquinaria y vehículos autopropulsados con tren motriz
+    const isExcludedFromGearbox =
+        /\b(dron|rpas|uav|torre\s+de\s+iluminacion|soldadora|compresor|generador|grupo\s+electrogeno|motobomba|bomba\s+centrifuga|martillo|perforadora\s+manual|herramienta|carro\s+de\s+arrastre|remolque|semirremolque)\b/.test(
+            normCtx
+        );
+
+    if ((isSelfPropelledWheeled || isSelfPropelledTracked) && !isExcludedFromGearbox) {
+        const hasTransmissionAxis = base.some(
+            (ax) =>
+                ax.axis_key === 'transmision_caja' ||
+                ax.axis_key === 'tipo_transmision' ||
+                ax.axis_key === 'caja_cambios' ||
+                /\b(transmision|caja\s+de\s+cambios)\b/i.test(stripTextAccents(ax.label_es))
+        );
+        if (!hasTransmissionAxis) {
+            const txAllowed = [
+                'Automática (Convertidor)',
+                'Automatizada (AMT)',
+                'Manual Eaton Fuller',
+                'Manual sincronizada',
+                'Powershift',
+                'Hidrostática',
+                'Eléctrica AC',
+                'CVT',
+            ];
+            base.push({
+                axis_key: 'transmision_caja',
+                label_es: 'Transmisión / Caja',
+                unit_si: 'Automática | Automatizada AMT | Manual Fuller | Manual | Powershift | Hidrostática',
+                value_kind: 'CLOSED_ENUM',
+                allowed_enum_values: txAllowed,
+                search_keywords: [
+                    'transmisión',
+                    'caja de cambios',
+                    'transmission',
+                    'gearbox',
+                    'Allison',
+                    'mDRIVE',
+                    'I-Shift',
+                    'Opticruise',
+                    'Eaton Fuller',
+                    'Powershift',
+                    'hidrostática',
+                    'automática',
+                    'manual',
+                ],
+                mandatory: true,
+                is_differentiator: true,
+            });
+        }
+    }
+
+    // 3. Eje de configuración de tren de rodaje en equipos sobre orugas si no existe
+    if (isSelfPropelledTracked && !/\b(chancador|harnero|planta)\b/.test(normCtx)) {
+        const hasUndercarriage = base.some(
+            (ax) =>
+                ax.axis_key === 'configuracion_rodaje' ||
+                /\b(tren\s+de\s+rodaje|oruga|zapatas|undercarriage)\b/i.test(stripTextAccents(ax.label_es))
+        );
+        if (!hasUndercarriage && base.length < 13) {
+            base.push({
+                axis_key: 'configuracion_rodaje',
+                label_es: 'Tren de rodaje',
+                unit_si: 'Oruga acero estándar | LC (Tren largo) | LGP (Baja presión) | Oruga goma',
+                value_kind: 'CLOSED_ENUM',
+                allowed_enum_values: [
+                    'Oruga acero estándar',
+                    'LC (Tren largo)',
+                    'LGP (Baja presión)',
+                    'High-Drive',
+                    'Oruga goma',
+                ],
+                search_keywords: ['undercarriage', 'tren de rodaje', 'LC', 'LGP', 'rubber track', 'oruga'],
+                mandatory: false,
+                is_differentiator: true,
+            });
+        }
+    }
+
+    return base.slice(0, 14);
 }
 
 /**
@@ -1878,33 +2559,94 @@ const FORBIDDEN_GENERIC_BULLET_TOKENS = new Set([
     'na',
 ]);
 
+const PURE_NEGATIVE_BULLET_START_REGEX =
+    /^(?:no\s+aplica\b|n\s*\/\s*a\b|sin\s+(?:sistema|equipamiento|adblue|def\b|scr\b|urea|dpf|egr|bater[ií]a\s+de\s+tracci[oó]n|combustible|estanque)|no\s+(?:posee|equipa|requiere|incorpora|utiliza|dispone\s+de|cuenta\s+con)\b|ausencia\s+de\b|inexistencia\s+de\b|exento\s+de\b)/i;
+
+const INLINE_NEGATIVE_SUBSYSTEM_PARENTHETICAL_REGEX =
+    /\(\s*(?:configuraci[oó]n\s+(?:de\s+motor\s+)?sin\s+[^)]+|no\s+aplica[^)]*|sin\s+(?:sistema\s+|uso\s+de\s+|requerir\s+)?(?:scr|adblue|def\b|urea|dpf|egr|doc\b|postratamiento|bater[ií]a\s+de\s+tracci[oó]n|combustible)[^)]*|no\s+(?:posee|equipa|requiere|incorpora)[^)]*|exento\s+de\s+[^)]*|ausencia\s+de\s+[^)]*)\s*\)/gi;
+
+const TRAILING_NEGATIVE_SUBSYSTEM_CLAUSE_REGEX =
+    /(?:[,;—–-]\s*|\s+)(?:sin\s+(?:sistema\s+|requerir\s+|necesidad\s+de\s+|uso\s+de\s+)?(?:scr\b|adblue\b|def\b|urea\b|dpf\b|egr\b|doc\b|postratamiento|bater[ií]a\s+de\s+tracci[oó]n|combustible)[a-z0-9/._\s-]*|no\s+(?:posee|equipa|requiere|incorpora)\s+(?:sistema\s+)?(?:scr\b|adblue\b|def\b|urea\b|dpf\b|egr\b)[a-z0-9/._\s-]*|exento\s+de\s+(?:sistema\s+)?(?:scr\b|adblue\b|def\b|urea\b|dpf\b)[a-z0-9/._\s-]*)$/i;
+
+const TRAILING_BROCHURE_FLUFF_CLAUSE_REGEX =
+    /\s+(?:dise[ñn]ad[oa]\s+para|orientad[oa]\s+a|enfocad[oa]\s+en)\s+(?:reducci[oó]n\s+de\s+ruido\s+y\s+)?(?:confort|comodidad|ergonom[ií]a\s+y\s+confort|mayor\s+productividad|m[aá]xima\s+eficiencia)[^.,;]*$/i;
+
+const TAUTOLOGICAL_CONFIG_MOBILITY_REGEX =
+    /^configuraci[oó]n\s+de\s+[a-z0-9áéíóúüñ\s/-]+\s+para\s+(?:movilidad|desplazamiento|traslado|operaci[oó]n|trabajo)\s+en\s+(?:superficies?|terrenos?|faenas?|obras?)(?:\s+de\s+[a-záéíóúüñ\s]+)?$/i;
+
+const TECHNICAL_NORM_OR_CODE_TOKEN_REGEX =
+    /\b(?:iso|sae|din|iec|epa|tier|stage|euro|ip\d{2}|rops|fops|atex|nfpa|xhp|lgp|awd|4wd|2wd|[468]x[2468]|allison|mdrive|powershift|hidrost[aá]tic[oa]|[a-z]{1,4}\d[a-z0-9.-]*)\b/i;
+
+function cleanPositivePresenceBulletClause(raw: string): string {
+    return raw
+        .replace(INLINE_NEGATIVE_SUBSYSTEM_PARENTHETICAL_REGEX, '')
+        .replace(TRAILING_NEGATIVE_SUBSYSTEM_CLAUSE_REGEX, '')
+        .replace(TRAILING_BROCHURE_FLUFF_CLAUSE_REGEX, '')
+        .replace(/\s+de\s+alto\s+rendimiento(?=\s*\([A-Z0-9]{2,6}\))/gi, '')
+        .replace(/\s+para\s+gesti[oó]n\s+de\s+flujo\s+en\s+aplicaciones\s+de\s+alta\s+demanda$/i, '')
+        .replace(/\s{2,}/g, ' ')
+        .replace(/[,;—–-]\s*$/, '')
+        .trim();
+}
+
 /**
- * Purga viñetas genéricas de 1–2 palabras ("Superficie", "Operación Técnica", "Operación Industrial")
+ * Purga viñetas genéricas de 1–2 palabras ("Superficie", "Operación Técnica"), cláusulas negativas
+ * de subsistemas inexistentes ("sin sistema SCR/AdBlue"), relleno comercial ("confort del operador",
+ * "aplicaciones de alta demanda"), tautologías del TIPO y duraciones de turno inventadas ("8 a 10 horas")
  * en `ambiente_operativo` (`CONDICIONES DE DISEÑO`) y `contexto_operativo` (`CONTEXTO Y TRABAJO`).
  * Si tras la purga no quedan especificaciones técnicas reales, aplica política Fail-Closed honesta:
  * `["[Información técnica no declarada en ficha]"]`.
  */
 export function sanitizeDesignAndWorkContextItems(
     rawItems: unknown,
-    fallbackSourceItems?: unknown
+    fallbackSourceItems?: unknown,
+    options?: { canonicalTypeEs?: string | null }
 ): string[] {
+    const normCanonicalType = options?.canonicalTypeEs
+        ? stripTextAccents(String(options.canonicalTypeEs)).replace(/[.,;:]/g, '').trim()
+        : '';
+
     const filterList = (input: unknown): string[] => {
         if (!Array.isArray(input)) return [];
         const out: string[] = [];
         const seen = new Set<string>();
         for (const item of input) {
-            const clean = String(item || '')
+            const rawTrimmed = String(item || '')
                 .replace(/^[•\-*]\s*/, '')
                 .replace(/\s+/g, ' ')
                 .trim();
+            if (!rawTrimmed) continue;
+            if (rawTrimmed === MISSING_FULL_TECH_SPEC || rawTrimmed === MISSING_AXIS_VALUE) continue;
+            if (PURE_NEGATIVE_BULLET_START_REGEX.test(rawTrimmed)) continue;
+
+            const clean = cleanPositivePresenceBulletClause(rawTrimmed);
             if (!clean) continue;
-            if (clean === MISSING_FULL_TECH_SPEC || clean === MISSING_AXIS_VALUE) continue;
+            if (PURE_NEGATIVE_BULLET_START_REGEX.test(clean)) continue;
             if (FORBIDDEN_MARKETING_OR_UNVERIFIED_CLAIM_REGEX.test(clean)) continue;
+
+            const hasMetricOrNorm =
+                ANY_ENGINEERING_METRIC_REGEX.test(clean) || TECHNICAL_NORM_OR_CODE_TOKEN_REGEX.test(clean);
+
+            if (!hasMetricOrNorm && TAUTOLOGICAL_CONFIG_MOBILITY_REGEX.test(clean)) {
+                continue;
+            }
 
             const norm = stripTextAccents(clean).replace(/[.,;:]/g, '').trim();
             if (!norm || FORBIDDEN_GENERIC_BULLET_TOKENS.has(norm)) continue;
-            // Exigir contenido técnico real (>= 12 caracteres o al menos 2 palabras con significado técnico)
-            if (norm.length < 10 && !ANY_ENGINEERING_METRIC_REGEX.test(clean)) continue;
+
+            if (
+                normCanonicalType &&
+                normCanonicalType.length >= 6 &&
+                !hasMetricOrNorm &&
+                (norm === normCanonicalType ||
+                    norm.startsWith(`configuracion de ${normCanonicalType}`) ||
+                    norm.startsWith(`equipo tipo ${normCanonicalType}`))
+            ) {
+                continue;
+            }
+
+            // Exigir contenido técnico real (>= 10 caracteres o al menos 1 magnitud/norma de ingeniería)
+            if (norm.length < 10 && !hasMetricOrNorm) continue;
             if (seen.has(norm)) continue;
             seen.add(norm);
             out.push(clean);
@@ -1921,10 +2663,219 @@ export function sanitizeDesignAndWorkContextItems(
     return [MISSING_FULL_TECH_SPEC];
 }
 
-export function hasOnlyGenericOrMissingContextItems(items: unknown): boolean {
+export function hasOnlyGenericOrMissingContextItems(
+    items: unknown,
+    options?: { canonicalTypeEs?: string | null }
+): boolean {
     if (!Array.isArray(items) || items.length === 0) return true;
-    const sanitized = sanitizeDesignAndWorkContextItems(items);
+    const sanitized = sanitizeDesignAndWorkContextItems(items, undefined, options);
     return sanitized.length === 1 && sanitized[0] === MISSING_FULL_TECH_SPEC;
+}
+
+const EDITORIAL_OR_SPECULATIVE_HEADING_REGEX =
+    /^(?:#{1,6}\s+|\*\*|__)?\s*(?:directiva\s+de\s+c[aá]lculo|gesti[oó]n\s+de\s+autonom[ií]a|nota\s+(?:de\s+modelamiento|metodol[oó]gica|sobre\s+tco|editorial|aclaratoria)|modelamiento\s+(?:de\s+)?tco|criterios?\s+de\s+estimaci[oó]n\s+tco|consideraciones?\s+de\s+autonom[ií]a|observaci[oó]n\s+sobre\s+subsistemas\s+no\s+equipados)\b[^|]*$/i;
+
+const SPECULATIVE_OR_NEGATIVE_PARAGRAPH_REGEX =
+    /\b(?:para\s+efectos\s+de\s+modelamiento\s+de\s+costo\s+total|turno\s+est[aá]ndar\s+de\s+\d+\s*(?:a|-|–)\s*\d+\s*(?:horas?|h\b)|ciclos?\s+de\s+trabajo\s+continuos?\s+de\s+\d+\s*(?:a|-|–)\s*\d+\s*(?:horas?|h\b)|no\s+incurre\s+en\s+costos\s+operativos\s+asociados\s+al\s+consumo\s+de\s+(?:fluido|adblue|def|urea)|(?:el|este)\s+equipo\s+no\s+(?:posee|equipa|cuenta\s+con|incorpora|requiere)\s+(?:sistema\s+)?(?:scr|adblue|def|dpf|egr|bater[ií]a\s+de\s+tracci[oó]n))\b/i;
+
+const NON_APPLICABLE_CELL_VALUE_REGEX =
+    /^(?:[*_`~]+\s*)*(?:no\s+aplica\b|n\s*\/\s*a\s*(?:\([^)]*\))?\s*$|no\s+(?:posee|equipa|incorpora|dispone\s+de|cuenta\s+con)\b|no\s+requiere\s+(?:adblue|def\b|scr\b|urea|dpf\b|combustible|postratamiento)|sin\s+(?:sistema\b|equipamiento\b|adblue\b|def\b|scr\b|urea\b|dpf\b|egr\b|doc\b|catalizador\s+scr|estanque\s+de\s+(?:adblue|def|urea|combustible)|banco\s+de\s+bater[ií]as|bater[ií]a\s+de\s+tracci[oó]n|postratamiento\s+scr)|ausencia\s+de\s+(?:sistema|scr|adblue|def|dpf|egr)|inexistencia\s+de\b|exento\s+de\s+(?:scr|adblue|def|dpf|consumo\s+de\s+fluido))/i;
+
+const OPTIONAL_SUBSYSTEM_PARAM_CELL_REGEX =
+    /\b(?:scr\b|adblue|def\b|urea|dpf\b|bater[ií]a\s+de\s+tracci[oó]n|banco\s+de\s+bater[ií]as|pant[oó]grafo|trolley|estabilizadores|outriggers|quinta\s+rueda|ripper)\b/i;
+
+const INLINE_NEGATIVE_CELL_ASSERTION_REGEX =
+    /\b(?:no\s+aplica|sin\s+(?:sistema\s+)?(?:scr\b|adblue|def\b|urea|dpf\b|estabilizadores|bater[ií]a\s+de\s+tracci[oó]n)|no\s+(?:posee|equipa|incorpora|requiere|dispone\s+de)|exento\s+de\s+(?:scr|adblue|def|dpf))\b/i;
+
+const EXPLICIT_VISUAL_CITATION_LINE_REGEX =
+    /\b(?:seg[uú]n\s+(?:el|la|los|las)?\s*(?:esquema|diagrama|plano|figura|ilustraci[oó]n|imagen|curva)|ver\s+(?:el|la)?\s*(?:esquema|diagrama|figura|ilustraci[oó]n|imagen|plano|curva)|(?:ilustrad[oa]s?|indicad[oa]s?|mostrad[oa]s?|se[nñ]alad[oa]s?|representad[oa]s?)\s+en\s+(?:el|la)\s+(?:figura|diagrama|esquema|ilustraci[oó]n|plano|curva)|ubicaci[oó]n\s+en\s+(?:el|la)?\s*(?:diagrama|esquema|figura)|\b(?:fig\.|figura)\s*\d+)/i;
+
+function splitMarkdownTableCells(rowLine: string): string[] {
+    return rowLine
+        .trim()
+        .replace(/^\||\|$/g, '')
+        .split('|')
+        .map((c) => c.trim());
+}
+
+function isMarkdownTableSeparatorCells(cells: string[]): boolean {
+    return cells.length > 0 && cells.every((c) => /^:?-{2,}:?$/.test(c) || c === '');
+}
+
+/**
+ * Sanitizador determinista post-inferencia de Presencia Positiva Estricta (`v9.6`):
+ * 1. Elimina filas de tabla cuyo valor sea `"No aplica..."`, `"N/A"`, `"Sin sistema SCR/AdBlue"`,
+ *    `"No posee..."` o `"Exento de..."`, preservando intacto `[Información técnica no declarada en ficha]`.
+ * 2. Limpia paréntesis negativos incrustados en celdas válidas (ej. `"(sin sistema SCR/AdBlue)"`).
+ * 3. Elimina bloques editoriales especulativos (`"Directiva de Cálculo TCO y Gestión de Autonomía:"`,
+ *    `"turno estándar de 8 a 10 horas"`, `"no incurre en costos operativos asociados al consumo de fluido..."`).
+ * 4. En `pillarId === 'ficha_tecnica'`, garantiza pureza 100% tabular + encabezados + marcadores de figuras.
+ */
+export function sanitizePositivePresenceMarkdown(
+    markdown: string,
+    options?: { pillarId?: string }
+): string {
+    const raw = String(markdown || '');
+    if (!raw.trim()) return raw;
+
+    const lines = raw.replace(/\r\n/g, '\n').split('\n');
+    const stage1Lines: string[] = [];
+    let i = 0;
+    let skippingEditorialBlock = false;
+
+    while (i < lines.length) {
+        const line = lines[i];
+        const trimmed = line.trim();
+
+        // Procesamiento íntegro de bloques de tabla Markdown
+        if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+            skippingEditorialBlock = false;
+            const tableBlock: string[] = [];
+            while (i < lines.length && lines[i].trim().startsWith('|')) {
+                tableBlock.push(lines[i]);
+                i++;
+            }
+
+            const headerAndSep: string[] = [];
+            const keptBodyRows: string[] = [];
+            let headerSeen = false;
+            let hadBodyRows = false;
+
+            for (const tRow of tableBlock) {
+                const cells = splitMarkdownTableCells(tRow);
+                if (isMarkdownTableSeparatorCells(cells)) {
+                    headerAndSep.push(tRow);
+                    continue;
+                }
+                if (!headerSeen) {
+                    headerSeen = true;
+                    headerAndSep.push(tRow);
+                    continue;
+                }
+
+                hadBodyRows = true;
+                const isIndexedChecklistRow = /^\d{1,3}$/.test(cells[0] || '');
+                const paramCell = isIndexedChecklistRow ? cells[1] || '' : cells[0] || '';
+
+                const hasPureNonApplicableCell = cells.some((c) => NON_APPLICABLE_CELL_VALUE_REGEX.test(c));
+                const isNegativeOptionalSubsystemRow =
+                    OPTIONAL_SUBSYSTEM_PARAM_CELL_REGEX.test(paramCell) &&
+                    cells.slice(isIndexedChecklistRow ? 2 : 1).some((c) => INLINE_NEGATIVE_CELL_ASSERTION_REGEX.test(c));
+
+                if (hasPureNonApplicableCell || isNegativeOptionalSubsystemRow) {
+                    continue;
+                }
+
+                // Limpiar paréntesis negativos residuales en celdas válidas (sin tocar placeholders `[Información...]`)
+                const cleanedCells = cells.map((cell, cellIdx) => {
+                    if (cellIdx === 0 && !isIndexedChecklistRow) return cell;
+                    if (cell.startsWith('[') && cell.endsWith(']')) return cell;
+                    const stripped = cell
+                        .replace(INLINE_NEGATIVE_SUBSYSTEM_PARENTHETICAL_REGEX, '')
+                        .replace(/\s{2,}/g, ' ')
+                        .trim();
+                    return stripped || cell;
+                });
+
+                const originalCleanedEqual = cleanedCells.every((c, idx) => c === cells[idx]);
+                keptBodyRows.push(originalCleanedEqual ? tRow : `| ${cleanedCells.join(' | ')} |`);
+            }
+
+            if (!hadBodyRows || keptBodyRows.length > 0) {
+                stage1Lines.push(...headerAndSep, ...keptBodyRows);
+            }
+            continue;
+        }
+
+        // Detectar inicio de bloque editorial/especulativo no solicitado
+        if (trimmed && EDITORIAL_OR_SPECULATIVE_HEADING_REGEX.test(trimmed)) {
+            skippingEditorialBlock = true;
+            i++;
+            continue;
+        }
+
+        if (skippingEditorialBlock) {
+            if (!trimmed) {
+                i++;
+                continue;
+            }
+            const isNextValidSectionHeading =
+                /^#{1,6}\s+/.test(trimmed) && !EDITORIAL_OR_SPECULATIVE_HEADING_REGEX.test(trimmed);
+            const isFigureOrSymbolMarker =
+                /^!\[/.test(trimmed) || /^\[(?:IMAGEN[_\s-]PENDIENTE|FIGURA|DIAGRAMA|S[ÍI]MBOLO)\b/i.test(trimmed);
+            if (isNextValidSectionHeading || isFigureOrSymbolMarker) {
+                skippingEditorialBlock = false;
+                // No incrementar `i`: procesar esta línea normalmente
+                continue;
+            }
+            // Descartar párrafo/viñeta perteneciente al bloque editorial
+            i++;
+            continue;
+        }
+
+        // Descartar párrafos especulativos sueltos fuera de tablas
+        if (trimmed && SPECULATIVE_OR_NEGATIVE_PARAGRAPH_REGEX.test(trimmed)) {
+            i++;
+            continue;
+        }
+
+        stage1Lines.push(line);
+        i++;
+    }
+
+    // Etapa 2: En Pilar 01 (`ficha_tecnica`), imponer pureza 100% tabular si existe al menos una tabla
+    const hasAnyTable = stage1Lines.some((l) => l.trim().startsWith('|'));
+    const stage2Lines =
+        options?.pillarId === 'ficha_tecnica' && hasAnyTable
+            ? stage1Lines.filter((l) => {
+                  const t = l.trim();
+                  if (!t) return true;
+                  if (/^#{1,6}\s+/.test(t)) return true;
+                  if (t.startsWith('|')) return true;
+                  if (/^!\[/.test(t) || /^\[(?:IMAGEN[_\s-]PENDIENTE|FIGURA|DIAGRAMA|S[ÍI]MBOLO)\b/i.test(t)) {
+                      return true;
+                  }
+                  if (t.length <= 160 && EXPLICIT_VISUAL_CITATION_LINE_REGEX.test(t)) {
+                      return true;
+                  }
+                  return false;
+              })
+            : stage1Lines;
+
+    // Etapa 3: Podar encabezados `##`..`######` huérfanos que hayan quedado vacíos tras eliminar filas/párrafos
+    const stage3Lines: string[] = [];
+    for (let idx = 0; idx < stage2Lines.length; idx++) {
+        const line = stage2Lines[idx];
+        const trimmed = line.trim();
+        const headingMatch = trimmed.match(/^(#{2,6})\s+/);
+        if (headingMatch) {
+            const currentLevel = headingMatch[1].length;
+            let hasSectionBody = false;
+            for (let lookahead = idx + 1; lookahead < stage2Lines.length; lookahead++) {
+                const nextTrimmed = stage2Lines[lookahead].trim();
+                if (!nextTrimmed) continue;
+                const nextHeading = nextTrimmed.match(/^(#{1,6})\s+/);
+                if (nextHeading && nextHeading[1].length <= currentLevel) {
+                    break;
+                }
+                if (!nextHeading) {
+                    hasSectionBody = true;
+                    break;
+                }
+            }
+            if (!hasSectionBody) {
+                continue;
+            }
+        }
+        stage3Lines.push(line);
+    }
+
+    const finalMarkdown = stage3Lines
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+    return finalMarkdown.length > 0 ? finalMarkdown : raw.trim();
 }
 
 /**

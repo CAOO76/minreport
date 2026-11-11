@@ -1,30 +1,40 @@
 import type {
+    AssetConfigurationProfile,
     AssetMobilityTrait,
     AssetPhysicalTraits,
     CanonicalSpecSlot,
     CostDriverUnit,
     CostMatrixTaxonomyMeta,
+    DisambiguationFacetGroup,
+    DisambiguationFacetKey,
     DutyTravelRegimeTrait,
     EnergyConsumptionProfile,
     EnergySourceCategory,
+    EphemeralIdentificationImageInput,
     EquipmentAxisValueKind,
     FleetIdentifierType,
     FleetOwnershipCondition,
     FunctionalDomainTrait,
     OperationalCostMatrix,
     OperatorInterfaceTrait,
+    OpticalIdentificationSummary,
     PmCadenceBasisTrait,
+    TransmissionCategory,
 } from '../../../contracts/opermaq.contracts';
 import {
     ApplyCatalogHomologationBodySchema,
+    AssetConfigurationProfileSchema,
     AssetMobilityTraitSchema,
     AssetPhysicalTraitsSchema,
     CanonicalSpecSlotSchema,
     CostDriverUnitSchema,
     CostMatrixTaxonomyMetaSchema,
+    DisambiguationFacetGroupSchema,
+    DisambiguationFacetKeySchema,
     DutyTravelRegimeTraitSchema,
     EnergyConsumptionProfileSchema,
     EnergySourceCategorySchema,
+    EphemeralIdentificationImageInputSchema,
     EquipmentAxisValueKindSchema,
     EquipmentTypeAxisSchema,
     FleetIdentifierTypeSchema,
@@ -35,9 +45,11 @@ import {
     HITL_CONFIRM_KEYWORD,
     OperationalCostMatrixSchema,
     OperatorInterfaceTraitSchema,
+    OpticalIdentificationSummarySchema,
     PmCadenceBasisTraitSchema,
     ResolveAssetBodySchema,
     ReviewContributionBodySchema,
+    TransmissionCategorySchema,
 } from '../../../contracts/opermaq.contracts';
 import type {
     EquipmentTypeAxisSchemaItem,
@@ -45,14 +57,18 @@ import type {
 } from '../utils/canonicalArchetypeSpecs';
 
 export type {
+    AssetConfigurationProfile,
     AssetMobilityTrait,
     AssetPhysicalTraits,
     CanonicalSpecSlot,
     CostDriverUnit,
     CostMatrixTaxonomyMeta,
+    DisambiguationFacetGroup,
+    DisambiguationFacetKey,
     DutyTravelRegimeTrait,
     EnergyConsumptionProfile,
     EnergySourceCategory,
+    EphemeralIdentificationImageInput,
     EquipmentAxisValueKind,
     EquipmentTypeAxisSchemaItem,
     FleetIdentifierType,
@@ -61,19 +77,25 @@ export type {
     MachineryArchetypeId,
     OperationalCostMatrix,
     OperatorInterfaceTrait,
+    OpticalIdentificationSummary,
     PmCadenceBasisTrait,
+    TransmissionCategory,
 };
 
 export {
     ApplyCatalogHomologationBodySchema,
+    AssetConfigurationProfileSchema,
     AssetMobilityTraitSchema,
     AssetPhysicalTraitsSchema,
     CanonicalSpecSlotSchema,
     CostDriverUnitSchema,
     CostMatrixTaxonomyMetaSchema,
+    DisambiguationFacetGroupSchema,
+    DisambiguationFacetKeySchema,
     DutyTravelRegimeTraitSchema,
     EnergyConsumptionProfileSchema,
     EnergySourceCategorySchema,
+    EphemeralIdentificationImageInputSchema,
     EquipmentAxisValueKindSchema,
     EquipmentTypeAxisSchema,
     FleetIdentifierTypeSchema,
@@ -84,9 +106,11 @@ export {
     HITL_CONFIRM_KEYWORD,
     OperationalCostMatrixSchema,
     OperatorInterfaceTraitSchema,
+    OpticalIdentificationSummarySchema,
     PmCadenceBasisTraitSchema,
     ResolveAssetBodySchema,
     ReviewContributionBodySchema,
+    TransmissionCategorySchema,
 };
 
 export type EquipmentTypeOrigin = 'SEEDED_ISO_BASE' | 'AI_CURATED' | 'AI_DISCOVERED' | 'HUMAN_CURATED_HITL';
@@ -178,6 +202,8 @@ export interface ItemizedSource {
 }
 
 export type EstadoAprobacion = 'GENERADO_IA' | 'REQUIERE_CAMBIOS' | 'APROBADO_HUMANO';
+
+export type HuntIntent = 'INITIAL_CAPTURE' | 'INCREMENTAL_UPDATE';
 
 export interface FigureCallout {
     callout: string;
@@ -276,6 +302,7 @@ export interface PillarItem {
     content: string | null;
     created_at: string;
     created_by?: string;
+    initial_hunt_activated_at?: string | null;
     hunted_at?: string | null;
     item_sources?: ItemizedSource[];
     hunt_error?: string | null;
@@ -294,6 +321,7 @@ export interface PillarItem {
     locked_item_advisories?: LockedItemAdvisory[];
     figures?: ExtractedFigureRef[];
     fact_fingerprints?: string[];
+    rejected_fact_fingerprints?: string[];
     symbology_refs?: string[];
     media_harvest_report?: Record<string, any>;
     last_edit_by?: string;
@@ -390,6 +418,7 @@ export interface CatalogProfile {
     equipment_type_key?: string;
     archetype_id?: MachineryArchetypeId;
     physical_traits?: AssetPhysicalTraits;
+    configuration_profile?: AssetConfigurationProfile;
     tipo_equipo: string;
     categoria_equipo: string;
     canonical_specs?: CanonicalSpecSlot[];
@@ -409,6 +438,7 @@ export interface ResolvedAssetCandidate {
     equipment_type_key?: string;
     archetype_id?: MachineryArchetypeId;
     physical_traits?: AssetPhysicalTraits;
+    configuration_profile?: AssetConfigurationProfile;
     tipo_equipo: string;
     categoria_equipo: string;
     canonical_specs?: CanonicalSpecSlot[];
@@ -424,6 +454,14 @@ export interface ResolvedAssetCandidate {
     rejection_reason?: string;
     requires_clarification?: boolean;
     clarification_message?: string;
+    disambiguation_facets?: DisambiguationFacetGroup[];
+    optical_identification_summary?: OpticalIdentificationSummary | null;
+}
+
+export interface ResolveAssetsEnvelopeResponse {
+    candidates: ResolvedAssetCandidate[];
+    optical_identification_summary?: OpticalIdentificationSummary | null;
+    disambiguation_facets?: DisambiguationFacetGroup[];
 }
 
 export type SymbologyStandardFamily =

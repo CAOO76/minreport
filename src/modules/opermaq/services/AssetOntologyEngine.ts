@@ -832,10 +832,10 @@ export class AssetOntologyEngine {
         if (traits.primary_energy === 'MANUAL_MECANICO') {
             return {
                 chapter_key: 'matriz_energetica_consumos_y_autonomia',
-                title_es: 'Accionamiento Mecánico Manual (0 L/h), Fuerza de Entrada Máxima y Relación de Multiplicación',
+                title_es: 'Accionamiento Mecánico Manual, Fuerza de Entrada Máxima y Relación de Multiplicación',
                 section_es: 'ACCIONAMIENTO MECÁNICO Y RENDIMIENTO',
                 rationale_es:
-                    'Detalla la operación puramente mecánica sin consumo de combustible ni red eléctrica (0 L/h, 0 kWh), esfuerzo manual máximo admisible en palanca/volante (N), relación de multiplicación mecánica, rendimiento y límites de sobrecarga.',
+                    'Detalla esfuerzo manual máximo admisible en palanca/volante (N), relación de multiplicación mecánica, rendimiento de transmisión y límites de sobrecarga.',
                 priority: 'CRÍTICO',
             };
         }
@@ -846,7 +846,7 @@ export class AssetOntologyEngine {
                 title_es: 'Requerimiento de Unidad Hidráulica Externa: Presión Nominal (bar/psi), Caudal (L/min) y Curva Presión-Torque/Fuerza',
                 section_es: 'SUMINISTRO HIDRÁULICO DE ALTA PRESIÓN Y CONSUMOS',
                 rationale_es:
-                    'Detalla el suministro requerido desde bomba/central hidráulica externa: presión máxima y de retorno (ej. 700 bar / 10.000 psi), caudal requerido (L/min), volumen desplazado por ciclo (cm³), grado de aceite hidráulico ISO VG y tabla/curva oficial de conversión Presión (bar/psi) vs Torque/Fuerza de salida (N·m / kN). No aplica combustible ni AdBlue.',
+                    'Detalla el suministro requerido desde bomba/central hidráulica externa: presión máxima y de retorno (ej. 700 bar / 10.000 psi), caudal requerido (L/min), volumen desplazado por ciclo (cm³), grado de aceite hidráulico ISO VG y tabla/curva oficial de conversión Presión (bar/psi) vs Torque/Fuerza de salida (N·m / kN).',
                 priority: 'CRÍTICO',
             };
         }
@@ -857,7 +857,7 @@ export class AssetOntologyEngine {
                 title_es: 'Demanda de Aire Comprimido (L/s · CFM), Presión de Trabajo (bar) y Consumo de Lubricación de Línea',
                 section_es: 'CONSUMOS DE AIRE COMPRIMIDO Y FLUIDOS DE LÍNEA',
                 rationale_es:
-                    'Detalla el caudal nominal de aire comprimido (L/s, m³/min, CFM) a presión efectiva de trabajo (bar / MPa), diámetro mínimo de manguera, consumo de aceite de lubricador en línea (mL/h) y caudal/presión de agua de barrido si aplica. No aplica combustible diésel ni AdBlue.',
+                    'Detalla el caudal nominal de aire comprimido (L/s, m³/min, CFM) a presión efectiva de trabajo (bar / MPa), diámetro mínimo de manguera, consumo de aceite de lubricador en línea (mL/h) y caudal/presión de agua de barrido cuando el equipo lo incorpore.',
                 priority: 'CRÍTICO',
             };
         }
@@ -868,7 +868,7 @@ export class AssetOntologyEngine {
                 title_es: 'Alimentación Eléctrica Nominal (V/kV · Hz · Fases), Potencia Absorbida (kW/kVA) y Consumo Horario (kWh/h)',
                 section_es: 'CONSUMOS DE ENERGÍA ELÉCTRICA Y DEMANDA DE POTENCIA',
                 rationale_es:
-                    'Detalla tensión nominal y tolerancia (V o kV en media tensión), número de fases y frecuencia (50/60 Hz), corriente nominal y de partida (A), factor de potencia (cos φ), potencia instalada/absorbida (kW / kVA) y consumo energético horario o específico por carga (kWh/h, kWh/t o kWh/m³). Sin consumo de combustible fósil ni AdBlue.',
+                    'Detalla tensión nominal y tolerancia (V o kV en media tensión), número de fases y frecuencia (50/60 Hz), corriente nominal y de partida (A), factor de potencia (cos φ), potencia instalada/absorbida (kW / kVA) y consumo energético horario o específico por carga (kWh/h, kWh/t o kWh/m³).',
                 priority: 'CRÍTICO',
             };
         }
@@ -894,17 +894,17 @@ export class AssetOntologyEngine {
                 title_es: 'Consumos de Combustible (Por Kilómetro en Ruta/Faena y Por Hora PTO/Ralentí), Eficiencia y Autonomía',
                 section_es: 'CONSUMOS DE COMBUSTIBLE, RENDIMIENTO VIAL Y AUTONOMÍA',
                 rationale_es:
-                    'Detalla tipo de combustible, rendimiento por kilómetro en Carretera Pavimentada (km/L y L/100 km) y Fuera de Carretera / Faena (km/L y L/100 km) para cálculo entre puntos de entrega, consumo horario en ralentí y toma de fuerza PTO (L/h), BSFC (g/kWh), capacidad de estanque (L), autonomía (km y h), y postratamiento SCR (DEF/AdBlue) únicamente si la motorización específica lo equipa (declarando expresamente cuando el motor es Euro III / Tier 3 mecánico o electrónico sin SCR/AdBlue).',
+                    'Detalla tipo de combustible, rendimiento por kilómetro en Carretera Pavimentada (km/L y L/100 km) y Fuera de Carretera / Faena (km/L y L/100 km) para cálculo entre puntos de entrega, consumo horario en ralentí y toma de fuerza PTO (L/h), BSFC (g/kWh), capacidad de estanque de combustible (L), autonomía nominal (km y h), y dosificación SCR (DEF/AdBlue) únicamente cuando la motorización específica lo equipe físicamente (omitiendo por completo toda fila o mención a SCR/DEF cuando no lo posea).',
                 priority: 'CRÍTICO',
             };
         }
 
         return {
             chapter_key: 'matriz_energetica_consumos_y_autonomia',
-            title_es: 'Consumos de Combustible / Energía por Factor de Carga (Bajo/Medio/Alto) y Autonomía de Turno',
+            title_es: 'Consumos Horarios por Factor de Carga (Bajo/Medio/Alto), Consumo Específico y Autonomía Nominal',
             section_es: 'CONSUMOS DE COMBUSTIBLE, ENERGÍA Y AUTONOMÍA',
             rationale_es:
-                'Detalla fuente de energía primaria, consumo horario en ralentí y bajo factor de carga bajo (25-35%), medio (50-65%) y alto (80-100%) en L/h (y kWh/h en híbridos), consumo específico BSFC (g/kWh), capacidad de estanque (L), autonomía operativa efectiva por turno (h) y sistema SCR (DEF/AdBlue) únicamente si la norma de emisiones del motor efectivamente lo incorpora.',
+                'Detalla fuente de energía primaria, consumo horario en ralentí y bajo factor de carga bajo (25-35%), medio (50-65%) y alto (80-100%) en L/h (y kWh/h en híbridos), consumo específico BSFC (g/kWh), capacidad utilizable de estanque de combustible (L), autonomía nominal por carga de estanque (h) y dosificación DEF/AdBlue únicamente cuando la motorización incorpore físicamente sistema SCR (omitiéndolo por completo si no lo posee).',
             priority: 'CRÍTICO',
         };
     }

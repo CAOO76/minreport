@@ -274,8 +274,8 @@ export function collapseSpacedModelDesignators(input: string): string {
     // Dígitos + espacio/guion + sufijo de serie corto: "242 D" -> "242D", "242 - D3" -> "242D3", "320 GC" -> "320GC"
     s = s.replace(/\b(\d{2,5})\s*[- ]\s*([A-Za-z]{1,3}\d{0,2})\b/g, (full, digits: string, suffix: string) => {
         const upSuffix = suffix.toUpperCase();
-        // No fusionar unidades métricas comunes (ej. "200 KW", "150 HP", "500 KG", "220 V")
-        if (/^(KW|HP|CV|KG|TON|MM|CM|PSI|BAR|KVA|RPM|LTS|LT|VOLT|HZ)$/.test(upSuffix)) {
+        // No fusionar unidades métricas o sufijos de transmisión comunes (ej. "200 KW", "150 HP", "4500 RDS", "18 VEL")
+        if (/^(KW|HP|CV|KG|TON|MM|CM|PSI|BAR|KVA|RPM|LTS|LT|VOLT|HZ|RDS|EVS|VEL|TM)$/.test(upSuffix)) {
             return full;
         }
         return `${digits}${upSuffix}`;

@@ -110,6 +110,60 @@ export class ConfidentialityAirlockService {
     }
 
     /**
+     * Sanitizador determinista especializado para lectura óptica efímera de placas de fabricante / VIN / PIN
+     * durante el registro inicial de Catálogo (Ley N° 21.719):
+     * - Conserva intactos los dígitos estructurales WMI+VDS (posiciones 1 a 8 de VIN ISO 3779) que identifican
+     *   fabricante, modelo, configuración de ejes, cabina y motor.
+     * - Purga determinísticamente la cola secuencial de serie individual (posiciones 9 a 17 -> "-XXXXXXXXX"),
+     *   números de serie individuales (S/N, PIN, Chasis), patentes vehiculares (PPU) y RUT/correos/teléfonos.
+     */
+    public static scrubIdentificationPlateAndVinText(rawText: string): {
+        scrubbed: string;
+        extractedStructuralWmiVds: string | null;
+        redactedCategories: string[];
+    } {
+        const base = this.scrubDeterministicPii(rawText || '');
+        let s = base.scrubbed;
+        const cats = new Set<string>(base.redactedCategories);
+        let extractedStructuralWmiVds: string | null = null;
+
+        // Detectar VIN / PIN de 17 caracteres ISO 3779: preservar WMI+VDS (1..8) y truncar serie privada (9..17)
+        s = s.replace(/\b([A-HJ-NPR-Z0-9]{8})([A-HJ-NPR-Z0-9]{9})\b/gi, (_full, wmiVds: string) => {
+            const up = wmiVds.toUpperCase();
+            // Exigir al menos 1 letra y 1 dígito para evitar falsos positivos en palabras comunes de 17 letras
+            if (/[A-Z]/.test(up) && /\d/.test(up)) {
+                if (!extractedStructuralWmiVds) {
+                    extractedStructuralWmiVds = up;
+                }
+                cats.add('VIN_SERIAL_TAIL_REDACTED');
+                return `${up}-XXXXXXXXX`;
+            }
+            return _full;
+        });
+
+        // Purgar números de serie individuales explícitos (S/N, Serial, N° Serie, Chasis, Interno)
+        if (/\b(?:s\/n|n[°º]?\s*(?:de\s+)?serie|serial(?:\s+no\.?)?|n[°º]?\s*interno|cod(?:igo)?\s+interno)\s*[:#-]?\s*[A-Z0-9-]{4,24}\b/i.test(s)) {
+            cats.add('SERIAL_INDIVIDUAL_REDACTED');
+            s = s.replace(
+                /\b(?:s\/n|n[°º]?\s*(?:de\s+)?serie|serial(?:\s+no\.?)?|n[°º]?\s*interno|cod(?:igo)?\s+interno)\s*[:#-]?\s*[A-Z0-9-]{4,24}\b/gi,
+                '[SERIE_UNIDAD_RESERVADA]'
+            );
+        }
+
+        // Purgar patentes chilenas sueltas formato vigente (4 consonantes + 2 dígitos, ej. ABCD-12)
+        if (/\b[BCDFGHJKLPRSTVWXYZ]{4}[-\s]\d{2}\b/.test(s)) {
+            cats.add('PATENTE_INTERNA');
+            s = s.replace(/\b[BCDFGHJKLPRSTVWXYZ]{4}[-\s]\d{2}\b/g, '[PATENTE_RESERVADA]');
+        }
+
+        return {
+            scrubbed: s.replace(/\s+/g, ' ').trim(),
+            extractedStructuralWmiVds,
+            redactedCategories: Array.from(cats),
+        };
+    }
+
+    /**
      * Evalúa y separa conocimiento técnico universal OEM de datos operativos privados del cliente
      */
     public static async evaluateTextContribution(params: {

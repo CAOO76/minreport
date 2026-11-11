@@ -41,6 +41,7 @@ import {
     verifyAndNormalizeTechnicalUnits,
     verifyAndResolveSymbologyRefs,
 } from './NeuroSymbolicVerifier';
+import { sanitizePositivePresenceMarkdown } from '../utils/canonicalArchetypeSpecs';
 import { normalizeComparableTitle, tokenJaccardSimilarity } from './TextSimilarityUtils';
 
 /**
@@ -394,9 +395,11 @@ export class VaultReconciliationService {
         const model = String(assetData.model_oficial || assetData.model || input.globalAssetId);
         const makeModel = assetData.make_model || `${make} ${model}`.trim();
 
-        // 1. Verificación determinista SI + resolución de simbología normativa real
+        // 1. Verificación determinista SI + Sanitizador de Presencia Positiva Estricta + resolución de simbología normativa real
         const siVerified = verifyAndNormalizeTechnicalUnits(input.markdownContent || '');
-        const cleanMarkdown = siVerified.normalizedMarkdown.trim();
+        const cleanMarkdown = sanitizePositivePresenceMarkdown(siVerified.normalizedMarkdown.trim(), {
+            pillarId: input.pillarId,
+        });
         const verifiedSymbols = await verifyAndResolveSymbologyRefs(input.symbologyCandidates || []);
         const incomingFigures = input.figures || [];
 

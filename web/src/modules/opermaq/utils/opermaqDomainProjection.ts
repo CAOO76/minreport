@@ -100,23 +100,23 @@ const ARCHETYPE_UNIVERSAL_ENERGY_AXES: ArchetypeAxisDefinition[] = [
         label_es: 'Fuente energía',
         unit_hint: 'Diésel | Gasolina | Eléctrico | Híbrido | GLP/GNV | Neumático',
         mandatory: false,
-        legacyKeyPattern: /\b(fuente\s+de\s+energ[ií]a|tipo\s+de\s+(?:combustible|energ[ií]a)|combustible|alimentaci[oó]n\s+energ[eé]tica)\b/i,
+        legacyKeyPattern: /\b(fuente\s+(?:de\s+)?energ[ií]a|tipo\s+de\s+(?:combustible|energ[ií]a)|combustible|alimentaci[oó]n\s+energ[eé]tica)\b/i,
         validValuePattern: ENERGY_SOURCE_VALUE_REGEX,
     },
     {
         axis_key: 'consumo_energetico_nominal',
-        label_es: 'Consumo nominal',
-        unit_hint: 'L/h / km/L (L/100 km) / g/kWh / kWh/h / L/s',
+        label_es: 'Consumo horario combustible',
+        unit_hint: 'L/h · g/kWh',
         mandatory: false,
-        legacyKeyPattern: /\b(consumo\s+(?:energ[eé]tico|nominal|de\s+combustible|espec[ií]fico|horario|el[eé]ctrico|de\s+aire)|rendimiento\s+de\s+combustible|bsfc)\b/i,
+        legacyKeyPattern: /\b(consumo\s+(?:energ[eé]tico|nominal|de\s+combustible|espec[ií]fico|horario|el[eé]ctrico|de\s+aire)|rendimiento\s+de\s+combustible|potencia\s+el[eé]ctrica\s+absorbida|bsfc)\b/i,
         validValuePattern: NUM_UNIT_ENERGY_CONSUMPTION,
     },
     {
         axis_key: 'capacidad_energetica_autonomia',
-        label_es: 'Capacidad estanque / batería',
-        unit_hint: 'L / kWh (Autonomía h / km)',
+        label_es: 'Capacidad estanque combustible',
+        unit_hint: 'L',
         mandatory: false,
-        legacyKeyPattern: /\b(capacidad\s+(?:de\s+)?(?:estanque|tanque\s+de\s+combustible|bater[ií]a)|estanque\s+de\s+combustible|autonom[ií]a)\b/i,
+        legacyKeyPattern: /\b(capacidad\s+(?:de\s+)?(?:estanque|tanque\s+de\s+combustible|banco\s+bater[ií]as|bater[ií]a)|estanque\s+(?:de\s+)?combustible|autonom[ií]a)\b/i,
         validValuePattern: NUM_UNIT_ENERGY_CAPACITY,
     },
 ];
@@ -864,6 +864,46 @@ function inferDiscreteSkidSteerKinematics(record: Record<string, any>): string |
 export const ANY_ENGINEERING_METRIC_REGEX =
     /\b(\d[\d.,]*\s*(?:l\/100\s*km|kwh\/100\s*km|km\/l|g\/kwh|lb\/hp[·.\s-]?h(?:r)?|kwh\/h|kwh\/t|l\/t|l\/ton|gal\/h|gph|mpg|m³\/min|m³\/h|m3\/min|m3\/h|l\/min|l\/s|l\/h|km\/h|m\/s|kn[·.\s-]?m|t[·.\s-]?m|n[·.\s-]?m|m\.?c\.?a\.?|m³|m²|cm³|yd³|°c|dba|db|kwh|kva|kw|mw|hp|cv|kgf|kg|toneladas?|ton|lbs?|mm|cm|km|pulg|ft|in|m3|m2|cm3|cc|yd3|litros?|gal|scfm|cfm|gpm|mbar|bar|mpa|kpa|psi|kn|kj|hz|khz|mhz|bpm|rpm|mah|ah|wh|kv|mv|volt|amp|[tgwvnajmlh%])\b|[2468]x[2468]|\b(?:awd|4wd|2wd|fwd|rwd|[bhnp]q)\b|\d[\d.,]*\s*°)/i;
 
+export function normalizeCanonicalTransmissionEnumLabel(rawVal: string): string | null {
+    const clean = String(rawVal || '').trim().replace(/\s+/g, ' ');
+    const norm = stripTextAccents(clean);
+    if (!norm) return null;
+
+    const specificModelMatch = clean.match(
+        /\b(allison\s*[0-9a-z-]*|mdrive(?:\s*hd)?|i-?shift|opticruise|traxon|powershift|eaton\s*fuller(?:\s*[0-9a-z-]+)?|fuller(?:\s*[0-9a-z-]+)?|roadranger|zf\s*[0-9a-z-]+|cvt|ivt|ecvt)\b/i
+    );
+    const suffix = specificModelMatch ? ` (${specificModelMatch[1].trim()})` : '';
+
+    if (/\b(mdrive|i-?shift|opticruise|traxon|amt\b|automatizad[oa])\b/.test(norm)) {
+        return `Automatizada AMT${suffix}`;
+    }
+    if (/\b(allison|convertidor\s+de\s+par|automatic[oa])\b/.test(norm) && !/\bhidrostatic/.test(norm)) {
+        return `Automática${suffix}`;
+    }
+    if (/\b(fuller|roadranger|eaton)\b/.test(norm)) {
+        return `Manual Eaton Fuller${suffix.toLowerCase().includes('fuller') ? '' : suffix}`;
+    }
+    if (/\bpowershift\b/.test(norm)) {
+        return 'Powershift';
+    }
+    if (/\bhidrostatic/.test(norm)) {
+        return 'Hidrostática';
+    }
+    if (/\b(cvt|ivt|ecvt|continuamente\s+variable)\b/.test(norm)) {
+        return `CVT / IVT${suffix}`;
+    }
+    if (/\b(electric[oa]|ac\s+drive|dc\s+drive)\b/.test(norm)) {
+        return 'Eléctrica AC/DC';
+    }
+    if (/\b(manual|mecanica|sincronizad[oa])\b/.test(norm)) {
+        return `Manual${suffix}`;
+    }
+    if (/\b(direct[oa]|reductor)\b/.test(norm)) {
+        return 'Directa / Reductor';
+    }
+    return null;
+}
+
 export function cleanDynamicAxisValue(
     rawVal: unknown,
     axisMeta?: {
@@ -899,9 +939,21 @@ export function cleanDynamicAxisValue(
         return null;
     }
 
-    if (axisMeta?.axis_key === 'fuente_energia' || /^(fuente_energia|tipo_combustible|tipo_energia)$/i.test(String(axisMeta?.axis_key || ''))) {
+    const axisKeyNorm = String(axisMeta?.axis_key || '').toLowerCase();
+    if (axisKeyNorm === 'fuente_energia' || /^(fuente_energia|tipo_combustible|tipo_energia)$/i.test(axisKeyNorm)) {
         const canonEnergy = normalizeCanonicalEnergyEnumLabel(valueOnly);
         if (canonEnergy) return canonEnergy;
+    }
+    if (/^(transmision_caja|tipo_transmision|caja_cambios|transmision)$/i.test(axisKeyNorm)) {
+        const canonTx = normalizeCanonicalTransmissionEnumLabel(valueOnly);
+        if (canonTx) return canonTx;
+    }
+    if (/^(traccion_ejes|configuracion_ejes|formula_rodado|traccion)$/i.test(axisKeyNorm)) {
+        const axleMatch = valueOnly.match(/\b(4x2|4x4|6x2|6x4|6x6|8x4|8x6|8x8|10x4|10x6|awd|4wd|2wd)\b/i);
+        if (axleMatch) {
+            const tok = axleMatch[1];
+            return /^\d/.test(tok) ? tok.toLowerCase() : tok.toUpperCase();
+        }
     }
 
     if (axisMeta?.value_kind === 'CLOSED_ENUM' && Array.isArray(axisMeta.allowed_enum_values) && axisMeta.allowed_enum_values.length > 0) {
@@ -909,6 +961,8 @@ export function cleanDynamicAxisValue(
         if (canonEnergy && axisMeta.allowed_enum_values.includes(canonEnergy)) {
             return canonEnergy;
         }
+        const canonTx = normalizeCanonicalTransmissionEnumLabel(valueOnly);
+        if (canonTx) return canonTx;
 
         const normCandidate = valueOnly
             .normalize('NFD')
@@ -928,7 +982,7 @@ export function cleanDynamicAxisValue(
         return valueOnly;
     }
 
-    if (/^(?:[2468]x[2468]|awd|4wd|2wd|fwd|rwd|levante\s+(?:vertical|radial))$/i.test(valueOnly)) {
+    if (/^(?:(?:4|6|8|10)x(?:2|4|6|8)|awd|4wd|2wd|fwd|rwd|levante\s+(?:vertical|radial)|orugas?.*|lgp)$/i.test(valueOnly)) {
         return valueOnly;
     }
 
@@ -957,6 +1011,419 @@ export function hasSelfDescribingTypeSchema<
     );
 }
 
+export type FrontendResolvedEnergyKind =
+    | 'THERMAL_FUEL'
+    | 'BATTERY_BEV'
+    | 'HYBRID'
+    | 'GRID_AC'
+    | 'PNEUMATIC_AIR'
+    | 'HYDRAULIC_AUX'
+    | 'TOWED_PASSIVE'
+    | 'MANUAL_MECHANICAL';
+
+function stripFrontendAccents(raw: string): string {
+    return String(raw || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+}
+
+export function classifyFrontendEnergyKind(params?: {
+    primaryEnergy?: string | null;
+    energyValueText?: string | null;
+    typeContextText?: string | null;
+}): FrontendResolvedEnergyKind {
+    const valNorm = stripFrontendAccents(params?.energyValueText || '');
+    const primaryNorm = String(params?.primaryEnergy || '').trim().toUpperCase();
+    const ctxNorm = stripFrontendAccents(params?.typeContextText || '');
+
+    if (valNorm && !valNorm.startsWith('[')) {
+        if (/\b(manual|mecanico|sin\s+energia\s+externa)\b/.test(valNorm)) return 'MANUAL_MECHANICAL';
+        if (/\b(remolcado|sin\s+propulsion\s+propia)\b/.test(valNorm) && !/\b(diesel|gasolina)\b/.test(valNorm)) {
+            return 'TOWED_PASSIVE';
+        }
+        if (/\b(hidraulico\s+auxiliar|electrohidraulico|700\s*bar)\b/.test(valNorm) && !/\b(diesel|gasolina)\b/.test(valNorm)) {
+            return 'HYDRAULIC_AUX';
+        }
+        if (/\b(neumatico|aire\s+comprimido)\b/.test(valNorm) && !/\b(diesel|gasolina)\b/.test(valNorm)) {
+            return 'PNEUMATIC_AIR';
+        }
+        if (/\bhibrid/.test(valNorm)) return 'HYBRID';
+        if (/\b(bateria|bev|li-?ion|lfp)\b/.test(valNorm) && !/\b(diesel|gasolina|remolcado|auxiliar\s+12v)\b/.test(valNorm)) {
+            return 'BATTERY_BEV';
+        }
+        if (/\b(electrico\s+red|red\s+ac|trifasic|monofasic|corriente\s+alterna)\b/.test(valNorm) && !/\b(diesel|gasolina)\b/.test(valNorm)) {
+            return 'GRID_AC';
+        }
+        if (/\b(diesel|gasolina|bencina|glp|gnv|gnl|dual[- ]?fuel|combustible)\b/.test(valNorm)) {
+            return 'THERMAL_FUEL';
+        }
+    }
+
+    if (primaryNorm) {
+        if (primaryNorm === 'MANUAL_MECANICO') return 'MANUAL_MECHANICAL';
+        if (primaryNorm === 'REMOLCADO_SIN_PROPULSION_PROPIA') return 'TOWED_PASSIVE';
+        if (primaryNorm === 'HIDRAULICO_AUXILIAR') return 'HYDRAULIC_AUX';
+        if (primaryNorm === 'NEUMATICO_AIRE_COMPRIMIDO') return 'PNEUMATIC_AIR';
+        if (primaryNorm === 'ELECTRICO_RED_AC') return 'GRID_AC';
+        if (primaryNorm === 'ELECTRICO_BATERIA_BEV') return 'BATTERY_BEV';
+        if (primaryNorm === 'HIBRIDO_DIESEL_ELECTRICO' || primaryNorm === 'HIBRIDO_GASOLINA_ELECTRICO') {
+            return 'HYBRID';
+        }
+        if (
+            primaryNorm === 'DIESEL' ||
+            primaryNorm === 'GASOLINA' ||
+            primaryNorm === 'GLP_GNV' ||
+            primaryNorm === 'DUAL_FUEL_DIESEL_GAS'
+        ) {
+            return 'THERMAL_FUEL';
+        }
+    }
+
+    if (/\b(torquimetro\s+manual|tecle\s+manual|polipasto\s+manual|gata\s+mecanica|herramienta\s+manual)\b/.test(ctxNorm)) {
+        return 'MANUAL_MECHANICAL';
+    }
+    if (
+        /\b(carro\s+de\s+arrastre|remolque|semirremolque|cama\s+baja|lowboy|acoplado|estanque\s+(?:movil\s+)?remolcado|cisterna\s+remolcada|implemento\s+remolcado|dolly|sin\s+propulsion\s+propia)\b/.test(
+            ctxNorm
+        ) &&
+        !/\b(autopropulsad|motor\s+diesel|tractocamion)\b/.test(ctxNorm)
+    ) {
+        return 'TOWED_PASSIVE';
+    }
+    if (/\b(llave\s+(?:de\s+)?torque\s+hidraulic|700\s*bar|cilindro\s+hidraulico\s+portatil|tensor\s+hidraulico)\b/.test(ctxNorm)) {
+        return 'HYDRAULIC_AUX';
+    }
+    if (/\b(perforadora\s+neumatica|jackleg|stoper|martillo\s+neumatico|herramienta\s+neumatica)\b/.test(ctxNorm)) {
+        return 'PNEUMATIC_AIR';
+    }
+    if (/\b(dron|rpas|uav|bev|a\s+bateria|inalambric)\b/.test(ctxNorm) && !/\b(diesel|gasolina)\b/.test(ctxNorm)) {
+        return 'BATTERY_BEV';
+    }
+    if (
+        /\b(pala\s+electrica\s+de\s+cables|bomba\s+sumergible|chancador\s+fijo|molino\s+sag|molino\s+de\s+bolas|harnero\s+estacionario|soldadora\s+inverter|compresor\s+estacionario\s+electrico|motor\s+electrico\s+trifasico)\b/.test(
+            ctxNorm
+        ) &&
+        !/\b(diesel|motobomba\s+diesel)\b/.test(ctxNorm)
+    ) {
+        return 'GRID_AC';
+    }
+
+    return 'THERMAL_FUEL';
+}
+
+export function resolveFrontendEnergySemantics(params?: {
+    primaryEnergy?: string | null;
+    energyValueText?: string | null;
+    typeContextText?: string | null;
+}): {
+    energyKind: FrontendResolvedEnergyKind;
+    includeConsumptionAxis: boolean;
+    includeCapacityAxis: boolean;
+    consumptionLabelEs: string;
+    consumptionUnitSi: string;
+    capacityLabelEs: string | null;
+    capacityUnitSi: string | null;
+} {
+    const energyKind = classifyFrontendEnergyKind(params);
+    const ctxNorm = stripFrontendAccents(params?.typeContextText || '');
+    const isRoadOrUtilityVehicle =
+        /\b(camion\s+tolva|tractocamion|camion\s+aljibe|camion\s+pluma|camion\s+lubricador|camion\s+mixer|camioneta|pick\s*up|automovil|suv|furgon|van|bus|minibus|vehiculo|motocicleta|volquete)\b/.test(
+            ctxNorm
+        ) && !/\b(caex|camion\s+de\s+extraccion|ultra\s*class)\b/.test(ctxNorm);
+    const isDroneOrCyclicBattery = /\b(dron|rpas|uav|herramienta\s+inalambrica)\b/.test(ctxNorm);
+
+    switch (energyKind) {
+        case 'MANUAL_MECHANICAL':
+        case 'TOWED_PASSIVE':
+            return {
+                energyKind,
+                includeConsumptionAxis: false,
+                includeCapacityAxis: false,
+                consumptionLabelEs: 'Consumo energético',
+                consumptionUnitSi: '0 W',
+                capacityLabelEs: null,
+                capacityUnitSi: null,
+            };
+        case 'GRID_AC':
+            return {
+                energyKind,
+                includeConsumptionAxis: true,
+                includeCapacityAxis: false,
+                consumptionLabelEs: 'Potencia eléctrica absorbida',
+                consumptionUnitSi: 'kW · kWh/h',
+                capacityLabelEs: null,
+                capacityUnitSi: null,
+            };
+        case 'PNEUMATIC_AIR':
+            return {
+                energyKind,
+                includeConsumptionAxis: true,
+                includeCapacityAxis: false,
+                consumptionLabelEs: 'Consumo de aire requerido',
+                consumptionUnitSi: 'L/s (m³/min @ bar)',
+                capacityLabelEs: null,
+                capacityUnitSi: null,
+            };
+        case 'HYDRAULIC_AUX':
+            return {
+                energyKind,
+                includeConsumptionAxis: true,
+                includeCapacityAxis: false,
+                consumptionLabelEs: 'Caudal / presión hidráulica req.',
+                consumptionUnitSi: 'L/min @ bar',
+                capacityLabelEs: null,
+                capacityUnitSi: null,
+            };
+        case 'BATTERY_BEV':
+            return {
+                energyKind,
+                includeConsumptionAxis: true,
+                includeCapacityAxis: true,
+                consumptionLabelEs: isRoadOrUtilityVehicle
+                    ? 'Consumo eléctrico nominal'
+                    : isDroneOrCyclicBattery
+                    ? 'Autonomía por carga'
+                    : 'Consumo eléctrico horario',
+                consumptionUnitSi: isRoadOrUtilityVehicle ? 'kWh/100 km' : isDroneOrCyclicBattery ? 'min · Wh' : 'kWh/h',
+                capacityLabelEs: 'Capacidad banco baterías',
+                capacityUnitSi: 'kWh · Wh',
+            };
+        case 'HYBRID':
+            return {
+                energyKind,
+                includeConsumptionAxis: true,
+                includeCapacityAxis: true,
+                consumptionLabelEs: isRoadOrUtilityVehicle ? 'Rendimiento combinado' : 'Consumo horario combinado',
+                consumptionUnitSi: isRoadOrUtilityVehicle ? 'km/L · kWh/100 km' : 'L/h · kWh/h',
+                capacityLabelEs: 'Capacidad estanque + batería HV',
+                capacityUnitSi: 'L + kWh',
+            };
+        case 'THERMAL_FUEL':
+        default:
+            return {
+                energyKind: 'THERMAL_FUEL',
+                includeConsumptionAxis: true,
+                includeCapacityAxis: true,
+                consumptionLabelEs: isRoadOrUtilityVehicle
+                    ? 'Rendimiento / consumo combustible'
+                    : 'Consumo horario combustible',
+                consumptionUnitSi: isRoadOrUtilityVehicle ? 'km/L (L/100 km) · L/h' : 'L/h · g/kWh',
+                capacityLabelEs: 'Capacidad estanque combustible',
+                capacityUnitSi: 'L',
+            };
+    }
+}
+
+const FRONTEND_HYBRID_CAPACITY_LABEL_REGEX =
+    /\b(estanque\s*\/\s*bater[ií]a|estanque\s*\/\s*carga|tanque\s*\/\s*bater[ií]a|combustible\s*\/\s*bater[ií]a)\b/i;
+const FRONTEND_HYBRID_CONSUMPTION_LABEL_REGEX =
+    /^(consumo\s+nominal|consumo\s*\/\s*demanda.*|consumo\s+auxiliar\s*\/\s*tracci[oó]n)$/i;
+
+export function normalizeFrontendSlotsByEnergy(
+    slots: CanonicalSpecSlot[],
+    context?: {
+        typeContextText?: string | null;
+        primaryEnergy?: string | null;
+        energyValueText?: string | null;
+    }
+): CanonicalSpecSlot[] {
+    if (!Array.isArray(slots) || slots.length === 0) return [];
+    const sourceSlot = slots.find(
+        (s) =>
+            s &&
+            (s.axis_key === 'fuente_energia' || /\bfuente\s+(?:de\s+)?energ[ií]a\b/i.test(s.label_es || '')) &&
+            s.value_si &&
+            !s.value_si.startsWith('[')
+    );
+    const semantics = resolveFrontendEnergySemantics({
+        energyValueText: context?.energyValueText || sourceSlot?.value_si || null,
+        primaryEnergy: context?.primaryEnergy || null,
+        typeContextText: context?.typeContextText || null,
+    });
+
+    const out: CanonicalSpecSlot[] = [];
+    for (const slot of slots) {
+        if (!slot) continue;
+        const isConsumption =
+            slot.axis_key === 'consumo_energetico_nominal' ||
+            FRONTEND_HYBRID_CONSUMPTION_LABEL_REGEX.test((slot.label_es || '').trim());
+        const isCapacity =
+            slot.axis_key === 'capacidad_energetica_autonomia' ||
+            FRONTEND_HYBRID_CAPACITY_LABEL_REGEX.test(slot.label_es || '');
+
+        if (isConsumption) {
+            if (!semantics.includeConsumptionAxis) continue;
+            const rewrite =
+                slot.axis_key === 'consumo_energetico_nominal' ||
+                FRONTEND_HYBRID_CONSUMPTION_LABEL_REGEX.test((slot.label_es || '').trim());
+            out.push({
+                ...slot,
+                label_es: rewrite ? semantics.consumptionLabelEs : slot.label_es,
+                unit_si: rewrite ? semantics.consumptionUnitSi : slot.unit_si,
+            });
+            continue;
+        }
+
+        if (isCapacity) {
+            if (!semantics.includeCapacityAxis || !semantics.capacityLabelEs) continue;
+            const rewrite =
+                slot.axis_key === 'capacidad_energetica_autonomia' ||
+                FRONTEND_HYBRID_CAPACITY_LABEL_REGEX.test(slot.label_es || '') ||
+                (semantics.energyKind === 'THERMAL_FUEL' && /\bbater[ií]a\b/i.test(slot.label_es || '')) ||
+                (semantics.energyKind === 'BATTERY_BEV' && /\b(estanque|tanque|combustible)\b/i.test(slot.label_es || ''));
+            out.push({
+                ...slot,
+                label_es: rewrite ? semantics.capacityLabelEs : slot.label_es,
+                unit_si: rewrite && semantics.capacityUnitSi ? semantics.capacityUnitSi : slot.unit_si,
+            });
+            continue;
+        }
+
+        out.push(slot);
+    }
+    return out;
+}
+
+export function normalizeFrontendSpecLinesByEnergy(
+    rawLines: string[] | undefined | null,
+    context?: {
+        energyValueText?: string | null;
+        primaryEnergy?: string | null;
+        typeContextText?: string | null;
+    }
+): string[] {
+    if (!Array.isArray(rawLines) || rawLines.length === 0) return [];
+    const lines = rawLines.map((l) => String(l || '').trim()).filter(Boolean);
+    let detectedEnergy = context?.energyValueText || null;
+    if (!detectedEnergy) {
+        for (const line of lines) {
+            const m = line.match(/^fuente\s+(?:de\s+)?energ[ií]a\s*:\s*(.+)$/i);
+            if (m && m[1]) {
+                detectedEnergy = m[1].trim();
+                break;
+            }
+        }
+    }
+    const semantics = resolveFrontendEnergySemantics({
+        energyValueText: detectedEnergy,
+        primaryEnergy: context?.primaryEnergy || null,
+        typeContextText: context?.typeContextText || null,
+    });
+
+    const out: string[] = [];
+    for (const line of lines) {
+        const colonIdx = line.indexOf(':');
+        if (colonIdx <= 0) {
+            out.push(line);
+            continue;
+        }
+        const rawLabel = line.slice(0, colonIdx).trim();
+        const rawVal = line.slice(colonIdx + 1).trim();
+
+        if (
+            FRONTEND_HYBRID_CAPACITY_LABEL_REGEX.test(rawLabel) ||
+            (semantics.energyKind === 'THERMAL_FUEL' && /^capacidad\s+.*bater[ií]a$/i.test(rawLabel)) ||
+            (semantics.energyKind === 'BATTERY_BEV' && /^capacidad\s+(?:de\s+)?(?:estanque|tanque)/i.test(rawLabel))
+        ) {
+            if (!semantics.includeCapacityAxis || !semantics.capacityLabelEs) continue;
+            out.push(`${semantics.capacityLabelEs}: ${rawVal}`);
+            continue;
+        }
+        if (!semantics.includeCapacityAxis && /^capacidad\s+(?:de\s+)?(?:estanque|tanque|bater[ií]a)/i.test(rawLabel)) {
+            continue;
+        }
+        if (FRONTEND_HYBRID_CONSUMPTION_LABEL_REGEX.test(rawLabel)) {
+            if (!semantics.includeConsumptionAxis) continue;
+            out.push(`${semantics.consumptionLabelEs}: ${rawVal}`);
+            continue;
+        }
+        out.push(line);
+    }
+    return out;
+}
+
+const FRONTEND_PURE_NEGATIVE_BULLET_REGEX =
+    /^(?:no\s+aplica\b|n\s*\/\s*a\b|sin\s+(?:sistema|equipamiento|adblue|def\b|scr\b|urea|dpf|egr|bater[ií]a\s+de\s+tracci[oó]n|combustible|estanque)|no\s+(?:posee|equipa|requiere|incorpora|utiliza|dispone\s+de|cuenta\s+con)\b|ausencia\s+de\b|inexistencia\s+de\b|exento\s+de\b)/i;
+
+const FRONTEND_INLINE_NEGATIVE_PAREN_REGEX =
+    /\(\s*(?:configuraci[oó]n\s+(?:de\s+motor\s+)?sin\s+[^)]+|no\s+aplica[^)]*|sin\s+(?:sistema\s+|uso\s+de\s+|requerir\s+)?(?:scr|adblue|def\b|urea|dpf|egr|doc\b|postratamiento|bater[ií]a\s+de\s+tracci[oó]n|combustible)[^)]*|no\s+(?:posee|equipa|requiere|incorpora)[^)]*|exento\s+de\s+[^)]*|ausencia\s+de\s+[^)]*)\s*\)/gi;
+
+const FRONTEND_TRAILING_NEGATIVE_CLAUSE_REGEX =
+    /(?:[,;—–-]\s*|\s+)(?:sin\s+(?:sistema\s+|requerir\s+|necesidad\s+de\s+|uso\s+de\s+)?(?:scr\b|adblue\b|def\b|urea\b|dpf\b|egr\b|doc\b|postratamiento|bater[ií]a\s+de\s+tracci[oó]n|combustible)[a-z0-9/._\s-]*|no\s+(?:posee|equipa|requiere|incorpora)\s+(?:sistema\s+)?(?:scr\b|adblue\b|def\b|urea\b|dpf\b|egr\b)[a-z0-9/._\s-]*|exento\s+de\s+(?:sistema\s+)?(?:scr\b|adblue\b|def\b|urea\b|dpf\b)[a-z0-9/._\s-]*)$/i;
+
+const FRONTEND_TRAILING_FLUFF_REGEX =
+    /\s+(?:dise[ñn]ad[oa]\s+para|orientad[oa]\s+a|enfocad[oa]\s+en)\s+(?:reducci[oó]n\s+de\s+ruido\s+y\s+)?(?:confort|comodidad|ergonom[ií]a\s+y\s+confort|mayor\s+productividad|m[aá]xima\s+eficiencia)[^.,;]*$/i;
+
+const FRONTEND_SPECULATIVE_CLAIM_REGEX =
+    /\b(?:ciclos?\s+de\s+trabajo\s+continuos?\s+de\s+\d+\s*(?:a|-|–)\s*\d+\s*(?:horas?|h\b)|turno\s+est[aá]ndar\s+de\s+\d+\s*(?:a|-|–)\s*\d+\s*(?:horas?|h\b)|no\s+incurre\s+en\s+costos|comodidad\s+del\s+operador|confort(?:\s+superior|\s+del\s+operador)?|aplicaciones\s+de\s+alta\s+demanda)\b/i;
+
+const FRONTEND_TAUTOLOGICAL_MOBILITY_REGEX =
+    /^configuraci[oó]n\s+de\s+[a-z0-9áéíóúüñ\s/-]+\s+para\s+(?:movilidad|desplazamiento|traslado|operaci[oó]n|trabajo)\s+en\s+(?:superficies?|terrenos?|faenas?|obras?)(?:\s+de\s+[a-záéíóúüñ\s]+)?$/i;
+
+const FRONTEND_METRIC_OR_NORM_REGEX =
+    /\b(?:\d[\d.,]*\s*(?:kw|hp|kg|t\b|mm|m³|m3|l\/min|l\/h|bar|mpa|psi|kva|kwh|v\b|hz|dba|db|°c)|iso|sae|din|iec|epa|tier|stage|euro|ip\d{2}|rops|fops|atex|nfpa|xhp|lgp|[468]x[2468]|allison|mdrive|powershift|hidrost[aá]tic[oa]|[a-z]{1,4}\d[a-z0-9.-]*)\b/i;
+
+export function sanitizeFrontendContextLines(
+    rawItems: string[] | undefined | null,
+    options?: { canonicalTypeEs?: string | null }
+): string[] {
+    if (!Array.isArray(rawItems) || rawItems.length === 0) return [];
+    const normType = options?.canonicalTypeEs
+        ? String(options.canonicalTypeEs)
+              .normalize('NFD')
+              .replace(/[\u0300-\u036f]/g, '')
+              .toLowerCase()
+              .replace(/[.,;:]/g, '')
+              .trim()
+        : '';
+
+    const out: string[] = [];
+    for (const item of rawItems) {
+        const rawTrimmed = String(item || '')
+            .replace(/^[•\-*]\s*/, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+        if (!rawTrimmed) continue;
+        if (rawTrimmed.startsWith('[')) continue;
+        if (FRONTEND_PURE_NEGATIVE_BULLET_REGEX.test(rawTrimmed)) continue;
+
+        const clean = rawTrimmed
+            .replace(FRONTEND_INLINE_NEGATIVE_PAREN_REGEX, '')
+            .replace(FRONTEND_TRAILING_NEGATIVE_CLAUSE_REGEX, '')
+            .replace(FRONTEND_TRAILING_FLUFF_REGEX, '')
+            .replace(/\s+de\s+alto\s+rendimiento(?=\s*\([A-Z0-9]{2,6}\))/gi, '')
+            .replace(/\s+para\s+gesti[oó]n\s+de\s+flujo\s+en\s+aplicaciones\s+de\s+alta\s+demanda$/i, '')
+            .replace(/\s{2,}/g, ' ')
+            .replace(/[,;—–-]\s*$/, '')
+            .trim();
+        if (!clean || FRONTEND_PURE_NEGATIVE_BULLET_REGEX.test(clean)) continue;
+        if (FRONTEND_SPECULATIVE_CLAIM_REGEX.test(clean)) continue;
+
+        const hasMetricOrNorm = FRONTEND_METRIC_OR_NORM_REGEX.test(clean);
+        if (!hasMetricOrNorm && FRONTEND_TAUTOLOGICAL_MOBILITY_REGEX.test(clean)) continue;
+
+        const norm = clean
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .replace(/[.,;:]/g, '')
+            .trim();
+        if (
+            normType &&
+            normType.length >= 6 &&
+            !hasMetricOrNorm &&
+            (norm === normType || norm.startsWith(`configuracion de ${normType}`))
+        ) {
+            continue;
+        }
+        out.push(clean);
+    }
+
+    return out.length > 0 ? out : [MISSING_TECH_SPEC];
+}
+
 export function extractHomologousAxisValues(record: {
     equipment_type_key?: string;
     archetype_id?: string;
@@ -966,6 +1433,7 @@ export function extractHomologousAxisValues(record: {
     caracteristicas_principales?: string[];
     short_description?: string;
 }): { archetype: ArchetypeDefinition; slots: CanonicalSpecSlot[] } {
+    const typeContextText = `${record.equipment_type_key || ''} ${record.tipo_equipo || ''} ${record.categoria_equipo || ''}`;
     const explicitArch =
         record.archetype_id && record.archetype_id in ARCHETYPE_DEFINITIONS
             ? ARCHETYPE_DEFINITIONS[record.archetype_id as MachineryArchetypeId]
@@ -1029,14 +1497,26 @@ export function extractHomologousAxisValues(record: {
             });
         }
 
-        if (dynamicSlots.length >= 2) {
+        const normalizedDynamicSlots = normalizeFrontendSlotsByEnergy(dynamicSlots, { typeContextText });
+        if (normalizedDynamicSlots.length >= 2) {
+            const alignedAxes = normalizedDynamicSlots.map((ns) => {
+                const origAx = dynamicAxes.find((a) => a.axis_key === ns.axis_key);
+                return {
+                    axis_key: ns.axis_key,
+                    label_es: ns.label_es,
+                    unit_hint: ns.unit_si || origAx?.unit_hint || '',
+                    mandatory: ns.mandatory !== false,
+                    legacyKeyPattern: origAx?.legacyKeyPattern || new RegExp(ns.axis_key, 'i'),
+                    validValuePattern: origAx?.validValuePattern || ANY_ENGINEERING_METRIC_REGEX,
+                };
+            });
             return {
                 archetype: {
                     id: baseArchetype.id,
                     name_es: String(record.tipo_equipo || baseArchetype.name_es),
-                    axes: dynamicAxes,
+                    axes: alignedAxes,
                 },
-                slots: dynamicSlots,
+                slots: normalizedDynamicSlots,
             };
         }
     }
@@ -1119,18 +1599,39 @@ export function extractHomologousAxisValues(record: {
         }
     }
 
-    const slots: CanonicalSpecSlot[] = archetype.axes.map((axis) => {
+    const rawFallbackSlots: CanonicalSpecSlot[] = archetype.axes.map((axis) => {
         const hit = byKey.get(axis.axis_key);
         return {
             axis_key: axis.axis_key,
             label_es: axis.label_es,
             value_si: hit?.value_si || null,
+            unit_si: axis.unit_hint,
+            mandatory: axis.mandatory,
             source_url: hit?.source_url || null,
             verbatim_evidence: hit?.verbatim_evidence || null,
         };
     });
 
-    return { archetype, slots };
+    const slots = normalizeFrontendSlotsByEnergy(rawFallbackSlots, { typeContextText });
+    const alignedFallbackAxes = slots.map((ns) => {
+        const origAx = archetype.axes.find((a) => a.axis_key === ns.axis_key);
+        return {
+            axis_key: ns.axis_key,
+            label_es: ns.label_es,
+            unit_hint: ns.unit_si || origAx?.unit_hint || '',
+            mandatory: ns.mandatory !== false,
+            legacyKeyPattern: origAx?.legacyKeyPattern || new RegExp(ns.axis_key, 'i'),
+            validValuePattern: origAx?.validValuePattern || ANY_ENGINEERING_METRIC_REGEX,
+        };
+    });
+
+    return {
+        archetype: {
+            ...archetype,
+            axes: alignedFallbackAxes,
+        },
+        slots,
+    };
 }
 
 export function validateCrossAxisPhysicalPlausibility(
@@ -1205,7 +1706,7 @@ export function buildHomologousEquipmentDescription(record: {
     caracteristicas_principales?: string[];
     short_description?: string;
 }): string {
-    const { archetype, slots } = extractHomologousAxisValues(record);
+    const { slots } = extractHomologousAxisValues(record);
 
     const hasAnyVerifiedValue = slots.some((s) => Boolean(s.value_si));
     if (!hasAnyVerifiedValue) {
@@ -1213,30 +1714,86 @@ export function buildHomologousEquipmentDescription(record: {
     }
 
     const renderedParts: string[] = [];
-    for (let i = 0; i < archetype.axes.length; i++) {
-        const axisDef = archetype.axes[i];
-        const slot = slots[i];
-        if (axisDef.mandatory) {
-            renderedParts.push(`${axisDef.label_es}: ${slot.value_si || MISSING_AXIS_VALUE}`);
+    for (const slot of slots) {
+        if (slot.mandatory) {
+            renderedParts.push(`${slot.label_es}: ${slot.value_si || MISSING_AXIS_VALUE}`);
         } else if (slot.value_si) {
-            renderedParts.push(`${axisDef.label_es}: ${slot.value_si}`);
+            renderedParts.push(`${slot.label_es}: ${slot.value_si}`);
         }
     }
 
     return renderedParts.join(' · ');
 }
 
+export function formatTransmissionCategoryShortEs(category?: string | null): string | null {
+    switch (category) {
+        case 'AUTOMATIC_PLANETARY_CONVERTER':
+        case 'AUTOMATIC_TORQUE_CONVERTER':
+            return 'Automática';
+        case 'AUTOMATED_MANUAL_AMT':
+        case 'AMT_AUTOMATED':
+            return 'Automatizada (AMT)';
+        case 'MANUAL_UNSYNCHRONIZED_FULLER':
+        case 'MANUAL_FULLER_NON_SYNCHRO':
+            return 'Manual Eaton Fuller';
+        case 'MANUAL_SYNCHRONIZED':
+        case 'MANUAL_SYNCHRO':
+            return 'Manual';
+        case 'POWERSHIFT':
+            return 'Powershift';
+        case 'HYDROSTATIC':
+            return 'Hidrostática';
+        case 'ELECTRIC_DRIVE':
+        case 'ELECTRIC_AC_DC':
+            return 'Eléctrica AC/DC';
+        case 'DIRECT_MECHANICAL':
+        case 'DIRECT_DRIVE_OR_REDUCER':
+            return 'Accionamiento directo';
+        default:
+            return null;
+    }
+}
+
 export function buildEquipmentShortDescription(record: {
     equipment_type_key?: string;
     archetype_id?: string;
     canonical_specs?: CanonicalSpecSlot[] | Record<string, any> | null;
+    configuration_profile?: {
+        axle_or_undercarriage_config?: string | null;
+        transmission_category?: string | null;
+        transmission_model_spec?: string | null;
+        work_body_or_implement?: string | null;
+        factory_emission_or_grid_spec?: string | null;
+    } | null;
     short_description?: string;
     tipo_equipo?: string;
     categoria_equipo?: string;
     contexto_operativo?: string[];
     caracteristicas_principales?: string[];
 }): string {
-    return buildHomologousEquipmentDescription(record);
+    const base = buildHomologousEquipmentDescription(record);
+    const cfg = record.configuration_profile;
+    if (!cfg) return base;
+
+    const baseUpper = base.toUpperCase();
+    const extras: string[] = [];
+
+    if (
+        cfg.axle_or_undercarriage_config &&
+        !baseUpper.includes(cfg.axle_or_undercarriage_config.toUpperCase())
+    ) {
+        extras.push(`Ejes/Rodaje: ${cfg.axle_or_undercarriage_config}`);
+    }
+    const txText = cfg.transmission_model_spec || formatTransmissionCategoryShortEs(cfg.transmission_category);
+    if (txText && !baseUpper.includes(txText.toUpperCase().slice(0, 10))) {
+        extras.push(`Caja: ${txText}`);
+    }
+    if (cfg.work_body_or_implement && !baseUpper.includes(cfg.work_body_or_implement.toUpperCase().slice(0, 10))) {
+        extras.push(`Config.: ${cfg.work_body_or_implement}`);
+    }
+    if (extras.length === 0) return base;
+    if (!base || base === MISSING_TECH_SPEC) return extras.join(' · ');
+    return `${base} · ${extras.join(' · ')}`;
 }
 
 export function countPublishedPillars(

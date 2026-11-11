@@ -12,6 +12,12 @@ import {
     SEQUENTIAL_PILLAR_ORDER,
     VALID_PILLAR_IDS,
 } from '../types/vault.types';
+import {
+    normalizeCanonicalSlotsByResolvedEnergy,
+    normalizeLegacySpecLinesByEnergy,
+    sanitizeDesignAndWorkContextItems,
+    sanitizePositivePresenceMarkdown,
+} from '../utils/canonicalArchetypeSpecs';
 
 const MAX_INLINE_AUDIT_ENTRIES = 20;
 
@@ -138,16 +144,36 @@ export class VaultPersistenceService {
             if (!VALID_PILLAR_IDS.includes(pid)) continue;
             const subData = pDoc.data() || {};
             const inlineSummary = mergedVault[pid] || {};
+            const rawItems: PillarItem[] = Array.isArray(subData.items)
+                ? subData.items
+                : Array.isArray(inlineSummary.items)
+                ? inlineSummary.items
+                : [];
             mergedVault[pid] = {
                 ...inlineSummary,
                 ...subData,
                 pillar_id: pid,
-                items: Array.isArray(subData.items)
-                    ? subData.items
-                    : Array.isArray(inlineSummary.items)
-                    ? inlineSummary.items
-                    : [],
+                items: rawItems,
             };
+        }
+
+        // Saneamiento no destructivo en lectura (`v9.6`): limpia filas "No aplica" y ensayos TCO
+        // en capítulos generados por IA aún no bloqueados ni editados manualmente (`EDICION_HITL`).
+        for (const pid of VALID_PILLAR_IDS) {
+            const pDoc = mergedVault[pid];
+            if (!pDoc || !Array.isArray(pDoc.items)) continue;
+            pDoc.items = pDoc.items.map((it: PillarItem) => {
+                if (!it || typeof it.content !== 'string' || !it.content.trim()) return it;
+                if (Boolean(it.is_human_locked)) return it;
+                const hasDirectHumanEdit =
+                    Array.isArray(it.historial_cambios) &&
+                    it.historial_cambios.some((h: any) => h?.accion === 'EDICION_HITL');
+                if (hasDirectHumanEdit) return it;
+                return {
+                    ...it,
+                    content: sanitizePositivePresenceMarkdown(it.content, { pillarId: pid }),
+                };
+            });
         }
 
         let hydratedCostMatrix = rootData.operational_cost_matrix;
@@ -167,8 +193,70 @@ export class VaultPersistenceService {
             }
         }
 
+        const typeContextText = `${rootData.make_model || ''} ${rootData.tipo_equipo || ''} ${rootData.categoria_equipo || ''}`.trim();
+        const resolvedPrimaryEnergy = rootData.physical_traits?.primary_energy || null;
+        const resolvedEnergyLabel =
+            rootData.energy_consumption_profile?.energy_spec_label ||
+            (rootData.energy_consumption_profile?.energy_source &&
+            rootData.energy_consumption_profile.energy_source !== 'NO_DECLARADO'
+                ? rootData.energy_consumption_profile.energy_source
+                : null);
+
+        const normalizedCanonicalSpecs = Array.isArray(rootData.canonical_specs)
+            ? normalizeCanonicalSlotsByResolvedEnergy(rootData.canonical_specs, {
+                  typeContextText,
+                  primaryEnergy: resolvedPrimaryEnergy,
+                  energyValueText: resolvedEnergyLabel,
+              })
+            : rootData.canonical_specs;
+
+        const normalizedMainSpecs =
+            Array.isArray(rootData.caracteristicas_principales) &&
+            !Boolean(rootData.sidebar_caracteristicas_human_curated)
+                ? normalizeLegacySpecLinesByEnergy(rootData.caracteristicas_principales, {
+                      typeContextText,
+                      primaryEnergy: resolvedPrimaryEnergy,
+                      energyValueText: resolvedEnergyLabel,
+                  })
+                : rootData.caracteristicas_principales;
+
+        const sanitizedAmbiente =
+            Array.isArray(rootData.ambiente_operativo) && !Boolean(rootData.sidebar_ambiente_human_curated)
+                ? sanitizeDesignAndWorkContextItems(rootData.ambiente_operativo, undefined, {
+                      canonicalTypeEs: rootData.tipo_equipo,
+                  })
+                : rootData.ambiente_operativo;
+
+        const sanitizedContexto =
+            Array.isArray(rootData.contexto_operativo) && !Boolean(rootData.sidebar_contexto_human_curated)
+                ? sanitizeDesignAndWorkContextItems(rootData.contexto_operativo, undefined, {
+                      canonicalTypeEs: rootData.tipo_equipo,
+                  })
+                : rootData.contexto_operativo;
+
+        let resolvedFotoAuditVersion: number | null =
+            typeof rootData.foto_vlm_audit_version === 'number' ? rootData.foto_vlm_audit_version : null;
+        if (resolvedFotoAuditVersion === null && rootData.foto_url) {
+            const candidateMatch = Array.isArray(rootData.official_photo_candidates)
+                ? rootData.official_photo_candidates.find(
+                      (c: any) =>
+                          c &&
+                          (c.preview_url === rootData.foto_url ||
+                              (rootData.foto_media_telemetry?.sha256 &&
+                                  c.sha256 === rootData.foto_media_telemetry.sha256))
+                  )
+                : null;
+            resolvedFotoAuditVersion =
+                typeof candidateMatch?.vlm_audit_version === 'number' ? candidateMatch.vlm_audit_version : 0;
+        }
+
         const hydratedData: Record<string, any> = {
             ...rootData,
+            ...(normalizedCanonicalSpecs !== undefined ? { canonical_specs: normalizedCanonicalSpecs } : {}),
+            ...(normalizedMainSpecs !== undefined ? { caracteristicas_principales: normalizedMainSpecs } : {}),
+            ...(sanitizedAmbiente !== undefined ? { ambiente_operativo: sanitizedAmbiente } : {}),
+            ...(sanitizedContexto !== undefined ? { contexto_operativo: sanitizedContexto } : {}),
+            ...(resolvedFotoAuditVersion !== null ? { foto_vlm_audit_version: resolvedFotoAuditVersion } : {}),
             knowledge_vault: mergedVault,
             ...(hydratedCostMatrix ? { operational_cost_matrix: hydratedCostMatrix } : {}),
             ...(hydratedSymbologyPack ? { symbology_pack: hydratedSymbologyPack } : {}),
@@ -548,6 +636,10 @@ export class VaultPersistenceService {
             unsealed_by: _usb,
             unsealedBy: _usB,
             official_photo_candidates: _opc,
+            foto_vlm_audit_version: _fvav,
+            sidebar_caracteristicas_human_curated: _schc,
+            sidebar_ambiente_human_curated: _sahc,
+            sidebar_contexto_human_curated: _scohc,
             ...cleanRoot
         } = hydratedData;
 

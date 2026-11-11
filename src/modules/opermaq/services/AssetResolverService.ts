@@ -1,7 +1,14 @@
 import { createHash } from 'crypto';
 import { db } from '../../../config/firebase';
+import { ConfidentialityAirlockService } from '../../../core/privacy/ConfidentialityAirlockService';
 import { ResilientAIClient, Type } from '../../../core/resilient-ai-client';
-import type { GlobalEquipmentTypeDoc, ResolvedAssetCandidate } from '../types/vault.types';
+import type {
+    DisambiguationFacetGroup,
+    EphemeralIdentificationImageInput,
+    GlobalEquipmentTypeDoc,
+    OpticalIdentificationSummary,
+    ResolvedAssetCandidate,
+} from '../types/vault.types';
 import { AssetOntologyEngine } from './AssetOntologyEngine';
 import { getCachedMasterSymbologyIndex } from './SymbologyService';
 import {
@@ -12,6 +19,10 @@ import {
     serializeCanonicalSlotsToSpecsArray,
 } from '../utils/canonicalArchetypeSpecs';
 import { DomainRejectionError, normalizeCatalogKey, validateIndustrialDomain } from '../utils/domainGuard';
+import {
+    formatTransmissionCategoryLabelEs,
+    inferAssetConfigurationProfile,
+} from '../utils/lockedVariantDirective';
 import {
     BRAND_SYNONYM_TO_OFFICIAL,
     collapseSpacedModelDesignators,
@@ -60,10 +71,167 @@ export interface AssetResolutionResponse {
     requires_clarification?: boolean;
     clarification_message?: string;
     candidates: ResolvedAssetCandidate[];
+    optical_identification_summary?: OpticalIdentificationSummary | null;
+    disambiguation_facets?: DisambiguationFacetGroup[];
     resolved_from_commons?: boolean;
     resolution_tier?: 'TIER_0_EXACT' | 'TIER_1_HYBRID_RRF' | 'TIER_2_WEB_DISCOVERY';
     resolution_latency_ms?: number;
     detected_equipment_type?: DetectedEquipmentTypeMetadata;
+}
+
+const EPHEMERAL_OPTICAL_IDENTIFICATION_SCHEMA = {
+    type: Type.OBJECT,
+    properties: {
+        detected_make: {
+            type: Type.STRING,
+            nullable: true,
+            description:
+                'Marca oficial del fabricante leída en placa metálica, emblema frontal/lateral, código WMI o cabina en MAYÚSCULAS (ej. "MACK", "CATERPILLAR", "KOMATSU", "ATLAS COPCO"), o null si no es identificable.',
+        },
+        detected_model_or_series: {
+            type: Type.STRING,
+            nullable: true,
+            description:
+                'Modelo o serie exacta leída en placa de datos, insignia de puerta/capó o código VDS (ej. "GU813E", "GRANITE GU813", "272D XHP", "336D2 L"), SIN números de serie individuales ni años.',
+        },
+        wmi_vds_structural_code: {
+            type: Type.STRING,
+            nullable: true,
+            description:
+                'ÚNICAMENTE las posiciones estructurales 1 a 8 del VIN/PIN (WMI + VDS que codifican fabricante, línea, ejes y motorización). PROHIBIDO extraer los dígitos finales de serie individual de la unidad.',
+        },
+        observed_axle_or_undercarriage: {
+            type: Type.STRING,
+            nullable: true,
+            description:
+                'Configuración física de ejes/ruedas u orugas verificada visualmente o en placa FAWR/RAWR (ej. "8x4 (4 ejes: doble direccional delantero + tándem trasero)", "6x4 (3 ejes)", "4x4", "Orugas de acero LGP", "Portátil remolcable 1 eje"), o null.',
+        },
+        observed_transmission: {
+            type: Type.STRING,
+            nullable: true,
+            description:
+                'Tipo y modelo exacto de transmisión/caja leído en placa de transmisión/chasis o en controles de cabina (ej. "Automática Allison 4500 RDS (selector botonera)", "Automatizada Mack mDRIVE", "Manual Eaton Fuller Roadranger 18 vel.", "Hidrostática"), o null.',
+        },
+        observed_work_body_or_implement: {
+            type: Type.STRING,
+            nullable: true,
+            description:
+                'Carrocería vocacional u órgano de trabajo visible o estampado en placa (ej. "Tolva minera/roquera ~20 m³", "Estanque aljibe", "Trompo mixer", "Quinta rueda tractocamión", "Hidráulica High-Flow XHP"), o null.',
+        },
+        observed_engine_or_rating: {
+            type: Type.STRING,
+            nullable: true,
+            description:
+                'Motorización o capacidad nominal leída en placa (ej. "Mack MP8 440 HP", "CAT C3.8 73 kW", "500 kVA · 400 V"), o null.',
+        },
+        observed_emission_or_grid: {
+            type: Type.STRING,
+            nullable: true,
+            description:
+                'Norma de emisiones de fábrica o frecuencia eléctrica leída en etiqueta EPA/ECE/motor (ej. "EPA Tier 4 Interim / Stage IIIB (DPF)", "Euro V SCR", "50 Hz"), o null.',
+        },
+        evidence_notes_es: {
+            type: Type.STRING,
+            nullable: true,
+            description:
+                'Síntesis técnica aséptica de 1 línea explicando qué evidencia visual permitió determinar la variante (PROHIBIDO incluir patentes, RUT, nombres de empresas o números de serie).',
+        },
+        confidence: {
+            type: Type.STRING,
+            enum: ['HIGH', 'MEDIUM', 'LOW'],
+        },
+    },
+    required: [
+        'detected_make',
+        'detected_model_or_series',
+        'wmi_vds_structural_code',
+        'observed_axle_or_undercarriage',
+        'observed_transmission',
+        'observed_work_body_or_implement',
+        'observed_engine_or_rating',
+        'observed_emission_or_grid',
+        'evidence_notes_es',
+        'confidence',
+    ],
+};
+
+/**
+ * Decodificador Óptico Efímero RAM-Only (Ley N° 21.719):
+ * Inspecciona de 1 a 3 imágenes en memoria volátil (placas OEM/VIN, placa de caja/motor, selector de cabina o foto 3/4)
+ * exclusivamente para identificar el modelo y su configuración mecánica exacta, purgando cualquier PII/serie individual
+ * y sin persistir jamás los bytes en Cloud Storage ni Firestore.
+ */
+async function decodeEphemeralEquipmentEvidence(
+    ephemeralImages: EphemeralIdentificationImageInput[],
+    rawQuery: string,
+    clarificationContext?: string
+): Promise<OpticalIdentificationSummary | null> {
+    if (!Array.isArray(ephemeralImages) || ephemeralImages.length === 0) {
+        return null;
+    }
+
+    const validMedia = ephemeralImages
+        .slice(0, 3)
+        .filter((img) => img && typeof img.base64Data === 'string' && img.base64Data.length > 32)
+        .map((img) => ({
+            mimeType: img.mimeType,
+            dataBase64: img.base64Data.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, ''),
+        }));
+
+    if (validMedia.length === 0) return null;
+
+    const scrubField = (val: string | null | undefined): string | null => {
+        if (!val || !String(val).trim()) return null;
+        const { scrubbed } = ConfidentialityAirlockService.scrubIdentificationPlateAndVinText(String(val));
+        return scrubbed || null;
+    };
+
+    try {
+        const { data } = await ResilientAIClient.generateStructured<OpticalIdentificationSummary>({
+            module: 'opermaq',
+            preferredTier: 'PRIMARY',
+            thinkingLevel: 'medium',
+            temperature: 0,
+            maxOutputTokens: 1536,
+            bypassCache: true,
+            media: validMedia,
+            responseSchema: EPHEMERAL_OPTICAL_IDENTIFICATION_SCHEMA,
+            prompt: `Actúa como Perito Forense de Identificación de Maquinaria y Vehículos Industriales (OEM Data Plate & Morphology Decoder).
+Analiza las ${validMedia.length} imagen(es) efímera(s) adjuntadas por el usuario para identificar con exactitud el modelo y la configuración mecánica de fábrica del equipo a registrar en el Catálogo Técnico.
+${rawQuery ? `- Texto base ingresado por el usuario: "${rawQuery}"` : ''}
+${clarificationContext ? `- Contexto técnico adicional del usuario: "${clarificationContext}"` : ''}
+
+INSTRUCCIONES FORENSES DE LECTURA MULTIMODAL (TOLERANCIA CERO A LA ALUCINACIÓN):
+1. PLACAS METÁLICAS OEM / VIN / PIN / PLACAS DE TRANSMISIÓN O MOTOR:
+   - Si hay una placa de datos del fabricante, lee exactamente la Marca, Código de Modelo/Variante, Código de Motor, Código de Transmisión/Caja (ej. Allison, Eaton Fuller, Mack mDRIVE, Volvo I-Shift, ZF, Powershift, Hidrostática), capacidades por eje (FAWR/RAWR) y etiquetas de emisión/frecuencia (EPA Tier / EU Stage / Euro / Hz).
+   - PRIVACIDAD LEY 21.719: Si observas un código VIN/PIN de 17 caracteres, extrae en "wmi_vds_structural_code" ÚNICAMENTE las posiciones 1 a 8 (WMI + VDS estructural). JAMÁS transcribas los dígitos finales de serie individual de la unidad, patentes vehiculares (PPU) ni nombres de empresas/contratistas.
+2. MORFOLOGÍA EXTERIOR E INTERIOR DE CABINA:
+   - Si es una fotografía exterior del equipo, CUENTA CON PRECISIÓN QUIRÚRGICA los ejes y configuración de rodado: distingue sin error entre 8x4 (4 ejes: 2 ejes direccionales delanteros + 2 traseros), 6x4 (3 ejes: 1 direccional delantero + 2 traseros), 4x4, 4x2, orugas LGP/LC o equipo estacionario/remolcable.
+   - Identifica la carrocería u órgano de trabajo montado (ej. Tolva minera/roquera y volumen si es visible, Aljibe, Trompo mixer, Pluma articulada, Quinta rueda, Hidráulica auxiliar High-Flow XHP).
+   - Si muestra el interior de cabina o selector de cambios, distingue entre botonera automática (Allison), selector rotativo/palanca AMT sin pedal de embrague (mDRIVE / I-Shift / Opticruise / TraXon), palanca manual con splitter/rango Eaton Fuller y pedal de embrague, o joysticks hidrostáticos.
+3. Si un atributo NO es visible ni deducible con certeza de las imágenes, devuelve null en ese campo.`,
+        });
+
+        const rawWmi = data.wmi_vds_structural_code
+            ? String(data.wmi_vds_structural_code).replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8)
+            : null;
+
+        return {
+            detected_make: scrubField(data.detected_make)?.toUpperCase() || null,
+            detected_model_or_series: scrubField(data.detected_model_or_series)?.toUpperCase() || null,
+            wmi_vds_structural_code: rawWmi && rawWmi.length >= 3 ? rawWmi : null,
+            observed_axle_or_undercarriage: scrubField(data.observed_axle_or_undercarriage),
+            observed_transmission: scrubField(data.observed_transmission),
+            observed_work_body_or_implement: scrubField(data.observed_work_body_or_implement),
+            observed_engine_or_rating: scrubField(data.observed_engine_or_rating),
+            observed_emission_or_grid: scrubField(data.observed_emission_or_grid),
+            evidence_notes_es: scrubField(data.evidence_notes_es),
+            confidence: data.confidence || 'MEDIUM',
+        };
+    } catch (err: any) {
+        console.warn('[OPERMAQ-OPTICAL-ID] Decodificación óptica efímera degradada:', err?.message);
+        return null;
+    }
 }
 
 export function detectModelDesignator(input: string): string | null {
@@ -151,6 +319,13 @@ const STEP1_PRIMARY_TYPE_DETECTION_SCHEMA = {
             description:
                 'true únicamente si el código de modelo es poco conocido y no tienes certeza absoluta de qué TIPO de máquina o vehículo es sin consultar antes Google Search.',
         },
+        suggested_quick_refinements: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+            nullable: true,
+            description:
+                'Solo cuando requires_clarification = true: entre 3 y 6 opciones concretas de series o tipos reales para que el usuario refine con 1 clic (ej. si escribió "Mack" -> ["MACK GRANITE GU813 8X4 TOLVA", "MACK GRANITE GU813 6X4", "MACK ANTHEM 6X4 TRACTO", "MACK MD"]). En caso contrario devuelve null.',
+        },
     },
     required: [
         'is_pertinent',
@@ -207,13 +382,13 @@ const PASS2_TYPE_SCOPED_CANDIDATE_SCHEMA = {
                         type: Type.ARRAY,
                         items: { type: Type.STRING },
                         description:
-                            'CONDICIONES DE DISEÑO (2 a 4 viñetas técnicas concretas verificadas en la fuente OEM): certificaciones estructurales (ej. ROPS ISO 3471 / FOPS ISO 3449), régimen hidromecánico/térmico/altitud (ej. circuito auxiliar XHP 150 L/min @ 280 bar, enfriamiento de alta temperatura) y configuración de rodaje/terreno admisible. Prohibido usar palabras sueltas genéricas como "Superficie" o "Terreno".',
+                            'CONDICIONES DE DISEÑO (2 a 4 viñetas telegráficas <= 12 palabras cada una, 100% presencia positiva verificada): motor/norma real de fábrica (ej. "Motor Cat C3.8 DIT — EPA Tier 4 Interim / EU Stage IIIB"), certificaciones estructurales (ROPS ISO 3471 / FOPS ISO 3449, presurización) y circuito hidromecánico/térmico real. PROHIBIDO declarar subsistemas inexistentes ("sin SCR/AdBlue", "no aplica"), PROHIBIDO usar marketing ("confort del operador", "alto rendimiento", "alta demanda") y PROHIBIDO repetir tautológicamente el TIPO del equipo.',
                     },
                     contexto_operativo: {
                         type: Type.ARRAY,
                         items: { type: Type.STRING },
                         description:
-                            'CONTEXTO Y TRABAJO (2 a 4 viñetas técnicas concretas verificadas en la fuente OEM): aplicaciones operativas reales en minería, construcción o industria y familia de herramientas/implementos de trabajo compatibles. Prohibido usar frases vacías como "Operación Técnica" u "Operación Industrial".',
+                            'CONTEXTO Y TRABAJO (2 a 3 viñetas telegráficas <= 12 palabras cada una, 100% verificadas en fuente OEM): labores reales e implementos/carrozados compatibles. PROHIBIDO inventar duraciones de turno ("ciclos de 8 a 10 horas", "factores de carga medios") o usar frases vacías ("Operación Técnica", "Operación Industrial").',
                     },
                     extracted_axes: {
                         type: Type.ARRAY,
@@ -257,6 +432,36 @@ const PASS2_TYPE_SCOPED_CANDIDATE_SCHEMA = {
                         nullable: true,
                         description:
                             'URL exacta tomada de FUENTES WEB VERIFICADAS DISPONIBLES, o null si no aplica.',
+                    },
+                    configuration_hints: {
+                        type: Type.OBJECT,
+                        nullable: true,
+                        properties: {
+                            axle_or_undercarriage: {
+                                type: Type.STRING,
+                                nullable: true,
+                                description:
+                                    'Configuración de ejes o tren de rodaje de esta variante específica (ej. "8x4", "6x4", "4x4", "Orugas LGP"), o null.',
+                            },
+                            transmission_spec: {
+                                type: Type.STRING,
+                                nullable: true,
+                                description:
+                                    'Tipo y modelo de caja/transmisión de esta variante específica (ej. "Automática Allison 4500 RDS 6 vel.", "Automatizada Mack mDRIVE 12 vel.", "Manual Eaton Fuller 18 vel.", "Hidrostática 2 vel.", "Powershift"), o null.',
+                            },
+                            work_body_or_implement: {
+                                type: Type.STRING,
+                                nullable: true,
+                                description:
+                                    'Carrocería u órgano de trabajo diferenciador de esta variante (ej. "Tolva 20 m³", "Tractocamión quinta rueda", "Hidráulica XHP"), o null.',
+                            },
+                            factory_emission_or_grid: {
+                                type: Type.STRING,
+                                nullable: true,
+                                description:
+                                    'Norma de emisión de fábrica o frecuencia eléctrica declarada en la ficha OEM de esta variante (ej. "EPA Tier 4 Interim / EU Stage IIIB (DPF)", "Euro V SCR", "50 Hz"), o null.',
+                            },
+                        },
                     },
                 },
                 required: [
@@ -304,6 +509,17 @@ function isVagueDetectedType(raw?: string | null): boolean {
 export interface QueryTechnicalConstraints {
     requestedYear: number | null;
     requestedTraction: string | null;
+    requestedTransmissionFamily:
+        | 'AUTOMATICA'
+        | 'AUTOMATIZADA_AMT'
+        | 'MANUAL_FULLER'
+        | 'MANUAL'
+        | 'POWERSHIFT'
+        | 'HIDROSTATICA'
+        | 'ELECTRICA'
+        | null;
+    requestedTransmissionBrand: string | null;
+    requestedBodyCapacity: string | null;
     requestedFuel: 'DIESEL' | 'GASOLINA' | 'ELECTRICO' | 'HIBRIDO' | null;
     requestedDisplacement: string | null;
     clarificationText: string | null;
@@ -322,10 +538,55 @@ export function extractQueryTechnicalConstraints(
     const yearMatch = combined.match(/\b(19[6-9]\d|20[0-3]\d)\b/);
     const requestedYear = yearMatch ? Number.parseInt(yearMatch[1], 10) : null;
 
-    const tractionMatch = combined.match(/\b(4X4|4X2|6X4|6X6|8X4|AWD|4WD|2WD)\b/);
+    const tractionMatch = combined.match(
+        /\b(10X6|10X4|8X8|8X6|8X4|6X6|6X4|6X2|4X4|4X2|AWD|4WD|2WD)\b/
+    );
     let requestedTraction = tractionMatch ? tractionMatch[1] : null;
     if (requestedTraction === '4WD') requestedTraction = '4X4';
     if (requestedTraction === '2WD') requestedTraction = '4X2';
+
+    let requestedTransmissionFamily: QueryTechnicalConstraints['requestedTransmissionFamily'] = null;
+    let requestedTransmissionBrand: string | null = null;
+
+    if (/\bALLISON\b/.test(combined)) {
+        requestedTransmissionFamily = 'AUTOMATICA';
+        requestedTransmissionBrand = 'ALLISON';
+    } else if (/\b(M-?DRIVE|I-?SHIFT|OPTICRUISE|TRAXON|AS[- ]?TRONIC|ULTRASHIFT|ENDURANT|DT12)\b/.test(combined)) {
+        const m = combined.match(/\b(M-?DRIVE|I-?SHIFT|OPTICRUISE|TRAXON|AS[- ]?TRONIC|ULTRASHIFT|ENDURANT|DT12)\b/);
+        requestedTransmissionFamily = 'AUTOMATIZADA_AMT';
+        requestedTransmissionBrand = m ? m[1].replace('-', '') : null;
+    } else if (/\b(FULLER|ROADRANGER|RTLO-?\d{4,5})\b/.test(combined)) {
+        requestedTransmissionFamily = 'MANUAL_FULLER';
+        requestedTransmissionBrand = 'EATON FULLER';
+    } else if (/\b(AUTOMATIZAD[AO]|\bAMT\b)\b/.test(combined)) {
+        requestedTransmissionFamily = 'AUTOMATIZADA_AMT';
+    } else if (
+        /\b(AUTOMATIC[AO]|CONVERTIDOR\s+DE\s+PAR|\b\d{1,2}\s*AT\b)\b/.test(combined) &&
+        !/\b(ENGRASE\s+AUTOMATICO|LUBRICACION\s+AUTOMATICA|APAGADO\s+AUTOMATICO)\b/.test(combined)
+    ) {
+        requestedTransmissionFamily = 'AUTOMATICA';
+    } else if (/\b(CAJA\s+MANUAL|TRANSMISION\s+MANUAL|CAMBIO\s+MANUAL|MANUAL\s+\d{1,2}\s*VEL|\b\d{1,2}\s*MT\b|MECANICA)\b/.test(combined)) {
+        requestedTransmissionFamily = 'MANUAL';
+    } else if (/\b(POWERSHIFT|SERVOTRANSMISION|TORQFLOW)\b/.test(combined)) {
+        requestedTransmissionFamily = 'POWERSHIFT';
+    } else if (/\bHIDROSTATIC[AO]\b/.test(combined)) {
+        requestedTransmissionFamily = 'HIDROSTATICA';
+    }
+
+    let requestedBodyCapacity: string | null = null;
+    const m3Match = combined.match(/\b(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:M3|M³|METROS?\s+CUBICOS?)\b/);
+    if (m3Match) {
+        const val = m3Match[1].replace(',', '.');
+        requestedBodyCapacity = /\b(MIXER|BETONERA|HORMIGONERA)\b/.test(combined)
+            ? `MIXER ${val}M3`
+            : `TOLVA ${val}M3`;
+    } else if (/\bTOLVA\b/.test(combined)) {
+        requestedBodyCapacity = 'TOLVA';
+    } else if (/\bALJIBE|CISTERNA\b/.test(combined)) {
+        requestedBodyCapacity = 'ALJIBE';
+    } else if (/\bXHP\b/.test(combined)) {
+        requestedBodyCapacity = 'XHP';
+    }
 
     let requestedFuel: QueryTechnicalConstraints['requestedFuel'] = null;
     if (/\b(DIESEL|TURBODIESEL|HDI|TDI|BLUEHDI|CRDI|DID)\b/.test(combined)) {
@@ -338,17 +599,26 @@ export function extractQueryTechnicalConstraints(
         requestedFuel = 'HIBRIDO';
     }
 
-    const dispMatch = combined.match(/\b(\d[.,]\d)\s*(?:L|LITROS?|D|HDI|TDI|THP)?\b/);
+    const dispMatch = combined.match(/\b(\d[.,]\d)\s*(?:L|LITROS?|D|HDI|TDI|THP)\b/);
     const requestedDisplacement = dispMatch ? `${dispMatch[1].replace(',', '.')}L` : null;
 
     const clarificationText = clarificationContext?.trim() ? clarificationContext.trim() : null;
     const hasExplicitConstraints = Boolean(
-        requestedYear || requestedTraction || requestedFuel || requestedDisplacement || clarificationText
+        requestedYear ||
+            requestedTraction ||
+            requestedTransmissionFamily ||
+            requestedBodyCapacity ||
+            requestedFuel ||
+            requestedDisplacement ||
+            clarificationText
     );
 
     return {
         requestedYear,
         requestedTraction,
+        requestedTransmissionFamily,
+        requestedTransmissionBrand,
+        requestedBodyCapacity,
         requestedFuel,
         requestedDisplacement,
         clarificationText,
@@ -370,12 +640,37 @@ function formatConstraintsDirective(constraints: QueryTechnicalConstraints): str
     }
     if (constraints.requestedTraction) {
         rules.push(
-            `- TRACCIÓN OBLIGATORIA: ${constraints.requestedTraction}. Queda ESTRICTAMENTE PROHIBIDO incluir configuraciones de tracción distinta (ej. si pidió 4X4, excluye 4X2/2WD).`
+            `- CONFIGURACIÓN DE EJES / TRACCIÓN OBLIGATORIA: ${constraints.requestedTraction}. Queda ESTRICTAMENTE PROHIBIDO devolver candidatos de otra configuración de ejes (ej. si solicitó 8X4, EXCLUYE 6X4, 6X2 y 4X2; si solicitó 6X4, EXCLUYE 8X4 y 4X2).`
+        );
+    }
+    if (constraints.requestedTransmissionFamily) {
+        const brandNote = constraints.requestedTransmissionBrand ? ` (${constraints.requestedTransmissionBrand})` : '';
+        if (constraints.requestedTransmissionFamily === 'AUTOMATICA') {
+            rules.push(
+                `- TRANSMISIÓN / CAJA OBLIGATORIA: AUTOMÁTICA${brandNote} (ej. Allison con convertidor de par y/o automatizada OEM sin pedal de embrague como mDRIVE/I-Shift si la marca las comercializa para este chasis, diferenciándolas claramente). EXCLUYE cajas manuales Eaton Fuller o mecánicas con pedal de embrague.`
+            );
+        } else if (constraints.requestedTransmissionFamily === 'AUTOMATIZADA_AMT') {
+            rules.push(
+                `- TRANSMISIÓN / CAJA OBLIGATORIA: AUTOMATIZADA AMT${brandNote} (ej. Mack mDRIVE, Volvo I-Shift, Scania Opticruise, ZF TraXon). EXCLUYE cajas manuales no automatizadas.`
+            );
+        } else if (constraints.requestedTransmissionFamily === 'MANUAL_FULLER') {
+            rules.push(
+                '- TRANSMISIÓN / CAJA OBLIGATORIA: MANUAL NO SINCRONIZADA EATON FULLER / ROADRANGER. EXCLUYE cajas automáticas Allison o automatizadas.'
+            );
+        } else if (constraints.requestedTransmissionFamily === 'MANUAL') {
+            rules.push(
+                '- TRANSMISIÓN / CAJA OBLIGATORIA: MANUAL / MECÁNICA. EXCLUYE cajas automáticas con convertidor de par.'
+            );
+        }
+    }
+    if (constraints.requestedBodyCapacity) {
+        rules.push(
+            `- CARROCERÍA / ÓRGANO DE TRABAJO SOLICITADO: ${constraints.requestedBodyCapacity}. Refleja esta configuración vocacional y volumen exacto en el candidato.`
         );
     }
     if (constraints.requestedYear) {
         rules.push(
-            `- AÑO DE REFERENCIA TÉCNICA: ${constraints.requestedYear}. Incluye ÚNICAMENTE las versiones y motorizaciones vigentes y comercializadas en el año ${constraints.requestedYear} (excluye motores o restylings lanzados en años posteriores a ${constraints.requestedYear}). JAMÁS escribas el año ni frases como "desde 2020 a la actualidad" dentro del nombre del modelo.`
+            `- AÑO DE REFERENCIA TÉCNICA: ${constraints.requestedYear}. Incluye ÚNICAMENTE las versiones y motorizaciones vigentes y comercializadas en el año ${constraints.requestedYear}. JAMÁS escribas el año ni frases como "desde 2020 a la actualidad" dentro del nombre del modelo.`
         );
     }
     if (constraints.requestedDisplacement) {
@@ -383,7 +678,7 @@ function formatConstraintsDirective(constraints: QueryTechnicalConstraints): str
     }
     if (constraints.clarificationText) {
         rules.push(
-            `- ACLARACIÓN TÉCNICA APORTADA POR EL USUARIO (PRIORIDAD MÁXIMA): "${constraints.clarificationText}".`
+            `- ESPECIFICACIÓN ADICIONAL / EVIDENCIA DEL USUARIO (PRIORIDAD MÁXIMA): "${constraints.clarificationText}".`
         );
     }
     return `\nRESTRICCIONES TÉCNICAS EXPLÍCITAS DE LA CONSULTA (FILTRO DURO OBLIGATORIO):\n${rules.join('\n')}\n`;
@@ -406,12 +701,47 @@ function textViolatesConstraints(text: string, constraints: QueryTechnicalConstr
         }
     }
 
-    if (constraints.requestedTraction === '4X4') {
-        if (/\b(4X2|2WD|TRACCION\s+SIMPLE)\b/.test(norm) && !/\b4X4\b/.test(norm)) {
+    if (constraints.requestedTraction) {
+        const reqAxle = constraints.requestedTraction.toUpperCase();
+        const allAxles = ['10X6', '10X4', '8X8', '8X6', '8X4', '6X6', '6X4', '6X2', '4X4', '4X2'];
+        if (allAxles.includes(reqAxle)) {
+            const mentionsReq = new RegExp(`\\b${reqAxle}\\b`).test(norm);
+            const mentionsOtherAxle = allAxles
+                .filter((ax) => ax !== reqAxle)
+                .some((ax) => new RegExp(`\\b${ax}\\b`).test(norm));
+            if (mentionsOtherAxle && !mentionsReq) {
+                return true;
+            }
+        }
+        if (reqAxle === '4X4' && /\b(2WD|TRACCION\s+SIMPLE)\b/.test(norm) && !/\b4X4\b/.test(norm)) {
             return true;
         }
-    } else if (constraints.requestedTraction === '4X2') {
-        if (/\b(4X4|4WD|AWD)\b/.test(norm) && !/\b4X2\b/.test(norm)) {
+    }
+
+    if (constraints.requestedTransmissionFamily === 'AUTOMATICA') {
+        if (
+            /\b(MANUAL\s+FULLER|EATON\s+FULLER|ROADRANGER|CAJA\s+MANUAL|TRANSMISION\s+MANUAL|\bMT6\b|\b6MT\b)\b/.test(
+                norm
+            ) &&
+            !/\b(AUTOMATICA|AUTOMATIC|ALLISON|M-?DRIVE|I-?SHIFT|OPTICRUISE|AMT)\b/.test(norm)
+        ) {
+            return true;
+        }
+    } else if (constraints.requestedTransmissionFamily === 'AUTOMATIZADA_AMT') {
+        if (
+            /\b(MANUAL\s+FULLER|EATON\s+FULLER|ROADRANGER|CAJA\s+MANUAL)\b/.test(norm) &&
+            !/\b(AUTOMATIZADA|AMT|M-?DRIVE|I-?SHIFT|OPTICRUISE|TRAXON)\b/.test(norm)
+        ) {
+            return true;
+        }
+    } else if (
+        constraints.requestedTransmissionFamily === 'MANUAL_FULLER' ||
+        constraints.requestedTransmissionFamily === 'MANUAL'
+    ) {
+        if (
+            /\b(AUTOMATICA|ALLISON|CONVERTIDOR\s+DE\s+PAR|\bAT6\b|\b6AT\b)\b/.test(norm) &&
+            !/\b(MANUAL|FULLER|ROADRANGER|MECANICA)\b/.test(norm)
+        ) {
             return true;
         }
     }
@@ -480,26 +810,28 @@ ${axesInstructions}
         .join(' ')
         .trim();
 
-    return `Usa Google Search para investigar en fichas técnicas oficiales OEM, hojas de especificaciones de fabricantes y registros técnicos verificados el siguiente activo:
+    return `Usa Google Search para investigar en fichas técnicas oficiales OEM globales (100% Worldwide OEM: US/EPA, Europa/Stage, LATAM, Asia y exportación directa), hojas de especificaciones de fabricantes y registros técnicos verificados el siguiente activo:
 - Búsqueda original del usuario: "${rawInput}"
 ${canonicalTarget ? `- Identidad corregida objetivo: "${canonicalTarget}"` : ''}
 ${designator ? `- Designador alfanumérico detectado: "${designator}"` : ''}
 - TIPO CANÓNICO DE EQUIPO DETECTADO: "${typeDoc.canonical_type_es}" (${typeDoc.categoria_equipo})
-${clarificationContext ? `- Contexto aclaratorio del usuario: "${clarificationContext}"` : ''}
+${clarificationContext ? `- Contexto técnico / evidencia de placa aportada: "${clarificationContext}"` : ''}
 ${constraintsDirective}
-INSTRUCCIONES DE INVESTIGACIÓN WEB FOCALIZADA POR TIPO (CENSO EXHAUSTIVO 1..N SIN LÍMITE DE CANTIDAD):
-1. CENSO EXHAUSTIVO DE VERSIONES COMERCIALES O GENERACIONES REALES QUE CUMPLEN LAS RESTRICCIONES (1..N, CERO OMISIONES):
-   - Si el usuario buscó un modelo específico con restricciones técnicas (ej. "PEUGEOT LANDTREK 4X4 DIESEL 2022"), identifica y lista por separado TODAS las versiones/equipamientos comerciales reales verificados que cumplan exactamente dichas restricciones (ej. "LANDTREK ACTIVE 1.9D 4X4", "LANDTREK ACTION 1.9D 4X4", "LANDTREK 4ACTION 1.9D 4X4", "LANDTREK ALLURE 1.9D 4X4", diferenciando transmisión MT6 / AT6 si aplica), EXCLUYENDO motorizaciones o tracciones que contradigan la consulta.
-   - Si el usuario buscó una familia o serie de maquinaria (ej. "CAT D10", "CAT 140M", "KOMATSU PC200"), identifica y lista el 100% de las generaciones y series reales ("D10", "D10N", "D10R", "D10T", "D10T2", "D10 NEXT GEN"; "140M", "140M2", "140M3").
+INSTRUCCIONES DE INVESTIGACIÓN WEB GLOBAL FOCALIZADA POR TIPO (CENSO EXHAUSTIVO 1..N SIN RESTRICCIÓN GEOGRÁFICA):
+1. REGLA GLOBAL-FIRST NO-RESTRICTIVA (SOPORTE DE IMPORTACIÓN DIRECTA):
+   - Consulta SIEMPRE el catálogo mundial completo del fabricante. JAMÁS excluyas ni ocultes un modelo por no comercializarse en un país específico (ej. equipos importados directamente como "CAT 272D / 272D XHP" EPA Tier 4i, camiones norteamericanos o europeos). Reporta siempre su configuración real de fábrica sin inventar variantes locales inexistentes.
+2. CENSO EXHAUSTIVO Y DESGLOSE DE CONFIGURACIONES MECÁNICAS DIFERENCIADORAS (EJES, TRANSMISIÓN/CAJA, CARROCERÍA/IMPLEMENTO):
+   - Si el modelo existe en múltiples configuraciones mecánicas reales de fábrica (ej. en camiones vocacionales como "MACK GU813 / GRANITE": chasis "6x4" vs "8x4", cajas "Automática Allison 4500 RDS" vs "Automatizada Mack mDRIVE" vs "Manual Eaton Fuller 18 vel.", y carrozados como "Tolva minera 20 m³" vs "Tractocamión"; en maquinaria: hidráulica estándar vs "XHP", tren "XL" vs "LGP", o normas de motorización distintas como "Tier 3 / Euro V sin DPF" vs "EPA Tier 4 / Stage V con DPF"), DEBES listar y desglosar explícitamente CADA CONFIGURACIÓN que cumpla las restricciones solicitadas por el usuario.
+   - Si el usuario especificó configuración (ej. "GU813 8x4 20 m³ automática"), investiga focalizadamente las configuraciones 8x4 con tolva ~20 m³ y transmisión automática/automatizada disponibles en ese modelo (ej. Allison serie 4000/4500 RDS y Mack mDRIVE HD), reportando con exactitud el tipo y modelo de caja, configuración de 4 ejes (8x4) y capacidad de tolva.
    - PROHIBICIÓN ABSOLUTA DE RANGOS TEMPORALES EN NOMBRES: Jamás agregues frases como "(desde 2020 a la actualidad)", "(2020-presente)" ni rangos de años a los nombres de modelos o versiones.
-2. BÚSQUEDA EXCLUSIVA DE LAS CARACTERÍSTICAS DE "${typeDoc.canonical_type_es}" Y CONDICIONES DE DISEÑO / TRABAJO:
-   Para cada versión, modelo o serie identificada, busca en las fichas técnicas OEM:
-   A) Los ${typeDoc.spec_schema.length} parámetros principales y diferenciadores establecidos para "${typeDoc.canonical_type_es}" (incluyendo diferenciadores de sufijo OEM como XHP, XE, VHP, LGP, LC y consumos energéticos):
+3. BÚSQUEDA EXCLUSIVA DE LAS CARACTERÍSTICAS DE "${typeDoc.canonical_type_es}" Y CONDICIONES DE DISEÑO / TRABAJO:
+   Para cada configuración, versión o serie identificada, busca en las fichas técnicas OEM:
+   A) Los ${typeDoc.spec_schema.length} parámetros principales y diferenciadores establecidos para "${typeDoc.canonical_type_es}" (incluyendo obligatoriamente tipo/modelo de transmisión/caja, configuración de ejes/rodaje si aplica y consumos energéticos):
 ${axesInstructions}
-   B) CONDICIONES DE DISEÑO (ambiente_operativo): certificaciones de cabina/estructura (ROPS/FOPS, presurización), régimen hidráulico/térmico/emisiones (Tier/Stage) y configuración de tracción/rodado/superficie de trabajo.
-   C) CONTEXTO Y TRABAJO (contexto_operativo): labores específicas en minería, construcción o industria y herramientas/implementos acoplables compatibles.
-3. CERO PARÁMETROS CRUZADOS, FORMATO DENSO Y CERO PROSA PUBLICITARIA:
-   - Formato ultra-compacto: presenta máximo 3 a 4 líneas densas por cada versión/generación con sus cifras SI, condiciones de diseño, trabajo y fuente. Prohibido redactar introducciones o párrafos extensos.
+   B) CONDICIONES DE DISEÑO (ambiente_operativo): motor/norma de emisiones o frecuencia real de fábrica (Tier/Stage/Euro/Hz), certificaciones estructurales (ROPS/FOPS, presurización, IP) y circuito hidráulico/térmico equipado (100% presencia positiva: PROHIBIDO listar subsistemas que NO equipa como "sin SCR/AdBlue", PROHIBIDO usar "confort" o repetir el TIPO).
+   C) CONTEXTO Y TRABAJO (contexto_operativo): labores técnicas reales y carrocerías/implementos compatibles declarados por el OEM (PROHIBIDO inventar turnos de "8 a 10 horas").
+4. CERO PARÁMETROS CRUZADOS, FORMATO DENSO Y CERO PROSA PUBLICITARIA:
+   - Formato ultra-compacto: presenta máximo 3 a 4 líneas densas por cada variante/configuración con sus cifras SI, transmisión exacta, ejes, condiciones de diseño y fuente.
    - Si algún parámetro no figura explícitamente en las páginas web consultadas, escribe literalmente "NO DECLARADO EN FUENTE".`;
 }
 
@@ -518,7 +850,7 @@ function buildTypeScopedPass2ExtractionPrompt(params: {
         .map((ax) => {
             const constraint =
                 ax.value_kind === 'CLOSED_ENUM' && ax.allowed_enum_values?.length
-                    ? `Valor permitido exacto: uno de [${ax.allowed_enum_values.join(' | ')}]`
+                    ? `Valor permitido (puedes especificar código OEM si es caja de cambios, ej. "Automática (Allison 4500 RDS)" o "Manual Eaton Fuller (18 vel.)"): [${ax.allowed_enum_values.join(' | ')}]`
                     : `Unidad métrica SI requerida: "${ax.unit_si}"`;
             return `- axis_key: "${ax.axis_key}" | Etiqueta: "${ax.label_es}" | ${constraint}`;
         })
@@ -526,7 +858,7 @@ function buildTypeScopedPass2ExtractionPrompt(params: {
 
     const constraintsDirective = formatConstraintsDirective(constraints);
 
-    return `Eres un Extractor Determinista de Catálogo Técnico OEM y Vehicular (Temperatura 0, Tolerancia Cero a la Alucinación, Cero Restricción de Cantidad 1..N).
+    return `Eres un Extractor Determinista de Catálogo Técnico OEM Global (Temperatura 0, Tolerancia Cero a la Alucinación, Cero Restricción Geográfica y Cero Colisión de Variantes 1..N).
 Convierte el INFORME DE INVESTIGACIÓN WEB VERIFICADA adjunto abajo en la estructura JSON requerida para la búsqueda "${rawInput}" (modo: ${isGeneric ? 'GENÉRICO' : 'MARCA/OEM'}${designator && isGeneric ? `, designador bloqueado: "${designator}"` : ''}).
 ${constraintsDirective}
 TIPO CANÓNICO DEL EQUIPO: "${typeDoc.canonical_type_es}" (clave: "${typeDoc.type_key}")
@@ -541,40 +873,390 @@ INFORME DE INVESTIGACIÓN WEB VERIFICADA (ÚNICA FUENTE DE VERDAD):
 ${groundedReportText.slice(0, 48000)}
 """
 
-REGLAS ESTRICTAS FAIL-CLOSED (1..N SIN RESTRICCIÓN DE CANTIDAD):
+REGLAS ESTRICTAS FAIL-CLOSED (1..N SIN RESTRICCIÓN DE CANTIDAD NI COLAPSO DE VARIANTES):
 1. "is_pertinent": true para cualquier vehículo, maquinaria, compresor, generador, perforadora, chancador, bomba, grúa, equipo industrial o herramienta. Solo false para artículos domésticos/personales ajenos.
-2. DESGLOSE DE CANDIDATOS SELECCIONABLES (SERIES O VERSIONES COMERCIALES):
-   - PROHIBIDO recortar, limitar o resumir la lista de candidatos: extrae el 100% de las generaciones, series o versiones comerciales verificadas en el informe que cumplan las restricciones de la consulta.
-   - Si el informe describe múltiples versiones comerciales/equipamientos de un mismo modelo (ej. para "PEUGEOT LANDTREK 4X4 DIESEL 2022": "LANDTREK ACTIVE 1.9D 4X4", "LANDTREK ACTION 1.9D 4X4", "LANDTREK 4ACTION 1.9D 4X4", "LANDTREK ALLURE 1.9D 4X4"), DEBES emitir CADA VERSIÓN COMERCIAL como un candidato independiente en el arreglo "candidates" con su "model_oficial" específico, para que el usuario pueda seleccionar directamente la versión exacta que desea registrar.
-   - Si el informe describe múltiples series/generaciones de una familia de maquinaria (ej. "D10", "D10N", "D10R", "D10T", "D10T2", "D10 NEXT GEN" o "140M", "140M2", "140M3"), emite cada serie como un candidato independiente.
+2. DESGLOSE DE CANDIDATOS SELECCIONABLES CON IDENTIDAD MECÁNICA EXPLÍCITA EN "model_oficial":
+   - PROHIBIDO colapsar configuraciones mecánicas distintas en un único candidato genérico: si el informe describe variantes con distinta configuración de ejes ("6X4" vs "8X4"), distinto tipo/familia de transmisión ("AUTOMATICA ALLISON" vs "AUTOMATIZADA MDRIVE" vs "MANUAL FULLER"), distinta carrocería/capacidad ("TOLVA 20M3" vs "TRACTO") o paquete hidráulico/rodaje ("272D" vs "272D XHP", "D6T XL" vs "D6T LGP"), DEBES emitir CADA CONFIGURACIÓN REAL como un candidato independiente e incluir los diferenciadores en "model_oficial" (ej. "GU813E 8X4 TOLVA 20M3 AUTOMATICA ALLISON", "GU813E 8X4 TOLVA 20M3 AUTOMATIZADA MDRIVE", "GU813E 6X4 MANUAL FULLER"; o "272D", "272D XHP").
+   - Respeta estrictamente las restricciones del usuario: si el usuario pidió "8x4" y "automática", NO emitas candidatos "6x4" ni "Manual".
+   - Rellena siempre "configuration_hints" con la configuración exacta de ejes/rodaje, tipo/modelo de caja, carrocería/implemento y norma de emisión/frecuencia declarada para ese candidato.
    - PROHIBICIÓN ABSOLUTA DE RUIDO TEMPORAL: Jamás incluyas años, rangos de años ni frases como "(desde 2020 a la actualidad)" o "(2020-presente)" en "model_oficial" ni en "versions".
    - En modo OEM, normaliza "make_oficial" a la marca oficial corregida en MAYÚSCULAS (ej. "PEUGUEOT" -> "PEUGEOT", "CAT" -> "CATERPILLAR").
 3. EXTRACCIÓN EXACTA DE "extracted_axes", "ambiente_operativo" (CONDICIONES DE DISEÑO) Y "contexto_operativo" (CONTEXTO Y TRABAJO):
    - Devuelve en "extracted_axes" una entrada por cada "axis_key" del esquema de "${typeDoc.canonical_type_es}".
-   - En "value_si" escribe ÚNICAMENTE la cifra con su unidad métrica SI (ej. "110 kW (150 HP)", "150 L/min @ 280 bar", "1.910 cm³", "350 Nm", "1.020 kg", "4x4") o el valor exacto del enum permitido. JAMÁS repitas el nombre de la etiqueta dentro de "value_si".
-   - En "ambiente_operativo" extrae de 2 a 4 viñetas técnicas concretas de CONDICIONES DE DISEÑO (certificaciones ROPS/FOPS, circuito hidráulico/térmico/emisiones, configuración de tracción y terreno). Prohibido devolver palabras sueltas como "Superficie".
-   - En "contexto_operativo" extrae de 2 a 4 viñetas técnicas concretas de CONTEXTO Y TRABAJO (labores específicas en minería/construcción/industria e implementos compatibles). Prohibido devolver frases vacías como "Operación Técnica".
+   - En "value_si" escribe ÚNICAMENTE la cifra con su unidad métrica SI (ej. "328 kW (440 HP)", "20 m³", "8x4", "Automática (Allison 4500 RDS)") sin repetir el nombre de la etiqueta.
+   - En "ambiente_operativo" extrae de 2 a 4 viñetas telegráficas (<= 12 palabras) de CONDICIONES DE DISEÑO con 100% presencia positiva (motor/emisiones reales, certificaciones ROPS/FOPS/IP y circuito hidráulico/térmico). PROHIBIDO mencionar qué subsistemas NO posee el equipo ("sin SCR/AdBlue", "no aplica"), PROHIBIDO usar términos subjetivos ("confort", "alto rendimiento", "alta demanda") y PROHIBIDO repetir tautológicamente "${typeDoc.canonical_type_es}".
+   - En "contexto_operativo" extrae de 2 a 3 viñetas telegráficas (<= 12 palabras) de CONTEXTO Y TRABAJO (aplicaciones reales e implemento/carrozado compatible). PROHIBIDO inventar duraciones de turno ("8 a 10 horas").
    - Si un eje NO aparece con dato explícito en el informe verificado (o dice NO DECLARADO), devuelve "value_si": null, "source_url": null, "verbatim_evidence": null.
    - "source_url" y "official_url" DEBEN ser URLs literales tomadas de FUENTES WEB VERIFICADAS DISPONIBLES.`;
+}
+
+interface RawPass2Candidate {
+    make_oficial: string;
+    model_oficial: string;
+    configuration_hints?: {
+        axle_or_undercarriage?: string | null;
+        transmission_category?: string | null;
+        transmission_spec?: string | null;
+        transmission_model?: string | null;
+        work_body_or_implement?: string | null;
+        factory_emission_or_grid?: string | null;
+        emission_or_regulation?: string | null;
+        power_grid_spec?: string | null;
+    } | null;
+    ambiente_operativo: string[];
+    contexto_operativo: string[];
+    extracted_axes: Array<{
+        axis_key: string;
+        value_si: string | null;
+        source_url: string | null;
+        verbatim_evidence: string | null;
+    }>;
+    versions: string[];
+    official_url: string | null;
+}
+
+function candidateCorpusViolatesConstraints(
+    candidate: {
+        model_oficial?: string;
+        caracteristicas_principales?: string[];
+        configuration_profile?: {
+            axle_or_undercarriage_config?: string | null;
+            transmission_category?: string | null;
+            transmission_model_spec?: string | null;
+            work_body_or_implement?: string | null;
+        } | null;
+    },
+    constraints: QueryTechnicalConstraints
+): boolean {
+    if (!constraints.hasExplicitConstraints) return false;
+    const parts = [
+        candidate.model_oficial || '',
+        ...(Array.isArray(candidate.caracteristicas_principales) ? candidate.caracteristicas_principales : []),
+        candidate.configuration_profile?.axle_or_undercarriage_config || '',
+        candidate.configuration_profile?.transmission_model_spec || '',
+        candidate.configuration_profile?.work_body_or_implement || '',
+    ].join(' ');
+    if (textViolatesConstraints(parts, constraints)) return true;
+
+    if (constraints.requestedTransmissionFamily && candidate.configuration_profile?.transmission_category) {
+        const cat = candidate.configuration_profile.transmission_category;
+        if (cat !== 'NOT_APPLICABLE') {
+            const req = constraints.requestedTransmissionFamily;
+            let catMatches = true;
+            if (req === 'AUTOMATICA') {
+                catMatches = cat === 'AUTOMATIC_PLANETARY_CONVERTER' || cat === 'AUTOMATED_MANUAL_AMT';
+            } else if (req === 'AUTOMATIZADA_AMT') {
+                catMatches = cat === 'AUTOMATED_MANUAL_AMT';
+            } else if (req === 'MANUAL_FULLER') {
+                catMatches = cat === 'MANUAL_UNSYNCHRONIZED_FULLER' || cat === 'MANUAL_SYNCHRONIZED';
+            } else if (req === 'MANUAL') {
+                catMatches = cat === 'MANUAL_SYNCHRONIZED' || cat === 'MANUAL_UNSYNCHRONIZED_FULLER';
+            } else if (req === 'HIDROSTATICA') {
+                catMatches = cat === 'HYDROSTATIC';
+            } else if (req === 'POWERSHIFT') {
+                catMatches = cat === 'POWERSHIFT';
+            }
+            if (!catMatches) return true;
+        }
+    }
+    return false;
+}
+
+function conciseTransmissionToken(
+    hints?: RawPass2Candidate['configuration_hints']
+): string | null {
+    const modelUpper = String(hints?.transmission_spec || hints?.transmission_model || '').toUpperCase();
+    if (/\bALLISON\b/.test(modelUpper)) return 'ALLISON';
+    if (/\bM[\s-]?DRIVE\b/.test(modelUpper)) return 'MDRIVE';
+    if (/\bI[\s-]?SHIFT\b/.test(modelUpper)) return 'I-SHIFT';
+    if (/\bOPTICRUISE\b/.test(modelUpper)) return 'OPTICRUISE';
+    if (/\bTRAXON\b/.test(modelUpper)) return 'TRAXON';
+    if (/\bPOWERSHIFT\b/.test(modelUpper)) return 'POWERSHIFT';
+    if (/\b(FULLER|EATON|ROADRANGER)\b/.test(modelUpper)) return 'FULLER';
+    if (/\b(AUTOMATICA|AUTOMATIC)\b/.test(modelUpper)) return 'AUTO';
+    if (/\b(AUTOMATIZADA|AMT)\b/.test(modelUpper)) return 'AMT';
+    const catUpper = String(hints?.transmission_category || '').toUpperCase();
+    if (catUpper === 'AUTOMATIC_PLANETARY_CONVERTER') return 'AUTO';
+    if (catUpper === 'AUTOMATED_MANUAL_AMT') return 'AMT';
+    if (catUpper === 'MANUAL_UNSYNCHRONIZED_FULLER') return 'FULLER';
+    if (catUpper === 'MANUAL_SYNCHRONIZED') return 'MANUAL';
+    return null;
+}
+
+function conciseWorkBodyToken(rawBody: string | null | undefined): string | null {
+    if (!rawBody) return null;
+    const upper = rawBody
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase();
+    const m3Match = upper.match(/\b(\d{1,2}(?:[.,]\d)?)\s*(?:M3|METROS?\s+CUBICOS?)\b/);
+    const volSuffix = m3Match ? ` ${m3Match[1].replace(',', '.')}M3` : '';
+    if (/\b(TOLVA|VOLQUETE|DUMP)\b/.test(upper)) return `TOLVA${volSuffix}`;
+    if (/\b(TRACTO|QUINTA\s+RUEDA)\b/.test(upper)) return 'TRACTO';
+    if (/\b(ALJIBE|CISTERNA)\b/.test(upper)) return `ALJIBE${volSuffix}`;
+    if (/\b(MIXER|BETONERA|HORMIGONERA)\b/.test(upper)) return `MIXER${volSuffix}`;
+    if (/\bLUBRICADOR\b/.test(upper)) return 'LUBRICADOR';
+    if (/\bXHP\b/.test(upper)) return 'XHP';
+    return null;
+}
+
+function disambiguateSiblingCandidateModels(
+    candidates: RawPass2Candidate[],
+    constraints: QueryTechnicalConstraints,
+    opticalSummary: OpticalIdentificationSummary | null
+): RawPass2Candidate[] {
+    if (candidates.length === 0) return candidates;
+
+    const distinctAxles = new Set(
+        candidates
+            .map((c) => {
+                const m = String(c.configuration_hints?.axle_or_undercarriage || '').match(/\b(4x2|4x4|6x2|6x4|6x6|8x4|8x6|8x8|10x4|10x6)\b/i);
+                return m ? m[1].toUpperCase() : '';
+            })
+            .filter(Boolean)
+    );
+    const distinctBodies = new Set(
+        candidates.map((c) => conciseWorkBodyToken(c.configuration_hints?.work_body_or_implement) || '').filter(Boolean)
+    );
+
+    const firstPass = candidates.map((c) => {
+        let model = normalizeModelCode(c.model_oficial);
+        const axleMatch = String(c.configuration_hints?.axle_or_undercarriage || '').match(
+            /\b(4x2|4x4|6x2|6x4|6x6|8x4|8x6|8x8|10x4|10x6)\b/i
+        );
+        const axleToken = axleMatch ? axleMatch[1].toUpperCase() : null;
+        if (
+            axleToken &&
+            !model.includes(axleToken) &&
+            (distinctAxles.size > 1 ||
+                Boolean(constraints.requestedTraction) ||
+                Boolean(opticalSummary?.observed_axle_or_undercarriage))
+        ) {
+            model = normalizeModelCode(`${model} ${axleToken}`);
+        }
+
+        const bodyToken = conciseWorkBodyToken(c.configuration_hints?.work_body_or_implement);
+        if (
+            bodyToken &&
+            !model.includes(bodyToken.split(' ')[0]) &&
+            (distinctBodies.size > 1 ||
+                Boolean(constraints.requestedBodyCapacity) ||
+                Boolean(opticalSummary?.observed_work_body_or_implement))
+        ) {
+            model = normalizeModelCode(`${model} ${bodyToken}`);
+        }
+
+        return {
+            ...c,
+            model_oficial: model,
+        };
+    });
+
+    const modelCounts = new Map<string, number>();
+    for (const c of firstPass) {
+        const key = `${String(c.make_oficial || '').toUpperCase()}::${c.model_oficial}`;
+        modelCounts.set(key, (modelCounts.get(key) || 0) + 1);
+    }
+
+    return firstPass.map((c) => {
+        const key = `${String(c.make_oficial || '').toUpperCase()}::${c.model_oficial}`;
+        const hasCollision = (modelCounts.get(key) || 0) > 1;
+        const txToken = conciseTransmissionToken(c.configuration_hints);
+        if (
+            txToken &&
+            !c.model_oficial.includes(txToken) &&
+            (hasCollision ||
+                Boolean(constraints.requestedTransmissionFamily) ||
+                Boolean(opticalSummary?.observed_transmission))
+        ) {
+            return {
+                ...c,
+                model_oficial: normalizeModelCode(`${c.model_oficial} ${txToken}`),
+            };
+        }
+        return c;
+    });
+}
+
+export function buildDisambiguationFacets(candidates: ResolvedAssetCandidate[]): DisambiguationFacetGroup[] {
+    if (!Array.isArray(candidates) || candidates.length < 2) return [];
+
+    const facets: DisambiguationFacetGroup[] = [];
+
+    const collectGroup = (
+        facetKey: DisambiguationFacetGroup['facet_key'],
+        labelEs: string,
+        helperEs: string | undefined,
+        extractor: (c: ResolvedAssetCandidate) => string | null | undefined
+    ) => {
+        const counts = new Map<string, { label: string; count: number }>();
+        for (const c of candidates) {
+            const rawVal = extractor(c);
+            const cleanVal = String(rawVal || '').trim();
+            if (!cleanVal || cleanVal.startsWith('[')) continue;
+            const normKey = cleanVal.toUpperCase();
+            const prev = counts.get(normKey);
+            if (prev) {
+                prev.count += 1;
+            } else {
+                counts.set(normKey, { label: cleanVal.slice(0, 56), count: 1 });
+            }
+        }
+        if (counts.size >= 2) {
+            facets.push({
+                facet_key: facetKey,
+                label_es: labelEs,
+                ...(helperEs ? { helper_es: helperEs } : {}),
+                options: [
+                    { value: 'ALL', label_es: 'Todas', candidate_count: candidates.length },
+                    ...Array.from(counts.entries()).map(([normKey, entry]) => ({
+                        value: normKey,
+                        label_es: entry.label,
+                        candidate_count: entry.count,
+                    })),
+                ],
+            });
+        }
+    };
+
+    collectGroup(
+        'axle_config',
+        'Ejes / Rodaje',
+        undefined,
+        (c) => c.configuration_profile?.axle_or_undercarriage_config
+    );
+    collectGroup('transmission', 'Transmisión / Caja', undefined, (c) => {
+        const p = c.configuration_profile;
+        if (!p) return null;
+        if (p.transmission_model_spec) return p.transmission_model_spec;
+        if (p.transmission_category && p.transmission_category !== 'NOT_APPLICABLE') {
+            return formatTransmissionCategoryLabelEs(p.transmission_category);
+        }
+        return null;
+    });
+    collectGroup(
+        'work_body',
+        'Carrocería / Implemento',
+        undefined,
+        (c) => c.configuration_profile?.work_body_or_implement
+    );
+    collectGroup(
+        'emission_or_spec_origin',
+        'Norma OEM de Fábrica',
+        'Informativo no restrictivo (incluye importación directa)',
+        (c) => {
+            const spec = c.configuration_profile?.factory_emission_or_grid_spec;
+            if (!spec || /\b(?:50|60)\s*hz\b/i.test(spec)) return null;
+            return spec;
+        }
+    );
+    collectGroup('power_grid', 'Frecuencia / Red', undefined, (c) => {
+        const spec = c.configuration_profile?.factory_emission_or_grid_spec;
+        const m = String(spec || '').match(/\b(50\s*Hz|60\s*Hz|50\s*\/\s*60\s*Hz)\b/i);
+        return m ? m[1] : null;
+    });
+
+    return facets;
 }
 
 export async function resolveMachineryCandidates(
     jerga: string,
     isGeneric: boolean = false,
     clarificationContext?: string,
-    forceWebDiscovery: boolean = false
+    forceWebDiscovery: boolean = false,
+    ephemeralImages?: EphemeralIdentificationImageInput[]
 ): Promise<AssetResolutionResponse> {
-    const cleanInput = jerga.trim();
+    const hasEphemeralImages = Array.isArray(ephemeralImages) && ephemeralImages.length > 0;
+    const opticalSummary = hasEphemeralImages
+        ? await decodeEphemeralEquipmentEvidence(ephemeralImages!, jerga.trim(), clarificationContext)
+        : null;
+
+    let cleanInput = jerga.trim();
+    if (opticalSummary) {
+        const opticalMakeModel = [opticalSummary.detected_make, opticalSummary.detected_model_or_series]
+            .filter(Boolean)
+            .join(' ')
+            .trim();
+        if (!cleanInput && opticalMakeModel) {
+            cleanInput = opticalMakeModel;
+        } else if (
+            cleanInput &&
+            !detectModelDesignator(cleanInput) &&
+            opticalSummary.detected_model_or_series &&
+            !cleanInput.toUpperCase().includes(opticalSummary.detected_model_or_series.toUpperCase())
+        ) {
+            cleanInput = `${cleanInput} ${opticalSummary.detected_model_or_series}`.trim();
+        }
+    }
+
+    const opticalEvidenceParts = opticalSummary
+        ? [
+              opticalSummary.detected_make ? `Marca placa/visual: ${opticalSummary.detected_make}` : '',
+              opticalSummary.detected_model_or_series
+                  ? `Modelo/Serie placa/visual: ${opticalSummary.detected_model_or_series}`
+                  : '',
+              opticalSummary.wmi_vds_structural_code
+                  ? `WMI/VDS estructural (1-8): ${opticalSummary.wmi_vds_structural_code}`
+                  : '',
+              opticalSummary.observed_axle_or_undercarriage
+                  ? `Ejes/Rodaje verificado: ${opticalSummary.observed_axle_or_undercarriage}`
+                  : '',
+              opticalSummary.observed_transmission
+                  ? `Transmisión/Caja verificada: ${opticalSummary.observed_transmission}`
+                  : '',
+              opticalSummary.observed_work_body_or_implement
+                  ? `Carrocería/Implemento verificado: ${opticalSummary.observed_work_body_or_implement}`
+                  : '',
+              opticalSummary.observed_engine_or_rating
+                  ? `Motor/Capacidad placa: ${opticalSummary.observed_engine_or_rating}`
+                  : '',
+              opticalSummary.observed_emission_or_grid
+                  ? `Norma emisión/red fábrica: ${opticalSummary.observed_emission_or_grid}`
+                  : '',
+          ].filter(Boolean)
+        : [];
+
+    const effectiveClarification =
+        [
+            clarificationContext ? clarificationContext.trim() : '',
+            opticalEvidenceParts.length > 0
+                ? `EVIDENCIA ÓPTICA EFÍMERA VERIFICADA (${opticalSummary?.confidence}): ${opticalEvidenceParts.join(' | ')}`
+                : '',
+        ]
+            .filter(Boolean)
+            .join('\n') || undefined;
+
+    if (!cleanInput || cleanInput.length < 2) {
+        return {
+            requires_clarification: true,
+            clarification_message:
+                'No fue posible leer marca o código de modelo nítido en las imágenes adjuntas. Indique marca/modelo o adjunte una placa de datos legible.',
+            candidates: [],
+            optical_identification_summary: opticalSummary,
+            disambiguation_facets: [],
+        };
+    }
+
     validateIndustrialDomain(cleanInput);
-    const constraints = extractQueryTechnicalConstraints(cleanInput, clarificationContext);
+    const constraints = extractQueryTechnicalConstraints(cleanInput, effectiveClarification);
+    const bypassLineageAndCache =
+        forceWebDiscovery ||
+        Boolean(effectiveClarification) ||
+        hasEphemeralImages ||
+        constraints.hasExplicitConstraints;
 
     // ── COMPUERTA COLABORATIVA DE LINAJE COMPLETO (< 30 ms, $0 IA, 0 Duplicados) ──
-    if (!forceWebDiscovery && !clarificationContext) {
+    if (!bypassLineageAndCache) {
         const lineageHit = await readCollaborativeLineage(cleanInput, isGeneric);
-        if (lineageHit.matched && lineageHit.candidates.length > 0) {
+        const hasV95Profiles =
+            lineageHit.candidates.length > 0 &&
+            lineageHit.candidates.every((c) => Boolean(c.configuration_profile));
+        if (lineageHit.matched && hasV95Profiles) {
             return {
                 requires_clarification: false,
                 candidates: lineageHit.candidates,
+                optical_identification_summary: opticalSummary,
+                disambiguation_facets: buildDisambiguationFacets(lineageHit.candidates),
                 resolved_from_commons: true,
                 resolution_tier: 'TIER_0_EXACT',
                 resolution_latency_ms: lineageHit.latencyMs,
@@ -593,7 +1275,7 @@ export async function resolveMachineryCandidates(
 
     // ── PASO 1: Detección Primaria del `TIPO` de Equipo y Pertinencia (Con Fast-Path Determinista < 1 ms) ──
     const explicitTypeInQuery = detectExplicitTypeFromQueryText(
-        `${cleanInput} ${clarificationContext || ''}`
+        `${cleanInput} ${effectiveClarification || ''}`
     );
     const deterministicBrandModelType = !isGeneric
         ? detectDeterministicEquipmentTypeFromBrandAndModel(cleanInput)
@@ -601,9 +1283,12 @@ export async function resolveMachineryCandidates(
 
     let correctedMake = isGeneric
         ? 'GENÉRICO'
-        : deterministicBrandModelType?.correctedMake || '';
+        : opticalSummary?.detected_make || deterministicBrandModelType?.correctedMake || '';
     let correctedModelOrFamily =
-        deterministicBrandModelType?.correctedModel || designator || cleanInput;
+        deterministicBrandModelType?.correctedModel ||
+        opticalSummary?.detected_model_or_series ||
+        designator ||
+        cleanInput;
     let detectedTipoHint =
         deterministicBrandModelType?.canonical_type_es ||
         explicitTypeInQuery?.canonical_type_es ||
@@ -618,6 +1303,7 @@ export async function resolveMachineryCandidates(
                 rejection_reason: string | null;
                 requires_clarification: boolean;
                 clarification_message: string | null;
+                suggested_quick_refinements?: string[];
                 corrected_make: string;
                 corrected_model_or_family: string;
                 detected_tipo_equipo: string;
@@ -629,21 +1315,21 @@ export async function resolveMachineryCandidates(
                 temperature: 0,
                 topP: 1,
                 topK: 1,
-                maxOutputTokens: 768,
-                bypassCache: forceWebDiscovery,
+                maxOutputTokens: 896,
+                bypassCache: bypassLineageAndCache,
                 responseSchema: STEP1_PRIMARY_TYPE_DETECTION_SCHEMA,
-                prompt: `Analiza la siguiente solicitud de búsqueda/registro de activo en OPERMAQ:
+                prompt: `Analiza la siguiente solicitud de búsqueda/registro de activo en OPERMAQ (Alcance Global Worldwide OEM, sin restricción geográfica por país):
 - Texto ingresado: "${cleanInput}"
 - Modo: ${isGeneric ? 'GENÉRICO (sin marca obligatoria)' : 'MARCA / MODELO OEM'}
 ${designator ? `- Código alfanumérico detectado: "${designator}"` : ''}
 ${explicitTypeInQuery ? `- Tipo explícito detectado en texto: "${explicitTypeInQuery.canonical_type_es}"` : ''}
-${clarificationContext ? `- Aclaración adicional del usuario: "${clarificationContext}"` : ''}
+${effectiveClarification ? `- Contexto técnico / evidencia óptica adicional: "${effectiveClarification}"` : ''}
 
 TAREA PRIMARIA (PASO 1):
 1. Valida pertinencia ("is_pertinent": true para cualquier vehículo liviano/pesado, maquinaria, compresor, generador, perforadora, chancador, grúa, bomba, equipo o herramienta; false solo para objetos domésticos/personales ajenos).
-2. Verifica si requiere aclaración ("requires_clarification": true solo si escribió únicamente una marca suelta sin modelo ni tipo, p. ej. solo "Caterpillar" o solo "Toyota", o una palabra vacía como "máquina").
-3. Corrige errores ortográficos de marca y modelo SIN INCLUIR AÑOS NI TRACCIÓN EN EL MODELO BASE (ej. "PEUGUEOT LANDTRECK 4X4 DIESEL 2022" -> marca "PEUGEOT", modelo "LANDTREK"; "CAT 140M" -> marca "CATERPILLAR", modelo "140M").
-4. Identifica en "detected_tipo_equipo" el TIPO canónico exacto de equipo en español singular MAYÚSCULAS (ej. "MOTONIVELADORA", "CAMIONETA PICK-UP", "COMPRESOR DE AIRE", "PERFORADORA NEUMÁTICA MANUAL", "CHANCADOR DE MANDÍBULAS", "EXCAVADORA HIDRÁULICA", "BULLDOZER SOBRE ORUGAS").`,
+2. Verifica si requiere aclaración ("requires_clarification": true solo si escribió únicamente una marca suelta sin modelo ni tipo, p. ej. solo "Caterpillar" o solo "Mack", o una palabra vacía como "máquina"). Si "requires_clarification" es true, rellena "suggested_quick_refinements" con 3 a 6 líneas/modelos representativos de esa marca para selección en 1 clic.
+3. Corrige errores ortográficos de marca y modelo base (ej. "PEUGUEOT LANDTRECK 4X4 DIESEL 2022" -> marca "PEUGEOT", modelo "LANDTREK"; "CAT 272D" -> marca "CATERPILLAR", modelo "272D"; "MACK GU813 8X4" -> marca "MACK", modelo "GU813").
+4. Identifica en "detected_tipo_equipo" el TIPO canónico exacto de equipo en español singular MAYÚSCULAS (ej. "CAMIÓN TOLVA", "MINICARGADOR", "MOTONIVELADORA", "CAMIONETA PICK-UP", "COMPRESOR DE AIRE", "PERFORADORA NEUMÁTICA MANUAL", "EXCAVADORA HIDRÁULICA").`,
             });
 
             if (step1.is_pertinent === false) {
@@ -653,20 +1339,38 @@ TAREA PRIMARIA (PASO 1):
                 );
             }
 
-            if (step1.requires_clarification === true && !clarificationContext) {
+            if (step1.requires_clarification === true && !effectiveClarification) {
+                const quickOptions = Array.isArray(step1.suggested_quick_refinements)
+                    ? step1.suggested_quick_refinements.map((s) => String(s || '').trim()).filter(Boolean).slice(0, 6)
+                    : [];
                 return {
                     requires_clarification: true,
                     clarification_message:
                         step1.clarification_message ||
                         'La búsqueda es demasiado amplia. Especifique modelo, serie o tipo específico de equipo.',
                     candidates: [],
+                    optical_identification_summary: opticalSummary,
+                    disambiguation_facets:
+                        quickOptions.length > 0
+                            ? [
+                                  {
+                                      facet_key: 'model_family',
+                                      label_es: 'Líneas / Modelos Frecuentes',
+                                      helper_es: 'Seleccione una línea en 1 clic o ingrese el modelo exacto',
+                                      options: quickOptions.map((opt) => ({
+                                          value: opt,
+                                          label_es: opt,
+                                      })),
+                                  },
+                              ]
+                            : [],
                 };
             }
 
             const rawMakeUpper = String(step1.corrected_make || '').trim().toUpperCase();
             correctedMake = isGeneric
                 ? 'GENÉRICO'
-                : BRAND_SYNONYM_TO_OFFICIAL[rawMakeUpper] || rawMakeUpper;
+                : BRAND_SYNONYM_TO_OFFICIAL[rawMakeUpper] || rawMakeUpper || correctedMake;
             correctedModelOrFamily = normalizeModelCode(
                 String(step1.corrected_model_or_family || designator || cleanInput).trim()
             );
@@ -683,16 +1387,21 @@ TAREA PRIMARIA (PASO 1):
         }
     }
 
-    // Segunda verificación de Linaje Colaborativo post-corrección ortográfica (ej. "landtreck" -> "LANDTREK")
-    if (!forceWebDiscovery && !clarificationContext && correctedMake && correctedModelOrFamily) {
+    // Segunda verificación de Linaje Colaborativo post-corrección ortográfica
+    if (!bypassLineageAndCache && correctedMake && correctedModelOrFamily) {
         const canonicalLineageHit = await readCollaborativeLineage(cleanInput, isGeneric, {
             make: correctedMake,
             model: correctedModelOrFamily,
         });
-        if (canonicalLineageHit.matched && canonicalLineageHit.candidates.length > 0) {
+        const hasV95Profiles =
+            canonicalLineageHit.candidates.length > 0 &&
+            canonicalLineageHit.candidates.every((c) => Boolean(c.configuration_profile));
+        if (canonicalLineageHit.matched && hasV95Profiles) {
             return {
                 requires_clarification: false,
                 candidates: canonicalLineageHit.candidates,
+                optical_identification_summary: opticalSummary,
+                disambiguation_facets: buildDisambiguationFacets(canonicalLineageHit.candidates),
                 resolved_from_commons: true,
                 resolution_tier: 'TIER_0_EXACT',
                 resolution_latency_ms: canonicalLineageHit.latencyMs,
@@ -710,8 +1419,8 @@ TAREA PRIMARIA (PASO 1):
                 useGoogleSearch: true,
                 requireGroundedEvidence: true,
                 maxOutputTokens: 1024,
-                bypassCache: forceWebDiscovery,
-                prompt: `Usa Google Search para identificar qué clase o tipo exacto de vehículo, maquinaria, equipo industrial o herramienta corresponde a "${cleanInput}"${clarificationContext ? ` (${clarificationContext})` : ''}. Responde en español técnico conciso indicando marca oficial, modelo y el TIPO exacto de máquina (ej. Motoniveladora, Compresor de aire portátil, Chancador de mandíbulas, Camioneta pick-up, Perforadora neumática manual).`,
+                bypassCache: bypassLineageAndCache,
+                prompt: `Usa Google Search en alcance mundial (Global OEM, incluyendo modelos de otros mercados e importación directa) para identificar qué clase o tipo exacto de vehículo, maquinaria, equipo industrial o herramienta corresponde a "${cleanInput}"${effectiveClarification ? ` (${effectiveClarification})` : ''}. Responde en español técnico conciso indicando marca oficial, modelo y el TIPO exacto de máquina.`,
             });
 
             const { data: postWebType } = await ResilientAIClient.generateStructured<{
@@ -774,7 +1483,7 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
         `[OPERMAQ-TYPE-ONTOLOGY] TIPO="${activeTypeDoc.canonical_type_es}" (key=${activeTypeDoc.type_key}, source=${typeResolution.resolutionSource}, reused=${typeResolution.reusedExistingSchema}, ${typeResolution.latencyMs}ms) -> Ejes: [${activeTypeDoc.spec_schema.map((a) => a.axis_key).join(', ')}]`
     );
 
-    // ── PASO 3 (PASADA 1 GROUNDED): Búsqueda Web en Prosa Natural Dirigida Exclusivamente a los Ejes de `activeTypeDoc` + Caché Determinista SHA-256 (30 días) ──
+    // ── PASO 3 (PASADA 1 GROUNDED): Búsqueda Web Global OEM Dirigida a los Ejes y Variantes Diferenciadoras + Caché SHA-256 v4 ──
     const pass1Prompt = buildTypeScopedGroundedResearchPrompt({
         rawInput: cleanInput,
         correctedMake,
@@ -782,19 +1491,25 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
         isGeneric,
         designator,
         typeDoc: activeTypeDoc,
-        clarificationContext,
+        clarificationContext: effectiveClarification,
         constraints,
     });
 
     const groundedCacheKey = createHash('sha256')
         .update(
             JSON.stringify({
-                v: 3,
+                v: 4,
                 make: correctedMake.toUpperCase(),
                 model: correctedModelOrFamily.toUpperCase(),
                 typeKey: activeTypeDoc.type_key,
                 isGeneric,
                 query: cleanInput.toUpperCase().replace(/\s+/g, ' '),
+                constraints: {
+                    traction: constraints.requestedTraction,
+                    tx: constraints.requestedTransmissionFamily,
+                    txBrand: constraints.requestedTransmissionBrand,
+                    body: constraints.requestedBodyCapacity,
+                },
             })
         )
         .digest('hex');
@@ -805,7 +1520,7 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
         groundingSources: Array<{ title: string; uri: string }>;
     } | null = null;
 
-    if (!forceWebDiscovery && !clarificationContext) {
+    if (!forceWebDiscovery && !effectiveClarification) {
         try {
             const cacheSnap = await db.collection('ai_grounded_discovery_cache').doc(groundedCacheKey).get();
             if (cacheSnap.exists) {
@@ -840,7 +1555,7 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
                 useGoogleSearch: true,
                 requireGroundedEvidence: true,
                 maxOutputTokens: 8192,
-                bypassCache: forceWebDiscovery || Boolean(clarificationContext),
+                bypassCache: forceWebDiscovery || Boolean(effectiveClarification),
                 prompt: pass1Prompt,
             });
             pass1Response = {
@@ -848,12 +1563,13 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
                 groundingSources: liveResponse.groundingSources,
             };
 
-            if (!clarificationContext && liveResponse.groundingSources.length > 0) {
+            if (!effectiveClarification && liveResponse.groundingSources.length > 0) {
                 await db
                     .collection('ai_grounded_discovery_cache')
                     .doc(groundedCacheKey)
                     .set({
                         cacheKey: groundedCacheKey,
+                        schemaVersion: 4,
                         normalizedQuery: cleanInput.toUpperCase(),
                         make: correctedMake,
                         model: correctedModelOrFamily,
@@ -867,10 +1583,15 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
             }
         } catch (aiErr) {
             const localFallback = await localPreexistingPromise;
-            if (localFallback.matched && localFallback.candidates.length > 0) {
+            const filteredFallback = localFallback.candidates.filter(
+                (c) => !candidateCorpusViolatesConstraints(c, constraints)
+            );
+            if (localFallback.matched && filteredFallback.length > 0) {
                 return {
                     requires_clarification: false,
-                    candidates: localFallback.candidates,
+                    candidates: filteredFallback,
+                    optical_identification_summary: opticalSummary,
+                    disambiguation_facets: buildDisambiguationFacets(filteredFallback),
                     resolved_from_commons: true,
                     resolution_tier: localFallback.tier === 'TIER_0_EXACT' ? 'TIER_0_EXACT' : 'TIER_1_HYBRID_RRF',
                     resolution_latency_ms: localFallback.latencyMs,
@@ -912,20 +1633,7 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
         requires_clarification: boolean;
         clarification_message: string | null;
         actual_tipo_equipo_if_different: string | null;
-        candidates: Array<{
-            make_oficial: string;
-            model_oficial: string;
-            ambiente_operativo: string[];
-            contexto_operativo: string[];
-            extracted_axes: Array<{
-                axis_key: string;
-                value_si: string | null;
-                source_url: string | null;
-                verbatim_evidence: string | null;
-            }>;
-            versions: string[];
-            official_url: string | null;
-        }>;
+        candidates: RawPass2Candidate[];
     }>({
         module: 'opermaq',
         preferredTier: 'SECONDARY',
@@ -934,7 +1642,7 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
         topP: 1,
         topK: 1,
         maxOutputTokens: 32768,
-        bypassCache: forceWebDiscovery || Boolean(clarificationContext),
+        bypassCache: forceWebDiscovery || Boolean(effectiveClarification),
         responseSchema: PASS2_TYPE_SCOPED_CANDIDATE_SCHEMA,
         prompt: pass2Prompt,
     });
@@ -956,6 +1664,8 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
                 parsed.clarification_message ||
                 'La búsqueda es ambigua. Especifique modelo, serie o configuración motriz.',
             candidates: [],
+            optical_identification_summary: opticalSummary,
+            disambiguation_facets: [],
         };
     }
 
@@ -995,7 +1705,15 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
                 versions: cleanVersions.length > 0 ? cleanVersions : ['ESTÁNDAR'],
             };
         })
-        .filter((c) => !textViolatesConstraints(c.model_oficial, constraints));
+        .filter((c) => {
+            const hintCorpus = [
+                c.model_oficial,
+                c.configuration_hints?.axle_or_undercarriage || '',
+                c.configuration_hints?.transmission_spec || c.configuration_hints?.transmission_model || '',
+                c.configuration_hints?.work_body_or_implement || '',
+            ].join(' ');
+            return !textViolatesConstraints(hintCorpus, constraints);
+        });
 
     const effectiveRawCandidates =
         sanitizedRawCandidates.length > 0 ? sanitizedRawCandidates : initialRawCandidates;
@@ -1028,9 +1746,15 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
         }
     }
 
+    const disambiguatedRawCandidates = disambiguateSiblingCandidateModels(
+        expandedRawCandidates,
+        constraints,
+        opticalSummary
+    );
+
     // Procesar el 100% de los candidatos (concurrencia controlada = 4)
     const resolvedCandidates = await mapWithConcurrency(
-        expandedRawCandidates,
+        disambiguatedRawCandidates,
         4,
         async (raw, idx): Promise<ResolvedAssetCandidate> => {
             const rawMakeUpper = (isGeneric ? 'GENÉRICO' : String(raw.make_oficial || correctedMake || 'GENÉRICO'))
@@ -1078,6 +1802,10 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
                     String(existingData.model_oficial || existingData.model || safeModel)
                 );
 
+                const resolvedSlots = hasSelfDescribingTypeSchema(existingData)
+                    ? existingData.canonical_specs
+                    : homologous.slots;
+
                 const existingTraits =
                     existingData.physical_traits ||
                     activeTypeDoc.physical_traits ||
@@ -1085,10 +1813,25 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
                         type_key: existingData.equipment_type_key || activeTypeDoc.type_key,
                         canonical_type_es: existingData.tipo_equipo || activeTypeDoc.canonical_type_es,
                         categoria_equipo: existingData.categoria_equipo || activeTypeDoc.categoria_equipo,
-                        canonical_specs: hasSelfDescribingTypeSchema(existingData)
-                            ? existingData.canonical_specs
-                            : homologous.slots,
+                        canonical_specs: resolvedSlots,
                     });
+
+                const existingConfigProfile = inferAssetConfigurationProfile({
+                    make_oficial: existingData.make_oficial || existingData.make || safeMake,
+                    model_oficial: cleanExistingModel || safeModel,
+                    tipo_equipo: existingData.tipo_equipo || activeTypeDoc.canonical_type_es,
+                    categoria_equipo: existingData.categoria_equipo || activeTypeDoc.categoria_equipo,
+                    version: existingData.version || existingVersions[0] || undefined,
+                    versions: existingVersions,
+                    canonical_specs: resolvedSlots,
+                    caracteristicas_principales: serializeCanonicalSlotsToSpecsArray(homologous.slots),
+                    ambiente_operativo: existingData.ambiente_operativo,
+                    contexto_operativo: existingData.contexto_operativo,
+                    physical_traits: existingTraits,
+                    existing_profile: existingData.configuration_profile || null,
+                    optical_summary: opticalSummary,
+                    identification_source: hasEphemeralImages ? 'MULTIMODAL_PLATE_AND_PHOTO' : 'GROUNDED_OEM_SPEC',
+                });
 
                 return {
                     global_asset_id: existingDocSnap.id,
@@ -1102,16 +1845,17 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
                     categoria_equipo:
                         existingData.categoria_equipo || activeTypeDoc.categoria_equipo || 'EQUIPAMIENTO INDUSTRIAL',
                     physical_traits: existingTraits,
-                    canonical_specs: hasSelfDescribingTypeSchema(existingData)
-                        ? existingData.canonical_specs
-                        : homologous.slots,
+                    configuration_profile: existingConfigProfile,
+                    canonical_specs: resolvedSlots,
                     ambiente_operativo: sanitizeDesignAndWorkContextItems(
                         raw.ambiente_operativo,
-                        existingData.ambiente_operativo
+                        existingData.ambiente_operativo,
+                        { canonicalTypeEs: existingData.tipo_equipo || activeTypeDoc.canonical_type_es }
                     ),
                     contexto_operativo: sanitizeDesignAndWorkContextItems(
                         raw.contexto_operativo,
-                        existingData.contexto_operativo
+                        existingData.contexto_operativo,
+                        { canonicalTypeEs: existingData.tipo_equipo || activeTypeDoc.canonical_type_es }
                     ),
                     caracteristicas_principales: serializeCanonicalSlotsToSpecsArray(homologous.slots),
                     versions: existingVersions.length > 0 ? existingVersions : ['ESTÁNDAR'],
@@ -1142,8 +1886,12 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
                     tipo_equipo: activeTypeDoc.canonical_type_es,
                     categoria_equipo: activeTypeDoc.categoria_equipo,
                     canonical_specs: verifiedSlots,
-                    ambiente_operativo: sanitizeDesignAndWorkContextItems(raw.ambiente_operativo),
-                    contexto_operativo: sanitizeDesignAndWorkContextItems(raw.contexto_operativo),
+                    ambiente_operativo: sanitizeDesignAndWorkContextItems(raw.ambiente_operativo, undefined, {
+                        canonicalTypeEs: activeTypeDoc.canonical_type_es,
+                    }),
+                    contexto_operativo: sanitizeDesignAndWorkContextItems(raw.contexto_operativo, undefined, {
+                        canonicalTypeEs: activeTypeDoc.canonical_type_es,
+                    }),
                     caracteristicas_principales: serializeCanonicalSlotsToSpecsArray(verifiedSlots),
                 }
                 : await enrichCatalogProfile(
@@ -1180,11 +1928,63 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
                         .filter(Boolean)
                     : ['ESTÁNDAR'];
 
+            const rawHints = raw.configuration_hints || undefined;
+            const hintTransmissionCat =
+                rawHints?.transmission_category &&
+                [
+                    'MANUAL_SYNCHRONIZED',
+                    'MANUAL_UNSYNCHRONIZED_FULLER',
+                    'AUTOMATED_MANUAL_AMT',
+                    'AUTOMATIC_PLANETARY_CONVERTER',
+                    'POWERSHIFT',
+                    'HYDROSTATIC',
+                    'ELECTRIC_DRIVE',
+                    'DIRECT_MECHANICAL',
+                    'NOT_APPLICABLE',
+                ].includes(rawHints.transmission_category)
+                    ? (rawHints.transmission_category as any)
+                    : undefined;
+
+            const candidateConfigProfile = inferAssetConfigurationProfile({
+                make_oficial: safeMake,
+                model_oficial: safeModel,
+                tipo_equipo: profile.tipo_equipo || activeTypeDoc.canonical_type_es,
+                categoria_equipo: profile.categoria_equipo || activeTypeDoc.categoria_equipo,
+                version: candidateVersions[0] || undefined,
+                versions: candidateVersions,
+                canonical_specs: profile.canonical_specs || verifiedSlots,
+                caracteristicas_principales: profile.caracteristicas_principales,
+                ambiente_operativo: profile.ambiente_operativo,
+                contexto_operativo: profile.contexto_operativo,
+                physical_traits: candidateTraits,
+                optical_summary: opticalSummary,
+                existing_profile: {
+                    axle_or_undercarriage_config:
+                        rawHints?.axle_or_undercarriage || opticalSummary?.observed_axle_or_undercarriage || null,
+                    transmission_category: hintTransmissionCat || null,
+                    transmission_model_spec:
+                        rawHints?.transmission_spec ||
+                        rawHints?.transmission_model ||
+                        opticalSummary?.observed_transmission ||
+                        null,
+                    work_body_or_implement:
+                        rawHints?.work_body_or_implement || opticalSummary?.observed_work_body_or_implement || null,
+                    factory_emission_or_grid_spec:
+                        rawHints?.factory_emission_or_grid ||
+                        rawHints?.emission_or_regulation ||
+                        rawHints?.power_grid_spec ||
+                        opticalSummary?.observed_emission_or_grid ||
+                        null,
+                },
+                identification_source: hasEphemeralImages ? 'MULTIMODAL_PLATE_AND_PHOTO' : 'GROUNDED_OEM_SPEC',
+            });
+
             return {
                 make_oficial: safeMake,
                 model_oficial: safeModel,
                 ...profile,
                 physical_traits: candidateTraits,
+                configuration_profile: candidateConfigProfile,
                 versions: candidateVersions.length > 0 ? candidateVersions : ['ESTÁNDAR'],
                 chassis_versions: candidateVersions.length > 0 ? candidateVersions : ['ESTÁNDAR'],
                 official_url: assignedGroundedUrl,
@@ -1204,17 +2004,34 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
         resolvedCandidates.some((c) => c.model_oficial.length > correctedModelOrFamily.length);
 
     const compatibleLocalCandidates = localPreexisting.candidates
-        .map((c) => ({
-            ...c,
-            model_oficial: normalizeModelCode(c.model_oficial),
-            versions: Array.isArray(c.versions)
-                ? c.versions
-                    .map((v) => stripTemporalAndHistoricalNoise(String(v || '')))
-                    .filter((v) => Boolean(v) && !textViolatesConstraints(v, constraints))
-                : ['ESTÁNDAR'],
-        }))
+        .map((c) => {
+            const enrichedLocalProfile =
+                c.configuration_profile ||
+                inferAssetConfigurationProfile({
+                    make_oficial: c.make_oficial,
+                    model_oficial: c.model_oficial,
+                    tipo_equipo: c.tipo_equipo,
+                    categoria_equipo: c.categoria_equipo,
+                    versions: c.versions,
+                    canonical_specs: c.canonical_specs,
+                    caracteristicas_principales: c.caracteristicas_principales,
+                    ambiente_operativo: c.ambiente_operativo,
+                    contexto_operativo: c.contexto_operativo,
+                    physical_traits: c.physical_traits || null,
+                });
+            return {
+                ...c,
+                model_oficial: normalizeModelCode(c.model_oficial),
+                configuration_profile: enrichedLocalProfile,
+                versions: Array.isArray(c.versions)
+                    ? c.versions
+                        .map((v) => stripTemporalAndHistoricalNoise(String(v || '')))
+                        .filter((v) => Boolean(v) && !textViolatesConstraints(v, constraints))
+                    : ['ESTÁNDAR'],
+            };
+        })
         .filter((c) => {
-            if (textViolatesConstraints(c.model_oficial, constraints)) return false;
+            if (candidateCorpusViolatesConstraints(c, constraints)) return false;
             if (
                 hasSpecificSubmodels &&
                 correctedModelOrFamily &&
@@ -1225,7 +2042,13 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
             return true;
         });
 
-    const combinedCandidates = [...resolvedCandidates, ...compatibleLocalCandidates];
+    const filteredResolvedCandidates = resolvedCandidates.filter(
+        (c) => !candidateCorpusViolatesConstraints(c, constraints)
+    );
+    const combinedCandidates = [
+        ...(filteredResolvedCandidates.length > 0 ? filteredResolvedCandidates : resolvedCandidates),
+        ...compatibleLocalCandidates,
+    ];
 
     const seenKeys = new Set<string>();
     let uniqueCandidates = combinedCandidates.filter((c) => {
@@ -1235,7 +2058,7 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
         return true;
     });
 
-    if (uniqueCandidates.length > 0 && !clarificationContext) {
+    if (uniqueCandidates.length > 0 && !effectiveClarification && !constraints.hasExplicitConstraints) {
         uniqueCandidates = await saveCollaborativeLineage(cleanInput, isGeneric, uniqueCandidates, {
             make: correctedMake,
             model: correctedModelOrFamily,
@@ -1245,6 +2068,8 @@ Extrae la marca corregida, el modelo/familia y el nombre canónico singular en e
     return {
         requires_clarification: false,
         candidates: uniqueCandidates,
+        optical_identification_summary: opticalSummary,
+        disambiguation_facets: buildDisambiguationFacets(uniqueCandidates),
         resolved_from_commons: false,
         resolution_tier: 'TIER_2_WEB_DISCOVERY',
         resolution_latency_ms: Date.now() - webStartMs,

@@ -34,6 +34,10 @@ import {
     type MachineryArchetypeId,
 } from '../utils/canonicalArchetypeSpecs';
 import { DomainRejectionError, validateIndustrialDomain } from '../utils/domainGuard';
+import {
+    formatTransmissionCategoryLabelEs,
+    inferAssetConfigurationProfile,
+} from '../utils/lockedVariantDirective';
 
 /**
  * OPERMAQ — Assets Routes (Etapa 1: Catálogo Maestro OEM y Control de Flota por Tenant)
@@ -106,7 +110,31 @@ function sanitizeOperationalSpec(raw: unknown): string | null {
  * sin prosa comercial, sin alucinaciones y sin truncamiento de caracteres.
  */
 function buildConciseEquipmentDescription(docData: Record<string, any>): string {
-    return buildHomologousEquipmentDescription(docData);
+    const base = buildHomologousEquipmentDescription(docData);
+    const cfg = docData?.configuration_profile;
+    if (!cfg || typeof cfg !== 'object') return base;
+    const baseUpper = base.toUpperCase();
+    const extras: string[] = [];
+    if (
+        cfg.axle_or_undercarriage_config &&
+        !baseUpper.includes(String(cfg.axle_or_undercarriage_config).toUpperCase())
+    ) {
+        extras.push(String(cfg.axle_or_undercarriage_config));
+    }
+    const txLabel =
+        cfg.transmission_model_spec ||
+        (cfg.transmission_category && cfg.transmission_category !== 'NOT_APPLICABLE'
+            ? formatTransmissionCategoryLabelEs(cfg.transmission_category)
+            : '');
+    if (txLabel && !baseUpper.includes(String(txLabel).toUpperCase().slice(0, 12))) {
+        extras.push(String(txLabel));
+    }
+    if (cfg.work_body_or_implement && !baseUpper.includes(String(cfg.work_body_or_implement).toUpperCase().slice(0, 10))) {
+        extras.push(String(cfg.work_body_or_implement));
+    }
+    if (extras.length === 0) return base;
+    if (!base || base.startsWith('[')) return extras.join(' · ');
+    return `${base} · ${extras.join(' · ')}`;
 }
 
 function handleRouteError(res: Response, err: unknown, fallbackMsg: string) {
@@ -143,6 +171,7 @@ const CATALOG_PROJECTED_FIELDS = [
     'equipment_type_key',
     'archetype_id',
     'physical_traits',
+    'configuration_profile',
     'tipo_equipo',
     'categoria_equipo',
     'canonical_specs',
@@ -276,6 +305,7 @@ assetsRouter.get('/catalog', async (req: ScopedRequest, res: Response) => {
                     equipment_type_key: d.equipment_type_key ? String(d.equipment_type_key) : undefined,
                     archetype_id: homologous.archetype.id,
                     physical_traits: physicalTraits,
+                    configuration_profile: d.configuration_profile || undefined,
                     tipo_equipo: tipoEquipo,
                     categoria_equipo: d.categoria_equipo ? String(d.categoria_equipo) : undefined,
                     canonical_specs: homologous.slots,
@@ -421,10 +451,23 @@ assetsRouter.patch('/catalog/:id/apply-homologation', async (req: ScopedRequest,
                 rawCategoryText: nextCategoria,
                 makeModelText: `${existingData.make_oficial || ''} ${existingData.model_oficial || ''}`.trim(),
             });
+        const nextConfigProfile = inferAssetConfigurationProfile({
+            make_oficial: existingData.make_oficial || '',
+            model_oficial: existingData.model_oficial || '',
+            tipo_equipo: finalCanonicalTipo,
+            categoria_equipo: nextCategoria,
+            canonical_specs: consolidatedSlots,
+            caracteristicas_principales: serializedSpecs,
+            ambiente_operativo: existingData.ambiente_operativo,
+            contexto_operativo: existingData.contexto_operativo,
+            physical_traits: resolvedTraits,
+            existing_profile: body.configuration_profile || existingData.configuration_profile || null,
+        });
         const updatePayload: Record<string, any> = {
             equipment_type_key: typeDoc.type_key,
             archetype_id: targetArchetypeId,
             physical_traits: resolvedTraits,
+            configuration_profile: nextConfigProfile,
             tipo_equipo: finalCanonicalTipo,
             categoria_equipo: nextCategoria,
             canonical_specs: consolidatedSlots,
@@ -571,6 +614,7 @@ assetsRouter.get('/catalog-lookup', async (req: ScopedRequest, res: Response) =>
                 existing.equipment_type_key = d.equipment_type_key || undefined;
                 existing.archetype_id = homologous.archetype.id;
                 existing.physical_traits = resolvedTraits;
+                existing.configuration_profile = d.configuration_profile || undefined;
                 existing.canonical_specs = homologous.slots;
                 existing.short_description = buildConciseEquipmentDescription(d);
                 continue;
@@ -614,6 +658,7 @@ assetsRouter.get('/catalog-lookup', async (req: ScopedRequest, res: Response) =>
                 equipment_type_key: d.equipment_type_key || undefined,
                 archetype_id: homologous.archetype.id,
                 physical_traits: resolvedTraits,
+                configuration_profile: d.configuration_profile || undefined,
                 tipo_equipo: cleanMachineryType(d.tipo_equipo),
                 categoria_equipo: String(d.categoria_equipo || 'EQUIPAMIENTO INDUSTRIAL'),
                 canonical_specs: homologous.slots,
@@ -731,6 +776,7 @@ assetsRouter.get('/my-fleet', async (req: ScopedRequest, res: Response) => {
                 tipo_equipo: tipoEquipo,
                 archetype_id: cat?.archetype_id || unit.archetype_id || undefined,
                 physical_traits: resolvedTraits,
+                configuration_profile: cat?.configuration_profile || unit.configuration_profile || undefined,
                 canonical_specs: Array.isArray(cat?.canonical_specs)
                     ? cat.canonical_specs
                     : Array.isArray(unit.canonical_specs)
@@ -946,6 +992,7 @@ assetsRouter.post('/register-fleet-unit', async (req: ScopedRequest, res: Respon
                 categoria_equipo: data.categoria_equipo,
                 tipo_equipo: data.tipo_equipo,
                 physical_traits: data.physical_traits,
+                configuration_profile: data.configuration_profile,
                 archetype_id: data.archetype_id as MachineryArchetypeId | undefined,
                 canonical_specs: data.canonical_specs,
                 ambiente_operativo: data.ambiente_operativo,
@@ -990,6 +1037,7 @@ assetsRouter.post('/register-fleet-unit', async (req: ScopedRequest, res: Respon
             equipment_type_key: catalogAsset.equipment_type_key || data.equipment_type_key || null,
             archetype_id: catalogAsset.archetype_id || data.archetype_id || null,
             physical_traits: resolvedTraits,
+            configuration_profile: catalogAsset.configuration_profile || data.configuration_profile || null,
             canonical_specs: Array.isArray(catalogAsset.canonical_specs)
                 ? catalogAsset.canonical_specs
                 : Array.isArray(data.canonical_specs)
@@ -1220,15 +1268,26 @@ assetsRouter.post('/resolve', async (req: ScopedRequest, res: Response) => {
             });
         }
 
-        const { jerga, modelo, marca, tipo, isGeneric, clarificationContext, forceWebDiscovery } = parsed.data;
+        const {
+            jerga,
+            modelo,
+            marca,
+            tipo,
+            isGeneric,
+            clarificationContext,
+            forceWebDiscovery,
+            ephemeralImages,
+            includeEnvelope,
+        } = parsed.data;
         const searchTerms =
             (jerga || '').trim() ||
             [marca, modelo].filter((s) => s && s.trim().length > 0).join(' ').trim() ||
             (tipo || '').trim();
+        const hasEphemeralImages = Array.isArray(ephemeralImages) && ephemeralImages.length > 0;
 
-        if (!searchTerms || searchTerms.length < 2) {
+        if ((!searchTerms || searchTerms.length < 2) && !hasEphemeralImages) {
             return res.status(400).json({
-                error: 'Ingrese al menos marca/modelo o designador técnico (mínimo 2 caracteres).',
+                error: 'Ingrese al menos marca/modelo, designador técnico o adjunte una imagen de placa/equipo.',
             });
         }
 
@@ -1236,7 +1295,8 @@ assetsRouter.post('/resolve', async (req: ScopedRequest, res: Response) => {
             searchTerms,
             Boolean(isGeneric),
             clarificationContext,
-            Boolean(forceWebDiscovery)
+            Boolean(forceWebDiscovery),
+            ephemeralImages
         );
 
         if (result.requires_clarification) {
@@ -1244,6 +1304,8 @@ assetsRouter.post('/resolve', async (req: ScopedRequest, res: Response) => {
                 requires_clarification: true,
                 clarification_message: result.clarification_message,
                 candidates: [],
+                optical_identification_summary: result.optical_identification_summary || null,
+                disambiguation_facets: result.disambiguation_facets || [],
             });
         }
 
@@ -1268,17 +1330,44 @@ assetsRouter.post('/resolve', async (req: ScopedRequest, res: Response) => {
                     rawCategoryText: c.categoria_equipo,
                     makeModelText: `${c.make_oficial || ''} ${c.model_oficial || ''}`,
                 });
-            return {
+            const resolvedConfigProfile =
+                c.configuration_profile ||
+                inferAssetConfigurationProfile({
+                    make_oficial: c.make_oficial || '',
+                    model_oficial: c.model_oficial || '',
+                    tipo_equipo: cleanedTipo,
+                    categoria_equipo: c.categoria_equipo || '',
+                    versions: c.versions,
+                    canonical_specs: homologous.slots,
+                    caracteristicas_principales: serializeCanonicalSlotsToSpecsArray(homologous.slots),
+                    ambiente_operativo: c.ambiente_operativo,
+                    contexto_operativo: c.contexto_operativo,
+                    physical_traits: resolvedTraits,
+                });
+            const candidateDoc = {
                 ...c,
                 equipment_type_key: c.equipment_type_key || result.detected_equipment_type?.type_key || undefined,
                 archetype_id: homologous.archetype.id,
                 physical_traits: resolvedTraits,
+                configuration_profile: resolvedConfigProfile,
                 tipo_equipo: cleanedTipo,
                 canonical_specs: homologous.slots,
                 caracteristicas_principales: serializeCanonicalSlotsToSpecsArray(homologous.slots),
-                short_description: buildHomologousEquipmentDescription(c),
+            };
+            return {
+                ...candidateDoc,
+                short_description: buildConciseEquipmentDescription(candidateDoc),
             };
         });
+
+        if (includeEnvelope) {
+            return res.status(200).json({
+                requires_clarification: false,
+                candidates: sanitizedCandidates,
+                optical_identification_summary: result.optical_identification_summary || null,
+                disambiguation_facets: result.disambiguation_facets || [],
+            });
+        }
 
         return res.status(200).json(sanitizedCandidates);
     } catch (err) {
@@ -1301,6 +1390,7 @@ assetsRouter.post('/add-tenant-catalog', async (req: ScopedRequest, res: Respons
             archetype_id,
             categoria_equipo,
             tipo_equipo,
+            configuration_profile,
             canonical_specs,
             ambiente_operativo,
             contexto_operativo,
@@ -1398,6 +1488,7 @@ assetsRouter.post('/add-tenant-catalog', async (req: ScopedRequest, res: Respons
                 make_oficial,
                 model_oficial,
                 categoria_equipo,
+                configuration_profile,
                 ...profileData,
                 versions: Array.isArray(chassis_versions) ? chassis_versions : version ? [version] : undefined,
                 official_url,
@@ -1450,6 +1541,7 @@ assetsRouter.post('/add-tenant-catalog', async (req: ScopedRequest, res: Respons
             model_oficial,
             categoria_equipo: categoria_equipo || 'EQUIPAMIENTO INDUSTRIAL',
             tipo_equipo: profileData.tipo_equipo,
+            configuration_profile: configuration_profile || null,
             version: version || 'ESTÁNDAR',
             original_jargon: original_jargon || '',
             tenant_id: ctx.tenantId,

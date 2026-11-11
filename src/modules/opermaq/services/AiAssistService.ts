@@ -1,6 +1,7 @@
 import { ConfidentialityAirlockService } from '../../../core/privacy/ConfidentialityAirlockService';
 import { ResilientAIClient, Type } from '../../../core/resilient-ai-client';
 import { PillarId, PillarItem, ProposedUpdate } from '../types/vault.types';
+import { sanitizePositivePresenceMarkdown } from '../utils/canonicalArchetypeSpecs';
 import { verifyAndNormalizeTechnicalUnits } from './NeuroSymbolicVerifier';
 import { getPillarEditGovernancePrompt, PILLAR_AGENTS } from './pillarAgents';
 import { applySurgicalFragmentSplice } from './vaultChatService';
@@ -103,7 +104,10 @@ Responde estrictamente en JSON válido:
 
         const parsed = JSON.parse(ResilientAIClient.extractJsonString(aiRes.text));
         const safeFinal = parsed.finalContent
-            ? verifyAndNormalizeTechnicalUnits(String(parsed.finalContent)).normalizedMarkdown
+            ? sanitizePositivePresenceMarkdown(
+                  verifyAndNormalizeTechnicalUnits(String(parsed.finalContent)).normalizedMarkdown,
+                  { pillarId }
+              )
             : undefined;
 
         return {
@@ -175,7 +179,10 @@ Responde estrictamente en JSON puro:
 
         const parsed = JSON.parse(ResilientAIClient.extractJsonString(aiRes.text));
         const safeFinal = parsed.finalContent
-            ? verifyAndNormalizeTechnicalUnits(String(parsed.finalContent)).normalizedMarkdown
+            ? sanitizePositivePresenceMarkdown(
+                  verifyAndNormalizeTechnicalUnits(String(parsed.finalContent)).normalizedMarkdown,
+                  { pillarId }
+              )
             : undefined;
 
         return {
@@ -296,7 +303,10 @@ export function applyDeterministicProposalFallback(
         nextContent = `${nextContent}${blockToAppend}`.trim();
     }
 
-    return verifyAndNormalizeTechnicalUnits(nextContent).normalizedMarkdown;
+    return sanitizePositivePresenceMarkdown(
+        verifyAndNormalizeTechnicalUnits(nextContent).normalizedMarkdown,
+        { pillarId }
+    );
 }
 
 export async function evolveItemContent(params: {
@@ -351,7 +361,10 @@ REGLAS ESTRICTAS:
             prompt,
         });
 
-        const text = verifyAndNormalizeTechnicalUnits(aiRes.text.trim()).normalizedMarkdown;
+        const text = sanitizePositivePresenceMarkdown(
+            verifyAndNormalizeTechnicalUnits(aiRes.text.trim()).normalizedMarkdown,
+            { pillarId }
+        );
         if (text && text.trim().length > 0) {
             return text;
         }

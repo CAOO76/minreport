@@ -85,9 +85,20 @@
     "offline_manual_fallback_notice": "Offline mode. You may manually queue the base identifier for later sync.",
     "offline_manual_fallback_btn": "ENABLE OFFLINE REGISTRATION",
     "clarification_input_label": "Add technical precision to search",
-    "clarification_input_placeholder": "e.g. Chilean market version, 1.9L HDi 150 HP diesel engine, double cab, 4x4, year 2022...",
+    "clarification_input_placeholder": "e.g. 8x4 chassis, 20 m³ dump body, Allison 4500 RDS automatic gearbox, direct import EPA Tier 4...",
     "clarification_apply_btn": "REFINE SEARCH",
-    "clarification_toggle_label": "Provide additional technical details if expected version is missing"
+    "clarification_toggle_label": "Provide additional technical details if expected version is missing",
+    "precision_toggle_open": "ADDITIONAL SPECS / DATA PLATE OR IDENTIFICATION PHOTO",
+    "precision_active_count": "{{count}} RAM IMAGE(S)",
+    "precision_specs_label": "DIFFERENTIATING TRAITS (AXLES, TRANSMISSION/GEARBOX, BODY OR OEM SPEC)",
+    "precision_attach_btn": "ATTACH PLATE / PHOTO ({{current}}/{{max}})",
+    "precision_camera_btn": "CAMERA",
+    "precision_apply_btn": "IDENTIFY VARIANT",
+    "precision_ram_privacy_notice": "Ephemeral RAM-only optical reading (Law 21.719): used solely to identify the exact OEM model. Does not enroll private fleet or store images.",
+    "optical_summary_title": "IN-MEMORY VERIFIED OPTICAL READING",
+    "facets_filter_heading": "QUICK OEM VARIANT DISAMBIGUATION",
+    "facets_reset_btn": "RESET FILTERS",
+    "variant_photo_verified_badge": "VLM v4 VERIFIED OEM VARIANT"
   },
   "admin": {
     "CONTROL_CENTER": "CONTROL_CENTER / ADMIN",
@@ -453,6 +464,8 @@
     "reframe_88": "REFRAME 88%",
     "hunt_another": "HUNT ANOTHER",
     "confirm_photo_update": "Confirm official photo",
+    "legacy_photo_audit_notice": "Photo saved prior to OEM v4 optical filter",
+    "replace_with_oem_photo": "REPLACE WITH OEM PHOTO",
     "pillars": {
       "ficha_tecnica": "Technical Sheet",
       "manual_operaciones": "Operations Manual",
@@ -549,6 +562,17 @@
       "expand": "Expand",
       "create_item": "Create item",
       "search_complementary_items": "Search complementary items with AI"
+    },
+    "item_actions": {
+      "hunt_content": "Hunt content",
+      "open_item": "Open item content",
+      "update_with_ai": "Update with AI",
+      "update_with_ai_tooltip": "Search for updated technical evidence without overwriting active content",
+      "confirm_update_with_ai": "Type \"ACTUALIZAR\" to search for new technical evidence (routed to New Content or Conflicting Content without overwriting active text):",
+      "empty_item_guidance": "Use \"Update with AI\", \"Upload Files\" or the OPERMAQ AI assistant.",
+      "stage_enqueuing_update": "Enqueuing technical update search...",
+      "update_completed_with_findings": "AI update completed: +{{newCount}} New Content · +{{conflictCount}} in Conflict.",
+      "update_completed_no_changes": "AI update completed: no differences against active content."
     },
     "suggestions": {
       "title": "AI-Suggested Complementary Items"
@@ -696,5 +720,21 @@
     "odometer_km_label": "ODOMETER (KM)",
     "cycles_count_label": "ACCUMULATED CYCLES",
     "calibration_due_date_label": "NEXT CALIBRATION"
+  },
+  "cost_matrix_energy": {
+    "section_title_base": "I. ENERGY CONSUMPTION & OPERATIONAL AUTONOMY",
+    "section_title_with_scr": "I. ENERGY CONSUMPTION, AUTONOMY & SCR AFTERTREATMENT",
+    "driver_unit_label": "COST DRIVER UNIT",
+    "storage_fuel_tank": "FUEL TANK CAPACITY",
+    "storage_battery_bank": "BATTERY BANK CAPACITY",
+    "storage_hybrid": "FUEL TANK + HV BATTERY CAPACITY",
+    "autonomy_thermal": "ESTIMATED AUTONOMY / BSFC",
+    "autonomy_battery": "OPERATIONAL AUTONOMY PER CHARGE",
+    "demand_grid_ac": "ABSORBED ELECTRICAL POWER",
+    "demand_pneumatic": "REQUIRED AIR CONSUMPTION & PRESSURE",
+    "demand_hydraulic": "REQUIRED HYDRAULIC FLOW & PRESSURE",
+    "scr_card_title": "SCR / ADBLUE SYSTEM (DEF ISO 22241)",
+    "scr_proportion": "Dosing Ratio",
+    "scr_tank": "DEF Tank"
   }
 }

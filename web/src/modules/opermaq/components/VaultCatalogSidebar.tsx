@@ -9,8 +9,14 @@ import {
     frameEquipmentPhotoToStudio4x3,
     reframeExistingEquipmentPhotoUrl,
 } from '../utils/equipmentPhotoFraming';
+import {
+    normalizeFrontendSpecLinesByEnergy,
+    sanitizeFrontendContextLines,
+} from '../utils/opermaqDomainProjection';
 import { PENDING_CONTENT_HIGHLIGHT_CLASS } from '../utils/pendingContentDetector';
 import { M3CircularProgress } from './M3ProgressIndicator';
+
+export const CURRENT_VLM_AUDIT_VERSION = 4;
 
 export interface OfficialPhotoCandidate {
     candidate_id: string;
@@ -28,6 +34,8 @@ export interface OfficialPhotoCandidate {
     width: number;
     height: number;
     framing_mode: 'STUDIO_88' | 'VLM_BOX_4X3' | 'CENTER_4X3';
+    vlm_audit_version?: number;
+    verified_variant_summary?: string;
 }
 
 export interface FotoMediaTelemetry {
@@ -49,6 +57,7 @@ export function formatPhotoBytes(bytes?: number): string {
 
 export interface SidebarCatalogPatch {
     foto_url?: string;
+    foto_vlm_audit_version?: number | null;
     foto_media_telemetry?: FotoMediaTelemetry;
     official_photo_candidates?: OfficialPhotoCandidate[];
     caracteristicas_principales?: string[];
@@ -61,8 +70,11 @@ export interface VaultCatalogSidebarProps {
     catalog: {
         id: string;
         makeModel: string;
+        tipo_equipo?: string;
+        categoria_equipo?: string;
         is_sealed?: boolean;
         foto_url?: string;
+        foto_vlm_audit_version?: number | null;
         foto_media_telemetry?: FotoMediaTelemetry;
         official_photo_candidates?: OfficialPhotoCandidate[];
         caracteristicas_principales?: string[];
@@ -126,8 +138,14 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
         };
     }, [catalogId]);
 
+    const verifiedStoredCandidates = (catalog.official_photo_candidates || []).filter(
+        (c) => c && c.vlm_audit_version === CURRENT_VLM_AUDIT_VERSION
+    );
+
     const handleOpenStoredAlternatives = useCallback(() => {
-        const storedPool = catalog.official_photo_candidates || [];
+        const storedPool = (catalog.official_photo_candidates || []).filter(
+            (c) => c && c.vlm_audit_version === CURRENT_VLM_AUDIT_VERSION
+        );
         if (storedPool.length === 0) return;
         setPhotoCandidates(storedPool);
         setSelectedCandidateIdx(0);
@@ -148,10 +166,11 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
         const currentAttempt = photoHuntAttemptRef.current;
         photoHuntAttemptRef.current += 1;
 
-        const previousPool: OfficialPhotoCandidate[] =
+        const previousPool: OfficialPhotoCandidate[] = (
             photoCandidates.length > 0
                 ? photoCandidates
-                : catalog.official_photo_candidates || [];
+                : catalog.official_photo_candidates || []
+        ).filter((c) => c && c.vlm_audit_version === CURRENT_VLM_AUDIT_VERSION);
         const previousShas = new Set(previousPool.map((c) => c.sha256));
 
         setIsHuntingPhoto(true);
@@ -277,6 +296,11 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                 updated_at: new Date().toISOString(),
             };
 
+            const resolvedCandidateAuditVersion =
+                typeof candidate.vlm_audit_version === 'number'
+                    ? candidate.vlm_audit_version
+                    : CURRENT_VLM_AUDIT_VERSION;
+
             const res = await authFetch(`${API_BASE_URL}/vault/asset-image`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -285,6 +309,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                     tenantAssetId: assetId !== catalogId ? assetId : undefined,
                     imageUrl: candidate.preview_url,
                     fotoMediaTelemetry,
+                    fotoVlmAuditVersion: resolvedCandidateAuditVersion,
                     officialPhotoCandidates: photoCandidates,
                 }),
             });
@@ -296,6 +321,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
 
             onCatalogPatch({
                 foto_url: candidate.preview_url,
+                foto_vlm_audit_version: resolvedCandidateAuditVersion,
                 foto_media_telemetry: fotoMediaTelemetry,
                 official_photo_candidates: photoCandidates,
             });
@@ -364,10 +390,11 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                 const data = await res.json().catch(() => null);
 
                 if (res.ok && data?.approved && data?.candidate) {
-                    const basePool =
+                    const basePool = (
                         photoCandidates.length > 0
                             ? photoCandidates
-                            : catalog.official_photo_candidates || [];
+                            : catalog.official_photo_candidates || []
+                    ).filter((c) => c && c.vlm_audit_version === CURRENT_VLM_AUDIT_VERSION);
                     const updatedPool = [
                         data.candidate,
                         ...basePool.filter((c) => c.sha256 !== data.candidate.sha256),
@@ -540,6 +567,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
 
             onCatalogPatch({
                 foto_url: '',
+                foto_vlm_audit_version: null,
                 foto_media_telemetry: undefined,
             });
 
@@ -617,22 +645,58 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
         onRefreshVault,
     ]);
 
+    const normalizedMainSpecs = React.useMemo(
+        () =>
+            normalizeFrontendSpecLinesByEnergy(catalog.caracteristicas_principales, {
+                primaryEnergy: catalog.energy_consumption_profile?.energy_source || null,
+                typeContextText: `${catalog.makeModel || ''} ${catalog.tipo_equipo || ''} ${catalog.categoria_equipo || ''}`,
+            }),
+        [
+            catalog.caracteristicas_principales,
+            catalog.energy_consumption_profile?.energy_source,
+            catalog.makeModel,
+            catalog.tipo_equipo,
+            catalog.categoria_equipo,
+        ]
+    );
+
+    const normalizedDesignConditions = React.useMemo(
+        () =>
+            sanitizeFrontendContextLines(catalog.ambiente_operativo, {
+                canonicalTypeEs: catalog.tipo_equipo || null,
+            }),
+        [catalog.ambiente_operativo, catalog.tipo_equipo]
+    );
+
+    const normalizedWorkContext = React.useMemo(
+        () =>
+            sanitizeFrontendContextLines(catalog.contexto_operativo, {
+                canonicalTypeEs: catalog.tipo_equipo || null,
+            }),
+        [catalog.contexto_operativo, catalog.tipo_equipo]
+    );
+
+    const isLegacyPreV4Photo =
+        Boolean(catalog.foto_url) &&
+        (typeof catalog.foto_vlm_audit_version !== 'number' ||
+            catalog.foto_vlm_audit_version < CURRENT_VLM_AUDIT_VERSION);
+
     const handleOpenSidebarEditor = useCallback(
         (section: 'caracteristicas' | 'ambiente' | 'contexto') => {
             const currentItems =
                 section === 'caracteristicas'
-                    ? catalog.caracteristicas_principales || []
+                    ? normalizedMainSpecs
                     : section === 'ambiente'
-                    ? catalog.ambiente_operativo || []
-                    : catalog.contexto_operativo || [];
+                    ? normalizedDesignConditions
+                    : normalizedWorkContext;
             setEditingSidebarSection((prev) => (prev === section ? null : section));
             setSidebarDraftText(currentItems.filter((x) => !x.startsWith('[')).join('\n'));
             setSidebarConfirmText('');
         },
         [
-            catalog.caracteristicas_principales,
-            catalog.ambiente_operativo,
-            catalog.contexto_operativo,
+            normalizedMainSpecs,
+            normalizedDesignConditions,
+            normalizedWorkContext,
         ]
     );
 
@@ -857,15 +921,14 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 CARGAR MANUAL
                             </button>
                         </div>
-                        {(catalog.official_photo_candidates?.length || 0) > 0 && (
+                        {verifiedStoredCandidates.length > 0 && (
                             <button
                                 type="button"
                                 onClick={handleOpenStoredAlternatives}
                                 disabled={isHuntingPhoto || isUploadingPhoto || isReframingPhoto}
                                 className="w-full py-1 px-2 border border-[#00AEEF] text-[#00AEEF] hover:bg-[#00AEEF] hover:text-[#000000] text-[9px] font-mono font-bold uppercase tracking-wider tabular-nums rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                             >
-                                VER ALTERNATIVAS GUARDADAS (
-                                {catalog.official_photo_candidates!.length})
+                                VER ALTERNATIVAS GUARDADAS ({verifiedStoredCandidates.length})
                             </button>
                         )}
                     </div>
@@ -926,7 +989,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                             key={cand.candidate_id || `${cand.sha256}_${idx}`}
                                             type="button"
                                             onClick={() => setSelectedCandidateIdx(idx)}
-                                            title={`Alternativa #${idx + 1} (${cand.source_label})`}
+                                            title={`Alternativa #${idx + 1} (${cand.verified_variant_summary || cand.source_label})`}
                                             className={`relative aspect-[4/3] w-full bg-[#FFFFFF] border rounded-none shadow-none overflow-hidden cursor-pointer transition-colors p-0 ${
                                                 isSelected
                                                     ? 'border-2 border-[#C68346]'
@@ -978,20 +1041,38 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                             </button>
                         </div>
 
-                        <div className="px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] flex items-center justify-between gap-[8px] font-mono tabular-nums text-[9px] rounded-none">
-                            <span className="text-[#475569] dark:text-[#8A93A6] truncate">
-                                ORIG:{' '}
-                                {formatPhotoBytes(
-                                    photoCandidates[selectedCandidateIdx]?.original_bytes
-                                )}{' '}
-                                ➔ CAS:{' '}
-                                {formatPhotoBytes(
-                                    photoCandidates[selectedCandidateIdx]?.optimized_bytes
-                                )}
-                            </span>
-                            <span className="font-bold text-[#00AEEF] shrink-0">
-                                -{photoCandidates[selectedCandidateIdx]?.savings_pct}%
-                            </span>
+                        <div className="px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] flex flex-col gap-[4px] font-mono tabular-nums text-[9px] rounded-none">
+                            <div className="flex items-center justify-between gap-[8px]">
+                                <span className="text-[#00AEEF] font-bold uppercase truncate">
+                                    {photoCandidates[selectedCandidateIdx]?.verified_variant_summary ||
+                                        t(
+                                            'registration.variant_photo_verified_badge',
+                                            'VARIANTE OEM VERIFICADA VLM'
+                                        )}
+                                </span>
+                                <span className="text-[#5A6072] dark:text-[#94A3B8] shrink-0">
+                                    {Math.round(
+                                        (photoCandidates[selectedCandidateIdx]?.authenticity_score ||
+                                            0) * 100
+                                    )}
+                                    % OEM
+                                </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-[8px]">
+                                <span className="text-[#475569] dark:text-[#8A93A6] truncate">
+                                    ORIG:{' '}
+                                    {formatPhotoBytes(
+                                        photoCandidates[selectedCandidateIdx]?.original_bytes
+                                    )}{' '}
+                                    ➔ CAS:{' '}
+                                    {formatPhotoBytes(
+                                        photoCandidates[selectedCandidateIdx]?.optimized_bytes
+                                    )}
+                                </span>
+                                <span className="font-bold text-[#00AEEF] shrink-0">
+                                    -{photoCandidates[selectedCandidateIdx]?.savings_pct}%
+                                </span>
+                            </div>
                         </div>
 
                         <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] rounded-none">
@@ -1098,7 +1179,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         </span>
                                     </button>
 
-                                    {(catalog.official_photo_candidates?.length || 0) > 0 && (
+                                    {verifiedStoredCandidates.length > 0 && (
                                         <button
                                             type="button"
                                             onClick={handleOpenStoredAlternatives}
@@ -1107,8 +1188,8 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                                 isReframingPhoto ||
                                                 isUploadingPhoto
                                             }
-                                            title={`Alternativas verificadas (${catalog.official_photo_candidates!.length})`}
-                                            aria-label={`Alternativas verificadas (${catalog.official_photo_candidates!.length})`}
+                                            title={`Alternativas verificadas VLM v4 (${verifiedStoredCandidates.length})`}
+                                            aria-label={`Alternativas verificadas VLM v4 (${verifiedStoredCandidates.length})`}
                                             className="bg-transparent border-0 outline-none p-1 text-[#00AEEF] hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer disabled:opacity-40 flex items-center"
                                         >
                                             <span className="material-symbols-outlined !text-[15px]">
@@ -1173,6 +1254,33 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 </div>
                             )}
                         </div>
+
+                        {canCurateAI &&
+                            !catalog.is_sealed &&
+                            !showPhotoDeleteConfirm &&
+                            isLegacyPreV4Photo && (
+                                <div className="mt-[8px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] flex flex-col gap-[8px] rounded-none shadow-none select-none">
+                                    <span className="text-[10px] font-mono leading-tight text-[#475569] dark:text-[#8A93A6] tabular-nums">
+                                        {t(
+                                            'vault_dashboard.legacy_photo_audit_notice',
+                                            'Fotografía previa al filtro óptico OEM v4'
+                                        )}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={handleStartOfficialPhotoHunt}
+                                        disabled={
+                                            isHuntingPhoto || isReframingPhoto || isUploadingPhoto
+                                        }
+                                        className="w-full py-1 px-[8px] border border-[#C68346] bg-[#C68346]/10 hover:bg-[#C68346] text-[#C68346] hover:text-[#000000] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                                    >
+                                        {t(
+                                            'vault_dashboard.replace_with_oem_photo',
+                                            'REEMPLAZAR CON FOTO OEM'
+                                        )}
+                                    </button>
+                                </div>
+                            )}
 
                         {canCurateAI && showPhotoDeleteConfirm && (
                             <div className="flex flex-col gap-[8px] w-full mt-[8px]">
@@ -1315,8 +1423,8 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                         </div>
                     ) : (
                         <ul className="space-y-1.5 text-[12px] font-normal text-[#475569] dark:text-[#8A93A6] tabular-nums">
-                            {catalog.caracteristicas_principales?.length ? (
-                                catalog.caracteristicas_principales.map((item, idx) => (
+                            {normalizedMainSpecs.length ? (
+                                normalizedMainSpecs.map((item, idx) => (
                                     <li
                                         key={idx}
                                         className="flex items-start gap-1.5 leading-tight"
@@ -1401,8 +1509,8 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                         </div>
                     ) : (
                         <ul className="space-y-1.5 text-[12px] font-normal text-[#475569] dark:text-[#8A93A6]">
-                            {catalog.ambiente_operativo?.length ? (
-                                catalog.ambiente_operativo.map((item, idx) => (
+                            {normalizedDesignConditions.length ? (
+                                normalizedDesignConditions.map((item, idx) => (
                                     <li
                                         key={idx}
                                         className="flex items-start gap-1.5 leading-tight"
@@ -1487,8 +1595,8 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                         </div>
                     ) : (
                         <ul className="space-y-1.5 text-[12px] font-normal text-[#475569] dark:text-[#8A93A6]">
-                            {catalog.contexto_operativo?.length ? (
-                                catalog.contexto_operativo.map((item, idx) => (
+                            {normalizedWorkContext.length ? (
+                                normalizedWorkContext.map((item, idx) => (
                                     <li
                                         key={idx}
                                         className="flex items-start gap-1.5 leading-tight"

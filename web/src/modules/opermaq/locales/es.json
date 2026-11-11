@@ -85,9 +85,20 @@
     "offline_manual_fallback_notice": "Sin conexión a red. Puede encolar manualmente el identificador base para sincronización posterior.",
     "offline_manual_fallback_btn": "HABILITAR REGISTRO OFFLINE",
     "clarification_input_label": "Aportar precisión técnica a la búsqueda",
-    "clarification_input_placeholder": "Ej: versión comercializada en Chile, motor 1.9L HDi 150 HP, doble cabina, tracción 4x4, año 2022...",
+    "clarification_input_placeholder": "Ej: chasis 8x4, tolva 20 m³, caja automática Allison 4500 RDS, importación directa EPA Tier 4...",
     "clarification_apply_btn": "REFINAR BÚSQUEDA",
-    "clarification_toggle_label": "Aportar datos técnicos si el resultado esperado no figura en la lista"
+    "clarification_toggle_label": "Aportar datos técnicos si el resultado esperado no figura en la lista",
+    "precision_toggle_open": "ESPECIFICACIONES ADICIONALES / PLACA O FOTO DE IDENTIFICACIÓN",
+    "precision_active_count": "{{count}} IMAGEN(ES) RAM",
+    "precision_specs_label": "CARACTERÍSTICAS DIFERENCIADORAS (EJES, TRANSMISIÓN/CAJA, CARROCERÍA O NORMA OEM)",
+    "precision_attach_btn": "ADJUNTAR PLACA / FOTO ({{current}}/{{max}})",
+    "precision_camera_btn": "CÁMARA",
+    "precision_apply_btn": "IDENTIFICAR VARIANTE",
+    "precision_ram_privacy_notice": "Lectura óptica efímera en memoria RAM (Ley 21.719): uso exclusivo para identificar el modelo OEM exacto. No registra flota privada ni almacena imágenes.",
+    "optical_summary_title": "LECTURA ÓPTICA VERIFICADA EN MEMORIA",
+    "facets_filter_heading": "DESAMBIGUACIÓN RÁPIDA DE VARIANTES OEM",
+    "facets_reset_btn": "RESTABLECER FILTROS",
+    "variant_photo_verified_badge": "VARIANTE OEM VERIFICADA VLM v4"
   },
   "admin": {
     "CONTROL_CENTER": "CONTROL_CENTER / ADMIN",
@@ -493,6 +504,8 @@
     "reframe_88": "ENCUADRAR 88%",
     "hunt_another": "CAZAR OTRA",
     "confirm_photo_update": "Confirmar fotografía oficial",
+    "legacy_photo_audit_notice": "Fotografía previa al filtro óptico OEM v4",
+    "replace_with_oem_photo": "REEMPLAZAR CON FOTO OEM",
     "bloqueado": "BLOQUEADO",
     "pillars": {
       "ficha_tecnica": "Ficha Técnica",
@@ -590,6 +603,17 @@
       "expand": "Expandir",
       "create_item": "Crear ítem",
       "search_complementary_items": "Buscar ítems complementarios con IA"
+    },
+    "item_actions": {
+      "hunt_content": "Cazar contenido",
+      "open_item": "Abrir contenido del ítem",
+      "update_with_ai": "Actualizar con IA",
+      "update_with_ai_tooltip": "Buscar evidencia técnica actualizada sin sobrescribir el contenido vigente",
+      "confirm_update_with_ai": "Escribe \"ACTUALIZAR\" para buscar nueva evidencia técnica (se enviará a Nuevo Contenido o Contenido en Conflicto sin sobrescribir el texto actual):",
+      "empty_item_guidance": "Utilice \"Actualizar con IA\", \"Subir Archivos\" o el asistente lateral OPERMAQ IA.",
+      "stage_enqueuing_update": "Encolando búsqueda de actualización técnica...",
+      "update_completed_with_findings": "Actualización IA completada: +{{newCount}} Nuevo Contenido · +{{conflictCount}} en Conflicto.",
+      "update_completed_no_changes": "Actualización IA completada: sin diferencias frente al contenido vigente."
     },
     "suggestions": {
       "title": "Ítems Complementarios Sugeridos por IA"
@@ -696,5 +720,21 @@
     "odometer_km_label": "ODÓMETRO (KM)",
     "cycles_count_label": "CICLOS ACUMULADOS",
     "calibration_due_date_label": "PRÓXIMA CALIBRACIÓN"
+  },
+  "cost_matrix_energy": {
+    "section_title_base": "I. CONSUMO ENERGÉTICO Y AUTONOMÍA OPERATIVA",
+    "section_title_with_scr": "I. CONSUMO ENERGÉTICO, AUTONOMÍA Y POSTRATAMIENTO SCR",
+    "driver_unit_label": "UNIDAD CONDUCTORA",
+    "storage_fuel_tank": "CAPACIDAD ESTANQUE COMBUSTIBLE",
+    "storage_battery_bank": "CAPACIDAD BANCO BATERÍAS",
+    "storage_hybrid": "CAPACIDAD COMBUSTIBLE + BATERÍA HV",
+    "autonomy_thermal": "AUTONOMÍA ESTIMADA / BSFC",
+    "autonomy_battery": "AUTONOMÍA OPERATIVA POR CARGA",
+    "demand_grid_ac": "POTENCIA ELÉCTRICA ABSORBIDA",
+    "demand_pneumatic": "CONSUMO Y PRESIÓN DE AIRE REQUERIDA",
+    "demand_hydraulic": "CAUDAL Y PRESIÓN HIDRÁULICA REQUERIDA",
+    "scr_card_title": "SISTEMA SCR / ADBLUE (DEF ISO 22241)",
+    "scr_proportion": "Proporción",
+    "scr_tank": "Estanque DEF"
   }
 }

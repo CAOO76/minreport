@@ -42,7 +42,7 @@ import { syncQueueEngine } from '../../../core/offline/SyncQueueEngine';
 import { useOpermaqContext } from '../hooks/useOpermaqContext';
 import { ItemFiguresAndAdvisoriesBlock, resolveMediaSrc, formatByteWeight } from './ItemFiguresAndAdvisoriesBlock';
 import { OpermaqEngineeringStudioDrawer, type StudioTabId } from './OpermaqEngineeringStudioDrawer';
-import type { PillarId, PillarDocument, PillarItem, ItemizedSource, ProposedUpdate, EstadoAprobacion, HistorialAuditoria, ChatMessage, ExtractedFigureRef } from '../types/vault';
+import type { PillarId, PillarDocument, PillarItem, ItemizedSource, ProposedUpdate, EstadoAprobacion, HistorialAuditoria, ChatMessage, ExtractedFigureRef, HuntIntent } from '../types/vault';
 import { PILLAR_PREREQUISITE_MAP } from '../types/vault';
 import type { AssetPhysicalTraits, EnergyConsumptionProfile, CanonicalSpecSlot, OperationalCostMatrix } from '../../../contracts';
 import { EquipmentCostMatrixPanel } from './EquipmentCostMatrixPanel';
@@ -69,6 +69,7 @@ interface CatalogSnapshot {
   is_sealed?: boolean;
   official_url?: string;
   foto_url?: string;
+  foto_vlm_audit_version?: number | null;
   foto_media_telemetry?: {
     original_bytes: number;
     optimized_bytes: number;
@@ -1263,6 +1264,8 @@ interface ItemContentBlockProps {
   item: PillarItem;
   canCurateAI: boolean;
   isHunting: boolean;
+  huntProgressPct?: number;
+  huntStageMessage?: string;
   assistingItemId: string | null;
   onAiAssist: (userRequest: string) => Promise<AiAssistResponse | null>;
   onApplyAssist: (finalContent: string, intent: string) => Promise<void>;
@@ -1538,7 +1541,6 @@ interface NuevosHallazgosViewProps {
 
 function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClose, isSealed }: NuevosHallazgosViewProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const autoEvolvedRef = useRef(false);
   const firstValidUrl = item.item_sources?.find(s => s.url && s.url !== '#')?.url;
 
   const proposals = (item.pending_conflicts ?? []).filter(
@@ -1559,14 +1561,6 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
       setIsSubmitting(false);
     }
   }, [isSealed, isSubmitting, onEvolveItemByType]);
-
-  // Auto-consolidar hallazgos que quedaron congelados en estado APROBADO de sesiones previas
-  useEffect(() => {
-    if (approvedCount > 0 && !isSealed && !item.is_human_locked && !autoEvolvedRef.current) {
-      autoEvolvedRef.current = true;
-      void handleEvolve();
-    }
-  }, [approvedCount, isSealed, item.is_human_locked, handleEvolve]);
 
   return (
     <div className="flex-1 flex flex-col min-h-0 w-full font-atkinson">
@@ -1663,7 +1657,6 @@ interface ConflictosViewProps {
 
 function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, isSealed }: ConflictosViewProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const autoEvolvedRef = useRef(false);
   const firstValidUrl = item.item_sources?.find(s => s.url && s.url !== '#')?.url;
 
   const proposals = (item.pending_conflicts ?? []).filter(
@@ -1684,14 +1677,6 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
       setIsSubmitting(false);
     }
   }, [isSealed, isSubmitting, onEvolveItemByType]);
-
-  // Auto-consolidar conflictos que quedaron congelados en estado APROBADO de sesiones previas
-  useEffect(() => {
-    if (approvedCount > 0 && !isSealed && !item.is_human_locked && !autoEvolvedRef.current) {
-      autoEvolvedRef.current = true;
-      void handleEvolve();
-    }
-  }, [approvedCount, isSealed, item.is_human_locked, handleEvolve]);
 
   return (
     <div className="flex-1 flex flex-col min-h-0 w-full font-atkinson">
@@ -1797,6 +1782,8 @@ function ItemContentBlock({
   item,
   canCurateAI,
   isHunting,
+  huntProgressPct,
+  huntStageMessage,
   isSealed,
   onHunt,
   onDiscard,
@@ -1836,33 +1823,9 @@ function ItemContentBlock({
   const chatFeedRef = useRef<HTMLDivElement>(null);
   const contentContainerRef = useRef<HTMLDivElement>(null);
   const pendingLocatorCursorRef = useRef<number>(0);
-  const autoConsolidatedTypesRef = useRef<Set<string>>(new Set());
 
-  const isGenerating = item.content_status === 'GENERANDO' || isHunting || isSearching;
-
-  // Auto-consolidar propuestas que quedaron congeladas en estado APROBADO de sesiones anteriores
-  useEffect(() => {
-    if (!canCurateAI || isSealed || item.is_human_locked) return;
-    const pendingList = item.pending_conflicts ?? [];
-    const hasStuckNuevo = pendingList.some(
-      (p) => p.estado_fusion === 'NUEVO' && p.human_decision === 'APROBADO'
-    );
-    const hasStuckConflicto = pendingList.some(
-      (p) => p.estado_fusion === 'CONFLICTO' && p.human_decision === 'APROBADO'
-    );
-
-    const nuevoKey = `${item.item_id}:NUEVO`;
-    if (hasStuckNuevo && !autoConsolidatedTypesRef.current.has(nuevoKey)) {
-      autoConsolidatedTypesRef.current.add(nuevoKey);
-      void onEvolveItemByType('NUEVO');
-    }
-
-    const conflictoKey = `${item.item_id}:CONFLICTO`;
-    if (hasStuckConflicto && !autoConsolidatedTypesRef.current.has(conflictoKey)) {
-      autoConsolidatedTypesRef.current.add(conflictoKey);
-      void onEvolveItemByType('CONFLICTO');
-    }
-  }, [canCurateAI, isSealed, item.is_human_locked, item.item_id, item.pending_conflicts, onEvolveItemByType]);
+  const isHuntActive = item.content_status === 'GENERANDO' || isHunting;
+  const isGenerating = isHuntActive || isSearching;
 
   useEffect(() => {
     if (!canCurateAI || !catalogId || !item.item_id) return;
@@ -2253,10 +2216,23 @@ function ItemContentBlock({
             </div>
           </div>
         ) : (
-          <div className="py-12 px-4 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-center rounded-none shadow-none">
+          <div className="py-[21px] px-[21px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-center space-y-[8px] rounded-none shadow-none">
             <p className="text-[11px] font-mono font-bold text-[#5A6072]">
-              [Ítem pendiente de redacción técnica — Utilice Regenerar IA o el asistente lateral OPERMAQ IA]
+              [Información técnica no declarada en ficha]
             </p>
+            {canCurateAI && (
+              <p className="text-[11px] text-[#475569] dark:text-[#8A93A6]">
+                {t(
+                  'vault_dashboard.item_actions.empty_item_guidance',
+                  'Utilice "Actualizar con IA", "Subir Archivos" o el asistente lateral OPERMAQ IA.'
+                )}
+              </p>
+            )}
+            {canCurateAI && item.content_status === 'ERROR' && item.hunt_error && (
+              <p className="text-[10px] font-mono font-bold text-[#C68346]">
+                ERROR: {item.hunt_error}
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -2632,19 +2608,61 @@ function ItemContentBlock({
                 type="button"
                 disabled={isSealed || isGenerating || item.is_human_locked}
                 onClick={() => setShowHuntConfirm(!showHuntConfirm)}
-                className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
-                title="Regenerar con IA"
+                className="w-full flex items-center justify-between px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                title={t(
+                  'vault_dashboard.item_actions.update_with_ai_tooltip',
+                  'Buscar evidencia técnica actualizada sin sobrescribir el contenido vigente'
+                )}
               >
-                Regenerar con IA
+                <span>{t('vault_dashboard.item_actions.update_with_ai', 'Actualizar con IA')}</span>
+                {isHuntActive && (
+                  <span className="font-mono tabular-nums text-[#C68346]">
+                    {Math.max(0, Math.min(100, Math.round(huntProgressPct ?? 0)))}%
+                  </span>
+                )}
               </button>
 
-              {showHuntConfirm && (
+              {isHuntActive && (
                 <div className="p-[8px] border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-[8px] rounded-none shadow-none">
-                  <p className="text-[10px] text-[#C68346] font-bold">Escribe "ACTUALIZAR" para confirmar la regeneración por IA:</p>
+                  <M3LinearProgress
+                    value={huntProgressPct ?? 0}
+                    indeterminate={!huntProgressPct || huntProgressPct <= 0}
+                    tone="copper"
+                    ariaLabel={t('vault_dashboard.item_actions.update_with_ai', 'Actualizar con IA')}
+                  />
+                  {huntStageMessage && (
+                    <p className="text-[10px] font-mono text-[#475569] dark:text-[#8A93A6] leading-snug">
+                      {huntStageMessage}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {showHuntConfirm && !isHuntActive && (
+                <div className="p-[8px] border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-[8px] rounded-none shadow-none">
+                  <p className="text-[10px] text-[#C68346] font-bold leading-snug">
+                    {t(
+                      'vault_dashboard.item_actions.confirm_update_with_ai',
+                      'Escribe "ACTUALIZAR" para buscar nueva evidencia técnica (se enviará a Nuevo Contenido o Contenido en Conflicto sin sobrescribir el texto actual):'
+                    )}
+                  </p>
                   <input
                     type="text"
                     value={huntConfirmText}
                     onChange={(e) => setHuntConfirmText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (
+                        e.key === 'Enter' &&
+                        huntConfirmText.trim().toUpperCase() === 'ACTUALIZAR' &&
+                        !isGenerating &&
+                        !isSealed
+                      ) {
+                        e.preventDefault();
+                        onHunt();
+                        setHuntConfirmText('');
+                        setShowHuntConfirm(false);
+                      }
+                    }}
                     placeholder="ACTUALIZAR"
                     autoComplete="off"
                     spellCheck={false}
@@ -2653,7 +2671,7 @@ function ItemContentBlock({
                   <div className="flex gap-[8px]">
                     <button
                       type="button"
-                      disabled={huntConfirmText.trim() !== 'ACTUALIZAR' || isGenerating || isSealed}
+                      disabled={huntConfirmText.trim().toUpperCase() !== 'ACTUALIZAR' || isGenerating || isSealed}
                       onClick={() => {
                         onHunt();
                         setHuntConfirmText('');
@@ -2665,7 +2683,10 @@ function ItemContentBlock({
                     </button>
                     <button
                       type="button"
-                      onClick={() => setShowHuntConfirm(false)}
+                      onClick={() => {
+                        setShowHuntConfirm(false);
+                        setHuntConfirmText('');
+                      }}
                       className="px-2 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[10px] rounded-none shadow-none cursor-pointer"
                     >
                       Cancelar
@@ -2944,11 +2965,12 @@ function ItemContentBlock({
 interface ItemizedItemsListProps {
   items: PillarItem[];
   canCurateAI: boolean;
-  onHunt: (itemId: string, correction?: string, forceRestart?: boolean) => void;
+  onHunt: (itemId: string, correction?: string, forceRestart?: boolean, intent?: HuntIntent) => void;
   onAiAssist: (itemId: string, userRequest: string) => Promise<AiAssistResponse | null>;
   onApplyAssist: (itemId: string, finalContent: string, intent: string) => Promise<void>;
   isAssistingItemId: string | null;
   huntProgressByItem?: Record<string, number>;
+  huntStageByItem?: Record<string, string>;
   expandedItems: Set<string>;
   onToggleExpand: (id: string) => void;
   onDiscard: (itemId: string) => void;
@@ -2972,7 +2994,7 @@ interface ItemizedItemsListProps {
 
 
 function ItemizedItemsList({
-  items, canCurateAI, onHunt, onAiAssist, onApplyAssist, isAssistingItemId: assistingItemId, huntProgressByItem,
+  items, canCurateAI, onHunt, onAiAssist, onApplyAssist, isAssistingItemId: assistingItemId, huntProgressByItem, huntStageByItem,
   expandedItems, onToggleExpand, onDiscard: _onDiscard, onReactivate, isArchive, isSealed,
   onUnlockItem, onUpdateApprovalState, onRollbackVersion, catalogId,
   pillarId, activeProposalView, onSetProposalView, onDecideProposal, onEvolveItemByType,
@@ -3008,6 +3030,18 @@ function ItemizedItemsList({
                 const displayPct = Math.max(0, Math.min(100, Math.round(itemHuntPct ?? 0)));
                 const isExpanded = expandedItems.has(item.item_id);
                 const hasContent = !!(item.content && item.content.trim());
+                const isInitialHuntActivated = Boolean(
+                  item.initial_hunt_activated_at ||
+                  item.hunted_at ||
+                  hasContent ||
+                  isGenerating ||
+                  item.content_status === 'COMPLETADO' ||
+                  item.content_status === 'ERROR'
+                );
+                const canOpenItem = !isArchive && (hasContent || (canCurateAI && isInitialHuntActivated));
+                const pendingProposalsCount = (item.pending_conflicts ?? []).filter(
+                  (p) => p.human_decision !== 'ELIMINADO' && p.human_decision !== 'APROBADO'
+                ).length;
 
                 if (hasExpanded && !isExpanded) return null;
 
@@ -3053,7 +3087,7 @@ function ItemizedItemsList({
                       </div>
 
                       <div className="flex-1 min-w-0">
-                        <div className={hasContent && !isArchive ? 'cursor-pointer' : ''} onClick={() => hasContent && !isArchive ? onToggleExpand(item.item_id) : undefined}>
+                        <div className={canOpenItem ? 'cursor-pointer' : ''} onClick={() => canOpenItem ? onToggleExpand(item.item_id) : undefined}>
                           <p className="text-[13px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">{item.title}</p>
                           <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] mt-0.5">{item.rationale}</p>
                           {!hasContent && !canCurateAI && (
@@ -3069,36 +3103,53 @@ function ItemizedItemsList({
                         ) : null}
                       </div>
 
-                      <div className="flex flex-col items-end gap-1.5 shrink-0">
-                        {!isArchive && (
-                          <div className="flex items-center gap-1">
-                            {isGenerating && (isExpanded || hasContent) && (
+                      <div className="flex flex-col items-end gap-[8px] shrink-0">
+                        {!isArchive ? (
+                          <div className="flex items-center gap-[8px]">
+                            {isGenerating && (
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  if (canCurateAI && !isSealed) onHunt(item.item_id, undefined, true);
+                                  if (canCurateAI && !isSealed) {
+                                    onHunt(
+                                      item.item_id,
+                                      undefined,
+                                      true,
+                                      hasContent ? 'INCREMENTAL_UPDATE' : 'INITIAL_CAPTURE'
+                                    );
+                                  }
                                 }}
                                 title={
                                   canCurateAI
-                                    ? 'Caza en curso — Clic para reanudar o reiniciar si se detuvo'
-                                    : 'Caza en curso'
+                                    ? 'Procesamiento IA en curso — Clic para reanudar si se interrumpió'
+                                    : 'Procesamiento IA en curso'
                                 }
-                                className="flex items-center justify-center h-8 px-1.5 text-[12px] font-mono tabular-nums font-bold text-[#C68346] bg-transparent border-0 outline-none select-none cursor-pointer"
+                                className="bg-transparent border-0 outline-none flex items-center gap-[8px] h-8 px-1.5 text-[12px] font-mono tabular-nums font-bold text-[#C68346] select-none cursor-pointer rounded-none"
                                 aria-live="polite"
                               >
-                                {displayPct}%
+                                <M3CircularProgress
+                                  size={16}
+                                  strokeWidth={2.5}
+                                  value={displayPct}
+                                  indeterminate={displayPct <= 0}
+                                  tone="copper"
+                                  ariaLabel="Progreso de captura IA"
+                                />
+                                <span>{displayPct}%</span>
                               </button>
                             )}
-                            {canCurateAI &&
-                              item.pending_conflicts &&
-                              item.pending_conflicts.some(
-                                (p) => p.human_decision !== 'ELIMINADO' && p.human_decision !== 'APROBADO'
-                              ) && (
-                                <span className="flex items-center justify-center w-8 h-8 shrink-0">
-                                  <span className="material-symbols-outlined !text-[20px] text-[#00AEEF]" title="Nuevos hallazgos o conflictos pendientes">release_alert</span>
-                                </span>
-                              )}
+
+                            {canCurateAI && pendingProposalsCount > 0 && (
+                              <span
+                                className="flex items-center gap-[4px] h-6 px-[6px] shrink-0 bg-[#00AEEF]/10 dark:bg-[#00AEEF]/15 text-[#00AEEF] border border-[#00AEEF] rounded-none"
+                                title={`${pendingProposalsCount} hallazgo(s) pendiente(s) de revisión (Nuevo Contenido / Conflicto)`}
+                              >
+                                <span className="material-symbols-outlined !text-[14px]">release_alert</span>
+                                <span className="text-[11px] font-mono tabular-nums font-bold">{pendingProposalsCount}</span>
+                              </span>
+                            )}
+
                             {(() => {
                               const pendingFigCount = countItemPendingFigures(item.content, item.title, item.item_sources, item.figures);
                               const pendingTextCount = countUndeclaredTextInMarkdown(item.content);
@@ -3113,90 +3164,59 @@ function ItemizedItemsList({
                                 </span>
                               ) : null;
                             })()}
+
                             {item.is_human_locked ? (
                               <span className="flex items-center justify-center w-8 h-8 shrink-0">
                                 <span className="material-symbols-outlined !text-[20px] text-[#00AEEF]" title="Verificado">verified</span>
                               </span>
-                            ) : canCurateAI && hasContent ? (
+                            ) : canCurateAI && isInitialHuntActivated && !isExpanded && !isGenerating ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onToggleExpand(item.item_id);
+                                }}
+                                title={t('vault_dashboard.item_actions.open_item', 'Abrir contenido del ítem')}
+                                aria-label={t('vault_dashboard.item_actions.open_item', 'Abrir contenido del ítem')}
+                                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none"
+                              >
+                                <span className="material-symbols-outlined !text-[20px]">edit_document</span>
+                              </button>
+                            ) : canCurateAI && !isInitialHuntActivated && !isExpanded && !isGenerating ? (
                               <>
-                                {!isExpanded && !isGenerating && (
-                                  <M3IconButton
-                                    icon="travel_explore"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (!isSealed) onHunt(item.item_id);
-                                    }}
-                                    variant="ghost"
-                                    title="Actualizar / Re-cazar contenido IA"
-                                    className={`text-[#C68346] ${isSealed ? 'opacity-20 cursor-not-allowed' : ''}`}
-                                    disabled={isSealed || item.is_human_locked}
-                                  />
-                                )}
-                                <button
-                                  type="button"
+                                <M3IconButton
+                                  icon="travel_explore"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    onToggleExpand(item.item_id);
+                                    if (!isSealed) onHunt(item.item_id, undefined, false, 'INITIAL_CAPTURE');
                                   }}
-                                  title="Abrir y editar contenido del ítem"
-                                  className="bg-transparent border-0 outline-none flex items-center justify-center w-8 h-8 shrink-0 text-[#C68346] hover:text-[#b07239] cursor-pointer"
-                                >
-                                  <span className="material-symbols-outlined !text-[20px]">edit_document</span>
-                                </button>
+                                  variant="ghost"
+                                  title={t('vault_dashboard.item_actions.hunt_content', 'Cazar contenido')}
+                                  className={`text-[#C68346] ${isSealed ? 'opacity-20 cursor-not-allowed' : ''}`}
+                                  disabled={isSealed || item.is_human_locked}
+                                />
+                                <M3IconButton
+                                  icon="text_ad_off"
+                                  onClick={(e) => { e.stopPropagation(); if (!isSealed) setConfirmDiscardId(item.item_id); }}
+                                  variant="ghost"
+                                  title="Descartar ítem"
+                                  className={`text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] ${isSealed ? 'opacity-20 cursor-not-allowed' : ''}`}
+                                  disabled={isSealed || item.is_human_locked}
+                                />
                               </>
                             ) : null}
                           </div>
-                        )}
-
-                        {canCurateAI && !isExpanded && (
-                          <div className="flex items-center gap-1">
-                            {!isArchive ? (
-                              !hasContent && (
-                                isGenerating ? (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (!isSealed) onHunt(item.item_id, undefined, true);
-                                    }}
-                                    title="Caza en curso — Clic para reanudar o reiniciar si se detuvo"
-                                    className="flex items-center justify-center h-8 px-1.5 text-[12px] font-mono tabular-nums font-bold text-[#C68346] bg-transparent border-0 outline-none select-none cursor-pointer"
-                                    aria-live="polite"
-                                  >
-                                    {displayPct}%
-                                  </button>
-                                ) : (
-                                  <>
-                                    <M3IconButton
-                                      icon="travel_explore"
-                                      onClick={(e) => { e.stopPropagation(); onHunt(item.item_id); }}
-                                      variant="ghost"
-                                      title="Cazar contenido"
-                                      className={`text-[#C68346] ${isSealed ? 'opacity-20 cursor-not-allowed' : ''}`}
-                                      disabled={isSealed || item.is_human_locked}
-                                    />
-                                    <M3IconButton
-                                      icon="text_ad_off"
-                                      onClick={(e) => { e.stopPropagation(); if (!isSealed) setConfirmDiscardId(item.item_id); }}
-                                      variant="ghost"
-                                      title="Descartar ítem"
-                                      className={`text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] ${isSealed ? 'opacity-20 cursor-not-allowed' : ''}`}
-                                      disabled={isSealed || item.is_human_locked}
-                                    />
-                                  </>
-                                )
-                              )
-                            ) : (
-                              <M3Button
-                                variant="ghost"
-                                onClick={() => { if (!isSealed) setConfirmReactivateId(item.item_id); }}
-                                className={`text-[10px] text-[#00AEEF] ${isSealed ? 'opacity-40 cursor-not-allowed' : ''}`}
-                                disabled={isSealed}
-                              >
-                                {isSealed ? (t('vault_dashboard.bloqueado') || 'BLOQUEADO').toUpperCase() : (t('vault_dashboard.reactivate') || 'REACTIVAR').toUpperCase()}
-                              </M3Button>
-                            )}
-                          </div>
+                        ) : (
+                          canCurateAI && !isExpanded && (
+                            <M3Button
+                              variant="ghost"
+                              onClick={() => { if (!isSealed) setConfirmReactivateId(item.item_id); }}
+                              className={`text-[10px] text-[#00AEEF] ${isSealed ? 'opacity-40 cursor-not-allowed' : ''}`}
+                              disabled={isSealed}
+                            >
+                              {isSealed ? (t('vault_dashboard.bloqueado') || 'BLOQUEADO').toUpperCase() : (t('vault_dashboard.reactivate') || 'REACTIVAR').toUpperCase()}
+                            </M3Button>
+                          )
                         )}
 
                         {canCurateAI && !isArchive && item.content_status === 'ERROR' && item.hunt_error && (
@@ -3293,11 +3313,13 @@ function ItemizedItemsList({
                           item={item}
                           canCurateAI={canCurateAI}
                           isHunting={isGenerating}
+                          huntProgressPct={displayPct}
+                          huntStageMessage={huntStageByItem?.[itemHuntKey]}
                           onAiAssist={(req) => onAiAssist(item.item_id, req)}
                           onApplyAssist={(final, intent) => onApplyAssist(item.item_id, final, intent)}
                           assistingItemId={assistingItemId}
                           isSealed={isSealed}
-                          onHunt={() => onHunt(item.item_id)}
+                          onHunt={() => onHunt(item.item_id, undefined, false, 'INCREMENTAL_UPDATE')}
                           onDiscard={() => setConfirmDiscardId(item.item_id)}
                           onUnlockItem={() => onUnlockItem(item.item_id)}
                           onUpdateApprovalState={(state, notes) => onUpdateApprovalState(item.item_id, state, notes)}
@@ -3463,12 +3485,13 @@ interface PillarTabContentProps {
   catalogId: string;
   canCurateAI: boolean;
   onItemize: (pillarId: PillarId) => void;
-  onHuntItem: (pillarId: PillarId, itemId: string, correction?: string, forceRestart?: boolean) => void;
+  onHuntItem: (pillarId: PillarId, itemId: string, correction?: string, forceRestart?: boolean, intent?: HuntIntent) => void;
   onAiAssistItem: (pillarId: PillarId, itemId: string, userRequest: string) => Promise<AiAssistResponse | null>;
   onApplyAssistItem: (pillarId: PillarId, itemId: string, finalContent: string, intent: string) => Promise<void>;
   onCreateItem: (pillarId: PillarId, title: string, section: string, rationale?: string, itemSource?: Record<string, unknown>) => Promise<void>;
   itemizing: boolean;
   huntProgressByItem: Record<string, number>;
+  huntStageByItem?: Record<string, string>;
   assistingItemId: string | null;
   expandedItems: Set<string>;
   onToggleExpand: (id: string) => void;
@@ -3498,7 +3521,7 @@ interface PillarTabContentProps {
 }
 
 const PillarTabContent: React.FC<PillarTabContentProps> = ({
-  pillarMeta, pillar, catalogId, canCurateAI, onItemize, onHuntItem, onAiAssistItem, onApplyAssistItem, onCreateItem, itemizing, huntProgressByItem, assistingItemId, expandedItems, onToggleExpand, onDiscardItem, onReactivateItem,
+  pillarMeta, pillar, catalogId, canCurateAI, onItemize, onHuntItem, onAiAssistItem, onApplyAssistItem, onCreateItem, itemizing, huntProgressByItem, huntStageByItem, assistingItemId, expandedItems, onToggleExpand, onDiscardItem, onReactivateItem,
   isSealed, onUnlockItem, onUpdateApprovalState, onRollbackVersion,
   activeProposalView, onSetProposalView, onDecideProposal, onEvolveItemByType,
   resolveItemSymbology, onOpenStudio, prerequisitePillar, onNavigateToPillar
@@ -3973,11 +3996,12 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                 items={activeItems}
                 canCurateAI={canCurateAI}
                 catalogId={catalogId}
-                onHunt={(itemId, correction, forceRestart) => onHuntItem(pillarMeta.id, itemId, correction, forceRestart)}
+                onHunt={(itemId, correction, forceRestart, intent) => onHuntItem(pillarMeta.id, itemId, correction, forceRestart, intent)}
                 onAiAssist={(itemId, req) => onAiAssistItem(pillarMeta.id, itemId, req)}
                 onApplyAssist={(itemId, final, intent) => onApplyAssistItem(pillarMeta.id, itemId, final, intent)}
                 isAssistingItemId={assistingItemId}
                 huntProgressByItem={huntProgressByItem}
+                huntStageByItem={huntStageByItem}
                 expandedItems={expandedItems}
                 onToggleExpand={onToggleExpand}
                 onDiscard={onDiscardItem}
@@ -4158,7 +4182,9 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
   const [masterSymbols, setMasterSymbols] = useState<Record<string, any>>({});
   const [itemizingPillar, setItemizingPillar] = useState<PillarId | null>(null);
   const [huntProgressByItem, setHuntProgressByItem] = useState<Record<string, number>>({});
+  const [huntStageByItem, setHuntStageByItem] = useState<Record<string, string>>({});
   const huntListenersRef = useRef<Record<string, () => void>>({});
+  const notifiedCompletedTasksRef = useRef<Set<string>>(new Set());
   const [assistingItemId, setAssistingItemId] = useState<string | null>(null);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [studioOpen, setStudioOpen] = useState(false);
@@ -4321,6 +4347,12 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         version: effectiveOverrides?.version || data?.version || 'ESTÁNDAR',
         official_url: effectiveOverrides?.official_url || data?.official_url || '',
         foto_url: effectiveOverrides?.foto_url || data?.foto_url || '',
+        foto_vlm_audit_version:
+          typeof effectiveOverrides?.foto_vlm_audit_version === 'number'
+            ? effectiveOverrides.foto_vlm_audit_version
+            : typeof data?.foto_vlm_audit_version === 'number'
+              ? data.foto_vlm_audit_version
+              : null,
         foto_media_telemetry: effectiveOverrides?.foto_media_telemetry || data?.foto_media_telemetry,
         official_photo_candidates: Array.isArray(data?.official_photo_candidates)
           ? data.official_photo_candidates
@@ -4535,7 +4567,9 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
               typeof data.progress_percent === 'number'
                 ? Math.max(0, Math.min(100, Math.round(data.progress_percent)))
                 : Math.max(0, Math.min(100, Number.parseInt(String(data.progress_percent ?? 0), 10) || 0));
+            const stageMsg = typeof data.progress_message === 'string' ? data.progress_message.trim() : '';
             setHuntProgressByItem((prev) => (prev[key] === pctVal ? prev : { ...prev, [key]: pctVal }));
+            setHuntStageByItem((prev) => (prev[key] === stageMsg ? prev : { ...prev, [key]: stageMsg }));
 
             const updatedAtMs = Number(data.updatedAtMs || (data.updated_at ? Date.parse(String(data.updated_at)) : 0));
             if (canCurateAI && updatedAtMs > 0 && Date.now() - updatedAtMs > 120_000) {
@@ -4547,6 +4581,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                   pillarId,
                   itemId,
                   forceRestart: true,
+                  ...(data.intent ? { intent: data.intent } : {}),
                 }),
               }).catch(() => { });
             }
@@ -4559,13 +4594,63 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
               delete next[key];
               return next;
             });
+            setHuntStageByItem((prev) => {
+              if (prev[key] === undefined) return prev;
+              const next = { ...prev };
+              delete next[key];
+              return next;
+            });
+
+            if (data.result_mode === 'CONFLICT_BUFFER' || data.intent === 'INCREMENTAL_UPDATE') {
+              const dedupToken = `${taskId}:${String(data.completed_at || data.updatedAtMs || '')}`;
+              if (!notifiedCompletedTasksRef.current.has(dedupToken)) {
+                notifiedCompletedTasksRef.current.add(dedupToken);
+                const addedNew = Number(data.added_new_count ?? 0);
+                const addedConflict = Number(data.added_conflict_count ?? 0);
+                const totalAdded = addedNew + addedConflict;
+                if (totalAdded > 0) {
+                  toast.info(
+                    t('vault_dashboard.item_actions.update_completed_with_findings', {
+                      newCount: addedNew,
+                      conflictCount: addedConflict,
+                      defaultValue: `Actualización IA completada: +${addedNew} Nuevo Contenido · +${addedConflict} en Conflicto.`,
+                    }),
+                    {
+                      autoClose: 5000,
+                      style: { borderRadius: '0', boxShadow: 'none' },
+                    }
+                  );
+                } else {
+                  toast.info(
+                    t(
+                      'vault_dashboard.item_actions.update_completed_no_changes',
+                      'Actualización IA completada: sin diferencias frente al contenido vigente.'
+                    ),
+                    {
+                      autoClose: 4000,
+                      style: { borderRadius: '0', boxShadow: 'none' },
+                    }
+                  );
+                }
+              }
+            }
+
             void refreshHydratedVault(catalogId);
           } else if (data.status === 'FAILED' || data.status === 'ERROR') {
             const errMsg = data.error || t('vault_dashboard.status.async_research_failed');
-            toast.error(`Error: ${errMsg}`, { autoClose: 5000 });
+            toast.error(`Error: ${errMsg}`, {
+              autoClose: 5000,
+              style: { borderRadius: '0', boxShadow: 'none' },
+            });
             huntListenersRef.current[key]?.();
             delete huntListenersRef.current[key];
             setHuntProgressByItem((prev) => {
+              if (prev[key] === undefined) return prev;
+              const next = { ...prev };
+              delete next[key];
+              return next;
+            });
+            setHuntStageByItem((prev) => {
               if (prev[key] === undefined) return prev;
               const next = { ...prev };
               delete next[key];
@@ -4643,10 +4728,23 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
     }
   }, [canCurateAI, catalogId, itemizingPillar, t]);
 
-  const handleHuntItem = useCallback(async (pillarId: PillarId, itemId: string, correction?: string, forceRestart?: boolean) => {
+  const handleHuntItem = useCallback(async (
+    pillarId: PillarId,
+    itemId: string,
+    correction?: string,
+    forceRestart?: boolean,
+    intent?: HuntIntent
+  ) => {
     const huntKey = `${pillarId}:${itemId}`;
     if (!canCurateAI || !catalogId || (huntProgressByItem[huntKey] !== undefined && !forceRestart)) return;
     setHuntProgressByItem((prev) => ({ ...prev, [huntKey]: 0 }));
+    setHuntStageByItem((prev) => ({
+      ...prev,
+      [huntKey]:
+        intent === 'INCREMENTAL_UPDATE'
+          ? t('vault_dashboard.item_actions.stage_enqueuing_update', 'Encolando búsqueda de actualización técnica...')
+          : t('vault_dashboard.pending_in_queue', 'Pendiente en cola…'),
+    }));
 
     try {
       const res = await authFetch(`${API_BASE_URL}/vault/hunt-item-async`, {
@@ -4658,6 +4756,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
           itemId,
           humanCorrection: correction,
           forceRestart: Boolean(forceRestart),
+          ...(intent ? { intent } : {}),
         }),
       });
 
@@ -4667,10 +4766,18 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
       }
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      toast.error(`Error: ${errorMessage}`, { autoClose: 5000 });
+      toast.error(`Error: ${errorMessage}`, {
+        autoClose: 5000,
+        style: { borderRadius: '0', boxShadow: 'none' },
+      });
       huntListenersRef.current[huntKey]?.();
       delete huntListenersRef.current[huntKey];
       setHuntProgressByItem((prev) => {
+        const next = { ...prev };
+        delete next[huntKey];
+        return next;
+      });
+      setHuntStageByItem((prev) => {
         const next = { ...prev };
         delete next[huntKey];
         return next;
@@ -5311,6 +5418,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                   onCreateItem={handleCreateManualItem}
                   itemizing={itemizingPillar === activeTab}
                   huntProgressByItem={huntProgressByItem}
+                  huntStageByItem={huntStageByItem}
                   assistingItemId={assistingItemId}
                   expandedItems={expandedItems}
                   onToggleExpand={toggleItemExpansion}

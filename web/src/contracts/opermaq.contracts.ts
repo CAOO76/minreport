@@ -327,8 +327,8 @@ export const GlobalEquipmentTypeSchema = z.object({
     symbology_concept_ids: z.array(z.string()).optional(),
     type_aliases: z.array(z.string()).default([]),
     search_tokens: z.array(z.string()).default([]),
-    spec_schema: z.array(EquipmentTypeAxisSchema).min(2).max(12),
-    schema_version: z.number().int().positive().default(3),
+    spec_schema: z.array(EquipmentTypeAxisSchema).min(2).max(16),
+    schema_version: z.number().int().positive().default(8),
     origin: z.enum(['SEEDED_ISO_BASE', 'AI_CURATED', 'AI_DISCOVERED', 'HUMAN_CURATED_HITL']),
     is_human_locked: z.boolean().default(false),
     usage_count: z.number().int().nonnegative().default(0),
@@ -353,6 +353,85 @@ export const CanonicalSpecSlotSchema = z.object({
 
 export type CanonicalSpecSlot = z.infer<typeof CanonicalSpecSlotSchema>;
 
+export const TransmissionCategorySchema = z.enum([
+    'MANUAL_SYNCHRONIZED',
+    'MANUAL_UNSYNCHRONIZED_FULLER',
+    'AUTOMATED_MANUAL_AMT',
+    'AUTOMATIC_PLANETARY_CONVERTER',
+    'POWERSHIFT',
+    'HYDROSTATIC',
+    'ELECTRIC_DRIVE',
+    'DIRECT_MECHANICAL',
+    'NOT_APPLICABLE',
+]);
+
+export type TransmissionCategory = z.infer<typeof TransmissionCategorySchema>;
+
+export const AssetConfigurationProfileSchema = z.object({
+    axle_or_undercarriage_config: z.string().trim().max(120).nullable().default(null),
+    tire_or_track_count: z.number().int().positive().max(64).nullable().default(null),
+    transmission_category: TransmissionCategorySchema.nullable().default(null),
+    transmission_model_spec: z.string().trim().max(140).nullable().default(null),
+    work_body_or_implement: z.string().trim().max(160).nullable().default(null),
+    engine_or_prime_mover_spec: z.string().trim().max(160).nullable().default(null),
+    auxiliary_braking_spec: z.string().trim().max(140).nullable().default(null),
+    factory_emission_or_grid_spec: z.string().trim().max(140).nullable().default(null),
+    identification_source: z
+        .enum(['MULTIMODAL_PLATE_AND_PHOTO', 'GROUNDED_OEM_SPEC', 'HUMAN_CURATED'])
+        .default('GROUNDED_OEM_SPEC'),
+});
+
+export type AssetConfigurationProfile = z.infer<typeof AssetConfigurationProfileSchema>;
+
+export const EphemeralIdentificationImageInputSchema = z.object({
+    mimeType: z.enum(['image/webp', 'image/jpeg', 'image/png']),
+    base64Data: z.string().min(32).max(2_400_000),
+    hintLabel: z.string().trim().max(80).optional(),
+});
+
+export type EphemeralIdentificationImageInput = z.infer<typeof EphemeralIdentificationImageInputSchema>;
+
+export const OpticalIdentificationSummarySchema = z.object({
+    detected_make: z.string().trim().nullable().default(null),
+    detected_model_or_series: z.string().trim().nullable().default(null),
+    wmi_vds_structural_code: z.string().trim().nullable().default(null),
+    observed_axle_or_undercarriage: z.string().trim().nullable().default(null),
+    observed_transmission: z.string().trim().nullable().default(null),
+    observed_work_body_or_implement: z.string().trim().nullable().default(null),
+    observed_engine_or_rating: z.string().trim().nullable().default(null),
+    observed_emission_or_grid: z.string().trim().nullable().default(null),
+    evidence_notes_es: z.string().trim().nullable().default(null),
+    confidence: z.enum(['HIGH', 'MEDIUM', 'LOW']).default('MEDIUM'),
+});
+
+export type OpticalIdentificationSummary = z.infer<typeof OpticalIdentificationSummarySchema>;
+
+export const DisambiguationFacetKeySchema = z.enum([
+    'axle_config',
+    'transmission',
+    'work_body',
+    'emission_or_spec_origin',
+    'power_grid',
+    'model_family',
+]);
+
+export type DisambiguationFacetKey = z.infer<typeof DisambiguationFacetKeySchema>;
+
+export const DisambiguationFacetOptionSchema = z.object({
+    value: z.string().trim().min(1).max(96),
+    label_es: z.string().trim().min(1).max(120),
+    candidate_count: z.number().int().nonnegative().optional(),
+});
+
+export const DisambiguationFacetGroupSchema = z.object({
+    facet_key: DisambiguationFacetKeySchema,
+    label_es: z.string().trim().min(1).max(96),
+    helper_es: z.string().trim().max(160).optional(),
+    options: z.array(DisambiguationFacetOptionSchema).min(2).max(12),
+});
+
+export type DisambiguationFacetGroup = z.infer<typeof DisambiguationFacetGroupSchema>;
+
 export const FleetUnitRegistrationSchema = z.object({
     global_asset_id: z.string().optional(),
     make_oficial: z.string().min(1, 'Marca oficial requerida'),
@@ -362,6 +441,7 @@ export const FleetUnitRegistrationSchema = z.object({
     equipment_type_key: z.string().optional(),
     archetype_id: z.string().optional(),
     physical_traits: AssetPhysicalTraitsSchema.optional(),
+    configuration_profile: AssetConfigurationProfileSchema.optional(),
     canonical_specs: z.array(CanonicalSpecSlotSchema).optional(),
     energy_consumption_profile: EnergyConsumptionProfileSchema.optional(),
     ambiente_operativo: z.array(z.string()).optional(),

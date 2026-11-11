@@ -4,7 +4,7 @@ import { Request, Response, NextFunction } from 'express';
 import { db } from '../../../config/firebase';
 import { env } from '../../../config/env';
 import { constantTimeEqualStrings } from '../../../utils/security';
-import { PillarId, SEQUENTIAL_PILLAR_ORDER } from '../types/vault.types';
+import { type HuntIntent, PillarId, SEQUENTIAL_PILLAR_ORDER } from '../types/vault.types';
 import { huntVaultItem } from './ItemHunterService';
 
 /**
@@ -20,6 +20,7 @@ export interface HuntTaskPayload {
     globalAssetId: string;
     pillarId: PillarId;
     itemId: string;
+    intent?: HuntIntent;
     humanCorrection?: string;
     tenantId: string;
     actorId: string;
@@ -77,19 +78,23 @@ function drainPendingLocalQueue(): void {
 }
 
 async function runLocalWorkerSlot(payload: HuntTaskPayload): Promise<void> {
-    const { taskId, globalAssetId, pillarId, itemId, humanCorrection, actorId } = payload;
+    const { taskId, globalAssetId, pillarId, itemId, intent, humanCorrection, actorId } = payload;
     runningLocalWorkersCount++;
     try {
         await updateTaskStatus(taskId, {
             status: 'PROCESSING',
             progress_percent: 5,
-            progress_message: 'Iniciando agente especialista de caza OEM...',
+            progress_message:
+                intent === 'INCREMENTAL_UPDATE'
+                    ? 'Iniciando búsqueda de actualizaciones técnicas con IA...'
+                    : 'Iniciando agente especialista de caza OEM...',
         });
 
         const result = await huntVaultItem({
             globalAssetId,
             pillarId,
             itemId,
+            intent,
             humanCorrection,
             actorId,
             onProgress: async (percent, message) => {
@@ -106,10 +111,13 @@ async function runLocalWorkerSlot(payload: HuntTaskPayload): Promise<void> {
             progress_percent: 100,
             progress_message:
                 result.mode === 'CONFLICT_BUFFER'
-                    ? `Compulsa finalizada (${result.newConflictsCount} propuestas HITL).`
+                    ? `Actualización finalizada (+${result.addedNewCount} Nuevo Contenido · +${result.addedConflictCount} en Conflicto).`
                     : 'Caza técnica completada.',
+            intent: intent || (result.mode === 'CONFLICT_BUFFER' ? 'INCREMENTAL_UPDATE' : 'INITIAL_CAPTURE'),
             result_mode: result.mode,
             new_conflicts_count: result.newConflictsCount,
+            added_new_count: result.addedNewCount,
+            added_conflict_count: result.addedConflictCount,
             completed_at: new Date().toISOString(),
         });
     } catch (err: any) {
@@ -167,6 +175,7 @@ export async function enqueueItemHuntTask(
         globalAssetId: params.globalAssetId,
         pillarId: params.pillarId,
         itemId: params.itemId,
+        intent: params.intent,
         humanCorrection: params.humanCorrection,
         tenantId: params.tenantId,
         actorId: params.actorId,
@@ -178,6 +187,7 @@ export async function enqueueItemHuntTask(
         globalAssetId: params.globalAssetId,
         pillarId: params.pillarId,
         itemId: params.itemId,
+        intent: params.intent || 'INITIAL_CAPTURE',
         tenantId: params.tenantId,
         actorId: params.actorId,
         userId: params.actorId,
@@ -261,6 +271,7 @@ export async function recoverAndResumeOrphanedHuntTasks(): Promise<number> {
                         globalAssetId: String(d.globalAssetId),
                         pillarId: d.pillarId as PillarId,
                         itemId: String(d.itemId),
+                        intent: d.intent === 'INCREMENTAL_UPDATE' ? 'INCREMENTAL_UPDATE' : undefined,
                         tenantId: String(d.tenantId || 'dev-master-sandbox'),
                         actorId: String(d.actorId || 'dev-master-root-uid'),
                     });

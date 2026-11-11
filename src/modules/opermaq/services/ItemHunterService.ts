@@ -8,6 +8,7 @@ import {
 } from '../../../core/resilient-ai-client';
 import {
     type ExtractedFigureRef,
+    type HuntIntent,
     ItemizedSource,
     type PillarDocument,
     PillarId,
@@ -52,12 +53,18 @@ import {
     type CanonicalSpecSlot,
     deriveEnergyConsumptionProfile,
     hasOnlyGenericOrMissingContextItems,
+    normalizeCanonicalSlotsByResolvedEnergy,
     sanitizeDesignAndWorkContextItems,
+    sanitizePositivePresenceMarkdown,
     serializeCanonicalSlotsToSpecsArray,
 } from '../utils/canonicalArchetypeSpecs';
+import {
+    buildLockedVariantDirective,
+    inferAssetConfigurationProfile,
+} from '../utils/lockedVariantDirective';
 
 const symbologyPackRebuildTimers = new Map<string, NodeJS.Timeout>();
-function scheduleDebouncedAssetSymbologyPackRebuild(globalAssetId: string, delayMs = 3500): void {
+export function scheduleDebouncedAssetSymbologyPackRebuild(globalAssetId: string, delayMs = 3500): void {
     const existing = symbologyPackRebuildTimers.get(globalAssetId);
     if (existing) clearTimeout(existing);
     const timer = setTimeout(() => {
@@ -130,6 +137,20 @@ export async function reconcileAssetSidebarProfileFromVault(
             existingProfile: data.energy_consumption_profile,
         });
 
+        const preliminaryConfig = inferAssetConfigurationProfile({
+            make_oficial: makeOficial,
+            model_oficial: modelOficial,
+            tipo_equipo: data.tipo_equipo || typeDoc.canonical_type_es,
+            categoria_equipo: data.categoria_equipo || typeDoc.categoria_equipo,
+            version: data.version,
+            physical_traits: data.physical_traits,
+            canonical_specs: existingSlots,
+            caracteristicas_principales: data.caracteristicas_principales,
+            chassis_versions: data.chassis_versions,
+            extra_evidence_text: fullMarkdown.slice(0, 6000),
+            existing_profile: data.configuration_profile,
+        });
+
         // Fusionar esquema actualizado del TIPO con los slots existentes y rescatar valores verificados desde el Markdown del Pilar 01
         const preferMarkdown = Boolean(options?.preferVaultMarkdownOverExisting);
         const mergedSlots: CanonicalSpecSlot[] = typeDoc.spec_schema.map((schemaAxis) => {
@@ -159,6 +180,14 @@ export async function reconcileAssetSidebarProfileFromVault(
                     NEUMATICO_AIRE_COMPRIMIDO: 'Neumático (Aire Comprimido)',
                 };
                 rescuedValue = profile.energy_spec_label || mapLabel[profile.energy_source] || null;
+            } else if (schemaAxis.axis_key === 'transmision_caja') {
+                rescuedValue = preliminaryConfig.transmission_model_spec || null;
+            } else if (
+                schemaAxis.axis_key === 'traccion_ejes' ||
+                schemaAxis.axis_key === 'traccion' ||
+                schemaAxis.axis_key === 'configuracion_rodaje'
+            ) {
+                rescuedValue = preliminaryConfig.axle_or_undercarriage_config || null;
             } else if (schemaAxis.axis_key === 'consumo_energetico_nominal') {
                 rescuedValue =
                     profile.hourly_consumption_by_load.medium_load_50_65pct ||
@@ -227,28 +256,25 @@ export async function reconcileAssetSidebarProfileFromVault(
             };
         });
 
-        let nextAmbiente = sanitizeDesignAndWorkContextItems(data.ambiente_operativo);
-        let nextContexto = sanitizeDesignAndWorkContextItems(data.contexto_operativo);
+        const canonicalTypeLabel = String(data.tipo_equipo || typeDoc.canonical_type_es || '').trim();
+        let nextAmbiente = sanitizeDesignAndWorkContextItems(data.ambiente_operativo, undefined, {
+            canonicalTypeEs: canonicalTypeLabel,
+        });
+        let nextContexto = sanitizeDesignAndWorkContextItems(data.contexto_operativo, undefined, {
+            canonicalTypeEs: canonicalTypeLabel,
+        });
         let finalSlots = mergedSlots;
 
         const needsContextUpgrade =
-            hasOnlyGenericOrMissingContextItems(data.ambiente_operativo) ||
-            hasOnlyGenericOrMissingContextItems(data.contexto_operativo);
+            hasOnlyGenericOrMissingContextItems(data.ambiente_operativo, { canonicalTypeEs: canonicalTypeLabel }) ||
+            hasOnlyGenericOrMissingContextItems(data.contexto_operativo, { canonicalTypeEs: canonicalTypeLabel });
         const missingDiffAxes = finalSlots.filter((s) => s.is_differentiator && !s.value_si).length;
 
-        if (
-            (needsContextUpgrade || missingDiffAxes > 0) &&
-            (fullMarkdown.trim().length > 200 || options?.allowGroundedEnrichmentIfNeeded)
-        ) {
+        // CORTAFUEGOS ANTI-AUTOCONTAMINACIÓN (v9.6):
+        // Prohibido pasar `fullMarkdown` (generado por IA en Pilar 01) como supuesta evidencia OEM a `enrichCatalogProfile`.
+        // El enriquecimiento lateral solo se ejecuta cuando `allowGroundedEnrichmentIfNeeded === true` contra corpus PDF local o web verificada.
+        if (Boolean(options?.allowGroundedEnrichmentIfNeeded) && (needsContextUpgrade || missingDiffAxes > 0)) {
             try {
-                const gatheredSources = fichaItems
-                    .flatMap((it) => (Array.isArray(it.item_sources) ? it.item_sources : []))
-                    .filter((s) => s && s.url)
-                    .map((s) => ({ uri: s.url, title: `${s.author}: ${s.description}` }));
-                if (primaryVerifiedUrl && !gatheredSources.some((g) => g.uri === primaryVerifiedUrl)) {
-                    gatheredSources.unshift({ uri: primaryVerifiedUrl, title: `${makeOficial} ${modelOficial} OEM` });
-                }
-
                 const enriched = await enrichCatalogProfile(
                     makeOficial,
                     modelOficial,
@@ -262,17 +288,27 @@ export async function reconcileAssetSidebarProfileFromVault(
                     Boolean(data.is_generic),
                     {
                         globalAssetId,
-                        preRetrievedEvidenceText: fullMarkdown.trim().length > 200 ? fullMarkdown : undefined,
-                        preRetrievedSources: gatheredSources.length > 0 ? gatheredSources : undefined,
                         preResolvedTypeDoc: typeDoc,
                     }
                 );
 
-                if (!hasOnlyGenericOrMissingContextItems(enriched.ambiente_operativo)) {
-                    nextAmbiente = enriched.ambiente_operativo;
+                if (
+                    !hasOnlyGenericOrMissingContextItems(enriched.ambiente_operativo, {
+                        canonicalTypeEs: canonicalTypeLabel,
+                    })
+                ) {
+                    nextAmbiente = sanitizeDesignAndWorkContextItems(enriched.ambiente_operativo, undefined, {
+                        canonicalTypeEs: canonicalTypeLabel,
+                    });
                 }
-                if (!hasOnlyGenericOrMissingContextItems(enriched.contexto_operativo)) {
-                    nextContexto = enriched.contexto_operativo;
+                if (
+                    !hasOnlyGenericOrMissingContextItems(enriched.contexto_operativo, {
+                        canonicalTypeEs: canonicalTypeLabel,
+                    })
+                ) {
+                    nextContexto = sanitizeDesignAndWorkContextItems(enriched.contexto_operativo, undefined, {
+                        canonicalTypeEs: canonicalTypeLabel,
+                    });
                 }
                 if (Array.isArray(enriched.canonical_specs)) {
                     finalSlots = finalSlots.map((slot) => {
@@ -286,7 +322,28 @@ export async function reconcileAssetSidebarProfileFromVault(
             }
         }
 
+        finalSlots = normalizeCanonicalSlotsByResolvedEnergy(finalSlots, {
+            typeContextText: canonicalTypeLabel,
+            primaryEnergy: data.physical_traits?.primary_energy || null,
+            energyValueText:
+                profile.energy_spec_label ||
+                (profile.energy_source !== 'NO_DECLARADO' ? profile.energy_source : null),
+        });
+
         const nextCaracteristicas = serializeCanonicalSlotsToSpecsArray(finalSlots);
+        const nextConfigProfile = inferAssetConfigurationProfile({
+            make_oficial: makeOficial,
+            model_oficial: modelOficial,
+            tipo_equipo: data.tipo_equipo || typeDoc.canonical_type_es,
+            categoria_equipo: data.categoria_equipo || typeDoc.categoria_equipo,
+            version: data.version,
+            physical_traits: data.physical_traits,
+            canonical_specs: finalSlots,
+            caracteristicas_principales: nextCaracteristicas,
+            chassis_versions: data.chassis_versions,
+            extra_evidence_text: fullMarkdown.slice(0, 6000),
+            existing_profile: data.configuration_profile,
+        });
 
         await docRef.update({
             equipment_type_key: typeDoc.type_key,
@@ -295,6 +352,7 @@ export async function reconcileAssetSidebarProfileFromVault(
             ambiente_operativo: nextAmbiente,
             contexto_operativo: nextContexto,
             energy_consumption_profile: profile,
+            configuration_profile: nextConfigProfile,
             updatedAt: Date.now(),
         });
 
@@ -337,6 +395,7 @@ export interface HuntItemOptions {
     globalAssetId: string;
     pillarId: PillarId;
     itemId: string;
+    intent?: HuntIntent;
     humanCorrection?: string;
     forceOverwrite?: boolean;
     recordAdvisoryIfLocked?: boolean;
@@ -353,8 +412,55 @@ export interface HuntItemResult {
     hunted_at: string;
     mode: 'INITIAL_HUNT' | 'CONFLICT_BUFFER' | 'LOCKED_ADVISORY';
     newConflictsCount: number;
+    addedNewCount: number;
+    addedConflictCount: number;
     harvestedFiguresCount?: number;
     error?: string;
+}
+
+const PILLAR_INCREMENTAL_FOCUS: Record<PillarId, string> = {
+    ficha_tecnica:
+        'Magnitudes nominales en unidades SI, curvas de consumo horario/específico, pesos operativos, dimensiones, capacidades hidráulicas/eléctricas y resolución de ejes canónicos pendientes.',
+    manual_operaciones:
+        'Mandos de cabina/panel, secuencias operativas de arranque/parada, límites de pendiente/carga, testigos ISO 7000/2575 y coherencia estricta con capacidades del Pilar 01.',
+    pauta_mantencion:
+        'Intervalos preventivos PM (horas o ciclos), viscosidades SAE/ISO, capacidades de llenado, códigos de filtro, pares de apriete N·m, tren de rodado/neumáticos y elementos de desgaste GET.',
+    matriz_riesgos:
+        'Energías peligrosas del activo, controles críticos, puntos de aislamiento LOTO (Energía Cero), umbrales DS N° 132, DS N° 594 (PREXOR/PLANESI), ISO 12100 y señalética ISO 7010 / GHS.',
+    checklist_pre_op:
+        'Puntos de inspección perimetral 360°, niveles, fugas, frenos, dirección, parada de emergencia, extintores/AFEX y criterios objetivos PASA / NO PASA pre-turno.',
+};
+
+function buildIncrementalUpdateDirective(pillarId: PillarId, currentItem: PillarItem): string {
+    const existingText = String(currentItem.content || '').trim();
+    if (!existingText) return '';
+
+    const rawLines = existingText.split('\n').map((l) => l.trim()).filter(Boolean);
+    const undeclaredContextLines = rawLines
+        .filter((l) => /informaci[oó]n t[eé]cnica no declarada|pendiente de registro|IMAGEN_PENDIENTE/i.test(l))
+        .slice(0, 12);
+
+    const declaredFactLines = rawLines
+        .filter(
+            (l) =>
+                !/^\|[\s:-]+\|$/.test(l) &&
+                !/informaci[oó]n t[eé]cnica no declarada|pendiente de registro|IMAGEN_PENDIENTE/i.test(l) &&
+                (/\d/.test(l) || l.startsWith('|') || l.startsWith('#'))
+        )
+        .slice(0, 28);
+
+    return [
+        `\nMODO DE OPERACIÓN INDEPENDIENTE: ACTUALIZACIÓN EVOLUTIVA DE CONTENIDO EXISTENTE (${pillarId.toUpperCase()})`,
+        `- Foco forense prioritario del pilar: ${PILLAR_INCREMENTAL_FOCUS[pillarId]}`,
+        undeclaredContextLines.length > 0
+            ? `- BRECHAS ABIERTAS EN EL CAPÍTULO VIGENTE (PRIORIDAD 1 — BUSCAR DATOS REALES OEM PARA COMPLETARLAS COMO NUEVO CONTENIDO):\n  ${undeclaredContextLines.join('\n  ')}`
+            : `- Sin marcadores de dato faltante explícito; buscar parámetros técnicos complementarios omitidos o boletines OEM actualizados.`,
+        declaredFactLines.length > 0
+            ? `- EXTRACTO DE PARÁMETROS ACTUALMENTE REGISTRADOS (CONTRASTAR CONTRA FUENTES OFICIALES PARA DETECTAR ACTUALIZACIONES O DISCREPANCIAS REALES):\n  ${declaredFactLines.join('\n  ').slice(0, 2800)}`
+            : '',
+    ]
+        .filter(Boolean)
+        .join('\n');
 }
 
 const DIFF_SCHEMA = {
@@ -368,7 +474,12 @@ const DIFF_SCHEMA = {
                     estado_fusion: {
                         type: Type.STRING,
                         description:
-                            'NUEVO (información complementaria ausente) o CONFLICTO (contradicción numérica o procedimental con el texto vigente).',
+                            'NUEVO (dato ausente o que resuelve [Información técnica no declarada en ficha]) o CONFLICTO (contradicción numérica, normativa o procedimental con el texto vigente).',
+                    },
+                    componente_especifico: {
+                        type: Type.STRING,
+                        description:
+                            'Nombre conciso del parámetro, subsistema o paso técnico afectado (ej. "Capacidad Estanque Hidráulico", "Intervalo PM 500 h").',
                     },
                     valor_actual: { type: Type.STRING },
                     valor_nuevo: { type: Type.STRING },
@@ -391,19 +502,25 @@ export async function detectContentDifferences(
     primarySource?: ItemizedSource,
     attachedFigures?: ExtractedFigureRef[]
 ): Promise<ProposedUpdate[]> {
-    const prompt = `Actúa como Compulsor Técnico Forense OEM para "${makeModel}" — Capítulo "${itemTitle}".
-Compara el CONTENIDO VIGENTE de la bóveda contra el NUEVO HALLAZGO DE CAZA WEB.
+    const pillarFocus = PILLAR_INCREMENTAL_FOCUS[pillarId];
+    const prompt = `Actúa como Compulsor Técnico Forense OEM para "${makeModel}" — Capítulo "${itemTitle}" (${pillarId}).
+Foco de auditoría del pilar: ${pillarFocus}
 
-REGLAS:
-1. Ignora diferencias meramente estilísticas o de redacción equivalente.
-2. Si el nuevo hallazgo aporta datos duros reales que faltaban en el contenido vigente (capacidades, torques, pasos verificados), clasifícalo con "estado_fusion": "NUEVO".
-3. Si el nuevo hallazgo contradice un valor numérico, viscosidad, intervalo u orden crítico del contenido vigente, clasifícalo con "estado_fusion": "CONFLICTO" citando exactamente "valor_actual".
-4. Si no hay diferencias sustanciales reales, devuelve "differences": [].
+Compara el CONTENIDO VIGENTE de la bóveda contra la NUEVA EVIDENCIA TÉCNICA RECOPILADA.
+
+REGLAS ESTRICTAS DE CLASIFICACIÓN:
+1. Ignora diferencias meramente estilísticas, sinónimos o reordenamientos equivalentes. Prohibido reportar parámetros que siguen siendo "[Información técnica no declarada en ficha]".
+2. Clasifica como "estado_fusion": "NUEVO" cuando:
+   - La nueva evidencia aporta un valor verificado que en el contenido vigente figuraba como "[Información técnica no declarada en ficha]" o "[Pendiente de registro]" (indica ese marcador en "valor_actual").
+   - La nueva evidencia incorpora especificaciones, intervalos, advertencias normativas o criterios verificados que no existían en el contenido vigente.
+3. Clasifica como "estado_fusion": "CONFLICTO" únicamente cuando la nueva evidencia contradice un valor numérico, unidad SI, grado de fluido, intervalo, umbral normativo o paso crítico ya declarado en el contenido vigente (cita literalmente el fragmento exacto en "valor_actual").
+4. Conserva las referencias de trazabilidad [F#] presentes en "valor_nuevo" cuando existan.
+5. Si no hay información nueva verificada ni discrepancias técnicas reales, devuelve "differences": [].
 
 === CONTENIDO VIGENTE ===
 ${existingContent}
 
-=== NUEVO HALLAZGO DE CAZA ===
+=== NUEVA EVIDENCIA TÉCNICA ===
 ${newHuntedContent}`;
 
     const nowIso = new Date().toISOString();
@@ -414,6 +531,7 @@ ${newHuntedContent}`;
         const { data } = await ResilientAIClient.generateStructured<{
             differences: Array<{
                 estado_fusion: string;
+                componente_especifico?: string;
                 valor_actual?: string;
                 valor_nuevo: string;
                 synthesis: string;
@@ -422,46 +540,52 @@ ${newHuntedContent}`;
             module: 'opermaq',
             preferredTier: 'SECONDARY',
             temperature: 0.1,
+            bypassCache: true,
             responseSchema: DIFF_SCHEMA,
             prompt,
         });
 
-        return (Array.isArray(data.differences) ? data.differences : []).map((d, idx) => ({
-            proposal_id: `prop_${itemId}_${Date.now()}_${idx}`,
-            estado_fusion: d.estado_fusion === 'CONFLICTO' ? 'CONFLICTO' : 'NUEVO',
-            zona: pillarId,
-            componente: itemTitle || itemId,
-            tipo_input: 'text_block',
-            is_oem: isOem,
-            valor_actual: d.valor_actual || '',
-            valor_nuevo: d.valor_nuevo,
-            condicion_esperada: d.valor_nuevo,
-            synthesis: d.synthesis,
-            source_url: srcUrl,
-            detected_at: nowIso,
-            human_decision: null,
-            fact_fingerprint: computeFactFingerprint(d.valor_nuevo, itemTitle),
-            figures: idx === 0 && attachedFigures && attachedFigures.length > 0 ? attachedFigures : undefined,
-        }));
-    } catch {
-        return [
-            {
-                proposal_id: `prop_${itemId}_${Date.now()}_0`,
-                estado_fusion: 'CONFLICTO',
-                zona: pillarId,
-                componente: itemTitle || itemId,
-                tipo_input: 'text_block',
-                is_oem: isOem,
-                valor_actual: existingContent.slice(0, 400),
-                valor_nuevo: newHuntedContent,
-                synthesis: 'Propuesta íntegra de re-caza web pendiente de revisión comparativa HITL.',
-                source_url: srcUrl,
-                detected_at: nowIso,
-                human_decision: null,
-                fact_fingerprint: computeFactFingerprint(newHuntedContent, itemTitle),
-                figures: attachedFigures && attachedFigures.length > 0 ? attachedFigures : undefined,
-            },
-        ];
+        return (Array.isArray(data.differences) ? data.differences : [])
+            .filter(
+                (d) =>
+                    d &&
+                    typeof d.valor_nuevo === 'string' &&
+                    d.valor_nuevo.trim().length > 0 &&
+                    !/^\[?informaci[oó]n t[eé]cnica no declarada/i.test(d.valor_nuevo.trim())
+            )
+            .map((d, idx) => {
+                const fusion: 'NUEVO' | 'CONFLICTO' =
+                    d.estado_fusion === 'CONFLICTO' &&
+                    d.valor_actual &&
+                    !/informaci[oó]n t[eé]cnica no declarada|pendiente de registro/i.test(d.valor_actual)
+                        ? 'CONFLICTO'
+                        : 'NUEVO';
+                const cleanSubComponent = String(d.componente_especifico || '').trim();
+                const displayComponente = cleanSubComponent
+                    ? `${itemTitle} · ${cleanSubComponent}`
+                    : itemTitle || itemId;
+
+                return {
+                    proposal_id: `prop_${itemId}_${Date.now()}_${idx}`,
+                    estado_fusion: fusion,
+                    zona: pillarId,
+                    componente: displayComponente,
+                    tipo_input: 'text_block',
+                    is_oem: isOem,
+                    valor_actual: d.valor_actual || '',
+                    valor_nuevo: d.valor_nuevo.trim(),
+                    condicion_esperada: d.valor_nuevo.trim(),
+                    synthesis: d.synthesis,
+                    source_url: srcUrl,
+                    detected_at: nowIso,
+                    human_decision: null,
+                    fact_fingerprint: computeFactFingerprint(d.valor_nuevo, itemTitle),
+                    figures: idx === 0 && attachedFigures && attachedFigures.length > 0 ? attachedFigures : undefined,
+                };
+            });
+    } catch (err: any) {
+        console.warn(`[ItemHunterService] Error estructurando compulsa incremental en ${itemId}:`, err?.message);
+        return [];
     }
 }
 
@@ -749,16 +873,38 @@ export async function huntVaultItem(options: HuntItemOptions): Promise<HuntItemR
         throw err;
     }
 
-    await onProgress?.(20, 'Consultando corpus local de manuales PDF/ETT y catálogo vectorial ISO...');
+    const hasCurrentContent = Boolean(currentItem.content && currentItem.content.trim().length > 0);
+    const effectiveIntent: HuntIntent =
+        options.intent === 'INCREMENTAL_UPDATE' || (hasCurrentContent && !forceOverwrite && !humanCorrection)
+            ? 'INCREMENTAL_UPDATE'
+            : 'INITIAL_CAPTURE';
+    const isIncrementalUpdate = effectiveIntent === 'INCREMENTAL_UPDATE' && hasCurrentContent;
+    const bypassInferenceCache = effectiveIntent === 'INCREMENTAL_UPDATE' || Boolean(humanCorrection);
+
+    await onProgress?.(
+        20,
+        isIncrementalUpdate
+            ? 'Contrastando manuales PDF/ETT, pilares previos y fuentes externas OEM para actualización...'
+            : 'Consultando corpus local de manuales PDF/ETT y catálogo vectorial ISO...'
+    );
 
     await ensureUniversalSymbologySeeded(false);
 
     // 1. Consulta Corpus-First en fragmentos locales `vault_corpus_chunks` (`768d`)
-    const localChunks = await SegmentedDocumentProcessorService.searchLocalAssetCorpus(
+    //    En actualización incremental se excluye el chunk autocurado del propio ítem para evitar bucle de autorreferencia (F-03).
+    const selfCuratedChunkId = `curated_${pillarId}_${itemId}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
+    const rawLocalChunks = await SegmentedDocumentProcessorService.searchLocalAssetCorpus(
         globalAssetId,
         `${currentItem.section || ''} ${currentItem.title} ${currentItem.rationale || ''}`,
-        5
+        isIncrementalUpdate ? 8 : 5
     );
+    const localChunks = rawLocalChunks.filter((c) => {
+        if (c.chunkId === selfCuratedChunkId) return false;
+        if (isIncrementalUpdate && /Curadur[ií]a T[eé]cnica HITL Soberana/i.test(String(c.sourceFilename || ''))) {
+            return false;
+        }
+        return true;
+    });
 
     const extraVaultDocSnippets: string[] = [];
     const localDocSources: ItemizedSource[] = [];
@@ -807,23 +953,30 @@ export async function huntVaultItem(options: HuntItemOptions): Promise<HuntItemR
             : '';
 
     const intraPillarContext = buildIntraPillarConsistencyAndScopeContext(pillar, currentItem);
+    const lockedVariantDirective = buildLockedVariantDirective(assetData);
 
     const profileSummary = [
         `- Activo: ${makeModel} (${assetData.tipo_equipo || ''})`,
         `- Categoría: ${assetData.categoria_equipo || ''}`,
         `- Ambientes: ${(assetData.ambiente_operativo || []).join(', ')}`,
         `- Referencia de perfil NO VERIFICADA (solo orientativa; confirmar cada valor con fuente OEM y PROHIBIDO citarla como fuente): ${(assetData.caracteristicas_principales || []).join(' | ')}`,
+        lockedVariantDirective ? `\n${lockedVariantDirective}` : '',
         crossPillarContext.promptBlock,
         intraPillarContext,
     ]
         .filter(Boolean)
         .join('\n');
 
+    const incrementalDirective = isIncrementalUpdate
+        ? buildIncrementalUpdateDirective(pillarId, currentItem)
+        : '';
+
     const feedbackBlock = [
         currentItem.review_notes
             ? `\nOBSERVACIÓN DE RECHAZO HUMANO PREVIO (CORREGIR OBLIGATORIAMENTE): "${currentItem.review_notes}"`
             : '',
         humanCorrection ? `\nDIRECTIVA HUMANA EXPRESA PARA ESTA CAZA: "${humanCorrection}"` : '',
+        incrementalDirective,
     ]
         .filter(Boolean)
         .join('\n');
@@ -842,7 +995,12 @@ INSTRUCCIÓN DE REDACCIÓN TÉCNICA FUNDAMENTADA (MARKDOWN PURO + SIMBOLOGÍA IN
 PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia visual explícita, y PROHIBIDO inventar URLs.
 5. Si un valor específico no aparece en la documentación consultada, indícalo como [Información técnica no declarada en ficha].`;
 
-    await onProgress?.(42, `Ejecutando caza profunda multimodal OEM para "${currentItem.title}"...`);
+    await onProgress?.(
+        42,
+        isIncrementalUpdate
+            ? `Investigando actualizaciones y discrepancias OEM para "${currentItem.title}"...`
+            : `Ejecutando caza profunda multimodal OEM para "${currentItem.title}"...`
+    );
 
     let inferenceHeartbeatTimer: NodeJS.Timeout | null = null;
     let heartbeatPct = 42;
@@ -852,19 +1010,22 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                 heartbeatPct = Math.min(64, heartbeatPct + 4);
                 void onProgress(
                     heartbeatPct,
-                    `Consultando evidencia técnica OEM para "${currentItem.title}"...`
+                    isIncrementalUpdate
+                        ? `Contrastando evidencia OEM frente al contenido vigente de "${currentItem.title}"...`
+                        : `Consultando evidencia técnica OEM para "${currentItem.title}"...`
                 );
             }
         }, 4000);
     }
 
     try {
-        // CAPA IA AD-HOC 1: Agente Investigador Forense (`SOVEREIGN_VAULT_FIRST` + Fallback Grounded, `SEC-01`)
+        // CAPA IA AD-HOC 1: Agente Investigador Forense (`SOVEREIGN_VAULT_FIRST` en captura inicial; contraste abierto en actualización incremental)
         let aiText = '';
         let groundingSources: Array<{ uri: string; title: string }> = [];
         let groundingCandidate: any = null;
 
         const hasStrongSovereignLocalCorpus =
+            !isIncrementalUpdate &&
             (localChunks.filter((c) => Number(c.score || 0) >= 0.45).length >= 2 ||
                 extraVaultDocSnippets.length >= 2) &&
             !humanCorrection;
@@ -878,6 +1039,7 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                         systemInstruction: agent.systemPrompt,
                         temperature: 0.05,
                         maxOutputTokens: 8192,
+                        bypassCache: bypassInferenceCache,
                         useGoogleSearch: false,
                         requireGroundedEvidence: false,
                         useUrlContext: false,
@@ -900,6 +1062,7 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                     systemInstruction: agent.systemPrompt,
                     temperature: 0.1,
                     maxOutputTokens: 8192,
+                    bypassCache: bypassInferenceCache,
                     useGoogleSearch: true,
                     requireGroundedEvidence: !hasSovereignOrPreverifiedEvidence,
                     useUrlContext: false,
@@ -918,6 +1081,7 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                     systemInstruction: agent.systemPrompt,
                     temperature: 0.05,
                     maxOutputTokens: 8192,
+                    bypassCache: bypassInferenceCache,
                     useGoogleSearch: false,
                     requireGroundedEvidence: false,
                     thinkingLevel: 'low',
@@ -946,8 +1110,11 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
             throw new Error('El agente de caza devolvió contenido vacío.');
         }
 
-        // 1. Normalización determinista SI (`NeuroSymbolicVerifier`: psi, gal, lb-ft, lb, hp, gpm, mph, yd³, °F)
-        const unitNormalizedMarkdown = verifyAndNormalizeTechnicalUnits(rawMarkdownContent).normalizedMarkdown;
+        // 1. Normalización determinista SI (`NeuroSymbolicVerifier`) + Sanitizador de Presencia Positiva Estricta (`v9.6`)
+        const unitNormalizedMarkdown = sanitizePositivePresenceMarkdown(
+            verifyAndNormalizeTechnicalUnits(rawMarkdownContent).normalizedMarkdown,
+            { pillarId }
+        );
 
         await onProgress?.(
             68,
@@ -1191,6 +1358,8 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                     mergedSources: targetItem.item_sources || [],
                     mode: 'LOCKED_ADVISORY' as const,
                     newConflictsCount: 0,
+                    addedNewCount: 0,
+                    addedConflictCount: 0,
                     addedFiguresCount: 0,
                 };
             }
@@ -1219,6 +1388,7 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
             );
 
             const existingFingerprints = new Set<string>(targetItem.fact_fingerprints || []);
+            const rejectedFingerprints = new Set<string>(targetItem.rejected_fact_fingerprints || []);
             const hasExistingContent =
                 Boolean(targetItem.content && targetItem.content.trim().length > 0) &&
                 !forceOverwrite &&
@@ -1226,8 +1396,14 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
 
             let mode: 'INITIAL_HUNT' | 'CONFLICT_BUFFER' = 'INITIAL_HUNT';
             let newConflictsCount = 0;
+            let addedNewCount = 0;
+            let addedConflictCount = 0;
+
+            targetItem.initial_hunt_activated_at = targetItem.initial_hunt_activated_at || nowIso;
 
             if (hasExistingContent) {
+                // F-04 INMUTABILIDAD HITL ESTRICTA: Cero mutación directa sobre `content`, `figures`, `symbology_refs` ni `item_sources`.
+                // Todos los hallazgos se encapsulan exclusivamente en `pending_conflicts[]` (NUEVO / CONFLICTO) hasta aprobación 1 a 1.
                 mode = 'CONFLICT_BUFFER';
                 const pendingFingerprints = new Set<string>(
                     (targetItem.pending_conflicts || []).map(
@@ -1236,26 +1412,24 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                 );
                 const dedupedDiffs = preComputedDiffs.filter((d) => {
                     const fp = d.fact_fingerprint || computeFactFingerprint(d.valor_nuevo || '', targetItem.title);
-                    if (existingFingerprints.has(fp) || pendingFingerprints.has(fp)) return false;
+                    if (
+                        existingFingerprints.has(fp) ||
+                        pendingFingerprints.has(fp) ||
+                        rejectedFingerprints.has(fp)
+                    ) {
+                        return false;
+                    }
                     pendingFingerprints.add(fp);
                     return true;
                 });
 
+                addedNewCount = dedupedDiffs.filter((d) => d.estado_fusion === 'NUEVO').length;
+                addedConflictCount = dedupedDiffs.filter((d) => d.estado_fusion === 'CONFLICTO').length;
                 newConflictsCount = dedupedDiffs.length;
+
                 targetItem.content_status = 'COMPLETADO';
                 targetItem.hunt_error = null;
                 targetItem.hunted_at = nowIso;
-                targetItem.item_sources = mergedSources;
-                if (newFigures.length > 0 && targetItem.content) {
-                    targetItem.content = reconcileSectionFiguresAndPendingMarkers(
-                        targetItem.content,
-                        newFigures,
-                        mergedSources,
-                        targetItem.title
-                    );
-                }
-                targetItem.figures = filterFiguresReferencedInMarkdown(targetItem.content || '', mergedFigures);
-                targetItem.symbology_refs = [...verifiedSymbologyRefs];
                 targetItem.media_harvest_report = mediaHarvestReport
                     ? { ...mediaHarvestReport, corpus_figures: corpusFigures.length, table_chart: false, traceability: traceAnalysis.stats, evidence_docs: evidenceDocs.length, at: nowIso }
                     : { corpus_figures: corpusFigures.length, table_chart: false, traceability: traceAnalysis.stats, evidence_docs: evidenceDocs.length, at: nowIso };
@@ -1317,9 +1491,11 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
             freshItems[freshIdx] = targetItem;
 
             const pillarSources = [...(freshPillar.classified_sources_itemized || [])];
-            for (const src of classifiedSources) {
-                if (src?.url && !pillarSources.some((ps) => ps.url === src.url)) {
-                    pillarSources.push(src);
+            if (mode === 'INITIAL_HUNT') {
+                for (const src of classifiedSources) {
+                    if (src?.url && !pillarSources.some((ps) => ps.url === src.url)) {
+                        pillarSources.push(src);
+                    }
                 }
             }
 
@@ -1347,22 +1523,26 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
 
             return {
                 targetItem,
-                mergedSources,
+                mergedSources: mode === 'INITIAL_HUNT' ? mergedSources : targetItem.item_sources || [],
                 mode,
                 newConflictsCount,
-                addedFiguresCount: newFigures.length,
+                addedNewCount,
+                addedConflictCount,
+                addedFiguresCount: mode === 'INITIAL_HUNT' ? newFigures.length : 0,
             };
         });
 
-        // 5. Actualizar paquete ad-hoc de simbología del activo con debounce (`VEL-03`) para evitar contención en cazas concurrentes
-        scheduleDebouncedAssetSymbologyPackRebuild(globalAssetId);
+        // 5. En modo INITIAL_HUNT (poblado fundacional), actualizar simbología, ficha lateral y matriz de costos.
+        //    En modo CONFLICT_BUFFER (actualización IA), estos derivados se actualizan únicamente cuando el humano aprueba 1 a 1 en `/vault/decide-proposal`.
+        if (txOutcome.mode === 'INITIAL_HUNT') {
+            scheduleDebouncedAssetSymbologyPackRebuild(globalAssetId);
 
-        // 5b. Sincronizar perfil de consumos de energía, slots canónicos y matriz automática de costos e insumos
-        if (pillarId === 'ficha_tecnica') {
-            await syncEnergyProfileAndCanonicalSpecs(globalAssetId).catch(() => undefined);
-        }
-        if (pillarId === 'ficha_tecnica' || pillarId === 'pauta_mantencion') {
-            await buildAndPersistEquipmentCostMatrix(globalAssetId).catch(() => null);
+            if (pillarId === 'ficha_tecnica') {
+                await syncEnergyProfileAndCanonicalSpecs(globalAssetId).catch(() => undefined);
+            }
+            if (pillarId === 'ficha_tecnica' || pillarId === 'pauta_mantencion') {
+                await buildAndPersistEquipmentCostMatrix(globalAssetId).catch(() => null);
+            }
         }
 
         // 6. Trazabilidad Criptográfica Inmutable en `AuditLedger` (`SEC-05`: preserva `actorId` humano)
@@ -1371,13 +1551,14 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
             actorUid: actorId || 'SYSTEM_HUNTER_V5',
             actorEmail: actorEmail || 'system@minreport.com',
             module: 'opermaq',
-            action: txOutcome.mode === 'CONFLICT_BUFFER' ? 'VAULT_ITEM_REHUNTED_DIFF' : 'VAULT_ITEM_HUNTED',
+            action: txOutcome.mode === 'CONFLICT_BUFFER' ? 'VAULT_ITEM_INCREMENTAL_UPDATE_DIFF' : 'VAULT_ITEM_HUNTED',
             targetEntity: `global_asset_catalog/${globalAssetId}/knowledge_vault/${pillarId}/${itemId}`,
             details: {
                 makeModel,
                 pillarId,
                 itemId,
                 itemTitle: txOutcome.targetItem.title,
+                intent: effectiveIntent,
                 mode: txOutcome.mode,
                 sourcesCount: txOutcome.mergedSources.length,
                 symbologyRefsCount: (txOutcome.targetItem.symbology_refs || []).length,
@@ -1389,10 +1570,17 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                 mediaHarvestRejections: mediaHarvestReport?.rejections || {},
                 harvestedFiguresCount: txOutcome.addedFiguresCount,
                 newConflictsCount: txOutcome.newConflictsCount,
+                addedNewCount: txOutcome.addedNewCount,
+                addedConflictCount: txOutcome.addedConflictCount,
             },
         }).catch(() => undefined);
 
-        await onProgress?.(100, 'Caza técnica multimodal finalizada exitosamente.');
+        await onProgress?.(
+            100,
+            txOutcome.mode === 'CONFLICT_BUFFER'
+                ? `Actualización IA completada (+${txOutcome.addedNewCount} Nuevo Contenido · +${txOutcome.addedConflictCount} en Conflicto).`
+                : 'Caza técnica multimodal finalizada exitosamente.'
+        );
 
         return {
             success: true,
@@ -1402,6 +1590,8 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
             hunted_at: nowIso,
             mode: txOutcome.mode,
             newConflictsCount: txOutcome.newConflictsCount,
+            addedNewCount: txOutcome.addedNewCount,
+            addedConflictCount: txOutcome.addedConflictCount,
             harvestedFiguresCount: txOutcome.addedFiguresCount,
         };
     } catch (err: any) {
@@ -1416,8 +1606,10 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                 const items: PillarItem[] = [...(pDoc?.items || [])];
                 const idx = items.findIndex((i) => i.item_id === itemId);
                 if (idx !== -1) {
+                    const failIso = new Date().toISOString();
                     items[idx] = {
                         ...items[idx],
+                        initial_hunt_activated_at: items[idx].initial_hunt_activated_at || failIso,
                         content_status: items[idx].content ? 'COMPLETADO' : 'ERROR',
                         hunt_error: err?.message || 'Error en caza técnica.',
                     };
@@ -1428,7 +1620,7 @@ PROHIBIDO insertar este marcador en secciones de solo tablas o sin referencia vi
                             ...pDoc,
                             pillar_id: pillarId,
                             items,
-                            updated_at: new Date().toISOString(),
+                            updated_at: failIso,
                         },
                     });
                 }

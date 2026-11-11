@@ -8,10 +8,15 @@ i18n
     .init({
         fallbackLng: 'es',
         supportedLngs: ['es', 'en', 'pt'],
+        load: 'languageOnly',
         detection: {
             order: ['localStorage', 'navigator'],
             lookupLocalStorage: 'i18nextLng',
             caches: ['localStorage'],
+        },
+        react: {
+            bindI18n: 'languageChanged loaded',
+            bindI18nStore: 'added removed',
         },
         interpolation: {
             escapeValue: false,
