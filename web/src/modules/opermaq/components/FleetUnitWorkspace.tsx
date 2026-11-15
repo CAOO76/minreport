@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import type { AssetPhysicalTraits } from '../../../contracts';
+import { ManufacturerLogoBadge } from './ManufacturerLogoBadge';
 import { mediaDigestorClient } from '../../../core/media/MediaDigestorClient';
-import { syncQueueEngine } from '../../../core/offline/SyncQueueEngine';
 import { API_BASE_URL } from '../firebase/config';
 import { useOpermaqContext } from '../hooks/useOpermaqContext';
 import type { PillarId } from '../types/vault';
@@ -31,24 +32,7 @@ interface PrivatePhotoRecord {
     caption?: string;
     width?: number;
     height?: number;
-    original_bytes?: number;
-    optimized_bytes?: number;
-    savings_pct?: number;
-    originalBytes?: number;
-    optimizedBytes?: number;
-    savingsPct?: number;
     uploadedAt?: string;
-}
-
-interface TenantCustomOverridesRecord {
-    faena_name?: string;
-    altitude_masl?: number;
-    internal_radio_channel?: string;
-    max_ramp_speed_kmh?: number;
-    emergency_protocol_notes?: string;
-    custom_pm_derating_factor?: number;
-    custom_checklist_additions?: string[];
-    private_operational_notes?: string;
 }
 
 interface FleetUnitDetail {
@@ -70,7 +54,6 @@ interface FleetUnitDetail {
     cycles_count?: number;
     calibration_due_date?: string;
     physical_traits?: AssetPhysicalTraits;
-    tenant_custom_overrides?: TenantCustomOverridesRecord;
     tenant_id?: string;
     tenantId?: string;
     private_photos: PrivatePhotoRecord[];
@@ -127,20 +110,13 @@ interface ClientContributionRecord {
     reviewed_at: string | null;
 }
 
-const PILLAR_TABS: Array<{ id: PillarId; labelKey: string }> = [
-    { id: 'ficha_tecnica', labelKey: 'vault_dashboard.pillars.ficha_tecnica' },
-    { id: 'manual_operaciones', labelKey: 'vault_dashboard.pillars.manual_operaciones' },
-    { id: 'pauta_mantencion', labelKey: 'vault_dashboard.pillars.pauta_mantencion' },
-    { id: 'matriz_riesgos', labelKey: 'vault_dashboard.pillars.matriz_riesgos' },
-    { id: 'checklist_pre_op', labelKey: 'vault_dashboard.pillars.checklist_pre_op' },
+const PILLAR_TABS: Array<{ id: PillarId; icon: string; labelKey: string }> = [
+    { id: 'ficha_tecnica', icon: 'fact_check', labelKey: 'vault_dashboard.pillars.ficha_tecnica' },
+    { id: 'manual_operaciones', icon: 'settings', labelKey: 'vault_dashboard.pillars.manual_operaciones' },
+    { id: 'pauta_mantencion', icon: 'build', labelKey: 'vault_dashboard.pillars.pauta_mantencion' },
+    { id: 'matriz_riesgos', icon: 'security', labelKey: 'vault_dashboard.pillars.matriz_riesgos' },
+    { id: 'checklist_pre_op', icon: 'rule', labelKey: 'vault_dashboard.pillars.checklist_pre_op' },
 ];
-
-function formatCasBytesCompact(bytes: number): string {
-    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
-    if (bytes < 1024) return `${Math.round(bytes)} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-}
 
 function highlightUndeclaredInFleetText(text: string, baseKey: string): React.ReactNode[] {
     const regex = createUndeclaredContentRegex();
@@ -196,7 +172,7 @@ function renderInlineMarkdown(text: string): React.ReactNode[] {
             nodes.push(
                 <code
                     key={`c-${keySeq++}`}
-                    className="px-[8px] py-0.5 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] font-mono tabular-nums text-[12px] text-[#0F172A] dark:text-[#F3F4F6] select-text"
+                    className="px-[8px] py-0.5 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] font-mono tabular-nums text-[0.8125rem] text-[#0F172A] dark:text-[#F3F4F6] select-text"
                 >
                     {highlightUndeclaredInFleetText(match[4], `c-u-${keySeq}`)}
                 </code>
@@ -262,9 +238,8 @@ function renderPublishedMarkdown(raw: string, pillarId?: PillarId): React.ReactN
                                     {headerRow.map((h, hIdx) => (
                                         <th
                                             key={hIdx}
-                                            className={`px-[13px] py-[8px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] ${
-                                                hIdx === indexColIdx ? 'text-center whitespace-nowrap' : 'text-left'
-                                            }`}
+                                            className={`px-[13px] py-[8px] text-microcopy font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] ${hIdx === indexColIdx ? 'text-center whitespace-nowrap' : 'text-left'
+                                                }`}
                                         >
                                             {renderInlineMarkdown(h)}
                                         </th>
@@ -277,11 +252,10 @@ function renderPublishedMarkdown(raw: string, pillarId?: PillarId): React.ReactN
                                         {r.map((c, cIdx) => (
                                             <td
                                                 key={cIdx}
-                                                className={`px-[13px] py-[8px] align-top ${
-                                                    cIdx === indexColIdx
-                                                        ? 'text-center font-bold text-[#C68346] whitespace-nowrap'
-                                                        : 'text-[#0F172A] dark:text-[#F3F4F6]'
-                                                }`}
+                                                className={`px-[13px] py-[8px] align-top ${cIdx === indexColIdx
+                                                    ? 'text-center font-bold text-[#C68346] whitespace-nowrap'
+                                                    : 'text-[#0F172A] dark:text-[#F3F4F6]'
+                                                    }`}
                                             >
                                                 {cIdx === indexColIdx
                                                     ? c.replace(/^\*\*|\*\*$/g, '')
@@ -303,7 +277,7 @@ function renderPublishedMarkdown(raw: string, pillarId?: PillarId): React.ReactN
             blocks.push(
                 <h5
                     key={`h4-${i}`}
-                    className="text-[12px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] pt-[8px]"
+                    className="text-[0.8125rem] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] pt-[8px]"
                 >
                     {renderInlineMarkdown(line.slice(5))}
                 </h5>
@@ -384,7 +358,8 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
     onBack,
 }) => {
     const { t } = useTranslation();
-    const { tenantId, capabilities } = useOpermaqContext();
+    const navigate = useNavigate();
+    const { tenantId, capabilities, hostScope } = useOpermaqContext();
 
     const [unit, setUnit] = useState<FleetUnitDetail | null>(null);
     const [publishedVault, setPublishedVault] = useState<PublishedVaultPayload | null>(null);
@@ -397,22 +372,6 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
 
     const [uploadingPhoto, setUploadingPhoto] = useState<boolean>(false);
     const [deletingPhotoSha, setDeletingPhotoSha] = useState<string | null>(null);
-    const [pendingDeletePhotoSha, setPendingDeletePhotoSha] = useState<string | null>(null);
-    const [confirmDeletePhotoWord, setConfirmDeletePhotoWord] = useState<string>('');
-
-    const [isConfirmingDeleteUnit, setIsConfirmingDeleteUnit] = useState<boolean>(false);
-    const [confirmDeleteUnitWord, setConfirmDeleteUnitWord] = useState<string>('');
-    const [deletingUnit, setDeletingUnit] = useState<boolean>(false);
-
-    const [isEditingOverrides, setIsEditingOverrides] = useState<boolean>(false);
-    const [savingOverrides, setSavingOverrides] = useState<boolean>(false);
-    const [overridesStatusNotice, setOverridesStatusNotice] = useState<string | null>(null);
-    const [overrideFaenaName, setOverrideFaenaName] = useState<string>('');
-    const [overrideAltitudeMasl, setOverrideAltitudeMasl] = useState<string>('');
-    const [overrideRadioChannel, setOverrideRadioChannel] = useState<string>('');
-    const [overrideMaxRampSpeed, setOverrideMaxRampSpeed] = useState<string>('');
-    const [overrideNotes, setOverrideNotes] = useState<string>('');
-    const [confirmOverridesWord, setConfirmOverridesWord] = useState<string>('');
 
     const [uploadingPdf, setUploadingPdf] = useState<boolean>(false);
     const [pdfStatusNotice, setPdfStatusNotice] = useState<string | null>(null);
@@ -421,56 +380,11 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
     const pdfInputRef = useRef<HTMLInputElement | null>(null);
 
     const canMutateUnit = capabilities.canManageFleet || capabilities.canCurateAI;
-    const unitCacheKey = `opermaq_unit_detail_${tenantId || 'default'}_${tenantAssetId}`;
 
     const loadWorkspaceData = useCallback(async () => {
         setLoading(true);
         setErrorMsg(null);
         const headers = tenantId ? { 'X-Active-Account-Id': tenantId } : undefined;
-
-        let hydratedUnit: FleetUnitDetail | null = null;
-        try {
-            hydratedUnit = await syncQueueEngine.getOfflineKnowledge<FleetUnitDetail>(unitCacheKey);
-            if (!hydratedUnit && tenantId) {
-                const cachedFleet = await syncQueueEngine.getOfflineKnowledge<FleetUnitDetail[]>(
-                    `opermaq_fleet_${tenantId}`
-                );
-                const match = Array.isArray(cachedFleet)
-                    ? cachedFleet.find((u) => u && u.id === tenantAssetId) || null
-                    : null;
-                if (match) {
-                    hydratedUnit = {
-                        ...match,
-                        private_photos: Array.isArray(match.private_photos) ? match.private_photos : [],
-                    };
-                }
-            }
-            if (hydratedUnit) {
-                setUnit(hydratedUnit);
-            }
-            const cachedGlobalId = String(
-                hydratedUnit?.global_asset_id || globalAssetId || ''
-            ).trim();
-            if (cachedGlobalId) {
-                const [cachedVault, cachedContribs] = await Promise.all([
-                    syncQueueEngine.getOfflineKnowledge<PublishedVaultPayload>(
-                        `opermaq_published_vault_${cachedGlobalId}`
-                    ),
-                    syncQueueEngine.getOfflineKnowledge<ClientContributionRecord[]>(
-                        `opermaq_unit_contribs_${tenantId || 'default'}_${cachedGlobalId}`
-                    ),
-                ]);
-                if (cachedVault) setPublishedVault(cachedVault);
-                if (Array.isArray(cachedContribs)) setContributions(cachedContribs);
-            }
-        } catch {
-            // Continuar con carga de red si IndexedDB no está disponible
-        }
-
-        if (typeof navigator !== 'undefined' && !navigator.onLine && hydratedUnit) {
-            setLoading(false);
-            return;
-        }
 
         try {
             const unitRes = await authFetch(`${API_BASE_URL}/assets/unit/${encodeURIComponent(tenantAssetId)}`, {
@@ -483,7 +397,6 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
 
             const loadedUnit: FleetUnitDetail = unitJson.unit;
             setUnit(loadedUnit);
-            void syncQueueEngine.saveOfflineKnowledge(unitCacheKey, loadedUnit);
 
             const targetGlobalId = String(loadedUnit.global_asset_id || globalAssetId || '').trim();
             if (targetGlobalId) {
@@ -498,35 +411,20 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
 
                 if (pubRes.ok) {
                     const pubJson = await pubRes.json().catch(() => null);
-                    if (pubJson) {
-                        setPublishedVault(pubJson);
-                        void syncQueueEngine.saveOfflineKnowledge(
-                            `opermaq_published_vault_${targetGlobalId}`,
-                            pubJson
-                        );
-                    }
+                    if (pubJson) setPublishedVault(pubJson);
                 }
 
                 if (contribRes.ok) {
                     const contribJson = await contribRes.json().catch(() => ({}));
-                    const contribItems: ClientContributionRecord[] = Array.isArray(contribJson?.items)
-                        ? contribJson.items
-                        : [];
-                    setContributions(contribItems);
-                    void syncQueueEngine.saveOfflineKnowledge(
-                        `opermaq_unit_contribs_${tenantId || 'default'}_${targetGlobalId}`,
-                        contribItems
-                    );
+                    setContributions(Array.isArray(contribJson?.items) ? contribJson.items : []);
                 }
             }
         } catch (err: unknown) {
-            if (!hydratedUnit) {
-                setErrorMsg(err instanceof Error ? err.message : t('vault_dashboard.load_error'));
-            }
+            setErrorMsg(err instanceof Error ? err.message : t('vault_dashboard.load_error'));
         } finally {
             setLoading(false);
         }
-    }, [tenantAssetId, globalAssetId, tenantId, unitCacheKey, t]);
+    }, [tenantAssetId, globalAssetId, tenantId, t]);
 
     useEffect(() => {
         void loadWorkspaceData();
@@ -543,140 +441,6 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
         }
     };
 
-    const handleOpenEditOverrides = () => {
-        const cur = unit?.tenant_custom_overrides;
-        setOverrideFaenaName(cur?.faena_name || '');
-        setOverrideAltitudeMasl(
-            typeof cur?.altitude_masl === 'number' ? String(cur.altitude_masl) : ''
-        );
-        setOverrideRadioChannel(cur?.internal_radio_channel || '');
-        setOverrideMaxRampSpeed(
-            typeof cur?.max_ramp_speed_kmh === 'number' ? String(cur.max_ramp_speed_kmh) : ''
-        );
-        setOverrideNotes(cur?.private_operational_notes || '');
-        setConfirmOverridesWord('');
-        setOverridesStatusNotice(null);
-        setIsEditingOverrides(true);
-    };
-
-    const handleSaveOverrides = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!unit || confirmOverridesWord.trim() !== 'ACTUALIZAR') return;
-
-        setSavingOverrides(true);
-        setErrorMsg(null);
-        setOverridesStatusNotice(null);
-
-        const effectiveTenant = unit.tenant_id || unit.tenantId || tenantId || undefined;
-        const parsedAlt =
-            overrideAltitudeMasl.trim() !== ''
-                ? Math.max(0, Math.min(6000, Number(overrideAltitudeMasl) || 0))
-                : undefined;
-        const parsedSpeed =
-            overrideMaxRampSpeed.trim() !== ''
-                ? Math.max(5, Math.min(120, Number(overrideMaxRampSpeed) || 5))
-                : undefined;
-
-        const nextOverrides: TenantCustomOverridesRecord = {
-            ...unit.tenant_custom_overrides,
-            ...(overrideFaenaName.trim() ? { faena_name: overrideFaenaName.trim() } : { faena_name: undefined }),
-            ...(typeof parsedAlt === 'number' ? { altitude_masl: parsedAlt } : { altitude_masl: undefined }),
-            ...(overrideRadioChannel.trim()
-                ? { internal_radio_channel: overrideRadioChannel.trim() }
-                : { internal_radio_channel: undefined }),
-            ...(typeof parsedSpeed === 'number'
-                ? { max_ramp_speed_kmh: parsedSpeed }
-                : { max_ramp_speed_kmh: undefined }),
-            ...(overrideNotes.trim()
-                ? { private_operational_notes: overrideNotes.trim() }
-                : { private_operational_notes: undefined }),
-        };
-
-        const payload: Record<string, unknown> = {
-            confirm_word: 'ACTUALIZAR',
-            ...(overrideFaenaName.trim() ? { faena_name: overrideFaenaName.trim() } : {}),
-            ...(typeof parsedAlt === 'number' ? { altitude_masl: parsedAlt } : {}),
-            ...(overrideRadioChannel.trim() ? { internal_radio_channel: overrideRadioChannel.trim() } : {}),
-            ...(typeof parsedSpeed === 'number' ? { max_ramp_speed_kmh: parsedSpeed } : {}),
-            ...(overrideNotes.trim() ? { private_operational_notes: overrideNotes.trim() } : {}),
-        };
-
-        const applyLocalOverrides = (queuedOffline: boolean) => {
-            const nextUnit: FleetUnitDetail = {
-                ...unit,
-                tenant_custom_overrides: nextOverrides,
-            };
-            setUnit(nextUnit);
-            void syncQueueEngine.saveOfflineKnowledge(unitCacheKey, nextUnit);
-            setIsEditingOverrides(false);
-            setConfirmOverridesWord('');
-            setOverridesStatusNotice(
-                queuedOffline
-                    ? t('opermaq_domains.overrides_queued_offline')
-                    : t('opermaq_domains.overrides_saved_notice')
-            );
-        };
-
-        if (typeof navigator !== 'undefined' && !navigator.onLine) {
-            try {
-                await syncQueueEngine.enqueueApiMutation(
-                    `/api/assets/${unit.id}/overrides`,
-                    payload,
-                    'OPERMAQ_OVERRIDE_SYNC',
-                    effectiveTenant,
-                    'PATCH'
-                );
-                applyLocalOverrides(true);
-            } catch (err: unknown) {
-                setErrorMsg(err instanceof Error ? err.message : t('common.error'));
-            } finally {
-                setSavingOverrides(false);
-            }
-            return;
-        }
-
-        try {
-            const res = await authFetch(
-                `${API_BASE_URL}/assets/${encodeURIComponent(unit.id)}/overrides`,
-                {
-                    method: 'PATCH',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        ...(effectiveTenant ? { 'X-Active-Account-Id': effectiveTenant } : {}),
-                    },
-                    body: JSON.stringify(payload),
-                }
-            );
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                throw new Error(data?.message || data?.error || t('common.error'));
-            }
-            applyLocalOverrides(false);
-        } catch (err: unknown) {
-            const isNetworkFailure =
-                (typeof navigator !== 'undefined' && !navigator.onLine) || err instanceof TypeError;
-            if (isNetworkFailure) {
-                try {
-                    await syncQueueEngine.enqueueApiMutation(
-                        `/api/assets/${unit.id}/overrides`,
-                        payload,
-                        'OPERMAQ_OVERRIDE_SYNC',
-                        effectiveTenant,
-                        'PATCH'
-                    );
-                    applyLocalOverrides(true);
-                    return;
-                } catch (queueErr: unknown) {
-                    setErrorMsg(queueErr instanceof Error ? queueErr.message : t('common.error'));
-                    return;
-                }
-            }
-            setErrorMsg(err instanceof Error ? err.message : t('common.error'));
-        } finally {
-            setSavingOverrides(false);
-        }
-    };
-
     const handlePrivatePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         e.target.value = '';
@@ -684,29 +448,17 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
 
         setUploadingPhoto(true);
         setErrorMsg(null);
-        const clientOriginalBytes = file.size;
-        let clientOptimizedBytes = file.size;
-        let clientSavingsPct = 0;
-        let preflightSha256 = '';
-
         try {
             let payloadBlob: File | Blob = file;
             try {
                 const digested = await mediaDigestorClient.digestFile(file, 'IMAGE_FIELD_EVIDENCE');
                 payloadBlob = digested.blob;
-                clientOptimizedBytes = digested.optimizedBytes;
-                clientSavingsPct = Math.max(0, Number((digested.savingsRatio * 100).toFixed(1)));
-                preflightSha256 = digested.sha256;
             } catch {
                 payloadBlob = file;
             }
 
             const form = new FormData();
             form.append('file', payloadBlob, file.name || 'equipo_flota.webp');
-            form.append('clientOriginalBytes', String(clientOriginalBytes));
-            if (preflightSha256) {
-                form.append('sha256', preflightSha256);
-            }
 
             const res = await authFetch(
                 `${API_BASE_URL}/assets/${encodeURIComponent(unit.id)}/private-photo`,
@@ -721,28 +473,16 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                 throw new Error(data?.error || t('common.error'));
             }
 
-            const rawPhotos: PrivatePhotoRecord[] = Array.isArray(data.private_photos)
-                ? data.private_photos
-                : unit.private_photos;
-            const enrichedPhotos = rawPhotos.map((p, idx) => {
-                const isTarget =
-                    (preflightSha256 && p.sha256 === preflightSha256) ||
-                    (!preflightSha256 && idx === rawPhotos.length - 1);
-                if (!isTarget) return p;
-                return {
-                    ...p,
-                    original_bytes: p.original_bytes ?? p.originalBytes ?? clientOriginalBytes,
-                    optimized_bytes: p.optimized_bytes ?? p.optimizedBytes ?? clientOptimizedBytes,
-                    savings_pct: p.savings_pct ?? p.savingsPct ?? clientSavingsPct,
-                };
-            });
-
-            const nextUnit: FleetUnitDetail = {
-                ...unit,
-                private_photos: enrichedPhotos,
-            };
-            setUnit(nextUnit);
-            void syncQueueEngine.saveOfflineKnowledge(unitCacheKey, nextUnit);
+            setUnit((prev) =>
+                prev
+                    ? {
+                        ...prev,
+                        private_photos: Array.isArray(data.private_photos)
+                            ? data.private_photos
+                            : prev.private_photos,
+                    }
+                    : prev
+            );
         } catch (err: unknown) {
             setErrorMsg(err instanceof Error ? err.message : t('common.error'));
         } finally {
@@ -751,81 +491,35 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
     };
 
     const handleDeletePrivatePhoto = async (sha256: string) => {
-        if (!unit || !sha256 || confirmDeletePhotoWord.trim() !== 'ACTUALIZAR') return;
+        if (!unit || !sha256) return;
         setDeletingPhotoSha(sha256);
         setErrorMsg(null);
         try {
             const res = await authFetch(
-                `${API_BASE_URL}/assets/${encodeURIComponent(unit.id)}/private-photo/${encodeURIComponent(sha256)}?confirmWord=ACTUALIZAR`,
+                `${API_BASE_URL}/assets/${encodeURIComponent(unit.id)}/private-photo/${encodeURIComponent(sha256)}`,
                 {
                     method: 'DELETE',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        ...(tenantId ? { 'X-Active-Account-Id': tenantId } : {}),
-                    },
-                    body: JSON.stringify({ confirmWord: 'ACTUALIZAR' }),
+                    headers: tenantId ? { 'X-Active-Account-Id': tenantId } : undefined,
                 }
             );
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
-                throw new Error(data?.message || data?.error || t('common.error'));
+                throw new Error(data?.error || t('common.error'));
             }
-            const nextPhotos = Array.isArray(data.private_photos)
-                ? data.private_photos
-                : unit.private_photos.filter((p) => p.sha256 !== sha256);
-            const nextUnit: FleetUnitDetail = {
-                ...unit,
-                private_photos: nextPhotos,
-            };
-            setUnit(nextUnit);
-            void syncQueueEngine.saveOfflineKnowledge(unitCacheKey, nextUnit);
-            setPendingDeletePhotoSha(null);
-            setConfirmDeletePhotoWord('');
+            setUnit((prev) =>
+                prev
+                    ? {
+                        ...prev,
+                        private_photos: Array.isArray(data.private_photos)
+                            ? data.private_photos
+                            : prev.private_photos.filter((p) => p.sha256 !== sha256),
+                    }
+                    : prev
+            );
         } catch (err: unknown) {
             setErrorMsg(err instanceof Error ? err.message : t('common.error'));
         } finally {
             setDeletingPhotoSha(null);
-        }
-    };
-
-    const handleDeleteUnit = async () => {
-        if (!unit || confirmDeleteUnitWord.trim() !== 'ACTUALIZAR') return;
-        setDeletingUnit(true);
-        setErrorMsg(null);
-        try {
-            const res = await authFetch(
-                `${API_BASE_URL}/assets/${encodeURIComponent(unit.id)}?confirmWord=ACTUALIZAR`,
-                {
-                    method: 'DELETE',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        ...(tenantId ? { 'X-Active-Account-Id': tenantId } : {}),
-                    },
-                    body: JSON.stringify({ confirmWord: 'ACTUALIZAR' }),
-                }
-            );
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                throw new Error(data?.message || data?.error || t('common.error'));
-            }
-            if (tenantId) {
-                const cachedFleet = await syncQueueEngine
-                    .getOfflineKnowledge<FleetUnitDetail[]>(`opermaq_fleet_${tenantId}`)
-                    .catch(() => null);
-                if (Array.isArray(cachedFleet)) {
-                    void syncQueueEngine.saveOfflineKnowledge(
-                        `opermaq_fleet_${tenantId}`,
-                        cachedFleet.filter((u) => u && u.id !== unit.id)
-                    );
-                }
-            }
-            setIsConfirmingDeleteUnit(false);
-            setConfirmDeleteUnitWord('');
-            onBack();
-        } catch (err: unknown) {
-            setErrorMsg(err instanceof Error ? err.message : t('common.error'));
-        } finally {
-            setDeletingUnit(false);
         }
     };
 
@@ -849,26 +543,10 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
         setErrorMsg(null);
 
         try {
-            let pdfBlob: File | Blob = file;
-            let clientOriginalBytes = file.size;
-            let pdfSha256 = '';
-            try {
-                const digestedPdf = await mediaDigestorClient.digestPdf(file);
-                pdfBlob = digestedPdf.blob;
-                clientOriginalBytes = digestedPdf.originalBytes;
-                pdfSha256 = digestedPdf.sha256;
-            } catch {
-                pdfBlob = file;
-            }
-
             const form = new FormData();
-            form.append('file', pdfBlob, file.name);
+            form.append('file', file);
             form.append('globalAssetId', resolvedGlobalId);
             form.append('tenantAssetId', unit.id);
-            form.append('clientOriginalBytes', String(clientOriginalBytes));
-            if (pdfSha256) {
-                form.append('sha256', pdfSha256);
-            }
 
             const res = await authFetch(`${API_BASE_URL}/vault/client-contribute-pdf`, {
                 method: 'POST',
@@ -887,11 +565,7 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
 
             setPdfStatusNotice(
                 netNew > 0
-                    ? t('opermaq_domains.pdf_evaluated_notice', {
-                          totalPages,
-                          skippedCount: skippedPages + skippedSem,
-                          netNew,
-                      })
+                    ? `PDF evaluado (${totalPages} pág. · ${skippedPages + skippedSem} duplicadas omitidas · ${netNew} propuestas en revisión humana MINREPORT).`
                     : `${t('opermaq_domains.status_deduplicated')} (${totalPages} pág.).`
             );
 
@@ -903,14 +577,7 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
             );
             if (contribRes.ok) {
                 const contribJson = await contribRes.json().catch(() => ({}));
-                const contribItems: ClientContributionRecord[] = Array.isArray(contribJson?.items)
-                    ? contribJson.items
-                    : [];
-                setContributions(contribItems);
-                void syncQueueEngine.saveOfflineKnowledge(
-                    `opermaq_unit_contribs_${tenantId || 'default'}_${resolvedGlobalId}`,
-                    contribItems
-                );
+                setContributions(Array.isArray(contribJson?.items) ? contribJson.items : []);
             }
         } catch (err: unknown) {
             setErrorMsg(err instanceof Error ? err.message : t('common.error'));
@@ -935,7 +602,7 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
         return (
             <div className="h-full w-full flex flex-col items-center justify-center p-[34px] gap-[13px] bg-[#FFFFFF] dark:bg-[#000000]">
                 <M3CircularProgress size={28} strokeWidth={3} tone="copper" />
-                <span className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                <span className="text-microcopy font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                     {t('fleet.syncing')}
                 </span>
             </div>
@@ -970,7 +637,6 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
     const effectiveOwnerTenant = unit?.tenant_id || unit?.tenantId || tenantId;
     const activePillarData = publishedVault?.published_pillars?.[activePillar];
     const activePillarItems = activePillarData?.items || [];
-    const customOverrides = unit?.tenant_custom_overrides;
 
     return (
         <div className="h-full w-full flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-sans select-none rounded-none shadow-none overflow-hidden">
@@ -986,18 +652,23 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                     >
                         <span className="material-symbols-outlined text-[20px]">arrow_back</span>
                     </button>
+                    <ManufacturerLogoBadge
+                        make={unit?.make_oficial || publishedVault?.make_oficial || officialTitle}
+                        variant="compact"
+                        size="md"
+                    />
                     <div className="min-w-0">
                         <div className="flex items-baseline gap-[8px] min-w-0">
                             <h1 className="text-[17px] font-semibold leading-tight text-[#0F172A] dark:text-[#F3F4F6] truncate">
                                 {officialTitle}
                             </h1>
                             {unit?.version && unit.version !== 'ESTÁNDAR' && (
-                                <span className="text-[11px] font-mono text-[#94A3B8] dark:text-[#5A6072] shrink-0">
+                                <span className="text-microcopy font-mono text-[#94A3B8] dark:text-[#5A6072] shrink-0">
                                     {unit.version}
                                 </span>
                             )}
                         </div>
-                        <p className="text-[12px] text-[#475569] dark:text-[#8A93A6] truncate">
+                        <p className="text-[0.8125rem] text-[#475569] dark:text-[#8A93A6] truncate">
                             {cleanMachineryTypeLabel(unit?.tipo_equipo || publishedVault?.tipo_equipo)}
                         </p>
                     </div>
@@ -1023,69 +694,53 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
 
                     <button
                         type="button"
+                        onClick={() => {
+                            const jumpMake = (
+                                unit?.make_oficial ||
+                                publishedVault?.make_oficial ||
+                                officialTitle ||
+                                ''
+                            ).trim();
+                            const jumpTipo = (unit?.tipo_equipo || publishedVault?.tipo_equipo || '').trim();
+                            try {
+                                sessionStorage.setItem(
+                                    'opermaq_manufacturer_jump_context',
+                                    JSON.stringify({
+                                        make: jumpMake,
+                                        tipoEquipo: jumpTipo,
+                                        timestamp: Date.now(),
+                                    })
+                                );
+                            } catch {
+                                // Ignore storage errors in constrained browsers
+                            }
+                            window.dispatchEvent(
+                                new CustomEvent('opermaq:open-manufacturer-channels', {
+                                    detail: { make: jumpMake, tipoEquipo: jumpTipo },
+                                })
+                            );
+                            if (hostScope === 'CLIENT') {
+                                navigate('/opermaq/fabricantes');
+                            }
+                        }}
+                        title={t('opermaq_domains.view_supplier_channels')}
+                        aria-label={t('opermaq_domains.view_supplier_channels')}
+                        className={flatIconBtn}
+                    >
+                        <span className="material-symbols-outlined text-[18px]">factory</span>
+                    </button>
+
+                    <button
+                        type="button"
                         onClick={() => void loadWorkspaceData()}
-                        title={t('common.refresh')}
-                        aria-label={t('common.refresh')}
+                        title={t('common.refresh', 'Actualizar')}
+                        aria-label={t('common.refresh', 'Actualizar')}
                         className={flatIconBtn}
                     >
                         <span className="material-symbols-outlined text-[18px]">refresh</span>
                     </button>
-
-                    {canMutateUnit && unit && (
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setIsConfirmingDeleteUnit((prev) => !prev);
-                                setConfirmDeleteUnitWord('');
-                            }}
-                            title={t('opermaq_domains.delete_unit_tooltip')}
-                            aria-label={t('opermaq_domains.delete_unit_tooltip')}
-                            className={flatIconBtn}
-                        >
-                            <span className="material-symbols-outlined text-[18px]">delete</span>
-                        </button>
-                    )}
                 </div>
             </header>
-
-            {isConfirmingDeleteUnit && canMutateUnit && unit && (
-                <div className="px-[21px] py-[13px] border-b border-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col sm:flex-row sm:items-center justify-between gap-[13px] shrink-0">
-                    <span className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6]">
-                        {t('opermaq_domains.confirm_delete_unit_prompt')}
-                    </span>
-                    <div className="flex items-center gap-[8px]">
-                        <input
-                            type="text"
-                            autoComplete="off"
-                            spellCheck={false}
-                            value={confirmDeleteUnitWord}
-                            onChange={(e) => setConfirmDeleteUnitWord(e.target.value.toUpperCase())}
-                            placeholder="ACTUALIZAR"
-                            className="h-8 w-40 px-[8px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[12px] font-mono tracking-widest uppercase text-center text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none select-text"
-                        />
-                        <button
-                            type="button"
-                            disabled={deletingUnit || confirmDeleteUnitWord.trim() !== 'ACTUALIZAR'}
-                            onClick={() => void handleDeleteUnit()}
-                            className="h-8 px-[13px] bg-[#C68346] hover:bg-[#b0743e] disabled:opacity-40 text-white text-[11px] font-mono font-bold uppercase tracking-[0.05em] border-0 rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
-                        >
-                            {t('common.confirm')}
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setIsConfirmingDeleteUnit(false);
-                                setConfirmDeleteUnitWord('');
-                            }}
-                            title={t('common.cancel')}
-                            aria-label={t('common.cancel')}
-                            className={flatIconBtn}
-                        >
-                            <span className="material-symbols-outlined text-[16px]">close</span>
-                        </button>
-                    </div>
-                </div>
-            )}
 
             {errorMsg && (
                 <div className="px-[21px] py-[8px] border-b border-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D] flex items-center justify-between gap-[13px]">
@@ -1101,12 +756,12 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                 </div>
             )}
 
-            {/* Macro-Layout Proporción Áurea (61.8% Informe 5 Pilares / 38.2% Unidad, Overrides, Fotos Privadas y Aporte PDF) */}
+            {/* Macro-Layout Proporción Áurea (61.8% Informe 5 Pilares / 38.2% Unidad, Fotos Privadas y Aporte PDF) */}
             <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
                 {/* ÁREA MAYOR (61.8%) — Informe Técnico Oficial de los 5 Pilares (Solo Lectura, APROBADO_HUMANO) */}
                 <section className="w-full lg:w-[61.8%] h-full flex flex-col min-h-0 overflow-hidden bg-[#FFFFFF] dark:bg-[#000000]">
                     <div className="px-[21px] pt-[13px] border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] shrink-0">
-                        <div className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF] mb-[8px]">
+                        <div className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF] mb-[8px]">
                             {t('opermaq_domains.published_report_heading')}
                         </div>
 
@@ -1120,13 +775,14 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                                         key={pillar.id}
                                         type="button"
                                         onClick={() => setActivePillar(pillar.id)}
-                                        className={`px-[13px] py-[8px] bg-transparent border-0 border-b-2 text-[12px] font-mono uppercase tracking-[0.03em] whitespace-nowrap flex items-center gap-[8px] transition-colors cursor-pointer rounded-none shadow-none ${isActive
+                                        className={`px-[13px] py-[8px] bg-transparent border-0 border-b-2 text-[0.8125rem] font-mono uppercase tracking-[0.03em] whitespace-nowrap flex items-center gap-[8px] transition-colors cursor-pointer rounded-none ${isActive
                                             ? 'border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-bold'
                                             : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                                             }`}
                                     >
+                                        <span className="material-symbols-outlined text-[16px]">{pillar.icon}</span>
                                         <span>{t(pillar.labelKey)}</span>
-                                        <span className="tabular-nums text-[11px] text-[#94A3B8] dark:text-[#5A6072]">
+                                        <span className="tabular-nums text-microcopy text-[#94A3B8] dark:text-[#5A6072]">
                                             ({count})
                                         </span>
                                     </button>
@@ -1151,14 +807,14 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                                     >
                                         <header className="flex items-baseline justify-between gap-[13px]">
                                             <div className="flex items-baseline gap-[8px] min-w-0">
-                                                <span className="text-[12px] font-mono tabular-nums font-bold text-[#C68346]">
+                                                <span className="text-[0.8125rem] font-mono tabular-nums font-bold text-[#C68346]">
                                                     {String(item.order).padStart(2, '0')}.
                                                 </span>
                                                 <h2 className="text-[17px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                                                     {item.title}
                                                 </h2>
                                             </div>
-                                            <span className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072] shrink-0">
+                                            <span className="text-microcopy font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072] shrink-0">
                                                 {item.section}
                                             </span>
                                         </header>
@@ -1180,7 +836,7 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                                                                 imgClassName="w-full h-full object-contain"
                                                             />
                                                             {fig.caption && (
-                                                                <figcaption className="text-[12px] text-[#475569] dark:text-[#8A93A6]">
+                                                                <figcaption className="text-[0.8125rem] text-[#475569] dark:text-[#8A93A6]">
                                                                     {fig.caption}
                                                                 </figcaption>
                                                             )}
@@ -1196,12 +852,12 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                     </div>
                 </section>
 
-                {/* ÁREA MENOR (38.2%) — Datos de Serie, Overrides Operativos Offline-First, Fotografías Privadas y Envío de PDF */}
+                {/* ÁREA MENOR (38.2%) — Datos de Serie, Fotografías Privadas y Envío de PDF a Cuarentena */}
                 <aside className="w-full lg:w-[38.2%] h-full overflow-y-auto border-t lg:border-t-0 lg:border-l border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-[21px] space-y-[21px]">
                     {/* Bloque 1: Ficha Acreditativa de Unidad */}
-                    <section className="p-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] space-y-[13px] rounded-none shadow-none">
+                    <section className="p-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] space-y-[13px] rounded-none">
                         <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-[8px]">
-                            <span className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#C68346]">
+                            <span className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#C68346]">
                                 {t('opermaq_domains.serial_label')}
                             </span>
                             <div className="flex items-center gap-[8px]">
@@ -1224,7 +880,7 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
 
                         <dl className="grid grid-cols-2 gap-[13px] text-[13px]">
                             <div>
-                                <dt className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
+                                <dt className="text-microcopy font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
                                     {t('opermaq_domains.ownership_label')}
                                 </dt>
                                 <dd className="font-mono font-semibold text-[#0F172A] dark:text-[#F3F4F6] mt-0.5">
@@ -1233,7 +889,7 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                             </div>
                             {showHorometer && (
                                 <div>
-                                    <dt className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
+                                    <dt className="text-microcopy font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
                                         {t('opermaq_domains.horometer_label')}
                                     </dt>
                                     <dd className="font-mono tabular-nums font-semibold text-[#0F172A] dark:text-[#F3F4F6] mt-0.5">
@@ -1245,8 +901,8 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                             )}
                             {showOdometerKm && (
                                 <div>
-                                    <dt className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
-                                        {t('opermaq_domains.odometer_km_label')}
+                                    <dt className="text-microcopy font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
+                                        {t('opermaq_domains.odometer_km_label', 'ODÓMETRO (KM)')}
                                     </dt>
                                     <dd className="font-mono tabular-nums font-semibold text-[#0F172A] dark:text-[#F3F4F6] mt-0.5">
                                         {typeof unit?.odometer_km === 'number'
@@ -1257,8 +913,8 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                             )}
                             {showCyclesCount && (
                                 <div>
-                                    <dt className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
-                                        {t('opermaq_domains.cycles_count_label')}
+                                    <dt className="text-microcopy font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
+                                        {t('opermaq_domains.cycles_count_label', 'CICLOS / VUELOS')}
                                     </dt>
                                     <dd className="font-mono tabular-nums font-semibold text-[#0F172A] dark:text-[#F3F4F6] mt-0.5">
                                         {typeof unit?.cycles_count === 'number'
@@ -1269,8 +925,8 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                             )}
                             {showCalibrationDueDate && (
                                 <div>
-                                    <dt className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#00AEEF]">
-                                        {t('opermaq_domains.calibration_due_date_label')}
+                                    <dt className="text-microcopy font-mono uppercase tracking-[0.05em] text-[#00AEEF]">
+                                        {t('opermaq_domains.calibration_due_date_label', 'CALIBRACIÓN')}
                                     </dt>
                                     <dd className="font-mono tabular-nums font-semibold text-[#0F172A] dark:text-[#F3F4F6] mt-0.5">
                                         {unit?.calibration_due_date || t('opermaq_domains.pending_record')}
@@ -1280,211 +936,14 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                         </dl>
                     </section>
 
-                    {/* Bloque 1.5: Parámetros Operativos de Faena (`tenant_custom_overrides` · Edición Quirúrgica + Offline-First) */}
-                    <section className="p-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] space-y-[13px] rounded-none shadow-none">
-                        <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-[8px]">
-                            <h2 className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF]">
-                                {t('opermaq_domains.overrides_heading')}
-                            </h2>
-                            {canMutateUnit && unit && (
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        isEditingOverrides
-                                            ? setIsEditingOverrides(false)
-                                            : handleOpenEditOverrides()
-                                    }
-                                    title={
-                                        isEditingOverrides
-                                            ? t('common.cancel')
-                                            : t('opermaq_domains.overrides_edit_tooltip')
-                                    }
-                                    aria-label={
-                                        isEditingOverrides
-                                            ? t('common.cancel')
-                                            : t('opermaq_domains.overrides_edit_tooltip')
-                                    }
-                                    className={flatIconBtn}
-                                >
-                                    <span className="material-symbols-outlined text-[16px]">
-                                        {isEditingOverrides ? 'close' : 'edit'}
-                                    </span>
-                                </button>
-                            )}
-                        </div>
-
-                        {overridesStatusNotice && (
-                            <div className="p-[8px] border border-[#00AEEF] bg-[#F8FAFC] dark:bg-[#07090D] text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none">
-                                {overridesStatusNotice}
-                            </div>
-                        )}
-
-                        {!isEditingOverrides ? (
-                            <dl className="grid grid-cols-2 gap-[13px] text-[13px]">
-                                <div>
-                                    <dt className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
-                                        {t('opermaq_domains.overrides_faena_label')}
-                                    </dt>
-                                    <dd className="font-mono text-[#0F172A] dark:text-[#F3F4F6] mt-0.5 break-words">
-                                        {customOverrides?.faena_name || t('opermaq_domains.not_declared')}
-                                    </dd>
-                                </div>
-                                <div>
-                                    <dt className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
-                                        {t('opermaq_domains.overrides_altitude_label')}
-                                    </dt>
-                                    <dd className="font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] mt-0.5">
-                                        {typeof customOverrides?.altitude_masl === 'number'
-                                            ? `${customOverrides.altitude_masl.toLocaleString('es-CL')} msnm`
-                                            : t('opermaq_domains.not_declared')}
-                                    </dd>
-                                </div>
-                                <div>
-                                    <dt className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
-                                        {t('opermaq_domains.overrides_radio_label')}
-                                    </dt>
-                                    <dd className="font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] mt-0.5 break-words">
-                                        {customOverrides?.internal_radio_channel ||
-                                            t('opermaq_domains.not_declared')}
-                                    </dd>
-                                </div>
-                                <div>
-                                    <dt className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
-                                        {t('opermaq_domains.overrides_ramp_speed_label')}
-                                    </dt>
-                                    <dd className="font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] mt-0.5">
-                                        {typeof customOverrides?.max_ramp_speed_kmh === 'number'
-                                            ? `${customOverrides.max_ramp_speed_kmh} km/h`
-                                            : t('opermaq_domains.not_declared')}
-                                    </dd>
-                                </div>
-                                <div className="col-span-2">
-                                    <dt className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
-                                        {t('opermaq_domains.overrides_notes_label')}
-                                    </dt>
-                                    <dd className="text-[12px] text-[#475569] dark:text-[#8A93A6] mt-0.5 break-words">
-                                        {customOverrides?.private_operational_notes ||
-                                            t('opermaq_domains.not_declared')}
-                                    </dd>
-                                </div>
-                            </dl>
-                        ) : (
-                            <form
-                                onSubmit={handleSaveOverrides}
-                                autoComplete="off"
-                                spellCheck={false}
-                                className="space-y-[13px]"
-                            >
-                                <div className="grid grid-cols-2 gap-[8px]">
-                                    <div className="flex flex-col gap-[4px]">
-                                        <label className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                                            {t('opermaq_domains.overrides_faena_label')}
-                                        </label>
-                                        <input
-                                            type="text"
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            value={overrideFaenaName}
-                                            onChange={(e) => setOverrideFaenaName(e.target.value)}
-                                            className="h-8 px-[8px] bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[12px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none select-text"
-                                        />
-                                    </div>
-                                    <div className="flex flex-col gap-[4px]">
-                                        <label className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                                            {t('opermaq_domains.overrides_altitude_label')}
-                                        </label>
-                                        <input
-                                            type="number"
-                                            min={0}
-                                            max={6000}
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            value={overrideAltitudeMasl}
-                                            onChange={(e) => setOverrideAltitudeMasl(e.target.value)}
-                                            className="h-8 px-[8px] bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[12px] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none select-text"
-                                        />
-                                    </div>
-                                    <div className="flex flex-col gap-[4px]">
-                                        <label className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                                            {t('opermaq_domains.overrides_radio_label')}
-                                        </label>
-                                        <input
-                                            type="text"
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            value={overrideRadioChannel}
-                                            onChange={(e) => setOverrideRadioChannel(e.target.value)}
-                                            className="h-8 px-[8px] bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[12px] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none select-text"
-                                        />
-                                    </div>
-                                    <div className="flex flex-col gap-[4px]">
-                                        <label className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                                            {t('opermaq_domains.overrides_ramp_speed_label')}
-                                        </label>
-                                        <input
-                                            type="number"
-                                            min={5}
-                                            max={120}
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            value={overrideMaxRampSpeed}
-                                            onChange={(e) => setOverrideMaxRampSpeed(e.target.value)}
-                                            className="h-8 px-[8px] bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[12px] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none select-text"
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="flex flex-col gap-[4px]">
-                                    <label className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                                        {t('opermaq_domains.overrides_notes_label')}
-                                    </label>
-                                    <textarea
-                                        rows={2}
-                                        autoComplete="off"
-                                        spellCheck={false}
-                                        value={overrideNotes}
-                                        onChange={(e) => setOverrideNotes(e.target.value)}
-                                        className="p-[8px] bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[12px] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none resize-none select-text"
-                                    />
-                                </div>
-
-                                <div className="pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] space-y-[8px]">
-                                    <label className="block text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
-                                        {t('opermaq_domains.overrides_confirm_prompt')}
-                                    </label>
-                                    <div className="flex items-center gap-[8px]">
-                                        <input
-                                            type="text"
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            value={confirmOverridesWord}
-                                            onChange={(e) => setConfirmOverridesWord(e.target.value.toUpperCase())}
-                                            placeholder="ACTUALIZAR"
-                                            className="flex-1 h-8 px-[8px] bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[12px] font-mono tracking-widest uppercase text-center text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none select-text"
-                                        />
-                                        <button
-                                            type="submit"
-                                            disabled={
-                                                savingOverrides || confirmOverridesWord.trim() !== 'ACTUALIZAR'
-                                            }
-                                            className="h-8 px-[13px] bg-[#C68346] hover:bg-[#b0743e] disabled:opacity-40 text-white text-[11px] font-mono font-bold uppercase tracking-[0.05em] border-0 rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
-                                        >
-                                            {t('common.save')}
-                                        </button>
-                                    </div>
-                                </div>
-                            </form>
-                        )}
-                    </section>
-
                     {/* Bloque 2: Fotografías Privadas del Equipo (`TENANT_PRIVATE`) */}
-                    <section className="p-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] space-y-[13px] rounded-none shadow-none">
+                    <section className="p-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] space-y-[13px] rounded-none">
                         <div className="flex items-start justify-between gap-[13px]">
                             <div className="space-y-1">
-                                <h2 className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6]">
+                                <h2 className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6]">
                                     {t('opermaq_domains.private_photos_heading')}
                                 </h2>
-                                <p className="text-[12px] text-[#475569] dark:text-[#8A93A6] leading-snug">
+                                <p className="text-[0.8125rem] text-[#475569] dark:text-[#8A93A6] leading-snug">
                                     {t('opermaq_domains.private_photos_scope')}
                                 </p>
                             </div>
@@ -1496,7 +955,6 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                                         accept="image/jpeg,image/png,image/webp"
                                         onChange={handlePrivatePhotoSelect}
                                         autoComplete="off"
-                                        spellCheck={false}
                                         className="hidden"
                                     />
                                     <button
@@ -1519,128 +977,55 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                             )}
                         </div>
 
-                        {pendingDeletePhotoSha && canMutateUnit && (
-                            <div className="p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D] space-y-[8px] rounded-none">
-                                <label className="block text-[11px] font-mono uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6]">
-                                    {t('opermaq_domains.confirm_delete_photo_prompt')}
-                                </label>
-                                <div className="flex items-center gap-[8px]">
-                                    <input
-                                        type="text"
-                                        autoComplete="off"
-                                        spellCheck={false}
-                                        value={confirmDeletePhotoWord}
-                                        onChange={(e) => setConfirmDeletePhotoWord(e.target.value.toUpperCase())}
-                                        placeholder="ACTUALIZAR"
-                                        className="flex-1 h-8 px-[8px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[12px] font-mono tracking-widest uppercase text-center text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none select-text"
-                                    />
-                                    <button
-                                        type="button"
-                                        disabled={
-                                            deletingPhotoSha === pendingDeletePhotoSha ||
-                                            confirmDeletePhotoWord.trim() !== 'ACTUALIZAR'
-                                        }
-                                        onClick={() => void handleDeletePrivatePhoto(pendingDeletePhotoSha)}
-                                        className="h-8 px-[13px] bg-[#C68346] hover:bg-[#b0743e] disabled:opacity-40 text-white text-[11px] font-mono font-bold uppercase tracking-[0.05em] border-0 rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
-                                    >
-                                        {t('actions.delete')}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setPendingDeletePhotoSha(null);
-                                            setConfirmDeletePhotoWord('');
-                                        }}
-                                        title={t('common.cancel')}
-                                        aria-label={t('common.cancel')}
-                                        className={flatIconBtn}
-                                    >
-                                        <span className="material-symbols-outlined text-[16px]">close</span>
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-
                         {!unit?.private_photos || unit.private_photos.length === 0 ? (
-                            <div className="py-[13px] text-[12px] font-mono text-[#94A3B8] dark:text-[#5A6072]">
+                            <div className="py-[13px] text-[0.8125rem] font-mono text-[#94A3B8] dark:text-[#5A6072]">
                                 {t('opermaq_domains.no_private_photos')}
                             </div>
                         ) : (
-                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-[8px]">
-                                {unit.private_photos.map((photo) => {
-                                    const origBytes = photo.original_bytes ?? photo.originalBytes;
-                                    const optBytes = photo.optimized_bytes ?? photo.optimizedBytes;
-                                    const computedPct =
-                                        photo.savings_pct ??
-                                        photo.savingsPct ??
-                                        (typeof origBytes === 'number' &&
-                                        typeof optBytes === 'number' &&
-                                        origBytes > 0
-                                            ? Math.max(0, Math.round((1 - optBytes / origBytes) * 100))
-                                            : undefined);
-                                    const hasCasMetrics =
-                                        typeof origBytes === 'number' && typeof optBytes === 'number';
-
-                                    return (
-                                        <div
-                                            key={photo.sha256}
-                                            className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col rounded-none shadow-none"
-                                        >
-                                            <SecureCasThumbnail
-                                                src={photo.url}
-                                                alt={officialTitle}
-                                                tenantId={effectiveOwnerTenant}
-                                                fallbackIcon={assetFallbackIcon}
-                                                className="w-full h-24 border-0"
-                                            />
-                                            {(hasCasMetrics || canMutateUnit) && (
-                                                <div className="px-[8px] py-[4px] border-t border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between gap-[4px]">
-                                                    <span className="text-[10px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6] truncate">
-                                                        {hasCasMetrics
-                                                            ? `${formatCasBytesCompact(origBytes)} ➔ CAS ${formatCasBytesCompact(optBytes)} (-${computedPct ?? 0}%)`
-                                                            : photo.sha256.slice(0, 8)}
+                            <div className="grid grid-cols-3 gap-[8px]">
+                                {unit.private_photos.map((photo) => (
+                                    <div
+                                        key={photo.sha256}
+                                        className="relative group border border-[#E2E8F0] dark:border-[#12151C] rounded-none"
+                                    >
+                                        <SecureCasThumbnail
+                                            src={photo.url}
+                                            alt={officialTitle}
+                                            tenantId={effectiveOwnerTenant}
+                                            fallbackIcon={assetFallbackIcon}
+                                            className="w-full h-24 border-0"
+                                        />
+                                        {canMutateUnit && (
+                                            <button
+                                                type="button"
+                                                disabled={deletingPhotoSha === photo.sha256}
+                                                onClick={() => void handleDeletePrivatePhoto(photo.sha256)}
+                                                title={t('actions.delete')}
+                                                aria-label={t('actions.delete')}
+                                                className="absolute top-1 right-1 bg-[#FFFFFF]/90 dark:bg-[#000000]/90 border-0 outline-none p-1 text-slate-500 hover:text-[#C68346] dark:hover:text-[#C68346] transition-colors cursor-pointer rounded-none shadow-none"
+                                            >
+                                                {deletingPhotoSha === photo.sha256 ? (
+                                                    <M3CircularProgress size={14} strokeWidth={2} tone="copper" />
+                                                ) : (
+                                                    <span className="material-symbols-outlined text-[15px]">
+                                                        delete
                                                     </span>
-                                                    {canMutateUnit && (
-                                                        <button
-                                                            type="button"
-                                                            disabled={deletingPhotoSha === photo.sha256}
-                                                            onClick={() => {
-                                                                setPendingDeletePhotoSha(photo.sha256);
-                                                                setConfirmDeletePhotoWord('');
-                                                            }}
-                                                            title={t('actions.delete')}
-                                                            aria-label={t('actions.delete')}
-                                                            className={flatIconBtn}
-                                                        >
-                                                            {deletingPhotoSha === photo.sha256 ? (
-                                                                <M3CircularProgress
-                                                                    size={14}
-                                                                    strokeWidth={2}
-                                                                    tone="copper"
-                                                                />
-                                                            ) : (
-                                                                <span className="material-symbols-outlined text-[15px]">
-                                                                    delete
-                                                                </span>
-                                                            )}
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
+                                                )}
+                                            </button>
+                                        )}
+                                    </div>
+                                ))}
                             </div>
                         )}
                     </section>
 
                     {/* Bloque 3: Subida Exclusiva de PDF para Evaluación Anti-Duplicados y Revisión Humana */}
-                    <section className="p-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] space-y-[13px] rounded-none shadow-none">
+                    <section className="p-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] space-y-[13px] rounded-none">
                         <div className="space-y-1">
-                            <h2 className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF]">
+                            <h2 className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF]">
                                 {t('opermaq_domains.client_pdf_heading')}
                             </h2>
-                            <p className="text-[12px] text-[#475569] dark:text-[#8A93A6] leading-snug">
+                            <p className="text-[0.8125rem] text-[#475569] dark:text-[#8A93A6] leading-snug">
                                 {t('opermaq_domains.client_pdf_scope')}
                             </p>
                         </div>
@@ -1653,14 +1038,13 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                                     accept="application/pdf,.pdf"
                                     onChange={handleUploadClientPdf}
                                     autoComplete="off"
-                                    spellCheck={false}
                                     className="hidden"
                                 />
                                 <button
                                     type="button"
                                     disabled={uploadingPdf}
                                     onClick={() => pdfInputRef.current?.click()}
-                                    className="w-full h-9 px-[13px] bg-[#C68346] hover:bg-[#b0743e] disabled:opacity-50 text-white text-[11px] font-mono font-bold uppercase tracking-[0.05em] border-0 rounded-none shadow-none cursor-pointer transition-colors"
+                                    className="w-full h-9 px-[13px] bg-[#C68346] hover:bg-[#b0743e] disabled:opacity-50 text-white text-microcopy font-mono font-bold uppercase tracking-[0.05em] border-0 rounded-none cursor-pointer transition-colors"
                                 >
                                     {uploadingPdf
                                         ? t('opermaq_domains.uploading_pdf')
@@ -1670,23 +1054,23 @@ export const FleetUnitWorkspace: React.FC<FleetUnitWorkspaceProps> = ({
                         )}
 
                         {pdfStatusNotice && (
-                            <div className="p-[8px] border border-[#00AEEF] bg-[#F8FAFC] dark:bg-[#07090D] text-[12px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none">
+                            <div className="p-[8px] border border-[#00AEEF] bg-[#F8FAFC] dark:bg-[#07090D] text-[0.8125rem] font-mono text-[#0F172A] dark:text-[#F3F4F6]">
                                 {pdfStatusNotice}
                             </div>
                         )}
 
                         {contributions.length > 0 && (
                             <div className="pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] space-y-[8px]">
-                                <div className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
+                                <div className="text-microcopy font-mono uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
                                     {t('opermaq_domains.contributions_history')}
                                 </div>
                                 <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C] border border-[#E2E8F0] dark:border-[#12151C]">
                                     {contributions.map((c) => (
                                         <div key={c.id} className="px-[8px] py-[8px] space-y-0.5">
-                                            <div className="text-[12px] font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                                            <div className="text-[0.8125rem] font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate">
                                                 {c.sanitized_filename}
                                             </div>
-                                            <div className="text-[11px] font-mono tabular-nums text-[#00AEEF]">
+                                            <div className="text-microcopy font-mono tabular-nums text-[#00AEEF]">
                                                 {formatContributionStatus(c.status)}
                                             </div>
                                         </div>

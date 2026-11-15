@@ -1,31 +1,50 @@
-import { db, auth } from '../config/firebase';
+import { z } from 'zod';
+import { auth } from '../config/firebase';
 import { getApiUrl } from '../utils/network';
-import { collection, doc, getDoc, setDoc, updateDoc, arrayUnion, query, where, getDocs, limit, deleteDoc } from 'firebase/firestore';
-import type { AccountReference, UserDirectory } from '../types/user_directory';
+import {
+    RemoveB2BMemberPayloadSchema,
+    UpdateB2BMemberPayloadSchema,
+    UpsertB2BMemberPayloadSchema,
+    type B2BSeatRole,
+} from '../contracts';
 
-export interface WorkerData {
-    run: string;
-    fullName: string;
+export interface B2BMemberRecord {
+    uid: string;
+    userId: string;
     email: string;
-    jobProfileId: string;
+    fullName: string;
+    taxId?: string;
+    countryCode?: string;
+    role: B2BSeatRole;
+    jobTitle?: string;
+    allowedModules: {
+        opermaq: boolean;
+        stockpile: boolean;
+    };
+    canViewBilling: boolean;
+    status: string;
+    invitedAt?: number | string | null;
+    updatedAt?: number | string | null;
 }
 
-export interface RecruitResult {
-    success: boolean;
-    userId?: string;
+export type UpsertMemberInput = z.input<typeof UpsertB2BMemberPayloadSchema>;
+export type UpdateMemberInput = Omit<z.input<typeof UpdateB2BMemberPayloadSchema>, 'accountId'> & {
+    accountId?: string;
+};
+
+export interface UpsertMemberResponse {
+    uid: string;
     isNewUser: boolean;
-    error?: string;
+    status: string;
+    message?: string;
+}
+
+export interface MutateMemberResponse {
+    success: boolean;
+    uid: string;
 }
 
 export class StaffService {
-    private static get API_URL() {
-        return getApiUrl('/api');
-    }
-
-    private static normalizeRun(run: string): string {
-        return run.replace(/\./g, '').replace(/-/g, '').trim().toUpperCase();
-    }
-
     private static async getAuthHeaders(accountId?: string): Promise<Record<string, string>> {
         let idToken = '';
         if (auth.currentUser) {
@@ -35,12 +54,12 @@ export class StaffService {
         }
 
         if (!idToken) {
-            throw new Error('Sesion autenticada requerida para gestionar personal.');
+            throw new Error('Sesión autenticada requerida para gestionar equipo corporativo.');
         }
 
         const headers: Record<string, string> = {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${idToken}`,
+            Authorization: `Bearer ${idToken}`,
         };
 
         if (accountId) {
@@ -50,205 +69,88 @@ export class StaffService {
         return headers;
     }
 
-    static async recruitWorker(
+    static async listMembers(accountId: string): Promise<B2BMemberRecord[]> {
+        if (!accountId) return [];
+        const headers = await this.getAuthHeaders(accountId);
+        const url = getApiUrl(`/api/staff/members?accountId=${encodeURIComponent(accountId)}`);
+        const response = await fetch(url, {
+            method: 'GET',
+            headers,
+        });
+
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(body?.error || `Error HTTP ${response.status} al listar integrantes.`);
+        }
+
+        return Array.isArray(body?.members) ? (body.members as B2BMemberRecord[]) : [];
+    }
+
+    static async upsertMember(payload: UpsertMemberInput): Promise<UpsertMemberResponse> {
+        const parsed = UpsertB2BMemberPayloadSchema.parse(payload);
+        const headers = await this.getAuthHeaders(parsed.accountId);
+        const url = getApiUrl('/api/staff/members');
+        const response = await fetch(url, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(parsed),
+        });
+
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(body?.error || `Error HTTP ${response.status} al registrar integrante.`);
+        }
+
+        return body as UpsertMemberResponse;
+    }
+
+    static async updateMember(
         accountId: string,
-        workerData: WorkerData,
-        accountName: string
-    ): Promise<RecruitResult> {
-        try {
-            const normalizedRun = this.normalizeRun(workerData.run);
-            const normalizedEmail = workerData.email.toLowerCase().trim();
+        memberUid: string,
+        payload: UpdateMemberInput
+    ): Promise<MutateMemberResponse> {
+        const parsed = UpdateB2BMemberPayloadSchema.parse({
+            ...payload,
+            accountId,
+        });
+        const headers = await this.getAuthHeaders(accountId);
+        const url = getApiUrl(`/api/staff/members/${encodeURIComponent(memberUid)}`);
+        const response = await fetch(url, {
+            method: 'PATCH',
+            headers,
+            body: JSON.stringify(parsed),
+        });
 
-            const userDirRef = doc(db, 'user_directory', normalizedRun);
-            const userDirSnap = await getDoc(userDirRef);
-
-            let userDirectory: UserDirectory;
-
-            if (!userDirSnap.exists()) {
-                userDirectory = {
-                    run: normalizedRun,
-                    fullName: workerData.fullName,
-                    accounts: [],
-                    accountId: accountId,
-                    createdAt: Date.now(),
-                    updatedAt: Date.now()
-                };
-                await setDoc(userDirRef, userDirectory);
-            } else {
-                userDirectory = userDirSnap.data() as UserDirectory;
-            }
-
-            const existingLink = userDirectory.accounts?.find(
-                acc => acc.accountId === accountId
-            );
-
-            if (existingLink) {
-                return {
-                    success: false,
-                    isNewUser: false,
-                    error: 'El trabajador ya esta vinculado a esta empresa'
-                };
-            }
-
-            const usersRef = collection(db, 'users');
-            const q = query(usersRef, where('email', '==', normalizedEmail), limit(1));
-            const userSnap = await getDocs(q);
-
-            let userId: string;
-            let isNewUser = false;
-
-            if (userSnap.empty) {
-                const headers = await this.getAuthHeaders(accountId);
-                const response = await fetch(`${this.API_URL}/staff/create-worker`, {
-                    method: 'POST',
-                    headers,
-                    body: JSON.stringify({
-                        email: normalizedEmail,
-                        displayName: workerData.fullName,
-                        run: normalizedRun,
-                        accountId: accountId,
-                        accountName: accountName,
-                        jobProfileId: workerData.jobProfileId
-                    })
-                });
-
-                if (!response.ok) {
-                    const error = await response.json().catch(() => ({}));
-                    throw new Error(error.error || 'Error al crear trabajador en el servidor');
-                }
-
-                const { uid } = await response.json();
-                userId = uid;
-                isNewUser = true;
-            } else {
-                userId = userSnap.docs[0].id;
-                await setDoc(
-                    doc(db, 'accounts', accountId, 'members', userId),
-                    {
-                        userId,
-                        email: normalizedEmail,
-                        fullName: workerData.fullName,
-                        run: normalizedRun,
-                        role: 'OPERATOR',
-                        jobProfileId: workerData.jobProfileId,
-                        status: 'ACTIVE',
-                        invitedAt: Date.now(),
-                        invitedBy: auth.currentUser?.uid || 'system',
-                    },
-                    { merge: true }
-                );
-            }
-
-            const accountReference: AccountReference = {
-                accountId: accountId,
-                authEmail: normalizedEmail,
-                role: 'OPERATOR',
-                type: 'BUSINESS',
-                accountName: accountName,
-                status: 'PENDING',
-                jobProfileId: workerData.jobProfileId
-            };
-
-            await updateDoc(userDirRef, {
-                accounts: arrayUnion(accountReference),
-                accountId: accountId,
-                updatedAt: Date.now()
-            });
-
-            return {
-                success: true,
-                userId: userId,
-                isNewUser: isNewUser
-            };
-        } catch (error: any) {
-            console.error('[StaffService] Error en onboarding:', error);
-            return {
-                success: false,
-                isNewUser: false,
-                error: error.message || 'Error desconocido'
-            };
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(body?.error || `Error HTTP ${response.status} al actualizar integrante.`);
         }
+
+        return body as MutateMemberResponse;
     }
 
-    static async designateAdmin(
+    static async removeMember(
         accountId: string,
-        adminData: { run: string, name: string, lastName: string, email: string },
-        accountName: string
-    ): Promise<RecruitResult> {
-        try {
-            const normalizedRun = this.normalizeRun(adminData.run);
-            const normalizedEmail = adminData.email.toLowerCase().trim();
-            const fullName = `${adminData.name} ${adminData.lastName}`.trim();
+        memberUid: string,
+        confirmationKeyword: 'ACTUALIZAR' = 'ACTUALIZAR'
+    ): Promise<MutateMemberResponse> {
+        const parsed = RemoveB2BMemberPayloadSchema.parse({
+            accountId,
+            confirmationKeyword,
+        });
+        const headers = await this.getAuthHeaders(accountId);
+        const url = getApiUrl(`/api/staff/members/${encodeURIComponent(memberUid)}`);
+        const response = await fetch(url, {
+            method: 'DELETE',
+            headers,
+            body: JSON.stringify(parsed),
+        });
 
-            const headers = await this.getAuthHeaders(accountId);
-            const response = await fetch(`${this.API_URL}/staff/designate-admin`, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({
-                    email: normalizedEmail,
-                    displayName: fullName,
-                    run: normalizedRun,
-                    accountId: accountId,
-                    accountName: accountName
-                })
-            });
-
-            if (!response.ok) {
-                const error = await response.json().catch(() => ({}));
-                throw new Error(error.error || 'Error al procesar designacion en servidor');
-            }
-
-            const { uid, isNewUser } = await response.json();
-
-            const memberRef = doc(db, 'accounts', accountId, 'members', uid);
-            await setDoc(memberRef, {
-                userId: uid,
-                email: normalizedEmail,
-                fullName: fullName,
-                run: normalizedRun,
-                role: 'ADMIN',
-                status: 'PENDING',
-                invitedAt: Date.now(),
-                invitedBy: auth.currentUser?.uid || 'system'
-            }, { merge: true });
-
-            return {
-                success: true,
-                userId: uid,
-                isNewUser: isNewUser
-            };
-        } catch (error: any) {
-            console.error('[StaffService] Error en designacion admin:', error);
-            return {
-                success: false,
-                isNewUser: false,
-                error: error.message || 'Error inesperado'
-            };
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(body?.error || `Error HTTP ${response.status} al desvincular integrante.`);
         }
-    }
 
-    static async getAccountMembers(accountId: string): Promise<any[]> {
-        try {
-            const membersRef = collection(db, 'accounts', accountId, 'members');
-            const snapshot = await getDocs(membersRef);
-
-            return snapshot.docs.map(docSnap => ({
-                id: docSnap.id,
-                ...docSnap.data()
-            }));
-        } catch (error) {
-            console.error('[StaffService] Error al obtener miembros:', error);
-            return [];
-        }
-    }
-
-    static async removeMember(accountId: string, userId: string): Promise<boolean> {
-        try {
-            await deleteDoc(doc(db, 'accounts', accountId, 'members', userId));
-            return true;
-        } catch (error) {
-            console.error('[StaffService] Error al desvincular miembro:', error);
-            return false;
-        }
+        return body as MutateMemberResponse;
     }
 }

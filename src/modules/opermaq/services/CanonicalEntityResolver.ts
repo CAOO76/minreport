@@ -210,6 +210,93 @@ const OFFICIAL_TO_SHORT_ALIASES: Record<string, string[]> = {
     SINOTRUK: ['howo', 'sinotruk'],
 };
 
+/**
+ * Índice Reactivo Dinámico en Memoria (Zero-Preset `OPERMAQ · FABRICANTES`):
+ * Combina la semilla inicial de arranque (`BRAND_SYNONYM_TO_OFFICIAL`) con todas las marcas
+ * y alias aprendidos desde `global_manufacturers` al vuelo, permitiendo que marcas inéditas
+ * (incluyendo siglas cortas de 2-3 letras) sean reconocidas sin editar código fuente.
+ */
+const DYNAMIC_BRAND_SYNONYM_MAP = new Map<string, string>();
+const DYNAMIC_OFFICIAL_ALIASES_MAP = new Map<string, string[]>();
+
+const NON_LEARNABLE_GENERIC_BRANDS = new Set([
+    'GENERICO',
+    'GENERIC',
+    'SIN MARCA',
+    'NO DECLARADO',
+    'N/A',
+    'NA',
+    'NONE',
+    'UNKNOWN',
+]);
+
+function normalizeAliasToken(raw: string): string {
+    return String(raw || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toUpperCase();
+}
+
+export function registerLearnedManufacturerAliases(officialName: string, aliases: string[] = []): void {
+    const cleanOfficial = normalizeAliasToken(officialName);
+    if (!cleanOfficial || cleanOfficial.length < 2 || NON_LEARNABLE_GENERIC_BRANDS.has(cleanOfficial)) {
+        return;
+    }
+
+    const canonicalTarget = BRAND_SYNONYM_TO_OFFICIAL[cleanOfficial] || cleanOfficial;
+    const mergedAliases = new Set<string>(DYNAMIC_OFFICIAL_ALIASES_MAP.get(canonicalTarget) || []);
+    const candidates = [cleanOfficial, officialName, ...aliases];
+
+    for (const cand of candidates) {
+        const token = normalizeAliasToken(cand);
+        if (!token || token.length < 2 || NON_LEARNABLE_GENERIC_BRANDS.has(token)) continue;
+        // Evitar sobrescribir palabras genéricas de maquinaria o atributos físicos
+        if (NON_MODEL_ATTRIBUTE_TOKENS_REGEX.test(token)) continue;
+        if (!BRAND_SYNONYM_TO_OFFICIAL[token]) {
+            DYNAMIC_BRAND_SYNONYM_MAP.set(token, canonicalTarget);
+        }
+        mergedAliases.add(token.toLowerCase());
+    }
+
+    if (mergedAliases.size > 0) {
+        DYNAMIC_OFFICIAL_ALIASES_MAP.set(canonicalTarget, Array.from(mergedAliases));
+    }
+}
+
+export function clearLearnedManufacturerAliasesForTest(): void {
+    DYNAMIC_BRAND_SYNONYM_MAP.clear();
+    DYNAMIC_OFFICIAL_ALIASES_MAP.clear();
+}
+
+export function getLearnedManufacturerAliasesSnapshot(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [k, v] of DYNAMIC_BRAND_SYNONYM_MAP.entries()) {
+        out[k] = v;
+    }
+    return out;
+}
+
+function resolveBrandAliasValue(tokenUpper: string): string | null {
+    return DYNAMIC_BRAND_SYNONYM_MAP.get(tokenUpper) || BRAND_SYNONYM_TO_OFFICIAL[tokenUpper] || null;
+}
+
+function getEffectiveSortedBrandKeys(): string[] {
+    const all = new Set<string>([
+        ...Object.keys(BRAND_SYNONYM_TO_OFFICIAL),
+        ...DYNAMIC_BRAND_SYNONYM_MAP.keys(),
+    ]);
+    return Array.from(all).sort((a, b) => b.length - a.length);
+}
+
+function getEffectiveShortAliases(canonicalMake: string): string[] {
+    const staticShorts = OFFICIAL_TO_SHORT_ALIASES[canonicalMake] || [];
+    const dynamicShorts = DYNAMIC_OFFICIAL_ALIASES_MAP.get(canonicalMake) || [];
+    if (dynamicShorts.length === 0) return staticShorts;
+    return Array.from(new Set([...staticShorts, ...dynamicShorts]));
+}
+
 const GENERIC_EQUIPMENT_STOPWORDS = new Set([
     'de',
     'del',
@@ -264,10 +351,10 @@ export function collapseSpacedModelDesignators(input: string): string {
         .trim();
 
     // Prefijo corto + espacio + dígitos: "YT 27" -> "YT27", "PC 200" -> "PC200", "WA 380" -> "WA380"
-    // Evita fusionar marcas conocidas como "CAT 242" o "JCB 3CX" o "MAN 440"
+    // Evita fusionar marcas conocidas o aprendidas en vivo como "CAT 242", "JCB 3CX", "MAN 440" o "KTO 500"
     s = s.replace(/\b([A-Za-z]{1,3})\s+(\d{2,4}[A-Za-z0-9-]*)\b/g, (full, prefix: string, numPart: string) => {
         const up = prefix.toUpperCase();
-        if (BRAND_SYNONYM_TO_OFFICIAL[up]) return full;
+        if (resolveBrandAliasValue(up)) return full;
         return `${up}${numPart.toUpperCase()}`;
     });
 
@@ -363,12 +450,12 @@ export function isNonModelAttributeToken(token: string): boolean {
 }
 
 export function extractCanonicalDesignator(collapsedInput: string): string | null {
-    // Remover marcas conocidas primero para no capturar partes de marca (ej. JCB, MAN, BMW, JAC)
+    // Remover marcas conocidas o aprendidas primero para no capturar partes de marca (ej. JCB, MAN, BMW, JAC, KITO)
     let stripped = ` ${collapsedInput
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
         .toUpperCase()} `;
-    for (const syn of Object.keys(BRAND_SYNONYM_TO_OFFICIAL).sort((a, b) => b.length - a.length)) {
+    for (const syn of getEffectiveSortedBrandKeys()) {
         const escaped = syn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         stripped = stripped.replace(new RegExp(`\\b${escaped}\\b`, 'g'), ' ');
     }
@@ -401,11 +488,11 @@ export function detectCanonicalMake(input: string): string | null {
         .replace(/[\u0300-\u036f]/g, '')
         .toUpperCase();
 
-    const sortedKeys = Object.keys(BRAND_SYNONYM_TO_OFFICIAL).sort((a, b) => b.length - a.length);
+    const sortedKeys = getEffectiveSortedBrandKeys();
     for (const key of sortedKeys) {
         const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         if (new RegExp(`\\b${escaped}\\b`).test(upper)) {
-            return BRAND_SYNONYM_TO_OFFICIAL[key];
+            return resolveBrandAliasValue(key);
         }
     }
     return null;
@@ -440,7 +527,7 @@ export function parseIndustrialSearchQuery(rawInput: string, isGeneric: boolean 
     const tokenSet = new Set<string>(rawTokens);
     if (canonicalMake) {
         tokenSet.add(canonicalMake.toLowerCase().replace(/[^a-z0-9]+/g, '_'));
-        const shorts = OFFICIAL_TO_SHORT_ALIASES[canonicalMake] || [];
+        const shorts = getEffectiveShortAliases(canonicalMake);
         shorts.forEach((s) => tokenSet.add(s.replace(/\s+/g, '_')));
     }
     if (compactDesignator) {
@@ -478,7 +565,8 @@ export function buildCatalogSearchMetadata(params: {
     embeddingSourceText: string;
 } {
     const cleanMakeUpper = (params.make_oficial || 'GENÉRICO').trim().toUpperCase();
-    const canonicalMake = BRAND_SYNONYM_TO_OFFICIAL[cleanMakeUpper] || cleanMakeUpper;
+    const normalizedMakeLookup = normalizeAliasToken(params.make_oficial || 'GENÉRICO');
+    const canonicalMake = resolveBrandAliasValue(normalizedMakeLookup) || cleanMakeUpper;
     const canonicalModel = normalizeModelCode(params.model_oficial);
     const compactModel = compactAlphanumericCode(canonicalModel);
 
@@ -506,7 +594,7 @@ export function buildCatalogSearchMetadata(params: {
     pushAlias(params.original_jargon);
     (params.existingAliases || []).forEach(pushAlias);
 
-    const brandShorts = OFFICIAL_TO_SHORT_ALIASES[canonicalMake] || [];
+    const brandShorts = getEffectiveShortAliases(canonicalMake);
     for (const shortBrand of brandShorts) {
         pushAlias(`${shortBrand} ${canonicalModel}`);
         pushAlias(`${shortBrand} ${compactModel}`);

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { useTheme } from './ThemeContext';
+import { getApiUrl } from '../utils/network';
 
 export interface LogoSet {
   isotype: string;
@@ -44,6 +45,10 @@ export const fixBrandingUrl = (url?: string, key?: string): string => {
     return url;
   }
 
+  if (url.startsWith('/api/')) {
+    return getApiUrl(url);
+  }
+
   const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
   const isLocalEnv = currentHost === 'localhost' || currentHost === '127.0.0.1';
   const isEmulatorUrl =
@@ -72,6 +77,7 @@ export const BrandingProvider: React.FC<{ children: ReactNode }> = ({ children }
   const { theme } = useTheme();
 
   useEffect(() => {
+    document.documentElement.style.setProperty('--antigravity-accent', '#C68346');
     const docRef = doc(db, 'settings', 'branding');
 
     const unsubscribe = onSnapshot(docRef, (docSnap) => {
@@ -105,6 +111,7 @@ export const BrandingProvider: React.FC<{ children: ReactNode }> = ({ children }
 
         const data: BrandingConfig = {
           ...rawData,
+          primaryColor: '#C68346',
           light: fixLogoSet(rawData.light),
           dark: fixLogoSet(rawData.dark),
           invertDarkMap: rawData.invertDarkMap || {
@@ -126,9 +133,9 @@ export const BrandingProvider: React.FC<{ children: ReactNode }> = ({ children }
           document.title = 'MINREPORT';
         }
 
-        if (data.primaryColor) {
-          document.documentElement.style.setProperty('--antigravity-accent', data.primaryColor);
-        }
+        document.documentElement.style.setProperty('--antigravity-accent', '#C68346');
+      } else {
+        document.documentElement.style.setProperty('--antigravity-accent', '#C68346');
       }
       setLoading(false);
     }, (error) => {

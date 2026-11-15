@@ -16,7 +16,22 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    flavorDimensions "distribution"
+    productFlavors {
+        production {
+            dimension "distribution"
+            applicationId "com.minreport.app"
+        }
+        fieldtest {
+            dimension "distribution"
+            applicationId "com.minreport.app.fieldtest"
+            versionNameSuffix "-fieldtest"
+        }
+    }
     buildTypes {
+        debug {
+            applicationIdSuffix ".debug"
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'

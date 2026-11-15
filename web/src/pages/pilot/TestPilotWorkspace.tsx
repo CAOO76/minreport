@@ -1,717 +1,577 @@
-import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { collection, getDocs } from 'firebase/firestore';
+import { useTranslation } from 'react-i18next';
+import { collection, getCountFromServer, query, where } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
-import { useAuth } from '../../context/AuthContext';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
-import { PilotFeedbackSchema } from '../../contracts';
-import { getApiUrl } from '../../utils/network';
+import { useNetworkStatus } from '../../hooks/useNetworkStatus';
+import { syncQueueEngine, SyncState } from '../../core/offline/SyncQueueEngine';
+import { ModuleHost, M3ModuleHudFallback } from '../../core/modules/ModuleHost';
+import type { GeolappDomainMode } from '../../core/modules/module-registry';
 import BrandLogo from '../../components/BrandLogo';
 import { ThemeSwitch } from '../../components/ThemeSwitch';
 import { LanguageSwitch } from '../../components/LanguageSwitch';
+import ErgonomicScaleSwitch from '../../components/common/ErgonomicScaleSwitch';
+import ContextOrientationBar from '../../components/common/ContextOrientationBar';
+import ReadAloudButton from '../../components/common/ReadAloudButton';
+import type { PilotAiContextModule } from '../../components/pilot/TestPilotAiStudio';
 
-const OpermaqModule = lazy(() => import('../../modules/opermaq/OpermaqModule').then((m) => ({ default: m.OpermaqModule })));
-const StockpileModule = lazy(() => import('../../modules/stockpile/StockpileModule').then((m) => ({ default: m.StockpileModule })));
+const TestPilotAiStudio = lazy(() => import('../../components/pilot/TestPilotAiStudio'));
 
-type PilotTab =
-    | 'SIM_OPERMAQ_CATALOG'
-    | 'SIM_OPERMAQ_FLEET'
-    | 'SIM_OPERMAQ_SYMBOLOGY'
-    | 'SIM_STOCKPILE'
-    | 'FEEDBACK_LOG'
-    | 'HITL_CURATION';
+type PilotView =
+    | 'DASHBOARD'
+    | 'OPERMAQ_FLEET'
+    | 'OPERMAQ_SYMBOLOGY'
+    | 'OPERMAQ_MANUFACTURERS'
+    | 'OPERMAQ_SUPPLIERS'
+    | 'GEOLAPP_STOCKPILE'
+    | 'GEOLAPP_GEOMENSURA'
+    | 'GEOLAPP_EXPLORACION'
+    | 'GEOLAPP_ESTRUCTURAL'
+    | 'PILOT_AI_STUDIO';
 
-interface FeedbackRecord {
-    id: string;
-    module: 'core' | 'opermaq' | 'stockpile';
-    category: string;
-    priority: string;
-    contextPath: string;
-    observation: string;
-    expectedAiBehavior?: string;
-    status: 'OPEN' | 'IN_REVIEW' | 'APPLIED_TO_AI' | 'RESOLVED';
-    authorEmail?: string;
-    timestamp?: string;
+function resolvePilotGeolappDomain(view: PilotView): GeolappDomainMode | null {
+    switch (view) {
+        case 'GEOLAPP_STOCKPILE':
+            return 'STOCKPILE';
+        case 'GEOLAPP_GEOMENSURA':
+            return 'GEOMENSURA_GEO';
+        case 'GEOLAPP_EXPLORACION':
+            return 'EXPLORACION_SONDAJES';
+        case 'GEOLAPP_ESTRUCTURAL':
+            return 'ESTRUCTURAL_HIDRO';
+        default:
+            return null;
+    }
 }
 
-interface HitlCandidateDoc {
-    id: string;
-    tenantId?: string;
-    module?: string;
-    targetEntity?: string;
-    feedbackId?: string;
-    globalAssetId?: string;
-    pillarId?: string | null;
-    itemId?: string | null;
-    category?: string;
-    priority?: string;
-    observation?: string;
-    expectedAiBehavior?: string | null;
-    proposedContent?: string | null;
-    status?: string;
-    currentValues?: Record<string, unknown>;
-    suggestedValues?: Record<string, unknown>;
-    currentValue?: unknown;
-    suggestedValue?: unknown;
-    field?: string;
-    rationale?: string;
-    createdAt?: string | number;
-}
-
-const MISSING_TECH = '[Información técnica no declarada en ficha]';
-
-function resolveCandidateSuggestedMap(cand: HitlCandidateDoc): Record<string, unknown> {
-    if (
-        cand.suggestedValues &&
-        typeof cand.suggestedValues === 'object' &&
-        Object.keys(cand.suggestedValues).length > 0
-    ) {
-        return cand.suggestedValues;
-    }
-    if (cand.field) {
-        return { [cand.field]: cand.suggestedValue };
-    }
-    const opermaqFields: Record<string, unknown> = {};
-    if (typeof cand.observation === 'string' && cand.observation.trim()) {
-        opermaqFields.observation = cand.observation.trim();
-    }
-    if (typeof cand.expectedAiBehavior === 'string' && cand.expectedAiBehavior.trim()) {
-        opermaqFields.expectedAiBehavior = cand.expectedAiBehavior.trim();
-    }
-    if (typeof cand.proposedContent === 'string' && cand.proposedContent.trim()) {
-        opermaqFields.proposedContent = cand.proposedContent.trim();
-    }
-    return opermaqFields;
-}
-
-function resolveCandidateTargetLabel(cand: HitlCandidateDoc): string {
-    if (cand.targetEntity && cand.targetEntity.trim()) {
-        return cand.targetEntity.trim();
-    }
-    const parts = [cand.globalAssetId, cand.pillarId, cand.itemId].filter(
-        (p): p is string => typeof p === 'string' && p.trim().length > 0
-    );
-    return parts.length > 0 ? parts.join(' · ') : MISSING_TECH;
-}
+const PILOT_SIDEBAR_CALLOUT_CLASS =
+    'pointer-events-none opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 absolute left-full ml-3 top-1/2 -translate-y-1/2 z-50 whitespace-nowrap bg-[#0F172A] text-[#F3F4F6] dark:bg-[#F8FAFC] dark:text-[#0F172A] px-fib-13 py-fib-8 text-data-dense font-mono border border-[#C68346] rounded-none shadow-none';
 
 export const TestPilotWorkspace: React.FC = () => {
+    const { t } = useTranslation();
     const navigate = useNavigate();
-    const { user, signOut } = useAuth();
     const { session, isLoaded } = useMinReportSession();
+    const { isOnline } = useNetworkStatus();
 
-    const [activeTab, setActiveTab] = useState<PilotTab>('SIM_OPERMAQ_CATALOG');
-    const [feedbackItems, setFeedbackItems] = useState<FeedbackRecord[]>([]);
-    const [hitlCandidates, setHitlCandidates] = useState<HitlCandidateDoc[]>([]);
-    const [selectedCandidate, setSelectedCandidate] = useState<HitlCandidateDoc | null>(null);
-    const [approvedFields, setApprovedFields] = useState<Record<string, boolean>>({});
-    const [confirmKeyword, setConfirmKeyword] = useState('');
-    const [loadingList, setLoadingList] = useState(false);
-    const [errorMsg, setErrorMsg] = useState<string | null>(null);
-    const [statusMsg, setStatusMsg] = useState<string | null>(null);
+    const [activeView, setActiveView] = useState<PilotView>('DASHBOARD');
+    const [aiContextModule, setAiContextModule] = useState<PilotAiContextModule>('core');
+    const [fleetCount, setFleetCount] = useState<number | null>(null);
+    const [stockpileCount, setStockpileCount] = useState<number | null>(null);
+    const [syncState, setSyncState] = useState<SyncState>(() => syncQueueEngine.getState());
 
-    // Formulario rapido lateral
-    const [category, setCategory] = useState<'AI_KNOWLEDGE_TRAINING' | 'CHANGE_REQUEST' | 'BUG_CORRECTION' | 'FIELD_SIMULATION'>('FIELD_SIMULATION');
-    const [priority, setPriority] = useState<'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'>('MEDIUM');
-    const [observation, setObservation] = useState('');
-    const [expectedAiBehavior, setExpectedAiBehavior] = useState('');
-    const [submittingFeedback, setSubmittingFeedback] = useState(false);
-
-    const getToken = async () => {
-        if (auth.currentUser) return auth.currentUser.getIdToken();
-        return localStorage.getItem('dev_auth_token') || '';
+    const handleSelectView = (view: PilotView) => {
+        if (view.startsWith('GEOLAPP_')) {
+            setAiContextModule('geolapp');
+        } else if (view.startsWith('OPERMAQ_')) {
+            setAiContextModule('opermaq');
+        } else if (view === 'DASHBOARD') {
+            setAiContextModule('core');
+        }
+        setActiveView(view);
     };
 
-    const loadPilotFeedback = useCallback(async () => {
-        setLoadingList(true);
-        setErrorMsg(null);
-        try {
-            const token = await getToken();
-            const res = await fetch(getApiUrl('/api/pilot/feedback'), {
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
-            });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                throw new Error(data?.error || `Error HTTP ${res.status} al cargar pilot_feedback`);
-            }
-            setFeedbackItems(Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []);
-        } catch (err: any) {
-            setErrorMsg(err?.message || 'Error consultando bitacora pilot_feedback.');
-        } finally {
-            setLoadingList(false);
-        }
-    }, []);
+    const sandboxTenantId = useMemo(() => {
+        if (!session) return '';
+        return session.tenantId || `pilot-${session.uid}`;
+    }, [session]);
 
-    const loadHitlCandidates = useCallback(async () => {
-        setLoadingList(true);
-        setErrorMsg(null);
-        try {
-            const snap = await getDocs(collection(db, 'hitl_candidates'));
-            const docs: HitlCandidateDoc[] = snap.docs.map((d) => ({
-                id: d.id,
-                ...(d.data() as Omit<HitlCandidateDoc, 'id'>),
-            }));
-            setHitlCandidates(docs);
-        } catch (err: any) {
-            setErrorMsg(err?.message || 'Error consultando coleccion hitl_candidates.');
-        } finally {
-            setLoadingList(false);
-        }
+    useEffect(() => {
+        const unsubscribe = syncQueueEngine.subscribe((next) => {
+            setSyncState(next);
+        });
+        return () => unsubscribe();
     }, []);
 
     useEffect(() => {
-        if (!isLoaded || !session || (!session.isTestPilot && !session.isDevRoot)) return;
-        if (activeTab === 'FEEDBACK_LOG') {
-            loadPilotFeedback();
-        } else if (activeTab === 'HITL_CURATION') {
-            loadHitlCandidates();
-        }
-    }, [activeTab, isLoaded, session, loadPilotFeedback, loadHitlCandidates]);
-
-    const handleSelectCandidate = (cand: HitlCandidateDoc) => {
-        setSelectedCandidate(cand);
-        setConfirmKeyword('');
-        const suggestedMap = resolveCandidateSuggestedMap(cand);
-        const initialChecks: Record<string, boolean> = {};
-        Object.keys(suggestedMap).forEach((k) => {
-            initialChecks[k] = true;
-        });
-        setApprovedFields(initialChecks);
-    };
-
-    const handleConsolidateHitl = async (decision: 'APPROVED' | 'REJECTED') => {
-        if (!selectedCandidate || confirmKeyword.trim() !== 'ACTUALIZAR') return;
-        setErrorMsg(null);
-        setStatusMsg(null);
-        try {
-            const suggestedMap = resolveCandidateSuggestedMap(selectedCandidate);
-            const acceptedPatch: Record<string, unknown> = {};
-            Object.entries(suggestedMap).forEach(([k, v]) => {
-                if (approvedFields[k]) {
-                    acceptedPatch[k] = v;
-                }
-            });
-
-            const curatedDirective =
-                (typeof acceptedPatch.expectedAiBehavior === 'string' && acceptedPatch.expectedAiBehavior.trim()) ||
-                (typeof acceptedPatch.proposedContent === 'string' && acceptedPatch.proposedContent.trim()) ||
-                (typeof selectedCandidate.expectedAiBehavior === 'string' && selectedCandidate.expectedAiBehavior.trim()) ||
-                (typeof selectedCandidate.proposedContent === 'string' && selectedCandidate.proposedContent.trim()) ||
-                undefined;
-
-            const token = await getToken();
-            const res = await fetch(
-                getApiUrl(`/api/vault/pilot-hitl/${encodeURIComponent(selectedCandidate.id)}/consolidate`),
-                {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                        ...(session?.tenantId ? { 'X-Active-Account-Id': session.tenantId } : {}),
-                    },
-                    body: JSON.stringify({
-                        decision,
-                        confirmWord: confirmKeyword.trim(),
-                        approvedFields: decision === 'APPROVED' ? acceptedPatch : {},
-                        ...(curatedDirective ? { curatedDirective } : {}),
-                    }),
-                }
-            );
-            const body = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                throw new Error(body?.error || body?.message || `Error HTTP ${res.status}`);
+        let active = true;
+        const loadSandboxCounts = async () => {
+            if (!session?.isTestPilot || session.pilotExpired || !sandboxTenantId) {
+                return;
             }
-
-            setStatusMsg(`Candidato HITL ${selectedCandidate.id} consolidado con estado ${decision}.`);
-            setConfirmKeyword('');
-            setSelectedCandidate(null);
-            await loadHitlCandidates();
-        } catch (err: any) {
-            setErrorMsg(err?.message || 'No se pudo consolidar el candidato HITL.');
-        }
-    };
-
-    const handleCreateFeedback = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!session) return;
-        setErrorMsg(null);
-        setStatusMsg(null);
-
-        const mod: 'core' | 'opermaq' | 'stockpile' =
-            activeTab === 'SIM_OPERMAQ_CATALOG' ||
-                activeTab === 'SIM_OPERMAQ_FLEET' ||
-                activeTab === 'SIM_OPERMAQ_SYMBOLOGY'
-                ? 'opermaq'
-                : activeTab === 'SIM_STOCKPILE'
-                    ? 'stockpile'
-                    : 'core';
-
-        const payload = {
-            tenantId: session.tenantId || 'pilot-sandbox',
-            authorUid: session.uid,
-            authorEmail: session.email || 'pilot@minreport.com',
-            authorName: session.displayName || 'Test Pilot',
-            module: mod,
-            executionMode: 'integrated' as const,
-            category,
-            priority,
-            contextPath: `/pilot/${activeTab.toLowerCase()}`,
-            observation: observation.trim(),
-            expectedAiBehavior: expectedAiBehavior.trim() || undefined,
-            status: 'OPEN' as const,
-            timestamp: new Date().toISOString(),
+            try {
+                const [fleetSnap, stockpileSnap] = await Promise.all([
+                    getCountFromServer(query(collection(db, 'tenant_assets'), where('tenantId', '==', sandboxTenantId))),
+                    getCountFromServer(query(collection(db, 'stockpiles'), where('tenantId', '==', sandboxTenantId))),
+                ]);
+                if (!active) return;
+                setFleetCount(fleetSnap.data().count);
+                setStockpileCount(stockpileSnap.data().count);
+            } catch {
+                if (!active) return;
+                setFleetCount(null);
+                setStockpileCount(null);
+            }
         };
 
-        const parsed = PilotFeedbackSchema.safeParse(payload);
-        if (!parsed.success) {
-            setErrorMsg(parsed.error.issues[0]?.message || 'Verifique los campos de la observacion.');
-            return;
-        }
+        void loadSandboxCounts();
+        return () => {
+            active = false;
+        };
+    }, [sandboxTenantId, session?.isTestPilot, session?.pilotExpired]);
 
-        setSubmittingFeedback(true);
+    const handleLogout = async () => {
         try {
-            const token = await getToken();
-            const res = await fetch(getApiUrl('/api/pilot/feedback'), {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                },
-                body: JSON.stringify(parsed.data),
-            });
-            const body = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                throw new Error(body?.error || `Error HTTP ${res.status}`);
-            }
-            setObservation('');
-            setExpectedAiBehavior('');
-            setStatusMsg('Observacion registrada correctamente en pilot_feedback.');
-            if (activeTab === 'FEEDBACK_LOG') {
-                await loadPilotFeedback();
-            }
-        } catch (err: any) {
-            setErrorMsg(err?.message || 'Fallo al enviar observacion.');
-        } finally {
-            setSubmittingFeedback(false);
+            await auth.signOut();
+        } catch {
+            // Cierre resiliente local aunque no exista red
         }
+        navigate('/access', { replace: true });
     };
 
-    if (!isLoaded) return null;
-    if (!user) return <Navigate to="/login" replace />;
-    if (session?.isSuperAdmin) return <Navigate to="/admin" replace />;
-    if (!session?.isTestPilot && !session?.isDevRoot) return <Navigate to="/dashboard" replace />;
+    if (!isLoaded) {
+        return (
+            <div className="h-screen w-screen bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-center p-fib-34">
+                <div className="w-full max-w-md">
+                    <M3ModuleHudFallback label={t('core_pilot_ws.loading_session')} />
+                </div>
+            </div>
+        );
+    }
 
-    const isSimulation =
-        activeTab === 'SIM_OPERMAQ_CATALOG' ||
-        activeTab === 'SIM_OPERMAQ_FLEET' ||
-        activeTab === 'SIM_OPERMAQ_SYMBOLOGY' ||
-        activeTab === 'SIM_STOCKPILE';
+    if (!session) {
+        return <Navigate to="/access" replace />;
+    }
+
+    if (session.isDevRoot) {
+        return <Navigate to="/dev" replace />;
+    }
+
+    if (session.isSuperAdmin) {
+        return <Navigate to="/admin" replace />;
+    }
+
+    if (!session.isTestPilot) {
+        return <Navigate to="/dashboard" replace />;
+    }
+
+    if (session.pilotExpired) {
+        return (
+            <div className="min-h-screen bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col font-sans select-none">
+                <header className="h-16 px-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] flex items-center justify-between">
+                    <BrandLogo variant="logotype" className="h-6 w-auto object-contain pointer-events-none" />
+                    <div className="flex items-center gap-fib-13">
+                        <ErgonomicScaleSwitch compact />
+                        <ThemeSwitch />
+                        <LanguageSwitch />
+                    </div>
+                </header>
+                <main className="flex-1 flex items-center justify-center p-fib-34">
+                    <div className="w-full max-w-lg border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-34 rounded-none shadow-none space-y-fib-21">
+                        <div className="flex items-center gap-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
+                            <span className="material-symbols-outlined text-[24px] text-[#C68346]">schedule</span>
+                            <h1 className="text-h1-header font-semibold uppercase tracking-tight">
+                                {t('core_pilot_ws.expired_title')}
+                            </h1>
+                        </div>
+                        <p className="text-body-main text-[#475569] dark:text-[#8A93A6]">
+                            {t('core_pilot_ws.expired_desc')}
+                        </p>
+                        <div className="pt-fib-8 flex justify-end">
+                            <button
+                                type="button"
+                                onClick={handleLogout}
+                                className="min-h-[48px] px-fib-21 py-fib-13 bg-[#C68346] hover:bg-[#B0743E] text-white font-mono font-bold text-microcopy uppercase tracking-wider rounded-none shadow-none border-0 cursor-pointer transition-colors"
+                            >
+                                {t('core_pilot_ws.nav.logout')}
+                            </button>
+                        </div>
+                    </div>
+                </main>
+            </div>
+        );
+    }
+
+    const activeGeolappDomain = resolvePilotGeolappDomain(activeView);
+    const isEmbeddedModuleView = activeView.startsWith('OPERMAQ_') || activeGeolappDomain !== null;
+
+    const currentViewLabel = (() => {
+        switch (activeView) {
+            case 'OPERMAQ_FLEET':
+                return t('core_pilot_ws.nav.fleet');
+            case 'OPERMAQ_SYMBOLOGY':
+                return t('core_pilot_ws.nav.symbology');
+            case 'OPERMAQ_MANUFACTURERS':
+                return t('core_pilot_ws.nav.manufacturers');
+            case 'OPERMAQ_SUPPLIERS':
+                return t('core_pilot_ws.nav.suppliers');
+            case 'GEOLAPP_STOCKPILE':
+                return t('core_pilot_ws.nav.geolapp_stockpile');
+            case 'GEOLAPP_GEOMENSURA':
+                return t('core_pilot_ws.nav.geolapp_geomensura');
+            case 'GEOLAPP_EXPLORACION':
+                return t('core_pilot_ws.nav.geolapp_exploracion');
+            case 'GEOLAPP_ESTRUCTURAL':
+                return t('core_pilot_ws.nav.geolapp_estructural');
+            case 'PILOT_AI_STUDIO':
+                return t('core_pilot_ws.nav.ai_studio');
+            default:
+                return t('core_pilot_ws.nav.dashboard');
+        }
+    })();
+
+    const dashboardSpeechText = `${t('core_pilot_ws.dashboard.title')}. ${t('core_pilot_ws.dashboard.subtitle')}. ${t('core_pilot_ws.ai_future.title')}: ${t('core_pilot_ws.ai_future.desc')}`;
+
+    const navItems: Array<{ id: PilotView; icon: string; label: string }> = [
+        { id: 'DASHBOARD', icon: 'space_dashboard', label: t('core_pilot_ws.nav.dashboard') },
+        { id: 'OPERMAQ_FLEET', icon: 'precision_manufacturing', label: t('core_pilot_ws.nav.fleet') },
+        { id: 'OPERMAQ_SYMBOLOGY', icon: 'legend_toggle', label: t('core_pilot_ws.nav.symbology') },
+        { id: 'OPERMAQ_MANUFACTURERS', icon: 'factory', label: t('core_pilot_ws.nav.manufacturers') },
+        { id: 'OPERMAQ_SUPPLIERS', icon: 'storefront', label: t('core_pilot_ws.nav.suppliers') },
+        { id: 'GEOLAPP_STOCKPILE', icon: 'layers', label: t('core_pilot_ws.nav.geolapp_stockpile') },
+        { id: 'GEOLAPP_GEOMENSURA', icon: 'straighten', label: t('core_pilot_ws.nav.geolapp_geomensura') },
+        { id: 'GEOLAPP_EXPLORACION', icon: 'explore', label: t('core_pilot_ws.nav.geolapp_exploracion') },
+        { id: 'GEOLAPP_ESTRUCTURAL', icon: 'architecture', label: t('core_pilot_ws.nav.geolapp_estructural') },
+        { id: 'PILOT_AI_STUDIO', icon: 'psychology', label: t('core_pilot_ws.nav.ai_studio') },
+    ];
 
     return (
-        <div className="min-h-screen bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col font-sans select-none antialiased">
-            {/* Barra Superior Dedicada 3º TEST-PILOT */}
-            <header className="h-14 px-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] flex items-center justify-between sticky top-0 z-40">
-                <div className="flex items-center gap-fib-21">
-                    <BrandLogo variant="logotype" className="h-6 w-auto object-contain" />
-                    <span className="text-microcopy font-mono uppercase text-[#00AEEF] border-l border-[#E2E8F0] dark:border-[#12151C] pl-fib-13">
-                        3º TEST-PILOT · SIMULACION Y CURACION IA
-                    </span>
+        <div className="h-screen bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col font-sans select-none antialiased overflow-hidden">
+            {/* Barra superior B2B replicada sobre sandbox aislado 3º TEST-PILOT */}
+            <header className="h-16 px-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] flex items-center justify-between shrink-0 z-40">
+                <div className="flex items-center gap-fib-21 min-w-0">
+                    <button
+                        type="button"
+                        onClick={() => handleSelectView('DASHBOARD')}
+                        title={t('core_pilot_ws.nav.dashboard')}
+                        aria-label={t('core_pilot_ws.nav.dashboard')}
+                        className="min-h-[48px] bg-transparent border-0 outline-none p-0 cursor-pointer flex items-center shrink-0"
+                    >
+                        <BrandLogo variant="logotype" className="h-6 w-auto object-contain pointer-events-none" />
+                    </button>
+
+                    <div className="hidden sm:flex items-center gap-fib-13 border-l border-[#E2E8F0] dark:border-[#12151C] pl-fib-21 min-w-0">
+                        <span className="text-microcopy font-mono uppercase tracking-widest text-[#C68346] truncate">
+                            {session.tenantName}
+                        </span>
+                        <span className="text-data-dense font-mono tabular-nums text-[#475569] dark:text-[#8A93A6] select-text truncate">
+                            {sandboxTenantId}
+                        </span>
+                    </div>
                 </div>
 
-                <div className="flex items-center gap-fib-13">
+                <div className="flex items-center gap-fib-13 shrink-0">
+                    <div className="hidden md:flex items-center gap-fib-8 px-fib-13 py-fib-8 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] rounded-none">
+                        <span className={`w-2 h-2 rounded-none ${isOnline ? 'bg-[#00AEEF]' : 'bg-[#C68346]'}`} />
+                        <span className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
+                            {isOnline ? t('core_pilot_ws.telemetry.online') : t('core_pilot_ws.telemetry.offline')}
+                        </span>
+                    </div>
+
                     <button
                         type="button"
-                        onClick={() => navigate('/dashboard')}
-                        title="Ir a vista cliente MINREPORT"
-                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                        onClick={() => handleSelectView('PILOT_AI_STUDIO')}
+                        title={t('core_pilot_ws.ai_studio.open_button_title')}
+                        aria-label={t('core_pilot_ws.ai_studio.open_button_title')}
+                        className={`min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none p-1 transition-colors cursor-pointer flex items-center justify-center rounded-none ${
+                            activeView === 'PILOT_AI_STUDIO'
+                                ? 'text-[#C68346]'
+                                : 'text-slate-400 hover:text-[#0F172A] dark:hover:text-white'
+                        }`}
                     >
-                        <span className="material-symbols-outlined text-[20px]">dashboard</span>
+                        <span className="material-symbols-outlined text-[22px]">psychology</span>
+                        <span className="sr-only">{t('core_pilot_ws.ai_studio.open_button_title')}</span>
                     </button>
-                    <LanguageSwitch />
+
+                    <ErgonomicScaleSwitch compact />
                     <ThemeSwitch />
+                    <LanguageSwitch />
+
                     <button
                         type="button"
-                        onClick={() => signOut()}
-                        title="Cerrar sesion"
-                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-red-500 cursor-pointer"
+                        onClick={handleLogout}
+                        title={t('core_pilot_ws.nav.logout')}
+                        aria-label={t('core_pilot_ws.nav.logout')}
+                        className="min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-red-500 transition-colors cursor-pointer flex items-center justify-center rounded-none"
                     >
-                        <span className="material-symbols-outlined text-[20px]">logout</span>
+                        <span className="material-symbols-outlined text-[22px]">logout</span>
+                        <span className="sr-only">{t('core_pilot_ws.nav.logout')}</span>
                     </button>
                 </div>
             </header>
 
-            <nav className="px-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center gap-fib-21 overflow-x-auto">
-                {[
-                    { id: 'SIM_OPERMAQ_CATALOG' as PilotTab, label: 'CATÁLOGO' },
-                    { id: 'SIM_OPERMAQ_FLEET' as PilotTab, label: 'FLOTA' },
-                    { id: 'SIM_OPERMAQ_SYMBOLOGY' as PilotTab, label: 'SIMBOLOGÍA' },
-                    { id: 'SIM_STOCKPILE' as PilotTab, label: 'STOCKPILE 3D' },
-                    { id: 'FEEDBACK_LOG' as PilotTab, label: 'PILOT_FEEDBACK' },
-                    { id: 'HITL_CURATION' as PilotTab, label: 'HITL_CANDIDATES' },
-                ].map((tab) => (
-                    <button
-                        key={tab.id}
-                        type="button"
-                        onClick={() => {
-                            setActiveTab(tab.id);
-                            setErrorMsg(null);
-                            setStatusMsg(null);
-                            window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
-                        }}
-                        className={`py-fib-13 px-fib-8 bg-transparent border-0 border-b-2 text-xs font-mono uppercase tracking-wider cursor-pointer flex items-center whitespace-nowrap rounded-none shadow-none ${activeTab === tab.id
-                            ? 'border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-bold'
-                            : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                            }`}
-                    >
-                        <span>{tab.label}</span>
-                    </button>
-                ))}
-            </nav>
-
-            {(errorMsg || statusMsg) && (
-                <div className="px-fib-21 pt-fib-13">
-                    {errorMsg && (
-                        <div className="p-fib-13 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs font-mono">
-                            {errorMsg}
-                        </div>
-                    )}
-                    {statusMsg && (
-                        <div className="p-fib-13 bg-[#00AEEF]/10 border border-[#00AEEF]/30 text-[#00AEEF] text-xs font-mono">
-                            {statusMsg}
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {/* Macro-Layout Proporcion Aurea (61.8% / 38.2%) */}
-            <main className="flex-1 flex flex-col lg:flex-row p-fib-21 gap-fib-21">
-                {/* AREA MAYOR (61.8%) */}
-                <section className="w-full lg:w-[61.8%] lg:h-[calc(100vh-140px)] min-h-[640px] bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none overflow-hidden flex flex-col">
-                    {activeTab === 'SIM_OPERMAQ_CATALOG' && (
-                        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                            <Suspense fallback={<div className="p-fib-34 font-mono text-xs text-[#8A93A6]">CATÁLOGO...</div>}>
-                                <OpermaqModule key="pilot-opermaq-catalog" domainMode="CATALOG" hostScope="TEST_PILOT" />
-                            </Suspense>
-                        </div>
-                    )}
-
-                    {activeTab === 'SIM_OPERMAQ_FLEET' && (
-                        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                            <Suspense fallback={<div className="p-fib-34 font-mono text-xs text-[#8A93A6]">FLOTA...</div>}>
-                                <OpermaqModule key="pilot-opermaq-fleet" domainMode="FLEET" hostScope="TEST_PILOT" />
-                            </Suspense>
-                        </div>
-                    )}
-
-                    {activeTab === 'SIM_OPERMAQ_SYMBOLOGY' && (
-                        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                            <Suspense fallback={<div className="p-fib-34 font-mono text-xs text-[#8A93A6]">SIMBOLOGÍA...</div>}>
-                                <OpermaqModule key="pilot-opermaq-symbology" domainMode="SYMBOLOGY" hostScope="TEST_PILOT" />
-                            </Suspense>
-                        </div>
-                    )}
-
-                    {activeTab === 'SIM_STOCKPILE' && (
-                        <div className="flex-1 min-h-[600px] flex flex-col">
-                            <Suspense fallback={<div className="p-fib-34 font-mono text-xs text-[#8A93A6]">Cargando STOCKPILE CONTROL...</div>}>
-                                <StockpileModule />
-                            </Suspense>
-                        </div>
-                    )}
-
-                    {activeTab === 'FEEDBACK_LOG' && (
-                        <div className="p-fib-21 space-y-fib-21">
-                            <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
-                                <h1 className="text-h2-section uppercase">Registro Historico `pilot_feedback`</h1>
-                                <button
-                                    type="button"
-                                    onClick={loadPilotFeedback}
-                                    title="Actualizar bitacora"
-                                    className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
-                                >
-                                    <span className="material-symbols-outlined text-[20px]">refresh</span>
-                                </button>
-                            </div>
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left border-collapse font-mono text-data-dense tabular-nums">
-                                    <thead>
-                                        <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
-                                            <th className="py-fib-13 px-fib-8">Modulo</th>
-                                            <th className="py-fib-13 px-fib-8">Categoria</th>
-                                            <th className="py-fib-13 px-fib-8">Observacion</th>
-                                            <th className="py-fib-13 px-fib-8">Estado</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
-                                        {loadingList ? (
-                                            <tr>
-                                                <td colSpan={4} className="py-fib-34 text-center text-[#94A3B8] dark:text-[#5A6072]">
-                                                    Cargando observaciones...
-                                                </td>
-                                            </tr>
-                                        ) : feedbackItems.length === 0 ? (
-                                            <tr>
-                                                <td colSpan={4} className="py-fib-34 text-center text-[#94A3B8] dark:text-[#5A6072]">
-                                                    [Sin observaciones registradas]
-                                                </td>
-                                            </tr>
-                                        ) : (
-                                            feedbackItems.map((item) => (
-                                                <tr key={item.id} className="hover:bg-[#FFFFFF] dark:hover:bg-[#000000]">
-                                                    <td className="py-fib-13 px-fib-8 uppercase text-[#C68346]">{item.module}</td>
-                                                    <td className="py-fib-13 px-fib-8">{item.category}</td>
-                                                    <td className="py-fib-13 px-fib-8 font-sans">{item.observation}</td>
-                                                    <td className="py-fib-13 px-fib-8 text-[#00AEEF] uppercase">{item.status}</td>
-                                                </tr>
-                                            ))
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    )}
-
-                    {activeTab === 'HITL_CURATION' && (
-                        <div className="p-fib-21 space-y-fib-21">
-                            <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
-                                <h1 className="text-h2-section uppercase">Bandeja de Curacion IA (`hitl_candidates`)</h1>
-                                <button
-                                    type="button"
-                                    onClick={loadHitlCandidates}
-                                    title="Actualizar candidatos"
-                                    className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
-                                >
-                                    <span className="material-symbols-outlined text-[20px]">refresh</span>
-                                </button>
-                            </div>
-
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left border-collapse font-mono text-data-dense tabular-nums">
-                                    <thead>
-                                        <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
-                                            <th className="py-fib-13 px-fib-8">ID Candidato</th>
-                                            <th className="py-fib-13 px-fib-8">Modulo</th>
-                                            <th className="py-fib-13 px-fib-8">Entidad</th>
-                                            <th className="py-fib-13 px-fib-8">Estado</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
-                                        {hitlCandidates.length === 0 ? (
-                                            <tr>
-                                                <td colSpan={4} className="py-fib-34 text-center text-[#94A3B8] dark:text-[#5A6072]">
-                                                    [Sin propuestas pendientes en hitl_candidates]
-                                                </td>
-                                            </tr>
-                                        ) : (
-                                            hitlCandidates.map((cand) => (
-                                                <tr
-                                                    key={cand.id}
-                                                    onClick={() => handleSelectCandidate(cand)}
-                                                    className={`cursor-pointer ${selectedCandidate?.id === cand.id
-                                                        ? 'bg-[#C68346]/10'
-                                                        : 'hover:bg-[#FFFFFF] dark:hover:bg-[#000000]'
-                                                        }`}
-                                                >
-                                                    <td className="py-fib-13 px-fib-8 select-text">{cand.id}</td>
-                                                    <td className="py-fib-13 px-fib-8 uppercase text-[#C68346]">{cand.module || 'core'}</td>
-                                                    <td className="py-fib-13 px-fib-8">{resolveCandidateTargetLabel(cand)}</td>
-                                                    <td className="py-fib-13 px-fib-8 text-[#00AEEF] uppercase">{cand.status || 'PENDING'}</td>
-                                                </tr>
-                                            ))
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    )}
-                </section>
-
-                {/* AREA MENOR (38.2%) */}
-                <aside className="w-full lg:w-[38.2%] bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-fib-21 rounded-none shadow-none flex flex-col gap-fib-21">
-                    {activeTab === 'HITL_CURATION' ? (
-                        <>
-                            <div className="border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
-                                <span className="text-microcopy font-mono uppercase text-[#00AEEF]">
-                                    APROBACION GRANULAR 1 A 1 (HITL)
+            <div className="flex flex-1 min-h-0 overflow-hidden relative">
+                {/* Rail lateral B2B: solo vistas cliente y GEOLAPP®, cero CATÁLOGO maestro */}
+                <aside className="w-20 h-full flex flex-col items-center py-fib-21 border-r border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] z-30 shrink-0 gap-fib-8">
+                    {navItems.map((item) => {
+                        const active = activeView === item.id;
+                        return (
+                            <button
+                                key={item.id}
+                                type="button"
+                                onClick={() => handleSelectView(item.id)}
+                                title={item.label}
+                                aria-label={item.label}
+                                className={`group min-w-[48px] min-h-[48px] w-full py-fib-13 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
+                                    active
+                                        ? 'text-[#C68346]'
+                                        : 'text-slate-400 hover:text-[#0F172A] dark:hover:text-white'
+                                }`}
+                            >
+                                {active && (
+                                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-6 bg-[#C68346]" />
+                                )}
+                                <span className="material-symbols-outlined text-[24px]">{item.icon}</span>
+                                <span className="sr-only">{item.label}</span>
+                                <span aria-hidden="true" className={PILOT_SIDEBAR_CALLOUT_CLASS}>
+                                    {item.label}
                                 </span>
-                                <h2 className="text-h2-section uppercase mt-1">
-                                    Vista Comparativa [Actual] a [Sugerido]
-                                </h2>
+                            </button>
+                        );
+                    })}
+                </aside>
+
+                {/* Contenedor principal */}
+                <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden bg-[#FFFFFF] dark:bg-[#000000]">
+                    <ContextOrientationBar
+                        hidden={isEmbeddedModuleView}
+                        includeScaleSwitch={false}
+                        trail={[t('core_pilot_ws.nav.root'), currentViewLabel]}
+                        onBack={activeView !== 'DASHBOARD' ? () => handleSelectView('DASHBOARD') : undefined}
+                    />
+
+                    {activeView === 'DASHBOARD' && (
+                        <div className="flex-1 min-h-0 overflow-y-auto p-fib-34 space-y-fib-34">
+                            <div className="border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-21 flex flex-wrap items-end justify-between gap-fib-21">
+                                <div className="space-y-fib-8">
+                                    <p className="text-microcopy font-mono uppercase tracking-widest text-[#C68346]">
+                                        {t('core_pilot_ws.dashboard.eyebrow')}
+                                    </p>
+                                    <h1 className="text-h1-header font-sans font-semibold text-[#0F172A] dark:text-[#F3F4F6] uppercase tracking-tight">
+                                        {t('core_pilot_ws.dashboard.title')}
+                                    </h1>
+                                    <p className="text-body-main font-sans text-[#475569] dark:text-[#8A93A6] max-w-3xl">
+                                        {t('core_pilot_ws.dashboard.subtitle')}
+                                    </p>
+                                </div>
+                                <ReadAloudButton compact text={dashboardSpeechText} />
                             </div>
 
-                            {!selectedCandidate ? (
-                                <p className="text-xs font-mono text-[#94A3B8] dark:text-[#5A6072]">
-                                    Seleccione un candidato en la bandeja izquierda para autorizar o descartar campo por campo.
-                                </p>
-                            ) : (
-                                <div className="space-y-fib-21">
-                                    <div className="space-y-fib-8 text-xs font-mono">
-                                        {Object.entries(resolveCandidateSuggestedMap(selectedCandidate)).map(
-                                            ([fieldKey, suggestedVal]) => {
-                                                const currentVal =
-                                                    selectedCandidate.currentValues?.[fieldKey] ??
-                                                    selectedCandidate.currentValue ??
-                                                    MISSING_TECH;
-                                                return (
-                                                    <label
-                                                        key={fieldKey}
-                                                        className="flex items-start gap-fib-13 p-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none cursor-pointer"
+                            {/* Macro-Layout Áureo 61.8% / 38.2% idéntico a operativa B2B */}
+                            <div className="grid grid-cols-1 lg:grid-cols-[1.618fr_1fr] gap-fib-21 items-start">
+                                {/* Área Mayor (61.8%): Módulos operativos B2B sobre sandbox TEST-PILOT */}
+                                <section className="space-y-fib-21">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-fib-21">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleSelectView('OPERMAQ_FLEET')}
+                                            className="text-left border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] dark:hover:border-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 rounded-none shadow-none cursor-pointer transition-colors space-y-fib-13"
+                                        >
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-microcopy font-mono uppercase text-[#C68346]">
+                                                    OPERMAQ
+                                                </span>
+                                                <span className="material-symbols-outlined text-[22px] text-[#00AEEF]">
+                                                    precision_manufacturing
+                                                </span>
+                                            </div>
+                                            <h2 className="text-h2-section font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                {t('core_pilot_ws.cards.opermaq_title')}
+                                            </h2>
+                                            <p className="text-data-dense font-sans text-[#475569] dark:text-[#8A93A6]">
+                                                {t('core_pilot_ws.cards.opermaq_desc')}
+                                            </p>
+                                            <div className="pt-fib-13 border-t border-[#E2E8F0] dark:border-[#12151C] flex items-baseline justify-between">
+                                                <span className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
+                                                    {t('core_pilot_ws.cards.registered_units')}
+                                                </span>
+                                                <span className="text-kpi-display font-mono tabular-nums font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    {fleetCount !== null ? fleetCount : t('core_pilot_ws.pending_record')}
+                                                </span>
+                                            </div>
+                                        </button>
+
+                                        <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 rounded-none shadow-none space-y-fib-13 flex flex-col justify-between">
+                                            <div className="space-y-fib-13">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-microcopy font-mono uppercase text-[#C68346]">
+                                                        GEOLAPP®
+                                                    </span>
+                                                    <span className="material-symbols-outlined text-[22px] text-[#00AEEF]">
+                                                        terrain
+                                                    </span>
+                                                </div>
+                                                <h2 className="text-h2-section font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    {t('core_pilot_ws.cards.geolapp_title')}
+                                                </h2>
+                                                <p className="text-data-dense font-sans text-[#475569] dark:text-[#8A93A6]">
+                                                    {t('core_pilot_ws.cards.geolapp_desc')}
+                                                </p>
+                                            </div>
+                                            <div className="space-y-fib-13">
+                                                <div className="pt-fib-13 border-t border-[#E2E8F0] dark:border-[#12151C] flex items-baseline justify-between">
+                                                    <span className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
+                                                        {t('core_pilot_ws.cards.registered_stockpiles')}
+                                                    </span>
+                                                    <span className="text-kpi-display font-mono tabular-nums font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                        {stockpileCount !== null ? stockpileCount : t('core_pilot_ws.pending_record')}
+                                                    </span>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-fib-8">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleSelectView('GEOLAPP_STOCKPILE')}
+                                                        className="min-h-[44px] px-fib-8 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] bg-[#FFFFFF] dark:bg-[#000000] text-microcopy font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer transition-colors"
                                                     >
-                                                        <input
-                                                            type="checkbox"
-                                                            autoComplete="off"
-                                                            spellCheck={false}
-                                                            checked={Boolean(approvedFields[fieldKey])}
-                                                            onChange={(e) =>
-                                                                setApprovedFields((prev) => ({
-                                                                    ...prev,
-                                                                    [fieldKey]: e.target.checked,
-                                                                }))
-                                                            }
-                                                            className="mt-1 accent-[#C68346] rounded-none"
-                                                        />
-                                                        <div className="flex-1 space-y-1">
-                                                            <span className="text-microcopy uppercase text-[#C68346] block">
-                                                                {fieldKey}
-                                                            </span>
-                                                            <div className="flex flex-wrap items-center gap-fib-8 text-xs">
-                                                                <span className="text-[#475569] dark:text-[#8A93A6]">
-                                                                    [Actual: {String(currentVal)}]
-                                                                </span>
-                                                                <span className="material-symbols-outlined text-[14px] text-[#00AEEF]">
-                                                                    arrow_forward
-                                                                </span>
-                                                                <span className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                                                                    [Sugerido: {String(suggestedVal ?? MISSING_TECH)}]
-                                                                </span>
-                                                            </div>
-                                                        </div>
-                                                    </label>
-                                                );
-                                            }
-                                        )}
+                                                        {t('core_pilot_ws.nav.geolapp_stockpile')}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleSelectView('GEOLAPP_GEOMENSURA')}
+                                                        className="min-h-[44px] px-fib-8 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] bg-[#FFFFFF] dark:bg-[#000000] text-microcopy font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer transition-colors"
+                                                    >
+                                                        {t('core_pilot_ws.nav.geolapp_geomensura')}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleSelectView('GEOLAPP_EXPLORACION')}
+                                                        className="min-h-[44px] px-fib-8 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] bg-[#FFFFFF] dark:bg-[#000000] text-microcopy font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer transition-colors"
+                                                    >
+                                                        {t('core_pilot_ws.nav.geolapp_exploracion')}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleSelectView('GEOLAPP_ESTRUCTURAL')}
+                                                        className="min-h-[44px] px-fib-8 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] bg-[#FFFFFF] dark:bg-[#000000] text-microcopy font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer transition-colors"
+                                                    >
+                                                        {t('core_pilot_ws.nav.geolapp_estructural')}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
 
-                                    <div className="space-y-fib-13 border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-13">
-                                        <label className="block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
-                                            Escriba ACTUALIZAR para consolidar curacion
-                                        </label>
-                                        <input
-                                            type="text"
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            value={confirmKeyword}
-                                            onChange={(e) => setConfirmKeyword(e.target.value.toUpperCase())}
-                                            placeholder="ACTUALIZAR"
-                                            className="w-full px-fib-13 py-2 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-xs font-mono tracking-widest text-center rounded-none outline-none"
-                                        />
-                                        <div className="grid grid-cols-2 gap-fib-8">
+                                    {/* Accesos transversales OPERMAQ en modo cliente */}
+                                    <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 rounded-none shadow-none space-y-fib-13">
+                                        <p className="text-microcopy font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
+                                            {t('core_pilot_ws.sections.client_catalogs')}
+                                        </p>
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-fib-13">
                                             <button
                                                 type="button"
-                                                disabled={confirmKeyword.trim() !== 'ACTUALIZAR'}
-                                                onClick={() => handleConsolidateHitl('APPROVED')}
-                                                className="py-2.5 bg-[#C68346] hover:bg-[#B0743E] text-white text-xs font-mono font-bold uppercase rounded-none border-0 cursor-pointer disabled:opacity-40"
+                                                onClick={() => handleSelectView('OPERMAQ_SYMBOLOGY')}
+                                                className="min-h-[48px] px-fib-13 py-fib-13 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] bg-[#FFFFFF] dark:bg-[#000000] text-left flex items-center justify-between cursor-pointer rounded-none shadow-none transition-colors"
                                             >
-                                                Autorizar Campos
+                                                <span className="text-data-dense font-mono uppercase text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    {t('core_pilot_ws.nav.symbology')}
+                                                </span>
+                                                <span className="material-symbols-outlined text-[18px] text-[#00AEEF]">arrow_forward</span>
                                             </button>
                                             <button
                                                 type="button"
-                                                disabled={confirmKeyword.trim() !== 'ACTUALIZAR'}
-                                                onClick={() => handleConsolidateHitl('REJECTED')}
-                                                className="py-2.5 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-red-500 text-red-600 dark:text-red-400 text-xs font-mono uppercase rounded-none cursor-pointer disabled:opacity-40"
+                                                onClick={() => handleSelectView('OPERMAQ_MANUFACTURERS')}
+                                                className="min-h-[48px] px-fib-13 py-fib-13 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] bg-[#FFFFFF] dark:bg-[#000000] text-left flex items-center justify-between cursor-pointer rounded-none shadow-none transition-colors"
                                             >
-                                                Descartar
+                                                <span className="text-data-dense font-mono uppercase text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    {t('core_pilot_ws.nav.manufacturers')}
+                                                </span>
+                                                <span className="material-symbols-outlined text-[18px] text-[#00AEEF]">arrow_forward</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleSelectView('OPERMAQ_SUPPLIERS')}
+                                                className="min-h-[48px] px-fib-13 py-fib-13 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] bg-[#FFFFFF] dark:bg-[#000000] text-left flex items-center justify-between cursor-pointer rounded-none shadow-none transition-colors"
+                                            >
+                                                <span className="text-data-dense font-mono uppercase text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    {t('core_pilot_ws.nav.suppliers')}
+                                                </span>
+                                                <span className="material-symbols-outlined text-[18px] text-[#00AEEF]">arrow_forward</span>
                                             </button>
                                         </div>
                                     </div>
-                                </div>
-                            )}
-                        </>
-                    ) : (
-                        <form onSubmit={handleCreateFeedback} autoComplete="off" spellCheck={false} className="space-y-fib-13">
-                            <div className="border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
-                                <span className="text-microcopy font-mono uppercase text-[#C68346]">
-                                    {isSimulation ? 'REGISTRO DE SIMULACION EN VIVO' : 'NUEVA ENTRADA PILOT_FEEDBACK'}
-                                </span>
-                                <h2 className="text-h2-section uppercase mt-1">
-                                    Observacion y Entrenamiento Experto
-                                </h2>
-                            </div>
+                                </section>
 
-                            <div className="grid grid-cols-2 gap-fib-8">
-                                <div>
-                                    <label className="block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] mb-1">
-                                        Categoria
-                                    </label>
-                                    <select
-                                        value={category}
-                                        onChange={(e) => setCategory(e.target.value as any)}
-                                        className="w-full bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] px-2.5 py-2 text-xs font-mono rounded-none outline-none"
-                                    >
-                                        <option value="FIELD_SIMULATION">Simulacion Faena</option>
-                                        <option value="AI_KNOWLEDGE_TRAINING">Entrenamiento IA</option>
-                                        <option value="CHANGE_REQUEST">Solicitud Cambio</option>
-                                        <option value="BUG_CORRECTION">Correccion Tecnica</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] mb-1">
-                                        Prioridad
-                                    </label>
-                                    <select
-                                        value={priority}
-                                        onChange={(e) => setPriority(e.target.value as any)}
-                                        className="w-full bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] px-2.5 py-2 text-xs font-mono rounded-none outline-none"
-                                    >
-                                        <option value="LOW">LOW</option>
-                                        <option value="MEDIUM">MEDIUM</option>
-                                        <option value="HIGH">HIGH</option>
-                                        <option value="CRITICAL">CRITICAL</option>
-                                    </select>
-                                </div>
-                            </div>
+                                {/* Área Menor (38.2%): Telemetría sandbox y reserva arquitectónica IA */}
+                                <aside className="space-y-fib-21">
+                                    <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 rounded-none shadow-none space-y-fib-13">
+                                        <p className="text-microcopy font-mono uppercase tracking-wider text-[#C68346]">
+                                            {t('core_pilot_ws.telemetry.title')}
+                                        </p>
+                                        <dl className="space-y-fib-13 text-data-dense font-mono">
+                                            <div className="flex justify-between gap-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-8">
+                                                <dt className="text-[#475569] dark:text-[#8A93A6]">
+                                                    {t('core_pilot_ws.telemetry.account_type')}
+                                                </dt>
+                                                <dd className="text-[#0F172A] dark:text-[#F3F4F6] font-bold">
+                                                    3º TEST-PILOT
+                                                </dd>
+                                            </div>
+                                            <div className="flex justify-between gap-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-8">
+                                                <dt className="text-[#475569] dark:text-[#8A93A6]">
+                                                    {t('core_pilot_ws.telemetry.sync_pending')}
+                                                </dt>
+                                                <dd className="tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    {syncState.pendingCount}
+                                                </dd>
+                                            </div>
+                                            <div className="flex justify-between gap-fib-8">
+                                                <dt className="text-[#475569] dark:text-[#8A93A6]">
+                                                    {t('core_pilot_ws.telemetry.isolation_scope')}
+                                                </dt>
+                                                <dd className="text-[#00AEEF]">
+                                                    SANDBOX
+                                                </dd>
+                                            </div>
+                                        </dl>
+                                    </div>
 
-                            <div>
-                                <label className="block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] mb-1">
-                                    Observacion Tecnica
-                                </label>
-                                <textarea
-                                    required
-                                    rows={4}
-                                    autoComplete="off"
-                                    spellCheck={false}
-                                    value={observation}
-                                    onChange={(e) => setObservation(e.target.value)}
-                                    placeholder="Documente hallazgos de operacion minera, ergonomia o precision de calculo..."
-                                    className="w-full bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] p-fib-13 text-xs font-sans rounded-none outline-none resize-none select-text"
-                                />
+                                    <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 rounded-none shadow-none space-y-fib-13">
+                                        <div className="flex items-center justify-between gap-fib-8">
+                                            <span className="text-microcopy font-mono uppercase tracking-wider text-[#00AEEF]">
+                                                {t('core_pilot_ws.ai_future.eyebrow')}
+                                            </span>
+                                            <span className="material-symbols-outlined text-[22px] text-[#00AEEF]">
+                                                psychology
+                                            </span>
+                                        </div>
+                                        <h2 className="text-h2-section font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                                            {t('core_pilot_ws.ai_future.title')}
+                                        </h2>
+                                        <p className="text-data-dense font-sans text-[#475569] dark:text-[#8A93A6]">
+                                            {t('core_pilot_ws.ai_studio.subtitle')}
+                                        </p>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleSelectView('PILOT_AI_STUDIO')}
+                                            className="w-full min-h-[48px] px-fib-13 py-fib-8 border border-[#00AEEF] bg-[#FFFFFF] dark:bg-[#000000] hover:border-[#C68346] text-microcopy font-mono uppercase tracking-wider text-[#00AEEF] cursor-pointer rounded-none shadow-none transition-colors"
+                                        >
+                                            {t('core_pilot_ws.ai_future.open_studio')}
+                                        </button>
+                                    </div>
+                                </aside>
                             </div>
-
-                            <div>
-                                <label className="block text-microcopy font-mono uppercase text-[#00AEEF] mb-1">
-                                    Comportamiento Esperado IA (Opcional)
-                                </label>
-                                <textarea
-                                    rows={3}
-                                    autoComplete="off"
-                                    spellCheck={false}
-                                    value={expectedAiBehavior}
-                                    onChange={(e) => setExpectedAiBehavior(e.target.value)}
-                                    placeholder="Especifique criterio tecnico o norma DS 132/ISO para entrenar el enjambre..."
-                                    className="w-full bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] p-fib-13 text-xs font-sans rounded-none outline-none resize-none select-text"
-                                />
-                            </div>
-
-                            <button
-                                type="submit"
-                                disabled={submittingFeedback}
-                                className="w-full py-2.5 bg-[#C68346] hover:bg-[#B0743E] text-white text-xs font-mono font-bold uppercase tracking-wider rounded-none border-0 cursor-pointer disabled:opacity-50"
-                            >
-                                {submittingFeedback ? 'GUARDANDO...' : 'REGISTRAR EN PILOT_FEEDBACK'}
-                            </button>
-                        </form>
+                        </div>
                     )}
-                </aside>
-            </main>
+
+                    {activeView === 'OPERMAQ_FLEET' && (
+                        <ModuleHost moduleId="opermaq" embedded={true} domainMode="FLEET" hostScope="CLIENT" enforceEntitlement={false} />
+                    )}
+                    {activeView === 'OPERMAQ_SYMBOLOGY' && (
+                        <ModuleHost moduleId="opermaq" embedded={true} domainMode="SYMBOLOGY" hostScope="CLIENT" enforceEntitlement={false} />
+                    )}
+                    {activeView === 'OPERMAQ_MANUFACTURERS' && (
+                        <ModuleHost moduleId="opermaq" embedded={true} domainMode="MANUFACTURERS" hostScope="CLIENT" enforceEntitlement={false} />
+                    )}
+                    {activeView === 'OPERMAQ_SUPPLIERS' && (
+                        <ModuleHost moduleId="opermaq" embedded={true} domainMode="SUPPLIERS" hostScope="CLIENT" enforceEntitlement={false} />
+                    )}
+                    {activeGeolappDomain !== null && (
+                        <ModuleHost
+                            key={`pilot-geolapp-${activeGeolappDomain}`}
+                            moduleId="stockpile"
+                            embedded={true}
+                            domainMode={activeGeolappDomain}
+                            hostScope="TEST_PILOT"
+                            enforceEntitlement={false}
+                        />
+                    )}
+                    {activeView === 'PILOT_AI_STUDIO' && (
+                        <Suspense fallback={<M3ModuleHudFallback label={t('core_pilot_ws.nav.ai_studio')} />}>
+                            <TestPilotAiStudio activeContextModule={aiContextModule} />
+                        </Suspense>
+                    )}
+                </main>
+            </div>
         </div>
     );
 };

@@ -49,7 +49,7 @@ const DataValueCell: React.FC<{ value: string | null | undefined; mono?: boolean
   const { t } = useTranslation();
   const { text, isMissing } = valOrMissing(value, t('opermaq_domains.not_declared'));
   if (isMissing) {
-    return <span className="text-[12px] text-[#94A3B8] dark:text-[#5A6072]">{text}</span>;
+    return <span className="text-[0.8125rem] text-[#94A3B8] dark:text-[#5A6072]">{text}</span>;
   }
   return (
     <span
@@ -190,7 +190,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
               {taxonomy.material_icon || 'precision_manufacturing'}
             </span>
             <div className="min-w-0">
-              <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+              <div className="text-microcopy font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                 {t('cost_matrix.header_subtitle')} · {taxonomy.family_label_es}
               </div>
               <h1 className="text-[17px] font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate">
@@ -201,7 +201,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
 
           <div className="flex items-center gap-[21px]">
             <div className="text-right">
-              <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+              <div className="text-microcopy font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                 {t('cost_matrix.base_tco_unit')}
               </div>
               <div className="text-[15px] font-bold font-mono tabular-nums text-[#C68346]">
@@ -209,7 +209,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
               </div>
             </div>
             <div className="text-right">
-              <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+              <div className="text-microcopy font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                 {t('cost_matrix.energy_vector')}
               </div>
               <div className="text-[13px] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
@@ -228,7 +228,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
             className="flex-1"
             ariaLabel={t('cost_matrix.progress_aria')}
           />
-          <span className="text-[11px] font-bold uppercase tracking-[0.05em] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
+          <span className="text-microcopy font-bold uppercase tracking-[0.05em] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
             {completenessStatus === 'COMPLETE'
               ? t('cost_matrix.status_complete')
               : completenessStatus === 'PARTIAL'
@@ -248,7 +248,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
                   ? t('cost_matrix_energy.section_title_with_scr')
                   : t('cost_matrix_energy.section_title_base')}
               </h2>
-              <span className="text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
+              <span className="text-microcopy font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
                 {t('cost_matrix_energy.driver_unit_label')}: {energy?.cost_driver_unit || 'L/h'}
               </span>
             </div>
@@ -256,7 +256,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
             <div className={`mt-[13px] grid grid-cols-1 ${energyGridColsClass} gap-[13px]`}>
               {showStorageCapacityCard && (
                 <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[13px] rounded-none shadow-none">
-                  <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                  <div className="text-microcopy font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                     {storageCardTitle}
                   </div>
                   <div className="mt-[8px]">
@@ -266,7 +266,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
               )}
 
               <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[13px] rounded-none shadow-none">
-                <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                <div className="text-microcopy font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                   {autonomyOrDemandCardTitle}
                 </div>
                 <div className="mt-[8px]">
@@ -282,7 +282,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
 
               {requiresDef && (
                 <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[13px] rounded-none shadow-none">
-                  <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                  <div className="text-microcopy font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                     {t('cost_matrix_energy.scr_card_title')}
                   </div>
                   <div className="mt-[8px] flex flex-col gap-[4px] font-mono tabular-nums text-[13px] text-[#0F172A] dark:text-[#F3F4F6]">
@@ -290,7 +290,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
                       {t('cost_matrix_energy.scr_proportion')}:{' '}
                       {energy?.def_adblue_consumption?.consumption_pct_of_fuel || missingSpecText}
                     </span>
-                    <span className="text-[12px] text-[#475569] dark:text-[#8A93A6]">
+                    <span className="text-[0.8125rem] text-[#475569] dark:text-[#8A93A6]">
                       {t('cost_matrix_energy.scr_tank')}:{' '}
                       {energy?.def_adblue_consumption?.tank_capacity_liters || missingSpecText}
                     </span>
@@ -304,7 +304,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
               <div className="mt-[21px] overflow-x-auto">
                 <table className="w-full border-collapse text-left font-mono tabular-nums text-[13px]">
                   <thead>
-                    <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-[11px] uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                    <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-microcopy uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                       <th className="py-[8px] pr-[13px]">{t('cost_matrix.load_idle')}</th>
                       <th className="py-[8px] px-[13px]">{t('cost_matrix.load_low')}</th>
                       <th className="py-[8px] px-[13px]">{t('cost_matrix.load_medium')}</th>
@@ -334,12 +334,12 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
             {/* Tabla de Rendimiento por Kilómetro (Ruta / Faena) */}
             {hasRoadData && (
               <div className="mt-[21px] pt-[13px] border-t border-[#E2E8F0] dark:border-[#12151C] overflow-x-auto">
-                <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#00AEEF] mb-[8px]">
+                <div className="text-microcopy font-bold uppercase tracking-[0.05em] text-[#00AEEF] mb-[8px]">
                   {t('cost_matrix.road_heading')}
                 </div>
                 <table className="w-full border-collapse text-left font-mono tabular-nums text-[13px]">
                   <thead>
-                    <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-[11px] uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                    <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-microcopy uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                       <th className="py-[8px] pr-[13px]">{t('cost_matrix.road_highway')}</th>
                       <th className="py-[8px] px-[13px]">{t('cost_matrix.road_offroad')}</th>
                       <th className="py-[8px] px-[13px]">{t('cost_matrix.road_combined')}</th>
@@ -391,7 +391,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
           </h2>
           <div className="mt-[13px] grid grid-cols-1 md:grid-cols-4 gap-[13px]">
             <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[13px]">
-              <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+              <div className="text-microcopy font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                 {t('cost_matrix.capex_ref_price')}
               </div>
               <div className="mt-[8px]">
@@ -401,7 +401,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
               </div>
             </div>
             <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[13px]">
-              <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+              <div className="text-microcopy font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                 {t('cost_matrix.capex_economic_life')}
               </div>
               <div className="mt-[8px]">
@@ -415,7 +415,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
               </div>
             </div>
             <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[13px]">
-              <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+              <div className="text-microcopy font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                 {t('cost_matrix.capex_residual_dep')}
               </div>
               <div className="mt-[8px]">
@@ -425,7 +425,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
               </div>
             </div>
             <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[13px]">
-              <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+              <div className="text-microcopy font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                 {t('cost_matrix.capex_standard_equip')}
               </div>
               <div className="mt-[8px]">
@@ -444,14 +444,14 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
             {t('cost_matrix.sec3_title')}
           </h2>
           {periodicFluids.length === 0 ? (
-            <div className="pt-[13px] text-[12px] text-[#94A3B8] dark:text-[#5A6072]">
+            <div className="pt-[13px] text-[0.8125rem] text-[#94A3B8] dark:text-[#5A6072]">
               {missingSpecText} — {t('cost_matrix.sec3_empty')}
             </div>
           ) : (
             <div className="mt-[13px] overflow-x-auto">
               <table className="w-full border-collapse text-left text-[13px]">
                 <thead>
-                  <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                  <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-microcopy font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                     <th className="py-[8px] pr-[13px]">{t('cost_matrix.col_compartment')}</th>
                     <th className="py-[8px] px-[13px]">{t('cost_matrix.col_spec_viscosity')}</th>
                     <th className="py-[8px] px-[13px]">{t('cost_matrix.col_capacity')}</th>
@@ -494,14 +494,14 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
             {t('cost_matrix.sec4_title')}
           </h2>
           {periodicFilters.length === 0 ? (
-            <div className="pt-[13px] text-[12px] text-[#94A3B8] dark:text-[#5A6072]">
+            <div className="pt-[13px] text-[0.8125rem] text-[#94A3B8] dark:text-[#5A6072]">
               {missingSpecText} — {t('cost_matrix.sec4_empty')}
             </div>
           ) : (
             <div className="mt-[13px] overflow-x-auto">
               <table className="w-full border-collapse text-left text-[13px]">
                 <thead>
-                  <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                  <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-microcopy font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                     <th className="py-[8px] pr-[13px]">{t('cost_matrix.col_element_filter')}</th>
                     <th className="py-[8px] px-[13px]">{t('cost_matrix.col_oem_part')}</th>
                     <th className="py-[8px] px-[13px]">{t('cost_matrix.col_qty')}</th>
@@ -543,14 +543,14 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
               V. {taxonomy.wear_section_title_es.toUpperCase()}
             </h2>
             {wearParts.length === 0 ? (
-              <div className="pt-[13px] text-[12px] text-[#94A3B8] dark:text-[#5A6072]">
+              <div className="pt-[13px] text-[0.8125rem] text-[#94A3B8] dark:text-[#5A6072]">
                 {taxonomy.wear_empty_hint_es}
               </div>
             ) : (
               <div className="mt-[13px] overflow-x-auto">
                 <table className="w-full border-collapse text-left text-[13px]">
                   <thead>
-                    <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                    <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-microcopy font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                       <th className="py-[8px] pr-[13px]">{taxonomy.wear_col_1_label_es}</th>
                       <th className="py-[8px] px-[13px]">{taxonomy.wear_col_2_label_es}</th>
                       <th className="py-[8px] px-[13px]">{t('cost_matrix.col_oem_code_spec')}</th>
@@ -597,14 +597,14 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
               VI. {taxonomy.support_section_title_es.toUpperCase()}
             </h2>
             {supportParts.length === 0 ? (
-              <div className="pt-[13px] text-[12px] text-[#94A3B8] dark:text-[#5A6072]">
+              <div className="pt-[13px] text-[0.8125rem] text-[#94A3B8] dark:text-[#5A6072]">
                 {taxonomy.support_empty_hint_es}
               </div>
             ) : (
               <div className="mt-[13px] overflow-x-auto">
                 <table className="w-full border-collapse text-left text-[13px]">
                   <thead>
-                    <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                    <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-microcopy font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                       <th className="py-[8px] pr-[13px]">{t('cost_matrix.col_component')}</th>
                       <th className="py-[8px] px-[13px]">{taxonomy.support_col_spec_label_es}</th>
                       <th className="py-[8px] px-[13px]">{t('cost_matrix.col_qty')}</th>
@@ -653,7 +653,7 @@ export const EquipmentCostMatrixPanel: React.FC<EquipmentCostMatrixPanelProps> =
             <div className="mt-[13px] overflow-x-auto">
               <table className="w-full border-collapse text-left text-[13px]">
                 <thead>
-                  <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                  <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] text-microcopy font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                     <th className="py-[8px] pr-[13px]">{t('cost_matrix.col_schedule')}</th>
                     <th className="py-[8px] px-[13px]">{t('cost_matrix.col_frequency')}</th>
                     <th className="py-[8px] px-[13px]">{t('cost_matrix.col_assoc_fluids')}</th>

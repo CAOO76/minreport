@@ -6,20 +6,44 @@ import type {
     MediaDigestionProfile,
 } from '../../contracts/media.contracts';
 import { MediaDigestorServer, type DigestedBinaryOutput } from './MediaDigestorServer';
+import { TenantMetricsService } from '../../services/tenant-metrics.service';
 
 /**
- * CAS STORAGE SERVICE v4.0 — Almacenamiento Direccionado por Contenido (SHA-256 + pHash 64-bit)
+ * CAS STORAGE SERVICE v4.1 — Almacenamiento Direccionado por Contenido Multi-Tenant (SHA-256 + pHash 64-bit)
  *
  * Garantías de Economía y Seguridad:
  * 1. Cada archivo optimizado se guarda UNA SOLA VEZ en Cloud Storage (`southamerica-west1` / Emulador `:9195`):
  *    - `cas_blobs/global_oem/{sha256}.{ext}` (Conocimiento común OEM sanitizado)
  *    - `assets/symbology/cas/{sha256}.{ext}` (Simbología vectorial e ISO universal)
  *    - `cas_blobs/tenants/{tenantId}/{sha256}.{ext}` (Evidencia privada aislada por tenant)
- * 2. Deduplicación en 2 niveles:
- *    - Nivel Exacto: `media_registry/{sha256}` O(1) — si ya existe, incrementa `refCount` y evita re-escritura.
- *    - Nivel Perceptual: `phashHex` (`dHash` 64-bit, distancia de Hamming <= 5) dentro del mismo ámbito (`GLOBAL_OEM` o mismo `tenantId`).
- * 3. Directivas Edge Capa 1: `Cache-Control: public, max-age=31536000, immutable` en activos globales.
+ * 2. Aislamiento determinista en `media_registry`:
+ *    - `buildMediaRegistryDocId(sha256, scope, tenantId)` genera `tenant_${tenantId}_${sha256}` para `TENANT_PRIVATE`
+ *      y `${scope.toLowerCase()}_${sha256}` para ámbitos globales (`GLOBAL_OEM`, `SYMBOLOGY_MASTER`, `GLOBAL_CATALOG`, etc.).
+ *    - Fallback de solo lectura a `.doc(sha256)` para retrocompatibilidad 100% con activos preexistentes.
+ * 3. Streaming directo (`openCasBlobStream`) con 1 sola llamada `getMetadata()` sin cargar binarios pesados en RAM.
  */
+
+export function buildMediaRegistryDocId(
+    sha256: string,
+    scope: CasStorageScope | string,
+    tenantId?: string | null
+): string {
+    const cleanHash = String(sha256 || '').trim().toLowerCase();
+    const normalizedScope = String(scope || 'GLOBAL_OEM').trim().toUpperCase();
+
+    if (normalizedScope === 'TENANT_PRIVATE') {
+        const safeTenant = String(tenantId || '')
+            .trim()
+            .replace(/[^a-zA-Z0-9_-]/g, '_');
+        if (!safeTenant) {
+            throw new Error('tenantId es obligatorio para media_registry con scope TENANT_PRIVATE.');
+        }
+        return `tenant_${safeTenant}_${cleanHash}`;
+    }
+
+    const safeScope = normalizedScope.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+    return `${safeScope}_${cleanHash}`;
+}
 
 export interface PersistDigestedOptions {
     scope: CasStorageScope;
@@ -30,8 +54,121 @@ export interface PersistDigestedOptions {
     nearDuplicateHammingThreshold?: number;
 }
 
+export interface CasBlobStreamHandle {
+    stream: NodeJS.ReadableStream;
+    contentType: string;
+    cacheControl?: string;
+    contentLength?: number;
+    etag?: string;
+    storagePath: string;
+}
+
 export class CasStorageService {
     private static readonly REGISTRY_COLLECTION = 'media_registry';
+
+    public static readonly buildMediaRegistryDocId = buildMediaRegistryDocId;
+
+    private static mapRegistryDataToDescriptor(
+        fallbackSha256: string,
+        data: Record<string, any>,
+        deduplicatedHit: boolean,
+        nearDuplicateOf?: string
+    ): DigestedMediaDescriptor {
+        const resolvedSha = String(data.sha256 || fallbackSha256).trim().toLowerCase();
+        return {
+            sha256: resolvedSha,
+            phashHex: data.phashHex || undefined,
+            scope: data.scope,
+            tenantId: data.tenantId || undefined,
+            profile: data.profile || 'IMAGE_FIELD_EVIDENCE',
+            mimeType: data.mimeType || 'application/octet-stream',
+            extension: data.extension || 'bin',
+            originalFilename: data.originalFilename,
+            originalBytes: Number(data.originalBytes || data.optimizedBytes || 0),
+            optimizedBytes: Number(data.optimizedBytes || 0),
+            savingsRatio: Number(data.savingsRatio || 0),
+            savingsPct:
+                typeof data.savingsPct === 'number'
+                    ? Number(data.savingsPct)
+                    : Number((Number(data.savingsRatio || 0) * 100).toFixed(1)),
+            width: data.width || undefined,
+            height: data.height || undefined,
+            pageCount: data.pageCount || undefined,
+            resampledPages: data.resampledPages ?? undefined,
+            preservedVectorPages: data.preservedVectorPages ?? undefined,
+            durationSec: data.durationSec ?? undefined,
+            storagePath: data.storagePath,
+            downloadUrl: data.downloadUrl,
+            deduplicatedHit,
+            nearDuplicateOf,
+            createdAt: data.createdAt || new Date().toISOString(),
+        };
+    }
+
+    private static isLegacyDocAllowedForScope(
+        data: Record<string, any>,
+        requestedScope: CasStorageScope | string,
+        requestedTenantId?: string,
+        allowCrossTenantAudit: boolean = false
+    ): boolean {
+        const normalizedRequestedScope = String(requestedScope || '').trim().toUpperCase();
+        const docScope = String(data.scope || '').trim().toUpperCase();
+
+        if (docScope === 'TENANT_PRIVATE') {
+            if (normalizedRequestedScope !== 'TENANT_PRIVATE') return false;
+            if (allowCrossTenantAudit) return true;
+            const cleanReqTenant = String(requestedTenantId || '').trim();
+            const cleanDocTenant = String(data.tenantId || data.tenant_id || '').trim();
+            return Boolean(cleanReqTenant && cleanDocTenant && cleanReqTenant === cleanDocTenant);
+        }
+
+        if (normalizedRequestedScope === 'TENANT_PRIVATE') {
+            return false;
+        }
+
+        return !docScope || docScope === normalizedRequestedScope;
+    }
+
+    private static async lookupRegistryDocWithFallback(
+        cleanHash: string,
+        scope: CasStorageScope | string,
+        tenantId?: string,
+        allowCrossTenantAudit: boolean = false
+    ): Promise<{ docId: string; data: Record<string, any>; isLegacyFallback: boolean } | null> {
+        const normalizedScope = String(scope || 'GLOBAL_OEM').trim().toUpperCase();
+        if (normalizedScope === 'TENANT_PRIVATE' && (!tenantId || !tenantId.trim())) {
+            if (!allowCrossTenantAudit) {
+                return null;
+            }
+        } else {
+            const compositeDocId = buildMediaRegistryDocId(cleanHash, normalizedScope, tenantId);
+            const compositeSnap = await db.collection(this.REGISTRY_COLLECTION).doc(compositeDocId).get();
+            if (compositeSnap.exists) {
+                const data = compositeSnap.data()!;
+                if (
+                    normalizedScope === 'TENANT_PRIVATE' &&
+                    !allowCrossTenantAudit &&
+                    data.tenantId &&
+                    tenantId &&
+                    String(data.tenantId).trim() !== tenantId.trim()
+                ) {
+                    return null;
+                }
+                return { docId: compositeDocId, data, isLegacyFallback: false };
+            }
+        }
+
+        // Fallback de solo lectura a `.doc(sha256)` para retrocompatibilidad con activos previos de OPERMAQ
+        const legacySnap = await db.collection(this.REGISTRY_COLLECTION).doc(cleanHash).get();
+        if (!legacySnap.exists) return null;
+
+        const legacyData = legacySnap.data()!;
+        if (!this.isLegacyDocAllowedForScope(legacyData, normalizedScope, tenantId, allowCrossTenantAudit)) {
+            return null;
+        }
+
+        return { docId: cleanHash, data: legacyData, isLegacyFallback: true };
+    }
 
     public static buildStoragePath(
         scope: CasStorageScope,
@@ -83,46 +220,97 @@ export class CasStorageService {
     ): Promise<DigestedMediaDescriptor | null> {
         if (!/^[a-f0-9]{64}$/i.test(sha256)) return null;
         const cleanHash = sha256.toLowerCase();
-        const docSnap = await db.collection(this.REGISTRY_COLLECTION).doc(cleanHash).get();
-        if (!docSnap.exists) return null;
+        const found = await this.lookupRegistryDocWithFallback(cleanHash, scope, tenantId, false);
+        if (!found) return null;
+        return this.mapRegistryDataToDescriptor(cleanHash, found.data, true);
+    }
 
-        const data = docSnap.data()!;
-        // Control de aislamiento multi-tenant en registros privados
-        if (data.scope === 'TENANT_PRIVATE' && scope === 'TENANT_PRIVATE') {
-            if (data.tenantId && tenantId && data.tenantId !== tenantId) {
-                return null;
+    /**
+     * Resuelve metadatos en `media_registry` por SHA-256 verificando primero ID compuesto multi-tenant/global
+     * y aplicando fallback de solo lectura a `.doc(sha256)`.
+     */
+    public static async resolveRegistryEntryBySha256(
+        sha256: string,
+        options?: {
+            scope?: CasStorageScope | string;
+            tenantId?: string;
+            allowCrossTenantAudit?: boolean;
+        }
+    ): Promise<DigestedMediaDescriptor | null> {
+        if (!/^[a-f0-9]{64}$/i.test(sha256)) return null;
+        const cleanHash = sha256.toLowerCase();
+        const allowAudit = Boolean(options?.allowCrossTenantAudit);
+        const cleanTenant = options?.tenantId?.trim() || undefined;
+
+        if (options?.scope) {
+            const directHit = await this.lookupRegistryDocWithFallback(
+                cleanHash,
+                options.scope,
+                cleanTenant,
+                allowAudit
+            );
+            if (directHit) {
+                return this.mapRegistryDataToDescriptor(cleanHash, directHit.data, true);
             }
-        } else if (data.scope === 'TENANT_PRIVATE' && scope === 'GLOBAL_OEM') {
+            if (allowAudit && String(options.scope).toUpperCase() === 'TENANT_PRIVATE') {
+                const auditQuery = await db
+                    .collection(this.REGISTRY_COLLECTION)
+                    .where('sha256', '==', cleanHash)
+                    .limit(5)
+                    .get();
+                const privateDoc = auditQuery.docs.find(
+                    (d) => String(d.data()?.scope || '').toUpperCase() === 'TENANT_PRIVATE'
+                );
+                if (privateDoc) {
+                    return this.mapRegistryDataToDescriptor(cleanHash, privateDoc.data(), true);
+                }
+            }
             return null;
         }
 
-        return {
-            sha256: cleanHash,
-            phashHex: data.phashHex,
-            scope: data.scope,
-            tenantId: data.tenantId,
-            profile: data.profile || 'IMAGE_FIELD_EVIDENCE',
-            mimeType: data.mimeType || 'application/octet-stream',
-            extension: data.extension || 'bin',
-            originalFilename: data.originalFilename,
-            originalBytes: Number(data.originalBytes || data.optimizedBytes || 0),
-            optimizedBytes: Number(data.optimizedBytes || 0),
-            savingsRatio: Number(data.savingsRatio || 0),
-            savingsPct:
-                typeof data.savingsPct === 'number'
-                    ? Number(data.savingsPct)
-                    : Number((Number(data.savingsRatio || 0) * 100).toFixed(1)),
-            width: data.width,
-            height: data.height,
-            pageCount: data.pageCount,
-            resampledPages: data.resampledPages,
-            preservedVectorPages: data.preservedVectorPages,
-            durationSec: data.durationSec,
-            storagePath: data.storagePath,
-            downloadUrl: data.downloadUrl,
-            deduplicatedHit: true,
-            createdAt: data.createdAt || new Date().toISOString(),
-        };
+        // Sin scope explícito: 1) tenant activo (si aplica), 2) ámbitos globales, 3) fallback legacy `.doc(sha256)`
+        if (cleanTenant) {
+            const tenantCompositeId = buildMediaRegistryDocId(cleanHash, 'TENANT_PRIVATE', cleanTenant);
+            const tenantSnap = await db.collection(this.REGISTRY_COLLECTION).doc(tenantCompositeId).get();
+            if (tenantSnap.exists) {
+                return this.mapRegistryDataToDescriptor(cleanHash, tenantSnap.data()!, true);
+            }
+        }
+
+        for (const globalScope of ['GLOBAL_OEM', 'SYMBOLOGY_MASTER'] as const) {
+            const globalCompositeId = buildMediaRegistryDocId(cleanHash, globalScope);
+            const globalSnap = await db.collection(this.REGISTRY_COLLECTION).doc(globalCompositeId).get();
+            if (globalSnap.exists) {
+                return this.mapRegistryDataToDescriptor(cleanHash, globalSnap.data()!, true);
+            }
+        }
+
+        const legacySnap = await db.collection(this.REGISTRY_COLLECTION).doc(cleanHash).get();
+        if (legacySnap.exists) {
+            const legacyData = legacySnap.data()!;
+            const legacyScope = String(legacyData.scope || '').toUpperCase();
+            if (legacyScope === 'TENANT_PRIVATE') {
+                const legacyTenant = String(legacyData.tenantId || legacyData.tenant_id || '').trim();
+                if (allowAudit || (cleanTenant && legacyTenant && cleanTenant === legacyTenant)) {
+                    return this.mapRegistryDataToDescriptor(cleanHash, legacyData, true);
+                }
+            } else {
+                return this.mapRegistryDataToDescriptor(cleanHash, legacyData, true);
+            }
+        }
+
+        if (allowAudit) {
+            const auditSnap = await db
+                .collection(this.REGISTRY_COLLECTION)
+                .where('sha256', '==', cleanHash)
+                .limit(1)
+                .get();
+            if (!auditSnap.empty) {
+                return this.mapRegistryDataToDescriptor(cleanHash, auditSnap.docs[0].data(), true);
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -137,7 +325,6 @@ export class CasStorageService {
         if (!phashHex || phashHex.length !== 16) return null;
 
         try {
-            // Prefijo de 4 hex chars (16 bits superiores) o escaneo acotado por scope
             let query: FirebaseFirestore.Query = db
                 .collection(this.REGISTRY_COLLECTION)
                 .where('scope', '==', scope);
@@ -152,30 +339,8 @@ export class CasStorageService {
                 if (!d.phashHex) continue;
                 const dist = MediaDigestorServer.hammingDistanceHex64(phashHex, d.phashHex);
                 if (dist <= maxHamming) {
-                    return {
-                        sha256: docSnap.id,
-                        phashHex: d.phashHex,
-                        scope: d.scope,
-                        tenantId: d.tenantId,
-                        profile: d.profile || 'IMAGE_TECHNICAL_HD',
-                        mimeType: d.mimeType || 'image/webp',
-                        extension: d.extension || 'webp',
-                        originalFilename: d.originalFilename,
-                        originalBytes: Number(d.originalBytes || 0),
-                        optimizedBytes: Number(d.optimizedBytes || 0),
-                        savingsRatio: Number(d.savingsRatio || 0),
-                        savingsPct:
-                            typeof d.savingsPct === 'number'
-                                ? Number(d.savingsPct)
-                                : Number((Number(d.savingsRatio || 0) * 100).toFixed(1)),
-                        width: d.width,
-                        height: d.height,
-                        storagePath: d.storagePath,
-                        downloadUrl: d.downloadUrl,
-                        deduplicatedHit: true,
-                        nearDuplicateOf: docSnap.id,
-                        createdAt: d.createdAt || new Date().toISOString(),
-                    };
+                    const realSha = String(d.sha256 || docSnap.id).trim().toLowerCase();
+                    return this.mapRegistryDataToDescriptor(realSha, d, true, realSha);
                 }
             }
         } catch {
@@ -191,21 +356,29 @@ export class CasStorageService {
         digested: DigestedBinaryOutput,
         options: PersistDigestedOptions
     ): Promise<DigestedMediaDescriptor> {
-        // 1. Verificar hit exacto SHA-256
-        const exactHit = await this.preflightCheck(digested.sha256, options.scope, options.tenantId);
-        if (exactHit) {
-            await db
-                .collection(this.REGISTRY_COLLECTION)
-                .doc(digested.sha256)
-                .set(
-                    {
-                        refCount: FieldValue.increment(1),
-                        lastReferencedAt: new Date().toISOString(),
-                    },
-                    { merge: true }
-                )
-                .catch(() => {});
-            return exactHit;
+        const cleanHash = digested.sha256.toLowerCase();
+        // 1. Verificar hit exacto SHA-256 (ID compuesto primero + fallback de solo lectura a `.doc(sha256)`)
+        const existingLookup = await this.lookupRegistryDocWithFallback(
+            cleanHash,
+            options.scope,
+            options.tenantId,
+            false
+        );
+        if (existingLookup) {
+            if (!existingLookup.isLegacyFallback) {
+                await db
+                    .collection(this.REGISTRY_COLLECTION)
+                    .doc(existingLookup.docId)
+                    .set(
+                        {
+                            refCount: FieldValue.increment(1),
+                            lastReferencedAt: new Date().toISOString(),
+                        },
+                        { merge: true }
+                    )
+                    .catch(() => {});
+            }
+            return this.mapRegistryDataToDescriptor(cleanHash, existingLookup.data, true);
         }
 
         // 2. Verificar cuasi-duplicado perceptual en imágenes OEM / Simbología
@@ -226,13 +399,13 @@ export class CasStorageService {
 
         const storagePath = this.buildStoragePath(
             options.scope,
-            digested.sha256,
+            cleanHash,
             digested.extension,
             options.tenantId
         );
         const downloadUrl = this.buildGatewayUrl(
             options.scope,
-            digested.sha256,
+            cleanHash,
             digested.extension,
             options.tenantId
         );
@@ -250,7 +423,7 @@ export class CasStorageService {
             metadata: {
                 cacheControl,
                 metadata: {
-                    sha256: digested.sha256,
+                    sha256: cleanHash,
                     phashHex: digested.phashHex || '',
                     profile: digested.profile,
                     scope: options.scope,
@@ -275,8 +448,9 @@ export class CasStorageService {
                 : Number(digested.savingsRatio || 0);
         const trueSavingsPct = Number((trueSavingsRatio * 100).toFixed(1));
 
+        const registryDocId = buildMediaRegistryDocId(cleanHash, options.scope, options.tenantId);
         const registryDoc: Record<string, any> = {
-            sha256: digested.sha256,
+            sha256: cleanHash,
             phashHex: digested.phashHex || null,
             scope: options.scope,
             tenantId: options.scope === 'TENANT_PRIVATE' ? (options.tenantId || '').trim() : null,
@@ -302,10 +476,18 @@ export class CasStorageService {
             lastReferencedAt: nowIso,
         };
 
-        await db.collection(this.REGISTRY_COLLECTION).doc(digested.sha256).set(registryDoc, { merge: true });
+        await db.collection(this.REGISTRY_COLLECTION).doc(registryDocId).set(registryDoc, { merge: true });
+
+        if (options.tenantId) {
+            TenantMetricsService.recordCasDigestion({
+                accountId: options.tenantId,
+                originalBytes: trueOriginalBytes,
+                optimizedBytes: finalOptimizedBytes,
+            }).catch(() => {});
+        }
 
         return {
-            sha256: digested.sha256,
+            sha256: cleanHash,
             phashHex: digested.phashHex,
             scope: options.scope,
             tenantId: options.tenantId,
@@ -345,19 +527,81 @@ export class CasStorageService {
         return { descriptor, digested };
     }
 
+    private static async resolveEffectiveStoragePath(
+        storagePathOrSha256: string,
+        options?: {
+            scope?: CasStorageScope | string;
+            tenantId?: string;
+            allowCrossTenantAudit?: boolean;
+        }
+    ): Promise<string | null> {
+        const trimmed = String(storagePathOrSha256 || '').trim();
+        if (!trimmed) return null;
+        if (!trimmed.includes('/') && /^[a-f0-9]{64}$/i.test(trimmed)) {
+            const entry = await this.resolveRegistryEntryBySha256(trimmed, options);
+            return entry?.storagePath || null;
+        }
+        return trimmed;
+    }
+
     /**
-     * Lee los bytes de un blob CAS desde Cloud Storage para entrega HTTP inmutable
+     * Abre un stream de lectura directo desde Cloud Storage tras validar existencia/metadatos
+     * con 1 sola llamada `getMetadata()`, evitando cargar binarios de hasta 120 MB en RAM.
      */
-    public static async readCasBlob(storagePath: string): Promise<{
+    public static async openCasBlobStream(
+        storagePathOrSha256: string,
+        options?: {
+            scope?: CasStorageScope | string;
+            tenantId?: string;
+            allowCrossTenantAudit?: boolean;
+        }
+    ): Promise<CasBlobStreamHandle | null> {
+        try {
+            const resolvedPath = await this.resolveEffectiveStoragePath(storagePathOrSha256, options);
+            if (!resolvedPath) return null;
+
+            const file = storage.bucket().file(resolvedPath);
+            const [metadata] = await file.getMetadata();
+            const rawSize = metadata.size !== undefined ? Number(metadata.size) : undefined;
+            const contentLength =
+                typeof rawSize === 'number' && Number.isFinite(rawSize) && rawSize >= 0
+                    ? rawSize
+                    : undefined;
+
+            const stream = file.createReadStream();
+            return {
+                stream,
+                contentType: metadata.contentType || 'application/octet-stream',
+                cacheControl: metadata.cacheControl || undefined,
+                contentLength,
+                etag: metadata.etag || undefined,
+                storagePath: resolvedPath,
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Lee los bytes de un blob CAS desde Cloud Storage (mantiene compatibilidad 100% con módulos internos)
+     */
+    public static async readCasBlob(
+        storagePathOrSha256: string,
+        options?: {
+            scope?: CasStorageScope | string;
+            tenantId?: string;
+            allowCrossTenantAudit?: boolean;
+        }
+    ): Promise<{
         buffer: Buffer;
         contentType: string;
         cacheControl: string;
     } | null> {
         try {
-            const file = storage.bucket().file(storagePath);
-            const [exists] = await file.exists();
-            if (!exists) return null;
+            const resolvedPath = await this.resolveEffectiveStoragePath(storagePathOrSha256, options);
+            if (!resolvedPath) return null;
 
+            const file = storage.bucket().file(resolvedPath);
             const [metadata] = await file.getMetadata();
             const [buffer] = await file.download();
 
@@ -371,4 +615,5 @@ export class CasStorageService {
         }
     }
 }
+
 

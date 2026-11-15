@@ -6,6 +6,7 @@ import { env } from '../config/env';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { authRateLimiter, extractClientIp } from '../middleware/rateLimiter';
 import { AuditLedger } from '../core/audit-ledger';
+import { computeShortTtlTimestamp, toEpochMillis } from '../core/retention-policy';
 import { constantTimeEqualStrings } from '../utils/security';
 import { getRutVariants, cleanRut } from '../utils/rut';
 
@@ -353,6 +354,7 @@ webauthnRouter.post('/register-options', requireAuth, async (req: AuthRequest, r
             challenge,
             createdAt: now,
             expiresAt: now + CHALLENGE_TTL_MS,
+            ttlExpiresAt: computeShortTtlTimestamp(CHALLENGE_TTL_MS, now),
             used: false,
         });
 
@@ -422,7 +424,7 @@ webauthnRouter.post('/register-verify', requireAuth, async (req: AuthRequest, re
         }
 
         const chData = challengeSnap.data()!;
-        if (chData.used || chData.purpose !== 'REGISTER' || chData.uid !== uid || Date.now() > chData.expiresAt) {
+        if (chData.used || chData.purpose !== 'REGISTER' || chData.uid !== uid || Date.now() > toEpochMillis(chData.expiresAt)) {
             await challengeRef.update({ used: true }).catch(() => {});
             return res.status(400).json({ error: 'Desafío WebAuthn inválido, expirado o ya utilizado.' });
         }
@@ -638,6 +640,7 @@ webauthnRouter.post('/login-options', authRateLimiter, async (req: Request, res:
             challenge,
             createdAt: now,
             expiresAt: now + CHALLENGE_TTL_MS,
+            ttlExpiresAt: computeShortTtlTimestamp(CHALLENGE_TTL_MS, now),
             used: false,
         });
 
@@ -666,7 +669,7 @@ const loginVerifySchema = z.object({
     clientDataJSON: z.string().min(16).max(8192),
     authenticatorData: z.string().min(32).max(16384),
     signature: z.string().min(16).max(4096),
-    userHandle: z.string().max(512).optional(),
+    userHandle: z.string().max(512).nullish(),
     accountId: z.string().max(128).optional(),
 });
 
@@ -715,7 +718,7 @@ webauthnRouter.post('/login-verify', authRateLimiter, async (req: Request, res: 
         }
 
         const chData = challengeSnap.data()!;
-        if (chData.used || chData.purpose !== 'LOGIN' || Date.now() > chData.expiresAt) {
+        if (chData.used || chData.purpose !== 'LOGIN' || Date.now() > toEpochMillis(chData.expiresAt)) {
             await challengeRef.update({ used: true }).catch(() => {});
             return res.status(401).json({ error: 'Desafío WebAuthn inválido, expirado o ya consumido.' });
         }

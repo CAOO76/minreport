@@ -22,7 +22,6 @@ import type {
     TransmissionCategory,
 } from '../../../contracts/opermaq.contracts';
 import {
-    ApplyCatalogHomologationBodySchema,
     AssetConfigurationProfileSchema,
     AssetMobilityTraitSchema,
     AssetPhysicalTraitsSchema,
@@ -83,7 +82,6 @@ export type {
 };
 
 export {
-    ApplyCatalogHomologationBodySchema,
     AssetConfigurationProfileSchema,
     AssetMobilityTraitSchema,
     AssetPhysicalTraitsSchema,

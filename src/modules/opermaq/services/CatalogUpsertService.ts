@@ -4,11 +4,13 @@ import type { AssetConfigurationProfile, AssetPhysicalTraits } from '../types/va
 import {
     BRAND_SYNONYM_TO_OFFICIAL,
     buildCatalogSearchMetadata,
+    detectCanonicalMake,
     ensureAssetCanonicalIndex,
     normalizeModelCode,
 } from './CanonicalEntityResolver';
 import { enrichCatalogProfile } from './CatalogProfileEnricher';
 import { buildAndPersistAssetSymbologyPack } from './EquipmentSymbologyPackBuilder';
+import { triggerAsyncManufacturerDiscovery } from './ManufacturerRegistryService';
 import { resolveOrLearnEquipmentType } from './EquipmentTypeRegistryService';
 import {
     deriveEnergyConsumptionProfile,
@@ -99,7 +101,7 @@ export function validateCatalogProfileGate(assetData: Record<string, any>): {
 
 export async function upsertGlobalAssetCatalog(params: UpsertCatalogParams): Promise<UpsertCatalogResult> {
     const rawMake = (params.make_oficial || 'GENÉRICO').trim().toUpperCase();
-    const cleanMake = BRAND_SYNONYM_TO_OFFICIAL[rawMake] || rawMake;
+    const cleanMake = detectCanonicalMake(rawMake) || BRAND_SYNONYM_TO_OFFICIAL[rawMake] || rawMake;
     const cleanModel = normalizeModelCode(params.model_oficial || '');
 
     if (!cleanModel) {
@@ -160,6 +162,14 @@ export async function upsertGlobalAssetCatalog(params: UpsertCatalogParams): Pro
         if (params.original_jargon || !existingData.search_aliases) {
             void ensureAssetCanonicalIndex(docId, existingData, params.original_jargon);
         }
+        triggerAsyncManufacturerDiscovery({
+            rawMake: existingData.make_oficial || cleanMake,
+            archetypeId: existingData.archetype_id || params.archetype_id,
+            sampleModel: existingData.model_oficial || params.model_oficial,
+            sampleEquipmentType: existingData.tipo_equipo || params.tipo_equipo,
+            isNewEquipmentRecord: false,
+            actorUid: params.actorId || 'system',
+        });
     };
 
     if (params.existingCatalogId) {
@@ -352,9 +362,17 @@ export async function upsertGlobalAssetCatalog(params: UpsertCatalogParams): Pro
     const docRef = db.collection('global_asset_catalog').doc(catalogKey);
     await docRef.set(newCatalogDoc);
 
-    // Generar e indexar vector Matryoshka 768d + Paquete Ad-Hoc de Simbología ISO en segundo plano sin bloquear alta
+    // Generar e indexar vector Matryoshka 768d + Paquete Ad-Hoc de Simbología ISO + Fabricante Zero-Preset en segundo plano sin bloquear alta
     void ensureAssetCanonicalIndex(catalogKey, newCatalogDoc, params.original_jargon);
     void buildAndPersistAssetSymbologyPack(catalogKey, newCatalogDoc);
+    triggerAsyncManufacturerDiscovery({
+        rawMake: cleanMake,
+        archetypeId: enriched.archetype_id,
+        sampleModel: newCatalogDoc.model_oficial,
+        sampleEquipmentType: newCatalogDoc.tipo_equipo,
+        isNewEquipmentRecord: true,
+        actorUid: params.actorId || 'system',
+    });
 
     return {
         global_asset_id: catalogKey,

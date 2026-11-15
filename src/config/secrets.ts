@@ -21,16 +21,29 @@ export const CORE_HYDRATED_SECRETS = [
 
 export type CoreSecretName = (typeof CORE_HYDRATED_SECRETS)[number];
 
-let smClient: SecretManagerServiceClient | null = null;
+let globalSmClient: SecretManagerServiceClient | null = null;
+const regionalSmClients = new Map<string, SecretManagerServiceClient>();
 const secretCache = new Map<string, string>();
 const failedLookupAt = new Map<string, number>();
 const NEGATIVE_CACHE_TTL_MS = 60_000;
 
-function getSecretManagerClient(): SecretManagerServiceClient {
-    if (!smClient) {
-        smClient = new SecretManagerServiceClient();
+function getGlobalSecretManagerClient(): SecretManagerServiceClient {
+    if (!globalSmClient) {
+        globalSmClient = new SecretManagerServiceClient();
     }
-    return smClient;
+    return globalSmClient;
+}
+
+function getRegionalSecretManagerClient(location: string): SecretManagerServiceClient {
+    const cleanLocation = location.trim() || 'southamerica-west1';
+    let client = regionalSmClients.get(cleanLocation);
+    if (!client) {
+        client = new SecretManagerServiceClient({
+            apiEndpoint: `secretmanager.${cleanLocation}.rep.googleapis.com`,
+        });
+        regionalSmClients.set(cleanLocation, client);
+    }
+    return client;
 }
 
 function isRunningAgainstLocalEmulator(): boolean {
@@ -95,8 +108,13 @@ function readLocalEnvHot(secretName: string): string | null {
     return null;
 }
 
-async function accessSecretManagerVersion(secretResourceName: string): Promise<string> {
-    const client = getSecretManagerClient();
+async function accessSecretManagerVersion(
+    secretResourceName: string,
+    regionalLocation?: string
+): Promise<string> {
+    const client = regionalLocation
+        ? getRegionalSecretManagerClient(regionalLocation)
+        : getGlobalSecretManagerClient();
     const accessPromise = client.accessSecretVersion({ name: secretResourceName });
     const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error(`Timeout Secret Manager (${secretResourceName})`)), 3500)
@@ -139,15 +157,23 @@ export async function getSecret(secretName: string): Promise<string | null> {
     }
 
     const location = env.GCP_LOCATION || 'southamerica-west1';
-    const candidateNames = [
-        `projects/${env.GCP_PROJECT_ID}/secrets/${secretName}/versions/latest`,
-        `projects/${env.GCP_PROJECT_ID}/locations/${location}/secrets/${secretName}/versions/latest`,
+    const candidateLookups: Array<{ resourceName: string; regionalLocation?: string }> = [
+        {
+            resourceName: `projects/${env.GCP_PROJECT_ID}/locations/${location}/secrets/${secretName}/versions/latest`,
+            regionalLocation: location,
+        },
+        {
+            resourceName: `projects/${env.GCP_PROJECT_ID}/secrets/${secretName}/versions/latest`,
+        },
     ];
 
     let lastErr: unknown = null;
-    for (const resourceName of candidateNames) {
+    for (const candidate of candidateLookups) {
         try {
-            const payload = await accessSecretManagerVersion(resourceName);
+            const payload = await accessSecretManagerVersion(
+                candidate.resourceName,
+                candidate.regionalLocation
+            );
             if (payload) {
                 secretCache.set(secretName, payload);
                 failedLookupAt.delete(secretName);
@@ -240,4 +266,14 @@ export async function resolveDevRootPassword(): Promise<string | null> {
 
 export async function resolveX402HmacSecret(): Promise<string | null> {
     return getSecret('X402_HMAC_SECRET');
+}
+
+export async function resolveGoogleGeocodingApiKey(): Promise<string | null> {
+    try {
+        const key = await getSecret('GOOGLE_GEOCODING_API_KEY');
+        const trimmed = typeof key === 'string' ? key.trim() : '';
+        return trimmed || null;
+    } catch {
+        return null;
+    }
 }

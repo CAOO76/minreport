@@ -208,7 +208,7 @@ export async function authenticateWithPasskey(identifier?: string): Promise<User
     const authenticatorData = arrayBufferToBase64Url(response.authenticatorData);
     const clientDataJSON = arrayBufferToBase64Url(response.clientDataJSON);
     const signature = arrayBufferToBase64Url(response.signature);
-    const userHandle = response.userHandle ? arrayBufferToBase64Url(response.userHandle) : null;
+    const userHandle = response.userHandle ? arrayBufferToBase64Url(response.userHandle) : undefined;
     const rawId = arrayBufferToBase64Url(assertion.rawId);
 
     const verifyRes = await fetch(getApiUrl('/api/auth/passkey/login-verify'), {

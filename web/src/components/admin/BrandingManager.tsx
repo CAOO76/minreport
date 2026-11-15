@@ -1,9 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { auth, db, storage } from '../../config/firebase';
-import { doc, onSnapshot, setDoc } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { SecureImage } from '../common/SecureImage';
-import { getApiUrl } from '../../utils/network';
+import M3LinearProgress from '../common/M3LinearProgress';
+import M3CircularProgress from '../common/M3CircularProgress';
+import HitlConfirmModal from '../common/HitlConfirmModal';
+import { fixBrandingUrl } from '../../context/BrandingContext';
+import { mediaDigestorClient } from '../../core/media/MediaDigestorClient';
+import { coreAuthFetch } from '../../core/network/coreAuthFetch';
 
 export interface LogoSet {
     isotype: string;
@@ -14,14 +17,24 @@ export interface LogoSet {
     appIcon: string;
 }
 
+export interface BrandingAssetTelemetry {
+    sha256: string;
+    originalBytes: number;
+    optimizedBytes: number;
+    savingsPct: number;
+    profile: 'IMAGE_ISO_SYMBOL' | 'VECTOR_SVG_CLEAN';
+}
+
 export interface BrandingSettings {
     light: LogoSet;
     dark: LogoSet;
     siteName: string;
     primaryColor: string;
     invertDarkMap?: { [key: string]: boolean };
-    svgDataUris?: { [key: string]: string };
+    assetTelemetry?: Partial<Record<keyof LogoSet, BrandingAssetTelemetry>>;
 }
+
+const IMMUTABLE_PRIMARY_COLOR = '#C68346';
 
 const DEFAULT_SETTINGS: BrandingSettings = {
     light: {
@@ -41,97 +54,41 @@ const DEFAULT_SETTINGS: BrandingSettings = {
         appIcon: '/branding/master_appIcon.svg',
     },
     siteName: 'MINREPORT',
-    primaryColor: '#C68346',
+    primaryColor: IMMUTABLE_PRIMARY_COLOR,
 };
 
-interface AssetDefinition {
+interface AssetConfig {
     key: keyof LogoSet;
-    label: string;
-    description: string;
-    spec: string;
-    recommendedDim: string;
     defaultPath: string;
 }
 
-const BRAND_ASSETS: AssetDefinition[] = [
-    {
-        key: 'isotype',
-        label: 'Isotipo Oficial',
-        description: 'Símbolo gráfico aislado para cabeceras compactas, avatares y favicon de alta fidelidad.',
-        spec: 'SVG Vectorial o PNG 32-bit sRGB',
-        recommendedDim: '512 × 512 px (1:1)',
-        defaultPath: '/branding/master_isotype.svg',
-    },
-    {
-        key: 'logotype',
-        label: 'Logotipo Corporativo',
-        description: 'Tipografía de marca horizontal para encabezados de informes oficiales, carátulas y accesos.',
-        spec: 'SVG Vectorial o PNG transparente',
-        recommendedDim: '1200 × 320 px (Horizontal)',
-        defaultPath: '/branding/master_logotype.svg',
-    },
-    {
-        key: 'imagotype',
-        label: 'Imagotipo Principal (Horizontal)',
-        description: 'Identificador compuesto horizontal (Isotipo + Logotipo) para barras de navegación e informes técnicos.',
-        spec: 'SVG Vectorial o PNG transparente',
-        recommendedDim: '1400 × 400 px',
-        defaultPath: '/branding/master_imagotype.svg',
-    },
-    {
-        key: 'imagotypeVertical',
-        label: 'Imagotipo Vertical',
-        description: 'Identificador compuesto vertical (Isotipo sobre Logotipo) para pantallas de carga (Splash), credenciales de faena y carátulas verticales.',
-        spec: 'SVG Vectorial o PNG transparente',
-        recommendedDim: '800 × 1067 px (Vertical 3:4)',
-        defaultPath: '/branding/master_imagotype_vertical.svg',
-    },
-    {
-        key: 'pwaIcon',
-        label: 'Ícono Web PWA',
-        description: 'Activo maestro para manifest web y acceso directo en navegadores de escritorio y terreno.',
-        spec: 'PNG cuadrado sin transparencia perimetral',
-        recommendedDim: '512 × 512 px (1:1)',
-        defaultPath: '/branding/master_pwaIcon.svg',
-    },
-    {
-        key: 'appIcon',
-        label: 'Ícono Aplicación Móvil',
-        description: 'Activo de alta resolución para empaquetado nativo (Android / iOS) con margen de seguridad del 10%.',
-        spec: 'PNG cuadrado sin esquinas redondeadas',
-        recommendedDim: '1024 × 1024 px (1:1)',
-        defaultPath: '/branding/master_appIcon.svg',
-    },
+const BRAND_ASSET_CONFIGS: AssetConfig[] = [
+    { key: 'isotype', defaultPath: '/branding/master_isotype.svg' },
+    { key: 'logotype', defaultPath: '/branding/master_logotype.svg' },
+    { key: 'imagotype', defaultPath: '/branding/master_imagotype.svg' },
+    { key: 'imagotypeVertical', defaultPath: '/branding/master_imagotype_vertical.svg' },
+    { key: 'pwaIcon', defaultPath: '/branding/master_pwaIcon.svg' },
+    { key: 'appIcon', defaultPath: '/branding/master_appIcon.svg' },
 ];
 
-const fixBrandingUrl = (url?: string): string => {
-    if (!url) return '';
-    const currentHost = window.location.hostname;
-    if (currentHost !== 'localhost' && currentHost !== '127.0.0.1') {
-        return url.replace(/localhost|127\.0\.0\.1/g, currentHost);
-    }
-    return url;
-};
+const formatKb = (bytes: number): string => `${(bytes / 1024).toFixed(1)} KB`;
 
 interface BrandingManagerProps {
     className?: string;
 }
 
 export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = '' }) => {
+    const { t } = useTranslation();
     const [settings, setSettings] = useState<BrandingSettings>(DEFAULT_SETTINGS);
     const [files, setFiles] = useState<{ [key: string]: File | null }>({});
     const [previewUrls, setPreviewUrls] = useState<{ [key: string]: string }>({});
     const [siteNameInput, setSiteNameInput] = useState('MINREPORT');
-    const [primaryColorInput, setPrimaryColorInput] = useState('#C68346');
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
+    const [savingProgressText, setSavingProgressText] = useState<string | null>(null);
     const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-
-    // Modal de confirmación obligatoria por palabra clave ("ACTUALIZAR")
     const [showConfirmModal, setShowConfirmModal] = useState(false);
-    const [confirmKeyword, setConfirmKeyword] = useState('');
 
-    // Control de inversión de luminancia para fondos oscuros industriales
     const [invertDarkMap, setInvertDarkMap] = useState<{ [key: string]: boolean }>({
         isotype: true,
         logotype: true,
@@ -140,78 +97,73 @@ export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = ''
         pwaIcon: true,
         appIcon: true,
     });
+    const [assetTelemetry, setAssetTelemetry] = useState<
+        Partial<Record<keyof LogoSet, BrandingAssetTelemetry>>
+    >({});
     const [dirtyMetadataCount, setDirtyMetadataCount] = useState<number>(0);
 
     const previewUrlsRef = useRef<{ [key: string]: string }>({});
 
-    const readFileAsDataUrl = (file: File): Promise<string> =>
-        new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(String(reader.result || ''));
-            reader.onerror = (err) => reject(err);
-            reader.readAsDataURL(file);
-        });
+    const loadBrandingSettings = useCallback(async () => {
+        setIsLoading(true);
+        try {
+            const res = await coreAuthFetch('/api/dev/settings/branding');
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+            const data = (await res.json()) as Partial<BrandingSettings>;
+            const merged: BrandingSettings = {
+                light: { ...DEFAULT_SETTINGS.light, ...(data.light || {}) },
+                dark: { ...DEFAULT_SETTINGS.dark, ...(data.dark || {}) },
+                siteName: data.siteName || 'MINREPORT',
+                primaryColor: IMMUTABLE_PRIMARY_COLOR,
+                invertDarkMap: data.invertDarkMap || {
+                    isotype: true,
+                    logotype: true,
+                    imagotype: true,
+                    imagotypeVertical: true,
+                    pwaIcon: true,
+                    appIcon: true,
+                },
+                assetTelemetry: data.assetTelemetry || {},
+            };
+            setSettings(merged);
+            setSiteNameInput(merged.siteName);
+            if (merged.invertDarkMap) {
+                setInvertDarkMap(merged.invertDarkMap);
+            }
+            setAssetTelemetry(merged.assetTelemetry || {});
+        } catch (err) {
+            console.error('[BrandingManager] Error consultando configuración:', err);
+            setSettings(DEFAULT_SETTINGS);
+        } finally {
+            setIsLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        loadBrandingSettings();
+        return () => {
+            Object.values(previewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+        };
+    }, [loadBrandingSettings]);
 
     const toggleInvert = (key: string) => {
-        setInvertDarkMap(prev => ({ ...prev, [key]: !(prev[key] ?? true) }));
-        setDirtyMetadataCount(c => c + 1);
+        setInvertDarkMap((prev) => ({ ...prev, [key]: !(prev[key] ?? true) }));
+        setDirtyMetadataCount((c) => c + 1);
     };
-
-    // Sincronización en tiempo real desde Firestore settings/branding
-    useEffect(() => {
-        const docRef = doc(db, 'settings', 'branding');
-        const unsubscribe = onSnapshot(docRef, (docSnap) => {
-            if (docSnap.exists()) {
-                const data = docSnap.data() as Partial<BrandingSettings>;
-                const merged: BrandingSettings = {
-                    light: { ...DEFAULT_SETTINGS.light, ...(data.light || {}) },
-                    dark: { ...DEFAULT_SETTINGS.dark, ...(data.dark || {}) },
-                    siteName: data.siteName || 'MINREPORT',
-                    primaryColor: data.primaryColor || '#C68346',
-                    invertDarkMap: data.invertDarkMap || {
-                        isotype: true,
-                        logotype: true,
-                        imagotype: true,
-                        imagotypeVertical: true,
-                        pwaIcon: true,
-                        appIcon: true,
-                    },
-                    svgDataUris: data.svgDataUris || {},
-                };
-                setSettings(merged);
-                setSiteNameInput(merged.siteName);
-                setPrimaryColorInput(merged.primaryColor);
-                if (merged.invertDarkMap) {
-                    setInvertDarkMap(merged.invertDarkMap);
-                }
-            } else {
-                setSettings(DEFAULT_SETTINGS);
-            }
-            setIsLoading(false);
-        }, (error) => {
-            console.error('[BrandingManager] Error consultando configuración:', error);
-            setSettings(DEFAULT_SETTINGS);
-            setIsLoading(false);
-        });
-
-        return () => {
-            unsubscribe();
-            // Revocar URLs de previsualización locales
-            Object.values(previewUrlsRef.current).forEach(url => URL.revokeObjectURL(url));
-        };
-    }, []);
 
     const handleFileChange = (key: keyof LogoSet, file: File | null) => {
         if (!file) {
             if (previewUrls[key]) {
                 URL.revokeObjectURL(previewUrls[key]);
             }
-            setFiles(prev => {
+            setFiles((prev) => {
                 const copy = { ...prev };
                 delete copy[key];
                 return copy;
             });
-            setPreviewUrls(prev => {
+            setPreviewUrls((prev) => {
                 const copy = { ...prev };
                 delete copy[key];
                 return copy;
@@ -219,214 +171,267 @@ export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = ''
             return;
         }
 
-        const validTypes = ['image/svg+xml', 'image/png', 'image/x-icon'];
-        if (!validTypes.includes(file.type) && !file.name.endsWith('.svg') && !file.name.endsWith('.png')) {
+        const lowerName = file.name.toLowerCase();
+        const validTypes = ['image/svg+xml', 'image/png', 'image/webp'];
+        if (
+            !validTypes.includes(file.type) &&
+            !lowerName.endsWith('.svg') &&
+            !lowerName.endsWith('.png') &&
+            !lowerName.endsWith('.webp')
+        ) {
             setNotification({
                 type: 'error',
-                message: 'Formato no admitido. Se exige archivo .svg vectorial o .png de alta definición.',
+                message: t('core_branding_mgr.errors.invalid_format'),
             });
-            setTimeout(() => setNotification(null), 4000);
             return;
         }
 
-        // Crear previsualización local instantánea
         const objectUrl = URL.createObjectURL(file);
         if (previewUrls[key]) {
             URL.revokeObjectURL(previewUrls[key]);
         }
         previewUrlsRef.current[key] = objectUrl;
 
-        setFiles(prev => ({ ...prev, [key]: file }));
-        setPreviewUrls(prev => ({ ...prev, [key]: objectUrl }));
+        setFiles((prev) => ({ ...prev, [key]: file }));
+        setPreviewUrls((prev) => ({ ...prev, [key]: objectUrl }));
     };
 
     const handleResetAsset = (key: keyof LogoSet) => {
         if (previewUrls[key]) {
             URL.revokeObjectURL(previewUrls[key]);
         }
-        setFiles(prev => {
+        setFiles((prev) => {
             const copy = { ...prev };
             delete copy[key];
             return copy;
         });
-        setPreviewUrls(prev => {
+        setPreviewUrls((prev) => {
             const copy = { ...prev };
             delete copy[key];
             return copy;
         });
-        setSettings(prev => {
-            const nextSvgUris = { ...(prev.svgDataUris || {}) };
-            delete nextSvgUris[key];
-            return {
-                ...prev,
-                light: { ...prev.light, [key]: DEFAULT_SETTINGS.light[key] },
-                dark: { ...prev.dark, [key]: DEFAULT_SETTINGS.dark[key] },
-                svgDataUris: nextSvgUris,
-            };
+        setSettings((prev) => ({
+            ...prev,
+            light: { ...prev.light, [key]: DEFAULT_SETTINGS.light[key] },
+            dark: { ...prev.dark, [key]: DEFAULT_SETTINGS.dark[key] },
+        }));
+        setAssetTelemetry((prev) => {
+            const next = { ...prev };
+            delete next[key];
+            return next;
         });
-        setDirtyMetadataCount(c => c + 1);
-    };
-
-    const handleOpenConfirm = () => {
-        setConfirmKeyword('');
-        setShowConfirmModal(true);
+        setDirtyMetadataCount((c) => c + 1);
     };
 
     const handleExecuteSave = async () => {
-        if (confirmKeyword.trim() !== 'ACTUALIZAR') return;
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+            setShowConfirmModal(false);
+            setNotification({
+                type: 'error',
+                message: t('core_branding_mgr.errors.offline'),
+            });
+            return;
+        }
 
         setIsSaving(true);
-        setShowConfirmModal(false);
+        setNotification(null);
+        setSavingProgressText(t('core_branding_mgr.progress.starting'));
 
         try {
-            const updatedSettings: BrandingSettings = {
-                light: { ...settings.light },
-                dark: { ...settings.dark },
-                siteName: siteNameInput.trim() || 'MINREPORT',
-                primaryColor: primaryColorInput.trim() || '#C68346',
-                invertDarkMap: { ...invertDarkMap },
-                svgDataUris: { ...(settings.svgDataUris || {}) },
+            const updatedLight: LogoSet = { ...settings.light };
+            const updatedDark: LogoSet = { ...settings.dark };
+            const nextTelemetry: Partial<Record<keyof LogoSet, BrandingAssetTelemetry>> = {
+                ...assetTelemetry,
             };
 
-            // Subir archivos a Cloud Storage y almacenar copia vectorial portátil para SVG
-            const filesToUpload = Object.entries(files);
-            for (const [key, file] of filesToUpload) {
-                if (file) {
-                    const ext = (file.name.split('.').pop() || 'svg').toLowerCase();
-                    const fileKey = key === 'imagotypeVertical' ? 'imagotype_vertical' : key;
-                    const path = `branding/master_${fileKey}.${ext}`;
-                    const storageRef = ref(storage, path);
-                    const snapshot = await uploadBytes(storageRef, file);
-                    const downloadUrl = await getDownloadURL(snapshot.ref);
+            const pendingEntries = (Object.entries(files) as Array<[keyof LogoSet, File | null]>).filter(
+                ([, file]) => Boolean(file)
+            );
 
-                    (updatedSettings.light as any)[key] = downloadUrl;
-                    (updatedSettings.dark as any)[key] = downloadUrl;
+            for (const [key, file] of pendingEntries) {
+                if (!file) continue;
+                setSavingProgressText(t('core_branding_mgr.progress.digesting', { asset: key.toUpperCase() }));
+                const isSvg = file.type === 'image/svg+xml' || file.name.toLowerCase().endsWith('.svg');
+                const profile: 'VECTOR_SVG_CLEAN' | 'IMAGE_ISO_SYMBOL' = isSvg
+                    ? 'VECTOR_SVG_CLEAN'
+                    : 'IMAGE_ISO_SYMBOL';
 
-                    if ((ext === 'svg' || file.type === 'image/svg+xml') && file.size <= 150 * 1024) {
-                        const dataUri = await readFileAsDataUrl(file);
-                        if (dataUri) {
-                            updatedSettings.svgDataUris![key] = dataUri;
-                        }
-                    } else if (updatedSettings.svgDataUris?.[key]) {
-                        delete updatedSettings.svgDataUris[key];
-                    }
+                const { descriptor } = await mediaDigestorClient.digestAndUploadCas(file, {
+                    profile,
+                    scope: 'SYMBOLOGY_MASTER',
+                    tenantId: 'dev-master-sandbox',
+                });
+
+                const url = String(descriptor.downloadUrl || '').trim();
+                if (
+                    !url ||
+                    url.startsWith('blob:') ||
+                    url.startsWith('data:') ||
+                    url.includes(';base64,') ||
+                    !(url.startsWith('/api/media/') || url.startsWith('https://'))
+                ) {
+                    throw new Error(t('core_branding_mgr.errors.invalid_cas_url', { asset: key }));
                 }
+
+                updatedLight[key] = url;
+                updatedDark[key] = url;
+
+                const savingsPct =
+                    typeof descriptor.savingsPct === 'number'
+                        ? descriptor.savingsPct
+                        : Math.round((descriptor.savingsRatio || 0) * 1000) / 10;
+
+                nextTelemetry[key] = {
+                    sha256: descriptor.sha256,
+                    originalBytes: descriptor.originalBytes,
+                    optimizedBytes: descriptor.optimizedBytes,
+                    savingsPct,
+                    profile,
+                };
             }
 
-            // 1. Guardar en Firestore directamente
-            await setDoc(doc(db, 'settings', 'branding'), updatedSettings, { merge: true });
+            setSavingProgressText(t('core_branding_mgr.progress.consolidating'));
+            const cleanSiteName = siteNameInput.trim() || 'MINREPORT';
 
-            // 2. Notificar al backend para sincronización automática de filesystem (Web, Admin, Mobile y ./data)
-            try {
-                const firebaseIdToken = await auth.currentUser?.getIdToken().catch(() => '');
-                const token =
-                    firebaseIdToken ||
-                    localStorage.getItem('dev_auth_token') ||
-                    localStorage.getItem('dev_vault_token') ||
-                    localStorage.getItem('dev_token') ||
-                    localStorage.getItem('admin_token') ||
-                    '';
-                if (token) {
-                    await fetch(getApiUrl('/api/admin/settings/branding'), {
-                        method: 'PUT',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${token}`
-                        },
-                        body: JSON.stringify(updatedSettings)
-                    });
-                }
-            } catch {
-                // Sincronización backend secundaria opcional
+            const response = await coreAuthFetch('/api/dev/settings/branding', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    light: updatedLight,
+                    dark: updatedDark,
+                    siteName: cleanSiteName,
+                    primaryColor: IMMUTABLE_PRIMARY_COLOR,
+                    invertDarkMap: { ...invertDarkMap },
+                    assetTelemetry: nextTelemetry,
+                    confirmationKeyword: 'ACTUALIZAR',
+                }),
+            });
+
+            if (!response.ok) {
+                const errPayload = await response.json().catch(() => ({}));
+                throw new Error(
+                    errPayload?.error ||
+                        errPayload?.message ||
+                        t('core_branding_mgr.errors.http_save', { status: response.status })
+                );
             }
 
-            // Limpieza de archivos temporales
-            Object.values(previewUrlsRef.current).forEach(url => URL.revokeObjectURL(url));
+            Object.values(previewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
             previewUrlsRef.current = {};
             setFiles({});
             setPreviewUrls({});
             setDirtyMetadataCount(0);
-            setSettings(updatedSettings);
+            setAssetTelemetry(nextTelemetry);
+            setSettings({
+                light: updatedLight,
+                dark: updatedDark,
+                siteName: cleanSiteName,
+                primaryColor: IMMUTABLE_PRIMARY_COLOR,
+                invertDarkMap: { ...invertDarkMap },
+                assetTelemetry: nextTelemetry,
+            });
+            setShowConfirmModal(false);
 
             setNotification({
                 type: 'success',
-                message: 'Identidad corporativa actualizada y sincronizada en tiempo real en todo el sistema.',
+                message: t('core_branding_mgr.notifications.saved'),
             });
-            setTimeout(() => setNotification(null), 4000);
         } catch (error: any) {
-            console.error('[BrandingManager] Error persistiendo cambios:', error);
+            setShowConfirmModal(false);
             setNotification({
                 type: 'error',
-                message: error.message || 'Error al persistir la configuración de identidad en Cloud Storage o Firestore.',
+                message: error?.message || t('core_branding_mgr.errors.save_generic'),
             });
-            setTimeout(() => setNotification(null), 5000);
         } finally {
             setIsSaving(false);
+            setSavingProgressText(null);
         }
     };
 
-    const pendingCount = Object.keys(files).length +
+    const pendingCount =
+        Object.keys(files).length +
         dirtyMetadataCount +
-        (siteNameInput !== (settings.siteName || 'MINREPORT') ? 1 : 0) +
-        (primaryColorInput !== (settings.primaryColor || '#C68346') ? 1 : 0);
+        (siteNameInput !== (settings.siteName || 'MINREPORT') ? 1 : 0);
 
-    const registeredCount = BRAND_ASSETS.filter(a => !!settings.light[a.key]).length;
+    const registeredCount = BRAND_ASSET_CONFIGS.filter((a) => !!settings.light[a.key]).length;
 
     if (isLoading) {
         return (
-            <div className="py-12 flex flex-col items-center justify-center space-y-3 font-mono text-xs text-slate-400 dark:text-[#8A93A6]">
-                <span className="material-symbols-outlined text-2xl animate-spin text-[#C68346]">sync</span>
-                <span className="tabular-nums">[Sincronizando catálogo maestro de identidad...]</span>
+            <div className="py-12 px-fib-21 flex flex-col items-center justify-center gap-fib-13 font-mono text-xs text-[#475569] dark:text-[#8A93A6]">
+                <div className="w-full max-w-md space-y-fib-8">
+                    <M3LinearProgress indeterminate ariaLabel={t('core_branding_mgr.loading.aria')} />
+                    <span className="block text-center tabular-nums">
+                        {t('core_branding_mgr.loading.text')}
+                    </span>
+                </div>
             </div>
         );
     }
 
     return (
-        <div className={`space-y-6 font-sans select-none ${className}`}>
-            
+        <div className={`space-y-fib-21 font-sans select-none ${className}`}>
             {/* Cabecera Técnica de Sección */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-[#12151C]">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-fib-13 pb-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C]">
                 <div>
-                    <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs font-mono font-bold uppercase text-[#C68346] tracking-wider">
-                            MINREPORT // GOBERNANZA DE IDENTIDAD
-                        </span>
-                        <span className="text-[10px] font-mono text-slate-400 dark:text-[#5A6072]">•</span>
-                        <span className="text-[10px] font-mono text-slate-400 dark:text-[#5A6072] uppercase">
-                            CATÁLOGO MAESTRO
+                    <div className="flex items-center gap-fib-8 mb-1">
+                        <span className="text-microcopy font-mono font-bold uppercase text-[#C68346] tracking-wider">
+                            {t('core_branding_mgr.header.eyebrow')}
                         </span>
                     </div>
-                    <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-[#F3F4F6]">
-                        Gestor de Logos & Activos de Marca
+                    <h1 className="text-h1-header font-bold tracking-tight text-[#0F172A] dark:text-[#F3F4F6]">
+                        {t('core_branding_mgr.header.title')}
                     </h1>
-                    <p className="text-xs text-slate-500 dark:text-[#8A93A6] mt-0.5">
-                        Administración de isotipos, logotipos e imagotipos corporativos para entornos web, móvil y carátulas técnicas.
+                    <p className="text-data-dense text-[#475569] dark:text-[#8A93A6] mt-0.5">
+                        {t('core_branding_mgr.header.subtitle')}
                     </p>
                 </div>
 
-                <div className="flex items-center gap-3 shrink-0">
+                <div className="flex items-center gap-fib-13 shrink-0">
                     <button
                         type="button"
-                        onClick={handleOpenConfirm}
+                        onClick={() => setShowConfirmModal(true)}
                         disabled={isSaving || pendingCount === 0}
-                        className="px-4 py-2 text-xs font-mono font-bold uppercase tracking-wider bg-[#C68346] hover:bg-[#b0743e] text-white disabled:opacity-40 transition-colors flex items-center gap-2 cursor-pointer disabled:cursor-not-allowed rounded-none outline-none shadow-none"
+                        className="px-fib-21 py-fib-8 text-microcopy font-mono font-bold uppercase tracking-wider bg-[#C68346] hover:opacity-90 text-[#FFFFFF] disabled:opacity-40 transition-colors flex items-center gap-fib-8 cursor-pointer disabled:cursor-not-allowed rounded-none outline-none shadow-none"
                     >
-                        <span className={`material-symbols-outlined text-[16px] ${isSaving ? 'animate-spin' : ''}`}>
-                            {isSaving ? 'sync' : 'save'}
+                        {isSaving ? (
+                            <M3CircularProgress size={16} ariaLabel={t('core_branding_mgr.actions.syncing_aria')} />
+                        ) : (
+                            <span className="material-symbols-outlined text-[16px]">save</span>
+                        )}
+                        <span className="tabular-nums">
+                            {isSaving
+                                ? t('core_branding_mgr.actions.syncing')
+                                : t('core_branding_mgr.actions.save_changes', { count: pendingCount })}
                         </span>
-                        <span>{isSaving ? 'SINCRONIZANDO...' : `GUARDAR CAMBIOS (${pendingCount})`}</span>
                     </button>
                 </div>
             </div>
 
-            {/* Notificación Operativa Inline */}
+            {isSaving && savingProgressText && (
+                <div className="p-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none space-y-fib-8">
+                    <M3LinearProgress indeterminate ariaLabel={savingProgressText} />
+                    <span className="block font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6]">
+                        {savingProgressText}
+                    </span>
+                </div>
+            )}
+
             {notification && (
-                <div className={`px-4 py-2.5 border text-xs font-mono flex items-center gap-2 rounded-none ${
-                    notification.type === 'success'
-                        ? 'bg-slate-50 dark:bg-[#07090D] border-[#C68346] text-slate-900 dark:text-[#F3F4F6]'
-                        : 'bg-red-500/10 border-red-500 text-red-600 dark:text-red-400'
-                }`}>
-                    <span className="material-symbols-outlined text-[16px] text-[#C68346]">
+                <div
+                    role={notification.type === 'error' ? 'alert' : 'status'}
+                    className={`px-fib-21 py-fib-13 border text-data-dense font-mono flex items-center gap-fib-8 rounded-none shadow-none ${
+                        notification.type === 'success'
+                            ? 'bg-[#F8FAFC] dark:bg-[#07090D] border-[#00AEEF] text-[#0F172A] dark:text-[#F3F4F6]'
+                            : 'bg-red-500/10 border-red-500 text-red-600 dark:text-red-400'
+                    }`}
+                >
+                    <span
+                        className={`material-symbols-outlined text-[16px] ${
+                            notification.type === 'success' ? 'text-[#00AEEF]' : 'text-red-600 dark:text-red-400'
+                        }`}
+                    >
                         {notification.type === 'success' ? 'check_circle' : 'error'}
                     </span>
                     <span>{notification.message}</span>
@@ -434,74 +439,82 @@ export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = ''
             )}
 
             {/* Macro-Layout en Proporción Áurea (61.8% / 38.2%) */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-                
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-fib-34 items-start">
                 {/* ÁREA MAYOR (~61.8%): Visor y Gestor de Activos Gráficos */}
-                <div className="lg:col-span-8 space-y-6">
-                    <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-[#12151C]">
-                        <h2 className="text-xs font-mono uppercase tracking-wider text-slate-500 dark:text-[#8A93A6]">
-                            ACTIVOS REGISTRADOS (<span className="tabular-nums">{registeredCount} / {BRAND_ASSETS.length}</span>)
+                <div className="lg:col-span-8 space-y-fib-21">
+                    <div className="flex items-center justify-between pb-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C]">
+                        <h2 className="text-microcopy font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
+                            {t('core_branding_mgr.section.registered_assets')} (
+                            <span className="tabular-nums">
+                                {registeredCount} / {BRAND_ASSET_CONFIGS.length}
+                            </span>
+                            )
                         </h2>
-                        <span className="text-[11px] font-mono text-slate-400 dark:text-[#5A6072]">
-                            Formatos admitidos: SVG Vectorial / PNG 32-bit
+                        <span className="text-microcopy font-mono text-[#94A3B8] dark:text-[#5A6072]">
+                            {t('core_branding_mgr.section.supported_formats')}
                         </span>
                     </div>
 
-                    <div className="space-y-4">
-                        {BRAND_ASSETS.map((asset) => {
+                    <div className="space-y-fib-21">
+                        {BRAND_ASSET_CONFIGS.map((asset) => {
+                            const assetLabel = t(`core_branding_mgr.assets.${asset.key}.label`);
+                            const assetDescription = t(`core_branding_mgr.assets.${asset.key}.description`);
+                            const assetSpec = t(`core_branding_mgr.assets.${asset.key}.spec`);
+                            const assetRecommendedDim = t(`core_branding_mgr.assets.${asset.key}.recommendedDim`);
+                            const fileInputId = `branding-file-${asset.key}`;
+
                             const currentFile = files[asset.key];
                             const localPreview = previewUrls[asset.key];
-                            const firestoreUrl = fixBrandingUrl(settings.light[asset.key]);
-                            const previewSrc = localPreview || firestoreUrl || asset.defaultPath;
+                            const rawUrl = settings.light[asset.key];
+                            const resolvedUrl = fixBrandingUrl(rawUrl, asset.key);
+                            const previewSrc = localPreview || resolvedUrl || asset.defaultPath;
                             const isDarkInverted = invertDarkMap[asset.key] ?? true;
-                            const isCustom = !!firestoreUrl && !firestoreUrl.startsWith('/branding/');
+                            const isCustom = Boolean(rawUrl && !rawUrl.startsWith('/branding/'));
+                            const telemetry = assetTelemetry[asset.key];
 
                             return (
                                 <div
                                     key={asset.key}
-                                    className="border border-slate-200 dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] p-5 rounded-none space-y-4"
+                                    className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] p-fib-21 rounded-none shadow-none space-y-fib-13"
                                 >
-                                    {/* Cabecera del Activo */}
-                                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 pb-3 border-b border-slate-100 dark:border-[#12151C]">
+                                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-fib-8 pb-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C]">
                                         <div>
-                                            <div className="flex items-center gap-2">
-                                                <h3 className="text-sm font-bold uppercase tracking-tight text-slate-900 dark:text-[#F3F4F6]">
-                                                    {asset.label}
+                                            <div className="flex items-center gap-fib-8 flex-wrap">
+                                                <h3 className="text-body-main font-bold uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    {assetLabel}
                                                 </h3>
                                                 {isCustom && (
-                                                    <span className="px-1.5 py-0.5 text-[9px] font-mono uppercase border border-[#C68346]/40 text-[#C68346] bg-[#C68346]/5">
-                                                        CUSTOMIZADO
+                                                    <span className="px-fib-8 py-0.5 text-microcopy font-mono uppercase border border-[#C68346] text-[#C68346]">
+                                                        {t('core_branding_mgr.badges.cas_active')}
                                                     </span>
                                                 )}
                                                 {currentFile && (
-                                                    <span className="px-1.5 py-0.5 text-[9px] font-mono uppercase border border-[#00AEEF]/40 text-[#00AEEF] bg-[#00AEEF]/5">
-                                                        PENDIENTE DE SUBIDA
+                                                    <span className="px-fib-8 py-0.5 text-microcopy font-mono uppercase border border-[#00AEEF] text-[#00AEEF]">
+                                                        {t('core_branding_mgr.badges.cas_pending')}
                                                     </span>
                                                 )}
                                             </div>
-                                            <p className="text-xs text-slate-500 dark:text-[#8A93A6] mt-0.5 leading-relaxed">
-                                                {asset.description}
+                                            <p className="text-data-dense text-[#475569] dark:text-[#8A93A6] mt-0.5">
+                                                {assetDescription}
                                             </p>
                                         </div>
-                                        <div className="text-left sm:text-right font-mono text-[11px] text-slate-400 dark:text-[#5A6072] shrink-0 tabular-nums">
-                                            <div>{asset.recommendedDim}</div>
-                                            <div className="text-[10px] text-slate-400 dark:text-[#5A6072]">{asset.spec}</div>
+                                        <div className="text-left sm:text-right font-mono text-microcopy text-[#475569] dark:text-[#8A93A6] shrink-0 tabular-nums">
+                                            <div>{assetRecommendedDim}</div>
+                                            <div className="text-[#94A3B8] dark:text-[#5A6072]">{assetSpec}</div>
                                         </div>
                                     </div>
 
-                                    {/* Visualización Dual de Alta Fidelidad (Fondo Claro vs Fondo Oscuro) */}
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        
-                                        {/* 1. Fondo Claro */}
-                                        <div className="border border-slate-200 dark:border-[#12151C] bg-[#FFFFFF] p-4 flex flex-col items-center justify-between min-h-[130px] rounded-none">
-                                            <div className="w-full flex items-center justify-between text-[10px] font-mono text-slate-400 uppercase">
-                                                <span>Fondo Claro</span>
-                                                <span className="tabular-nums">Luminancia 100%</span>
+                                    {/* Visualización Dual Light / Dark */}
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-fib-13">
+                                        <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] p-fib-13 flex flex-col items-center justify-between min-h-[120px] rounded-none shadow-none">
+                                            <div className="w-full flex items-center justify-between text-microcopy font-mono text-[#475569] uppercase">
+                                                <span>{t('core_branding_mgr.preview.light_bg')}</span>
+                                                <span className="tabular-nums">#FFFFFF</span>
                                             </div>
-                                            <div className="w-full flex-1 flex items-center justify-center py-3">
+                                            <div className="w-full flex-1 flex items-center justify-center py-fib-13">
                                                 <SecureImage
                                                     src={previewSrc}
-                                                    alt={`${asset.label} Claro`}
+                                                    alt={t('core_branding_mgr.preview.light_alt', { label: assetLabel })}
                                                     className="max-h-14 max-w-[85%] object-contain"
                                                     onError={(e) => {
                                                         (e.currentTarget as HTMLImageElement).src = asset.defaultPath;
@@ -510,26 +523,29 @@ export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = ''
                                             </div>
                                         </div>
 
-                                        {/* 2. Fondo Oscuro Industrial (#000000) */}
-                                        <div className="border border-slate-200 dark:border-[#12151C] bg-[#000000] p-4 flex flex-col items-center justify-between min-h-[130px] rounded-none">
-                                            <div className="w-full flex items-center justify-between text-[10px] font-mono text-slate-400 uppercase">
-                                                <span>Fondo Oscuro</span>
+                                        <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#000000] p-fib-13 flex flex-col items-center justify-between min-h-[120px] rounded-none shadow-none">
+                                            <div className="w-full flex items-center justify-between text-microcopy font-mono text-[#8A93A6] uppercase">
+                                                <span>{t('core_branding_mgr.preview.dark_bg')}</span>
                                                 <button
                                                     type="button"
                                                     onClick={() => toggleInvert(asset.key)}
-                                                    className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-[#C68346] cursor-pointer transition-colors"
-                                                    title={isDarkInverted ? 'Inversión activa — alternar a original' : 'Original — alternar a inversión'}
-                                                    aria-label="Alternar inversión de luminancia"
+                                                    className="bg-transparent border-0 outline-none p-1 text-[#8A93A6] hover:text-[#C68346] cursor-pointer transition-colors"
+                                                    title={
+                                                        isDarkInverted
+                                                            ? t('core_branding_mgr.preview.invert_active_title')
+                                                            : t('core_branding_mgr.preview.invert_inactive_title')
+                                                    }
+                                                    aria-label={t('core_branding_mgr.preview.invert_aria')}
                                                 >
                                                     <span className="material-symbols-outlined text-[16px]">
                                                         {isDarkInverted ? 'contrast' : 'tonality'}
                                                     </span>
                                                 </button>
                                             </div>
-                                            <div className="w-full flex-1 flex items-center justify-center py-3">
+                                            <div className="w-full flex-1 flex items-center justify-center py-fib-13">
                                                 <SecureImage
                                                     src={previewSrc}
-                                                    alt={`${asset.label} Oscuro`}
+                                                    alt={t('core_branding_mgr.preview.dark_alt', { label: assetLabel })}
                                                     className={`max-h-14 max-w-[85%] object-contain transition-all ${
                                                         isDarkInverted ? 'invert brightness-150 contrast-125' : ''
                                                     }`}
@@ -541,51 +557,73 @@ export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = ''
                                         </div>
                                     </div>
 
-                                    {/* Selector de Archivo Quirúrgico */}
-                                    <div className="pt-2 border-t border-slate-100 dark:border-[#12151C] flex flex-col sm:flex-row sm:items-center justify-between gap-3 font-mono text-xs">
-                                        <div className="text-slate-500 dark:text-[#8A93A6] truncate">
+                                    {/* Telemetría CAS y Selector de Archivo */}
+                                    <div className="pt-fib-13 border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-col sm:flex-row sm:items-center justify-between gap-fib-13 font-mono text-data-dense">
+                                        <div className="text-[#475569] dark:text-[#8A93A6] truncate tabular-nums">
                                             {currentFile ? (
-                                                <span className="text-[#C68346] font-bold tabular-nums">
-                                                    Listo para subir: {currentFile.name} ({(currentFile.size / 1024).toFixed(1)} KB)
+                                                <span className="text-[#00AEEF] font-semibold">
+                                                    {t('core_branding_mgr.telemetry.pending_digestion', {
+                                                        file: currentFile.name,
+                                                        size: formatKb(currentFile.size),
+                                                    })}
+                                                </span>
+                                            ) : telemetry ? (
+                                                <span className="text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    {t('core_branding_mgr.telemetry.cas_ratio', {
+                                                        orig: formatKb(telemetry.originalBytes),
+                                                        opt: formatKb(telemetry.optimizedBytes),
+                                                        pct: telemetry.savingsPct.toFixed(1),
+                                                    })}
                                                 </span>
                                             ) : isCustom ? (
-                                                <span className="text-slate-400 dark:text-[#5A6072]">
-                                                    [Activo corporativo personalizado en Storage]
+                                                <span className="text-[#475569] dark:text-[#8A93A6] select-text">
+                                                    {rawUrl}
                                                 </span>
                                             ) : (
-                                                <span className="text-slate-400 dark:text-[#5A6072]">
-                                                    [Activo maestro local: {asset.defaultPath}]
+                                                <span className="text-[#94A3B8] dark:text-[#5A6072]">
+                                                    {t('core_branding_mgr.telemetry.base_asset', {
+                                                        path: asset.defaultPath,
+                                                    })}
                                                 </span>
                                             )}
                                         </div>
 
-                                        <div className="flex items-center gap-2 shrink-0">
+                                        <div className="flex items-center gap-fib-8 shrink-0">
                                             {isCustom && (
                                                 <button
                                                     type="button"
                                                     onClick={() => handleResetAsset(asset.key)}
-                                                    className="px-3 py-1.5 text-xs font-mono border border-slate-200 dark:border-[#12151C] bg-transparent hover:border-red-500 hover:text-red-500 text-slate-400 transition-colors cursor-pointer rounded-none"
-                                                    title="Restablecer activo al original del sistema"
+                                                    className="px-fib-13 py-fib-8 text-microcopy font-mono uppercase border border-[#E2E8F0] dark:border-[#12151C] bg-transparent hover:border-red-500 hover:text-red-600 dark:hover:text-red-400 text-[#475569] dark:text-[#8A93A6] transition-colors cursor-pointer rounded-none shadow-none"
                                                 >
-                                                    Restablecer
+                                                    {t('core_branding_mgr.actions.reset')}
                                                 </button>
                                             )}
 
-                                            <label className="relative cursor-pointer">
+                                            <label htmlFor={fileInputId} className="relative cursor-pointer">
                                                 <input
+                                                    id={fileInputId}
                                                     type="file"
-                                                    accept=".svg,.png"
+                                                    accept=".svg,.png,.webp"
                                                     autoComplete="off"
-                                                    onChange={(e) => handleFileChange(asset.key, e.target.files?.[0] || null)}
+                                                    spellCheck={false}
+                                                    aria-label={t('core_branding_mgr.actions.upload_aria', {
+                                                        label: assetLabel,
+                                                    })}
+                                                    onChange={(e) =>
+                                                        handleFileChange(asset.key, e.target.files?.[0] || null)
+                                                    }
                                                     className="sr-only"
                                                 />
-                                                <span className="px-3 py-1.5 text-xs font-mono inline-block border border-slate-300 dark:border-[#12151C] bg-slate-50 dark:bg-[#000000] text-slate-900 dark:text-[#F3F4F6] hover:border-[#C68346] transition-colors rounded-none">
-                                                    {currentFile ? 'Cambiar archivo' : isCustom ? 'Reemplazar activo' : 'Cargar archivo'}
+                                                <span className="px-fib-13 py-fib-8 text-microcopy font-mono uppercase inline-block border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] hover:border-[#C68346] transition-colors rounded-none shadow-none">
+                                                    {currentFile
+                                                        ? t('core_branding_mgr.actions.change_file')
+                                                        : isCustom
+                                                          ? t('core_branding_mgr.actions.replace_asset')
+                                                          : t('core_branding_mgr.actions.upload_file')}
                                                 </span>
                                             </label>
                                         </div>
                                     </div>
-
                                 </div>
                             );
                         })}
@@ -593,192 +631,88 @@ export const BrandingManager: React.FC<BrandingManagerProps> = ({ className = ''
                 </div>
 
                 {/* ÁREA MENOR (~38.2%): Parámetros de Plataforma & Gobernanza */}
-                <div className="lg:col-span-4 space-y-6">
-                    
-                    {/* Parámetros Generales */}
-                    <div className="border border-slate-200 dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] p-5 rounded-none space-y-4">
-                        <div className="pb-3 border-b border-slate-200 dark:border-[#12151C]">
-                            <h3 className="text-xs font-mono uppercase tracking-wider text-slate-500 dark:text-[#8A93A6]">
-                                PARÁMETROS GLOBALES DE INSTANCIA
+                <div className="lg:col-span-4 space-y-fib-21">
+                    <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] p-fib-21 rounded-none shadow-none space-y-fib-13">
+                        <div className="pb-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C]">
+                            <h3 className="text-microcopy font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
+                                {t('core_branding_mgr.params.title')}
                             </h3>
-                            <p className="text-xs text-slate-400 dark:text-[#5A6072] mt-0.5">
-                                Identificadores consumidos por el runtime Web, PWA y reportes.
-                            </p>
                         </div>
 
-                        <div className="space-y-4">
+                        <div className="space-y-fib-13">
                             <div>
-                                <label className="block text-xs font-mono uppercase text-slate-500 dark:text-[#8A93A6] mb-1">
-                                    Nombre del Sistema
+                                <label
+                                    htmlFor="branding-site-name"
+                                    className="block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] mb-fib-8"
+                                >
+                                    {t('core_branding_mgr.params.site_name')}
                                 </label>
                                 <input
+                                    id="branding-site-name"
                                     type="text"
                                     value={siteNameInput}
                                     onChange={(e) => setSiteNameInput(e.target.value)}
                                     autoComplete="off"
                                     spellCheck={false}
-                                    className="w-full px-3 py-2 text-xs font-mono border border-slate-300 dark:border-[#12151C] bg-white dark:bg-[#000000] text-slate-900 dark:text-[#F3F4F6] focus:outline-none focus:border-[#C68346] rounded-none transition-colors"
+                                    placeholder={t('core_branding_mgr.params.site_name_placeholder')}
+                                    className="w-full px-fib-13 py-fib-8 text-data-dense font-mono border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] focus:outline-none focus:border-[#C68346] rounded-none shadow-none transition-colors"
                                 />
                             </div>
 
                             <div>
-                                <label className="block text-xs font-mono uppercase text-slate-500 dark:text-[#8A93A6] mb-1">
-                                    Acento Primario (HEX)
-                                </label>
-                                <div className="flex items-center gap-2">
-                                    <div
-                                        className="w-8 h-8 border border-slate-300 dark:border-[#12151C] shrink-0 rounded-none"
-                                        style={{ backgroundColor: primaryColorInput }}
-                                        title={`Muestra de color: ${primaryColorInput}`}
+                                <span className="block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] mb-fib-8">
+                                    {t('core_branding_mgr.params.primary_color_label')}
+                                </span>
+                                <div className="flex items-center gap-fib-8 px-fib-13 py-fib-8 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] rounded-none shadow-none">
+                                    <span
+                                        className="w-5 h-5 border border-[#E2E8F0] dark:border-[#12151C] shrink-0 rounded-none bg-[#C68346]"
+                                        aria-hidden="true"
                                     />
-                                    <input
-                                        type="text"
-                                        value={primaryColorInput}
-                                        onChange={(e) => setPrimaryColorInput(e.target.value)}
-                                        autoComplete="off"
-                                        spellCheck={false}
-                                        className="flex-1 px-3 py-2 text-xs font-mono border border-slate-300 dark:border-[#12151C] bg-white dark:bg-[#000000] text-slate-900 dark:text-[#F3F4F6] focus:outline-none focus:border-[#C68346] rounded-none tabular-nums transition-colors"
-                                    />
-                                </div>
-                                <span className="text-[10px] font-mono text-slate-400 dark:text-[#5A6072] mt-1 block">
-                                    Valor oficial MINREPORT: #C68346 (Cobre Industrial)
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Especificaciones Técnicas y Cumplimiento Normativo */}
-                    <div className="border border-slate-200 dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] p-5 rounded-none space-y-4">
-                        <div className="pb-3 border-b border-slate-200 dark:border-[#12151C]">
-                            <h3 className="text-xs font-mono uppercase tracking-wider text-slate-500 dark:text-[#8A93A6]">
-                                CRITERIOS TÉCNICOS DE REPOSITORIO
-                            </h3>
-                            <p className="text-xs text-slate-400 dark:text-[#5A6072] mt-0.5">
-                                Normalización para renderizado en faena y dispositivos móviles.
-                            </p>
-                        </div>
-
-                        <div className="space-y-3 text-xs text-slate-500 dark:text-[#8A93A6]">
-                            <div className="flex items-start gap-2">
-                                <span className="material-symbols-outlined text-[16px] text-[#C68346] shrink-0 mt-0.5">
-                                    contrast
-                                </span>
-                                <div>
-                                    <strong className="text-slate-900 dark:text-[#F3F4F6]">Inversión Dinámica:</strong> Los activos corporativos maestros se cargan en negro monocromo y el motor los invierte dinámicamente en interfaces oscuras.
-                                </div>
-                            </div>
-
-                            <div className="flex items-start gap-2">
-                                <span className="material-symbols-outlined text-[16px] text-[#C68346] shrink-0 mt-0.5">
-                                    verified
-                                </span>
-                                <div>
-                                    <strong className="text-slate-900 dark:text-[#F3F4F6]">Vectorial SVG:</strong> Se recomienda el uso exclusivo de archivos SVG sin metadatos sobrantes para permitir escalabilidad nítida sin pixelación.
-                                </div>
-                            </div>
-
-                            <div className="flex items-start gap-2">
-                                <span className="material-symbols-outlined text-[16px] text-[#C68346] shrink-0 mt-0.5">
-                                    verified
-                                </span>
-                                <div>
-                                    <strong className="text-slate-900 dark:text-[#F3F4F6]">Canal Alfa Obligatorio:</strong> Los mapas de bits (PNG) deben entregarse con canal alfa transparente y espacio sRGB.
-                                </div>
-                            </div>
-
-                            <div className="flex items-start gap-2">
-                                <span className="material-symbols-outlined text-[16px] text-[#C68346] shrink-0 mt-0.5">
-                                    verified
-                                </span>
-                                <div>
-                                    <strong className="text-slate-900 dark:text-[#F3F4F6]">Zona Segura Móvil:</strong> El ícono de aplicación (1024×1024 px) contempla un margen perimetral del 10% para el corte adaptativo de Android e iOS.
+                                    <span className="font-mono text-data-dense font-bold tabular-nums text-[#0F172A] dark:text-[#F3F4F6] select-text">
+                                        {IMMUTABLE_PRIMARY_COLOR}
+                                    </span>
+                                    <span className="font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6] ml-auto">
+                                        {t('core_branding_mgr.params.copper_name')}
+                                    </span>
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    {/* Resumen de Persistencia */}
-                    <div className="border border-slate-200 dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] p-4 rounded-none font-mono text-xs text-slate-500 dark:text-[#8A93A6] space-y-2">
+                    <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] p-fib-21 rounded-none shadow-none font-mono text-data-dense text-[#475569] dark:text-[#8A93A6] space-y-fib-8 tabular-nums">
                         <div className="flex justify-between items-center">
-                            <span>Destino Persistencia:</span>
-                            <span className="text-slate-900 dark:text-[#F3F4F6]">settings/branding</span>
+                            <span>{t('core_branding_mgr.meta.sovereign_endpoint')}</span>
+                            <span className="text-[#0F172A] dark:text-[#F3F4F6]">PUT /api/dev/settings/branding</span>
                         </div>
                         <div className="flex justify-between items-center">
-                            <span>Almacenamiento Medios:</span>
-                            <span className="text-slate-900 dark:text-[#F3F4F6]">Cloud Storage: /branding/*</span>
+                            <span>{t('core_branding_mgr.meta.persistence_target')}</span>
+                            <span className="text-[#0F172A] dark:text-[#F3F4F6]">settings/branding</span>
                         </div>
                         <div className="flex justify-between items-center">
-                            <span>Modificaciones pendientes:</span>
-                            <span className={pendingCount > 0 ? 'text-[#C68346] font-bold tabular-nums' : 'text-slate-400 tabular-nums'}>
-                                {pendingCount} cambio(s)
+                            <span>{t('core_branding_mgr.meta.media_storage')}</span>
+                            <span className="text-[#0F172A] dark:text-[#F3F4F6]">CAS SYMBOLOGY_MASTER</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                            <span>{t('core_branding_mgr.meta.pending_changes')}</span>
+                            <span className={pendingCount > 0 ? 'text-[#C68346] font-bold' : 'text-[#94A3B8] dark:text-[#5A6072]'}>
+                                {t('core_branding_mgr.meta.changes_count', { count: pendingCount })}
                             </span>
                         </div>
                     </div>
-
                 </div>
-
             </div>
 
-            {/* MODAL DE CONFIRMACIÓN OBLIGATORIA POR PALABRA CLAVE ("ACTUALIZAR") */}
-            {showConfirmModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200">
-                    <div className="w-full max-w-md bg-white dark:bg-[#07090D] border border-slate-300 dark:border-[#12151C] p-6 rounded-none space-y-5 shadow-none font-mono">
-                        <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#12151C] pb-3">
-                            <div className="flex items-center gap-2 text-slate-900 dark:text-[#F3F4F6]">
-                                <span className="material-symbols-outlined text-[#C68346] text-[20px]">warning</span>
-                                <span className="font-bold text-xs uppercase tracking-wider">CONFIRMACIÓN HITL REQUERIDA</span>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={() => setShowConfirmModal(false)}
-                                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
-                            >
-                                <span className="material-symbols-outlined text-[18px]">close</span>
-                            </button>
-                        </div>
-
-                        <p className="text-xs text-slate-600 dark:text-[#8A93A6] leading-relaxed">
-                            Está a punto de actualizar los activos de identidad corporativa maestros de MINREPORT en Firestore y Cloud Storage.
-                            Para validar la operación, escriba obligatoriamente <strong className="text-[#C68346]">ACTUALIZAR</strong> a continuación:
-                        </p>
-
-                        <div className="space-y-2">
-                            <label className="block text-[10px] uppercase text-slate-400 tracking-wider">
-                                Palabra Clave de Seguridad
-                            </label>
-                            <input
-                                type="text"
-                                autoFocus
-                                autoComplete="off"
-                                spellCheck={false}
-                                value={confirmKeyword}
-                                onChange={(e) => setConfirmKeyword(e.target.value.toUpperCase())}
-                                placeholder="ACTUALIZAR"
-                                className="w-full bg-[#F8FAFC] dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] px-3 py-2 text-xs font-mono tracking-widest text-center rounded-none outline-none"
-                            />
-                        </div>
-
-                        <div className="flex justify-end gap-3 pt-2">
-                            <button
-                                type="button"
-                                onClick={() => setShowConfirmModal(false)}
-                                className="px-4 py-2 text-xs font-mono uppercase bg-transparent border border-slate-300 dark:border-[#12151C] text-slate-500 hover:text-slate-900 dark:hover:text-white rounded-none cursor-pointer"
-                            >
-                                Cancelar
-                            </button>
-                            <button
-                                type="button"
-                                onClick={handleExecuteSave}
-                                disabled={confirmKeyword.trim() !== 'ACTUALIZAR' || isSaving}
-                                className="px-5 py-2 text-xs font-mono font-bold uppercase tracking-wider bg-[#C68346] hover:bg-[#b0743e] text-white disabled:opacity-30 disabled:cursor-not-allowed rounded-none cursor-pointer transition-colors"
-                            >
-                                Confirmar y Sincronizar
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
+            <HitlConfirmModal
+                open={showConfirmModal}
+                title={t('core_branding_mgr.hitl.title')}
+                description={t('core_branding_mgr.hitl.description')}
+                keyword="ACTUALIZAR"
+                confirmLabel={t('core_branding_mgr.hitl.confirm')}
+                cancelLabel={t('core_branding_mgr.hitl.cancel')}
+                loading={isSaving}
+                onConfirm={handleExecuteSave}
+                onCancel={() => setShowConfirmModal(false)}
+            />
         </div>
     );
 };

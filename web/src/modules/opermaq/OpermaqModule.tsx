@@ -53,11 +53,15 @@ export const OpermaqModule: React.FC<OpermaqModuleProps> = ({
                 fallback={
                     <div className="w-full h-96 flex flex-col items-center justify-center p-[34px] gap-[13px] font-mono text-[#475569] dark:text-[#8A93A6]">
                         <M3CircularProgress size={28} strokeWidth={3} tone="copper" />
-                        <div className="text-[11px] uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
+                        <div className="text-microcopy uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
                             {domainMode === 'CATALOG'
                                 ? 'CATÁLOGO'
                                 : domainMode === 'SYMBOLOGY'
                                 ? 'SIMBOLOGÍA'
+                                : domainMode === 'MANUFACTURERS'
+                                ? 'FABRICANTES'
+                                : domainMode === 'SUPPLIERS'
+                                ? 'PROVEEDORES'
                                 : 'FLOTA'}
                         </div>
                     </div>

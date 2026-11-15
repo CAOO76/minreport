@@ -17,6 +17,7 @@ export interface RateLimiterConfig {
     windowMs: number;
     maxRequests: number;
     message?: string;
+    keyGenerator?: (req: Request) => string;
 }
 
 const buckets = new Map<string, RateBucket>();
@@ -51,13 +52,26 @@ export function extractClientIp(req: Request): string {
         .slice(0, 64) || 'unknown';
 }
 
+export function extractM2mRateKey(req: Request): string {
+    const ip = extractClientIp(req);
+    const rawAgentHeader = Array.isArray(req.headers?.['x-agent-id'])
+        ? req.headers['x-agent-id'][0]
+        : req.headers?.['x-agent-id'];
+    const agentId =
+        String(rawAgentHeader || 'anonymous')
+            .trim()
+            .replace(/[^a-zA-Z0-9._:-]/g, '_')
+            .slice(0, 128) || 'anonymous';
+    return `${ip}:${agentId}`;
+}
+
 export function createRateLimiter(config: RateLimiterConfig) {
-    const { routeKey, windowMs, maxRequests, message } = config;
+    const { routeKey, windowMs, maxRequests, message, keyGenerator } = config;
 
     return (req: Request, res: Response, next: NextFunction) => {
         const now = Date.now();
-        const ip = extractClientIp(req);
-        const key = `${routeKey}:${ip}`;
+        const subjectKey = keyGenerator ? keyGenerator(req) : extractClientIp(req);
+        const key = `${routeKey}:${subjectKey}`;
 
         let bucket = buckets.get(key);
         if (!bucket || bucket.resetAtMs <= now) {
@@ -121,3 +135,15 @@ export const mutationRateLimiter = createRateLimiter({
     maxRequests: 60,
     message: 'Demasiadas operaciones de escritura consecutivas. Reintente en unos segundos.',
 });
+
+/**
+ * Preset Agéntico M2M (`/api/m2m/*`): 120 req / 60s por clave `IP + x-agent-id`.
+ */
+export const m2mRateLimiter = createRateLimiter({
+    routeKey: 'm2m',
+    windowMs: 60 * 1000,
+    maxRequests: 120,
+    keyGenerator: extractM2mRateKey,
+    message: 'Límite de solicitudes M2M por minuto excedido. Reintente tras el periodo indicado en Retry-After.',
+});
+

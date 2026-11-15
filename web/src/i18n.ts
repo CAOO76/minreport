@@ -1,6 +1,26 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import LanguageDetector from 'i18next-browser-languagedetector';
+import { coreShellLocales } from './locales/coreShellLocales';
+import { coreAccessB2bLocales } from './locales/coreAccessB2bLocales';
+import { coreAdminLocales } from './locales/coreAdminLocales';
+import { coreDevPilotLocales } from './locales/coreDevPilotLocales';
+
+export type SupportedLang = 'es' | 'en' | 'pt';
+
+export function resolveNormalizedLang(raw?: string | null): SupportedLang {
+    const normalized = String(raw || 'es').trim().toLowerCase().slice(0, 2);
+    if (normalized === 'en' || normalized === 'pt') {
+        return normalized;
+    }
+    return 'es';
+}
+
+const syncHtmlLangAttribute = (rawLang?: string | null) => {
+    if (typeof document !== 'undefined' && document.documentElement) {
+        document.documentElement.lang = resolveNormalizedLang(rawLang);
+    }
+};
 
 i18n
     .use(LanguageDetector)
@@ -24,6 +44,10 @@ i18n
         resources: {
             es: {
                 translation: {
+                    ...coreShellLocales.es,
+                    ...coreAccessB2bLocales.es,
+                    ...coreAdminLocales.es,
+                    ...coreDevPilotLocales.es,
                     auth: {
                         title: 'Crear Cuenta',
                         subtitle: 'Registro corporativo MINREPORT',
@@ -127,6 +151,10 @@ i18n
             },
             en: {
                 translation: {
+                    ...coreShellLocales.en,
+                    ...coreAccessB2bLocales.en,
+                    ...coreAdminLocales.en,
+                    ...coreDevPilotLocales.en,
                     auth: {
                         title: 'Create Account',
                         subtitle: 'MINREPORT Corporate Registration',
@@ -230,6 +258,10 @@ i18n
             },
             pt: {
                 translation: {
+                    ...coreShellLocales.pt,
+                    ...coreAccessB2bLocales.pt,
+                    ...coreAdminLocales.pt,
+                    ...coreDevPilotLocales.pt,
                     auth: {
                         title: 'Criar Conta',
                         subtitle: 'Registro corporativo MINREPORT',
@@ -333,5 +365,10 @@ i18n
             },
         },
     });
+
+syncHtmlLangAttribute(i18n.resolvedLanguage || i18n.language);
+i18n.on('languageChanged', (lng) => {
+    syncHtmlLangAttribute(lng);
+});
 
 export default i18n;

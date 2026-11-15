@@ -1,12 +1,14 @@
 /// <reference types="vite/client" />
 
-declare module '@stockpile/StockpileModuleView' {
+declare module '@geolapp/GeolappModuleView' {
     import React from 'react';
-    export interface StockpileAppProps {
-        tenantContext?: any;
+    export interface GeolappAppProps {
+        domainMode?: 'STOCKPILE';
+        hostScope?: 'CLIENT' | 'DEV_GATEWAY' | 'TEST_PILOT';
         embedded?: boolean;
+        tenantContext?: any;
         onTelemetryEvent?: (event: any) => void;
     }
-    const StockpileModuleView: React.ComponentType<StockpileAppProps>;
-    export default StockpileModuleView;
+    const GeolappModuleView: React.ComponentType<GeolappAppProps>;
+    export default GeolappModuleView;
 }

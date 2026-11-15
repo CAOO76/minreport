@@ -58,7 +58,7 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
         <div className="w-full relative z-10 select-none font-sans">
             <div className="text-center mb-fib-21">
                 <p className="text-microcopy font-mono text-[#475569] dark:text-[#8A93A6] mb-fib-8 uppercase">
-                    [NODOS DE IDENTIDAD ASOCIADOS]
+                    {t('core_shell.associated_identity_nodes', '[NODOS DE IDENTIDAD ASOCIADOS]')}
                 </p>
                 <h2 className="text-h1-header font-bold text-[#0F172A] dark:text-[#F3F4F6] uppercase">
                     {t('auth.associated_accounts', 'Cuentas Asociadas')}
@@ -140,8 +140,8 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
                             {/* Indicador Selección */}
                             <div className="shrink-0">
                                 {isSelected && loading ? (
-                                    <span className="material-symbols-outlined text-[20px] text-[#C68346] animate-spin">
-                                        progress_activity
+                                    <span className="material-symbols-outlined text-[20px] text-[#C68346]">
+                                        sync
                                     </span>
                                 ) : (
                                     <span

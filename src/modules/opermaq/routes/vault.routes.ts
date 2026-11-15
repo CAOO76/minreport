@@ -5437,103 +5437,13 @@ const VaultPilotFeedbackSchema = z.object({
     proposedContent: z.string().max(32000).optional(),
 });
 
-vaultRouter.post('/pilot-feedback', requireCurateAI, async (req: ScopedRequest, res: Response) => {
-    const ctx = req.opermaqContext!;
-    const parsed = VaultPilotFeedbackSchema.safeParse(req.body || {});
-    if (!parsed.success) {
-        return sendZodBadRequest(res, parsed.error, 'Parámetros de feedback TEST-PILOT inválidos.');
-    }
-
-    try {
-        const d = parsed.data;
-        const cleanObs = ConfidentialityAirlockService.scrubDeterministicPii(d.observation).scrubbed.trim();
-        const cleanExpected = d.expectedAiBehavior
-            ? ConfidentialityAirlockService.scrubDeterministicPii(d.expectedAiBehavior).scrubbed.trim()
-            : null;
-        const cleanProposed = d.proposedContent
-            ? ConfidentialityAirlockService.scrubDeterministicPii(d.proposedContent).scrubbed.trim()
-            : null;
-
-        const feedbackRef = db.collection('pilot_feedback').doc();
-        const nowIso = new Date().toISOString();
-        const record = {
-            id: feedbackRef.id,
-            feedbackId: feedbackRef.id,
-            tenantId: ctx.tenantId || 'dev-master-sandbox',
-            authorUid: ctx.actorId,
-            authorEmail: ctx.actorEmail,
-            authorRole:
-                ctx.accountTier === 1
-                    ? 'DEV_ROOT'
-                    : ctx.accountTier === 2
-                    ? 'SUPER_ADMIN'
-                    : ctx.isTestPilot
-                    ? 'TEST_PILOT'
-                    : 'CURATOR',
-            module: 'opermaq' as const,
-            executionMode: 'integrated' as const,
-            category: d.category,
-            priority: d.priority,
-            contextPath: `/opermaq/vault/${d.globalAssetId}${d.pillarId ? `/${d.pillarId}` : ''}${d.itemId ? `/${d.itemId}` : ''}`,
-            assetOrSurveyId: d.globalAssetId,
-            pillarId: d.pillarId || null,
-            itemId: d.itemId || null,
-            observation: cleanObs,
-            expectedAiBehavior: cleanExpected,
-            status: 'OPEN' as const,
-            timestamp: nowIso,
-            createdAt: Date.now(),
-        };
-
-        await feedbackRef.set(record);
-
-        let hitlCandidateId: string | null = null;
-        if (d.category === 'AI_KNOWLEDGE_TRAINING' || cleanProposed) {
-            const candRef = db.collection('hitl_candidates').doc();
-            hitlCandidateId = candRef.id;
-            await candRef.set({
-                id: candRef.id,
-                feedbackId: feedbackRef.id,
-                module: 'opermaq',
-                globalAssetId: d.globalAssetId,
-                pillarId: d.pillarId || null,
-                itemId: d.itemId || null,
-                authorUid: ctx.actorId,
-                authorEmail: ctx.actorEmail,
-                observation: cleanObs,
-                expectedAiBehavior: cleanExpected,
-                proposedContent: cleanProposed,
-                status: 'PENDING_REVIEW',
-                createdAt: nowIso,
-            });
-        }
-
-        await AuditLedger.record({
-            tenantId: ctx.tenantId || 'GLOBAL_OEM',
-            actorUid: ctx.actorId,
-            actorEmail: ctx.actorEmail,
-            module: 'test-pilot',
-            action: `OPERMAQ_PILOT_FEEDBACK_${d.category}`,
-            targetEntity: feedbackRef.id,
-            details: {
-                globalAssetId: d.globalAssetId,
-                pillarId: d.pillarId || null,
-                itemId: d.itemId || null,
-                hitlCandidateId,
-                priority: d.priority,
-            },
-        }).catch(() => undefined);
-
-        return res.status(201).json({
-            success: true,
-            feedbackId: feedbackRef.id,
-            hitlCandidateId,
-            item: record,
-        });
-    } catch (err) {
-        return handleVaultError(res, err, 'Error registrando retroalimentación TEST-PILOT.');
-    }
+vaultRouter.post('/pilot-feedback', requireCurateAI, async (_req: ScopedRequest, res: Response) => {
+    return res.status(403).json({
+        error: 'Prohibido: 3º TEST-PILOT opera herméticamente en /pilot; sin envío desde OPERMAQ/DEV.',
+    });
 });
+
+
 
 /**
  * POST /api/vault/pilot-hitl/:candidateId/consolidate

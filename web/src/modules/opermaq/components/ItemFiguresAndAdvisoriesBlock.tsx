@@ -119,7 +119,7 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
         <section className="border border-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D] p-[21px] rounded-none shadow-none">
           <div className="flex items-center justify-between gap-[13px] pb-[13px] border-b border-[#E2E8F0] dark:border-[#12151C]">
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#C68346]">
+              <p className="text-microcopy font-bold uppercase tracking-[0.05em] text-[#C68346]">
                 {t('item_figures.advisories_title')}
               </p>
               <p className="text-[13px] text-[#475569] dark:text-[#8A93A6] mt-[4px]">
@@ -138,7 +138,7 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
                 className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] p-[13px] rounded-none shadow-none"
               >
                 <div className="flex items-center justify-between gap-[13px]">
-                  <span className="font-mono tabular-nums text-[11px] font-bold text-[#00AEEF]">
+                  <span className="font-mono tabular-nums text-microcopy font-bold text-[#00AEEF]">
                     {t('item_figures.source_prefix')}: {adv.source_label} · {new Date(adv.detected_at).toLocaleDateString()}
                   </span>
                   <button
@@ -163,7 +163,7 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
                       className="max-h-[260px] w-auto mx-auto object-contain select-none pointer-events-none"
                       style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
                     />
-                    <figcaption className="mt-[8px] text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                    <figcaption className="mt-[8px] text-microcopy font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
                       {adv.summary} · ORIG {adv.figure.original_bytes ?? 0} B -&gt; CAS {adv.figure.optimized_bytes ?? 0} B (-{adv.figure.savings_pct ?? 0}%)
                     </figcaption>
                   </figure>
@@ -183,7 +183,7 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
         <section className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-[21px] rounded-none shadow-none">
           <div className="flex flex-wrap items-center justify-between gap-[13px] pb-[13px] border-b border-[#E2E8F0] dark:border-[#12151C]">
             <div>
-              <h4 className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6]">
+              <h4 className="text-microcopy font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6]">
                 {t('item_figures.gallery_title')} (<span className="font-mono tabular-nums">{validFigures.length}</span>)
               </h4>
               <p className="text-[13px] text-[#475569] dark:text-[#8A93A6]">
@@ -215,7 +215,7 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
                   {/* Área Menor (38.2%): Especificación y tabla de Callouts 1..N */}
                   <figcaption className="lg:w-[38.2%] flex flex-col justify-between gap-[13px]">
                     <div className="flex flex-col gap-[8px]">
-                      <span className="font-mono tabular-nums text-[11px] font-bold uppercase text-[#C68346]">
+                      <span className="font-mono tabular-nums text-microcopy font-bold uppercase text-[#C68346]">
                         {fig.figure_type.replace(/_/g, ' ')}
                         {fig.source_page ? ` · ${t('item_figures.page_oem', { page: fig.source_page })}` : ''}
                       </span>
@@ -233,10 +233,10 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
                           <table className="w-full border-collapse text-[13px] font-mono tabular-nums">
                             <thead>
                               <tr className="bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C]">
-                                <th className="px-[8px] py-[6px] text-left text-[11px] text-[#475569] dark:text-[#8A93A6]">
+                                <th className="px-[8px] py-[6px] text-left text-microcopy text-[#475569] dark:text-[#8A93A6]">
                                   {t('item_figures.col_ref')}
                                 </th>
-                                <th className="px-[8px] py-[6px] text-left text-[11px] text-[#475569] dark:text-[#8A93A6]">
+                                <th className="px-[8px] py-[6px] text-left text-microcopy text-[#475569] dark:text-[#8A93A6]">
                                   {t('item_figures.col_component_spec')}
                                 </th>
                               </tr>
@@ -262,7 +262,7 @@ export const ItemFiguresAndAdvisoriesBlock: React.FC<ItemFiguresAndAdvisoriesBlo
                       )}
                     </div>
 
-                    <div className="pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center justify-between gap-[8px] font-mono tabular-nums text-[11px] text-[#94A3B8] dark:text-[#5A6072] select-text">
+                    <div className="pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center justify-between gap-[8px] font-mono tabular-nums text-microcopy text-[#94A3B8] dark:text-[#5A6072] select-text">
                       <span>SHA-256: {fig.sha256.slice(0, 16)}…</span>
                       {typeof fig.original_bytes === 'number' && typeof fig.optimized_bytes === 'number' && (
                         <span className="text-[#00AEEF] font-bold">

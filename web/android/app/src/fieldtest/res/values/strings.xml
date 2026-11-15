@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MINREPORT TEST</string>
+    <string name="title_activity_main">MINREPORT TEST</string>
+    <string name="package_name">com.minreport.app.fieldtest</string>
+    <string name="custom_url_scheme">com.minreport.app.fieldtest</string>
+</resources>

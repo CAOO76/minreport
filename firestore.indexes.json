@@ -217,7 +217,116 @@
           "order": "DESCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "global_manufacturers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "curationStatus",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "officialName",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "global_suppliers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "manufacturerKeys",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "countryIso2",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "supplier_contact_contributions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "ai_inference_cache",
+      "fieldPath": "ttlExpiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "auth_otp_challenges",
+      "fieldPath": "ttlExpiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "dev_challenges",
+      "fieldPath": "ttlExpiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "equipment_onboarding_requests",
+      "fieldPath": "ttlExpiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "setup_tokens",
+      "fieldPath": "ttlExpiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "tenants",
+      "fieldPath": "ttlExpiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "accounts",
+      "fieldPath": "ttlExpiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "test_pilots",
+      "fieldPath": "ttlExpiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "users",
+      "fieldPath": "ttlExpiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "webauthn_challenges",
+      "fieldPath": "ttlExpiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "supplier_contact_contributions",
+      "fieldPath": "ttlExpiresAt",
+      "ttl": true,
+      "indexes": []
+    }
+  ]
 }

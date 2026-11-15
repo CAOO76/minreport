@@ -1,10 +1,12 @@
 
 import React, { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { auth, db } from '../config/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 
 const MobileLayout: React.FC = () => {
+    const { t } = useTranslation();
     const location = useLocation();
     const navigate = useNavigate();
 
@@ -42,39 +44,42 @@ const MobileLayout: React.FC = () => {
             </main>
 
             {/* Bottom Navigation Bar */}
-            <nav className="fixed bottom-0 w-full pb-[env(safe-area-inset-bottom)] bg-white/95 dark:bg-[#07090D]/95 border-t border-[#E2E8F0] dark:border-[#12151C] z-50">
-                <div className="flex justify-around items-center h-16">
+            <nav
+                aria-label={t('core_mobile.bottom_nav_aria', 'Navegación móvil')}
+                className="fixed bottom-0 w-full pb-[env(safe-area-inset-bottom)] bg-white/95 dark:bg-[#07090D]/95 border-t border-[#E2E8F0] dark:border-[#12151C] z-50"
+            >
+                <div className="flex justify-around items-stretch min-h-[64px]">
 
                     {/* Inicio */}
-                    <Link to="/mobile/dashboard" className="flex flex-col items-center justify-center w-full h-full relative cursor-pointer">
-                        {isActive('/mobile/dashboard') && <div className="absolute top-0 w-8 h-[2px] bg-[#C68346]"></div>}
-                        <span className={`material-symbols-outlined text-[22px] ${isActive('/mobile/dashboard') ? 'text-[#C68346]' : 'text-neutral-400 dark:text-neutral-500'}`}>
+                    <Link to="/mobile/dashboard" className="flex flex-col items-center justify-center w-full min-h-[56px] py-1 relative cursor-pointer">
+                        {isActive('/mobile/dashboard') && <div className="absolute top-0 w-10 h-[3px] bg-[#C68346]"></div>}
+                        <span className={`material-symbols-outlined text-[24px] ${isActive('/mobile/dashboard') ? 'text-[#C68346]' : 'text-[#475569] dark:text-[#CBD5E1]'}`}>
                             home
                         </span>
-                        <span className={`text-[10px] font-mono mt-1 ${isActive('/mobile/dashboard') ? 'text-[#C68346] font-bold' : 'text-neutral-400 dark:text-neutral-500'}`}>
-                            Inicio
+                        <span className={`text-microcopy font-mono mt-1 ${isActive('/mobile/dashboard') ? 'text-[#C68346] font-bold' : 'text-[#475569] dark:text-[#CBD5E1]'}`}>
+                            {t('core_mobile.nav_home', 'Inicio')}
                         </span>
                     </Link>
 
                     {/* Herramientas (Módulos) */}
-                    <Link to="/mobile/tools" className="flex flex-col items-center justify-center w-full h-full relative cursor-pointer">
-                        {isActive('/mobile/tools') && <div className="absolute top-0 w-8 h-[2px] bg-[#C68346]"></div>}
-                        <span className={`material-symbols-outlined text-[22px] ${isActive('/mobile/tools') ? 'text-[#C68346]' : 'text-neutral-400 dark:text-neutral-500'}`}>
+                    <Link to="/mobile/tools" className="flex flex-col items-center justify-center w-full min-h-[56px] py-1 relative cursor-pointer">
+                        {isActive('/mobile/tools') && <div className="absolute top-0 w-10 h-[3px] bg-[#C68346]"></div>}
+                        <span className={`material-symbols-outlined text-[24px] ${isActive('/mobile/tools') ? 'text-[#C68346]' : 'text-[#475569] dark:text-[#CBD5E1]'}`}>
                             grid_view
                         </span>
-                        <span className={`text-[10px] font-mono mt-1 ${isActive('/mobile/tools') ? 'text-[#C68346] font-bold' : 'text-neutral-400 dark:text-neutral-500'}`}>
-                            Módulos
+                        <span className={`text-microcopy font-mono mt-1 ${isActive('/mobile/tools') ? 'text-[#C68346] font-bold' : 'text-[#475569] dark:text-[#CBD5E1]'}`}>
+                            {t('core_mobile.nav_modules', 'Módulos')}
                         </span>
                     </Link>
 
                     {/* Perfil */}
-                    <Link to="/mobile/profile" className="flex flex-col items-center justify-center w-full h-full relative cursor-pointer">
-                        {isActive('/mobile/profile') && <div className="absolute top-0 w-8 h-[2px] bg-[#C68346]"></div>}
-                        <span className={`material-symbols-outlined text-[22px] ${isActive('/mobile/profile') ? 'text-[#C68346]' : 'text-neutral-400 dark:text-neutral-500'}`}>
+                    <Link to="/mobile/profile" className="flex flex-col items-center justify-center w-full min-h-[56px] py-1 relative cursor-pointer">
+                        {isActive('/mobile/profile') && <div className="absolute top-0 w-10 h-[3px] bg-[#C68346]"></div>}
+                        <span className={`material-symbols-outlined text-[24px] ${isActive('/mobile/profile') ? 'text-[#C68346]' : 'text-[#475569] dark:text-[#CBD5E1]'}`}>
                             person
                         </span>
-                        <span className={`text-[10px] font-mono mt-1 ${isActive('/mobile/profile') ? 'text-[#C68346] font-bold' : 'text-neutral-400 dark:text-neutral-500'}`}>
-                            Perfil
+                        <span className={`text-microcopy font-mono mt-1 ${isActive('/mobile/profile') ? 'text-[#C68346] font-bold' : 'text-[#475569] dark:text-[#CBD5E1]'}`}>
+                            {t('core_mobile.nav_profile', 'Perfil')}
                         </span>
                     </Link>
 

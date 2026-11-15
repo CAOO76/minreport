@@ -1,57 +1,103 @@
-import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { Navigate } from 'react-router-dom';
-import { auth, db } from '../../config/firebase';
+import { useTranslation } from 'react-i18next';
+import { auth } from '../../config/firebase';
 import { signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { ThemeSwitch } from '../../components/ThemeSwitch';
 import { LanguageSwitch } from '../../components/LanguageSwitch';
 import BrandLogo from '../../components/BrandLogo';
 import BrandingManager from '../../components/admin/BrandingManager';
-import CopyButton from '../../components/common/CopyButton';
+import ErgonomicScaleSwitch from '../../components/common/ErgonomicScaleSwitch';
+import ContextOrientationBar from '../../components/common/ContextOrientationBar';
+import ReadAloudButton from '../../components/common/ReadAloudButton';
+import M3LinearProgress from '../../components/common/M3LinearProgress';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
+import { ModuleHost, M3ModuleHudFallback } from '../../core/modules/ModuleHost';
+import type { GeolappDomainMode } from '../../core/modules/module-registry';
 import { getApiUrl } from '../../utils/network';
 
-// Carga asíncrona de módulos y vistas integradas para navegación 100% contenida en cabina DEV
-const StockpileModule = lazy(() => import('../../modules/stockpile/StockpileModule').then(m => ({ default: m.StockpileModule })));
-const OpermaqModule = lazy(() => import('../../modules/opermaq/OpermaqModule').then(m => ({ default: m.OpermaqModule })));
-const EmpresaPage = lazy(() => import('../b2b/EmpresaPage').then(m => ({ default: m.EmpresaPage })));
-const StaffPage = lazy(() => import('../StaffPage').then(m => ({ default: m.StaffPage })));
-const JobProfilesPage = lazy(() => import('../JobProfilesPage').then(m => ({ default: m.JobProfilesPage })));
-const AdminsPage = lazy(() => import('../b2b/AdminsPage').then(m => ({ default: m.AdminsPage })));
-const MetricasPage = lazy(() => import('../b2b/MetricasPage').then(m => ({ default: m.MetricasPage })));
+// Carga asíncrona de bandejas integradas para navegación 100% contenida en cabina DEV
+const DevEquipmentOnboardingInbox = lazy(() => import('../../components/dev/DevEquipmentOnboardingInbox').then(m => ({ default: m.DevEquipmentOnboardingInbox })));
 
-interface TestPilot {
-    id: string;
-    accountId: string;
-    collaboratorName: string;
-    collaboratorEmail: string;
-    organization?: string;
-    purpose: string;
-    status: string;
-    expiresAt: number;
-    createdAt: number;
-}
-
-type DevAuthState = 'IDLE' | 'WAITING_CONFIRMATION' | 'OTP' | 'USER' | 'PASSWORD' | 'PASSWORD_ROTATION';
+type DevAuthState = 'IDLE' | 'OTP' | 'USER' | 'PASSWORD' | 'PASSWORD_ROTATION';
 
 export type DevSection =
     // Configuración MINREPORT
-    | 'PILOTS'
-    | 'B2B_EMPRESA'
-    | 'STAFF'
-    | 'JOB_PROFILES'
-    | 'B2B_ADMINS'
+    | 'PILOT_METRICS'
+    | 'EQUIPMENT_ONBOARDING'
     | 'BRANDING'
-    | 'B2B_METRICAS'
     // Módulos Industriales (CATÁLOGO, FLOTA y SIMBOLOGÍA separados bajo Minimalismo Industrial Puro)
     | 'MODULE_STOCKPILE'
     | 'MODULE_OPERMAQ_CATALOG'
     | 'MODULE_OPERMAQ_FLEET'
-    | 'MODULE_OPERMAQ_SYMBOLOGY';
+    | 'MODULE_OPERMAQ_SYMBOLOGY'
+    | 'MODULE_OPERMAQ_MANUFACTURERS'
+    | 'MODULE_OPERMAQ_SUPPLIERS';
+
+const DEV_SIDEBAR_CALLOUT_CLASS =
+    'pointer-events-none opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 absolute left-full ml-3 top-1/2 -translate-y-1/2 z-50 whitespace-nowrap bg-[#0F172A] text-[#F3F4F6] dark:bg-[#F8FAFC] dark:text-[#0F172A] px-fib-13 py-fib-8 text-data-dense font-mono border border-[#C68346] rounded-none shadow-none';
+
+function formatCountdownMmSs(seconds: number): string {
+    const safe = Math.max(0, Math.floor(seconds));
+    const mins = String(Math.floor(safe / 60)).padStart(2, '0');
+    const secs = String(safe % 60).padStart(2, '0');
+    return `${mins}:${secs}`;
+}
+
+function formatUtcTimestamp(isoValue: string | null | undefined, fallback: string): string {
+    if (!isoValue) return fallback;
+    const ms = Date.parse(isoValue);
+    if (!Number.isFinite(ms) || ms <= 0) return fallback;
+    return `${new Date(ms).toISOString().replace('T', ' ').slice(0, 16)} UTC`;
+}
+
+interface DevPilotAggregatedMetrics {
+    pilots: {
+        total: number;
+        active: number;
+        expired: number;
+        revoked: number;
+    };
+    sandboxes: {
+        pilotTenantsCount: number;
+        tenantAssetsCount: number;
+        stockpilesCount: number;
+    };
+    aiInteractions: {
+        total: number;
+        byModule: {
+            core: number;
+            opermaq: number;
+            geolapp: number;
+            stockpile: number;
+        };
+        byCategory: {
+            BUG_CORRECTION: number;
+            CHANGE_REQUEST: number;
+            AI_KNOWLEDGE_TRAINING: number;
+            FIELD_SIMULATION: number;
+        };
+        byPriority: {
+            LOW: number;
+            MEDIUM: number;
+            HIGH: number;
+            CRITICAL: number;
+        };
+        byStatus: {
+            PENDING: number;
+            REVIEWED: number;
+            APPLIED_TO_AI: number;
+            REJECTED: number;
+        };
+        lastActivityAt: string | null;
+    };
+}
 
 export const DevVaultGateway: React.FC = () => {
+    const { t } = useTranslation();
     const { session, isLoaded } = useMinReportSession();
-    const [activeSection, setActiveSection] = useState<DevSection>('PILOTS');
+    const [activeSection, setActiveSection] = useState<DevSection>('MODULE_OPERMAQ_CATALOG');
+    const [geolappDomainMode, setGeolappDomainMode] = useState<GeolappDomainMode>('STOCKPILE');
     const isModuleSection = activeSection.startsWith('MODULE_');
 
     // Estado Auth DEV
@@ -64,7 +110,7 @@ export const DevVaultGateway: React.FC = () => {
     const [clientToken, setClientToken] = useState<string>('');
     const [stepToken, setStepToken] = useState<string>('');
     const [expiresAt, setExpiresAt] = useState<number>(0);
-    const [timeLeft, setTimeLeft] = useState<number>(180);
+    const [timeLeft, setTimeLeft] = useState<number>(600);
     const [attemptsRemaining, setAttemptsRemaining] = useState<number>(3);
 
     // Campos de entrada escalonados
@@ -81,22 +127,56 @@ export const DevVaultGateway: React.FC = () => {
     const [loginLoading, setLoginLoading] = useState<boolean>(false);
     const [loginError, setLoginError] = useState<string | null>(null);
 
-    // Estado Pilotos
-    const [pilots, setPilots] = useState<TestPilot[]>([]);
-    const [pilotsLoading, setPilotsLoading] = useState<boolean>(false);
-
-    // Formulario Acreditar Piloto
-    const [pilotName, setPilotName] = useState<string>('');
-    const [pilotEmail, setPilotEmail] = useState<string>('');
-    const [pilotOrg, setPilotOrg] = useState<string>('');
-    const [pilotPurpose, setPilotPurpose] = useState<string>('');
-    const [pilotDays, setPilotDays] = useState<number>(90);
-    const [pilotSubmitting, setPilotSubmitting] = useState<boolean>(false);
-    const [pilotError, setPilotError] = useState<string | null>(null);
-    const [pilotHitlModal, setPilotHitlModal] = useState<{ mode: 'CREATE' | 'REVOKE'; pilotId?: string } | null>(null);
-    const [pilotHitlKeyword, setPilotHitlKeyword] = useState<string>('');
+    const [pilotMetrics, setPilotMetrics] = useState<DevPilotAggregatedMetrics | null>(null);
+    const [pilotMetricsLoading, setPilotMetricsLoading] = useState<boolean>(false);
+    const [pilotMetricsError, setPilotMetricsError] = useState<string | null>(null);
 
     const apiBase = getApiUrl('/api/dev');
+
+    const fetchPilotMetrics = useCallback(async () => {
+        setPilotMetricsLoading(true);
+        setPilotMetricsError(null);
+        try {
+            const firebaseToken = await auth.currentUser?.getIdToken().catch(() => null);
+            const token =
+                firebaseToken ||
+                devToken ||
+                localStorage.getItem('dev_auth_token') ||
+                localStorage.getItem('dev_vault_token') ||
+                '';
+            const res = await fetch(`${apiBase}/pilot-metrics`, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+            });
+            const data = await res.json();
+            if (!res.ok || !data?.success) {
+                throw new Error(data?.error || t('core_dev_vault.pilot_metrics.error_fetch'));
+            }
+            setPilotMetrics((data.metrics as DevPilotAggregatedMetrics) ?? null);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : t('core_dev_vault.pilot_metrics.error_fetch');
+            setPilotMetricsError(msg);
+        } finally {
+            setPilotMetricsLoading(false);
+        }
+    }, [apiBase, devToken, t]);
+
+    useEffect(() => {
+        if (isAuthenticated && activeSection === 'PILOT_METRICS') {
+            void fetchPilotMetrics();
+        }
+    }, [isAuthenticated, activeSection, fetchPilotMetrics]);
+
+    useEffect(() => {
+        const handleOpenCatalogAsset = () => {
+            setActiveSection('MODULE_OPERMAQ_CATALOG');
+        };
+        window.addEventListener('opermaq:open-catalog-asset', handleOpenCatalogAsset);
+        return () => window.removeEventListener('opermaq:open-catalog-asset', handleOpenCatalogAsset);
+    }, []);
 
     useEffect(() => {
         window.name = 'minreport_dev_terminal';
@@ -130,62 +210,28 @@ export const DevVaultGateway: React.FC = () => {
             return;
         }
 
-        // Inspeccionar si venimos de la confirmación directa desde el email (302 redirect)
+        // Inspeccionar si venimos de error en confirmación desde el email (302 redirect)
         const params = new URLSearchParams(window.location.search);
-        const cidParam = params.get('cid');
-        const tokenParam = params.get('token');
         const errParam = params.get('error');
 
         if (errParam) {
             setLoginError(decodeURIComponent(errParam));
             window.history.replaceState({}, document.title, window.location.pathname);
-        } else if (cidParam && tokenParam) {
-            setChallengeId(cidParam);
-            setClientToken(tokenParam);
-            setExpiresAt(Date.now() + 180000);
-            setTimeLeft(180);
-            setAttemptsRemaining(3);
-            setOtpDigits(['', '', '', '', '', '']);
-            setAuthState('OTP');
-            window.history.replaceState({}, document.title, window.location.pathname);
-            setTimeout(() => {
-                otpRefs.current[0]?.focus();
-            }, 150);
-
-            // Sincronizar en tiempo real con cualquier otra pestaña abierta en el navegador
-            try {
-                const bc = new BroadcastChannel('minreport_dev_gateway');
-                bc.postMessage({
-                    type: 'EMAIL_CONFIRMED',
-                    challengeId: cidParam,
-                    clientToken: tokenParam
-                });
-                bc.close();
-            } catch { }
         }
     }, []);
 
-    // Sincronización instantánea entre pestañas del navegador vía BroadcastChannel
     useEffect(() => {
-        let channel: BroadcastChannel | null = null;
-        try {
-            channel = new BroadcastChannel('minreport_dev_gateway');
-            channel.onmessage = (event) => {
-                if (event.data?.type === 'EMAIL_CONFIRMED') {
-                    if (event.data.challengeId) setChallengeId(event.data.challengeId);
-                    if (event.data.clientToken) setClientToken(event.data.clientToken);
-                    setExpiresAt(Date.now() + 180000);
-                    setTimeLeft(180);
-                    setAuthState('OTP');
-                    setTimeout(() => {
-                        otpRefs.current[0]?.focus();
-                    }, 100);
-                }
-            };
-        } catch { }
-
+        const handleOpenManufacturerChannels = () => {
+            setActiveSection('MODULE_OPERMAQ_MANUFACTURERS');
+        };
+        const handleOpenSupplierAgenda = () => {
+            setActiveSection('MODULE_OPERMAQ_SUPPLIERS');
+        };
+        window.addEventListener('opermaq:open-manufacturer-channels', handleOpenManufacturerChannels);
+        window.addEventListener('opermaq:open-supplier-agenda', handleOpenSupplierAgenda);
         return () => {
-            try { channel?.close(); } catch { }
+            window.removeEventListener('opermaq:open-manufacturer-channels', handleOpenManufacturerChannels);
+            window.removeEventListener('opermaq:open-supplier-agenda', handleOpenSupplierAgenda);
         };
     }, []);
 
@@ -195,8 +241,7 @@ export const DevVaultGateway: React.FC = () => {
             if (
                 user &&
                 (user.email?.toLowerCase() === 'dev@minreport.com' ||
-                    user.uid === 'dev-master-root-uid' ||
-                    user.uid === 'minreport-dev-root-superadmin-2026')
+                    user.uid === 'dev-master-root-uid')
             ) {
                 try {
                     const freshToken = await user.getIdToken();
@@ -260,13 +305,7 @@ export const DevVaultGateway: React.FC = () => {
         };
     }, [isAuthenticated, devToken, apiBase]);
 
-    useEffect(() => {
-        if (isAuthenticated && devToken) {
-            fetchPilots();
-        }
-    }, [isAuthenticated, devToken]);
-
-    // Reloj de cuenta regresiva de 180s
+    // Reloj de cuenta regresiva de 600s (10 minutos)
     useEffect(() => {
         if (authState === 'IDLE') return;
 
@@ -277,58 +316,13 @@ export const DevVaultGateway: React.FC = () => {
             if (diff <= 0) {
                 clearInterval(timer);
                 setAuthState('IDLE');
-                setLoginError('Sesión expirada (límite de 180 segundos alcanzado).');
+                setLoginError(t('core_dev_vault.auth.session_expired_180'));
                 setOtpDigits(['', '', '', '', '', '']);
             }
         }, 1000);
 
         return () => clearInterval(timer);
-    }, [authState, expiresAt]);
-
-    // Polling silencioso en espera de confirmación desde el correo electrónico
-    useEffect(() => {
-        if (authState !== 'WAITING_CONFIRMATION' || !challengeId || !clientToken) return;
-
-        let active = true;
-        const pollInterval = setInterval(async () => {
-            try {
-                const resp = await fetch(`${apiBase}/auth/challenge/status/${challengeId}?clientToken=${clientToken}`);
-                if (!resp.ok) return;
-                const data = await resp.json();
-
-                if (!active) return;
-
-                if (data.status === 'EMAIL_CONFIRMED') {
-                    clearInterval(pollInterval);
-                    // Solo al confirmar desde el email se activan los campos
-                    setAuthState('OTP');
-                    setTimeout(() => {
-                        otpRefs.current[0]?.focus();
-                    }, 100);
-                    try {
-                        const bc = new BroadcastChannel('minreport_dev_gateway');
-                        bc.postMessage({
-                            type: 'EMAIL_CONFIRMED',
-                            challengeId,
-                            clientToken
-                        });
-                        bc.close();
-                    } catch { }
-                } else if (data.status === 'REVOKED' || data.status === 'COMPLETED') {
-                    clearInterval(pollInterval);
-                    setAuthState('IDLE');
-                    setLoginError('Sesión de desafío expirada o revocada.');
-                }
-            } catch {
-                // Silencioso
-            }
-        }, 600);
-
-        return () => {
-            active = false;
-            clearInterval(pollInterval);
-        };
-    }, [authState, challengeId, clientToken, apiBase]);
+    }, [authState, expiresAt, t]);
 
     // Fase 1: Clic en Isotipo para iniciar reto
     const handleInitChallenge = async () => {
@@ -345,13 +339,13 @@ export const DevVaultGateway: React.FC = () => {
 
             const data = await resp.json();
             if (!resp.ok) {
-                throw new Error(data.error || 'Fallo al iniciar sesión de desafío DEV');
+                throw new Error(data.error || t('core_dev_vault.auth.challenge_init_failed'));
             }
 
             setChallengeId(data.challengeId);
             setClientToken(data.clientToken);
             setExpiresAt(data.expiresAt);
-            setTimeLeft(180);
+            setTimeLeft(600);
             setAttemptsRemaining(3);
             setOtpDigits(['', '', '', '', '', '']);
             // Transición directa y fluida a OTP en la misma pantalla (cero nuevas pestañas ni parpadeos)
@@ -360,7 +354,7 @@ export const DevVaultGateway: React.FC = () => {
                 otpRefs.current[0]?.focus();
             }, 100);
         } catch (err: any) {
-            setLoginError(err.message || 'Error iniciando desafío');
+            setLoginError(err.message || t('core_dev_vault.auth.challenge_start_error'));
         } finally {
             setLoginLoading(false);
         }
@@ -428,10 +422,10 @@ export const DevVaultGateway: React.FC = () => {
             if (!resp.ok) {
                 if (data.attemptsRemaining <= 0) {
                     setAuthState('IDLE');
-                    setLoginError('Límite de intentos superado. Sesión autodestruida.');
+                    setLoginError(t('core_dev_vault.auth.otp_attempts_exceeded'));
                     setOtpDigits(['', '', '', '', '', '']);
                 } else {
-                    setLoginError(`Código dinámico incorrecto. Intentos restantes: ${data.attemptsRemaining}`);
+                    setLoginError(t('core_dev_vault.auth.otp_invalid_remaining', { count: data.attemptsRemaining }));
                     setAttemptsRemaining(data.attemptsRemaining);
                     setOtpDigits(['', '', '', '', '', '']);
                     otpRefs.current[0]?.focus();
@@ -442,7 +436,7 @@ export const DevVaultGateway: React.FC = () => {
             setStepToken(data.stepToken);
             setAuthState('USER');
         } catch (err: any) {
-            setLoginError(err.message || 'Error validando código');
+            setLoginError(err.message || t('core_dev_vault.auth.otp_validation_error'));
         } finally {
             setLoginLoading(false);
         }
@@ -469,7 +463,7 @@ export const DevVaultGateway: React.FC = () => {
 
             const data = await resp.json();
             if (!resp.ok) {
-                throw new Error(data.error || 'Identidad no autorizada');
+                throw new Error(data.error || t('core_dev_vault.auth.identity_unauthorized'));
             }
 
             setDaysRemaining(data.daysRemaining);
@@ -479,7 +473,7 @@ export const DevVaultGateway: React.FC = () => {
                 setAuthState('PASSWORD');
             }
         } catch (err: any) {
-            setLoginError(err.message || 'Identidad no autorizada');
+            setLoginError(err.message || t('core_dev_vault.auth.identity_unauthorized'));
         } finally {
             setLoginLoading(false);
         }
@@ -494,13 +488,13 @@ export const DevVaultGateway: React.FC = () => {
         try {
             if (authState === 'PASSWORD_ROTATION') {
                 if (!newPassword || newPassword.trim().length < 8) {
-                    throw new Error('La nueva clave debe tener al menos 8 caracteres.');
+                    throw new Error(t('core_dev_vault.auth.rotation_min_length'));
                 }
                 if (newPassword !== confirmPassword) {
-                    throw new Error('La confirmación de la nueva clave no coincide.');
+                    throw new Error(t('core_dev_vault.auth.rotation_mismatch'));
                 }
                 if (newPassword === oldPassword) {
-                    throw new Error('La nueva clave debe ser diferente a la actual.');
+                    throw new Error(t('core_dev_vault.auth.rotation_same_key'));
                 }
             }
 
@@ -524,26 +518,24 @@ export const DevVaultGateway: React.FC = () => {
 
             const data = await resp.json();
             if (!resp.ok) {
-                throw new Error(data.error || 'Credenciales inválidas');
+                throw new Error(data.error || t('core_dev_vault.auth.invalid_credentials'));
             }
 
-            const token = data.token || data.firebaseToken;
-            localStorage.setItem('dev_auth_token', token);
-            setDevToken(token);
-            setIsAuthenticated(true);
-
+            let effectiveToken = data.token || data.firebaseToken;
             if (data.firebaseToken) {
                 try {
                     const cred = await signInWithCustomToken(auth, data.firebaseToken);
-                    const freshToken = await cred.user.getIdToken(true);
-                    localStorage.setItem('dev_auth_token', freshToken);
-                    setDevToken(freshToken);
+                    effectiveToken = await cred.user.getIdToken(true);
                 } catch (fbErr) {
                     console.warn('[DEV] Firebase sync warning:', fbErr);
                 }
             }
+
+            localStorage.setItem('dev_auth_token', effectiveToken);
+            setDevToken(effectiveToken);
+            setIsAuthenticated(true);
         } catch (err: any) {
-            setLoginError(err.message || 'Fallo de autenticación');
+            setLoginError(err.message || t('core_dev_vault.auth.auth_failed'));
         } finally {
             setLoginLoading(false);
         }
@@ -561,8 +553,6 @@ export const DevVaultGateway: React.FC = () => {
     const handleLogout = async () => {
         localStorage.removeItem('dev_auth_token');
         localStorage.removeItem('dev_vault_token');
-        localStorage.removeItem('dev_is_impersonating');
-        localStorage.removeItem('dev_impersonated_account');
         setDevToken('');
         setLoginEmail('');
         setLoginPassword('');
@@ -574,156 +564,6 @@ export const DevVaultGateway: React.FC = () => {
         try {
             await auth.signOut();
         } catch { }
-    };
-
-    /**
-     * Cliente HTTP autenticado resiliente para operaciones DEV.
-     * Renueva automáticamente el token ID de Firebase ante vencimiento o desincronización (401).
-     */
-    const fetchWithDevAuth = async (endpoint: string, options: RequestInit = {}): Promise<Response> => {
-        if (typeof auth.authStateReady === 'function') {
-            try {
-                await auth.authStateReady();
-            } catch { }
-        }
-        let activeToken = devToken || localStorage.getItem('dev_auth_token') || '';
-        if (auth.currentUser) {
-            try {
-                activeToken = await auth.currentUser.getIdToken();
-                setDevToken(activeToken);
-                localStorage.setItem('dev_auth_token', activeToken);
-            } catch { }
-        }
-
-        const headers: Record<string, string> = {
-            ...((options.headers as Record<string, string>) || {}),
-            'Authorization': `Bearer ${activeToken}`
-        };
-
-        let resp = await fetch(`${apiBase}${endpoint}`, {
-            ...options,
-            headers
-        });
-
-        if (resp.status === 401) {
-            // Intento de re-autenticación forzada si hay sesión Firebase activa
-            if (auth.currentUser) {
-                try {
-                    const refreshed = await auth.currentUser.getIdToken(true);
-                    setDevToken(refreshed);
-                    localStorage.setItem('dev_auth_token', refreshed);
-                    headers['Authorization'] = `Bearer ${refreshed}`;
-                    resp = await fetch(`${apiBase}${endpoint}`, {
-                        ...options,
-                        headers
-                    });
-                } catch { }
-            }
-
-            if (resp.status === 401) {
-                console.warn('[DEV] Sesión DEV expirada o inválida (401). Retornando a terminal...');
-                await handleLogout();
-                setLoginError('Sesión DEV expirada o no autorizada. Por favor inicie sesión nuevamente.');
-            }
-        }
-
-        return resp;
-    };
-
-    const fetchPilots = async () => {
-        setPilotsLoading(true);
-        try {
-            const resp = await fetchWithDevAuth('/test-pilots');
-            if (resp.ok) {
-                const data = await resp.json();
-                setPilots(Array.isArray(data) ? data : []);
-                return;
-            }
-        } catch {
-            // Respaldo resiliente directo a Cloud Firestore si el proceso Core API está reiniciando
-        }
-
-        try {
-            if (typeof auth.authStateReady === 'function') {
-                await auth.authStateReady();
-            }
-            if (auth.currentUser) {
-                const q = query(collection(db, 'test_pilots'), orderBy('createdAt', 'desc'));
-                const snap = await getDocs(q);
-                const list: TestPilot[] = snap.docs.map((d) => ({
-                    id: d.id,
-                    ...(d.data() as Omit<TestPilot, 'id'>),
-                }));
-                setPilots(list);
-            }
-        } catch {
-            // Silencioso si aún no completa autenticación Firebase
-        } finally {
-            setPilotsLoading(false);
-        }
-    };
-
-    const handleCreatePilot = (e: React.FormEvent) => {
-        e.preventDefault();
-        setPilotError(null);
-        setPilotHitlKeyword('');
-        setPilotHitlModal({ mode: 'CREATE' });
-    };
-
-    const handleRevokePilot = (id: string) => {
-        setPilotError(null);
-        setPilotHitlKeyword('');
-        setPilotHitlModal({ mode: 'REVOKE', pilotId: id });
-    };
-
-    const executeConfirmedPilotAction = async () => {
-        if (!pilotHitlModal || pilotHitlKeyword.trim() !== 'ACTUALIZAR') return;
-        setPilotSubmitting(true);
-        setPilotError(null);
-
-        try {
-            if (pilotHitlModal.mode === 'CREATE') {
-                const resp = await fetchWithDevAuth('/test-pilots', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        collaboratorName: pilotName.trim(),
-                        collaboratorEmail: pilotEmail.trim().toLowerCase(),
-                        organization: pilotOrg.trim() || undefined,
-                        purpose: pilotPurpose.trim(),
-                        expiresDays: Number(pilotDays)
-                    })
-                });
-
-                if (!resp.ok) {
-                    const data = await resp.json().catch(() => ({}));
-                    throw new Error(data.error || 'Error al acreditar piloto');
-                }
-
-                setPilotName('');
-                setPilotEmail('');
-                setPilotOrg('');
-                setPilotPurpose('');
-                await fetchPilots();
-            } else if (pilotHitlModal.mode === 'REVOKE' && pilotHitlModal.pilotId) {
-                const resp = await fetchWithDevAuth(`/test-pilots/${encodeURIComponent(pilotHitlModal.pilotId)}`, {
-                    method: 'DELETE'
-                });
-                if (!resp.ok) {
-                    const data = await resp.json().catch(() => ({}));
-                    throw new Error(data.error || 'Error revocando cuenta piloto');
-                }
-                await fetchPilots();
-            }
-            setPilotHitlModal(null);
-            setPilotHitlKeyword('');
-        } catch (err: any) {
-            setPilotError(err?.message || 'Error ejecutando operacion sobre cuenta TEST-PILOT');
-        } finally {
-            setPilotSubmitting(false);
-        }
     };
 
     // Restriccion Soberana: /dev es exclusivo para 1º DEV (isDevRoot)
@@ -745,287 +585,333 @@ export const DevVaultGateway: React.FC = () => {
             <div className="min-h-screen bg-white dark:bg-[#000000] text-slate-900 dark:text-[#F3F4F6] flex flex-col items-center justify-center p-6 antialiased select-none font-sans relative">
 
                 {/* Controles Flotantes Superior */}
-                <div className="absolute top-6 right-6 flex items-center gap-3 z-50">
+                <div className="absolute top-6 right-6 flex items-center gap-fib-8 z-50">
+                    <ErgonomicScaleSwitch compact />
                     <LanguageSwitch />
                     <ThemeSwitch />
                 </div>
 
                 {/* ESTADO 0: SILENCIO ABSOLUTO (ÚNICAMENTE EL IMAGOTIPO VERTICAL COMO BOTÓN INTERACTIVO) */}
                 {authState === 'IDLE' && (
-                    <div className="flex flex-col items-center justify-center">
+                    <div className="flex flex-col items-center justify-center max-w-md text-center">
                         <button
                             type="button"
                             onClick={handleInitChallenge}
                             disabled={loginLoading}
-                            aria-label="MINREPORT"
+                            aria-label={t('core_dev_vault.auth.init_challenge_aria')}
                             className="bg-transparent border-0 outline-none p-4 cursor-pointer transition-transform duration-300 hover:scale-105 active:scale-95 disabled:opacity-50"
                         >
                             <BrandLogo variant="imagotypeVertical" className="h-36 w-auto object-contain pointer-events-none" />
                         </button>
 
+                        <p className="mt-fib-13 text-data-dense font-mono text-[#475569] dark:text-[#9CA3AF]">
+                            {t('core_dev_vault.auth.idle_click_hint')}
+                        </p>
+
                         {loginError && (
-                            <div className="mt-6 p-2 text-xs font-mono text-red-500 border border-red-500/20 bg-red-500/5 rounded-none max-w-xs text-center">
+                            <div className="mt-6 p-fib-13 text-data-dense font-mono text-red-500 border border-red-500/20 bg-red-500/5 rounded-none max-w-sm text-center">
                                 {loginError}
                             </div>
                         )}
                     </div>
                 )}
 
-                {/* ESTADO 1: ESPERANDO CONFIRMACIÓN DESDE EL EMAIL (CAMPOS TOTALMENTE OCULTOS) */}
-                {authState === 'WAITING_CONFIRMATION' && (
-                    <div className="flex flex-col items-center justify-center space-y-6">
-                        <div className="p-4 animate-pulse">
-                            <BrandLogo variant="imagotypeVertical" className="h-36 w-auto object-contain pointer-events-none opacity-80" />
-                        </div>
-
-                        <div className="flex items-center gap-4 text-xs font-mono text-slate-400 dark:text-[#5A6072]">
-                            <span className="tabular-nums font-mono">{timeLeft}s</span>
-                            <span className="text-slate-300 dark:text-[#12151C]">•</span>
-                            <button
-                                type="button"
-                                onClick={handleAbortChallenge}
-                                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-                                title="Cancelar"
-                            >
-                                <span className="material-symbols-outlined text-[18px]">close</span>
-                            </button>
-                        </div>
-
-                        {loginError && (
-                            <div className="p-2 text-xs font-mono text-red-500 border border-red-500/20 bg-red-500/5 rounded-none max-w-xs text-center">
-                                {loginError}
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {/* ESTADOS CON CAMPOS HABILITADOS: SOLO TRAS CONFIRMAR DESDE EL EMAIL */}
+                {/* ESTADOS CON CAMPOS HABILITADOS */}
                 {(authState === 'OTP' || authState === 'USER' || authState === 'PASSWORD' || authState === 'PASSWORD_ROTATION') && (
-                    <div className="w-full max-w-sm mx-auto space-y-6">
+                    <div className="w-full max-w-md mx-auto space-y-6">
 
                         {/* Cabecera Discreta */}
                         <div className="flex items-center justify-between border-b border-slate-200 dark:border-[#12151C] pb-3">
                             <div className="flex items-center gap-2">
                                 <BrandLogo variant="isotype" className="h-6 w-auto object-contain" />
                             </div>
-                            <span className="font-mono text-[10px] text-slate-400 dark:text-[#5A6072] tabular-nums">
-                                {timeLeft}s
+                            <span className="font-mono text-data-dense text-[#475569] dark:text-[#9CA3AF] tabular-nums">
+                                {t('core_dev_vault.auth.time_remaining_mmss', { time: formatCountdownMmSs(timeLeft) })}
                             </span>
                         </div>
 
                         {loginError && (
-                            <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs font-mono rounded-none">
+                            <div className="p-fib-13 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-data-dense font-mono rounded-none">
                                 {loginError}
                             </div>
                         )}
 
-                        {/* SUB-ESTADO: OTP (6 CASILLEROS DISCRETOS CON ICONO AD-HOC) */}
+                        {/* SUB-ESTADO: OTP */}
                         {authState === 'OTP' && (
                             <div className="bg-[#F8FAFC] dark:bg-[#07090D] border border-slate-200 dark:border-[#12151C] p-6 rounded-none space-y-6">
-                                <div className="flex justify-center items-center py-1">
-                                    <span className="material-symbols-outlined text-slate-400 dark:text-[#8A93A6] text-xl select-none">
+                                <div className="flex flex-col items-center gap-fib-8 text-center">
+                                    <span className="material-symbols-outlined text-[#C68346] text-2xl select-none">
                                         pin
                                     </span>
+                                    <p className="text-data-dense font-mono text-[#0F172A] dark:text-[#F3F4F6]">
+                                        {t('core_dev_vault.auth.otp_instructions')}
+                                    </p>
                                 </div>
 
                                 <div className="flex justify-between gap-2" onPaste={handleOtpPaste}>
                                     {otpDigits.map((digit, idx) => (
-                                        <input
-                                            key={idx}
-                                            ref={el => { otpRefs.current[idx] = el; }}
-                                            type="text"
-                                            inputMode="numeric"
-                                            maxLength={1}
-                                            value={digit}
-                                            onChange={e => handleOtpChange(idx, e.target.value)}
-                                            onKeyDown={e => handleOtpKeyDown(idx, e)}
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            className="w-11 h-14 bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] text-center text-2xl font-mono tabular-nums font-bold rounded-none outline-none transition-colors"
-                                        />
+                                        <div key={idx}>
+                                            <label htmlFor={`dev-otp-digit-${idx}`} className="sr-only">
+                                                {t('core_dev_vault.auth.otp_digit_label', { index: idx + 1 })}
+                                            </label>
+                                            <input
+                                                id={`dev-otp-digit-${idx}`}
+                                                ref={el => { otpRefs.current[idx] = el; }}
+                                                type="text"
+                                                inputMode="numeric"
+                                                maxLength={1}
+                                                aria-label={t('core_dev_vault.auth.otp_digit_label', { index: idx + 1 })}
+                                                value={digit}
+                                                onChange={e => handleOtpChange(idx, e.target.value)}
+                                                onKeyDown={e => handleOtpKeyDown(idx, e)}
+                                                onPaste={handleOtpPaste}
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                className="min-w-[48px] min-h-[56px] w-12 h-14 bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] text-center text-2xl font-mono tabular-nums font-bold rounded-none outline-none transition-colors"
+                                            />
+                                        </div>
                                     ))}
                                 </div>
 
-                                <div className="flex justify-between items-center text-[10px] font-mono text-slate-400 dark:text-[#5A6072]">
+                                <div className="flex justify-between items-center text-data-dense font-mono text-[#475569] dark:text-[#9CA3AF]">
                                     <span className="tabular-nums font-mono">{attemptsRemaining}/3</span>
                                     <button
                                         type="button"
                                         onClick={handleAbortChallenge}
-                                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
-                                        title="Cancelar"
+                                        className="min-w-[48px] min-h-[48px] flex items-center justify-center bg-transparent border-0 outline-none p-2 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                                        title={t('core_dev_vault.common.cancel')}
+                                        aria-label={t('core_dev_vault.common.cancel')}
                                     >
-                                        <span className="material-symbols-outlined text-[16px]">close</span>
+                                        <span className="material-symbols-outlined text-[20px]">close</span>
                                     </button>
                                 </div>
                             </div>
                         )}
 
-                        {/* SUB-ESTADO: USUARIO (ICONO AD-HOC, CERO TEXTO DE PISTA) */}
+                        {/* SUB-ESTADO: USUARIO (ETIQUETA VISIBLE Y LEGIBLE) */}
                         {authState === 'USER' && (
                             <div className="bg-[#F8FAFC] dark:bg-[#07090D] border border-slate-200 dark:border-[#12151C] p-6 rounded-none space-y-4">
                                 <form onSubmit={handleVerifyUser} autoComplete="off" spellCheck={false} className="space-y-4">
-                                    <div className="relative flex items-center">
-                                        <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[18px] select-none pointer-events-none">
-                                            person
-                                        </span>
-                                        <input
-                                            type="text"
-                                            inputMode="email"
-                                            value={loginEmail}
-                                            onChange={e => setLoginEmail(e.target.value)}
-                                            required
-                                            autoFocus
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            placeholder=""
-                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] pl-10 pr-3 py-2.5 text-xs font-mono outline-none rounded-none transition-colors"
-                                        />
+                                    <div>
+                                        <label
+                                            htmlFor="dev-login-email"
+                                            className="block text-data-dense font-mono font-semibold uppercase text-[#475569] dark:text-[#9CA3AF] mb-1.5"
+                                        >
+                                            {t('core_dev_vault.auth.user_id_label')}
+                                        </label>
+                                        <div className="relative flex items-center">
+                                            <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">
+                                                person
+                                            </span>
+                                            <input
+                                                id="dev-login-email"
+                                                type="text"
+                                                inputMode="email"
+                                                aria-label={t('core_dev_vault.auth.user_id_label')}
+                                                value={loginEmail}
+                                                onChange={e => setLoginEmail(e.target.value)}
+                                                required
+                                                autoFocus
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                placeholder=""
+                                                className="w-full min-h-[52px] bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] pl-11 pr-3 py-3 text-body-main font-mono outline-none rounded-none transition-colors"
+                                            />
+                                        </div>
                                     </div>
 
                                     <button
                                         type="submit"
                                         disabled={loginLoading}
-                                        className="w-full py-2.5 bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold text-xs uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none flex items-center justify-center"
+                                        title={t('core_dev_vault.auth.verify_user_btn')}
+                                        aria-label={t('core_dev_vault.auth.verify_user_btn')}
+                                        className="w-full min-h-[52px] py-3 bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold text-data-dense uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none flex items-center justify-center gap-fib-8"
                                     >
                                         {loginLoading ? (
-                                            <span className="material-symbols-outlined animate-spin text-[18px]">progress_activity</span>
+                                            <span className="text-data-dense font-mono tracking-widest uppercase">{t('core_dev_vault.auth.processing')}</span>
                                         ) : (
-                                            <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
+                                            <span className="material-symbols-outlined text-[22px]">arrow_forward</span>
                                         )}
                                     </button>
                                 </form>
                             </div>
                         )}
 
-                        {/* SUB-ESTADO: CLAVE TRADICIONAL (ICONO AD-HOC, CERO TEXTO DE PISTA) */}
+                        {/* SUB-ESTADO: CLAVE TRADICIONAL (ETIQUETA VISIBLE Y LEGIBLE) */}
                         {authState === 'PASSWORD' && (
                             <div className="bg-[#F8FAFC] dark:bg-[#07090D] border border-slate-200 dark:border-[#12151C] p-6 rounded-none space-y-4">
                                 <form onSubmit={handleLoginFinal} autoComplete="off" spellCheck={false} className="space-y-4">
-                                    <div className="relative flex items-center">
-                                        <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[18px] select-none pointer-events-none">
-                                            key
-                                        </span>
-                                        <input
-                                            type={showPassword ? 'text' : 'password'}
-                                            value={loginPassword}
-                                            onChange={e => setLoginPassword(e.target.value)}
-                                            required
-                                            autoFocus
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            placeholder=""
-                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] pl-10 pr-10 py-2.5 text-xs font-mono outline-none rounded-none transition-colors"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowPassword(prev => !prev)}
-                                            aria-label={showPassword ? 'Ocultar clave' : 'Mostrar clave'}
-                                            className="absolute right-2 bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center justify-center"
+                                    <div>
+                                        <label
+                                            htmlFor="dev-login-password"
+                                            className="block text-data-dense font-mono font-semibold uppercase text-[#475569] dark:text-[#9CA3AF] mb-1.5"
                                         >
-                                            <span className="material-symbols-outlined text-[18px] select-none">
-                                                {showPassword ? 'visibility_off' : 'visibility'}
+                                            {t('core_dev_vault.auth.password_label')}
+                                        </label>
+                                        <div className="relative flex items-center">
+                                            <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">
+                                                key
                                             </span>
-                                        </button>
+                                            <input
+                                                id="dev-login-password"
+                                                type={showPassword ? 'text' : 'password'}
+                                                aria-label={t('core_dev_vault.auth.password_label')}
+                                                value={loginPassword}
+                                                onChange={e => setLoginPassword(e.target.value)}
+                                                required
+                                                autoFocus
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                placeholder=""
+                                                className="w-full min-h-[52px] bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] pl-11 pr-12 py-3 text-body-main font-mono outline-none rounded-none transition-colors"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowPassword(prev => !prev)}
+                                                title={showPassword ? t('core_dev_vault.auth.hide_key') : t('core_dev_vault.auth.show_key')}
+                                                aria-label={showPassword ? t('core_dev_vault.auth.hide_key') : t('core_dev_vault.auth.show_key')}
+                                                className="min-w-[48px] min-h-[48px] absolute right-0 bg-transparent border-0 outline-none p-2 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center justify-center"
+                                            >
+                                                <span className="material-symbols-outlined text-[20px] select-none">
+                                                    {showPassword ? 'visibility_off' : 'visibility'}
+                                                </span>
+                                            </button>
+                                        </div>
                                     </div>
 
                                     <button
                                         type="submit"
                                         disabled={loginLoading}
-                                        className="w-full py-2.5 bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold text-xs uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none flex items-center justify-center"
+                                        title={t('core_dev_vault.auth.unlock_btn')}
+                                        aria-label={t('core_dev_vault.auth.unlock_btn')}
+                                        className="w-full min-h-[52px] py-3 bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold text-data-dense uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none flex items-center justify-center"
                                     >
                                         {loginLoading ? (
-                                            <span className="material-symbols-outlined animate-spin text-[18px]">progress_activity</span>
+                                            <span className="text-data-dense font-mono tracking-widest uppercase">{t('core_dev_vault.auth.processing')}</span>
                                         ) : (
-                                            <span className="material-symbols-outlined text-[18px]">lock_open</span>
+                                            <span className="material-symbols-outlined text-[22px]">lock_open</span>
                                         )}
                                     </button>
                                 </form>
                             </div>
                         )}
 
-                        {/* SUB-ESTADO: ROTACIÓN DE CLAVE (ICONOS AD-HOC, CERO TEXTOS DE PISTA) */}
+                        {/* SUB-ESTADO: ROTACIÓN DE CLAVE (ETIQUETAS VISIBLES Y LEGIBLES) */}
                         {authState === 'PASSWORD_ROTATION' && (
                             <div className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#C68346]/40 p-6 rounded-none space-y-4">
                                 <div className="flex justify-between items-center py-1">
-                                    <span className="material-symbols-outlined text-[#C68346] text-xl select-none">
+                                    <span className="material-symbols-outlined text-[#C68346] text-2xl select-none">
                                         lock_reset
                                     </span>
-                                    <span className="text-[10px] font-mono tabular-nums text-slate-500 dark:text-[#8A93A6]">
-                                        {daysRemaining}d
+                                    <span className="text-data-dense font-mono tabular-nums text-slate-500 dark:text-[#9CA3AF]">
+                                        {t('core_dev_vault.auth.days_remaining', { days: daysRemaining })}
                                     </span>
                                 </div>
 
                                 <form onSubmit={handleLoginFinal} autoComplete="off" spellCheck={false} className="space-y-4">
-                                    <div className="relative flex items-center">
-                                        <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[18px] select-none pointer-events-none">
-                                            key
-                                        </span>
-                                        <input
-                                            type={showPassword ? 'text' : 'password'}
-                                            value={oldPassword}
-                                            onChange={e => setOldPassword(e.target.value)}
-                                            required
-                                            autoFocus
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            placeholder=""
-                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] pl-10 pr-10 py-2.5 text-xs font-mono outline-none rounded-none transition-colors"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowPassword(prev => !prev)}
-                                            aria-label={showPassword ? 'Ocultar clave' : 'Mostrar clave'}
-                                            className="absolute right-2 bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center justify-center"
+                                    <div>
+                                        <label
+                                            htmlFor="dev-old-password"
+                                            className="block text-data-dense font-mono font-semibold uppercase text-[#475569] dark:text-[#9CA3AF] mb-1.5"
                                         >
-                                            <span className="material-symbols-outlined text-[18px] select-none">
-                                                {showPassword ? 'visibility_off' : 'visibility'}
+                                            {t('core_dev_vault.auth.current_key_label')}
+                                        </label>
+                                        <div className="relative flex items-center">
+                                            <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">
+                                                key
                                             </span>
-                                        </button>
+                                            <input
+                                                id="dev-old-password"
+                                                type={showPassword ? 'text' : 'password'}
+                                                aria-label={t('core_dev_vault.auth.current_key_label')}
+                                                value={oldPassword}
+                                                onChange={e => setOldPassword(e.target.value)}
+                                                required
+                                                autoFocus
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                placeholder=""
+                                                className="w-full min-h-[52px] bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] pl-11 pr-12 py-3 text-body-main font-mono outline-none rounded-none transition-colors"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowPassword(prev => !prev)}
+                                                title={showPassword ? t('core_dev_vault.auth.hide_key') : t('core_dev_vault.auth.show_key')}
+                                                aria-label={showPassword ? t('core_dev_vault.auth.hide_key') : t('core_dev_vault.auth.show_key')}
+                                                className="min-w-[48px] min-h-[48px] absolute right-0 bg-transparent border-0 outline-none p-2 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center justify-center"
+                                            >
+                                                <span className="material-symbols-outlined text-[20px] select-none">
+                                                    {showPassword ? 'visibility_off' : 'visibility'}
+                                                </span>
+                                            </button>
+                                        </div>
                                     </div>
 
-                                    <div className="relative flex items-center">
-                                        <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[18px] select-none pointer-events-none">
-                                            lock
-                                        </span>
-                                        <input
-                                            type={showPassword ? 'text' : 'password'}
-                                            value={newPassword}
-                                            onChange={e => setNewPassword(e.target.value)}
-                                            required
-                                            minLength={8}
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            placeholder=""
-                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] pl-10 pr-10 py-2.5 text-xs font-mono outline-none rounded-none transition-colors"
-                                        />
+                                    <div>
+                                        <label
+                                            htmlFor="dev-new-password"
+                                            className="block text-data-dense font-mono font-semibold uppercase text-[#475569] dark:text-[#9CA3AF] mb-1.5"
+                                        >
+                                            {t('core_dev_vault.auth.new_key_label')}
+                                        </label>
+                                        <div className="relative flex items-center">
+                                            <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">
+                                                lock
+                                            </span>
+                                            <input
+                                                id="dev-new-password"
+                                                type={showPassword ? 'text' : 'password'}
+                                                aria-label={t('core_dev_vault.auth.new_key_label')}
+                                                value={newPassword}
+                                                onChange={e => setNewPassword(e.target.value)}
+                                                required
+                                                minLength={8}
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                placeholder=""
+                                                className="w-full min-h-[52px] bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] pl-11 pr-3 py-3 text-body-main font-mono outline-none rounded-none transition-colors"
+                                            />
+                                        </div>
                                     </div>
 
-                                    <div className="relative flex items-center">
-                                        <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[18px] select-none pointer-events-none">
-                                            verified_user
-                                        </span>
-                                        <input
-                                            type={showPassword ? 'text' : 'password'}
-                                            value={confirmPassword}
-                                            onChange={e => setConfirmPassword(e.target.value)}
-                                            required
-                                            minLength={8}
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            placeholder=""
-                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] pl-10 pr-10 py-2.5 text-xs font-mono outline-none rounded-none transition-colors"
-                                        />
+                                    <div>
+                                        <label
+                                            htmlFor="dev-confirm-password"
+                                            className="block text-data-dense font-mono font-semibold uppercase text-[#475569] dark:text-[#9CA3AF] mb-1.5"
+                                        >
+                                            {t('core_dev_vault.auth.confirm_new_key_label')}
+                                        </label>
+                                        <div className="relative flex items-center">
+                                            <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">
+                                                verified_user
+                                            </span>
+                                            <input
+                                                id="dev-confirm-password"
+                                                type={showPassword ? 'text' : 'password'}
+                                                aria-label={t('core_dev_vault.auth.confirm_new_key_label')}
+                                                value={confirmPassword}
+                                                onChange={e => setConfirmPassword(e.target.value)}
+                                                required
+                                                minLength={8}
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                placeholder=""
+                                                className="w-full min-h-[52px] bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] focus:border-[#C68346] text-slate-900 dark:text-[#F3F4F6] pl-11 pr-3 py-3 text-body-main font-mono outline-none rounded-none transition-colors"
+                                            />
+                                        </div>
                                     </div>
 
                                     <button
                                         type="submit"
                                         disabled={loginLoading}
-                                        className="w-full py-2.5 bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold text-xs uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none flex items-center justify-center"
+                                        title={t('core_dev_vault.auth.rotate_and_unlock_btn')}
+                                        aria-label={t('core_dev_vault.auth.rotate_and_unlock_btn')}
+                                        className="w-full min-h-[52px] py-3 bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold text-data-dense uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none flex items-center justify-center"
                                     >
                                         {loginLoading ? (
-                                            <span className="material-symbols-outlined animate-spin text-[18px]">progress_activity</span>
+                                            <span className="text-data-dense font-mono tracking-widest uppercase">{t('core_dev_vault.auth.processing')}</span>
                                         ) : (
-                                            <span className="material-symbols-outlined text-[18px]">sync</span>
+                                            <span className="material-symbols-outlined text-[22px]">sync</span>
                                         )}
                                     </button>
                                 </form>
@@ -1043,6 +929,31 @@ export const DevVaultGateway: React.FC = () => {
     // =========================================================================
     // VISTA 2: PANEL DE CONTROL DEV (MINIMALISMO INDUSTRIAL PURO)
     // =========================================================================
+    const currentSectionLabel = (() => {
+        switch (activeSection) {
+            case 'PILOT_METRICS':
+                return t('core_dev_vault.sections.pilot_metrics');
+            case 'EQUIPMENT_ONBOARDING':
+                return t('core_dev_vault.sections.equipment_onboarding');
+            case 'BRANDING':
+                return t('core_dev_vault.sections.branding');
+            case 'MODULE_STOCKPILE':
+                return t('core_dev_vault.nav.stockpile_title');
+            case 'MODULE_OPERMAQ_CATALOG':
+                return t('core_dev_vault.nav.catalog_title');
+            case 'MODULE_OPERMAQ_FLEET':
+                return t('core_dev_vault.nav.fleet_title');
+            case 'MODULE_OPERMAQ_SYMBOLOGY':
+                return t('core_dev_vault.nav.symbology_title');
+            case 'MODULE_OPERMAQ_MANUFACTURERS':
+                return t('core_dev_vault.nav.manufacturers_title');
+            case 'MODULE_OPERMAQ_SUPPLIERS':
+                return t('core_dev_vault.nav.suppliers_title');
+            default:
+                return t('core_dev_vault.nav.catalog_title');
+        }
+    })();
+
     return (
         <div className="h-screen bg-white dark:bg-[#000000] text-slate-900 dark:text-[#F3F4F6] flex flex-col font-sans select-none antialiased overflow-hidden">
 
@@ -1052,23 +963,24 @@ export const DevVaultGateway: React.FC = () => {
             <header className="h-14 px-[21px] border-b border-slate-200 dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] flex items-center justify-between shrink-0 z-50">
                 <button
                     type="button"
-                    onClick={() => setActiveSection('PILOTS')}
-                    title="Volver a vista principal"
-                    aria-label="Volver a vista principal"
-                    className="bg-transparent border-0 outline-none p-0 cursor-pointer flex items-center"
+                    onClick={() => setActiveSection('MODULE_OPERMAQ_CATALOG')}
+                    title={t('core_dev_vault.nav.back_to_main')}
+                    aria-label={t('core_dev_vault.nav.back_to_main')}
+                    className="min-h-[48px] bg-transparent border-0 outline-none p-0 cursor-pointer flex items-center"
                 >
                     <BrandLogo variant="logotype" className="h-6 w-auto object-contain pointer-events-none" />
                 </button>
 
                 <div className="flex items-center gap-[13px]">
+                    <ErgonomicScaleSwitch compact />
                     <ThemeSwitch />
                     <LanguageSwitch />
                     <button
                         type="button"
                         onClick={handleLogout}
-                        title="Cerrar sesión DEV"
-                        aria-label="Cerrar sesión"
-                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-red-500 transition-colors cursor-pointer flex items-center justify-center rounded-none"
+                        title={t('core_dev_vault.nav.logout')}
+                        aria-label={t('core_dev_vault.nav.logout')}
+                        className="min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none p-2 text-slate-400 hover:text-red-500 transition-colors cursor-pointer flex items-center justify-center rounded-none"
                     >
                         <span className="material-symbols-outlined text-[20px]">logout</span>
                     </button>
@@ -1078,16 +990,16 @@ export const DevVaultGateway: React.FC = () => {
             {/* =========================================================================
                 CONTENEDOR INFERIOR: COLUMNA DE MENÚ + ÁREA DE TRABAJO PRINCIPAL
                 ========================================================================= */}
-            <div className="flex flex-1 min-h-0 overflow-hidden">
-                <aside className="w-14 sm:w-16 h-full flex flex-col items-center py-4 border-r border-slate-200 dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] z-40 select-none shrink-0">
+            <div className="flex flex-1 min-h-0 overflow-hidden relative">
+                <aside className="w-16 h-full flex flex-col items-center py-4 border-r border-slate-200 dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] z-40 relative select-none shrink-0">
 
                     {/* CABECERA COLUMNA MENÚ: ISOTIPO OFICIAL */}
                     <button
                         type="button"
-                        onClick={() => setActiveSection('PILOTS')}
-                        title="MINREPORT DEV"
-                        aria-label="MINREPORT DEV"
-                        className="mb-3 bg-transparent border-0 outline-none p-1 cursor-pointer flex items-center justify-center"
+                        onClick={() => setActiveSection('MODULE_OPERMAQ_CATALOG')}
+                        title={t('core_dev_vault.nav.back_to_main')}
+                        aria-label={t('core_dev_vault.nav.back_to_main')}
+                        className="mb-3 min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none p-1 cursor-pointer flex items-center justify-center rounded-none shadow-none"
                     >
                         <BrandLogo variant="isotype" className="h-6 w-6 object-contain pointer-events-none" />
                     </button>
@@ -1098,137 +1010,114 @@ export const DevVaultGateway: React.FC = () => {
                     <div className="flex flex-col items-center gap-1 w-full">
                         <button
                             type="button"
-                            onClick={() => setActiveSection('PILOTS')}
-                            title="Pilotos & Accesos DEV"
-                            aria-label="Pilotos"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'PILOTS'
+                            onClick={() => setActiveSection('PILOT_METRICS')}
+                            title={t('core_dev_vault.nav.pilot_metrics_title')}
+                            aria-label={t('core_dev_vault.nav.pilot_metrics_aria')}
+                            className={`group min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'PILOT_METRICS'
                                 ? 'text-[#C68346]'
                                 : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
                                 }`}
                         >
-                            {activeSection === 'PILOTS' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
+                            {activeSection === 'PILOT_METRICS' && (
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
                             )}
-                            <span className="material-symbols-outlined text-[20px]">group_add</span>
+                            <span className="material-symbols-outlined text-[22px]">monitoring</span>
+                            <span aria-hidden="true" className={DEV_SIDEBAR_CALLOUT_CLASS}>{t('core_dev_vault.nav.pilot_metrics_title')}</span>
                         </button>
 
                         <button
                             type="button"
-                            onClick={() => setActiveSection('B2B_EMPRESA')}
-                            title="Empresa B2B"
-                            aria-label="Empresa"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'B2B_EMPRESA'
+                            onClick={() => setActiveSection('EQUIPMENT_ONBOARDING')}
+                            title={t('core_dev_vault.nav.eq_onboarding_title')}
+                            aria-label={t('core_dev_vault.nav.eq_onboarding_title')}
+                            className={`group min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'EQUIPMENT_ONBOARDING'
                                 ? 'text-[#C68346]'
                                 : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
                                 }`}
                         >
-                            {activeSection === 'B2B_EMPRESA' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
+                            {activeSection === 'EQUIPMENT_ONBOARDING' && (
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
                             )}
-                            <span className="material-symbols-outlined text-[20px]">domain</span>
-                        </button>
-
-                        <button
-                            type="button"
-                            onClick={() => setActiveSection('STAFF')}
-                            title="Staff Operativo"
-                            aria-label="Staff"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'STAFF'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                                }`}
-                        >
-                            {activeSection === 'STAFF' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
-                            )}
-                            <span className="material-symbols-outlined text-[20px]">groups</span>
-                        </button>
-
-                        <button
-                            type="button"
-                            onClick={() => setActiveSection('JOB_PROFILES')}
-                            title="Perfiles de Cargo"
-                            aria-label="Perfiles"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'JOB_PROFILES'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                                }`}
-                        >
-                            {activeSection === 'JOB_PROFILES' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
-                            )}
-                            <span className="material-symbols-outlined text-[20px]">assignment_ind</span>
-                        </button>
-
-                        <button
-                            type="button"
-                            onClick={() => setActiveSection('B2B_ADMINS')}
-                            title="Gobernanza Administradores"
-                            aria-label="Administradores"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'B2B_ADMINS'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                                }`}
-                        >
-                            {activeSection === 'B2B_ADMINS' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
-                            )}
-                            <span className="material-symbols-outlined text-[20px]">admin_panel_settings</span>
+                            <span className="material-symbols-outlined text-[22px]">precision_manufacturing</span>
+                            <span aria-hidden="true" className={DEV_SIDEBAR_CALLOUT_CLASS}>{t('core_dev_vault.nav.eq_onboarding_title')}</span>
                         </button>
 
                         <button
                             type="button"
                             onClick={() => setActiveSection('BRANDING')}
-                            title="Gestor de Logos & Identidad"
-                            aria-label="Gestor de Logos"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'BRANDING'
+                            title={t('core_dev_vault.nav.branding_title')}
+                            aria-label={t('core_dev_vault.nav.branding_aria')}
+                            className={`group min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'BRANDING'
                                 ? 'text-[#C68346]'
                                 : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
                                 }`}
                         >
                             {activeSection === 'BRANDING' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
                             )}
-                            <span className="material-symbols-outlined text-[20px]">palette</span>
-                        </button>
-
-                        <button
-                            type="button"
-                            onClick={() => setActiveSection('B2B_METRICAS')}
-                            title="Métricas & Auditoría"
-                            aria-label="Métricas"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'B2B_METRICAS'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                                }`}
-                        >
-                            {activeSection === 'B2B_METRICAS' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
-                            )}
-                            <span className="material-symbols-outlined text-[20px]">monitoring</span>
+                            <span className="material-symbols-outlined text-[22px]">palette</span>
+                            <span aria-hidden="true" className={DEV_SIDEBAR_CALLOUT_CLASS}>{t('core_dev_vault.nav.branding_title')}</span>
                         </button>
                     </div>
 
                     {/* SEPARADOR DE PRECISIÓN FIBONACCI */}
                     <div className="w-7 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[13px] shrink-0" />
 
-                    {/* GRUPO 2: MÓDULO STOCKPILE CONTROL */}
+                    {/* GRUPO 2: MÓDULO GEOLAPP® (4 DOMINIOS GEOCIENTÍFICOS) */}
                     <div className="flex flex-col items-center gap-1 w-full">
                         <button
                             type="button"
                             onClick={() => setActiveSection('MODULE_STOCKPILE')}
-                            title="STOCKPILE"
-                            aria-label="Stockpile"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_STOCKPILE'
+                            title={t('core_dev_vault.nav.stockpile_title')}
+                            aria-label={t('core_dev_vault.nav.stockpile_aria')}
+                            className={`group min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_STOCKPILE'
                                 ? 'text-[#C68346]'
                                 : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
                                 }`}
                         >
                             {activeSection === 'MODULE_STOCKPILE' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
                             )}
-                            <span className="material-symbols-outlined text-[20px]">layers</span>
+                            <span className="material-symbols-outlined text-[22px]">layers</span>
+                            <span aria-hidden="true" className={DEV_SIDEBAR_CALLOUT_CLASS}>{t('core_dev_vault.nav.stockpile_title')}</span>
                         </button>
+                        {activeSection === 'MODULE_STOCKPILE' && (
+                            <div
+                                aria-label={t('core_shell.modules.stockpile.domain_selector_aria', 'Dominios operativos GEOLAPP®')}
+                                className="flex flex-col items-center gap-0.5 w-full border-t border-[#E2E8F0] dark:border-[#12151C] pt-1"
+                            >
+                                {(
+                                    [
+                                        { mode: 'STOCKPILE', icon: 'inventory_2', labelKey: 'core_dev_vault.nav.geolapp_domain_stockpile' },
+                                        { mode: 'GEOMENSURA_GEO', icon: 'straighten', labelKey: 'core_dev_vault.nav.geolapp_domain_geomensura' },
+                                        { mode: 'EXPLORACION_SONDAJES', icon: 'explore', labelKey: 'core_dev_vault.nav.geolapp_domain_exploracion' },
+                                        { mode: 'ESTRUCTURAL_HIDRO', icon: 'architecture', labelKey: 'core_dev_vault.nav.geolapp_domain_estructural' },
+                                    ] as Array<{ mode: GeolappDomainMode; icon: string; labelKey: string }>
+                                ).map((item) => {
+                                    const domainLabel = t(item.labelKey);
+                                    const isDomainActive = geolappDomainMode === item.mode;
+                                    return (
+                                        <button
+                                            key={item.mode}
+                                            type="button"
+                                            onClick={() => setGeolappDomainMode(item.mode)}
+                                            title={domainLabel}
+                                            aria-label={domainLabel}
+                                            className={`group min-w-[48px] min-h-[40px] w-full py-1.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${isDomainActive
+                                                ? 'text-[#00AEEF]'
+                                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                                }`}
+                                        >
+                                            {isDomainActive && (
+                                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#00AEEF]" />
+                                            )}
+                                            <span className="material-symbols-outlined text-[18px]">{item.icon}</span>
+                                            <span aria-hidden="true" className={DEV_SIDEBAR_CALLOUT_CLASS}>{domainLabel}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
                     </div>
 
                     {/* SEPARADOR DE PRECISIÓN FIBONACCI — MÓDULO OPERMAQ */}
@@ -1242,17 +1131,18 @@ export const DevVaultGateway: React.FC = () => {
                                 setActiveSection('MODULE_OPERMAQ_CATALOG');
                                 window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
                             }}
-                            title="CATÁLOGO"
-                            aria-label="Catálogo"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_CATALOG'
+                            title={t('core_dev_vault.nav.catalog_title')}
+                            aria-label={t('core_dev_vault.nav.catalog_aria')}
+                            className={`group min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_CATALOG'
                                 ? 'text-[#C68346]'
                                 : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
                                 }`}
                         >
                             {activeSection === 'MODULE_OPERMAQ_CATALOG' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
                             )}
-                            <span className="material-symbols-outlined text-[20px]">front_loader</span>
+                            <span className="material-symbols-outlined text-[22px]">front_loader</span>
+                            <span aria-hidden="true" className={DEV_SIDEBAR_CALLOUT_CLASS}>{t('core_dev_vault.nav.catalog_title')}</span>
                         </button>
 
                         <button
@@ -1261,17 +1151,18 @@ export const DevVaultGateway: React.FC = () => {
                                 setActiveSection('MODULE_OPERMAQ_FLEET');
                                 window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
                             }}
-                            title="FLOTA"
-                            aria-label="Flota"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_FLEET'
+                            title={t('core_dev_vault.nav.fleet_title')}
+                            aria-label={t('core_dev_vault.nav.fleet_aria')}
+                            className={`group min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_FLEET'
                                 ? 'text-[#C68346]'
                                 : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
                                 }`}
                         >
                             {activeSection === 'MODULE_OPERMAQ_FLEET' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
                             )}
-                            <span className="material-symbols-outlined text-[20px]">lists</span>
+                            <span className="material-symbols-outlined text-[22px]">lists</span>
+                            <span aria-hidden="true" className={DEV_SIDEBAR_CALLOUT_CLASS}>{t('core_dev_vault.nav.fleet_title')}</span>
                         </button>
 
                         <button
@@ -1280,382 +1171,462 @@ export const DevVaultGateway: React.FC = () => {
                                 setActiveSection('MODULE_OPERMAQ_SYMBOLOGY');
                                 window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
                             }}
-                            title="SIMBOLOGÍA"
-                            aria-label="Simbología"
-                            className={`w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_SYMBOLOGY'
+                            title={t('core_dev_vault.nav.symbology_title')}
+                            aria-label={t('core_dev_vault.nav.symbology_aria')}
+                            className={`group min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_SYMBOLOGY'
                                 ? 'text-[#C68346]'
                                 : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
                                 }`}
                         >
                             {activeSection === 'MODULE_OPERMAQ_SYMBOLOGY' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 bg-[#C68346]" />
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
                             )}
-                            <span className="material-symbols-outlined text-[20px]">shapes</span>
+                            <span className="material-symbols-outlined text-[22px]">shapes</span>
+                            <span aria-hidden="true" className={DEV_SIDEBAR_CALLOUT_CLASS}>{t('core_dev_vault.nav.symbology_title')}</span>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setActiveSection('MODULE_OPERMAQ_MANUFACTURERS');
+                                window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
+                            }}
+                            title={t('core_dev_vault.nav.manufacturers_title')}
+                            aria-label={t('core_dev_vault.nav.manufacturers_aria')}
+                            className={`group min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_MANUFACTURERS'
+                                ? 'text-[#C68346]'
+                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                }`}
+                        >
+                            {activeSection === 'MODULE_OPERMAQ_MANUFACTURERS' && (
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
+                            )}
+                            <span className="material-symbols-outlined text-[22px]">factory</span>
+                            <span aria-hidden="true" className={DEV_SIDEBAR_CALLOUT_CLASS}>{t('core_dev_vault.nav.manufacturers_title')}</span>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setActiveSection('MODULE_OPERMAQ_SUPPLIERS');
+                                window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
+                            }}
+                            title={t('core_dev_vault.nav.suppliers_title')}
+                            aria-label={t('core_dev_vault.nav.suppliers_aria')}
+                            className={`group min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_SUPPLIERS'
+                                ? 'text-[#C68346]'
+                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                }`}
+                        >
+                            {activeSection === 'MODULE_OPERMAQ_SUPPLIERS' && (
+                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
+                            )}
+                            <span className="material-symbols-outlined text-[22px]">storefront</span>
+                            <span aria-hidden="true" className={DEV_SIDEBAR_CALLOUT_CLASS}>{t('core_dev_vault.nav.suppliers_title')}</span>
                         </button>
                     </div>
                 </aside>
 
                 {/* =========================================================================
-                    ÁREA DE TRABAJO PRINCIPAL (CAMBIA SEGÚN EL BOTÓN ACTIVO)
+                    ÁREA DE TRABAJO PRINCIPAL (ORIENTACIÓN PERMANENTE + VISTA ACTIVA)
                     ========================================================================= */}
-                <main className={`flex-1 h-full min-h-0 ${isModuleSection ? 'p-0 overflow-hidden flex flex-col' : 'p-8 overflow-y-auto'}`}>
+                <main className="flex-1 h-full min-h-0 p-0 overflow-hidden flex flex-col">
+                    <ContextOrientationBar
+                        hidden={isModuleSection}
+                        includeScaleSwitch={false}
+                        compact={isModuleSection}
+                        trail={[t('core_orientation.dev_vault'), currentSectionLabel]}
+                        onBack={activeSection !== 'MODULE_OPERMAQ_CATALOG' ? () => setActiveSection('MODULE_OPERMAQ_CATALOG') : undefined}
+                    />
+                    <div className={`flex-1 min-h-0 flex flex-col ${isModuleSection ? 'overflow-hidden' : 'p-fib-34 overflow-y-auto'}`}>
 
                     {/* Header Técnico Aséptico Superior (Oculto en módulos para visualización integrada a pantalla completa) */}
                     {!isModuleSection && (
                         <div className="mb-[21px] border-b border-slate-200 dark:border-[#12151C] pb-[13px] flex justify-between items-end">
                             <div>
                                 <h1 className="text-lg font-bold tracking-tight uppercase font-sans text-slate-900 dark:text-[#F3F4F6]">
-                                    {activeSection === 'PILOTS' && 'PILOTOS'}
-                                    {activeSection === 'B2B_EMPRESA' && 'DATOS DE EMPRESA'}
-                                    {activeSection === 'STAFF' && 'PERSONAL OPERATIVO'}
-                                    {activeSection === 'JOB_PROFILES' && 'MATRIZ DE CARGOS'}
-                                    {activeSection === 'B2B_ADMINS' && 'ADMINISTRADORES GENERALES'}
-                                    {activeSection === 'BRANDING' && 'IDENTIDAD CORPORATIVA'}
-                                    {activeSection === 'B2B_METRICAS' && 'MÉTRICAS OPERACIONALES'}
+                                    {activeSection === 'PILOT_METRICS' && t('core_dev_vault.sections.pilot_metrics')}
+                                    {activeSection === 'EQUIPMENT_ONBOARDING' && t('core_dev_vault.sections.equipment_onboarding')}
+                                    {activeSection === 'BRANDING' && t('core_dev_vault.sections.branding')}
                                 </h1>
                             </div>
                         </div>
                     )}
 
-                    {/* CONTENIDO 1: GESTIÓN DE PILOTOS */}
-                    {activeSection === 'PILOTS' && (
-                        <div className="space-y-8">
-                            {pilotError && (
-                                <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs font-mono rounded-none">
-                                    {pilotError}
-                                </div>
-                            )}
+                    {/* CONTENIDO 1: MONITOREO PASIVO DE MÉTRICAS TEST-PILOT (SOLO LECTURA) */}
+                    {activeSection === 'PILOT_METRICS' && (() => {
+                        const aiTotal = pilotMetrics?.aiInteractions.total ?? 0;
+                        const pctOf = (count: number) => (aiTotal > 0 ? Math.round((count / aiTotal) * 100) : 0);
+                        const lastActivityText = formatUtcTimestamp(
+                            pilotMetrics?.aiInteractions.lastActivityAt,
+                            t('core_dev_vault.pilot_metrics.pending_record')
+                        );
+                        const moduleRows = [
+                            { key: 'geolapp', label: t('core_dev_vault.pilot_metrics.mod_geolapp'), count: pilotMetrics?.aiInteractions.byModule.geolapp ?? 0 },
+                            { key: 'opermaq', label: t('core_dev_vault.pilot_metrics.mod_opermaq'), count: pilotMetrics?.aiInteractions.byModule.opermaq ?? 0 },
+                            { key: 'core', label: t('core_dev_vault.pilot_metrics.mod_core'), count: pilotMetrics?.aiInteractions.byModule.core ?? 0 },
+                            { key: 'stockpile', label: t('core_dev_vault.pilot_metrics.mod_stockpile'), count: pilotMetrics?.aiInteractions.byModule.stockpile ?? 0 },
+                        ];
+                        const categoryRows = [
+                            { key: 'BUG_CORRECTION', label: t('core_dev_vault.pilot_metrics.cat_bug'), count: pilotMetrics?.aiInteractions.byCategory.BUG_CORRECTION ?? 0 },
+                            { key: 'CHANGE_REQUEST', label: t('core_dev_vault.pilot_metrics.cat_change'), count: pilotMetrics?.aiInteractions.byCategory.CHANGE_REQUEST ?? 0 },
+                            { key: 'AI_KNOWLEDGE_TRAINING', label: t('core_dev_vault.pilot_metrics.cat_training'), count: pilotMetrics?.aiInteractions.byCategory.AI_KNOWLEDGE_TRAINING ?? 0 },
+                            { key: 'FIELD_SIMULATION', label: t('core_dev_vault.pilot_metrics.cat_simulation'), count: pilotMetrics?.aiInteractions.byCategory.FIELD_SIMULATION ?? 0 },
+                        ];
+                        const speechSummary = `${t('core_dev_vault.pilot_metrics.heading')}. ${t('core_dev_vault.pilot_metrics.kpi_pilots_total')}: ${pilotMetrics?.pilots.total ?? 0}. ${t('core_dev_vault.pilot_metrics.kpi_sandboxes_tenants')}: ${pilotMetrics?.sandboxes.pilotTenantsCount ?? 0}. ${t('core_dev_vault.pilot_metrics.kpi_ai_total')}: ${aiTotal}. ${t('core_dev_vault.pilot_metrics.isolation_notice')}`;
 
-                            {/* Módulo Alta TEST-PILOT */}
-                            <div className="border border-slate-200 dark:border-[#12151C] p-6 rounded-none bg-[#F8FAFC] dark:bg-[#07090D]">
-                                <h2 className="text-xs font-mono font-bold uppercase tracking-wider mb-4 text-[#C68346]">
-                                    ALTA DE PILOTO
-                                </h2>
-
-                                <form onSubmit={handleCreatePilot} autoComplete="off" spellCheck={false} className="flex flex-col lg:flex-row gap-4 items-end">
-                                    <div className="flex-1 w-full">
-                                        <label className="block text-xs uppercase tracking-wider text-slate-500 dark:text-[#8A93A6] mb-1 font-mono">NOMBRE</label>
-                                        <input
-                                            required
-                                            type="text"
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            value={pilotName}
-                                            onChange={e => setPilotName(e.target.value)}
-                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#C68346] rounded-none"
-                                        />
-                                    </div>
-
-                                    <div className="flex-1 w-full">
-                                        <label className="block text-xs uppercase tracking-wider text-slate-500 dark:text-[#8A93A6] mb-1 font-mono">EMAIL</label>
-                                        <input
-                                            required
-                                            type="email"
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            value={pilotEmail}
-                                            onChange={e => setPilotEmail(e.target.value)}
-                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#C68346] rounded-none select-text"
-                                        />
-                                    </div>
-
-                                    <div className="flex-1 w-full">
-                                        <label className="block text-xs uppercase tracking-wider text-slate-500 dark:text-[#8A93A6] mb-1 font-mono">ORGANIZACIÓN</label>
-                                        <input
-                                            type="text"
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            value={pilotOrg}
-                                            onChange={e => setPilotOrg(e.target.value)}
-                                            placeholder="Minera / Partner"
-                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#C68346] rounded-none"
-                                        />
-                                    </div>
-
-                                    <div className="w-24">
-                                        <label className="block text-xs uppercase tracking-wider text-slate-500 dark:text-[#8A93A6] mb-1 font-mono">DÍAS</label>
-                                        <input
-                                            type="number"
-                                            min={7}
-                                            max={365}
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            value={pilotDays}
-                                            onChange={e => setPilotDays(Number(e.target.value))}
-                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono tabular-nums focus:outline-none focus:border-[#C68346] rounded-none"
-                                        />
-                                    </div>
-
-                                    <div className="flex-1 w-full">
-                                        <label className="block text-xs uppercase tracking-wider text-slate-500 dark:text-[#8A93A6] mb-1 font-mono">PROPÓSITO</label>
-                                        <input
-                                            required
-                                            type="text"
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            value={pilotPurpose}
-                                            onChange={e => setPilotPurpose(e.target.value)}
-                                            placeholder="Pruebas de módulo"
-                                            className="w-full bg-white dark:bg-[#000000] border border-slate-300 dark:border-[#12151C] px-3 py-2 text-xs font-mono focus:outline-none focus:border-[#C68346] rounded-none"
-                                        />
-                                    </div>
-
-                                    <button
-                                        type="submit"
-                                        disabled={pilotSubmitting}
-                                        className="w-full lg:w-auto bg-[#C68346] hover:bg-[#b0743e] text-white font-mono font-bold uppercase tracking-wider text-xs py-2.5 px-6 transition-colors rounded-none disabled:opacity-50 cursor-pointer"
-                                    >
-                                        {pilotSubmitting ? 'ACREDITANDO...' : 'ACREDITAR'}
-                                    </button>
-                                </form>
-                            </div>
-
-                            {/* Módulo Tabla TEST-PILOT */}
-                            <div>
-                                <div className="flex justify-between items-center mb-4 border-b border-slate-200 dark:border-[#12151C] pb-2">
-                                    <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-900 dark:text-[#F3F4F6]">
-                                        REGISTRO DE PILOTOS
-                                    </h2>
-                                    <button
-                                        type="button"
-                                        onClick={fetchPilots}
-                                        title="Recargar pilotos"
-                                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
-                                    >
-                                        <span className="material-symbols-outlined text-[18px]">refresh</span>
-                                    </button>
-                                </div>
-
-                                <div className="border border-slate-200 dark:border-[#12151C] rounded-none overflow-hidden">
-                                    <table className="w-full text-left border-collapse font-mono text-xs">
-                                        <thead>
-                                            <tr className="bg-slate-50 dark:bg-[#07090D] border-b border-slate-200 dark:border-[#12151C] text-slate-500 dark:text-[#8A93A6] uppercase tracking-wider text-[11px]">
-                                                <th className="py-3 px-4 font-normal">ID CUENTA</th>
-                                                <th className="py-3 px-4 font-normal">COLABORADOR</th>
-                                                <th className="py-3 px-4 font-normal">ORGANIZACIÓN</th>
-                                                <th className="py-3 px-4 font-normal">PROPÓSITO</th>
-                                                <th className="py-3 px-4 font-normal">ESTADO</th>
-                                                <th className="py-3 px-4 font-normal text-right">ACCIÓN</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-200 dark:divide-[#12151C] tabular-nums">
-                                            {pilotsLoading ? (
-                                                <tr>
-                                                    <td colSpan={6} className="py-6 text-center text-slate-400 font-mono">[Cargando registros...]</td>
-                                                </tr>
-                                            ) : pilots.length === 0 ? (
-                                                <tr>
-                                                    <td colSpan={6} className="py-6 text-center text-slate-400 font-mono">[Sin cuentas piloto registradas]</td>
-                                                </tr>
-                                            ) : (
-                                                pilots.map((p) => (
-                                                    <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.02]">
-                                                        <td className="py-3 px-4 text-[#00AEEF]">
-                                                            <span className="inline-flex items-center gap-1 select-text">
-                                                                <span>{p.id}</span>
-                                                                <CopyButton value={p.id} title="Copiar ID cuenta piloto" />
-                                                            </span>
-                                                        </td>
-                                                        <td className="py-3 px-4">
-                                                            <span className="block font-bold text-slate-900 dark:text-white">{p.collaboratorName}</span>
-                                                            <span className="inline-flex items-center gap-1 text-[11px] text-slate-500 dark:text-[#8A93A6] select-text">
-                                                                <span>{p.collaboratorEmail}</span>
-                                                                <CopyButton value={p.collaboratorEmail} title="Copiar correo colaborador" />
-                                                            </span>
-                                                        </td>
-                                                        <td className="py-3 px-4 text-slate-600 dark:text-slate-300">{p.organization || '[Información técnica no declarada en ficha]'}</td>
-                                                        <td className="py-3 px-4 text-slate-500 dark:text-[#8A93A6] max-w-xs truncate">{p.purpose}</td>
-                                                        <td className="py-3 px-4">
-                                                            <span className={`px-1.5 py-0.5 text-[10px] font-mono ${p.status === 'ACTIVE'
-                                                                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                                                                : 'bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/30'
-                                                                }`}>
-                                                                {p.status}
-                                                            </span>
-                                                        </td>
-                                                        <td className="py-3 px-4 text-right">
-                                                            {p.status === 'ACTIVE' && (
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleRevokePilot(p.id)}
-                                                                    className="bg-transparent border-0 text-red-500 hover:text-red-700 text-xs font-mono uppercase cursor-pointer"
-                                                                >
-                                                                    REVOCAR
-                                                                </button>
-                                                            )}
-                                                        </td>
-                                                    </tr>
-                                                ))
-                                            )}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-
-                            {/* Modal Industrial de Confirmacion HITL ("ACTUALIZAR") */}
-                            {pilotHitlModal && (
-                                <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-                                    <div className="w-full max-w-md bg-[#FFFFFF] dark:bg-[#07090D] border border-[#C68346] p-6 space-y-4 rounded-none shadow-none">
-                                        <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-3">
-                                            <span className="text-xs font-mono font-bold uppercase tracking-wider text-[#C68346]">
-                                                {pilotHitlModal.mode === 'CREATE'
-                                                    ? 'CONFIRMACION HITL · ACREDITAR TEST-PILOT'
-                                                    : 'CONFIRMACION HITL · REVOCAR TEST-PILOT'}
+                        return (
+                            <div className="space-y-[21px]">
+                                <div className="border border-slate-200 dark:border-[#12151C] p-[34px] rounded-none bg-[#F8FAFC] dark:bg-[#07090D] shadow-none space-y-[21px]">
+                                    <div className="flex flex-wrap items-start justify-between gap-[13px] pb-[21px] border-b border-slate-200 dark:border-[#12151C]">
+                                        <div className="space-y-[8px]">
+                                            <p className="text-microcopy font-mono uppercase tracking-widest text-[#C68346]">
+                                                {t('core_dev_vault.pilot_metrics.eyebrow')}
+                                            </p>
+                                            <h2 className="text-h1-header font-sans font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                {t('core_dev_vault.pilot_metrics.heading')}
+                                            </h2>
+                                            <p className="text-body-main font-sans text-[#475569] dark:text-[#8A93A6] max-w-3xl">
+                                                {t('core_dev_vault.pilot_metrics.subtitle')}
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-[13px]">
+                                            <span className="border border-slate-300 dark:border-[#12151C] bg-white dark:bg-[#000000] px-[13px] py-[8px] text-microcopy font-mono uppercase text-[#00AEEF] rounded-none">
+                                                {pilotMetrics
+                                                    ? t('core_dev_vault.pilot_metrics.status_active')
+                                                    : t('core_dev_vault.pilot_metrics.status_pending')}
                                             </span>
+                                            <ReadAloudButton compact text={speechSummary} />
                                             <button
                                                 type="button"
-                                                onClick={() => {
-                                                    setPilotHitlModal(null);
-                                                    setPilotHitlKeyword('');
-                                                }}
-                                                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                                                onClick={() => void fetchPilotMetrics()}
+                                                title={t('core_dev_vault.pilot_metrics.refresh_aria')}
+                                                aria-label={t('core_dev_vault.pilot_metrics.refresh_aria')}
+                                                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                                             >
-                                                <span className="material-symbols-outlined text-[18px]">close</span>
-                                            </button>
-                                        </div>
-
-                                        <p className="text-xs font-mono text-slate-600 dark:text-[#8A93A6] leading-relaxed">
-                                            {pilotHitlModal.mode === 'CREATE'
-                                                ? `Se acreditara acceso 3º TEST-PILOT para ${pilotName} (${pilotEmail}).`
-                                                : `Se revocara el acceso de la cuenta piloto ${pilotHitlModal.pilotId}.`}
-                                            {' '}Escriba obligatoriamente <strong className="text-[#C68346]">ACTUALIZAR</strong> para ejecutar:
-                                        </p>
-
-                                        <input
-                                            type="text"
-                                            autoFocus
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            value={pilotHitlKeyword}
-                                            onChange={(e) => setPilotHitlKeyword(e.target.value.toUpperCase())}
-                                            placeholder="ACTUALIZAR"
-                                            className="w-full bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] px-3 py-2 text-xs font-mono tracking-widest text-center text-[#0F172A] dark:text-[#F3F4F6] rounded-none outline-none"
-                                        />
-
-                                        <div className="flex justify-end gap-3 pt-2">
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    setPilotHitlModal(null);
-                                                    setPilotHitlKeyword('');
-                                                }}
-                                                className="px-4 py-2 text-xs font-mono uppercase bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-slate-500 hover:text-slate-900 dark:hover:text-white rounded-none cursor-pointer"
-                                            >
-                                                Cancelar
-                                            </button>
-                                            <button
-                                                type="button"
-                                                disabled={pilotHitlKeyword.trim() !== 'ACTUALIZAR' || pilotSubmitting}
-                                                onClick={executeConfirmedPilotAction}
-                                                className="px-5 py-2 text-xs font-mono font-bold uppercase bg-[#C68346] hover:bg-[#B0743E] text-white rounded-none border-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                                            >
-                                                {pilotSubmitting ? 'EJECUTANDO...' : 'CONFIRMAR'}
+                                                <span className="material-symbols-outlined text-[20px]">refresh</span>
+                                                <span className="sr-only">{t('core_dev_vault.pilot_metrics.refresh_aria')}</span>
                                             </button>
                                         </div>
                                     </div>
+
+                                    {pilotMetricsLoading && (
+                                        <M3LinearProgress
+                                            indeterminate
+                                            ariaLabel={t('core_dev_vault.pilot_metrics.loading_aria')}
+                                        />
+                                    )}
+
+                                    {pilotMetricsError && (
+                                        <div className="border border-red-500/60 bg-red-50 dark:bg-red-950/20 p-[13px] rounded-none text-data-dense font-mono text-red-700 dark:text-red-300">
+                                            {pilotMetricsError}
+                                        </div>
+                                    )}
+
+                                    {/* 3 KPIs Agregados Reales */}
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-[21px]">
+                                        <div className="border border-slate-200 dark:border-[#12151C] bg-white dark:bg-[#000000] p-[21px] rounded-none shadow-none space-y-[13px]">
+                                            <p className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
+                                                {t('core_dev_vault.pilot_metrics.kpi_pilots_total')}
+                                            </p>
+                                            <p className="text-kpi-display font-mono tabular-nums font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                {pilotMetrics ? pilotMetrics.pilots.total : 0}
+                                            </p>
+                                            <dl className="grid grid-cols-3 gap-[8px] pt-[13px] border-t border-slate-200 dark:border-[#12151C] text-microcopy font-mono tabular-nums">
+                                                <div>
+                                                    <dt className="text-[#475569] dark:text-[#8A93A6]">
+                                                        {t('core_dev_vault.pilot_metrics.kpi_pilots_active')}
+                                                    </dt>
+                                                    <dd className="text-[#00AEEF] font-bold">
+                                                        {pilotMetrics?.pilots.active ?? 0}
+                                                    </dd>
+                                                </div>
+                                                <div>
+                                                    <dt className="text-[#475569] dark:text-[#8A93A6]">
+                                                        {t('core_dev_vault.pilot_metrics.kpi_pilots_expired')}
+                                                    </dt>
+                                                    <dd className="text-[#C68346] font-bold">
+                                                        {pilotMetrics?.pilots.expired ?? 0}
+                                                    </dd>
+                                                </div>
+                                                <div>
+                                                    <dt className="text-[#475569] dark:text-[#8A93A6]">
+                                                        {t('core_dev_vault.pilot_metrics.kpi_pilots_revoked')}
+                                                    </dt>
+                                                    <dd className="text-[#475569] dark:text-[#8A93A6] font-bold">
+                                                        {pilotMetrics?.pilots.revoked ?? 0}
+                                                    </dd>
+                                                </div>
+                                            </dl>
+                                        </div>
+
+                                        <div className="border border-slate-200 dark:border-[#12151C] bg-white dark:bg-[#000000] p-[21px] rounded-none shadow-none space-y-[13px]">
+                                            <p className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
+                                                {t('core_dev_vault.pilot_metrics.kpi_sandboxes_tenants')}
+                                            </p>
+                                            <p className="text-kpi-display font-mono tabular-nums font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                {pilotMetrics ? pilotMetrics.sandboxes.pilotTenantsCount : 0}
+                                            </p>
+                                            <dl className="grid grid-cols-2 gap-[8px] pt-[13px] border-t border-slate-200 dark:border-[#12151C] text-microcopy font-mono tabular-nums">
+                                                <div>
+                                                    <dt className="text-[#475569] dark:text-[#8A93A6]">
+                                                        {t('core_dev_vault.pilot_metrics.kpi_sandboxes_assets')}
+                                                    </dt>
+                                                    <dd className="text-[#0F172A] dark:text-[#F3F4F6] font-bold">
+                                                        {pilotMetrics?.sandboxes.tenantAssetsCount ?? 0}
+                                                    </dd>
+                                                </div>
+                                                <div>
+                                                    <dt className="text-[#475569] dark:text-[#8A93A6]">
+                                                        {t('core_dev_vault.pilot_metrics.kpi_sandboxes_stockpiles')}
+                                                    </dt>
+                                                    <dd className="text-[#00AEEF] font-bold">
+                                                        {pilotMetrics?.sandboxes.stockpilesCount ?? 0}
+                                                    </dd>
+                                                </div>
+                                            </dl>
+                                        </div>
+
+                                        <div className="border border-slate-200 dark:border-[#12151C] bg-white dark:bg-[#000000] p-[21px] rounded-none shadow-none space-y-[13px]">
+                                            <p className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
+                                                {t('core_dev_vault.pilot_metrics.kpi_ai_total')}
+                                            </p>
+                                            <p className="text-kpi-display font-mono tabular-nums font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                {aiTotal}
+                                            </p>
+                                            <div className="pt-[13px] border-t border-slate-200 dark:border-[#12151C] space-y-1">
+                                                <p className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
+                                                    {t('core_dev_vault.pilot_metrics.last_activity_label')}
+                                                </p>
+                                                <p className="text-data-dense font-mono tabular-nums text-[#C68346]">
+                                                    {lastActivityText}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Desglose por Módulo IA y Categoría IA con M3LinearProgress */}
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-[21px]">
+                                        <div className="border border-slate-200 dark:border-[#12151C] bg-white dark:bg-[#000000] p-[21px] rounded-none shadow-none space-y-[13px]">
+                                            <p className="text-microcopy font-mono uppercase tracking-wider text-[#C68346]">
+                                                {t('core_dev_vault.pilot_metrics.breakdown_module_title')}
+                                            </p>
+                                            <div className="space-y-[13px]">
+                                                {moduleRows.map((row) => {
+                                                    const pct = pctOf(row.count);
+                                                    return (
+                                                        <div key={row.key} className="space-y-[8px]">
+                                                            <div className="flex items-center justify-between text-microcopy font-mono tabular-nums">
+                                                                <span className="text-[#475569] dark:text-[#8A93A6]">{row.label}</span>
+                                                                <span className="text-[#0F172A] dark:text-[#F3F4F6]">
+                                                                    {row.count} ({pct}%)
+                                                                </span>
+                                                            </div>
+                                                            <M3LinearProgress
+                                                                value={pct}
+                                                                ariaLabel={`${t('core_dev_vault.pilot_metrics.progress_module_aria')}: ${row.label}`}
+                                                            />
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+
+                                        <div className="border border-slate-200 dark:border-[#12151C] bg-white dark:bg-[#000000] p-[21px] rounded-none shadow-none space-y-[13px]">
+                                            <p className="text-microcopy font-mono uppercase tracking-wider text-[#00AEEF]">
+                                                {t('core_dev_vault.pilot_metrics.breakdown_category_title')}
+                                            </p>
+                                            <div className="space-y-[13px]">
+                                                {categoryRows.map((row) => {
+                                                    const pct = pctOf(row.count);
+                                                    return (
+                                                        <div key={row.key} className="space-y-[8px]">
+                                                            <div className="flex items-center justify-between text-microcopy font-mono tabular-nums">
+                                                                <span className="text-[#475569] dark:text-[#8A93A6]">{row.label}</span>
+                                                                <span className="text-[#0F172A] dark:text-[#F3F4F6]">
+                                                                    {row.count} ({pct}%)
+                                                                </span>
+                                                            </div>
+                                                            <M3LinearProgress
+                                                                value={pct}
+                                                                ariaLabel={`${t('core_dev_vault.pilot_metrics.progress_category_aria')}: ${row.label}`}
+                                                            />
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Prioridad y Estado Agregados (Cero textos libres / cero PII) */}
+                                    <div className="border border-slate-200 dark:border-[#12151C] bg-white dark:bg-[#000000] p-[21px] rounded-none shadow-none space-y-[13px]">
+                                        <p className="text-microcopy font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
+                                            {t('core_dev_vault.pilot_metrics.breakdown_priority_status_title')}
+                                        </p>
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-[13px] text-microcopy font-mono tabular-nums">
+                                            <div className="border border-slate-200 dark:border-[#12151C] p-[8px]">
+                                                <p className="text-[#475569] dark:text-[#8A93A6]">{t('core_dev_vault.pilot_metrics.prio_low')}</p>
+                                                <p className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    {pilotMetrics?.aiInteractions.byPriority.LOW ?? 0}
+                                                </p>
+                                            </div>
+                                            <div className="border border-slate-200 dark:border-[#12151C] p-[8px]">
+                                                <p className="text-[#475569] dark:text-[#8A93A6]">{t('core_dev_vault.pilot_metrics.prio_medium')}</p>
+                                                <p className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    {pilotMetrics?.aiInteractions.byPriority.MEDIUM ?? 0}
+                                                </p>
+                                            </div>
+                                            <div className="border border-slate-200 dark:border-[#12151C] p-[8px]">
+                                                <p className="text-[#C68346]">{t('core_dev_vault.pilot_metrics.prio_high')}</p>
+                                                <p className="text-data-dense font-bold text-[#C68346]">
+                                                    {pilotMetrics?.aiInteractions.byPriority.HIGH ?? 0}
+                                                </p>
+                                            </div>
+                                            <div className="border border-slate-200 dark:border-[#12151C] p-[8px]">
+                                                <p className="text-[#C68346]">{t('core_dev_vault.pilot_metrics.prio_critical')}</p>
+                                                <p className="text-data-dense font-bold text-[#C68346]">
+                                                    {pilotMetrics?.aiInteractions.byPriority.CRITICAL ?? 0}
+                                                </p>
+                                            </div>
+                                            <div className="border border-slate-200 dark:border-[#12151C] p-[8px]">
+                                                <p className="text-[#475569] dark:text-[#8A93A6]">{t('core_dev_vault.pilot_metrics.status_pending_count')}</p>
+                                                <p className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    {pilotMetrics?.aiInteractions.byStatus.PENDING ?? 0}
+                                                </p>
+                                            </div>
+                                            <div className="border border-slate-200 dark:border-[#12151C] p-[8px]">
+                                                <p className="text-[#475569] dark:text-[#8A93A6]">{t('core_dev_vault.pilot_metrics.status_reviewed_count')}</p>
+                                                <p className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                                    {pilotMetrics?.aiInteractions.byStatus.REVIEWED ?? 0}
+                                                </p>
+                                            </div>
+                                            <div className="border border-slate-200 dark:border-[#12151C] p-[8px]">
+                                                <p className="text-[#00AEEF]">{t('core_dev_vault.pilot_metrics.status_applied_count')}</p>
+                                                <p className="text-data-dense font-bold text-[#00AEEF]">
+                                                    {pilotMetrics?.aiInteractions.byStatus.APPLIED_TO_AI ?? 0}
+                                                </p>
+                                            </div>
+                                            <div className="border border-slate-200 dark:border-[#12151C] p-[8px]">
+                                                <p className="text-[#475569] dark:text-[#8A93A6]">{t('core_dev_vault.pilot_metrics.status_rejected_count')}</p>
+                                                <p className="text-data-dense font-bold text-[#475569] dark:text-[#8A93A6]">
+                                                    {pilotMetrics?.aiInteractions.byStatus.REJECTED ?? 0}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="border-t border-slate-200 dark:border-[#12151C] pt-[21px] flex items-start gap-[13px]">
+                                        <span className="material-symbols-outlined text-[20px] text-[#00AEEF] shrink-0">verified_user</span>
+                                        <p className="text-data-dense font-mono text-[#475569] dark:text-[#8A93A6]">
+                                            {t('core_dev_vault.pilot_metrics.isolation_notice')}
+                                        </p>
+                                    </div>
                                 </div>
-                            )}
+                            </div>
+                        );
+                    })()}
+
+                    {/* CONTENIDO 2: BANDEJA DE SOLICITUDES DE EQUIPOS B2B (100% INTEGRADO EN DEV) */}
+                    {activeSection === 'EQUIPMENT_ONBOARDING' && (
+                        <div className="w-full h-full min-h-0 flex-1 flex flex-col">
+                            <Suspense fallback={<M3ModuleHudFallback label={t('core_dev_vault.sections.loading_eq_inbox')} />}>
+                                <DevEquipmentOnboardingInbox />
+                            </Suspense>
                         </div>
                     )}
 
-                    {/* CONTENIDO 2: CONFIGURACIÓN B2B EMPRESA (100% INTEGRADO EN DEV) */}
-                    {activeSection === 'B2B_EMPRESA' && (
-                        <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Ficha de Empresa...]</div>}>
-                            <EmpresaPage />
-                        </Suspense>
-                    )}
-
-                    {/* CONTENIDO 3: STAFF (100% INTEGRADO EN DEV) */}
-                    {activeSection === 'STAFF' && (
-                        <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Personal Operativo...]</div>}>
-                            <StaffPage />
-                        </Suspense>
-                    )}
-
-                    {/* CONTENIDO 4: PERFILES DE CARGO (100% INTEGRADO EN DEV) */}
-                    {activeSection === 'JOB_PROFILES' && (
-                        <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Matriz de Cargos...]</div>}>
-                            <JobProfilesPage />
-                        </Suspense>
-                    )}
-
-                    {/* CONTENIDO 5: ADMINISTRADORES (100% INTEGRADO EN DEV) */}
-                    {activeSection === 'B2B_ADMINS' && (
-                        <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Administradores...]</div>}>
-                            <AdminsPage />
-                        </Suspense>
-                    )}
-
-                    {/* CONTENIDO 6: GESTOR DE LOGOS & IDENTIDAD (100% INTEGRADO EN DEV) */}
+                    {/* CONTENIDO 3: GESTOR DE LOGOS & IDENTIDAD (100% INTEGRADO EN DEV) */}
                     {activeSection === 'BRANDING' && (
                         <div className="max-w-5xl">
                             <BrandingManager />
                         </div>
                     )}
 
-                    {/* CONTENIDO 7: MÉTRICAS (100% INTEGRADO EN DEV) */}
-                    {activeSection === 'B2B_METRICAS' && (
-                        <Suspense fallback={<div className="p-6 font-mono text-xs text-slate-400">[Cargando Métricas Operacionales...]</div>}>
-                            <MetricasPage />
-                        </Suspense>
-                    )}
-
-                    {/* MÓDULO INDUSTRIAL 1: STOCKPILE (NATIVO EN VIVO) */}
+                    {/* MÓDULO INDUSTRIAL 1: GEOLAPP® (4 DOMINIOS EN VIVO) */}
                     {activeSection === 'MODULE_STOCKPILE' && (
                         <div className="w-full h-full min-h-0 overflow-hidden flex-1 flex flex-col">
-                            <Suspense fallback={
-                                <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
-                                    <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
-                                    <span className="text-[10px] uppercase text-slate-400">Cargando Módulo Stockpile (Capa 2)...</span>
-                                </div>
-                            }>
-                                <StockpileModule />
-                            </Suspense>
+                            <ModuleHost
+                                key={`dev-geolapp-${geolappDomainMode}`}
+                                moduleId="stockpile"
+                                embedded={true}
+                                domainMode={geolappDomainMode}
+                                hostScope="DEV_GATEWAY"
+                                enforceEntitlement={false}
+                            />
                         </div>
                     )}
 
                     {/* MÓDULO INDUSTRIAL 2A: CATÁLOGO MAESTRO ÚNICO (OPERMAQ CATALOG) */}
                     {activeSection === 'MODULE_OPERMAQ_CATALOG' && (
                         <div className="w-full h-full min-h-0 overflow-hidden flex-1 flex flex-col">
-                            <Suspense fallback={
-                                <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
-                                    <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
-                                    <span className="text-[10px] uppercase text-slate-400">CATÁLOGO</span>
-                                </div>
-                            }>
-                                <OpermaqModule key="dev-opermaq-catalog" domainMode="CATALOG" hostScope="DEV_GATEWAY" />
-                            </Suspense>
+                            <ModuleHost
+                                key="dev-opermaq-catalog"
+                                moduleId="opermaq"
+                                embedded={true}
+                                domainMode="CATALOG"
+                                hostScope="DEV_GATEWAY"
+                                enforceEntitlement={false}
+                            />
                         </div>
                     )}
 
                     {/* MÓDULO INDUSTRIAL 2B: CONTROL DE FLOTA (OPERMAQ FLEET) */}
                     {activeSection === 'MODULE_OPERMAQ_FLEET' && (
                         <div className="w-full h-full min-h-0 overflow-hidden flex-1 flex flex-col">
-                            <Suspense fallback={
-                                <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
-                                    <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
-                                    <span className="text-[10px] uppercase text-slate-400">FLOTA</span>
-                                </div>
-                            }>
-                                <OpermaqModule key="dev-opermaq-fleet" domainMode="FLEET" hostScope="DEV_GATEWAY" />
-                            </Suspense>
+                            <ModuleHost
+                                key="dev-opermaq-fleet"
+                                moduleId="opermaq"
+                                embedded={true}
+                                domainMode="FLEET"
+                                hostScope="DEV_GATEWAY"
+                                enforceEntitlement={false}
+                            />
                         </div>
                     )}
 
                     {/* MÓDULO INDUSTRIAL 2C: SIMBOLOGÍA TRANSVERSAL ISO 7000 (OPERMAQ SYMBOLOGY) */}
                     {activeSection === 'MODULE_OPERMAQ_SYMBOLOGY' && (
                         <div className="w-full h-full min-h-0 overflow-hidden flex-1 flex flex-col">
-                            <Suspense fallback={
-                                <div className="p-12 text-center font-mono text-xs flex flex-col items-center justify-center gap-2">
-                                    <span className="material-symbols-outlined text-2xl text-[#C68346] animate-spin">progress_activity</span>
-                                    <span className="text-[10px] uppercase text-slate-400">SIMBOLOGÍA</span>
-                                </div>
-                            }>
-                                <OpermaqModule key="dev-opermaq-symbology" domainMode="SYMBOLOGY" hostScope="DEV_GATEWAY" />
-                            </Suspense>
+                            <ModuleHost
+                                key="dev-opermaq-symbology"
+                                moduleId="opermaq"
+                                embedded={true}
+                                domainMode="SYMBOLOGY"
+                                hostScope="DEV_GATEWAY"
+                                enforceEntitlement={false}
+                            />
                         </div>
                     )}
 
+                    {/* MÓDULO INDUSTRIAL 2D: FABRICANTES Y CANALES COMERCIALES (OPERMAQ MANUFACTURERS) */}
+                    {activeSection === 'MODULE_OPERMAQ_MANUFACTURERS' && (
+                        <div className="w-full h-full min-h-0 overflow-hidden flex-1 flex flex-col">
+                            <ModuleHost
+                                key="dev-opermaq-manufacturers"
+                                moduleId="opermaq"
+                                embedded={true}
+                                domainMode="MANUFACTURERS"
+                                hostScope="DEV_GATEWAY"
+                                enforceEntitlement={false}
+                            />
+                        </div>
+                    )}
+
+                    {/* MÓDULO INDUSTRIAL 2E: AGENDA INDEPENDIENTE DE PROVEEDORES (OPERMAQ SUPPLIERS) */}
+                    {activeSection === 'MODULE_OPERMAQ_SUPPLIERS' && (
+                        <div className="w-full h-full min-h-0 overflow-hidden flex-1 flex flex-col">
+                            <ModuleHost
+                                key="dev-opermaq-suppliers"
+                                moduleId="opermaq"
+                                embedded={true}
+                                domainMode="SUPPLIERS"
+                                hostScope="DEV_GATEWAY"
+                                enforceEntitlement={false}
+                            />
+                        </div>
+                    )}
+
+                    </div>
                 </main>
             </div>
 

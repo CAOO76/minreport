@@ -4,11 +4,9 @@ import {
     UngroundedEvidenceError,
     type GroundingSource,
 } from '../../../core/resilient-ai-client';
-import type { CatalogProfile, EquipmentTypeOrigin, GlobalEquipmentTypeDoc } from '../types/vault.types';
+import type { CatalogProfile, GlobalEquipmentTypeDoc } from '../types/vault.types';
 import {
     detectDeterministicEquipmentTypeFromBrandAndModel,
-    extractHomologousAxisValues,
-    MISSING_AXIS_VALUE,
     MISSING_FULL_TECH_SPEC,
     sanitizeDesignAndWorkContextItems,
     serializeCanonicalSlotsToSpecsArray,
@@ -131,38 +129,6 @@ export interface EnrichCatalogOptions {
     preRetrievedEvidenceText?: string;
     preRetrievedSources?: GroundingSource[];
     preResolvedTypeDoc?: GlobalEquipmentTypeDoc;
-}
-
-export interface HomologationAxisDiff {
-    axis_key: string;
-    label_es: string;
-    unit_hint: string;
-    mandatory: boolean;
-    is_differentiator?: boolean;
-    current_value: string | null;
-    suggested_value: string | null;
-    source_url: string | null;
-    verbatim_evidence: string | null;
-    has_change: boolean;
-}
-
-export interface CatalogHomologationProposal {
-    global_asset_id: string;
-    make_oficial: string;
-    model_oficial: string;
-    equipment_type_key: string;
-    type_origin: EquipmentTypeOrigin;
-    reused_type_schema: boolean;
-    archetype_id: MachineryArchetypeId;
-    archetype_name_es: string;
-    current_tipo_equipo: string;
-    proposed_tipo_equipo: string;
-    proposed_categoria_equipo: string;
-    official_url: string;
-    grounded_sources: GroundingSource[];
-    had_legacy_marketing_prose: boolean;
-    warnings: string[];
-    axes_diff: HomologationAxisDiff[];
 }
 
 function isUsableSpecificTypeHint(raw?: string): boolean {
@@ -567,102 +533,4 @@ REGLAS INVIOLABLES FAIL-CLOSED:
             grounded_sources: collectedGroundingSources.map((s) => s.uri),
         };
     }
-}
-
-/**
- * Genera una propuesta comparativa HITL (`[Actual] ➔ [Sugerido Grounded]`) eje por eje
- * sobre el esquema canónico del `TIPO` (`global_equipment_types/{typeKey}`), sin mutar
- * `global_asset_catalog` hasta que un operador humano confirme con `"ACTUALIZAR"`.
- */
-export async function proposeCatalogHomologation(
-    globalAssetId: string,
-    existingData: Record<string, any>
-): Promise<CatalogHomologationProposal> {
-    const makeOficial = String(existingData.make_oficial || existingData.make || 'GENÉRICO')
-        .trim()
-        .toUpperCase();
-    const modelOficial = String(existingData.model_oficial || existingData.model || globalAssetId).trim();
-    const isGeneric = Boolean(existingData.is_generic || makeOficial === 'GENÉRICO');
-
-    const typeResolution = await resolveTargetEquipmentTypeForAsset(makeOficial, modelOficial, {
-        equipment_type_key: existingData.equipment_type_key,
-        tipo_equipo: existingData.tipo_equipo,
-        categoria_equipo: existingData.categoria_equipo,
-    });
-    const { typeDoc, reusedExistingSchema } = typeResolution;
-
-    const currentExtracted = extractHomologousAxisValues(existingData);
-    const currentByKey = new Map(currentExtracted.slots.map((s) => [s.axis_key, s]));
-    const currentByLabel = new Map(
-        currentExtracted.slots.map((s) => [s.label_es.trim().toLowerCase(), s])
-    );
-
-    const enriched = await enrichCatalogProfile(
-        makeOficial,
-        modelOficial,
-        {
-            equipment_type_key: typeDoc.type_key,
-            tipo_equipo: typeDoc.canonical_type_es,
-            categoria_equipo: existingData.categoria_equipo || typeDoc.categoria_equipo,
-            ambiente_operativo: existingData.ambiente_operativo,
-            contexto_operativo: existingData.contexto_operativo,
-        },
-        isGeneric,
-        {
-            globalAssetId,
-            forceFreshWeb: true,
-            preResolvedTypeDoc: typeDoc,
-        }
-    );
-
-    const proposedByKey = new Map((enriched.canonical_specs || []).map((s) => [s.axis_key, s]));
-
-    const axesDiff: HomologationAxisDiff[] = typeDoc.spec_schema.map((axisDef) => {
-        const curSlot =
-            currentByKey.get(axisDef.axis_key) ||
-            currentByLabel.get(axisDef.label_es.trim().toLowerCase());
-        const cur = curSlot?.value_si || null;
-        const sugSlot = proposedByKey.get(axisDef.axis_key);
-        const sug = sugSlot?.value_si || null;
-        return {
-            axis_key: axisDef.axis_key,
-            label_es: axisDef.label_es,
-            unit_hint: axisDef.unit_si,
-            mandatory: axisDef.mandatory,
-            is_differentiator: axisDef.is_differentiator,
-            current_value: cur,
-            suggested_value: sug,
-            source_url: sugSlot?.source_url || null,
-            verbatim_evidence: sugSlot?.verbatim_evidence || null,
-            has_change: (cur || MISSING_AXIS_VALUE) !== (sug || MISSING_AXIS_VALUE) && sug !== null,
-        };
-    });
-
-    const warnings: string[] = [];
-    if ((enriched.grounded_sources || []).length === 0) {
-        warnings.push(
-            'No se encontraron fichas técnicas web verificables en esta consulta; los ejes sin evidencia permanecen como [No declarado en ficha].'
-        );
-    }
-
-    const hadLegacyMarketingProse = Boolean(existingData.caracteristica_diferenciadora);
-
-    return {
-        global_asset_id: globalAssetId,
-        make_oficial: makeOficial,
-        model_oficial: modelOficial,
-        equipment_type_key: typeDoc.type_key,
-        type_origin: typeDoc.origin,
-        reused_type_schema: reusedExistingSchema,
-        archetype_id: typeDoc.archetype_id || 'HERRAMIENTA_INDUSTRIAL_GENERAL',
-        archetype_name_es: typeDoc.canonical_type_es,
-        current_tipo_equipo: String(existingData.tipo_equipo || MISSING_FULL_TECH_SPEC),
-        proposed_tipo_equipo: typeDoc.canonical_type_es,
-        proposed_categoria_equipo: enriched.categoria_equipo,
-        official_url: existingData.official_url || enriched.grounded_sources?.[0] || '',
-        grounded_sources: (enriched.grounded_sources || []).map((uri) => ({ uri, title: uri })),
-        had_legacy_marketing_prose: hadLegacyMarketingProse,
-        warnings,
-        axes_diff: axesDiff,
-    };
 }

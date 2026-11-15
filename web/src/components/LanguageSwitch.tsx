@@ -1,21 +1,41 @@
 import { useTranslation } from 'react-i18next';
+import { resolveNormalizedLang, type SupportedLang } from '../i18n';
+
+const LANG_ORDER: readonly SupportedLang[] = ['es', 'en', 'pt'];
 
 export const LanguageSwitch = () => {
-    const { i18n } = useTranslation();
+    const { t, i18n } = useTranslation();
+    const currentLang = resolveNormalizedLang(i18n.resolvedLanguage || i18n.language);
+    const currentIdx = LANG_ORDER.indexOf(currentLang);
+    const nextLang = LANG_ORDER[(currentIdx + 1) % LANG_ORDER.length];
 
     const toggleLanguage = () => {
-        const langs = ['es', 'en', 'pt'];
-        const currentIdx = langs.indexOf(i18n.language.split('-')[0]);
-        const nextLang = langs[(currentIdx + 1) % langs.length];
-        i18n.changeLanguage(nextLang);
+        try {
+            localStorage.setItem('i18nextLng', nextLang);
+        } catch {
+            // Ignorar errores en almacenamiento restringido
+        }
+        if (typeof document !== 'undefined' && document.documentElement) {
+            document.documentElement.lang = nextLang;
+        }
+        void i18n.changeLanguage(nextLang);
     };
+
+    const label = t('core_common.language_switch_label', {
+        current: currentLang.toUpperCase(),
+        next: nextLang.toUpperCase(),
+        defaultValue: `Idioma actual ${currentLang.toUpperCase()}. Cambiar a ${nextLang.toUpperCase()}`,
+    });
 
     return (
         <button
+            type="button"
             onClick={toggleLanguage}
-            className="text-[10px] font-bold px-2 py-1 rounded-none border border-slate-300 dark:border-[#12151C] text-slate-500 hover:text-slate-900 dark:hover:text-white hover:border-[#C68346] dark:hover:border-[#C68346] transition-colors uppercase tracking-widest font-mono bg-transparent cursor-pointer"
+            aria-label={label}
+            title={label}
+            className="min-w-[48px] min-h-[48px] px-3 py-2 text-microcopy font-bold rounded-none shadow-none border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] text-[#334155] dark:text-[#CBD5E1] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] hover:border-[#C68346] dark:hover:border-[#C68346] transition-colors uppercase tracking-widest font-mono tabular-nums cursor-pointer flex items-center justify-center shrink-0"
         >
-            {(i18n.language || 'es').startsWith('es') ? 'ES | EN' : (i18n.language.startsWith('en') ? 'EN | PT' : 'PT | ES')}
+            {currentLang.toUpperCase()}
         </button>
     );
 };

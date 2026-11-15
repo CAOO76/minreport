@@ -1,18 +1,28 @@
 import { CapacitorConfig } from '@capacitor/cli';
 
+const liveServerUrl = process.env.CAP_SERVER_URL?.trim();
+
 /**
- * MINREPORT - Configuración Universal Capacitor 6 (Producción Standalone + Offline First)
- * Carga directamente los bundles estáticos locales empaquetados en `dist/` (androidScheme: 'https').
- * Se elimina la IP fija de desarrollo para permitir ejecución 100% autónoma en terreno minero sin red.
+ * MINREPORT · GEOLAPP - Configuracion Capacitor 6 (Android Nativo + PWA Offline-First)
+ * Con CAP_SERVER_URL definido habilita live reload contra Vite HMR (ej. http://localhost:5173 via adb reverse).
+ * Sin CAP_SERVER_URL carga el bundle local empaquetado en dist/ bajo Secure Context HTTPS.
  */
 const config: CapacitorConfig = {
     appId: 'com.minreport.app',
-    appName: 'MINREPORT',
+    appName: 'MINREPORT · GEOLAPP',
     webDir: 'dist',
-    server: {
-        androidScheme: 'https',
-        cleartext: false
-    },
+    server: liveServerUrl
+        ? {
+              url: liveServerUrl,
+              androidScheme: 'https',
+              cleartext:
+                  liveServerUrl.startsWith('http://localhost') ||
+                  liveServerUrl.startsWith('http://127.0.0.1')
+          }
+        : {
+              androidScheme: 'https',
+              cleartext: false
+          },
     plugins: {
         Camera: {
             permissions: ['camera', 'photos']

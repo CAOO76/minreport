@@ -6,16 +6,19 @@
 import { doc, setDoc } from 'firebase/firestore';
 import { z } from 'zod';
 import { auth, db } from '../../config/firebase';
+import { CreateGeoReportStampBodySchema } from '../../contracts/geo.contracts';
 import { getApiUrl } from '../../utils/network';
-import { offlineStorage, FleetInspectionRecord, StockpileSurveyRecord, CashflowEventRecord } from './OfflineStorage';
+import { coreAuthFetch } from '../network/coreAuthFetch';
+import { offlineStorage, FleetInspectionRecord, StockpileSurveyRecord } from './OfflineStorage';
 
 export type SyncTaskType =
     | 'FLEET_INSPECTION'
     | 'TENANT_ASSET'
     | 'STOCKPILE_SURVEY'
-    | 'CASHFLOW_EVENT'
+    | 'STOCKPILE_MEASUREMENT'
     | 'OPERMAQ_API_MUTATION'
-    | 'CAS_MEDIA_UPLOAD';
+    | 'CAS_MEDIA_UPLOAD'
+    | 'GEO_REPORT_STAMP';
 
 export interface CasMediaSyncPayload {
     sha256: string;
@@ -77,7 +80,7 @@ const StockpileSurveySyncSchema = z.object({
     tenantId: z.string().min(1, 'tenantId es obligatorio en STOCKPILE_SURVEY'),
     tag: z.string().min(1),
     material: z.string().min(1),
-    shape: z.enum(['elliptic-cone', 'truncated-elliptic-cone', 'perimeter-cone']).default('elliptic-cone'),
+    shape: z.enum(['elliptic-cone', 'truncated-elliptic-cone', 'perimeter-cone', 'windrow', 'toe-wall']).default('elliptic-cone'),
     volumeM3: z.number().nonnegative(),
     density: z.number().positive(),
     tonnage: z.number().nonnegative(),
@@ -86,14 +89,13 @@ const StockpileSurveySyncSchema = z.object({
     timestamp: z.number().nonnegative(),
 }).passthrough();
 
-const CashflowEventSyncSchema = z.object({
+const StockpileMeasurementSyncSchema = z.object({
     id: z.string().min(1),
-    tenantId: z.string().min(1, 'tenantId es obligatorio en CASHFLOW_EVENT'),
-    type: z.enum(['INCOME', 'EXPENSE']),
-    category: z.string().min(1),
-    amountUSD: z.number(),
-    amountCLP: z.number(),
-    description: z.string(),
+    assetId: z.string().min(1, 'assetId es obligatorio en STOCKPILE_MEASUREMENT'),
+    tenantId: z.string().min(1, 'tenantId es obligatorio en STOCKPILE_MEASUREMENT'),
+    volumen_m3: z.number().nonnegative().optional(),
+    peso_t: z.number().nonnegative().optional(),
+    shape: z.enum(['elliptic-cone', 'truncated-elliptic-cone', 'perimeter-cone', 'windrow', 'toe-wall']).optional(),
     timestamp: z.number().nonnegative(),
 }).passthrough();
 
@@ -224,10 +226,14 @@ class SyncQueueEngine {
             request.type ||
             (request.targetCollection === 'inspections'
                 ? 'FLEET_INSPECTION'
-                : request.targetCollection === 'stockpiles'
-                    ? 'STOCKPILE_SURVEY'
-                    : request.targetCollection === 'financial_events'
-                        ? 'CASHFLOW_EVENT'
+                : (request.targetCollection === 'stockpile_measurements' ||
+                    request.targetCollection === 'stockpiles/measurements' ||
+                    (typeof request.targetCollection === 'string' &&
+                        request.targetCollection.startsWith('stockpiles/') &&
+                        request.targetCollection.endsWith('/measurements')))
+                    ? 'STOCKPILE_MEASUREMENT'
+                    : request.targetCollection === 'stockpiles'
+                        ? 'STOCKPILE_SURVEY'
                         : 'TENANT_ASSET');
 
         const generatedId =
@@ -401,8 +407,9 @@ class SyncQueueEngine {
             }
             case 'STOCKPILE_SURVEY': {
                 const raw = task.payload as Partial<StockpileSurveyRecord> & Record<string, unknown>;
+                const { measurements: _ignoredMeasurements, ...compactRaw } = raw;
                 const validated = StockpileSurveySyncSchema.parse({
-                    ...raw,
+                    ...compactRaw,
                     id: String(raw.id || raw.surveyId || ''),
                     tenantId: resolveActiveTenantId(raw.tenantId || raw.accountId),
                     tag: String(raw.tag || raw.name || 'ACOPIO'),
@@ -419,19 +426,31 @@ class SyncQueueEngine {
                 }, { merge: true });
                 break;
             }
-            case 'CASHFLOW_EVENT': {
-                const raw = task.payload as Partial<CashflowEventRecord> & Record<string, unknown>;
-                const validated = CashflowEventSyncSchema.parse({
+            case 'STOCKPILE_MEASUREMENT': {
+                const raw = task.payload as Record<string, unknown>;
+                const validated = StockpileMeasurementSyncSchema.parse({
                     ...raw,
+                    id: String(raw.id || raw.measurementId || ''),
+                    assetId: String(raw.assetId || raw.stockpileId || ''),
                     tenantId: resolveActiveTenantId(raw.tenantId || raw.accountId),
+                    timestamp: typeof raw.timestamp === 'number' ? raw.timestamp : Date.now(),
                 });
-                const docRef = doc(db, 'financial_events', validated.id);
-                await setDoc(docRef, {
+                const measRef = doc(db, 'stockpiles', validated.assetId, 'measurements', validated.id);
+                await setDoc(measRef, {
                     ...validated,
                     accountId: validated.tenantId,
                     syncedAt: new Date().toISOString(),
                     syncEngine: 'MINREPORT_WEB3_OFFLINE_v2'
                 }, { merge: true });
+                await offlineStorage.saveStockpileMeasurement({
+                    id: validated.id,
+                    assetId: validated.assetId,
+                    tenantId: validated.tenantId,
+                    shape: validated.shape,
+                    payload: validated as Record<string, unknown>,
+                    timestamp: validated.timestamp,
+                    synced: true,
+                }).catch(() => { /* no bloquear sync remoto por cache IDB */ });
                 break;
             }
             case 'OPERMAQ_API_MUTATION': {
@@ -491,6 +510,40 @@ class SyncQueueEngine {
                     tenantId: resolvedTenantId || undefined,
                     filename: mediaPayload.filename || casRecord.filename,
                 });
+                break;
+            }
+            case 'GEO_REPORT_STAMP': {
+                const raw = (task.payload || {}) as Record<string, unknown>;
+                const resolvedAccountId = resolveActiveTenantId(raw.accountId || raw.tenantId);
+                const validated = CreateGeoReportStampBodySchema.parse({
+                    accountId: resolvedAccountId || undefined,
+                    moduleId: raw.moduleId,
+                    entityType: raw.entityType,
+                    entityId: raw.entityId,
+                    fix: raw.fix,
+                    label: raw.label,
+                });
+
+                const headers: Record<string, string> = {
+                    'Content-Type': 'application/json',
+                };
+                if (validated.accountId) {
+                    headers['X-Active-Account-Id'] = validated.accountId;
+                }
+
+                const res = await coreAuthFetch('/api/geo/report-stamp', {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(validated),
+                });
+
+                if (!res.ok) {
+                    const errJson = await res.json().catch(() => ({}));
+                    throw new Error(
+                        (errJson as any)?.error ||
+                            `HTTP ${res.status} al sincronizar GEO_REPORT_STAMP en /api/geo/report-stamp`
+                    );
+                }
                 break;
             }
             default:

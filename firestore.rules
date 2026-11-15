@@ -5,23 +5,34 @@ rules_version = '2';
 // Jerarquía Soberana de 5 Tipos de Cuenta:
 //   1º DEV          (isDevRoot        — DEV_ROOT / dev@minreport.com verificado)
 //   2º ADMIN        (isSuperAdmin     — SUPER_ADMIN / admin@minreport.com verificado)
-//   3º TEST-PILOT   (isTestPilot      — TEST_PILOT / PILOT_LEAD)
+//   3º TEST-PILOT   (isTestPilot      — TEST_PILOT con control de caducidad pilotExpiresAt)
 //   4º CLIENTES B2B (isAccountMember  — Aislamiento estricto por accountId/tenantId)
 //   5º EDU          (isAccountMember  — Sandbox académico sin alta interna no autorizada)
 //
 // Assumed Data Model (Resumen Estructural):
 //   - /user_directory/{run}: { uid, email, run, updatedAt } — Exclusivo Admin/Backend
-//   - /users/{userId}: { uid, email, displayName, role (server-only), memberships (server-only), status (server-only), preferences, updatedAt }
-//   - /user_auth_credentials/{userId}, /webauthn_challenges/{id}, /dev_challenges/{id}, /system_dev_meta/{id}: Secretos Auth Server-Only
+//   - /users/{userId}: { uid, email, displayName, role (server-only), memberships (server-only), status (server-only), preferences, lastActiveAccountId, updatedAt }
+//   - /user_auth_credentials/{userId}, /webauthn_challenges/{id}, /dev_challenges/{id}, /auth_otp_challenges/{id}, /setup_tokens/{id}, /system_dev_meta/{id}: Secretos Auth Server-Only
 //   - /webauthn_credentials/{credId}: { uid, credentialId, publicKey, counter, transports, createdAt } — Lectura titular/Admin, Escritura Server-Only
 //   - /m2m_wallets/{walletId}, /x402_receipts/{receiptId}, /audit_ledger_head/{docId}: Finanzas M2M y cabeza SHA-256 Server-Only (lectura Admin)
 //   - /ai_telemetry/{docId}: Telemetría Enjambre Gemini — Lectura Admin/TestPilot, Escritura Server-Only
+//   - /ai_inference_cache/{cacheKey}: Caché inferencia/embeddings IA — Lectura exclusiva Admin, Escritura Server-Only
 //   - /accounts/{accountId}: { ownerId, name, contract (server-only), licensing (server-only), status (server-only), branding, operationalSettings }
 //   - /accounts/{accountId}/members/{memberId}: { userId, email, role, status, invitedAt } — Bloquea alta si licensing.allowInternalUsers == false
+//   - /accounts/{accountId}/metrics/{periodId}: Telemetría atómica por cuenta/periodo — Lectura miembros de cuenta/Admin, Escritura Server-Only
+//   - /accounts/{accountId}/manufacturer_contacts/{contactId}: { contactId (== docId, immutable en update), tenantId (== accountId, immutable), supplierKey, manufacturerKey, distributorName, areaName, areaKey, contactLabel, channelType ('NEW'|'USED'|'RENTAL'|'PARTS'|'SERVICE', opcional/nullable), cityRegion, phone, emailOrWeb, notes, createdByUid (== auth.uid en create, immutable en update), createdAt, updatedAt } — Anillo A Agenda Privada Multi-Tenant Offline-First; lectura isAccountMember, escritura bloqueada para 5º EDU
+//   - /accounts/{accountId}/supplier_billing_rules/{supplierKey}: { tenantId (== accountId), supplierKey (== docId), requiresPurchaseOrder801, requiresContract803, requiresDispatchGuide52, requiresReceptionTokenType ('NONE'|'HES'|'HEM'|'HAS'), defaultFormaPagoDte (1|2|3), paymentTermDays (0..365, Ley 21.131: <=30 o hasExceptionalPaymentAgreement), hasExceptionalPaymentAgreement, exceptionalAgreementNote, dteClaimWindowDays (1..8), rcvClaimAlertEmail, allowFactoringCesion, billingPortalUrl, remittanceEmail, defaultCentroCosto, notes, updatedByUid, updatedAt } — Reglas DTE/Pago privadas por tenant; lectura isAccountMember, escritura/borrado bloqueado para 5º EDU
+//   - /edu_metrics/{metricId}: Telemetría separada cuentas académicas EDU — Lectura exclusiva Admin (DEV_ROOT/SUPER_ADMIN), Escritura Server-Only
+//   - /edu_institutions/{institutionId}: Padrón de Instituciones Académicas Acreditadas — Lectura autenticada, Escritura Server-Only ("ACTUALIZAR" + AuditLedger)
+//   - /pilot_feedback/{feedbackId}: Observaciones TEST-PILOT — Lectura DEV_ROOT o autorUid, Create status=='OPEN' con authorUid propio, Update/Delete exclusivo DEV_ROOT
+//   - /hitl_candidates/{candidateId}: Candidatos HITL — Update/Delete exclusivo DEV_ROOT (Mitigación F1)
 //   - Colecciones Multi-Tenant Operativas (tenant_assets, tenant_catalogs, inspections, fleet_inspections, machinery_fleet,
-//     equipment_inspections, stockpiles, financial_events, job_profiles, project_profiles, report_templates, generated_reports):
-//     Requieren tenantId/tenant_id/accountId string no vacío con pertenencia verificada e inmutabilidad cross-tenant en update.
-//   - Ledgers Inmutables (audit_ledger, event_ledger, financial_ledger): Append-Only (update/delete == false).
+//     equipment_inspections, stockpiles, geolapp_records [dominios GEOMENSURA_GEO, EXPLORACION_SONDAJES, ESTRUCTURAL_HIDRO],
+//     job_profiles, project_profiles, report_templates, generated_reports, edu_sandbox_fleet):
+//     Requieren tenantId/tenant_id/accountId string no vacío con pertenencia verificada, inmutabilidad cross-tenant en update y delete exclusivo isTenantAdminOrOwner.
+//   - /financial_events/{eventId}: Append-Only estricto (create exclusivo Admin/Owner de cuenta, update/delete == false).
+//   - /audit_ledger/{logId}: Cadena SHA-256 Server-Only (create/update/delete == false; lectura Admin o auditor titular sin cruce multi-tenant).
+//   - Ledgers Operativos Inmutables (event_ledger, financial_ledger): Append-Only (update/delete == false).
 //   - Bóvedas Plan Maestro v4.0 (global_asset_catalog, global_equipment_types, global_asset_lineages, master_symbology_vault,
 //     media_registry, benchmark_events, benchmark_insights, knowledge_contributions, commons_airlock_queue,
 //     global_material_catalog, symbology_review_queue).
@@ -33,6 +44,10 @@ rules_version = '2';
 //     Particionamiento Anti-1MiB OPERMAQ v3.0 con segregación estricta OEM (1º DEV / 3º TEST-PILOT).
 //   - /edu_sandbox_fleet/{unitId}: Flota sandbox aislada multi-tenant para 5º EDU.
 //   - /ai_grounded_discovery_cache/{cacheKey}: Caché server-only (southamerica-west1) de descubrimiento IA fundamentado.
+//   - /global_manufacturers/{manufacturerId}: { manufacturerKey, officialName, aliases, hqCountryIso2, officialWebsiteUrl, observedArchetypeIds, logoSvg, logoCandidates, curationStatus, hasPublicWebFootprint, equipmentCount, aiSuggestedDistributors, createdAt, updatedAt, verifiedByUid } — Maestra global de fabricantes Zero-Preset (OPERMAQ · FABRICANTES); lectura autenticada, escritura exclusiva Admin SDK (HITL "ACTUALIZAR" + AuditLedger).
+//   - /global_suppliers/{supplierId}: { supplierKey, tradeName, legalName, countryIso2, supplierTaxId, officialWebsiteUrl, x402SellerWalletId, manufacturerKeys, representations, createdAt, updatedAt } — Entidad comercial única multimarca unificada (distribuidores, arriendo, Reman, especialistas y semilla KYB/x402 Marketplace); lectura autenticada, escritura exclusiva Admin SDK (HITL "ACTUALIZAR").
+//   - /supplier_channel_rules/{ruleId}: Legado sellado tras unificación en /global_suppliers.representations[] (read/write == false).
+//   - /supplier_contact_contributions/{contributionId}: { contributionId, manufacturerKey, distributorName, channelType, countryIso2, cityRegion, roleEmail, phone, portalUrl, sanitizedNotes, piiPurgedTypes, piiPurgedCount, status, submittedByTenantHash, createdAt, reviewedAt, reviewedByUid, ttlExpiresAt } — Cola de aportes comunitarios moderados Ley N° 19.628 / N° 21.719; lectura exclusiva 1º DEV / 2º ADMIN (isAdmin), escritura exclusiva Admin SDK (ConfidentialityAirlockService + bloqueo 5º EDU).
 // ===============================================================
 
 service cloud.firestore {
@@ -57,7 +72,8 @@ service cloud.firestore {
       return userDoc != null &&
         userDoc.data != null &&
         ('role' in userDoc.data) &&
-        (userDoc.data.role in allowedRoles);
+        (userDoc.data.role in allowedRoles) &&
+        (!('status' in userDoc.data) || !(userDoc.data.status in ['REVOKED', 'SUSPENDED']));
     }
 
     // 1º Jerarquía Soberana — DEV_ROOT
@@ -88,13 +104,26 @@ service cloud.firestore {
       );
     }
 
-    // 3º Jerarquía Soberana — TEST-PILOT / PILOT_LEAD
+    // Verifica estado vivo en servidor (/users/{uid}) para revocación inmediata de 3º TEST-PILOT
+    function isNotRevokedPilotUser() {
+      let u = get(/databases/$(database)/documents/users/$(request.auth.uid));
+      return u != null &&
+        u.data != null &&
+        ('role' in u.data && u.data.role == 'TEST_PILOT') &&
+        (!('status' in u.data) || !(u.data.status in ['REVOKED', 'SUSPENDED']));
+    }
+
+    // 3º Jerarquía Soberana — TEST-PILOT (Rol único TEST_PILOT con control de caducidad obligatorio y revocación inmediata)
     function isTestPilot() {
-      return request.auth != null && (
-        ('role' in request.auth.token &&
-          (request.auth.token.role == 'TEST_PILOT' || request.auth.token.role == 'PILOT_LEAD')) ||
-        hasServerAssignedRole(['TEST_PILOT', 'PILOT_LEAD'])
-      );
+      return request.auth != null &&
+        'pilotExpiresAt' in request.auth.token &&
+        request.auth.token.pilotExpiresAt is number &&
+        request.time.toMillis() < request.auth.token.pilotExpiresAt &&
+        isNotRevokedPilotUser() &&
+        (
+          ('role' in request.auth.token && request.auth.token.role == 'TEST_PILOT') ||
+          hasServerAssignedRole(['TEST_PILOT'])
+        );
     }
 
     // Gobierno Administrativo Superior (1º DEV + 2º ADMIN)
@@ -131,44 +160,70 @@ service cloud.firestore {
         );
     }
 
-    // Administración Interna de Cuenta Titular (Owner o Member con rol OWNER/ADMIN)
-    function isAccountAdmin(accountId) {
+    // Administración Interna de Cuenta / Tenant (Global Admin, Titular ownerId, o Miembro/Claim con rol OWNER/ADMIN)
+    function isTenantAdminOrOwner(tenantId) {
       return request.auth != null &&
-        accountId is string &&
-        accountId.size() > 0 &&
-        accountId.size() <= 128 &&
+        tenantId is string &&
+        tenantId.size() > 0 &&
+        tenantId.size() <= 128 &&
         (
           isAdmin() ||
           (
-            exists(/databases/$(database)/documents/accounts/$(accountId)) &&
-            'ownerId' in get(/databases/$(database)/documents/accounts/$(accountId)).data &&
-            get(/databases/$(database)/documents/accounts/$(accountId)).data.ownerId == request.auth.uid
-          ) ||
-          (
-            exists(/databases/$(database)/documents/accounts/$(accountId)/members/$(request.auth.uid)) &&
-            'role' in get(/databases/$(database)/documents/accounts/$(accountId)/members/$(request.auth.uid)).data &&
-            get(/databases/$(database)/documents/accounts/$(accountId)/members/$(request.auth.uid)).data.role in ['OWNER', 'ADMIN']
-          ) ||
-          (
             (
-              ('activeAccountId' in request.auth.token && request.auth.token.activeAccountId == accountId) ||
-              ('tenantId' in request.auth.token && request.auth.token.tenantId == accountId)
+              ('activeAccountId' in request.auth.token && request.auth.token.activeAccountId == tenantId) ||
+              ('tenantId' in request.auth.token && request.auth.token.tenantId == tenantId)
             ) &&
             'role' in request.auth.token &&
             request.auth.token.role in ['OWNER', 'ADMIN']
+          ) ||
+          (
+            exists(/databases/$(database)/documents/accounts/$(tenantId)) &&
+            'ownerId' in get(/databases/$(database)/documents/accounts/$(tenantId)).data &&
+            get(/databases/$(database)/documents/accounts/$(tenantId)).data.ownerId == request.auth.uid
+          ) ||
+          (
+            exists(/databases/$(database)/documents/accounts/$(tenantId)/members/$(request.auth.uid)) &&
+            'role' in get(/databases/$(database)/documents/accounts/$(tenantId)/members/$(request.auth.uid)).data &&
+            get(/databases/$(database)/documents/accounts/$(tenantId)/members/$(request.auth.uid)).data.role in ['OWNER', 'ADMIN']
           )
         );
     }
 
-    // Verifica que la licencia de la cuenta permita usuarios internos (Cierra bypass EDU)
-    function accountAllowsInternalUsers(accountId) {
-      return exists(/databases/$(database)/documents/accounts/$(accountId)) &&
-        (
-          !('licensing' in get(/databases/$(database)/documents/accounts/$(accountId)).data) ||
-          get(/databases/$(database)/documents/accounts/$(accountId)).data.licensing == null ||
-          !('allowInternalUsers' in get(/databases/$(database)/documents/accounts/$(accountId)).data.licensing) ||
-          get(/databases/$(database)/documents/accounts/$(accountId)).data.licensing.allowInternalUsers != false
-        );
+    // Alias semánticos de privilegio administrativo interno de cuenta
+    function isAccountAdmin(accountId) {
+      return isTenantAdminOrOwner(accountId);
+    }
+
+    function hasAccountAdminPrivilege(tenantId) {
+      return isTenantAdminOrOwner(tenantId);
+    }
+
+    // Predicado compartido 5º EDU Sandbox (alineado con restricciones en /accounts/{accountId})
+    function isEduAccountData(data) {
+      return data is map && (
+        ('isEduSandbox' in data && data.isEduSandbox == true) ||
+        ('classification' in data && data.classification in ['edu', 'educational']) ||
+        ('type' in data && data.type == 'EDUCATIONAL')
+      );
+    }
+
+    // Verifica si la cuenta /accounts/{accountId} corresponde a un Sandbox Académico 5º EDU
+    function isAccountEduSandbox(accountId) {
+      return accountId is string &&
+        accountId.size() > 0 &&
+        accountId.size() <= 128 &&
+        exists(/databases/$(database)/documents/accounts/$(accountId)) &&
+        isEduAccountData(get(/databases/$(database)/documents/accounts/$(accountId)).data);
+    }
+
+    // Verifica claims de rol/clasificación académica 5º EDU en el token del solicitante
+    function isCallerEduRoleOrClassification() {
+      return request.auth != null && (
+        ('classification' in request.auth.token && request.auth.token.classification in ['edu', 'educational']) ||
+        ('role' in request.auth.token && request.auth.token.role in ['STUDENT', 'PROFESSOR']) ||
+        ('accountTier' in request.auth.token && request.auth.token.accountTier == 5) ||
+        ('tier' in request.auth.token && request.auth.token.tier == 'EDUCATIONAL')
+      );
     }
 
     // ===============================================================
@@ -191,16 +246,22 @@ service cloud.firestore {
     }
 
     // Impide ataques de confusión entre llaves multi-tenant en un mismo documento
+    function isValidOptionalTenantField(data, field) {
+      return !(field in data) ||
+        data[field] == null ||
+        (data[field] is string && data[field].size() > 0 && data[field].size() <= 128);
+    }
+
     function isConsistentTenantFields(data) {
-      let tid = ('tenantId' in data && data.tenantId != null) ? data.tenantId : null;
-      let tidSnake = ('tenant_id' in data && data.tenant_id != null) ? data.tenant_id : null;
-      let aid = ('accountId' in data && data.accountId != null) ? data.accountId : null;
-      return (tid == null || (tid is string && tid.size() > 0 && tid.size() <= 128)) &&
-        (tidSnake == null || (tidSnake is string && tidSnake.size() > 0 && tidSnake.size() <= 128)) &&
-        (aid == null || (aid is string && aid.size() > 0 && aid.size() <= 128)) &&
-        (tid == null || tidSnake == null || tid == tidSnake) &&
-        (tid == null || aid == null || tid == aid) &&
-        (tidSnake == null || aid == null || tidSnake == aid);
+      let hasTid = 'tenantId' in data && data.tenantId != null;
+      let hasTidSnake = 'tenant_id' in data && data.tenant_id != null;
+      let hasAid = 'accountId' in data && data.accountId != null;
+      return isValidOptionalTenantField(data, 'tenantId') &&
+        isValidOptionalTenantField(data, 'tenant_id') &&
+        isValidOptionalTenantField(data, 'accountId') &&
+        (!hasTid || !hasTidSnake || data.tenantId == data.tenant_id) &&
+        (!hasTid || !hasAid || data.tenantId == data.accountId) &&
+        (!hasTidSnake || !hasAid || data.tenant_id == data.accountId);
     }
 
     // Evalúa lectura multi-tenant alineada con el planificador estático de queries de Firestore
@@ -209,6 +270,20 @@ service cloud.firestore {
         ('tenantId' in data && data.tenantId is string && isAccountMember(data.tenantId)) ||
         ('tenant_id' in data && data.tenant_id is string && isAccountMember(data.tenant_id)) ||
         ('accountId' in data && data.accountId is string && isAccountMember(data.accountId));
+    }
+
+    // Evalúa lectura de auditoría por tenant exclusiva para OWNER/ADMIN sin cruce multi-tenant ni shard global
+    function isAuditableTenantId(tid) {
+      return tid is string &&
+        tid.size() > 0 &&
+        tid.size() <= 128 &&
+        !(tid in ['global', 'GLOBAL', 'dev-master-sandbox', 'admin-master-console']);
+    }
+
+    function canReadTenantAuditDoc(data) {
+      return 'tenantId' in data &&
+        isAuditableTenantId(data.tenantId) &&
+        isTenantAdminOrOwner(data.tenantId);
     }
 
     // Validador general de cotas anti-DoS para colecciones operativas multi-tenant (Create & Update)
@@ -236,6 +311,7 @@ service cloud.firestore {
         (!('preferredLanguage' in data) || data.preferredLanguage == null || (data.preferredLanguage is string && data.preferredLanguage.size() <= 16)) &&
         (!('language' in data) || data.language == null || (data.language is string && data.language.size() <= 16)) &&
         (!('theme' in data) || data.theme == null || (data.theme is string && data.theme.size() <= 32)) &&
+        (!('lastActiveAccountId' in data) || data.lastActiveAccountId == null || (data.lastActiveAccountId is string && data.lastActiveAccountId.size() <= 128)) &&
         (!('preferences' in data) || data.preferences == null || (data.preferences is map && data.preferences.keys().size() <= 50));
     }
 
@@ -263,7 +339,50 @@ service cloud.firestore {
         (!('emailTributario' in data) || data.emailTributario == null || (data.emailTributario is string && data.emailTributario.size() <= 254)) &&
         (!('email_domain' in data) || data.email_domain == null || (data.email_domain is string && data.email_domain.size() <= 120)) &&
         (!('giro' in data) || data.giro == null || (data.giro is string && data.giro.size() <= 300)) &&
-        (!('activity' in data) || data.activity == null || (data.activity is string && data.activity.size() <= 300));
+        (!('activity' in data) || data.activity == null || (data.activity is string && data.activity.size() <= 300)) &&
+        (!('geoFix' in data) || data.geoFix == null || (
+          data.geoFix is map &&
+          data.geoFix.keys().size() <= 16 &&
+          'lat' in data.geoFix && data.geoFix.lat is number && data.geoFix.lat >= -90 && data.geoFix.lat <= 90 &&
+          'lng' in data.geoFix && data.geoFix.lng is number && data.geoFix.lng >= -180 && data.geoFix.lng <= 180 &&
+          (!('altitudeM' in data.geoFix) || data.geoFix.altitudeM == null || (data.geoFix.altitudeM is number && data.geoFix.altitudeM >= -1000 && data.geoFix.altitudeM <= 12000)) &&
+          (!('accuracyM' in data.geoFix) || data.geoFix.accuracyM == null || (data.geoFix.accuracyM is number && data.geoFix.accuracyM >= 0 && data.geoFix.accuracyM <= 100000)) &&
+          (!('headingDeg' in data.geoFix) || data.geoFix.headingDeg == null || (data.geoFix.headingDeg is number && data.geoFix.headingDeg >= 0 && data.geoFix.headingDeg <= 360)) &&
+          (!('speedMps' in data.geoFix) || data.geoFix.speedMps == null || (data.geoFix.speedMps is number && data.geoFix.speedMps >= 0 && data.geoFix.speedMps <= 100000)) &&
+          (!('capturedAt' in data.geoFix) || data.geoFix.capturedAt is timestamp || (data.geoFix.capturedAt is string && data.geoFix.capturedAt.size() <= 64)) &&
+          (!('source' in data.geoFix) || (data.geoFix.source is string && data.geoFix.source.size() <= 64)) &&
+          (!('srid' in data.geoFix) || data.geoFix.srid == 'EPSG:4326') &&
+          (!('utm' in data.geoFix) || (
+            data.geoFix.utm is map &&
+            data.geoFix.utm.keys().size() <= 12 &&
+            (!('zone' in data.geoFix.utm) || (data.geoFix.utm.zone is int && data.geoFix.utm.zone >= 1 && data.geoFix.utm.zone <= 60)) &&
+            (!('band' in data.geoFix.utm) || (data.geoFix.utm.band is string && data.geoFix.utm.band.size() <= 8)) &&
+            (!('hemisphere' in data.geoFix.utm) || data.geoFix.utm.hemisphere in ['N', 'S']) &&
+            (!('eastingM' in data.geoFix.utm) || (data.geoFix.utm.eastingM is number && data.geoFix.utm.eastingM >= 0 && data.geoFix.utm.eastingM <= 1000000)) &&
+            (!('northingM' in data.geoFix.utm) || (data.geoFix.utm.northingM is number && data.geoFix.utm.northingM >= 0 && data.geoFix.utm.northingM <= 10000000)) &&
+            (!('datum' in data.geoFix.utm) || (data.geoFix.utm.datum is string && data.geoFix.utm.datum.size() <= 32)) &&
+            (!('epsg' in data.geoFix.utm) || (data.geoFix.utm.epsg is string && data.geoFix.utm.epsg.size() <= 32)) &&
+            (!('formatted' in data.geoFix.utm) || (data.geoFix.utm.formatted is string && data.geoFix.utm.formatted.size() <= 128))
+          ))
+        )) &&
+        (!('corporateLogo' in data) || data.corporateLogo == null || (
+          data.corporateLogo is map &&
+          data.corporateLogo.keys().size() <= 12 &&
+          'sha256' in data.corporateLogo && data.corporateLogo.sha256 is string && data.corporateLogo.sha256.size() == 64 && data.corporateLogo.sha256.matches('^[a-f0-9]{64}$') &&
+          'downloadUrl' in data.corporateLogo && data.corporateLogo.downloadUrl is string && data.corporateLogo.downloadUrl.size() > 0 && data.corporateLogo.downloadUrl.size() <= 512 && data.corporateLogo.downloadUrl.matches('^(/api/media/|https://).*') &&
+          'mimeType' in data.corporateLogo && data.corporateLogo.mimeType is string && data.corporateLogo.mimeType.size() > 0 && data.corporateLogo.mimeType.size() <= 64 &&
+          'originalBytes' in data.corporateLogo && data.corporateLogo.originalBytes is number && data.corporateLogo.originalBytes >= 0 && data.corporateLogo.originalBytes <= 104857600 &&
+          'optimizedBytes' in data.corporateLogo && data.corporateLogo.optimizedBytes is number && data.corporateLogo.optimizedBytes >= 0 && data.corporateLogo.optimizedBytes <= 20971520 &&
+          'savingsPct' in data.corporateLogo && data.corporateLogo.savingsPct is number && data.corporateLogo.savingsPct >= 0 && data.corporateLogo.savingsPct <= 100 &&
+          (!('profile' in data.corporateLogo) || data.corporateLogo.profile in ['IMAGE_ISO_SYMBOL', 'VECTOR_SVG_CLEAN']) &&
+          (!('extension' in data.corporateLogo) || (data.corporateLogo.extension is string && data.corporateLogo.extension.size() <= 16)) &&
+          (!('updatedAt' in data.corporateLogo) || data.corporateLogo.updatedAt is number || data.corporateLogo.updatedAt is timestamp || (data.corporateLogo.updatedAt is string && data.corporateLogo.updatedAt.size() <= 64))
+        )) &&
+        (!('coBrandingLogoUrl' in data) || data.coBrandingLogoUrl == null || (
+          data.coBrandingLogoUrl is string &&
+          data.coBrandingLogoUrl.size() <= 512 &&
+          (data.coBrandingLogoUrl == '' || data.coBrandingLogoUrl.matches('^(/api/media/|https://).*'))
+        ));
     }
 
     // Validador estructural y prevención de DoS para colecciones técnicas OPERMAQ / Plan Maestro v4.0
@@ -278,6 +397,91 @@ service cloud.firestore {
         (!('observations' in data) || data.observations == null || (data.observations is string && data.observations.size() <= 10000)) &&
         (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 10000)) &&
         (!('messages' in data) || data.messages == null || (data.messages is list && data.messages.size() <= 500));
+    }
+
+    // Validador de dominio para Anillo A (/accounts/{accountId}/manufacturer_contacts/{contactId})
+    function isValidManufacturerContactPayload(data, accountId, contactId) {
+      return isBoundedPayload(data) &&
+        data.keys().hasOnly([
+          'contactId',
+          'tenantId',
+          'supplierKey',
+          'manufacturerKey',
+          'distributorName',
+          'areaName',
+          'areaKey',
+          'contactLabel',
+          'channelType',
+          'cityRegion',
+          'phone',
+          'emailOrWeb',
+          'notes',
+          'createdByUid',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        ('tenantId' in data && data.tenantId is string && data.tenantId == accountId) &&
+        (!('contactId' in data) || (data.contactId is string && data.contactId.size() > 0 && data.contactId.size() <= 256 && data.contactId == contactId)) &&
+        (!('supplierKey' in data) || data.supplierKey == null || (data.supplierKey is string && data.supplierKey.size() <= 120)) &&
+        (!('manufacturerKey' in data) || data.manufacturerKey == null || (data.manufacturerKey is string && data.manufacturerKey.size() <= 120)) &&
+        (!('distributorName' in data) || data.distributorName == null || (data.distributorName is string && data.distributorName.size() <= 180)) &&
+        (!('areaName' in data) || data.areaName == null || (data.areaName is string && data.areaName.size() <= 120)) &&
+        (!('areaKey' in data) || data.areaKey == null || (data.areaKey is string && data.areaKey.size() <= 120)) &&
+        (!('contactLabel' in data) || data.contactLabel == null || (data.contactLabel is string && data.contactLabel.size() <= 160)) &&
+        (!('channelType' in data) || data.channelType == null || (data.channelType is string && data.channelType in ['NEW', 'USED', 'RENTAL', 'PARTS', 'SERVICE'])) &&
+        (!('cityRegion' in data) || data.cityRegion == null || (data.cityRegion is string && data.cityRegion.size() <= 120)) &&
+        (!('phone' in data) || data.phone == null || (data.phone is string && data.phone.size() <= 64)) &&
+        (!('emailOrWeb' in data) || data.emailOrWeb == null || (data.emailOrWeb is string && data.emailOrWeb.size() <= 512)) &&
+        (!('notes' in data) || data.notes == null || (data.notes is string && data.notes.size() <= 20000)) &&
+        (!('createdByUid' in data) || (data.createdByUid is string && data.createdByUid.size() > 0 && data.createdByUid.size() <= 128)) &&
+        (!('createdAt' in data) || data.createdAt == null || data.createdAt is timestamp || data.createdAt is number || (data.createdAt is string && data.createdAt.size() <= 64)) &&
+        (!('updatedAt' in data) || data.updatedAt == null || data.updatedAt is timestamp || data.updatedAt is number || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    // Validador de dominio para reglas privadas de facturación DTE / Ley N° 21.131 (/accounts/{accountId}/supplier_billing_rules/{supplierKey})
+    function isValidSupplierBillingRulePayload(data, accountId, ruleSupplierKey) {
+      return data is map &&
+        data.keys().hasOnly([
+          'tenantId',
+          'supplierKey',
+          'requiresPurchaseOrder801',
+          'requiresContract803',
+          'requiresDispatchGuide52',
+          'requiresReceptionTokenType',
+          'defaultFormaPagoDte',
+          'paymentTermDays',
+          'hasExceptionalPaymentAgreement',
+          'exceptionalAgreementNote',
+          'dteClaimWindowDays',
+          'rcvClaimAlertEmail',
+          'allowFactoringCesion',
+          'billingPortalUrl',
+          'remittanceEmail',
+          'defaultCentroCosto',
+          'notes',
+          'updatedByUid',
+          'updatedAt'
+        ]) &&
+        ('tenantId' in data && data.tenantId is string && data.tenantId.size() > 0 && data.tenantId.size() <= 128 && data.tenantId == accountId) &&
+        ('supplierKey' in data && data.supplierKey is string && data.supplierKey.size() > 0 && data.supplierKey.size() <= 120 && data.supplierKey == ruleSupplierKey) &&
+        ('requiresPurchaseOrder801' in data && data.requiresPurchaseOrder801 is bool) &&
+        ('requiresContract803' in data && data.requiresContract803 is bool) &&
+        ('requiresDispatchGuide52' in data && data.requiresDispatchGuide52 is bool) &&
+        ('requiresReceptionTokenType' in data && data.requiresReceptionTokenType is string && data.requiresReceptionTokenType in ['NONE', 'HES', 'HEM', 'HAS']) &&
+        ('defaultFormaPagoDte' in data && data.defaultFormaPagoDte is int && data.defaultFormaPagoDte in [1, 2, 3]) &&
+        ('paymentTermDays' in data && data.paymentTermDays is int && data.paymentTermDays >= 0 && data.paymentTermDays <= 365) &&
+        ('hasExceptionalPaymentAgreement' in data && data.hasExceptionalPaymentAgreement is bool) &&
+        (data.paymentTermDays <= 30 || data.hasExceptionalPaymentAgreement == true) &&
+        ('dteClaimWindowDays' in data && data.dteClaimWindowDays is int && data.dteClaimWindowDays >= 1 && data.dteClaimWindowDays <= 8) &&
+        ('allowFactoringCesion' in data && data.allowFactoringCesion is bool) &&
+        ('updatedAt' in data && data.updatedAt is int && data.updatedAt >= 0) &&
+        (!('exceptionalAgreementNote' in data) || data.exceptionalAgreementNote == null || (data.exceptionalAgreementNote is string && data.exceptionalAgreementNote.size() <= 240)) &&
+        (!('rcvClaimAlertEmail' in data) || data.rcvClaimAlertEmail == null || (data.rcvClaimAlertEmail is string && data.rcvClaimAlertEmail.size() <= 180)) &&
+        (!('billingPortalUrl' in data) || data.billingPortalUrl == null || (data.billingPortalUrl is string && data.billingPortalUrl.size() <= 512)) &&
+        (!('remittanceEmail' in data) || data.remittanceEmail == null || (data.remittanceEmail is string && data.remittanceEmail.size() <= 180)) &&
+        (!('defaultCentroCosto' in data) || data.defaultCentroCosto == null || (data.defaultCentroCosto is string && data.defaultCentroCosto.size() <= 80)) &&
+        (!('notes' in data) || data.notes == null || (data.notes is string && data.notes.size() <= 800)) &&
+        (!('updatedByUid' in data) || data.updatedByUid == null || (data.updatedByUid is string && data.updatedByUid.size() <= 128));
     }
 
     // ===============================================================
@@ -333,6 +537,7 @@ service cloud.firestore {
             'preferredLanguage',
             'language',
             'theme',
+            'lastActiveAccountId',
             'updatedAt',
             'lastLoginAt'
           ])
@@ -371,6 +576,16 @@ service cloud.firestore {
 
     // Challenges y metadatos criptográficos de gateway DEV_ROOT (Exclusivo Admin SDK)
     match /dev_challenges/{challengeId} {
+      allow read, write: if false;
+    }
+
+    // Desafíos OTP de acceso 3 pasos en escritorio (Exclusivo Admin SDK)
+    match /auth_otp_challenges/{challengeId} {
+      allow read, write: if false;
+    }
+
+    // Tokens de configuración inicial de contraseña (Exclusivo Admin SDK)
+    match /setup_tokens/{tokenId} {
       allow read, write: if false;
     }
 
@@ -436,10 +651,13 @@ service cloud.firestore {
       // Alta exclusiva por servidor (/api/auth/register Admin SDK) o Super Admin / DevRoot
       allow create: if isAdmin() && isValidAccountPayload(request.resource.data);
 
-      // Bloquea alteración cliente de contract, licensing, status, enabledPlugins y ownerId
+      // Bloquea alteración cliente de contract, licensing, status, enabledPlugins, ownerId y cuentas sandbox 5º EDU
       allow update: if isValidAccountPayload(request.resource.data) && (
         isAdmin() ||
         (
+          !('isEduSandbox' in resource.data && resource.data.isEduSandbox == true) &&
+          !('classification' in resource.data && resource.data.classification in ['edu', 'educational']) &&
+          !('type' in resource.data && resource.data.type == 'EDUCATIONAL') &&
           (
             ('ownerId' in resource.data && resource.data.ownerId == request.auth.uid) ||
             isAccountAdmin(accountId)
@@ -466,7 +684,10 @@ service cloud.firestore {
             'giro',
             'activity',
             'branding',
+            'corporateLogo',
+            'coBrandingLogoUrl',
             'operationalSettings',
+            'geoFix',
             'updatedAt'
           ])
         ) ||
@@ -487,30 +708,66 @@ service cloud.firestore {
 
       allow delete: if isAdmin() && accountId != 'dev-master-sandbox';
 
-      // Subcolección: Perfiles de Cargo por Cuenta
+      // Subcolección: Perfiles de Cargo por Cuenta (Bloqueo total cliente)
       match /job_profiles/{profileId} {
-        allow read: if isAccountMember(accountId);
-        allow create, update: if isAccountMember(accountId) && isBoundedPayload(request.resource.data);
-        allow delete: if isAccountAdmin(accountId) || isAccountMember(accountId);
+        allow read, write: if false;
       }
 
-      // Subcolección: Miembros Internos (Cierra bypass EDU validando licensing.allowInternalUsers)
+      // Subcolección: Miembros Internos (Lectura titular/cuenta/Admin; mutación exclusiva Admin SDK vía /api/staff/members)
       match /members/{memberId} {
         allow read: if isAuthenticated() && (
           request.auth.uid == memberId ||
           isAccountMember(accountId) ||
           isAdmin()
         );
-        allow create, update: if isBoundedPayload(request.resource.data) && (
-          isAdmin() ||
-          (
-            isAccountAdmin(accountId) &&
-            accountAllowsInternalUsers(accountId) &&
-            (!('role' in request.resource.data) ||
-              !(request.resource.data.role in ['DEV_ROOT', 'SUPER_ADMIN', 'TEST_PILOT', 'PILOT_LEAD']))
-          )
-        );
-        allow delete: if isAdmin() || isAccountAdmin(accountId);
+        allow write: if false;
+      }
+
+      // Subcolección: Telemetría Atómica por Cliente y Periodo (Escritura exclusiva Admin SDK)
+      match /metrics/{periodId} {
+        allow read: if isAccountMember(accountId) || isAdmin();
+        allow write: if false;
+      }
+
+      // Subcolección Anillo A — Agenda Privada Multi-Tenant Offline-First (OPERMAQ · FABRICANTES v2.0, Ley N° 21.719)
+      match /manufacturer_contacts/{contactId} {
+        allow read: if isAccountMember(accountId);
+        allow create: if isAccountMember(accountId) &&
+          isValidManufacturerContactPayload(request.resource.data, accountId, contactId) &&
+          !(('isEduSandbox' in request.auth.token) && request.auth.token.isEduSandbox == true) &&
+          !isCallerEduRoleOrClassification() &&
+          !isAccountEduSandbox(accountId) &&
+          ('tenantId' in request.resource.data && request.resource.data.tenantId == accountId) &&
+          ('contactId' in request.resource.data && request.resource.data.contactId is string && request.resource.data.contactId == contactId) &&
+          ('createdByUid' in request.resource.data && request.resource.data.createdByUid == request.auth.uid);
+        allow update: if isAccountMember(accountId) &&
+          isValidManufacturerContactPayload(request.resource.data, accountId, contactId) &&
+          !(('isEduSandbox' in request.auth.token) && request.auth.token.isEduSandbox == true) &&
+          !isCallerEduRoleOrClassification() &&
+          !isAccountEduSandbox(accountId) &&
+          ('tenantId' in request.resource.data && request.resource.data.tenantId == accountId) &&
+          ('tenantId' in resource.data && resource.data.tenantId == accountId) &&
+          (!('contactId' in resource.data) || ('contactId' in request.resource.data && request.resource.data.contactId == resource.data.contactId)) &&
+          (!('createdByUid' in resource.data) || ('createdByUid' in request.resource.data && request.resource.data.createdByUid == resource.data.createdByUid)) &&
+          (!('createdAt' in resource.data) || ('createdAt' in request.resource.data && request.resource.data.createdAt == resource.data.createdAt));
+        allow delete: if isAccountMember(accountId) &&
+          !(('isEduSandbox' in request.auth.token) && request.auth.token.isEduSandbox == true) &&
+          !isCallerEduRoleOrClassification() &&
+          !isAccountEduSandbox(accountId);
+      }
+
+      // Subcolección Privada Multi-Tenant — Reglas de Facturación DTE, Recepción y Pago Ley N° 21.131 (OPERMAQ · PROVEEDORES, Ley N° 21.719)
+      match /supplier_billing_rules/{supplierKey} {
+        allow read: if isAccountMember(accountId);
+        allow create, update: if isAccountMember(accountId) &&
+          !(('isEduSandbox' in request.auth.token) && request.auth.token.isEduSandbox == true) &&
+          !isCallerEduRoleOrClassification() &&
+          !isAccountEduSandbox(accountId) &&
+          isValidSupplierBillingRulePayload(request.resource.data, accountId, supplierKey);
+        allow delete: if isAccountMember(accountId) &&
+          !(('isEduSandbox' in request.auth.token) && request.auth.token.isEduSandbox == true) &&
+          !isCallerEduRoleOrClassification() &&
+          !isAccountEduSandbox(accountId);
       }
     }
 
@@ -531,11 +788,17 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
-    // Configuración Global y Activos Visuales UI
+    // Telemetría separada de cuentas académicas EDU (Lectura DEV_ROOT / SUPER_ADMIN, Escritura exclusiva Admin SDK)
+    match /edu_metrics/{metricId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Configuración Global y Activos Visuales UI (settings/branding 100% server-authoritative vía Admin SDK)
     match /settings/{settingId} {
       allow read: if settingId in ['branding', 'ui_assets'] || isAdmin();
-      allow create, update: if isAdmin() && isBoundedPayload(request.resource.data);
-      allow delete: if isAdmin();
+      allow create, update: if settingId != 'branding' && isAdmin() && isBoundedPayload(request.resource.data);
+      allow delete: if settingId != 'branding' && isAdmin();
     }
 
     match /system/brand_config {
@@ -548,6 +811,12 @@ service cloud.firestore {
       allow read: if true;
       allow create, update: if isAdmin() && isBoundedPayload(request.resource.data);
       allow delete: if isAdmin();
+    }
+
+    // Padrón de Instituciones Académicas Acreditadas EDU (Listado público vía backend GET /api/auth/access/edu-institutions; mutación exclusiva Admin SDK con "ACTUALIZAR" + AuditLedger)
+    match /edu_institutions/{institutionId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
     }
 
     // ===============================================================
@@ -578,7 +847,7 @@ service cloud.firestore {
     }
 
     match /pilot_feedback/{feedbackId} {
-      allow read: if isSystemPrivileged() || (
+      allow read: if isDevRoot() || (
         isAuthenticated() &&
         resource != null &&
         'authorUid' in resource.data &&
@@ -590,7 +859,7 @@ service cloud.firestore {
         'status' in request.resource.data &&
         request.resource.data.status == 'OPEN' &&
         isBoundedPayload(request.resource.data);
-      allow update: if (isDevRoot() || isSuperAdmin()) && isBoundedPayload(request.resource.data);
+      allow update: if isDevRoot() && isBoundedPayload(request.resource.data);
       allow delete: if isDevRoot();
     }
 
@@ -604,14 +873,13 @@ service cloud.firestore {
           isSystemPrivileged() ||
           (docTenantId(request.resource.data) is string && isAccountMember(docTenantId(request.resource.data)))
         );
-      allow update: if isSystemPrivileged() && isBoundedPayload(request.resource.data);
-      allow delete: if isSystemPrivileged();
+      allow update: if isDevRoot() && isBoundedPayload(request.resource.data);
+      allow delete: if isDevRoot();
     }
 
     match /ai_inference_cache/{cacheKey} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAdmin() && isBoundedPayload(request.resource.data);
-      allow delete: if isAdmin();
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // Caché server-only de descubrimiento IA fundamentado (OPERMAQ v3.0 — Admin SDK southamerica-west1)
@@ -624,15 +892,10 @@ service cloud.firestore {
     // 6. Ledgers Criptográficos Inmutables (Append-Only Estricto)
     // ===============================================================
 
+    // Cadena SHA-256 verificable (Escritura exclusiva Admin SDK servidor; lectura sin cruce entre tenants)
     match /audit_ledger/{logId} {
-      allow read: if isAdmin() || (isAuthenticated() && canReadTenantDoc(resource.data));
-      allow create: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isAdmin() ||
-          (docTenantId(request.resource.data) is string && isAccountMember(docTenantId(request.resource.data)))
-        );
-      allow update, delete: if false;
+      allow read: if isAdmin() || (isAuthenticated() && canReadTenantAuditDoc(resource.data));
+      allow create, update, delete: if false;
     }
 
     match /event_ledger/{eventId} {
@@ -680,8 +943,8 @@ service cloud.firestore {
           )
         );
       allow delete: if isAuthenticated() && (
-        isSystemPrivileged() ||
-        (docTenantId(resource.data) is string && isAccountMember(docTenantId(resource.data)))
+        isAdmin() ||
+        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
       );
     }
 
@@ -704,8 +967,8 @@ service cloud.firestore {
           )
         );
       allow delete: if isAuthenticated() && (
-        isSystemPrivileged() ||
-        (docTenantId(resource.data) is string && isAccountMember(docTenantId(resource.data)))
+        isAdmin() ||
+        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
       );
     }
 
@@ -732,8 +995,8 @@ service cloud.firestore {
           )
         );
       allow delete: if isAuthenticated() && (
-        isSystemPrivileged() ||
-        (docTenantId(resource.data) is string && isAccountMember(docTenantId(resource.data)))
+        isAdmin() ||
+        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
       );
 
       // Subcolecciones de evidencia/ítems de inspección aisladas por el tenant padre o propio
@@ -780,12 +1043,15 @@ service cloud.firestore {
             )
           );
         allow delete: if isAuthenticated() && (
-          isSystemPrivileged() ||
-          (docTenantId(resource.data) is string && isAccountMember(docTenantId(resource.data))) ||
+          isAdmin() ||
+          (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data))) ||
           (
+            !('tenantId' in resource.data) &&
+            !('tenant_id' in resource.data) &&
+            !('accountId' in resource.data) &&
             exists(/databases/$(database)/documents/inspections/$(inspectionId)) &&
             docTenantId(get(/databases/$(database)/documents/inspections/$(inspectionId)).data) is string &&
-            isAccountMember(docTenantId(get(/databases/$(database)/documents/inspections/$(inspectionId)).data))
+            isTenantAdminOrOwner(docTenantId(get(/databases/$(database)/documents/inspections/$(inspectionId)).data))
           )
         );
       }
@@ -810,8 +1076,8 @@ service cloud.firestore {
           )
         );
       allow delete: if isAuthenticated() && (
-        isSystemPrivileged() ||
-        (docTenantId(resource.data) is string && isAccountMember(docTenantId(resource.data)))
+        isAdmin() ||
+        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
       );
     }
 
@@ -834,8 +1100,8 @@ service cloud.firestore {
           )
         );
       allow delete: if isAuthenticated() && (
-        isSystemPrivileged() ||
-        (docTenantId(resource.data) is string && isAccountMember(docTenantId(resource.data)))
+        isAdmin() ||
+        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
       );
     }
 
@@ -858,8 +1124,8 @@ service cloud.firestore {
           )
         );
       allow delete: if isAuthenticated() && (
-        isSystemPrivileged() ||
-        (docTenantId(resource.data) is string && isAccountMember(docTenantId(resource.data)))
+        isAdmin() ||
+        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
       );
     }
 
@@ -882,12 +1148,52 @@ service cloud.firestore {
           )
         );
       allow delete: if isAuthenticated() && (
-        isSystemPrivileged() ||
-        (docTenantId(resource.data) is string && isAccountMember(docTenantId(resource.data)))
+        isAdmin() ||
+        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
       );
+
+      // Subcolección de mediciones GEOLAPP aislada por tenant propio y del acopio padre
+      match /measurements/{measId} {
+        allow read: if isAuthenticated() && (
+          isSystemPrivileged() ||
+          canReadTenantDoc(resource.data) ||
+          (
+            exists(/databases/$(database)/documents/stockpiles/$(stkId)) &&
+            canReadTenantDoc(get(/databases/$(database)/documents/stockpiles/$(stkId)).data)
+          )
+        );
+        allow create: if isAuthenticated() &&
+          isBoundedPayload(request.resource.data) &&
+          (
+            isSystemPrivileged() ||
+            (
+              docTenantId(request.resource.data) is string &&
+              isAccountMember(docTenantId(request.resource.data)) &&
+              (
+                !exists(/databases/$(database)/documents/stockpiles/$(stkId)) ||
+                docTenantId(request.resource.data) == docTenantId(get(/databases/$(database)/documents/stockpiles/$(stkId)).data)
+              )
+            )
+          );
+        allow update: if isAuthenticated() &&
+          isBoundedPayload(request.resource.data) &&
+          (
+            isSystemPrivileged() ||
+            (
+              docTenantId(resource.data) is string &&
+              isAccountMember(docTenantId(resource.data)) &&
+              docTenantId(request.resource.data) == docTenantId(resource.data)
+            )
+          );
+        allow delete: if isAuthenticated() && (
+          isAdmin() ||
+          (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
+        );
+      }
     }
 
-    match /financial_events/{eventId} {
+    // Registros geológicos multi-tenant GEOLAPP® (GEOMENSURA_GEO, EXPLORACION_SONDAJES, ESTRUCTURAL_HIDRO)
+    match /geolapp_records/{recordId} {
       allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
       allow create: if isAuthenticated() &&
         isBoundedPayload(request.resource.data) &&
@@ -906,9 +1212,24 @@ service cloud.firestore {
           )
         );
       allow delete: if isAuthenticated() && (
-        isSystemPrivileged() ||
-        (docTenantId(resource.data) is string && isAccountMember(docTenantId(resource.data)))
+        isAdmin() ||
+        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
       );
+    }
+
+    // Eventos financieros multi-tenant (Append-Only estricto; alta exclusiva Admin/Owner de cuenta, cero edición/borrado)
+    match /financial_events/{eventId} {
+      allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
+      allow create: if isAuthenticated() &&
+        isBoundedPayload(request.resource.data) &&
+        (
+          isAdmin() ||
+          (
+            docTenantId(request.resource.data) is string &&
+            hasAccountAdminPrivilege(docTenantId(request.resource.data))
+          )
+        );
+      allow update, delete: if false;
     }
 
     match /job_profiles/{profileId} {
@@ -930,8 +1251,8 @@ service cloud.firestore {
           )
         );
       allow delete: if isAuthenticated() && (
-        isSystemPrivileged() ||
-        (docTenantId(resource.data) is string && isAccountMember(docTenantId(resource.data)))
+        isAdmin() ||
+        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
       );
     }
 
@@ -954,8 +1275,8 @@ service cloud.firestore {
           )
         );
       allow delete: if isAuthenticated() && (
-        isSystemPrivileged() ||
-        (docTenantId(resource.data) is string && isAccountMember(docTenantId(resource.data)))
+        isAdmin() ||
+        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
       );
     }
 
@@ -978,8 +1299,8 @@ service cloud.firestore {
           )
         );
       allow delete: if isAuthenticated() && (
-        isSystemPrivileged() ||
-        (docTenantId(resource.data) is string && isAccountMember(docTenantId(resource.data)))
+        isAdmin() ||
+        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
       );
     }
 
@@ -1002,8 +1323,8 @@ service cloud.firestore {
           )
         );
       allow delete: if isAuthenticated() && (
-        isSystemPrivileged() ||
-        (docTenantId(resource.data) is string && isAccountMember(docTenantId(resource.data)))
+        isAdmin() ||
+        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
       );
     }
 
@@ -1027,9 +1348,19 @@ service cloud.firestore {
           )
         );
       allow delete: if isAuthenticated() && (
-        isSystemPrivileged() ||
-        (docTenantId(resource.data) is string && isAccountMember(docTenantId(resource.data)))
+        isAdmin() ||
+        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
       );
+    }
+
+    // Solicitudes operativas de onboarding de equipos (Lectura multi-tenant/privilegiada; escritura exclusiva Admin SDK)
+    match /equipment_onboarding_requests/{requestId} {
+      allow read: if isAuthenticated() && (
+        isSystemPrivileged() ||
+        isAdmin() ||
+        canReadTenantDoc(resource.data)
+      );
+      allow write: if false;
     }
 
     // ===============================================================
@@ -1241,6 +1572,33 @@ service cloud.firestore {
     }
 
     // ===============================================================
+    // 8.1 OPERMAQ · FABRICANTES — Modelo Unificado y Aportes Comunitarios
+    // ===============================================================
+
+    // Maestra global de fabricantes Zero-Preset (mutación exclusiva Admin SDK tras HITL "ACTUALIZAR" + AuditLedger)
+    match /global_manufacturers/{manufacturerId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // Entidad comercial única multimarca con representations[] unificadas (mutación exclusiva Admin SDK / HITL "ACTUALIZAR")
+    match /global_suppliers/{supplierId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // Legado sellado (modelo unificado en /global_suppliers.representations[])
+    match /supplier_channel_rules/{ruleId} {
+      allow read, write: if false;
+    }
+
+    // Cola de aportes comunitarios moderados bajo Ley N° 19.628 / N° 21.719 (lectura exclusiva 1º DEV / 2º ADMIN; recepción backend ConfidentialityAirlockService + bloqueo 5º EDU)
+    match /supplier_contact_contributions/{contributionId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // ===============================================================
     // 9. Colecciones Legacy Blindadas (Lectura Auth, Escritura Privilegiada)
     // ===============================================================
 
@@ -1278,6 +1636,22 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create, update: if isSystemPrivileged() && isBoundedPayload(request.resource.data);
       allow delete: if isSystemPrivileged();
+    }
+
+    // ===============================================================
+    // Bloque Atómico 3.2 — Núcleo Geoespacial Multi-Dispositivo
+    // ===============================================================
+
+    // Caché determinista SHA-256 de geocodificación directa/inversa (Cloud Run / Admin SDK, expiresAt TTL 30 días)
+    match /geo_resolve_cache/{cacheKey} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Sellos georreferenciados auditables inmutables (POST /api/geo/report-stamp; accountId / tenantId, stampHashSha256, retención legal 6 años)
+    match /geo_report_stamps/{stampId} {
+      allow read: if isAdmin() || (isAuthenticated() && canReadTenantDoc(resource.data));
+      allow create, update, delete: if false;
     }
 
     // ===============================================================

@@ -427,6 +427,29 @@ export class MediaDigestorServer {
     ): Promise<DigestedBinaryOutput> {
         const lowerMime = (mimeType || '').toLowerCase();
 
+        if (requestedProfile === 'MESH_3D_GLB' || lowerMime.includes('gltf-binary')) {
+            const isValidGlb =
+                Buffer.isBuffer(inputBuffer) &&
+                inputBuffer.length >= 12 &&
+                inputBuffer.readUInt32LE(0) === 0x46546c67 &&
+                inputBuffer.readUInt32LE(4) === 2;
+            if (!isValidGlb) {
+                throw new Error(
+                    'Binario MESH_3D_GLB invalido: cabecera magic glTF 2.0 (0x46546c67 v2) ausente o corrupta.'
+                );
+            }
+            return {
+                buffer: inputBuffer,
+                sha256: this.computeSha256Hex(inputBuffer),
+                mimeType: 'model/gltf-binary',
+                extension: 'glb',
+                profile: 'MESH_3D_GLB',
+                originalBytes: inputBuffer.length,
+                optimizedBytes: inputBuffer.length,
+                savingsRatio: 0,
+            };
+        }
+
         if (lowerMime.includes('svg') || requestedProfile === 'VECTOR_SVG_CLEAN') {
             return this.digestSvg(inputBuffer);
         }

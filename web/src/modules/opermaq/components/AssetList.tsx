@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { useTranslation } from 'react-i18next';
 import type { AssetPhysicalTraits } from '../../../contracts';
+import { ManufacturerLogoBadge, useResolvedManufacturerName } from './ManufacturerLogoBadge';
 import { syncQueueEngine } from '../../../core/offline/SyncQueueEngine';
 import { API_BASE_URL, db } from '../firebase/config';
 import {
@@ -12,11 +13,11 @@ import {
 import { authFetch } from '../utils/authFetch';
 import {
     buildEquipmentShortDescription,
-    groupEquipmentByBrandAndType,
+    groupEquipmentHierarchyByBrandAndType,
     MISSING_TECH_SPEC,
     PENDING_RECORD_SPEC,
+    resolveModelWithinBrandLabel,
 } from '../utils/opermaqDomainProjection';
-import { CatalogHomologationHitlModal } from './CatalogHomologationHitlModal';
 import { M3CircularProgress } from './M3ProgressIndicator';
 import { SecureCasThumbnail } from './SecureCasThumbnail';
 
@@ -70,6 +71,29 @@ export interface AssetListProps {
     onAddNew?: () => void;
 }
 
+const BrandSectionHeader: React.FC<{ brandLabel: string }> = ({ brandLabel }) => {
+    const displayBrand = useResolvedManufacturerName(brandLabel) || brandLabel;
+    return (
+        <div className="pb-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center gap-fib-13">
+            <ManufacturerLogoBadge make={brandLabel} variant="frameless" size="md" />
+            <h2 className="font-sans text-h1-header font-semibold uppercase tracking-[-0.01em] leading-[1.25] text-[#0F172A] dark:text-[#F3F4F6] whitespace-normal break-words">
+                {displayBrand}
+            </h2>
+        </div>
+    );
+};
+
+const SubgroupSectionHeader: React.FC<{ title: string; count: number }> = ({ title, count }) => (
+    <div className="pb-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] flex items-baseline justify-between gap-fib-13">
+        <h3 className="font-mono text-microcopy font-bold uppercase tracking-[0.05em] text-[#C68346] whitespace-normal break-words">
+            {title}
+        </h3>
+        <span className="font-mono tabular-nums text-microcopy text-[#475569] dark:text-[#8A93A6] shrink-0">
+            {count}
+        </span>
+    </div>
+);
+
 export const AssetList: React.FC<AssetListProps> = ({
     domainMode,
     onSelectCatalogAsset,
@@ -98,7 +122,6 @@ export const AssetList: React.FC<AssetListProps> = ({
     const [fleetError, setFleetError] = useState<string>('');
     const [searchTerm, setSearchTerm] = useState<string>('');
     const [copiedRowId, setCopiedRowId] = useState<string | null>(null);
-    const [homologatingAsset, setHomologatingAsset] = useState<CatalogListRow | null>(null);
 
     // Carga aislada de FLOTA (`tenant_assets`) — exclusivamente los equipos registrados por el usuario/cliente
     const loadTenantFleet = useCallback(async (activeTenantId: string) => {
@@ -226,14 +249,26 @@ export const AssetList: React.FC<AssetListProps> = ({
                 const cachedOffline = await syncQueueEngine.getOfflineKnowledge<FleetListRow[]>(
                     `opermaq_fleet_${activeTenantId}`
                 );
-                setFleetRows(Array.isArray(cachedOffline) ? cachedOffline : []);
+                setFleetRows(
+                    Array.isArray(cachedOffline)
+                        ? cachedOffline.map((row) => ({
+                              ...row,
+                              short_description: buildEquipmentShortDescription(row),
+                          }))
+                        : []
+                );
             }
         } catch (err: unknown) {
             const cachedOffline = await syncQueueEngine
                 .getOfflineKnowledge<FleetListRow[]>(`opermaq_fleet_${activeTenantId}`)
                 .catch(() => null);
             if (Array.isArray(cachedOffline) && cachedOffline.length > 0) {
-                setFleetRows(cachedOffline);
+                setFleetRows(
+                    cachedOffline.map((row) => ({
+                        ...row,
+                        short_description: buildEquipmentShortDescription(row),
+                    }))
+                );
             } else {
                 setFleetRows([]);
                 setFleetError(
@@ -300,7 +335,14 @@ export const AssetList: React.FC<AssetListProps> = ({
                     .getOfflineKnowledge<CatalogListRow[]>('opermaq_catalog_index_v3')
                     .catch(() => null);
                 if (!cancelled) {
-                    setCatalogRows(Array.isArray(cachedCatalog) ? cachedCatalog : []);
+                    setCatalogRows(
+                        Array.isArray(cachedCatalog)
+                            ? cachedCatalog.map((row) => ({
+                                  ...row,
+                                  short_description: buildEquipmentShortDescription(row),
+                              }))
+                            : []
+                    );
                     setCatalogLoading(false);
                 }
             }
@@ -331,7 +373,7 @@ export const AssetList: React.FC<AssetListProps> = ({
                     .toLowerCase()
                     .includes(normalizedQuery)
             );
-        return groupEquipmentByBrandAndType(filtered);
+        return groupEquipmentHierarchyByBrandAndType(filtered);
     }, [catalogRows, normalizedQuery]);
 
     const groupedFleet = useMemo(() => {
@@ -352,13 +394,13 @@ export const AssetList: React.FC<AssetListProps> = ({
                     .toLowerCase()
                     .includes(normalizedQuery)
             );
-        return groupEquipmentByBrandAndType(filtered);
+        return groupEquipmentHierarchyByBrandAndType(filtered);
     }, [fleetRows, normalizedQuery]);
 
     const totalVisibleCount =
         effectiveMode === 'CATALOG'
-            ? groupedCatalog.reduce((acc, g) => acc + g.items.length, 0)
-            : groupedFleet.reduce((acc, g) => acc + g.items.length, 0);
+            ? groupedCatalog.reduce((acc, g) => acc + g.totalCount, 0)
+            : groupedFleet.reduce((acc, g) => acc + g.totalCount, 0);
 
     const isLoading = effectiveMode === 'CATALOG' ? catalogLoading : fleetLoading;
 
@@ -379,11 +421,42 @@ export const AssetList: React.FC<AssetListProps> = ({
     const flatIconBtn =
         'bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none shadow-none flex items-center justify-center';
 
+    const renderConciseDescription = (shortDesc: string) => {
+        const trimmed = String(shortDesc || '').trim();
+        if (!trimmed || trimmed === MISSING_TECH_SPEC || trimmed.startsWith('[')) {
+            return (
+                <div className="mt-[2px] text-[0.8125rem] font-mono leading-[1.35] text-[#94A3B8] dark:text-[#5A6072]">
+                    {trimmed || MISSING_TECH_SPEC}
+                </div>
+            );
+        }
+
+        const segments = trimmed
+            .split(' · ')
+            .map((seg) => seg.trim())
+            .filter(Boolean);
+
+        return (
+            <div className="flex flex-wrap items-center gap-x-[8px] gap-y-[2px] mt-[2px] text-[0.8125rem] sm:text-[0.875rem] font-mono tabular-nums leading-[1.35] text-[#475569] dark:text-[#8A93A6]">
+                {segments.map((seg, idx) => (
+                    <React.Fragment key={`${idx}-${seg}`}>
+                        {idx > 0 && (
+                            <span className="text-[#94A3B8] dark:text-[#5A6072]" aria-hidden="true">
+                                ·
+                            </span>
+                        )}
+                        <span className="whitespace-nowrap max-w-full truncate">{seg}</span>
+                    </React.Fragment>
+                ))}
+            </div>
+        );
+    };
+
     return (
         <div className="flex flex-col h-full bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-sans select-none rounded-none shadow-none">
             {/* Única Barra Superior Minimalista (Cero Duplicación, Cero Botones con Texto Adosado) */}
-            <header className="h-12 px-[21px] border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-between gap-[21px] shrink-0">
-                <h1 className="text-[12px] font-mono font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6] shrink-0">
+            <header className="h-12 px-[13px] sm:px-[21px] border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-between gap-[13px] sm:gap-[21px] shrink-0">
+                <h1 className="text-[0.8125rem] font-mono font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6] shrink-0">
                     {effectiveMode === 'CATALOG'
                         ? t('opermaq_domains.catalog_title')
                         : t('opermaq_domains.fleet_title')}
@@ -444,9 +517,9 @@ export const AssetList: React.FC<AssetListProps> = ({
             </header>
 
             {/* Lista Limpia Ordenada por Marca y Tipo de Maquinaria (Cero Cajas, Cero Adornos) */}
-            <div className="flex-1 overflow-y-auto px-[21px] py-[21px]">
+            <div className="flex-1 overflow-y-auto px-[13px] sm:px-[21px] py-[21px]">
                 {fleetError && effectiveMode === 'FLEET' && (
-                    <div className="mb-[21px] py-[8px] border-b border-[#C68346] text-[12px] font-mono text-[#0F172A] dark:text-[#F3F4F6]">
+                    <div className="mb-[21px] py-[8px] border-b border-[#C68346] text-[0.8125rem] font-mono text-[#0F172A] dark:text-[#F3F4F6]">
                         {fleetError}
                     </div>
                 )}
@@ -456,198 +529,195 @@ export const AssetList: React.FC<AssetListProps> = ({
                         <M3CircularProgress size={24} strokeWidth={3} tone="copper" />
                     </div>
                 ) : effectiveMode === 'FLEET' && !tenantId ? (
-                    <div className="h-56 flex items-center justify-center text-[12px] font-mono text-[#475569] dark:text-[#8A93A6]">
+                    <div className="h-56 flex items-center justify-center text-[0.8125rem] font-mono text-[#475569] dark:text-[#8A93A6]">
                         {t('registration.error_select_tenant')}
                     </div>
                 ) : totalVisibleCount === 0 ? (
-                    <div className="h-56 flex items-center justify-center text-[12px] font-mono text-[#94A3B8] dark:text-[#5A6072]">
+                    <div className="h-56 flex items-center justify-center text-[0.8125rem] font-mono text-[#94A3B8] dark:text-[#5A6072]">
                         {effectiveMode === 'CATALOG'
                             ? t('opermaq_domains.empty_catalog')
                             : t('opermaq_domains.empty_fleet')}
                     </div>
                 ) : effectiveMode === 'CATALOG' ? (
-                    <div className="space-y-[34px]">
-                        {groupedCatalog.map((group) => (
-                            <section key={group.groupKey} className="rounded-none shadow-none">
-                                <div className="pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center gap-[8px] text-[11px] font-mono font-bold uppercase tracking-[0.05em]">
-                                    <span className="text-[#C68346]">{group.brandLabel}</span>
-                                    <span className="text-[#94A3B8] dark:text-[#5A6072]">·</span>
-                                    <span className="text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
-                                        {group.machineryTypeLabel}
-                                    </span>
-                                </div>
+                    <div className="space-y-fib-55">
+                        {groupedCatalog.map((brandGroup) => (
+                            <section key={brandGroup.brandKey} className="rounded-none shadow-none">
+                                <BrandSectionHeader brandLabel={brandGroup.brandLabel} />
 
-                                <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
-                                    {group.items.map((asset) => {
-                                        const officialName = `${asset.make_oficial} ${asset.model_oficial}`.trim();
-                                        return (
-                                            <div
-                                                key={asset.id}
-                                                onClick={() => {
-                                                    if (onSelectCatalogAsset) onSelectCatalogAsset(asset.id);
-                                                    else onSelectAsset?.(asset.id);
-                                                }}
-                                                className="py-[13px] hover:bg-[#F8FAFC] dark:hover:bg-[#07090D] transition-colors cursor-pointer flex items-start sm:items-center gap-[13px] [content-visibility:auto]"
-                                            >
-                                                <SecureCasThumbnail
-                                                    src={asset.foto_url}
-                                                    alt={officialName}
-                                                    fallbackIcon={
-                                                        asset.physical_traits?.material_symbol_icon ||
-                                                        'precision_manufacturing'
-                                                    }
-                                                    className="w-10 h-10 shrink-0"
-                                                />
+                                <div className="mt-fib-21 space-y-fib-21">
+                                    {brandGroup.subgroups.map((sub) => (
+                                        <div key={sub.typeKey}>
+                                            <SubgroupSectionHeader title={sub.machineryTypeLabel} count={sub.items.length} />
 
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="text-[15px] font-semibold leading-snug text-[#0F172A] dark:text-[#F3F4F6] whitespace-normal break-words">
-                                                        {officialName}
-                                                    </div>
-                                                    <div className="text-[13px] font-mono tabular-nums leading-[1.35] text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
-                                                        {asset.short_description}
-                                                    </div>
-                                                </div>
+                                            <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
+                                                {sub.items.map((asset) => {
+                                                    const modelLabel = resolveModelWithinBrandLabel(
+                                                        asset.make_oficial,
+                                                        asset.model_oficial
+                                                    );
+                                                    const fullAlt = `${asset.make_oficial} ${asset.model_oficial}`.trim();
+                                                    return (
+                                                        <div
+                                                            key={asset.id}
+                                                            onClick={() => {
+                                                                if (onSelectCatalogAsset) onSelectCatalogAsset(asset.id);
+                                                                else onSelectAsset?.(asset.id);
+                                                            }}
+                                                            className="py-fib-13 hover:bg-[#F8FAFC] dark:hover:bg-[#07090D] transition-colors cursor-pointer flex items-start sm:items-center gap-fib-13 [content-visibility:auto]"
+                                                        >
+                                                            <SecureCasThumbnail
+                                                                src={asset.foto_url}
+                                                                alt={fullAlt}
+                                                                fallbackIcon={
+                                                                    asset.physical_traits?.material_symbol_icon ||
+                                                                    'precision_manufacturing'
+                                                                }
+                                                                className="w-10 h-10 shrink-0"
+                                                            />
 
-                                                {capabilities.canCurateAI && (
-                                                    <button
-                                                        type="button"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            setHomologatingAsset(asset);
-                                                        }}
-                                                        title={t('opermaq_domains.homologate_btn_title')}
-                                                        aria-label={t('opermaq_domains.homologate_btn_title')}
-                                                        className={`${flatIconBtn} shrink-0`}
-                                                    >
-                                                        <span className="material-symbols-outlined text-[16px]">
-                                                            edit
-                                                        </span>
-                                                    </button>
-                                                )}
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="font-sans text-body-main font-semibold leading-snug text-[#0F172A] dark:text-[#F3F4F6] whitespace-normal break-words">
+                                                                    {modelLabel}
+                                                                </div>
+                                                                {renderConciseDescription(asset.short_description)}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
-                                        );
-                                    })}
+                                        </div>
+                                    ))}
                                 </div>
                             </section>
                         ))}
                     </div>
                 ) : (
-                    <div className="space-y-[34px]">
-                        {groupedFleet.map((group) => (
-                            <section key={group.groupKey} className="rounded-none shadow-none">
-                                <div className="pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center gap-[8px] text-[11px] font-mono font-bold uppercase tracking-[0.05em]">
-                                    <span className="text-[#C68346]">{group.brandLabel}</span>
-                                    <span className="text-[#94A3B8] dark:text-[#5A6072]">·</span>
-                                    <span className="text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
-                                        {group.machineryTypeLabel}
-                                    </span>
-                                </div>
+                    <div className="space-y-fib-55">
+                        {groupedFleet.map((brandGroup) => (
+                            <section key={brandGroup.brandKey} className="rounded-none shadow-none">
+                                <BrandSectionHeader brandLabel={brandGroup.brandLabel} />
 
-                                <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
-                                    {group.items.map((unit) => {
-                                        const officialName = `${unit.make_oficial} ${unit.model_oficial}`.trim();
-                                        const ownerTenant = unit.tenant_id || unit.tenantId || tenantId;
-                                        return (
-                                            <div
-                                                key={unit.id}
-                                                onClick={() => {
-                                                    if (onSelectFleetUnit) {
-                                                        onSelectFleetUnit({
-                                                            id: unit.id,
-                                                            globalAssetId: unit.global_asset_id,
-                                                        });
-                                                    } else {
-                                                        onSelectAsset?.(unit.global_asset_id || unit.id);
-                                                    }
-                                                }}
-                                                className="py-[13px] hover:bg-[#F8FAFC] dark:hover:bg-[#07090D] transition-colors cursor-pointer flex items-start sm:items-center gap-[13px] [content-visibility:auto]"
-                                            >
-                                                <SecureCasThumbnail
-                                                    src={unit.foto_url}
-                                                    alt={officialName}
-                                                    tenantId={ownerTenant}
-                                                    fallbackIcon={
-                                                        unit.physical_traits?.material_symbol_icon ||
-                                                        'precision_manufacturing'
-                                                    }
-                                                    className="w-10 h-10 shrink-0"
-                                                />
+                                <div className="mt-fib-21 space-y-fib-21">
+                                    {brandGroup.subgroups.map((sub) => (
+                                        <div key={sub.typeKey}>
+                                            <SubgroupSectionHeader title={sub.machineryTypeLabel} count={sub.items.length} />
 
-                                                <div className="flex-1 min-w-0">
-                                                    <div className="flex flex-wrap items-baseline gap-[8px] min-w-0">
-                                                        <span className="text-[15px] font-semibold leading-snug text-[#0F172A] dark:text-[#F3F4F6] whitespace-normal break-words">
-                                                            {officialName}
-                                                        </span>
-                                                        {unit.version && unit.version !== 'ESTÁNDAR' && (
-                                                            <span className="text-[11px] font-mono text-[#94A3B8] dark:text-[#5A6072] shrink-0">
-                                                                {unit.version}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                    <div className="text-[13px] font-mono tabular-nums leading-[1.35] text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
-                                                        {unit.short_description}
-                                                    </div>
-                                                </div>
+                                            <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
+                                                {sub.items.map((unit) => {
+                                                    const modelLabel = resolveModelWithinBrandLabel(
+                                                        unit.make_oficial,
+                                                        unit.model_oficial
+                                                    );
+                                                    const fullAlt = `${unit.make_oficial} ${unit.model_oficial}`.trim();
+                                                    const ownerTenant = unit.tenant_id || unit.tenantId || tenantId;
+                                                    return (
+                                                        <div
+                                                            key={unit.id}
+                                                            onClick={() => {
+                                                                if (onSelectFleetUnit) {
+                                                                    onSelectFleetUnit({
+                                                                        id: unit.id,
+                                                                        globalAssetId: unit.global_asset_id,
+                                                                    });
+                                                                } else {
+                                                                    onSelectAsset?.(unit.global_asset_id || unit.id);
+                                                                }
+                                                            }}
+                                                            className="py-fib-13 hover:bg-[#F8FAFC] dark:hover:bg-[#07090D] transition-colors cursor-pointer flex items-start sm:items-center gap-fib-13 [content-visibility:auto]"
+                                                        >
+                                                            <SecureCasThumbnail
+                                                                src={unit.foto_url}
+                                                                alt={fullAlt}
+                                                                tenantId={ownerTenant}
+                                                                fallbackIcon={
+                                                                    unit.physical_traits?.material_symbol_icon ||
+                                                                    'precision_manufacturing'
+                                                                }
+                                                                className="w-10 h-10 shrink-0"
+                                                            />
 
-                                                {/* Número de Serie Acreditativo + Copia Plana */}
-                                                <div
-                                                    className="flex items-center gap-[8px] shrink-0"
-                                                    onClick={(e) => e.stopPropagation()}
-                                                >
-                                                    <span className="text-[13px] font-mono tabular-nums font-semibold text-[#0F172A] dark:text-[#F3F4F6] select-text">
-                                                        {unit.serial_number}
-                                                    </span>
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="flex flex-wrap items-baseline gap-fib-8 min-w-0">
+                                                                    <span className="font-sans text-body-main font-semibold leading-snug text-[#0F172A] dark:text-[#F3F4F6] whitespace-normal break-words">
+                                                                        {modelLabel}
+                                                                    </span>
+                                                                    {unit.version && unit.version !== 'ESTÁNDAR' && (
+                                                                        <span className="text-microcopy font-mono text-[#94A3B8] dark:text-[#5A6072] shrink-0">
+                                                                            {unit.version}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
 
-                                                    <button
-                                                        type="button"
-                                                        onClick={(e) =>
-                                                            void handleCopySerial(e, unit.id, unit.serial_number)
-                                                        }
-                                                        title={
-                                                            copiedRowId === unit.id
-                                                                ? t('opermaq_domains.copied')
-                                                                : t('opermaq_domains.copy_serial')
-                                                        }
-                                                        aria-label={t('opermaq_domains.copy_serial')}
-                                                        className={flatIconBtn}
-                                                    >
-                                                        <span className="material-symbols-outlined text-[15px]">
-                                                            {copiedRowId === unit.id ? 'check' : 'content_copy'}
-                                                        </span>
-                                                    </button>
-                                                </div>
+                                                                {/* Fila compacta móvil (< sm) para N° de Serie + Copia sin aplastar el título ni la descripción */}
+                                                                <div
+                                                                    className="flex sm:hidden items-center gap-fib-8 mt-[2px] min-w-0"
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                >
+                                                                    <span className="text-[0.8125rem] font-mono tabular-nums font-semibold text-[#0F172A] dark:text-[#F3F4F6] select-text truncate">
+                                                                        {unit.serial_number}
+                                                                    </span>
+
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={(e) =>
+                                                                            void handleCopySerial(e, unit.id, unit.serial_number)
+                                                                        }
+                                                                        title={
+                                                                            copiedRowId === unit.id
+                                                                                ? t('opermaq_domains.copied')
+                                                                                : t('opermaq_domains.copy_serial')
+                                                                        }
+                                                                        aria-label={t('opermaq_domains.copy_serial')}
+                                                                        className={flatIconBtn}
+                                                                    >
+                                                                        <span className="material-symbols-outlined text-[14px]">
+                                                                            {copiedRowId === unit.id ? 'check' : 'content_copy'}
+                                                                        </span>
+                                                                    </button>
+                                                                </div>
+
+                                                                {renderConciseDescription(unit.short_description)}
+                                                            </div>
+
+                                                            {/* Columna derecha escritorio/tablet (sm+): Número de Serie Acreditativo + Copia Plana */}
+                                                            <div
+                                                                className="hidden sm:flex items-center gap-fib-8 shrink-0"
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            >
+                                                                <span className="text-[13px] font-mono tabular-nums font-semibold text-[#0F172A] dark:text-[#F3F4F6] select-text">
+                                                                    {unit.serial_number}
+                                                                </span>
+
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) =>
+                                                                        void handleCopySerial(e, unit.id, unit.serial_number)
+                                                                    }
+                                                                    title={
+                                                                        copiedRowId === unit.id
+                                                                            ? t('opermaq_domains.copied')
+                                                                            : t('opermaq_domains.copy_serial')
+                                                                    }
+                                                                    aria-label={t('opermaq_domains.copy_serial')}
+                                                                    className={flatIconBtn}
+                                                                >
+                                                                    <span className="material-symbols-outlined text-[15px]">
+                                                                        {copiedRowId === unit.id ? 'check' : 'content_copy'}
+                                                                    </span>
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
-                                        );
-                                    })}
+                                        </div>
+                                    ))}
                                 </div>
                             </section>
                         ))}
                     </div>
                 )}
             </div>
-
-            {homologatingAsset && (
-                <CatalogHomologationHitlModal
-                    assetId={homologatingAsset.id}
-                    makeOficial={homologatingAsset.make_oficial}
-                    modelOficial={homologatingAsset.model_oficial}
-                    onClose={() => setHomologatingAsset(null)}
-                    onConsolidated={(updated) => {
-                        setCatalogRows((prev) =>
-                            prev.map((row) =>
-                                row.id === updated.id
-                                    ? {
-                                        ...row,
-                                        tipo_equipo: updated.tipo_equipo || row.tipo_equipo,
-                                        short_description: updated.short_description,
-                                    }
-                                    : row
-                            )
-                        );
-                        setHomologatingAsset(null);
-                    }}
-                />
-            )}
         </div>
     );
 };

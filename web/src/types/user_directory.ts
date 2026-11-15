@@ -1,4 +1,23 @@
-import { UserRole, AccountType } from '../../../src/types/auth';
+export type UserSystemRole =
+    | 'DEV_ROOT'
+    | 'SUPER_ADMIN'
+    | 'TEST_PILOT'
+    | 'OWNER'
+    | 'ADMIN'
+    | 'OPERATOR'
+    | 'VIEWER'
+    | 'PROFESSOR'
+    | 'STUDENT';
+
+export type UserRole =
+    | UserSystemRole
+    | 'SUPERVISOR'
+    | 'INTERNAL_USER'
+    | 'BILLING_ONLY'
+    | 'SUBSCRIPTION_ADMIN'
+    | 'GENERAL_ADMIN';
+
+export type AccountType = 'PERSONAL' | 'BUSINESS' | 'EDUCATIONAL' | 'ENTERPRISE';
 
 /**
  * Referencia a una cuenta en el directorio de usuarios
@@ -18,7 +37,7 @@ export interface AccountReference {
 /**
  * Directorio de Usuarios - Colección Maestra de Identidades
  * ID del Documento: RUN del usuario (normalizado)
- * 
+ *
  * Arquitectura "Pasillo de Puertas Blindadas":
  * - Desvincula identidad física (RUN) de cuenta de usuario (Auth UID)
  * - Permite múltiples cuentas (B2B, Personal, Edu) bajo un mismo RUN

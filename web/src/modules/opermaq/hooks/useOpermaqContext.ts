@@ -79,12 +79,12 @@ export function resolveOpermaqCapabilities(params: {
     };
 }
 
-export type OpermaqDomainMode = 'CATALOG' | 'FLEET' | 'SYMBOLOGY';
+export type OpermaqDomainMode = 'CATALOG' | 'FLEET' | 'SYMBOLOGY' | 'MANUFACTURERS' | 'SUPPLIERS';
 
 /**
- * Proyecta el dominio efectivo de OPERMAQ (`CATALOG`, `FLEET` o `SYMBOLOGY` transversal).
- * Cuentas con `canViewMasterCatalog` o `canCurateAI` (`1º DEV`, `2º ADMIN`, `3º TEST-PILOT`) pueden abrir `CATALOG`.
- * `SYMBOLOGY` es una sección transversal de OPERMAQ (curaduría en `DEV`/`PILOT`, consulta consolidada en `CLIENT`).
+ * Proyecta el dominio efectivo de OPERMAQ (`CATALOG`, `FLEET`, `SYMBOLOGY`, `MANUFACTURERS` o `SUPPLIERS`).
+ * Únicamente `1º DEV` (`canCurateAI`) y `2º ADMIN` (`canViewMasterCatalog`) pueden abrir `CATALOG`.
+ * `3º TEST-PILOT`, `4º B2B` y `5º EDU` operan exclusivamente en modos cliente (`FLEET`, `SYMBOLOGY`, `MANUFACTURERS`, `SUPPLIERS`).
  */
 export function resolveEffectiveOpermaqDomain(
     requestedDomain: OpermaqDomainMode,
@@ -92,6 +92,12 @@ export function resolveEffectiveOpermaqDomain(
 ): OpermaqDomainMode {
     if (requestedDomain === 'SYMBOLOGY') {
         return 'SYMBOLOGY';
+    }
+    if (requestedDomain === 'MANUFACTURERS') {
+        return 'MANUFACTURERS';
+    }
+    if (requestedDomain === 'SUPPLIERS') {
+        return 'SUPPLIERS';
     }
     return requestedDomain === 'CATALOG' && (capabilities.canViewMasterCatalog || capabilities.canCurateAI)
         ? 'CATALOG'

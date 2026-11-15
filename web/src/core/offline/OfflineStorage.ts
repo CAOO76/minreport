@@ -4,7 +4,7 @@
  */
 
 const DB_NAME = 'minreport_edge_db';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 export interface OfflineCasBlobRecord {
     sha256: string;
@@ -43,7 +43,7 @@ export interface StockpileSurveyRecord {
     tenantId: string;
     tag: string;
     material: string;
-    shape: 'elliptic-cone' | 'truncated-elliptic-cone' | 'perimeter-cone';
+    shape: 'elliptic-cone' | 'truncated-elliptic-cone' | 'perimeter-cone' | 'windrow' | 'toe-wall';
     volumeM3: number;
     density: number;
     tonnage: number;
@@ -53,14 +53,12 @@ export interface StockpileSurveyRecord {
     synced?: boolean;
 }
 
-export interface CashflowEventRecord {
+export interface StockpileMeasurementRecord {
     id: string;
+    assetId: string;
     tenantId: string;
-    type: 'INCOME' | 'EXPENSE';
-    category: string;
-    amountUSD: number;
-    amountCLP: number;
-    description: string;
+    shape?: 'elliptic-cone' | 'truncated-elliptic-cone' | 'perimeter-cone' | 'windrow' | 'toe-wall';
+    payload: Record<string, unknown>;
     timestamp: number;
     synced?: boolean;
 }
@@ -70,6 +68,9 @@ export class OfflineStorageEngine {
     private readonly BACKUP_KEY = 'minreport_offline_keys_backup';
 
     private getDB(): Promise<IDBDatabase> {
+        if (typeof indexedDB === 'undefined') {
+            return Promise.reject(new Error('[OFFLINE-STORAGE] IndexedDB no disponible en este entorno'));
+        }
         if (!this.dbPromise) {
             this.dbPromise = new Promise((resolve, reject) => {
                 const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -120,6 +121,13 @@ export class OfflineStorageEngine {
                     if (!db.objectStoreNames.contains('offline_cas_blobs')) {
                         const casStore = db.createObjectStore('offline_cas_blobs', { keyPath: 'sha256' });
                         casStore.createIndex('updatedAt', 'updatedAt', { unique: false });
+                    }
+
+                    if (!db.objectStoreNames.contains('stockpile_measurements')) {
+                        const measStore = db.createObjectStore('stockpile_measurements', { keyPath: 'id' });
+                        measStore.createIndex('assetId', 'assetId', { unique: false });
+                        measStore.createIndex('tenantId', 'tenantId', { unique: false });
+                        measStore.createIndex('timestamp', 'timestamp', { unique: false });
                     }
                 };
             });
@@ -207,35 +215,95 @@ export class OfflineStorageEngine {
         });
     }
 
-    public async saveCashflowEvent(record: CashflowEventRecord): Promise<void> {
+    public async deleteStockpileSurvey(id: string): Promise<void> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('stockpile_surveys', 'readwrite');
+            const store = tx.objectStore('stockpile_surveys');
+            const req = store.delete(id);
+
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    public async saveStockpileMeasurement(record: StockpileMeasurementRecord): Promise<void> {
         if (!record.tenantId) {
-            throw new Error('[OFFLINE-STORAGE] tenantId es obligatorio en CashflowEventRecord');
+            throw new Error('[OFFLINE-STORAGE] tenantId es obligatorio en StockpileMeasurementRecord');
+        }
+        if (!record.assetId) {
+            throw new Error('[OFFLINE-STORAGE] assetId es obligatorio en StockpileMeasurementRecord');
         }
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
-            const tx = db.transaction('cashflow_events', 'readwrite');
-            const store = tx.objectStore('cashflow_events');
+            const tx = db.transaction('stockpile_measurements', 'readwrite');
+            const store = tx.objectStore('stockpile_measurements');
             const req = store.put(record);
 
             req.onsuccess = () => {
-                this.registerKeyBackup('cashflow_events', record.id);
+                this.registerKeyBackup('stockpile_measurements', record.id);
                 resolve();
             };
             req.onerror = () => reject(req.error);
         });
     }
 
-    public async getCashflowEvents(tenantId?: string): Promise<CashflowEventRecord[]> {
+    public async getStockpileMeasurement(id: string): Promise<StockpileMeasurementRecord | null> {
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
-            const tx = db.transaction('cashflow_events', 'readonly');
-            const store = tx.objectStore('cashflow_events');
+            const tx = db.transaction('stockpile_measurements', 'readonly');
+            const store = tx.objectStore('stockpile_measurements');
+            const req = store.get(id);
+
+            req.onsuccess = () => resolve((req.result as StockpileMeasurementRecord) || null);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    public async getStockpileMeasurementsByAsset(
+        assetId: string,
+        tenantId?: string
+    ): Promise<StockpileMeasurementRecord[]> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('stockpile_measurements', 'readonly');
+            const store = tx.objectStore('stockpile_measurements');
+            const index = store.index('assetId');
+            const req = index.getAll(assetId);
+
+            req.onsuccess = () => {
+                const list: StockpileMeasurementRecord[] = req.result || [];
+                const filtered = tenantId ? list.filter((item) => item.tenantId === tenantId) : list;
+                resolve(filtered.sort((a, b) => b.timestamp - a.timestamp));
+            };
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    public async getAllStockpileMeasurements(tenantId?: string): Promise<StockpileMeasurementRecord[]> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('stockpile_measurements', 'readonly');
+            const store = tx.objectStore('stockpile_measurements');
             const req = store.getAll();
 
             req.onsuccess = () => {
-                const list: CashflowEventRecord[] = req.result || [];
-                resolve(tenantId ? list.filter((item) => item.tenantId === tenantId) : list);
+                const list: StockpileMeasurementRecord[] = req.result || [];
+                const filtered = tenantId ? list.filter((item) => item.tenantId === tenantId) : list;
+                resolve(filtered.sort((a, b) => b.timestamp - a.timestamp));
             };
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    public async deleteStockpileMeasurement(id: string): Promise<void> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('stockpile_measurements', 'readwrite');
+            const store = tx.objectStore('stockpile_measurements');
+            const req = store.delete(id);
+
+            req.onsuccess = () => resolve();
             req.onerror = () => reject(req.error);
         });
     }

@@ -778,6 +778,19 @@ export interface EquipmentBrandTypeGroup<T extends SortableEquipmentRecord> {
     items: T[];
 }
 
+export interface EquipmentMachineryTypeSubgroup<T extends SortableEquipmentRecord> {
+    typeKey: string;
+    machineryTypeLabel: string;
+    items: T[];
+}
+
+export interface EquipmentBrandHierarchyGroup<T extends SortableEquipmentRecord> {
+    brandKey: string;
+    brandLabel: string;
+    totalCount: number;
+    subgroups: EquipmentMachineryTypeSubgroup<T>[];
+}
+
 export function normalizeCompactSerialIdentifier(raw: string): string {
     return String(raw || '')
         .trim()
@@ -1556,9 +1569,15 @@ function detectRecordEnergyContext(record: {
     canonical_specs?: CanonicalSpecSlot[] | Record<string, any> | null;
     caracteristicas_principales?: string[];
     short_description?: string;
-    physical_traits?: { primary_energy_source?: string | null } | null;
+    physical_traits?: {
+        primary_energy?: string | null;
+        primary_energy_source?: string | null;
+        [key: string]: unknown;
+    } | null;
 }): { primaryEnergy: string | null; energyValueText: string | null } {
-    const primaryEnergy = record.physical_traits?.primary_energy_source || null;
+    const rawPrimary =
+        record.physical_traits?.primary_energy || record.physical_traits?.primary_energy_source || null;
+    const primaryEnergy = typeof rawPrimary === 'string' && rawPrimary.trim() ? rawPrimary.trim() : null;
     let energyValueText: string | null = null;
 
     if (Array.isArray(record.canonical_specs)) {
@@ -1621,7 +1640,11 @@ export function extractHomologousAxisValues(record: {
     canonical_specs?: CanonicalSpecSlot[] | Record<string, any> | null;
     caracteristicas_principales?: string[];
     short_description?: string;
-    physical_traits?: { primary_energy_source?: string | null } | null;
+    physical_traits?: {
+        primary_energy?: string | null;
+        primary_energy_source?: string | null;
+        [key: string]: unknown;
+    } | null;
 }): { archetype: ArchetypeDefinition; slots: CanonicalSpecSlot[] } {
     const typeContextText = `${record.equipment_type_key || ''} ${record.tipo_equipo || ''} ${record.categoria_equipo || ''}`;
     const detectedEnergy = detectRecordEnergyContext(record);
@@ -1899,42 +1922,148 @@ export function validateCrossAxisPhysicalPlausibility(
     };
 }
 
+const MAX_SYNTHETIC_LIST_TOKENS = 4;
+
+const CONSUMPTION_AXIS_KEY_ALIASES = new Set([
+    'consumo_energetico_nominal',
+    'consumo_combustible',
+    'consumo_aire',
+    'consumo_nominal',
+    'consumo_horario',
+    'rendimiento_combustible',
+]);
+
+const ENERGY_SOURCE_AXIS_KEY_ALIASES = new Set([
+    'fuente_energia',
+    'tipo_combustible',
+    'tipo_energia',
+    'energia_motriz',
+]);
+
+const ENERGY_CAPACITY_AXIS_KEY_ALIASES = new Set([
+    'capacidad_energetica_autonomia',
+    'capacidad_estanque',
+    'capacidad_combustible',
+    'capacidad_bateria',
+    'estanque_combustible',
+]);
+
+const SYNTHETIC_TRACTION_OR_UNDERCARRIAGE_KEYS = new Set([
+    'traccion',
+    'traccion_ejes',
+    'configuracion_ejes',
+    'configuracion_ejes_rodado',
+    'formula_rodado',
+    'tren_rodaje',
+    'configuracion_rodaje',
+]);
+
+const SYNTHETIC_TRANSMISSION_KEYS = new Set([
+    'transmision_caja',
+    'tipo_transmision',
+    'caja_cambios',
+    'transmision',
+]);
+
+const REDUNDANT_IMPERIAL_PAREN_REGEX =
+    /\s*\(\s*(?:(?:aprox\.?|sae|net[ao]?|brut[ao]?)\s+)?[~≈]?\d[\d.,/\s'″"–-]*\s*(?:b?hp|cv|lbs?|lbf|oz|lb[·.\s-]?ft|ft[·.\s-]?lbs?|in\b|pulg(?:adas?)?|ft\b|pies?|yd[³3]?|cu\.?\s*(?:yd|ft|in)|(?:us\s+|imp\s+)?gal(?:ones?)?|gpm|gph|mpg|s?cfm|psi|psig|mph|short\s*tons?|btu(?:\/h)?|°f)\b[^)]*\)/gi;
+
 /**
- * Construye la línea descriptiva homóloga e invariante del equipo para `CATÁLOGO` y `FLOTA`:
- * - Siempre presenta los mismos ejes obligatorios del arquetipo en el MISMO orden fijo para comparación 1 a 1.
- * - Ignora 100% cualquier prosa libre (`caracteristica_diferenciadora`) y bloquea afirmaciones comerciales.
- * - Cero truncamiento (`.slice` prohibido).
+ * Limpia conversiones imperiales secundarias redundantes entre paréntesis tras unidades SI primarias
+ * (ej. `79 kW (106 HP)` -> `79 kW`, `3.166 kg (6.980 lb)` -> `3.166 kg`, `2.461 mm (96.9 in)` -> `2.461 mm`),
+ * preservando paréntesis técnicos no imperiales (`(U)`, `(AMT)`, `(BEV)`, `(LGP)`).
  */
-export function buildHomologousEquipmentDescription(record: {
-    equipment_type_key?: string;
-    archetype_id?: string;
-    tipo_equipo?: string;
-    categoria_equipo?: string;
-    canonical_specs?: CanonicalSpecSlot[] | Record<string, any> | null;
-    caracteristicas_principales?: string[];
-    short_description?: string;
-}): string {
-    const { slots } = extractHomologousAxisValues(record);
+export function compactSyntheticMetricValue(rawVal: string): string {
+    const base = String(rawVal || '').replace(/\s+/g, ' ').trim();
+    if (!base) return '';
+    const stripped = base.replace(REDUNDANT_IMPERIAL_PAREN_REGEX, '').replace(/\s+/g, ' ').trim();
+    return stripped || base;
+}
 
-    const hasAnyVerifiedValue = slots.some((s) => Boolean(s.value_si));
-    if (!hasAnyVerifiedValue) {
-        return MISSING_TECH_SPEC;
+export const stripSecondaryImperialParentheses = compactSyntheticMetricValue;
+
+function isPositiveVerifiedSyntheticText(rawVal: unknown): rawVal is string {
+    if (typeof rawVal !== 'string') return false;
+    const trimmed = rawVal.trim();
+    if (!trimmed || trimmed.startsWith('[')) return false;
+    if (
+        /^(?:null|undefined|n\s*\/\s*a|n\s*\/\s*d|no\s+aplica\b.*|no\s+declarado\b.*|pendiente\b.*|sin\s+dato\b.*|0\s*w|-)$/i.test(
+            trimmed
+        )
+    ) {
+        return false;
     }
-
-    const renderedParts: string[] = [];
-    for (const slot of slots) {
-        if (slot.mandatory) {
-            renderedParts.push(`${slot.label_es}: ${slot.value_si || MISSING_AXIS_VALUE}`);
-        } else if (slot.value_si) {
-            renderedParts.push(`${slot.label_es}: ${slot.value_si}`);
-        }
+    if (/^(?:sin\s+|no\s+(?:posee|equipa|requiere|incorpora)\b)/i.test(trimmed)) {
+        return false;
     }
+    if (FORBIDDEN_MARKETING_OR_UNVERIFIED_CLAIM_REGEX.test(trimmed)) return false;
+    if (ACCESSORY_HISTORICAL_SPEC_REGEX.test(trimmed)) return false;
+    return true;
+}
 
-    return renderedParts.join(' · ');
+function isSecondaryConsumptionOrTankSlot(slot: CanonicalSpecSlot): boolean {
+    const key = String(slot.axis_key || '').trim().toLowerCase();
+    if (
+        CONSUMPTION_AXIS_KEY_ALIASES.has(key) ||
+        key === 'consumo_nominal_o_tasa' ||
+        ENERGY_CAPACITY_AXIS_KEY_ALIASES.has(key) ||
+        key === 'capacidad_estanque_o_bateria'
+    ) {
+        return true;
+    }
+    const label = String(slot.label_es || '').trim();
+    return /^(?:consumo\s+(?:energ[eé]tico|nominal|horario(?:\s+combustible|\s+combinado)?|de\s+combustible|el[eé]ctrico(?:\s+nominal)?|combinado|de\s+aire\s+(?:comprimido|requerido))|rendimiento\s+(?:de\s+combustible|combinado|\s*\/\s*consumo\s+combustible)|energ[ií]a\s+horaria|demanda\s+el[eé]ctrica|potencia\s+el[eé]ctrica\s+absorbida|autonom[ií]a\s+por\s+carga|capacidad\s+(?:de\s+)?(?:estanque(?:\s+combustible|\s*\+\s*bater[ií]a.*)?|tanque(?:\s+de\s+combustible)?|banco\s+(?:de\s+)?bater[ií]as|bater[ií]a)|alimentaci[oó]n\s+el[eé]ctrica\s+nominal)$/i.test(
+        label
+    );
+}
+
+function isEnergySourceSlot(slot: CanonicalSpecSlot): boolean {
+    const key = String(slot.axis_key || '').trim().toLowerCase();
+    const label = String(slot.label_es || '').trim();
+    return (
+        ENERGY_SOURCE_AXIS_KEY_ALIASES.has(key) ||
+        /^(?:fuente\s+(?:de\s+)?energ[ií]a|tipo\s+de\s+(?:combustible|energ[ií]a))$/i.test(label)
+    );
+}
+
+function isKinematicsSlot(slot: CanonicalSpecSlot): boolean {
+    const key = String(slot.axis_key || '').trim().toLowerCase();
+    const label = String(slot.label_es || '').trim();
+    return key === 'cinematica_levante' || /^cinem[aá]tica(?:\s+de\s+levante)?$/i.test(label);
+}
+
+function isTractionOrUndercarriageSlot(slot: CanonicalSpecSlot): boolean {
+    const key = String(slot.axis_key || '').trim().toLowerCase();
+    return SYNTHETIC_TRACTION_OR_UNDERCARRIAGE_KEYS.has(key);
+}
+
+function isTransmissionSlot(slot: CanonicalSpecSlot): boolean {
+    const key = String(slot.axis_key || '').trim().toLowerCase();
+    return SYNTHETIC_TRANSMISSION_KEYS.has(key);
+}
+
+function formatShortEnergyVector(rawVal: string): string | null {
+    if (!isPositiveVerifiedSyntheticText(rawVal)) return null;
+    const norm = stripTextAccents(rawVal);
+    if (/\bdual[- ]?fuel\b/.test(norm)) return 'Dual-Fuel';
+    if (/\bhibrid/.test(norm)) return 'Híbrido';
+    if (/\b(bateria|bev|li-?ion|lfp)\b/.test(norm) && !/\b(diesel|gasolina)\b/.test(norm)) return 'BEV';
+    if (/\belectric/.test(norm) && !/\b(diesel|gasolina|electrohidraulic)\b/.test(norm)) return 'Eléctrico AC';
+    if (/\b(neumatic|aire\s+comprimido)\b/.test(norm)) return 'Neumático';
+    if (/\bglp\b/.test(norm) || /\bgas\s+licuado\b/.test(norm)) return 'GLP';
+    if (/\bgnv\b/.test(norm) || /\bgas\s+natural\b/.test(norm)) return 'GNV';
+    if (/\bgnl\b/.test(norm)) return 'GNL';
+    if (/\b(gasolina|bencina|nafta)\b/.test(norm)) return 'Gasolina';
+    if (/\b(diesel|turbodiesel|ulsd)\b/.test(norm)) return 'Diésel';
+    if (/\belectrohidraulic/.test(norm)) return 'Electrohidráulico';
+    if (/\bhidraulic/.test(norm)) return 'Hidráulico';
+    if (/\b(remolcad|sin\s+propulsion)\b/.test(norm)) return 'Remolcado';
+    if (/\b(manual|mecanic)\b/.test(norm)) return 'Manual';
+    return compactSyntheticMetricValue(rawVal);
 }
 
 export function formatTransmissionCategoryShortEs(category?: string | null): string | null {
-    switch (category) {
+    switch (String(category || '').trim().toUpperCase()) {
         case 'AUTOMATIC_PLANETARY_CONVERTER':
         case 'AUTOMATIC_TORQUE_CONVERTER':
             return 'Automática';
@@ -1946,7 +2075,7 @@ export function formatTransmissionCategoryShortEs(category?: string | null): str
             return 'Manual Eaton Fuller';
         case 'MANUAL_SYNCHRONIZED':
         case 'MANUAL_SYNCHRO':
-            return 'Manual';
+            return 'Manual sincronizada';
         case 'POWERSHIFT':
             return 'Powershift';
         case 'HYDROSTATIC':
@@ -1956,10 +2085,301 @@ export function formatTransmissionCategoryShortEs(category?: string | null): str
             return 'Eléctrica AC/DC';
         case 'DIRECT_MECHANICAL':
         case 'DIRECT_DRIVE_OR_REDUCER':
-            return 'Accionamiento directo';
+            return 'Acople directo';
         default:
             return null;
     }
+}
+
+export function formatCompactAxleOrUndercarriageToken(rawVal: unknown): string | null {
+    if (!isPositiveVerifiedSyntheticText(rawVal)) return null;
+    const cleaned = rawVal
+        .replace(/^(?:ejes\s*\/\s*rodaje|configuraci[oó]n\s+de\s+ejes|ejes|tracci[oó]n|rodaje)\s*:\s*/i, '')
+        .trim();
+    if (!cleaned) return null;
+    const axleMatch = cleaned.match(/\b(10x6|10x4|8x8|8x6|8x4|6x6|6x4|6x2|4x4|4x2|awd|4wd|2wd|fwd|rwd)\b/i);
+    if (axleMatch) {
+        const tok = axleMatch[1];
+        return /^\d/.test(tok) ? tok.toLowerCase() : tok.toUpperCase();
+    }
+    if (/\borugas?\s+lgp\b/i.test(cleaned)) return 'Orugas LGP';
+    if (/\borugas?\s+(?:de\s+acero\s+)?lc\b/i.test(cleaned)) return 'Orugas LC';
+    if (/^tren\s+de\s+rodaje\s+sobre\s+orugas$/i.test(cleaned)) return 'Orugas';
+    return compactSyntheticMetricValue(cleaned);
+}
+
+export function formatCompactTransmissionToken(rawModelSpec: unknown, rawCategory?: unknown): string | null {
+    const candidate = isPositiveVerifiedSyntheticText(rawModelSpec)
+        ? rawModelSpec
+              .replace(/^(?:transmisi[oó]n(?:\s*\/\s*caja)?|caja(?:\s+de\s+cambios)?)\s*:\s*/i, '')
+              .trim()
+        : formatTransmissionCategoryShortEs(typeof rawCategory === 'string' ? rawCategory : null);
+    if (!candidate || !isPositiveVerifiedSyntheticText(candidate)) return null;
+
+    const simplified = compactSyntheticMetricValue(candidate)
+        .replace(/^Autom[aá]tica\s*\(Convertidor(?:\s+de\s+par)?\)$/i, 'Automática')
+        .replace(/^Servotransmisi[oó]n\s*\(?Powershift\)?$/i, 'Powershift')
+        .replace(/^Manual\s+no\s+sincronizada\s*\(Eaton\s+Fuller\)$/i, 'Manual Eaton Fuller')
+        .replace(/^Tracci[oó]n\s+el[eé]ctrica\s+AC(?:\/DC)?$/i, 'Eléctrica AC');
+
+    const isSelfExplanatory =
+        /\b(autom[aá]tic[ao]|automatizad[ao]|\bamt\b|hidrost[aá]tic[ao]|powershift|servotransmisi[oó]n|manual|sincronizad[ao]|fuller|allison|m-?drive|i-?shift|opticruise|traxon|cvt|ivt|e-cvt|el[eé]ctric[ao]|acople)\b/i.test(
+            simplified
+        );
+    return isSelfExplanatory ? simplified : `Caja: ${simplified}`;
+}
+
+export function formatCompactWorkBodyToken(rawVal: unknown): string | null {
+    if (!isPositiveVerifiedSyntheticText(rawVal)) return null;
+    const cleaned = compactSyntheticMetricValue(
+        rawVal.replace(/^(?:config\.?|configuraci[oó]n|carrocer[ií]a|implemento)\s*:\s*/i, '').trim()
+    )
+        .replace(/^Hidr[aá]ulica\s+auxiliar\s+de\s+alto\s+caudal\s+XHP$/i, 'Hidráulica XHP')
+        .replace(/^Quinta\s+rueda\s+de\s+arrastre\s*\(Tractocami[oó]n\)$/i, 'Quinta rueda');
+    return cleaned || null;
+}
+
+function compactSyntheticAxisLabel(axisKey: string, labelEs: string): string | null {
+    const key = String(axisKey || '').trim().toLowerCase();
+    const label = String(labelEs || '').trim();
+
+    if (key === 'cinematica_levante' || /^cinem[aá]tica(?:\s+de\s+levante)?$/i.test(label)) {
+        return null;
+    }
+    if (
+        ENERGY_SOURCE_AXIS_KEY_ALIASES.has(key) ||
+        /^(?:fuente\s+(?:de\s+)?energ[ií]a|tipo\s+de\s+(?:combustible|energ[ií]a))$/i.test(label)
+    ) {
+        return null;
+    }
+    if (
+        key === 'potencia_neta' ||
+        key === 'potencia_neta_vhp' ||
+        key === 'potencia_motor' ||
+        key === 'potencia_motriz' ||
+        /^potencia(?:\s+(?:neta|nominal|motor|motriz|bruta|instalada|m[aá]xima|al\s+volante|vhp))?$/i.test(label)
+    ) {
+        return 'Potencia';
+    }
+    if (
+        key === 'peso_operativo' ||
+        key === 'masa_operativa' ||
+        /^(?:peso\s+operativo|masa\s+operativa|peso\s+de\s+operaci[oó]n|peso(?:\s+neto)?)$/i.test(label)
+    ) {
+        return 'Peso';
+    }
+    if (
+        key === 'peso_bruto_vehicular' ||
+        /^(?:peso\s+bruto(?:\s+vehicular)?(?:\s*\(pbv\))?|pbv(?:\s+operativo)?)$/i.test(label)
+    ) {
+        return 'PBV';
+    }
+    if (
+        key === 'capacidad_nominal_roc' ||
+        /^(?:capacidad\s+nominal(?:\s+de\s+operaci[oó]n)?\s*\(roc\)|carga\s+nominal\s*\(roc\)|roc)$/i.test(label)
+    ) {
+        return 'ROC';
+    }
+    if (key === 'carga_util_nominal' || /^carga\s+[uú]til(?:\s+nominal)?$/i.test(label)) {
+        return 'Carga útil';
+    }
+    if (/^(?:capacidad\s+(?:de\s+)?(?:balde|cuchar[oó]n)|balde(?:\s+cargador)?)$/i.test(label) || key === 'capacidad_balde') {
+        return 'Balde';
+    }
+    if (key === 'capacidad_tolva' || /^(?:capacidad\s+(?:de\s+)?tolva|tolva(?:\s+colmada)?)$/i.test(label)) {
+        return 'Tolva';
+    }
+    if (key === 'capacidad_hoja' || /^(?:capacidad\s+(?:de\s+)?hoja|hoja)$/i.test(label)) {
+        return 'Hoja';
+    }
+    if (key === 'altura_max_descarga' || /^(?:altura\s+m[aá]x(?:ima)?\.?\s*(?:de\s+)?descarga|descarga)$/i.test(label)) {
+        return 'Descarga';
+    }
+    if (key === 'carga_vuelco_estatica' || /^(?:carga\s+est[aá]tica\s*(?:de\s+)?vuelco|vuelco)$/i.test(label)) {
+        return 'Vuelco';
+    }
+    if (/^configuraci[oó]n\s+(?:de\s+)?ejes$/i.test(label)) {
+        return 'Ejes';
+    }
+    if (/^tren\s+de\s+rodaje$/i.test(label)) {
+        return 'Rodaje';
+    }
+    if (CONSUMPTION_AXIS_KEY_ALIASES.has(key) || key === 'consumo_nominal_o_tasa') {
+        return 'Consumo';
+    }
+    if (ENERGY_CAPACITY_AXIS_KEY_ALIASES.has(key) || key === 'capacidad_estanque_o_bateria') {
+        return /bater[ií]a/i.test(label) ? 'Batería' : 'Estanque';
+    }
+    return label;
+}
+
+function formatSyntheticSlotSegment(slot: CanonicalSpecSlot): string | null {
+    if (!isPositiveVerifiedSyntheticText(slot.value_si)) return null;
+    if (isEnergySourceSlot(slot)) {
+        return formatShortEnergyVector(slot.value_si);
+    }
+    if (isTransmissionSlot(slot)) {
+        return formatCompactTransmissionToken(slot.value_si);
+    }
+    const cleanVal = compactSyntheticMetricValue(slot.value_si);
+    if (!cleanVal) return null;
+    const compactLabel = compactSyntheticAxisLabel(slot.axis_key, slot.label_es);
+    return compactLabel ? `${compactLabel}: ${cleanVal}` : cleanVal;
+}
+
+function pushUniqueSyntheticSegment(segments: string[], candidate: string | null | undefined, maxTokens = 4): void {
+    if (segments.length >= maxTokens || !candidate) return;
+    const trimmed = candidate.trim();
+    if (!trimmed || trimmed.startsWith('[')) return;
+
+    const normFull = stripTextAccents(trimmed.replace(/:/g, ' ').replace(/\s+/g, ' '));
+    const colonIdx = trimmed.indexOf(':');
+    const candLabel = colonIdx > 0 ? stripTextAccents(trimmed.slice(0, colonIdx)) : '';
+    const normVal = stripTextAccents(colonIdx > 0 ? trimmed.slice(colonIdx + 1) : trimmed);
+    if (!normVal) return;
+
+    const isDuplicate = segments.some((existing) => {
+        const exFull = stripTextAccents(existing.replace(/:/g, ' ').replace(/\s+/g, ' '));
+        if (exFull === normFull) return true;
+        if (/^tolva\s+\d/.test(normFull) && /^tolva\s+\d/.test(exFull)) return true;
+
+        const exColon = existing.indexOf(':');
+        const exLabel = exColon > 0 ? stripTextAccents(existing.slice(0, exColon)) : '';
+        const exVal = stripTextAccents(exColon > 0 ? existing.slice(exColon + 1) : existing);
+        const bothHaveDistinctLabels = Boolean(candLabel && exLabel && candLabel !== exLabel);
+        if (!bothHaveDistinctLabels) {
+            if (exVal === normVal) return true;
+            if (normVal.length >= 4 && exVal.includes(normVal)) return true;
+            if (exVal.length >= 4 && normVal.includes(exVal)) return true;
+        }
+        return false;
+    });
+
+    if (!isDuplicate) {
+        segments.push(trimmed);
+    }
+}
+
+/**
+ * Construye la línea descriptiva sintética y ergonómica del equipo para `CATÁLOGO` y `FLOTA` (máximo `4` tokens):
+ * - Cero `[No declarado en ficha]` en equipos con datos parciales; solo emite magnitudes/rasgos reales verificados.
+ * - Si el equipo posee `0` ejes verificados y `0` rasgos de configuración verificados, retorna `[Información técnica no declarada en ficha]`.
+ * - Prioriza ejes `mandatory: true` del arquetipo en orden canónico, luego diferenciadores clave verificados
+ *   (tracción/ejes/rodaje, transmisión corta, implemento/carrocería, cinemática, vector energético), con unidades SI puras.
+ */
+export function buildHomologousEquipmentDescription(record: {
+    equipment_type_key?: string;
+    archetype_id?: string;
+    tipo_equipo?: string;
+    categoria_equipo?: string;
+    canonical_specs?: CanonicalSpecSlot[] | Record<string, any> | null;
+    caracteristicas_principales?: string[];
+    short_description?: string;
+    physical_traits?: {
+        primary_energy?: string | null;
+        primary_energy_source?: string | null;
+        [key: string]: unknown;
+    } | null;
+    configuration_profile?: {
+        axle_or_undercarriage_config?: string | null;
+        transmission_category?: string | null;
+        transmission_model_spec?: string | null;
+        work_body_or_implement?: string | null;
+        factory_emission_or_grid_spec?: string | null;
+    } | null;
+}): string {
+    const { slots } = extractHomologousAxisValues(record);
+    const cfg =
+        record.configuration_profile && typeof record.configuration_profile === 'object'
+            ? record.configuration_profile
+            : null;
+
+    const segments: string[] = [];
+
+    // a) Ejes `mandatory: true` principales del arquetipo con valor positivo verificado (en su orden canónico)
+    for (const slot of slots) {
+        if (segments.length >= MAX_SYNTHETIC_LIST_TOKENS) break;
+        if (!slot.mandatory) continue;
+        if (!isPositiveVerifiedSyntheticText(slot.value_si)) continue;
+        if (
+            isSecondaryConsumptionOrTankSlot(slot) ||
+            isEnergySourceSlot(slot) ||
+            isKinematicsSlot(slot) ||
+            isTractionOrUndercarriageSlot(slot) ||
+            isTransmissionSlot(slot)
+        ) {
+            continue;
+        }
+        pushUniqueSyntheticSegment(segments, formatSyntheticSlotSegment(slot), MAX_SYNTHETIC_LIST_TOKENS);
+    }
+
+    // b) Diferenciadores clave verificados en orden estricto hasta completar máximo 4 tokens:
+    //    1. tracción/ejes/rodaje, 2. transmisión corta, 3. implemento/carrocería, 4. cinemática, 5. vector energético
+    if (segments.length < MAX_SYNTHETIC_LIST_TOKENS) {
+        const cfgAxle = formatCompactAxleOrUndercarriageToken(cfg?.axle_or_undercarriage_config);
+        const slotTraction = slots.find(
+            (s) => isTractionOrUndercarriageSlot(s) && isPositiveVerifiedSyntheticText(s.value_si)
+        );
+        const tractionSegment = cfgAxle || (slotTraction ? formatSyntheticSlotSegment(slotTraction) : null);
+        pushUniqueSyntheticSegment(segments, tractionSegment, MAX_SYNTHETIC_LIST_TOKENS);
+    }
+
+    if (segments.length < MAX_SYNTHETIC_LIST_TOKENS) {
+        const cfgTx = formatCompactTransmissionToken(cfg?.transmission_model_spec, cfg?.transmission_category);
+        const slotTx = slots.find((s) => isTransmissionSlot(s) && isPositiveVerifiedSyntheticText(s.value_si));
+        const txSegment = cfgTx || (slotTx ? formatSyntheticSlotSegment(slotTx) : null);
+        pushUniqueSyntheticSegment(segments, txSegment, MAX_SYNTHETIC_LIST_TOKENS);
+    }
+
+    if (segments.length < MAX_SYNTHETIC_LIST_TOKENS) {
+        const workBodySegment = formatCompactWorkBodyToken(cfg?.work_body_or_implement);
+        pushUniqueSyntheticSegment(segments, workBodySegment, MAX_SYNTHETIC_LIST_TOKENS);
+    }
+
+    if (segments.length < MAX_SYNTHETIC_LIST_TOKENS) {
+        const kinSlot = slots.find((s) => isKinematicsSlot(s) && isPositiveVerifiedSyntheticText(s.value_si));
+        if (kinSlot) {
+            pushUniqueSyntheticSegment(segments, formatSyntheticSlotSegment(kinSlot), MAX_SYNTHETIC_LIST_TOKENS);
+        }
+    }
+
+    if (segments.length < MAX_SYNTHETIC_LIST_TOKENS) {
+        const energySlot = slots.find((s) => isEnergySourceSlot(s) && isPositiveVerifiedSyntheticText(s.value_si));
+        if (energySlot) {
+            pushUniqueSyntheticSegment(segments, formatSyntheticSlotSegment(energySlot), MAX_SYNTHETIC_LIST_TOKENS);
+        }
+    }
+
+    // c) Otros ejes mecánicos secundarios verificados (ej. PBV, Vuelco, Hidráulica auxiliar) si aún hay < 4 tokens
+    if (segments.length < MAX_SYNTHETIC_LIST_TOKENS) {
+        for (const slot of slots) {
+            if (segments.length >= MAX_SYNTHETIC_LIST_TOKENS) break;
+            if (slot.mandatory) continue;
+            if (!isPositiveVerifiedSyntheticText(slot.value_si)) continue;
+            if (
+                isSecondaryConsumptionOrTankSlot(slot) ||
+                isEnergySourceSlot(slot) ||
+                isKinematicsSlot(slot) ||
+                isTractionOrUndercarriageSlot(slot) ||
+                isTransmissionSlot(slot)
+            ) {
+                continue;
+            }
+            pushUniqueSyntheticSegment(segments, formatSyntheticSlotSegment(slot), MAX_SYNTHETIC_LIST_TOKENS);
+        }
+    }
+
+    // d) Consumos horarios y capacidades de estanque: solo cuando el equipo tiene < 2 métricas principales y es su único dato verificado
+    if (segments.length === 0) {
+        for (const slot of slots) {
+            if (segments.length >= 2) break;
+            if (!isSecondaryConsumptionOrTankSlot(slot)) continue;
+            if (!isPositiveVerifiedSyntheticText(slot.value_si)) continue;
+            pushUniqueSyntheticSegment(segments, formatSyntheticSlotSegment(slot), 2);
+        }
+    }
+
+    return segments.length > 0 ? segments.join(' · ') : MISSING_TECH_SPEC;
 }
 
 export function buildEquipmentShortDescription(record: {
@@ -1978,30 +2398,13 @@ export function buildEquipmentShortDescription(record: {
     categoria_equipo?: string;
     contexto_operativo?: string[];
     caracteristicas_principales?: string[];
+    physical_traits?: {
+        primary_energy?: string | null;
+        primary_energy_source?: string | null;
+        [key: string]: unknown;
+    } | null;
 }): string {
-    const base = buildHomologousEquipmentDescription(record);
-    const cfg = record.configuration_profile;
-    if (!cfg) return base;
-
-    const baseUpper = base.toUpperCase();
-    const extras: string[] = [];
-
-    if (
-        cfg.axle_or_undercarriage_config &&
-        !baseUpper.includes(cfg.axle_or_undercarriage_config.toUpperCase())
-    ) {
-        extras.push(`Ejes/Rodaje: ${cfg.axle_or_undercarriage_config}`);
-    }
-    const txText = cfg.transmission_model_spec || formatTransmissionCategoryShortEs(cfg.transmission_category);
-    if (txText && !baseUpper.includes(txText.toUpperCase().slice(0, 10))) {
-        extras.push(`Caja: ${txText}`);
-    }
-    if (cfg.work_body_or_implement && !baseUpper.includes(cfg.work_body_or_implement.toUpperCase().slice(0, 10))) {
-        extras.push(`Config.: ${cfg.work_body_or_implement}`);
-    }
-    if (extras.length === 0) return base;
-    if (!base || base === MISSING_TECH_SPEC) return extras.join(' · ');
-    return `${base} · ${extras.join(' · ')}`;
+    return buildHomologousEquipmentDescription(record);
 }
 
 export function countPublishedPillars(
@@ -2081,4 +2484,104 @@ export function groupEquipmentByBrandAndType<T extends SortableEquipmentRecord>(
     }
 
     return groups;
+}
+
+function normalizeHierarchyBrandKey(rawBrand: string): string {
+    if (!rawBrand || rawBrand.startsWith('[')) return '__MISSING_BRAND__';
+    const key = rawBrand
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+    return key || '__MISSING_BRAND__';
+}
+
+function foldHierarchyText(raw: string): string {
+    return raw
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase()
+        .trim();
+}
+
+/**
+ * Resuelve la denominación visible de un equipo dentro de su bloque de marca OEM,
+ * evitando repetir el nombre del fabricante si `model_oficial` ya lo incluye al inicio.
+ */
+export function resolveModelWithinBrandLabel(makeRaw?: string, modelRaw?: string): string {
+    const cleanMake = String(makeRaw || '').trim();
+    const cleanModel = String(modelRaw || '').trim();
+
+    if (cleanModel && !cleanModel.startsWith('[')) {
+        if (cleanMake && !cleanMake.startsWith('[')) {
+            const makeFold = foldHierarchyText(cleanMake);
+            const modelWords = cleanModel.split(/\s+/);
+            const makeWordsCount = cleanMake.split(/\s+/).length;
+            if (modelWords.length > makeWordsCount) {
+                const prefixFold = foldHierarchyText(modelWords.slice(0, makeWordsCount).join(' '));
+                if (prefixFold === makeFold) {
+                    const stripped = modelWords.slice(makeWordsCount).join(' ').trim();
+                    if (stripped) return stripped;
+                }
+            }
+        }
+        return cleanModel;
+    }
+
+    return cleanMake || MISSING_TECH_SPEC;
+}
+
+/**
+ * Proyecta el listado en jerarquía estricta de 2 niveles:
+ * Nivel 1: Marca OEM única (`brandKey`, `brandLabel`)
+ * Nivel 2: Subgrupos por Tipo de Equipo (`subgroups[]`) -> Modelos (`items[]`)
+ */
+export function groupEquipmentHierarchyByBrandAndType<T extends SortableEquipmentRecord>(
+    records: T[]
+): EquipmentBrandHierarchyGroup<T>[] {
+    const sorted = sortEquipmentByBrandAndType(records);
+    const brands: EquipmentBrandHierarchyGroup<T>[] = [];
+    const brandIndexByKey = new Map<string, number>();
+
+    for (const item of sorted) {
+        const rawBrand = String(item.make_oficial || item.make || '').trim();
+        const brandKey = normalizeHierarchyBrandKey(rawBrand);
+        const brandLabel = rawBrand && !rawBrand.startsWith('[') ? rawBrand.toUpperCase() : MISSING_TECH_SPEC;
+
+        const cleanedType = cleanMachineryTypeLabel(item.tipo_equipo || item.categoria_equipo);
+        const machineryTypeLabel =
+            cleanedType && !cleanedType.startsWith('[')
+                ? cleanedType.toUpperCase()
+                : MISSING_TECH_SPEC;
+        const typeKey = `${brandKey}::${machineryTypeLabel}`;
+
+        let brandIdx = brandIndexByKey.get(brandKey);
+        if (brandIdx === undefined) {
+            brandIdx = brands.length;
+            brandIndexByKey.set(brandKey, brandIdx);
+            brands.push({
+                brandKey,
+                brandLabel,
+                totalCount: 0,
+                subgroups: [],
+            });
+        }
+
+        const brandGroup = brands[brandIdx];
+        brandGroup.totalCount += 1;
+
+        const existingSubgroup = brandGroup.subgroups.find((sub) => sub.typeKey === typeKey);
+        if (existingSubgroup) {
+            existingSubgroup.items.push(item);
+        } else {
+            brandGroup.subgroups.push({
+                typeKey,
+                machineryTypeLabel,
+                items: [item],
+            });
+        }
+    }
+
+    return brands;
 }

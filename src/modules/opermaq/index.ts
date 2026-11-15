@@ -1,6 +1,7 @@
 import type { Express } from 'express';
 import { resolveMinReportSessionScope } from '../../middleware/sessionScope';
 import assetsRouter from './routes/assets.routes';
+import manufacturersRouter from './routes/manufacturers.routes';
 import symbologyPublicRouter from './routes/symbology-public.routes';
 import vaultRouter from './routes/vault.routes';
 import workerRouter from './routes/worker.routes';
@@ -24,5 +25,6 @@ export function registerOpermaqModuleRoutes(app: Express): void {
 
     // 3. Núcleo funcional puro de OPERMAQ subordinado a la sesión y cuenta activa de MINREPORT Core
     app.use('/api/assets', resolveMinReportSessionScope, assetsRouter);
+    app.use('/api/manufacturers', resolveMinReportSessionScope, manufacturersRouter);
     app.use('/api/vault', resolveMinReportSessionScope, vaultRouter);
 }

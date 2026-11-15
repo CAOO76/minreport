@@ -27,7 +27,7 @@
         "baseUrl": ".",
         "paths": {
             "@opermaq/*": ["./src/modules/opermaq/*"],
-            "@stockpile/*": ["./src/modules/stockpile/*"]
+            "@geolapp/*": ["./src/modules/geolapp/*"]
         }
     },
     "include": [

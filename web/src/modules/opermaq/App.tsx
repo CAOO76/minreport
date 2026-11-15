@@ -34,6 +34,16 @@ const GlobalSymbologyDashboard = lazy(() =>
         default: m.GlobalSymbologyDashboard,
     }))
 );
+const ManufacturersDirectoryDashboard = lazy(() =>
+    import('./components/ManufacturersDirectoryDashboard').then((m) => ({
+        default: m.ManufacturersDirectoryDashboard,
+    }))
+);
+const SuppliersDirectoryDashboard = lazy(() =>
+    import('./components/SuppliersDirectoryDashboard').then((m) => ({
+        default: m.SuppliersDirectoryDashboard,
+    }))
+);
 
 type OpermaqView = 'list' | 'registration' | 'vault' | 'fleet_unit';
 
@@ -86,6 +96,21 @@ function App({
 
     // Al cambiar entre CATÁLOGO y FLOTA o al presionar nuevamente el icono del menú de sección, volver al home respectivo
     useEffect(() => {
+        if (effectiveDomain === 'CATALOG') {
+            try {
+                const pendingAssetId = sessionStorage.getItem('opermaq_jump_catalog_asset_id');
+                if (pendingAssetId) {
+                    sessionStorage.removeItem('opermaq_jump_catalog_asset_id');
+                    setSelectedFleetUnit(null);
+                    setShowFleetRegistrationModal(false);
+                    setSelectedCatalogAssetId(pendingAssetId);
+                    setCurrentView('vault');
+                    return;
+                }
+            } catch {
+                // Ignorar errores de sessionStorage restringido
+            }
+        }
         setCurrentView('list');
         setSelectedCatalogAssetId(null);
         setSelectedFleetUnit(null);
@@ -99,9 +124,30 @@ function App({
             setSelectedFleetUnit(null);
             setShowFleetRegistrationModal(false);
         };
+        const handleOpenCatalogAsset = (ev: Event) => {
+            if (effectiveDomain !== 'CATALOG') return;
+            const customEv = ev as CustomEvent<{ catalogId?: string }>;
+            let targetId = customEv?.detail?.catalogId || '';
+            try {
+                if (!targetId) {
+                    targetId = sessionStorage.getItem('opermaq_jump_catalog_asset_id') || '';
+                }
+                sessionStorage.removeItem('opermaq_jump_catalog_asset_id');
+            } catch {
+                // Ignorar errores de sessionStorage restringido
+            }
+            if (targetId) {
+                setSelectedCatalogAssetId(targetId);
+                setCurrentView('vault');
+            }
+        };
         window.addEventListener('opermaq:navigate-home', handleNavigateSectionHome);
-        return () => window.removeEventListener('opermaq:navigate-home', handleNavigateSectionHome);
-    }, []);
+        window.addEventListener('opermaq:open-catalog-asset', handleOpenCatalogAsset);
+        return () => {
+            window.removeEventListener('opermaq:navigate-home', handleNavigateSectionHome);
+            window.removeEventListener('opermaq:open-catalog-asset', handleOpenCatalogAsset);
+        };
+    }, [effectiveDomain]);
 
     useEffect(() => {
         if (selectedCatalogAssetId) localStorage.setItem('opermaq_asset_id', selectedCatalogAssetId);
@@ -168,6 +214,10 @@ function App({
                         <Suspense fallback={<ViewFallback />}>
                             {/* DOMINIO 3 TRANSVERSAL: SIMBOLOGÍA ISO 7000 */}
                             {effectiveDomain === 'SYMBOLOGY' && <GlobalSymbologyDashboard />}
+
+                            {/* DOMINIO 4 TRANSVERSAL: FABRICANTES Y CANALES COMERCIALES */}
+                            {effectiveDomain === 'MANUFACTURERS' && <ManufacturersDirectoryDashboard />}
+                            {effectiveDomain === 'SUPPLIERS' && <SuppliersDirectoryDashboard />}
 
                             {effectiveDomain === 'CATALOG' && currentView === 'registration' && (
                                 <AssetRegistration

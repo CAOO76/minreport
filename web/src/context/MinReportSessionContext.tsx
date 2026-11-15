@@ -2,16 +2,22 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import { collection, onSnapshot } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { useAuth } from './AuthContext';
-import type { AccountClassification, SystemRole } from '../contracts';
+import {
+    evaluatePilotExpiration,
+    resolveEffectiveModuleAccess,
+    resolveSessionHomePath,
+    type AccountClassification,
+    type SystemRole,
+} from '../contracts';
 
 /**
  * CONTEXTO DE SESION UNIFICADA WEB 3.0 (MINREPORT CORE & MODULOS INTEGRADOS)
  * Jerarquia Soberana de 5 Tipos de Cuenta:
  * 1º DEV (`DEV_ROOT` / `dev@minreport.com`)
  * 2º ADMIN (`SUPER_ADMIN` / `admin@minreport.com`)
- * 3º TEST-PILOT (`TEST_PILOT` / `PILOT_LEAD`)
- * 4º CLIENTES B2B (`OWNER`, `ADMIN`, `SUPERVISOR`, `OPERATOR`, `VIEWER`, `BILLING_ONLY`)
- * 5º EDU (`STUDENT` / `EDUCATIONAL`)
+ * 3º TEST-PILOT (`TEST_PILOT`)
+ * 4º CLIENTES B2B (`OWNER`, `ADMIN`, `OPERATOR`, `VIEWER`)
+ * 5º EDU (`PROFESSOR`, `STUDENT`)
  */
 
 export interface MinReportSession {
@@ -20,13 +26,19 @@ export interface MinReportSession {
     displayName: string;
     tenantId: string;
     tenantName: string;
+    countryCode?: string;
     role: SystemRole;
     classification: AccountClassification;
     accountTier: 1 | 2 | 3 | 4 | 5;
     isDevRoot: boolean;
     isSuperAdmin: boolean;
     isTestPilot: boolean;
+    pilotExpired?: boolean;
     isEduSandbox: boolean;
+    isMfaVerified?: boolean;
+    coBrandingLogoUrl?: string | null;
+    coBrandingName?: string | null;
+    maxProjects?: number | null;
     activeModules: {
         opermaq: boolean;
         stockpile: boolean;
@@ -36,6 +48,7 @@ export interface MinReportSession {
             canInspect: boolean;
             canManageFleet: boolean;
             canViewVaults: boolean;
+            canViewMasterCatalog?: boolean;
             canCurateAI: boolean;
         };
         stockpile: {
@@ -61,11 +74,36 @@ interface MinReportSessionContextType {
 const MinReportSessionContext = createContext<MinReportSessionContextType>({
     session: null,
     isLoaded: false,
-    hasModuleAccess: () => false
+    hasModuleAccess: () => false,
 });
 
+function normalizeCanonicalSystemRole(rawRole?: string): SystemRole | null {
+    const upper = String(rawRole || '').trim().toUpperCase();
+    switch (upper) {
+        case 'DEV_ROOT':
+        case 'SUPER_ADMIN':
+        case 'TEST_PILOT':
+        case 'OWNER':
+        case 'ADMIN':
+        case 'OPERATOR':
+        case 'VIEWER':
+        case 'PROFESSOR':
+        case 'STUDENT':
+            return upper;
+        case 'SUBSCRIPTION_ADMIN':
+        case 'BILLING_ONLY':
+        case 'GENERAL_ADMIN':
+            return 'ADMIN';
+        case 'SUPERVISOR':
+        case 'INTERNAL_USER':
+            return 'OPERATOR';
+        default:
+            return null;
+    }
+}
+
 export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const { user, profile, currentAccount, loading } = useAuth();
+    const { user, profile, currentAccount, loading, isMfaVerified } = useAuth();
     const [tokenClaims, setTokenClaims] = useState<Record<string, unknown>>({});
     const [claimsLoaded, setClaimsLoaded] = useState<boolean>(false);
     const [globalModuleStatus, setGlobalModuleStatus] = useState<{ opermaq: boolean; stockpile: boolean }>({
@@ -73,7 +111,7 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
         stockpile: true,
     });
 
-    // 1. Verificacion de Custom Claims reales desde Firebase ID Token
+    // 1. Verificación de Custom Claims reales desde Firebase ID Token
     useEffect(() => {
         let active = true;
         if (!user) {
@@ -100,7 +138,7 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
         };
     }, [user]);
 
-    // 2. Disponibilidad global de modulos (coleccion publica de lectura modules_status)
+    // 2. Disponibilidad global de módulos (`modules_status`)
     useEffect(() => {
         if (!user) return;
 
@@ -110,11 +148,19 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
                 const next: Partial<{ opermaq: boolean; stockpile: boolean }> = {};
                 snap.forEach((docSnap) => {
                     const data = docSnap.data();
-                    if (docSnap.id === 'opermaq' && typeof data?.enabled === 'boolean') {
-                        next.opermaq = data.enabled;
+                    const resolvedFlag =
+                        data?.enabled === false || data?.active === false
+                            ? false
+                            : typeof data?.enabled === 'boolean'
+                              ? data.enabled
+                              : typeof data?.active === 'boolean'
+                                ? data.active
+                                : undefined;
+                    if (docSnap.id === 'opermaq' && typeof resolvedFlag === 'boolean') {
+                        next.opermaq = resolvedFlag;
                     }
-                    if (docSnap.id === 'stockpile' && typeof data?.enabled === 'boolean') {
-                        next.stockpile = data.enabled;
+                    if (docSnap.id === 'stockpile' && typeof resolvedFlag === 'boolean') {
+                        next.stockpile = resolvedFlag;
                     }
                 });
                 setGlobalModuleStatus({
@@ -123,7 +169,7 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
                 });
             },
             () => {
-                // Mantener disponibilidad por defecto si ocurre desconexion offline inicial
+                // Mantener disponibilidad por defecto si ocurre desconexión offline inicial
             }
         );
 
@@ -136,11 +182,12 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
         if (!user) return null;
 
         const emailLower = (user.email || '').toLowerCase();
-        const claimRole = typeof tokenClaims.role === 'string' ? tokenClaims.role : undefined;
-        const claimClassification = typeof tokenClaims.classification === 'string' ? tokenClaims.classification.toLowerCase() : undefined;
+        const claimRole = typeof tokenClaims.role === 'string' ? tokenClaims.role.toUpperCase() : undefined;
+        const claimClassification =
+            typeof tokenClaims.classification === 'string' ? tokenClaims.classification.toLowerCase() : undefined;
         const claimIsMasterDev = Boolean(tokenClaims.isMasterDev);
 
-        const profileRole = (profile as any)?.role as string | undefined;
+        const profileRole = (profile as any)?.role ? String((profile as any).role).toUpperCase() : undefined;
         const profileClassification = ((profile as any)?.classification as string | undefined)?.toLowerCase();
 
         const accountType = currentAccount?.type?.toUpperCase();
@@ -152,51 +199,46 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
             claimRole === 'DEV_ROOT' ||
             emailLower === 'dev@minreport.com' ||
             user.uid === 'dev-master-root-uid' ||
-            user.uid === 'minreport-dev-root-superadmin-2026' ||
             profileRole === 'DEV_ROOT' ||
             currentAccount?.id === 'dev-master-sandbox';
 
         // 2º ADMIN (SUPER_ADMIN)
         const isSuperAdmin =
-            !isDevRoot && (
-                claimRole === 'SUPER_ADMIN' ||
+            !isDevRoot &&
+            (claimRole === 'SUPER_ADMIN' ||
                 emailLower === 'admin@minreport.com' ||
                 user.uid === 'super-admin-uid' ||
-                profileRole === 'SUPER_ADMIN'
-            );
+                profileRole === 'SUPER_ADMIN');
 
         const userMembership = profile?.memberships?.find((m: any) => m.accountId === currentAccount?.id);
-        const membershipRole = userMembership?.role as string | undefined;
+        const membershipRoleRaw = userMembership?.role ? String(userMembership.role).toUpperCase() : undefined;
 
-        // 3º TEST-PILOT
-        const isTestPilot =
+        // 3º TEST-PILOT (Rol único TEST_PILOT)
+        const rawIsTestPilot =
             !isDevRoot &&
-            !isSuperAdmin && (
-                claimRole === 'TEST_PILOT' ||
-                claimRole === 'PILOT_LEAD' ||
+            !isSuperAdmin &&
+            (claimRole === 'TEST_PILOT' ||
                 profileRole === 'TEST_PILOT' ||
-                profileRole === 'PILOT_LEAD' ||
-                membershipRole === 'PILOT_LEAD' ||
-                membershipRole === 'TEST_PILOT' ||
+                membershipRoleRaw === 'TEST_PILOT' ||
                 claimClassification === 'test-pilot' ||
                 profileClassification === 'test-pilot' ||
                 accountClass === 'test-pilot' ||
                 accountType === 'TEST_PILOT' ||
-                (currentAccount?.id || '').startsWith('pilot-')
-            );
+                (currentAccount?.id || '').startsWith('pilot-'));
 
         // 5º EDU
         const isEdu =
             !isDevRoot &&
             !isSuperAdmin &&
-            !isTestPilot && (
-                claimRole === 'STUDENT' ||
+            !rawIsTestPilot &&
+            (claimRole === 'STUDENT' ||
+                claimRole === 'PROFESSOR' ||
+                profileRole === 'PROFESSOR' ||
                 claimClassification === 'edu' ||
                 accountType === 'EDUCATIONAL' ||
                 accountClass === 'edu' ||
                 profileClassification === 'edu' ||
-                Boolean((currentAccount as any)?.isEduSandbox)
-            );
+                Boolean((currentAccount as any)?.isEduSandbox));
 
         let accountTier: 1 | 2 | 3 | 4 | 5 = 4;
         let classification: AccountClassification = 'b2b';
@@ -207,7 +249,7 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
         } else if (isSuperAdmin) {
             accountTier = 2;
             classification = 'admin';
-        } else if (isTestPilot) {
+        } else if (rawIsTestPilot) {
             accountTier = 3;
             classification = 'test-pilot';
         } else if (isEdu) {
@@ -223,92 +265,221 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
             role = 'DEV_ROOT';
         } else if (isSuperAdmin) {
             role = 'SUPER_ADMIN';
-        } else if (isTestPilot) {
-            role = (claimRole === 'PILOT_LEAD' || membershipRole === 'PILOT_LEAD' || profileRole === 'PILOT_LEAD')
-                ? 'PILOT_LEAD'
-                : 'TEST_PILOT';
-        } else if (membershipRole) {
-            role = membershipRole === 'SUBSCRIPTION_ADMIN' ? 'ADMIN' : (membershipRole as SystemRole);
-        } else if (claimRole && ['OWNER', 'ADMIN', 'SUPERVISOR', 'OPERATOR', 'VIEWER', 'STUDENT', 'BILLING_ONLY'].includes(claimRole)) {
-            role = claimRole as SystemRole;
-        } else if (currentAccount && currentAccount.ownerId === user.uid) {
-            role = 'OWNER';
-        } else if (isEdu) {
-            role = 'STUDENT';
+        } else if (rawIsTestPilot) {
+            role = 'TEST_PILOT';
+        } else {
+            const normalizedMembership = normalizeCanonicalSystemRole(membershipRoleRaw);
+            const normalizedClaim = normalizeCanonicalSystemRole(claimRole);
+            const normalizedProfile = normalizeCanonicalSystemRole(profileRole);
+
+            if (normalizedMembership) {
+                role = normalizedMembership;
+            } else if (normalizedClaim) {
+                role = normalizedClaim;
+            } else if (currentAccount && currentAccount.ownerId === user.uid) {
+                role = isEdu ? 'STUDENT' : 'OWNER';
+            } else if (normalizedProfile) {
+                role = normalizedProfile;
+            } else if (isEdu) {
+                role = 'STUDENT';
+            }
         }
 
-        // Gobernanza estricta de modulos:
-        // Cuentas privilegiadas (DEV, ADMIN, TEST-PILOT) habilitan ambos modulos;
-        // Cuentas B2B y EDU respetan estrictamente enabledPlugins/contract y modules_status global.
-        const hasFullSuiteOverride = isDevRoot || isSuperAdmin || isTestPilot;
-        const contract = (currentAccount as any)?.contract;
-        const rawActive = contract?.activeModules;
-        const explicitArray: string[] | null = Array.isArray((currentAccount as any)?.enabledPlugins)
-            ? (currentAccount as any).enabledPlugins
-            : Array.isArray((currentAccount as any)?.enabledModules)
-                ? (currentAccount as any).enabledModules
-                : Array.isArray(contract?.modules)
-                    ? contract.modules
-                    : null;
+        const rawPilotExpiresAt =
+            (tokenClaims as any)?.pilotExpiresAt ??
+            (profile as any)?.pilotExpiresAt ??
+            (currentAccount as any)?.pilotExpiresAt;
+        const pilotExpired = role === 'TEST_PILOT' && evaluatePilotExpiration(rawPilotExpiresAt);
+        const isTestPilot = rawIsTestPilot && !pilotExpired;
 
-        const resolveTenantModule = (key: 'opermaq' | 'stockpile'): boolean => {
-            if (typeof rawActive?.[key] === 'boolean') {
-                return rawActive[key];
+        const hasFullSuiteAccess = isDevRoot || isSuperAdmin || isTestPilot;
+        const accountStatus = String((currentAccount as any)?.status || 'ACTIVE').toUpperCase();
+        const isTenantBlocked =
+            !hasFullSuiteAccess &&
+            (accountStatus === 'PENDING_APPROVAL' || accountStatus === 'REJECTED' || accountStatus === 'SUSPENDED');
+
+        const rawEntitlements = (currentAccount as any)?.entitlements ?? null;
+        const contract = (currentAccount as any)?.contract;
+        const rawAllowedModules = (userMembership as any)?.allowedModules ?? null;
+        const rawAssignedModules: unknown[] | null = Array.isArray((userMembership as any)?.assignedModules)
+            ? (userMembership as any).assignedModules
+            : null;
+
+        const resolveMemberAllowedForModule = (
+            moduleKey: 'opermaq' | 'stockpile'
+        ): Record<string, boolean> | null => {
+            if (!rawAssignedModules) return rawAllowedModules;
+            const assignedSet = new Set(
+                rawAssignedModules.map((m) => String(m || '').trim().toLowerCase())
+            );
+            const merged: Record<string, boolean> = {
+                ...(rawAllowedModules || {}),
+            };
+            if (merged[moduleKey] === undefined) {
+                merged[moduleKey] = assignedSet.has(moduleKey);
             }
-            if (explicitArray !== null) {
-                return explicitArray.includes(key);
-            }
-            return false;
+            return merged;
         };
 
-        const activeModules = hasFullSuiteOverride
-            ? { opermaq: true, stockpile: true }
-            : {
-                opermaq: resolveTenantModule('opermaq') && globalModuleStatus.opermaq,
-                stockpile: resolveTenantModule('stockpile') && globalModuleStatus.stockpile,
-            };
+        const hasStructuredEntitlements = Boolean(
+            rawEntitlements &&
+                (rawEntitlements.basePackage !== undefined ||
+                    rawEntitlements.baseModules !== undefined ||
+                    rawEntitlements.addonModules !== undefined)
+        );
+        const entitlementModulesMap =
+            rawEntitlements?.modules && typeof rawEntitlements.modules === 'object'
+                ? (rawEntitlements.modules as Record<string, boolean>)
+                : null;
+        const legacyAccountModulesMap =
+            (currentAccount as any)?.modules && typeof (currentAccount as any).modules === 'object'
+                ? ((currentAccount as any).modules as Record<string, boolean>)
+                : null;
 
-        const isAdminOrOwner = hasFullSuiteOverride || role === 'OWNER' || role === 'ADMIN';
+        const resolveEntitlementsForModule = (
+            moduleKey: 'opermaq' | 'stockpile'
+        ): Record<string, any> | null => {
+            if (!hasStructuredEntitlements) return null;
+            if (
+                entitlementModulesMap &&
+                typeof entitlementModulesMap[moduleKey] === 'boolean' &&
+                rawEntitlements?.addonModules?.[moduleKey] === undefined &&
+                rawEntitlements?.baseModules?.[moduleKey] === undefined
+            ) {
+                return {
+                    ...rawEntitlements,
+                    addonModules: {
+                        ...(rawEntitlements.addonModules || {}),
+                        [moduleKey]: { active: entitlementModulesMap[moduleKey] },
+                    },
+                };
+            }
+            return rawEntitlements;
+        };
+
+        const mergedLegacyActiveModules = {
+            ...(legacyAccountModulesMap || {}),
+            ...(contract?.activeModules || {}),
+            ...(entitlementModulesMap || {}),
+        };
+
+        const activeModules =
+            pilotExpired || isTenantBlocked
+                ? { opermaq: false, stockpile: false }
+                : {
+                      opermaq: resolveEffectiveModuleAccess({
+                          moduleKey: 'opermaq',
+                          globalModuleActive: globalModuleStatus.opermaq !== false,
+                          hasFullSuiteOverride: hasFullSuiteAccess,
+                          entitlements: resolveEntitlementsForModule('opermaq'),
+                          legacyContractActiveModules: mergedLegacyActiveModules,
+                          legacyEnabledPlugins: (currentAccount as any)?.enabledPlugins,
+                          memberRole: userMembership?.role,
+                          memberAllowedModules: resolveMemberAllowedForModule('opermaq'),
+                      }),
+                      stockpile: resolveEffectiveModuleAccess({
+                          moduleKey: 'stockpile',
+                          globalModuleActive: globalModuleStatus.stockpile !== false,
+                          hasFullSuiteOverride: hasFullSuiteAccess,
+                          entitlements: resolveEntitlementsForModule('stockpile'),
+                          legacyContractActiveModules: mergedLegacyActiveModules,
+                          legacyEnabledPlugins: (currentAccount as any)?.enabledPlugins,
+                          memberRole: userMembership?.role,
+                          memberAllowedModules: resolveMemberAllowedForModule('stockpile'),
+                      }),
+                  };
+
+        const isAdminOrOwner = hasFullSuiteAccess || role === 'OWNER' || role === 'ADMIN';
         const resolvedTenantId =
             currentAccount?.id ||
             (typeof tokenClaims.activeAccountId === 'string' ? tokenClaims.activeAccountId : '') ||
             (isDevRoot ? 'dev-master-sandbox' : isSuperAdmin ? 'admin-master-console' : '');
 
+        const countryCode = String(
+            (currentAccount as any)?.countryCode ||
+            (currentAccount as any)?.country ||
+            (profile as any)?.countryCode ||
+            'CL'
+        ).toUpperCase();
+
+        const eduLogoUrl =
+            typeof (currentAccount as any)?.eduInstitutionLogo?.downloadUrl === 'string'
+                ? (currentAccount as any).eduInstitutionLogo.downloadUrl.trim()
+                : '';
+        const corpLogoUrl =
+            typeof (currentAccount as any)?.corporateLogo?.downloadUrl === 'string'
+                ? (currentAccount as any).corporateLogo.downloadUrl.trim()
+                : typeof (currentAccount as any)?.corporateLogo === 'string'
+                  ? (currentAccount as any).corporateLogo.trim()
+                  : typeof (currentAccount as any)?.coBrandingLogoUrl === 'string'
+                    ? (currentAccount as any).coBrandingLogoUrl.trim()
+                    : '';
+        const coBrandingLogoUrl = eduLogoUrl || corpLogoUrl || null;
+        const coBrandingName =
+            (typeof (currentAccount as any)?.eduInstitutionName === 'string' &&
+                (currentAccount as any).eduInstitutionName.trim()) ||
+            (coBrandingLogoUrl && currentAccount?.name ? currentAccount.name : null);
+        const rawMaxProjects =
+            (currentAccount as any)?.entitlements?.maxProjects ?? (currentAccount as any)?.maxProjects;
+        const maxProjects: number | null =
+            typeof rawMaxProjects === 'number' && Number.isFinite(rawMaxProjects)
+                ? rawMaxProjects
+                : isEdu
+                  ? 3
+                  : null;
+
         return {
             uid: user.uid,
             email: user.email || '',
-            displayName: user.displayName || (profile as any)?.fullName || user.email?.split('@')[0] || 'Usuario MINREPORT',
+            displayName:
+                user.displayName ||
+                (profile as any)?.fullName ||
+                user.email?.split('@')[0] ||
+                'Usuario MINREPORT',
             tenantId: resolvedTenantId,
-            tenantName: currentAccount?.name || (isDevRoot ? 'DEV Master Sandbox' : isSuperAdmin ? 'Consola Comercial MINREPORT' : '[Organizacion no seleccionada]'),
+            tenantName:
+                currentAccount?.name ||
+                (isDevRoot
+                    ? 'DEV Master Sandbox'
+                    : isSuperAdmin
+                        ? 'Consola Comercial MINREPORT'
+                        : '[Organización no seleccionada]'),
+            countryCode,
             role,
             classification,
             accountTier,
             isDevRoot,
             isSuperAdmin,
             isTestPilot,
+            pilotExpired,
             isEduSandbox: isEdu,
+            isMfaVerified,
+            coBrandingLogoUrl,
+            coBrandingName,
+            maxProjects,
             activeModules,
             permissions: {
                 opermaq: {
-                    canInspect: true,
-                    canManageFleet: isAdminOrOwner || role === 'SUPERVISOR' || isEdu,
-                    canViewVaults: true,
-                    canCurateAI: isDevRoot || isTestPilot
+                    canInspect: !pilotExpired && role !== 'VIEWER',
+                    canManageFleet: !pilotExpired && (isAdminOrOwner || isEdu),
+                    canViewVaults: !pilotExpired,
+                    canViewMasterCatalog: isDevRoot || isSuperAdmin,
+                    canCurateAI: isDevRoot,
                 },
                 stockpile: {
-                    canScan: hasFullSuiteOverride || !isEdu,
-                    canCalculate: true,
-                    canExportReport: isAdminOrOwner || role === 'SUPERVISOR',
-                    canTrainVisionAI: isDevRoot || isTestPilot
+                    canScan: !pilotExpired && (hasFullSuiteAccess || !isEdu) && role !== 'VIEWER',
+                    canCalculate: !pilotExpired,
+                    canExportReport: !pilotExpired && (isAdminOrOwner || role === 'VIEWER'),
+                    canTrainVisionAI: isDevRoot,
                 },
                 pilot: {
-                    canCommentAndRequestChanges: isDevRoot || isTestPilot || isSuperAdmin,
-                    canSimulateProjects: isDevRoot || isTestPilot,
-                    canTrainInternalAI: isDevRoot || isTestPilot
-                }
-            }
+                    canCommentAndRequestChanges: isTestPilot,
+                    canSimulateProjects: isTestPilot,
+                    canTrainInternalAI: false,
+                },
+            },
         };
-    }, [user, profile, currentAccount, tokenClaims, globalModuleStatus]);
+    }, [user, profile, currentAccount, tokenClaims, globalModuleStatus, isMfaVerified]);
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -318,7 +489,7 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
     }, [session?.tenantId]);
 
     const hasModuleAccess = (moduleKey: 'opermaq' | 'stockpile'): boolean => {
-        if (!session) return false;
+        if (!session || session.pilotExpired) return false;
         if (session.isDevRoot || session.isSuperAdmin || session.isTestPilot) return true;
         return Boolean(session.activeModules[moduleKey]);
     };
@@ -331,3 +502,4 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
 };
 
 export const useMinReportSession = () => useContext(MinReportSessionContext);
+export { resolveSessionHomePath };

@@ -36,6 +36,7 @@ import { toast } from 'react-toastify';
 import { M3IconButton } from './M3IconButton';
 import { M3Button } from './M3Button';
 import { M3LinearProgress, M3CircularProgress } from './M3ProgressIndicator';
+import { ReadAloudButton } from '../../../components/common/ReadAloudButton';
 import { useTranslation } from 'react-i18next';
 import i18n from '../locales/i18n';
 import { mediaDigestorClient } from '../../../core/media/MediaDigestorClient';
@@ -57,7 +58,6 @@ import {
   VaultSymbologyReadOnlyPanel,
   useLiveHuntedSymbology,
 } from './VaultSymbologyReadOnlyPanel';
-import { VaultPilotFeedbackBox } from './VaultPilotFeedbackBox';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface VaultDashboardProps {
@@ -456,7 +456,7 @@ function parseInlineStyles(
     if (m[1]) {
       result.push(<strong key={m.index} className="font-bold text-[#0F172A] dark:text-[#F3F4F6]">{m[2]}</strong>);
     } else if (m[3]) {
-      result.push(<code key={m.index} className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] px-[4px] py-[1px] rounded-none text-[11px] font-mono tabular-nums text-[#C68346]">{m[4]}</code>);
+      result.push(<code key={m.index} className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] px-[4px] py-[1px] rounded-none text-microcopy font-mono tabular-nums text-[#C68346]">{m[4]}</code>);
     } else if (m[5]) {
       result.push(<em key={m.index} className="italic text-[#475569] dark:text-[#8A93A6]">{m[6]}</em>);
     } else if (m[7]) {
@@ -713,7 +713,7 @@ function PendingSectionFigureCard({
       <div className="flex flex-wrap items-center justify-between gap-[8px] pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C]">
         <div className="flex items-center gap-[8px]">
           <span className="material-symbols-outlined !text-[16px] text-[#C68346]">image_search</span>
-          <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-[#C68346]">
+          <span className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#C68346]">
             {t('vault_dashboard.pending_figure.title', 'Imagen técnica pendiente en esta sección')}
           </span>
         </div>
@@ -735,21 +735,21 @@ function PendingSectionFigureCard({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="px-[8px] py-[4px] bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[10px] font-mono font-bold uppercase tracking-wider rounded-none shadow-none border-0 cursor-pointer transition-colors"
+              className="px-[8px] py-[4px] bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-microcopy font-mono font-bold uppercase tracking-wider rounded-none shadow-none border-0 cursor-pointer transition-colors"
             >
               {t('vault_dashboard.pending_figure.upload', 'Subir imagen')}
             </button>
             <button
               type="button"
               onClick={() => void handleClipboardButton()}
-              className="px-[8px] py-[4px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#0F172A] dark:text-[#F3F4F6] text-[10px] font-mono font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer transition-colors"
+              className="px-[8px] py-[4px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#0F172A] dark:text-[#F3F4F6] text-microcopy font-mono font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer transition-colors"
             >
               {t('vault_dashboard.pending_figure.paste', 'Pegar portapapeles')}
             </button>
           </div>
         )}
         {stage === 'UPLOADING' && (
-          <div className="flex items-center gap-[8px] text-[10px] font-mono text-[#C68346]">
+          <div className="flex items-center gap-[8px] text-microcopy font-mono text-[#C68346]">
             <M3CircularProgress size={14} strokeWidth={2} indeterminate tone="copper" ariaLabel={t('vault_dashboard.pending_figure.consolidating', 'Optimizando en CAS')} />
             <span className="uppercase">{t('vault_dashboard.pending_figure.consolidating', 'Optimizando en CAS')}</span>
           </div>
@@ -758,25 +758,25 @@ function PendingSectionFigureCard({
 
       <div className="mt-[8px] space-y-[8px]">
         <div>
-          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] block">
+          <span className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] block">
             {t('vault_dashboard.pending_figure.description_label', 'Recurso visual requerido')}
           </span>
           <p className="text-[13px] text-[#0F172A] dark:text-[#F3F4F6] leading-relaxed mt-0.5 select-text">{description}</p>
         </div>
 
         <div className="pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-col gap-[4px]">
-          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
+          <span className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
             {t('vault_dashboard.pending_figure.link_label', 'Fuente para obtención manual')}
           </span>
           {primarySource ? (
             <>
               <div className="flex flex-wrap items-center justify-between gap-[8px]">
-                <span className="text-[11px] font-semibold text-[#0F172A] dark:text-[#F3F4F6] select-text">{sourceLabel(primarySource)}</span>
+                <span className="text-microcopy font-semibold text-[#0F172A] dark:text-[#F3F4F6] select-text">{sourceLabel(primarySource)}</span>
                 <a
                   href={primarySource.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-[4px] text-[11px] font-mono font-bold text-[#00AEEF] hover:underline uppercase"
+                  className="inline-flex items-center gap-[4px] text-microcopy font-mono font-bold text-[#00AEEF] hover:underline uppercase"
                 >
                   <span className="material-symbols-outlined !text-[14px]">open_in_new</span>
                   <span>{t('vault_dashboard.pending_figure.visit_source', 'Visitar fuente')}</span>
@@ -786,18 +786,18 @@ function PendingSectionFigureCard({
                 href={primarySource.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-[10px] font-mono text-[#00AEEF]/80 hover:text-[#00AEEF] hover:underline break-all select-text"
+                className="text-microcopy font-mono text-[#00AEEF]/80 hover:text-[#00AEEF] hover:underline break-all select-text"
               >
                 {primarySource.url}
               </a>
               {alternativeSources.length > 0 && (
                 <details className="mt-[4px]">
-                  <summary className="text-[10px] font-mono text-[#475569] dark:text-[#8A93A6] cursor-pointer hover:text-[#0F172A] dark:hover:text-[#F3F4F6]">
+                  <summary className="text-microcopy font-mono text-[#475569] dark:text-[#8A93A6] cursor-pointer hover:text-[#0F172A] dark:hover:text-[#F3F4F6]">
                     {t('vault_dashboard.pending_figure.alt_links', 'Enlaces alternativos verificados')} ({alternativeSources.length})
                   </summary>
                   <ul className="mt-[4px] space-y-[4px] pl-[8px] border-l border-[#E2E8F0] dark:border-[#12151C]">
                     {alternativeSources.map((src, sIdx) => (
-                      <li key={sIdx} className="text-[10px] font-mono">
+                      <li key={sIdx} className="text-microcopy font-mono">
                         <span className="text-[#475569] dark:text-[#8A93A6]">[{src.type}] {src.author}: </span>
                         <a href={src.url} target="_blank" rel="noopener noreferrer" className="text-[#00AEEF] hover:underline break-all">
                           {src.description || src.url}
@@ -809,14 +809,14 @@ function PendingSectionFigureCard({
               )}
             </>
           ) : (
-            <span className="text-[11px] font-mono text-[#94A3B8] dark:text-[#5A6072]">
+            <span className="text-microcopy font-mono text-[#94A3B8] dark:text-[#5A6072]">
               [{t('vault_dashboard.pending_figure.no_source', 'Fuente no declarada')}]
             </span>
           )}
         </div>
 
         {stage === 'WAITING_ONLINE' && (
-          <div className="pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] flex items-center gap-[8px] text-[11px] font-mono text-[#C68346]">
+          <div className="pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] flex items-center gap-[8px] text-microcopy font-mono text-[#C68346]">
             <span className="material-symbols-outlined !text-[14px]">cloud_off</span>
             <span>{t('vault_dashboard.pending_figure.offline_waiting', 'Sin conexión: la imagen se procesará al recuperar la red.')}</span>
           </div>
@@ -824,7 +824,7 @@ function PendingSectionFigureCard({
 
         {canAct && preview && (stage === 'PREVIEW' || stage === 'CONFIRMING') && (
           <div className="pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-col gap-[8px]">
-            <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#00AEEF]">
+            <span className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#00AEEF]">
               {t('vault_dashboard.pending_figure.preview_title', 'Vista previa [Pendiente] -> [Imagen]')}
             </span>
             <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] p-[8px]">
@@ -837,11 +837,11 @@ function PendingSectionFigureCard({
                 style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
               />
             </div>
-            <span className="text-[11px] font-mono tabular-nums text-[#00AEEF]">
+            <span className="text-microcopy font-mono tabular-nums text-[#00AEEF]">
               ORIG: {formatPhotoBytes(preview.originalBytes)} -&gt; CAS: {formatPhotoBytes(preview.optimizedBytes)} (-{preview.savingsPct}%) · SHA-256 {preview.sha256.slice(0, 12)}
             </span>
             <label className="flex flex-col gap-[4px]">
-              <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
+              <span className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
                 {t('vault_dashboard.pending_figure.figure_type_label', 'Tipo de figura')}
               </span>
               <select
@@ -849,7 +849,7 @@ function PendingSectionFigureCard({
                 onChange={(e) => setFigureType(e.target.value as PendingFigureType)}
                 autoComplete="off"
                 spellCheck={false}
-                className="px-[8px] py-[4px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
+                className="px-[8px] py-[4px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-microcopy font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
               >
                 {PENDING_FIGURE_TYPES.map((ft) => (
                   <option key={ft} value={ft}>
@@ -859,11 +859,11 @@ function PendingSectionFigureCard({
               </select>
             </label>
             {isItemLocked && (
-              <p className="text-[11px] text-[#C68346]">
+              <p className="text-microcopy text-[#C68346]">
                 {t('vault_dashboard.pending_figure.locked_advisory', 'Ítem aprobado: la imagen quedará como propuesta hasta desbloquear el ítem.')}
               </p>
             )}
-            <p className="text-[10px] text-[#475569] dark:text-[#8A93A6]">
+            <p className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
               {t('vault_dashboard.pending_figure.confirm_helper', 'Escriba "ACTUALIZAR" para integrar la imagen en esta sección:')}
             </p>
             <div className="flex gap-[8px]">
@@ -875,13 +875,13 @@ function PendingSectionFigureCard({
                 autoComplete="off"
                 spellCheck={false}
                 disabled={stage === 'CONFIRMING'}
-                className="px-[8px] py-[4px] flex-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
+                className="px-[8px] py-[4px] flex-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-microcopy font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
               />
               <button
                 type="button"
                 disabled={confirmInput.trim() !== 'ACTUALIZAR' || stage === 'CONFIRMING'}
                 onClick={() => void handleConfirm()}
-                className="px-[13px] py-[4px] bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[10px] font-mono font-bold uppercase disabled:opacity-40 rounded-none border-0 cursor-pointer"
+                className="px-[13px] py-[4px] bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-microcopy font-mono font-bold uppercase disabled:opacity-40 rounded-none border-0 cursor-pointer"
               >
                 {t('vault_dashboard.pending_figure.confirm', 'Confirmar')}
               </button>
@@ -889,7 +889,7 @@ function PendingSectionFigureCard({
                 type="button"
                 disabled={stage === 'CONFIRMING'}
                 onClick={resetFlow}
-                className="px-[13px] py-[4px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[10px] font-mono uppercase rounded-none cursor-pointer"
+                className="px-[13px] py-[4px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-microcopy font-mono uppercase rounded-none cursor-pointer"
               >
                 {t('vault_dashboard.pending_figure.cancel', 'Cancelar')}
               </button>
@@ -954,7 +954,7 @@ function MarkdownRenderer({
     if (!line) { i++; continue; }
     if (line.startsWith('#### ')) {
       const currentRaw = raw;
-      nodes.push(<h4 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-[12px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mt-[21px] mb-[8px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(cleanSymbolMarkersFromText(line.replace('#### ', '')), activeHighlightText, resolvedSymbology)}</h4>);
+      nodes.push(<h4 key={i} onClick={(e) => onFragmentClick?.(currentRaw, e)} className={`text-data-dense font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mt-[21px] mb-[8px] ${interactiveCls} rounded-none px-[8px] -mx-[8px] transition-colors duration-150`}>{parseInlineStyles(cleanSymbolMarkersFromText(line.replace('#### ', '')), activeHighlightText, resolvedSymbology)}</h4>);
       i++;
       continue;
     }
@@ -1040,7 +1040,7 @@ function MarkdownRenderer({
 
         nodes.push(
           <div key={`tbl-${i}`} className="overflow-x-auto my-[21px]">
-            <table className="w-full text-[12px] border-collapse tabular-nums font-mono">
+            <table className="w-full text-data-dense border-collapse tabular-nums font-mono">
               <thead>
                 <tr>
                   {cleanedHeader.map((h, ci) => {
@@ -1177,16 +1177,16 @@ function MarkdownRenderer({
             />
             {(captionDetail || altText || matchedFig) && (
               <figcaption className="mt-[8px] pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-col gap-[4px]">
-                <span className="text-[11px] font-mono font-bold text-[#0F172A] dark:text-[#F3F4F6] uppercase tracking-wider">
+                <span className="text-microcopy font-mono font-bold text-[#0F172A] dark:text-[#F3F4F6] uppercase tracking-wider">
                   {altText || t('vault_dashboard.markdown.technical_figure')}
                 </span>
                 {captionDetail && captionDetail !== altText && (
-                  <span className="text-[12px] text-[#475569] dark:text-[#8A93A6]">
+                  <span className="text-data-dense text-[#475569] dark:text-[#8A93A6]">
                     {captionDetail}
                   </span>
                 )}
                 {matchedFig && typeof matchedFig.original_bytes === 'number' && typeof matchedFig.optimized_bytes === 'number' && (
-                  <span className="text-[10px] font-mono tabular-nums text-[#00AEEF]">
+                  <span className="text-microcopy font-mono tabular-nums text-[#00AEEF]">
                     ORIG: {formatByteWeight(matchedFig.original_bytes)} -&gt; CAS: {formatByteWeight(matchedFig.optimized_bytes)} (
                     {typeof matchedFig.savings_pct === 'number'
                       ? `-${matchedFig.savings_pct.toFixed(1)}%`
@@ -1226,7 +1226,7 @@ function ItemizedSourcesBlock({ sources }: { sources: ItemizedSource[] }) {
   const groups = ['OEM', 'EXTERNO', 'YOUTUBE', 'MANUAL'] as const;
   return (
     <details className="mt-[34px] pt-[21px] border-t border-[#E2E8F0] dark:border-[#12151C] group">
-      <summary className="text-[11px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mb-[13px] cursor-pointer hover:text-[#0F172A] dark:hover:text-[#F3F4F6] transition-colors list-none flex items-center gap-[8px]">
+      <summary className="text-microcopy font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mb-[13px] cursor-pointer hover:text-[#0F172A] dark:hover:text-[#F3F4F6] transition-colors list-none flex items-center gap-[8px]">
         <span className="material-symbols-outlined !text-[14px] transition-transform group-open:rotate-90">chevron_right</span>
         {t('vault_dashboard.sources.verified_title')} ({sources.length})
       </summary>
@@ -1237,19 +1237,19 @@ function ItemizedSourcesBlock({ sources }: { sources: ItemizedSource[] }) {
           if (!items.length) return null;
           return (
             <div key={g}>
-              <div className={`flex items-center gap-[8px] mb-[8px] text-[11px] font-bold uppercase tracking-wider font-mono tabular-nums ${SOURCE_COLORS[g]}`}>
+              <div className={`flex items-center gap-[8px] mb-[8px] text-microcopy font-bold uppercase tracking-wider font-mono tabular-nums ${SOURCE_COLORS[g]}`}>
                 <span className="material-symbols-outlined !text-[13px]">{SOURCE_ICONS[g]}</span>
                 {g} ({items.length})
               </div>
               <ul className="space-y-[8px]">
                 {items.map((src, idx) => (
                   <li key={idx} className="flex items-start gap-[8px]">
-                    <span className="text-[10px] font-mono tabular-nums font-bold text-[#475569] dark:text-[#8A93A6] mt-0.5 shrink-0 w-[26px]">F{refIndex(src)}</span>
+                    <span className="text-microcopy font-mono tabular-nums font-bold text-[#475569] dark:text-[#8A93A6] mt-0.5 shrink-0 w-[26px]">F{refIndex(src)}</span>
                     <div className="min-w-0">
-                      <p className="text-[12px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">{src.author}</p>
-                      <p className="text-[11px] text-[#475569] dark:text-[#8A93A6]">{src.description}</p>
+                      <p className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">{src.author}</p>
+                      <p className="text-microcopy text-[#475569] dark:text-[#8A93A6]">{src.description}</p>
                       {src.url && (
-                        <a href={src.url} target="_blank" rel="noopener noreferrer" className="text-[11px] font-mono text-[#00AEEF] hover:underline break-all">{src.url}</a>
+                        <a href={src.url} target="_blank" rel="noopener noreferrer" className="text-microcopy font-mono text-[#00AEEF] hover:underline break-all">{src.url}</a>
                       )}
                     </div>
                   </li>
@@ -1368,11 +1368,11 @@ function ProposalCard({
     >
       <div className="flex justify-between items-start gap-[13px]">
         <div className="flex flex-col gap-0.5">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
+          <span className="text-microcopy font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
             {proposal.zona} — {proposal.componente}
           </span>
           {proposal.detected_at && (
-            <span className="text-[10px] font-mono tabular-nums text-[#94A3B8] dark:text-[#5A6072]">
+            <span className="text-microcopy font-mono tabular-nums text-[#94A3B8] dark:text-[#5A6072]">
               {t('vault_dashboard.proposals.detected_at')}: {new Date(proposal.detected_at).toLocaleDateString()}
             </span>
           )}
@@ -1381,7 +1381,7 @@ function ProposalCard({
         <div className="flex items-center gap-[8px]">
           {isApproved ? (
             <div className="flex items-center gap-[8px]">
-              <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[#00AEEF] border border-[#00AEEF]/30 px-[8px] py-0.5 rounded-none">
+              <span className="flex items-center gap-1 text-microcopy font-bold uppercase tracking-wider text-[#00AEEF] border border-[#00AEEF]/30 px-[8px] py-0.5 rounded-none">
                 {isSubmitting ? t('vault_dashboard.proposals.integrating') : t('vault_dashboard.proposals.approved')}
               </span>
               {!confirmingDecision && (
@@ -1390,7 +1390,7 @@ function ProposalCard({
                     type="button"
                     disabled={isSealed || isSubmitting}
                     onClick={() => setConfirmingDecision('CONSOLIDAR')}
-                    className="px-[8px] py-0.5 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none border-0 cursor-pointer disabled:opacity-40"
+                    className="px-[8px] py-0.5 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none border-0 cursor-pointer disabled:opacity-40"
                     title={t('vault_dashboard.proposals.integrate_now_tooltip')}
                   >
                     {isSubmitting ? t('vault_dashboard.proposals.integrating') : t('vault_dashboard.proposals.integrate_now')}
@@ -1407,11 +1407,11 @@ function ProposalCard({
               )}
             </div>
           ) : confirmingDecision ? (
-            <span className="text-[10px] font-bold uppercase tracking-wider px-[8px] py-0.5 border border-[#C68346]/40 text-[#C68346] rounded-none">
+            <span className="text-microcopy font-bold uppercase tracking-wider px-[8px] py-0.5 border border-[#C68346]/40 text-[#C68346] rounded-none">
               {t('vault_dashboard.proposals.confirming')}
             </span>
           ) : (
-            <span className="text-[10px] font-bold uppercase tracking-wider px-[8px] py-0.5 bg-[#F8FAFC] dark:bg-[#000000] text-[#94A3B8] dark:text-[#5A6072] border border-[#E2E8F0] dark:border-[#12151C] rounded-none">
+            <span className="text-microcopy font-bold uppercase tracking-wider px-[8px] py-0.5 bg-[#F8FAFC] dark:bg-[#000000] text-[#94A3B8] dark:text-[#5A6072] border border-[#E2E8F0] dark:border-[#12151C] rounded-none">
               {t('vault_dashboard.proposals.pending')}
             </span>
           )}
@@ -1445,7 +1445,7 @@ function ProposalCard({
 
       {proposal.figures && proposal.figures.length > 0 && (
         <div className="mt-[13px] pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C]">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mb-[8px] font-mono tabular-nums">
+          <p className="text-microcopy font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mb-[8px] font-mono tabular-nums">
             {t('vault_dashboard.proposals.associated_figures')} ({proposal.figures.length})
           </p>
           <div className="grid grid-cols-2 gap-[8px]">
@@ -1463,10 +1463,10 @@ function ProposalCard({
                   className="w-[44px] h-[44px] object-contain shrink-0 select-none pointer-events-none bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] rounded-none"
                 />
                 <div className="min-w-0 flex-1">
-                  <p className="text-[11px] font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                  <p className="text-microcopy font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate">
                     {fig.title_es}
                   </p>
-                  <p className="text-[10px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6] truncate">
+                  <p className="text-microcopy font-mono tabular-nums text-[#475569] dark:text-[#8A93A6] truncate">
                     {fig.figure_type} {fig.source_page ? `· P.${fig.source_page}` : ''}
                   </p>
                 </div>
@@ -1477,8 +1477,8 @@ function ProposalCard({
       )}
 
       {(proposal.source_url || fallbackUrl) && (proposal.source_url || fallbackUrl) !== '#' && (
-        <div className="mt-[8px] flex items-center gap-1.5 text-[10px] text-[#00AEEF]">
-          <span className="material-symbols-outlined !text-[12px]">link</span>
+        <div className="mt-[8px] flex items-center gap-1.5 text-microcopy text-[#00AEEF]">
+          <span className="material-symbols-outlined !text-[14px]">link</span>
           <a
             href={proposal.source_url || fallbackUrl}
             target="_blank"
@@ -1493,7 +1493,7 @@ function ProposalCard({
 
       {confirmingDecision && (
         <div className="mt-[13px] pt-[13px] border-t border-[#E2E8F0] dark:border-[#12151C] space-y-[8px]">
-          <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+          <p className="text-microcopy font-bold text-[#0F172A] dark:text-[#F3F4F6]">
             {confirmingDecision === 'ELIMINADO'
               ? t('vault_dashboard.proposals.confirm_delete_prompt')
               : t('vault_dashboard.proposals.confirm_approve_prompt')}
@@ -1506,13 +1506,13 @@ function ProposalCard({
               placeholder="ACTUALIZAR"
               autoComplete="off"
               spellCheck={false}
-              className="px-[8px] py-1 text-[11px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none flex-1 text-[#0F172A] dark:text-[#F3F4F6] font-mono rounded-none shadow-none"
+              className="px-[8px] py-1 text-microcopy bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none flex-1 text-[#0F172A] dark:text-[#F3F4F6] font-mono rounded-none shadow-none"
             />
             <button
               type="button"
               disabled={confirmText.trim().toUpperCase() !== 'ACTUALIZAR' || isSubmitting}
               onClick={handleConfirm}
-              className="px-[13px] py-1 font-bold text-[10px] text-[#FFFFFF] bg-[#C68346] hover:bg-[#b07239] disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer"
+              className="px-[13px] py-1 font-bold text-microcopy text-[#FFFFFF] bg-[#C68346] hover:bg-[#b07239] disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer"
             >
               {isSubmitting ? t('vault_dashboard.proposals.integrating') : t('common.confirm')}
             </button>
@@ -1520,7 +1520,7 @@ function ProposalCard({
               type="button"
               onClick={handleReset}
               disabled={isSubmitting}
-              className="px-[13px] py-1 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none shadow-none cursor-pointer"
+              className="px-[13px] py-1 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] text-microcopy text-[#475569] dark:text-[#8A93A6] rounded-none shadow-none cursor-pointer"
             >
               {t('common.cancel')}
             </button>
@@ -1581,7 +1581,7 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
             <h3 className="text-xs font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6]">
               {t('vault_dashboard.proposals.new_content_title')}
             </h3>
-            <p className="text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
+            <p className="text-microcopy font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
               {t('vault_dashboard.proposals.summary_counts', { pending: pendingCount, approved: approvedCount })}
             </p>
           </div>
@@ -1599,7 +1599,7 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
 
       {approvedCount > 0 && (
         <div className="mt-[13px] p-[13px] bg-[#F8FAFC] dark:bg-[#07090D] border border-[#00AEEF] flex flex-col gap-[8px] shrink-0 rounded-none shadow-none">
-          <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+          <p className="text-microcopy font-bold text-[#0F172A] dark:text-[#F3F4F6]">
             {t('vault_dashboard.proposals.approved_ready_banner', { count: approvedCount })}
           </p>
           <div className="flex gap-[8px]">
@@ -1611,13 +1611,13 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
               autoComplete="off"
               spellCheck={false}
               disabled={isSealed || isSubmitting}
-              className="px-[8px] py-1 flex-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+              className="px-[8px] py-1 flex-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-microcopy font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
             />
             <button
               type="button"
               disabled={isSealed || isSubmitting || evolveConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'}
               onClick={handleEvolve}
-              className="px-[13px] py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-[10px] uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer shrink-0"
+              className="px-[13px] py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-microcopy uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer shrink-0"
             >
               {isSubmitting ? t('vault_dashboard.proposals.integrating') : t('vault_dashboard.proposals.integrate_now')}
             </button>
@@ -1627,7 +1627,7 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
 
       <div className="flex-1 overflow-y-auto mt-[13px] space-y-[13px] pr-1 custom-scrollbar">
         {proposals.length === 0 ? (
-          <div className="py-[34px] text-center text-[12px] text-[#94A3B8] dark:text-[#5A6072] border border-[#E2E8F0] dark:border-[#12151C]">
+          <div className="py-[34px] text-center text-data-dense text-[#94A3B8] dark:text-[#5A6072] border border-[#E2E8F0] dark:border-[#12151C]">
             {t('vault_dashboard.proposals.empty_new_content')}
           </div>
         ) : (
@@ -1641,10 +1641,10 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
               isSealed={isSealed}
               fallbackUrl={firstValidUrl}
             >
-              <div className="space-y-[8px] text-[11px] leading-relaxed">
+              <div className="space-y-[8px] text-microcopy leading-relaxed">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-[13px] pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C]">
                   <div className="space-y-1">
-                    <span className="text-[9px] font-bold text-[#94A3B8] dark:text-[#5A6072] uppercase tracking-wide">
+                    <span className="text-microcopy font-bold text-[#94A3B8] dark:text-[#5A6072] uppercase tracking-wide">
                       {t('vault_dashboard.proposals.col_current')}
                     </span>
                     <div className="p-[8px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-[#475569] dark:text-[#8A93A6] leading-relaxed font-mono break-all max-h-32 overflow-y-auto custom-scrollbar">
@@ -1656,7 +1656,7 @@ function NuevosHallazgosView({ item, onDecideProposal, onEvolveItemByType, onClo
                     </div>
                   </div>
                   <div className="space-y-1 md:border-l md:border-[#E2E8F0] md:dark:border-[#12151C] md:pl-[13px]">
-                    <span className="text-[9px] font-bold text-[#00AEEF] uppercase tracking-wide">
+                    <span className="text-microcopy font-bold text-[#00AEEF] uppercase tracking-wide">
                       {t('vault_dashboard.proposals.col_suggested')}
                     </span>
                     <div className="p-[8px] border border-[#00AEEF]/30 bg-[#00AEEF]/5 text-[#0F172A] dark:text-[#F3F4F6] leading-relaxed font-mono break-all max-h-32 overflow-y-auto custom-scrollbar">
@@ -1728,7 +1728,7 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
             <h3 className="text-xs font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6]">
               {t('vault_dashboard.proposals.conflict_content_title')}
             </h3>
-            <p className="text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
+            <p className="text-microcopy font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
               {t('vault_dashboard.proposals.summary_counts', { pending: pendingCount, approved: approvedCount })}
             </p>
           </div>
@@ -1746,7 +1746,7 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
 
       {approvedCount > 0 && (
         <div className="mt-[13px] p-[13px] bg-[#F8FAFC] dark:bg-[#07090D] border border-[#C68346] flex flex-col gap-[8px] shrink-0 rounded-none shadow-none">
-          <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+          <p className="text-microcopy font-bold text-[#0F172A] dark:text-[#F3F4F6]">
             {t('vault_dashboard.proposals.conflicts_ready_banner', { count: approvedCount })}
           </p>
           <div className="flex gap-[8px]">
@@ -1758,13 +1758,13 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
               autoComplete="off"
               spellCheck={false}
               disabled={isSealed || isSubmitting}
-              className="px-[8px] py-1 flex-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+              className="px-[8px] py-1 flex-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-microcopy font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
             />
             <button
               type="button"
               disabled={isSealed || isSubmitting || evolveConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'}
               onClick={handleEvolve}
-              className="px-[13px] py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-[10px] uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer shrink-0"
+              className="px-[13px] py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-microcopy uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none transition-colors border-0 cursor-pointer shrink-0"
             >
               {isSubmitting ? t('vault_dashboard.proposals.integrating') : t('vault_dashboard.proposals.integrate_now')}
             </button>
@@ -1774,7 +1774,7 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
 
       <div className="flex-1 overflow-y-auto mt-[13px] space-y-[13px] pr-1 custom-scrollbar">
         {proposals.length === 0 ? (
-          <div className="py-[34px] text-center text-[12px] text-[#94A3B8] dark:text-[#5A6072] border border-[#E2E8F0] dark:border-[#12151C]">
+          <div className="py-[34px] text-center text-data-dense text-[#94A3B8] dark:text-[#5A6072] border border-[#E2E8F0] dark:border-[#12151C]">
             {t('vault_dashboard.proposals.empty_conflicts')}
           </div>
         ) : (
@@ -1788,10 +1788,10 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
               isSealed={isSealed}
               fallbackUrl={firstValidUrl}
             >
-              <div className="space-y-[8px] text-[11px] leading-relaxed">
+              <div className="space-y-[8px] text-microcopy leading-relaxed">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-[13px] pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C]">
                   <div className="space-y-1">
-                    <span className="text-[9px] font-bold text-[#94A3B8] dark:text-[#5A6072] uppercase tracking-wide">
+                    <span className="text-microcopy font-bold text-[#94A3B8] dark:text-[#5A6072] uppercase tracking-wide">
                       {t('vault_dashboard.proposals.col_current')}
                     </span>
                     <div className="p-[8px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-[#475569] dark:text-[#8A93A6] leading-relaxed font-mono break-all max-h-32 overflow-y-auto custom-scrollbar">
@@ -1803,7 +1803,7 @@ function ConflictosView({ item, onDecideProposal, onEvolveItemByType, onClose, i
                     </div>
                   </div>
                   <div className="space-y-1 md:border-l md:border-[#E2E8F0] md:dark:border-[#12151C] md:pl-[13px]">
-                    <span className="text-[9px] font-bold text-[#C68346] uppercase tracking-wide">
+                    <span className="text-microcopy font-bold text-[#C68346] uppercase tracking-wide">
                       {t('vault_dashboard.proposals.col_suggested')}
                     </span>
                     <div className="p-[8px] border border-[#C68346]/30 bg-[#C68346]/5 text-[#0F172A] dark:text-[#F3F4F6] leading-relaxed font-mono break-all max-h-32 overflow-y-auto custom-scrollbar">
@@ -1851,7 +1851,7 @@ function ItemContentBlock({
   onOpenStudio,
 }: ItemContentBlockProps) {
   const { t } = useTranslation();
-  const { actorEmail, isTestPilot } = useOpermaqContext();
+  const { actorEmail } = useOpermaqContext();
   const effectiveCuratorEmail = actorEmail || auth.currentUser?.email || 'curador@minreport.cl';
   const [correctionText, setCorrectionText] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -2231,7 +2231,7 @@ function ItemContentBlock({
         ) : isEditingManualContent && canCurateAI && !isSealed && !item.is_human_locked ? (
           <div className="space-y-[13px] border border-[#C68346] bg-[#FFFFFF] dark:bg-[#07090D] p-[21px] rounded-none shadow-none select-none">
             <div className="flex items-center justify-between gap-[8px] pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C]">
-              <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-[#C68346]">
+              <span className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#C68346]">
                 {t('vault_dashboard.item_actions.surgical_edit_title')}
               </span>
               <button
@@ -2250,15 +2250,15 @@ function ItemContentBlock({
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-[13px]">
               <div className="space-y-[8px]">
-                <span className="block text-[10px] font-mono font-bold uppercase tracking-wider text-[#94A3B8] dark:text-[#5A6072]">
+                <span className="block text-microcopy font-mono font-bold uppercase tracking-wider text-[#94A3B8] dark:text-[#5A6072]">
                   {t('vault_dashboard.proposals.col_current')}
                 </span>
-                <div className="p-[13px] max-h-[360px] overflow-y-auto border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-[11px] font-mono text-[#475569] dark:text-[#8A93A6] whitespace-pre-wrap select-text custom-scrollbar">
+                <div className="p-[13px] max-h-[360px] overflow-y-auto border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-microcopy font-mono text-[#475569] dark:text-[#8A93A6] whitespace-pre-wrap select-text custom-scrollbar">
                   {item.content || t('opermaq_domains.not_declared')}
                 </div>
               </div>
               <div className="space-y-[8px]">
-                <span className="block text-[10px] font-mono font-bold uppercase tracking-wider text-[#00AEEF]">
+                <span className="block text-microcopy font-mono font-bold uppercase tracking-wider text-[#00AEEF]">
                   {t('vault_dashboard.proposals.col_suggested')}
                 </span>
                 <textarea
@@ -2268,12 +2268,12 @@ function ItemContentBlock({
                   autoComplete="off"
                   spellCheck={false}
                   disabled={isSavingManualContent}
-                  className="w-full p-[13px] min-h-[300px] border border-[#00AEEF]/40 focus:border-[#C68346] bg-[#FFFFFF] dark:bg-[#000000] text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] outline-none resize-y rounded-none shadow-none select-text custom-scrollbar"
+                  className="w-full p-[13px] min-h-[300px] border border-[#00AEEF]/40 focus:border-[#C68346] bg-[#FFFFFF] dark:bg-[#000000] text-microcopy font-mono text-[#0F172A] dark:text-[#F3F4F6] outline-none resize-y rounded-none shadow-none select-text custom-scrollbar"
                 />
               </div>
             </div>
             <div className="pt-[8px] border-t border-[#E2E8F0] dark:border-[#12151C] space-y-[8px]">
-              <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+              <p className="text-microcopy font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                 {t('vault_dashboard.item_actions.surgical_edit_confirm_prompt')}
               </p>
               <div className="flex gap-[8px]">
@@ -2285,7 +2285,7 @@ function ItemContentBlock({
                   autoComplete="off"
                   spellCheck={false}
                   disabled={isSavingManualContent}
-                  className="px-[13px] py-[8px] flex-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                  className="px-[13px] py-[8px] flex-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-microcopy font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
                 />
                 <button
                   type="button"
@@ -2304,7 +2304,7 @@ function ItemContentBlock({
                       setIsSavingManualContent(false);
                     }
                   }}
-                  className="px-[21px] py-[8px] bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[10px] font-bold uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
+                  className="px-[21px] py-[8px] bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-microcopy font-bold uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
                 >
                   {isSavingManualContent ? t('common.saving') : t('common.confirm')}
                 </button>
@@ -2315,7 +2315,7 @@ function ItemContentBlock({
                     setIsEditingManualContent(false);
                     setManualEditConfirmInput('');
                   }}
-                  className="px-[21px] py-[8px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                  className="px-[21px] py-[8px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                 >
                   {t('common.cancel')}
                 </button>
@@ -2375,7 +2375,7 @@ function ItemContentBlock({
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="flex flex-col gap-1">
                 {item.approved_by && (
-                  <span className="text-[10px] text-[#94A3B8] dark:text-[#5A6072] font-mono tabular-nums">
+                  <span className="text-microcopy text-[#94A3B8] dark:text-[#5A6072] font-mono tabular-nums">
                     {t('vault_dashboard.labels.by')} {item.approved_by} · {item.approved_at ? new Date(item.approved_at).toLocaleDateString() : ''}
                   </span>
                 )}
@@ -2384,11 +2384,11 @@ function ItemContentBlock({
           </div>
         ) : (
           <div className="py-[21px] px-[21px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-center space-y-[8px] rounded-none shadow-none">
-            <p className="text-[11px] font-mono font-bold text-[#94A3B8] dark:text-[#5A6072]">
+            <p className="text-microcopy font-mono font-bold text-[#94A3B8] dark:text-[#5A6072]">
               {t('opermaq_domains.not_declared')}
             </p>
             {canCurateAI && (
-              <p className="text-[11px] text-[#475569] dark:text-[#8A93A6]">
+              <p className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
                 {t(
                   'vault_dashboard.item_actions.empty_item_guidance',
                   'Utilice "Actualizar con IA", "Subir Archivos" o el asistente lateral OPERMAQ IA.'
@@ -2396,7 +2396,7 @@ function ItemContentBlock({
               </p>
             )}
             {canCurateAI && item.content_status === 'ERROR' && item.hunt_error && (
-              <p className="text-[10px] font-mono font-bold text-[#C68346]">
+              <p className="text-microcopy font-mono font-bold text-[#C68346]">
                 {t('common.error')}: {item.hunt_error}
               </p>
             )}
@@ -2408,7 +2408,7 @@ function ItemContentBlock({
         <div className="w-full lg:w-[38.2%] lg:max-w-[380px] shrink-0 flex flex-col justify-between border-t lg:border-t-0 lg:border-l border-[#E2E8F0] dark:border-[#12151C] pt-[13px] lg:pt-0 lg:pl-[13px] pb-2 h-full min-h-0 overflow-hidden select-none">
           <div className="flex-1 flex flex-col min-h-0 pb-2 gap-2 overflow-hidden">
             <div className="flex items-center justify-between mb-0.5 shrink-0">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-[#475569] dark:text-[#8A93A6]">{t('vault_dashboard.chat.header_title')}</span>
+              <span className="text-microcopy font-bold uppercase tracking-widest text-[#475569] dark:text-[#8A93A6]">{t('vault_dashboard.chat.header_title')}</span>
               <div className="flex items-center gap-1">
                 {isSearching && (
                   <M3CircularProgress size={12} strokeWidth={2} indeterminate tone="copper" ariaLabel={t('vault_dashboard.chat.generating_aria')} />
@@ -2438,7 +2438,7 @@ function ItemContentBlock({
               {messages.length === 0 ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
                   <span className="material-symbols-outlined !text-[28px] text-[#94A3B8] dark:text-[#5A6072] mb-2">forum</span>
-                  <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] leading-relaxed">
+                  <p className="text-microcopy text-[#475569] dark:text-[#8A93A6] leading-relaxed">
                     {t('vault_dashboard.chat.empty_guidance')}
                   </p>
                 </div>
@@ -2450,7 +2450,7 @@ function ItemContentBlock({
                   if (isSystem) {
                     return (
                       <div key={msg.id || index} className="p-2 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] text-center shrink-0">
-                        <p className="text-[10px] text-[#475569] dark:text-[#8A93A6] font-medium leading-relaxed">
+                        <p className="text-microcopy text-[#475569] dark:text-[#8A93A6] font-medium leading-relaxed">
                           {msg.content}
                         </p>
                       </div>
@@ -2462,12 +2462,12 @@ function ItemContentBlock({
                       key={msg.id || index}
                       className={`flex flex-col gap-1 max-w-[90%] shrink-0 ${isUser ? 'self-end items-end' : 'self-start items-start'}`}
                     >
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-[#94A3B8] dark:text-[#5A6072]">
+                      <span className="text-microcopy font-bold uppercase tracking-wider text-[#94A3B8] dark:text-[#5A6072]">
                         {isUser ? t('vault_dashboard.chat.role_operator') : t('vault_dashboard.chat.header_title')}
                       </span>
 
                       <div
-                        className={`p-2.5 text-[11px] leading-relaxed font-atkinson rounded-none shadow-none ${isUser
+                        className={`p-2.5 text-microcopy leading-relaxed font-atkinson rounded-none shadow-none ${isUser
                           ? 'bg-[#F8FAFC] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C]'
                           : 'bg-[#C68346]/5 text-[#0F172A] dark:text-[#F3F4F6] border border-[#C68346]/30'
                           }`}
@@ -2476,27 +2476,27 @@ function ItemContentBlock({
                       </div>
 
                       {msg.highlightText && (
-                        <div className="flex items-center gap-1 mt-0.5 text-[9px] text-[#C68346] font-bold shrink-0">
-                          <span className="material-symbols-outlined !text-[12px]">local_library</span>
+                        <div className="flex items-center gap-1 mt-0.5 text-microcopy text-[#C68346] font-bold shrink-0">
+                          <span className="material-symbols-outlined !text-[14px]">local_library</span>
                           {t('vault_dashboard.chat.active_highlight')}
                         </div>
                       )}
 
                       {msg.draftContent && msg.draftStatus === 'APPLIED' && (
-                        <div className="mt-1 px-2 py-1 border border-[#00AEEF]/40 bg-[#00AEEF]/10 text-[#00AEEF] text-[9px] font-mono font-bold uppercase tracking-wider rounded-none shadow-none shrink-0">
+                        <div className="mt-1 px-2 py-1 border border-[#00AEEF]/40 bg-[#00AEEF]/10 text-[#00AEEF] text-microcopy font-mono font-bold uppercase tracking-wider rounded-none shadow-none shrink-0">
                           {t('vault_dashboard.chat.draft_applied_badge')}
                         </div>
                       )}
 
                       {msg.draftContent && msg.draftStatus === 'DISCARDED' && (
-                        <div className="mt-1 px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-[#94A3B8] dark:text-[#5A6072] text-[9px] font-mono font-bold uppercase tracking-wider rounded-none shadow-none shrink-0">
+                        <div className="mt-1 px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-[#94A3B8] dark:text-[#5A6072] text-microcopy font-mono font-bold uppercase tracking-wider rounded-none shadow-none shrink-0">
                           {t('vault_dashboard.chat.draft_discarded_badge')}
                         </div>
                       )}
 
                       {msg.draftContent && (!msg.draftStatus || msg.draftStatus === 'PENDING') && (
                         <div className="mt-2 w-full bg-[#FFFFFF] dark:bg-[#07090D] border border-[#00AEEF]/40 p-2.5 flex flex-col gap-[8px] rounded-none shadow-none shrink-0">
-                          <div className="flex items-center justify-between gap-1.5 text-[9px] font-bold uppercase tracking-wider text-[#00AEEF]">
+                          <div className="flex items-center justify-between gap-1.5 text-microcopy font-bold uppercase tracking-wider text-[#00AEEF]">
                             <span className="flex items-center gap-1">
                               <span className="material-symbols-outlined !text-[14px]">edit_document</span>
                               {t('vault_dashboard.chat.comparative_title')}
@@ -2513,23 +2513,23 @@ function ItemContentBlock({
                           </div>
                           <div className="grid grid-cols-1 gap-[8px]">
                             <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] p-1.5">
-                              <span className="block text-[8px] font-mono font-bold uppercase tracking-wider text-[#94A3B8] dark:text-[#5A6072] mb-0.5">
+                              <span className="block text-microcopy font-mono font-bold uppercase tracking-wider text-[#94A3B8] dark:text-[#5A6072] mb-0.5">
                                 [{t('vault_dashboard.proposals.col_current')}]
                               </span>
-                              <div className="max-h-16 overflow-y-auto text-[9px] font-mono text-[#475569] dark:text-[#8A93A6] custom-scrollbar select-text">
+                              <div className="max-h-16 overflow-y-auto text-microcopy font-mono text-[#475569] dark:text-[#8A93A6] custom-scrollbar select-text">
                                 <pre className="whitespace-pre-wrap">{selectedFragment || item.content || t('opermaq_domains.not_declared')}</pre>
                               </div>
                             </div>
                             <div className="border border-[#00AEEF]/40 bg-[#F8FAFC] dark:bg-[#000000] p-1.5">
-                              <span className="block text-[8px] font-mono font-bold uppercase tracking-wider text-[#00AEEF] mb-0.5">
+                              <span className="block text-microcopy font-mono font-bold uppercase tracking-wider text-[#00AEEF] mb-0.5">
                                 [{t('vault_dashboard.proposals.col_suggested')}]
                               </span>
-                              <div className="max-h-24 overflow-y-auto text-[9px] font-mono text-[#0F172A] dark:text-[#F3F4F6] custom-scrollbar select-text">
+                              <div className="max-h-24 overflow-y-auto text-microcopy font-mono text-[#0F172A] dark:text-[#F3F4F6] custom-scrollbar select-text">
                                 <pre className="whitespace-pre-wrap">{msg.draftContent}</pre>
                               </div>
                             </div>
                           </div>
-                          <p className="text-[10px] text-[#475569] dark:text-[#8A93A6] leading-snug">
+                          <p className="text-microcopy text-[#475569] dark:text-[#8A93A6] leading-snug">
                             {t('vault_dashboard.chat.confirm_draft_prompt')}
                           </p>
                           <input
@@ -2539,7 +2539,7 @@ function ItemContentBlock({
                             placeholder="ACTUALIZAR"
                             autoComplete="off"
                             spellCheck={false}
-                            className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                            className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-microcopy font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
                           />
                           <div className="grid grid-cols-2 gap-1.5">
                             <button
@@ -2583,7 +2583,7 @@ function ItemContentBlock({
                                   setIsSending(false);
                                 }
                               }}
-                              className="bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[10px] py-1.5 font-bold uppercase tracking-wider transition-colors disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
+                              className="bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-microcopy py-1.5 font-bold uppercase tracking-wider transition-colors disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
                             >
                               {t('common.approve')}
                             </button>
@@ -2591,7 +2591,7 @@ function ItemContentBlock({
                               type="button"
                               disabled={isSending}
                               onClick={() => handleDismissDraft(msg.id)}
-                              className="bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#0F172A] dark:hover:border-[#F3F4F6] text-[#475569] dark:text-[#8A93A6] text-[10px] py-1.5 font-bold uppercase tracking-wider transition-colors rounded-none shadow-none cursor-pointer"
+                              className="bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#0F172A] dark:hover:border-[#F3F4F6] text-[#475569] dark:text-[#8A93A6] text-microcopy py-1.5 font-bold uppercase tracking-wider transition-colors rounded-none shadow-none cursor-pointer"
                             >
                               {t('common.discard')}
                             </button>
@@ -2604,7 +2604,7 @@ function ItemContentBlock({
               )}
 
               {isSending && (
-                <div className="flex items-center gap-1.5 py-1 justify-start text-[10px] text-[#C68346] shrink-0">
+                <div className="flex items-center gap-1.5 py-1 justify-start text-microcopy text-[#C68346] shrink-0">
                   <M3CircularProgress size={14} strokeWidth={2} indeterminate tone="copper" ariaLabel={t('vault_dashboard.chat.processing_query')} />
                   <span>{t('vault_dashboard.chat.processing_query')}</span>
                 </div>
@@ -2614,9 +2614,9 @@ function ItemContentBlock({
 
           <div className="flex flex-col shrink-0 max-h-[64%] overflow-y-auto custom-scrollbar pr-0.5">
             {selectedFragment && (
-              <div className="mb-[8px] bg-[#C68346]/5 border border-[#C68346]/30 p-[8px] text-[10px] flex items-start gap-[8px] shrink-0 rounded-none">
+              <div className="mb-[8px] bg-[#C68346]/5 border border-[#C68346]/30 p-[8px] text-microcopy flex items-start gap-[8px] shrink-0 rounded-none">
                 <div className="flex-1 min-w-0">
-                  <span className="font-bold text-[#C68346] uppercase block text-[8px] tracking-wider mb-0.5">{t('vault_dashboard.chat.selected_fragment')}</span>
+                  <span className="font-bold text-[#C68346] uppercase block text-microcopy tracking-wider mb-0.5">{t('vault_dashboard.chat.selected_fragment')}</span>
                   <p className="text-[#475569] dark:text-[#8A93A6] truncate max-w-full">
                     "{selectedFragment}"
                   </p>
@@ -2648,7 +2648,7 @@ function ItemContentBlock({
                     placeholder={latestDraftContent ? t('vault_dashboard.chat.placeholder_apply_draft') : t('vault_dashboard.chat.placeholder_instruction')}
                     autoComplete="off"
                     spellCheck={false}
-                    className="w-full bg-transparent resize-none focus:outline-none text-[12px] text-[#0F172A] dark:text-[#F3F4F6] placeholder-[#94A3B8] dark:placeholder-[#5A6072] custom-scrollbar px-1"
+                    className="w-full bg-transparent resize-none focus:outline-none text-data-dense text-[#0F172A] dark:text-[#F3F4F6] placeholder-[#94A3B8] dark:placeholder-[#5A6072] custom-scrollbar px-1"
                   />
                   <div className="flex justify-end items-center gap-[8px] mt-1">
                     <button
@@ -2691,17 +2691,17 @@ function ItemContentBlock({
                 title={
                   pendingContentSummary.total > 0
                     ? t('vault_dashboard.pending_content.summary_tooltip', {
-                        undeclared: pendingContentSummary.undeclaredFieldsCount,
-                        figures: pendingContentSummary.pendingFiguresCount,
-                      })
+                      undeclared: pendingContentSummary.undeclaredFieldsCount,
+                      figures: pendingContentSummary.pendingFiguresCount,
+                    })
                     : t('vault_dashboard.pending_content.completed_tooltip', 'Sin contenido pendiente en este ítem')
                 }
               >
-                <span className="text-[10px] font-bold uppercase tracking-wider">
+                <span className="text-microcopy font-bold uppercase tracking-wider">
                   {t('vault_dashboard.pending_content.label', 'Contenido Pendiente')}
                 </span>
                 <span
-                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded-none font-mono tabular-nums ${pendingContentSummary.total > 0
+                  className={`text-microcopy font-bold px-1.5 py-0.5 rounded-none font-mono tabular-nums ${pendingContentSummary.total > 0
                     ? 'bg-[#C68346]/20 text-[#C68346] border border-[#C68346]'
                     : 'text-[#475569] dark:text-[#8A93A6]'
                     }`}
@@ -2725,8 +2725,8 @@ function ItemContentBlock({
                   }`}
                 title={t('vault_dashboard.proposals.new_content_title')}
               >
-                <span className="text-[10px] font-bold uppercase tracking-wider">{t('vault_dashboard.proposals.new_content_title')}</span>
-                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-none font-mono tabular-nums text-[#00AEEF]">
+                <span className="text-microcopy font-bold uppercase tracking-wider">{t('vault_dashboard.proposals.new_content_title')}</span>
+                <span className="text-microcopy font-bold px-1.5 py-0.5 rounded-none font-mono tabular-nums text-[#00AEEF]">
                   {(item.pending_conflicts ?? []).filter(p => p.estado_fusion === 'NUEVO' && p.human_decision !== 'ELIMINADO' && p.human_decision !== 'APROBADO').length}
                 </span>
               </button>
@@ -2746,8 +2746,8 @@ function ItemContentBlock({
                   }`}
                 title={t('vault_dashboard.proposals.conflict_content_title')}
               >
-                <span className="text-[10px] font-bold uppercase tracking-wider">{t('vault_dashboard.proposals.conflict_content_title')}</span>
-                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-none font-mono tabular-nums text-[#C68346]">
+                <span className="text-microcopy font-bold uppercase tracking-wider">{t('vault_dashboard.proposals.conflict_content_title')}</span>
+                <span className="text-microcopy font-bold px-1.5 py-0.5 rounded-none font-mono tabular-nums text-[#C68346]">
                   {(item.pending_conflicts ?? []).filter(p => p.estado_fusion === 'CONFLICTO' && p.human_decision !== 'ELIMINADO' && p.human_decision !== 'APROBADO').length}
                 </span>
               </button>
@@ -2759,7 +2759,7 @@ function ItemContentBlock({
                 type="button"
                 disabled={isSending || isGenerating || isSealed}
                 onClick={() => onOpenStudio ? onOpenStudio('INGESTION') : toast.info(t('vault_dashboard.item_actions.ingestion_unavailable'))}
-                className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                 title={t('vault_dashboard.item_actions.upload_files_tooltip')}
               >
                 {t('vault_dashboard.item_actions.upload_files')}
@@ -2769,7 +2769,7 @@ function ItemContentBlock({
                 type="button"
                 disabled={isSending || isGenerating}
                 onClick={() => onOpenStudio ? onOpenStudio('MANUAL_PUBLISHER') : toast.info(t('vault_dashboard.item_actions.pdf_export_unavailable'))}
-                className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                 title={t('vault_dashboard.item_actions.generate_manual_tooltip')}
               >
                 {t('vault_dashboard.item_actions.generate_manual')}
@@ -2779,7 +2779,7 @@ function ItemContentBlock({
                 type="button"
                 disabled={isSealed || isGenerating || item.is_human_locked}
                 onClick={() => setShowHuntConfirm(!showHuntConfirm)}
-                className="w-full flex items-center justify-between px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                className="w-full flex items-center justify-between px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                 title={t(
                   'vault_dashboard.item_actions.update_with_ai_tooltip',
                   'Buscar evidencia técnica actualizada sin sobrescribir el contenido vigente'
@@ -2802,7 +2802,7 @@ function ItemContentBlock({
                     ariaLabel={t('vault_dashboard.item_actions.update_with_ai', 'Actualizar con IA')}
                   />
                   {huntStageMessage && (
-                    <p className="text-[10px] font-mono text-[#475569] dark:text-[#8A93A6] leading-snug">
+                    <p className="text-microcopy font-mono text-[#475569] dark:text-[#8A93A6] leading-snug">
                       {huntStageMessage}
                     </p>
                   )}
@@ -2811,7 +2811,7 @@ function ItemContentBlock({
 
               {showHuntConfirm && !isHuntActive && (
                 <div className="p-[8px] border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-[8px] rounded-none shadow-none">
-                  <p className="text-[10px] text-[#C68346] font-bold leading-snug">
+                  <p className="text-microcopy text-[#C68346] font-bold leading-snug">
                     {t(
                       'vault_dashboard.item_actions.confirm_update_with_ai',
                       'Escribe "ACTUALIZAR" para buscar nueva evidencia técnica (se enviará a Nuevo Contenido o Contenido en Conflicto sin sobrescribir el texto actual):'
@@ -2837,7 +2837,7 @@ function ItemContentBlock({
                     placeholder="ACTUALIZAR"
                     autoComplete="off"
                     spellCheck={false}
-                    className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                    className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-microcopy font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
                   />
                   <div className="flex gap-[8px]">
                     <button
@@ -2848,7 +2848,7 @@ function ItemContentBlock({
                         setHuntConfirmText('');
                         setShowHuntConfirm(false);
                       }}
-                      className="px-2 py-1 bg-[#C68346] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
+                      className="px-2 py-1 bg-[#C68346] text-[#FFFFFF] font-bold text-microcopy disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
                     >
                       {t('common.confirm')}
                     </button>
@@ -2858,7 +2858,7 @@ function ItemContentBlock({
                         setShowHuntConfirm(false);
                         setHuntConfirmText('');
                       }}
-                      className="px-2 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[10px] rounded-none shadow-none cursor-pointer"
+                      className="px-2 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-microcopy rounded-none shadow-none cursor-pointer"
                     >
                       {t('common.cancel')}
                     </button>
@@ -2869,7 +2869,7 @@ function ItemContentBlock({
               <button
                 type="button"
                 onClick={() => setShowHistoryModal(true)}
-                className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                 title={t('vault_dashboard.history.title')}
               >
                 {t('vault_dashboard.history.title')}
@@ -2887,7 +2887,7 @@ function ItemContentBlock({
                     setManualEditConfirmInput('');
                     setIsEditingManualContent((prev) => !prev);
                   }}
-                  className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                  className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] transition-colors text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                 >
                   {t('vault_dashboard.item_actions.surgical_edit_content')}
                 </button>
@@ -2898,7 +2898,7 @@ function ItemContentBlock({
                   type="button"
                   disabled={isSealed || isGenerating}
                   onClick={() => setShowUnlockConfirm(!showUnlockConfirm)}
-                  className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#C68346] transition-colors text-[#C68346] hover:bg-[#C68346] hover:text-[#FFFFFF] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                  className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#C68346] transition-colors text-[#C68346] hover:bg-[#C68346] hover:text-[#FFFFFF] disabled:opacity-40 disabled:pointer-events-none text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                 >
                   {t('vault_dashboard.item_actions.unlock_item')}
                 </button>
@@ -2907,7 +2907,7 @@ function ItemContentBlock({
                   type="button"
                   disabled={isSealed || isGenerating}
                   onClick={() => setShowApprovalConfirm(!showApprovalConfirm)}
-                  className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#00AEEF] transition-colors text-[#00AEEF] hover:bg-[#00AEEF] hover:text-[#FFFFFF] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                  className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#00AEEF] transition-colors text-[#00AEEF] hover:bg-[#00AEEF] hover:text-[#FFFFFF] disabled:opacity-40 disabled:pointer-events-none text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                 >
                   {t('vault_dashboard.item_actions.approve_item')}
                 </button>
@@ -2915,7 +2915,7 @@ function ItemContentBlock({
 
               {showUnlockConfirm && (
                 <div className="p-[8px] border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-[8px] rounded-none shadow-none">
-                  <p className="text-[10px] text-[#C68346] font-bold">{t('vault_dashboard.item_actions.confirm_unlock_prompt')}</p>
+                  <p className="text-microcopy text-[#C68346] font-bold">{t('vault_dashboard.item_actions.confirm_unlock_prompt')}</p>
                   <input
                     type="text"
                     value={confirmUnlockInput}
@@ -2923,7 +2923,7 @@ function ItemContentBlock({
                     placeholder="ACTUALIZAR"
                     autoComplete="off"
                     spellCheck={false}
-                    className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                    className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-microcopy font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
                   />
                   <div className="flex gap-[8px]">
                     <button
@@ -2934,7 +2934,7 @@ function ItemContentBlock({
                         setConfirmUnlockInput('');
                         setShowUnlockConfirm(false);
                       }}
-                      className="px-2 py-1 bg-[#C68346] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
+                      className="px-2 py-1 bg-[#C68346] text-[#FFFFFF] font-bold text-microcopy disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
                     >
                       {t('common.confirm')}
                     </button>
@@ -2944,7 +2944,7 @@ function ItemContentBlock({
                         setConfirmUnlockInput('');
                         setShowUnlockConfirm(false);
                       }}
-                      className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none shadow-none cursor-pointer"
+                      className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-microcopy text-[#475569] dark:text-[#8A93A6] rounded-none shadow-none cursor-pointer"
                     >
                       {t('common.cancel')}
                     </button>
@@ -2955,7 +2955,7 @@ function ItemContentBlock({
               {showApprovalConfirm && (
                 <div className="p-[8px] border border-[#00AEEF]/40 bg-[#F8FAFC] dark:bg-[#07090D] flex flex-col gap-[8px] rounded-none shadow-none">
                   {pendingFiguresCount > 0 && (
-                    <p className="text-[10px] text-[#C68346] font-bold flex items-center gap-[4px]">
+                    <p className="text-microcopy text-[#C68346] font-bold flex items-center gap-[4px]">
                       <span className="material-symbols-outlined !text-[14px]">image_search</span>
                       {t('vault_dashboard.pending_figure.approval_warning', {
                         count: pendingFiguresCount,
@@ -2963,7 +2963,7 @@ function ItemContentBlock({
                       })}
                     </p>
                   )}
-                  <p className="text-[10px] text-[#00AEEF] font-bold">{t('vault_dashboard.item_actions.confirm_approval_prompt')}</p>
+                  <p className="text-microcopy text-[#00AEEF] font-bold">{t('vault_dashboard.item_actions.confirm_approval_prompt')}</p>
                   <input
                     type="text"
                     value={confirmApprovalInput}
@@ -2971,7 +2971,7 @@ function ItemContentBlock({
                     placeholder="ACTUALIZAR"
                     autoComplete="off"
                     spellCheck={false}
-                    className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-[10px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+                    className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-microcopy font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
                   />
                   <div className="flex gap-[8px]">
                     <button
@@ -2982,7 +2982,7 @@ function ItemContentBlock({
                         setConfirmApprovalInput('');
                         setShowApprovalConfirm(false);
                       }}
-                      className="px-2 py-1 bg-[#00AEEF] text-[#FFFFFF] font-bold text-[10px] disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
+                      className="px-2 py-1 bg-[#00AEEF] text-[#FFFFFF] font-bold text-microcopy disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
                     >
                       {t('common.confirm')}
                     </button>
@@ -2992,7 +2992,7 @@ function ItemContentBlock({
                         setConfirmApprovalInput('');
                         setShowApprovalConfirm(false);
                       }}
-                      className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none shadow-none cursor-pointer"
+                      className="px-2 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-microcopy text-[#475569] dark:text-[#8A93A6] rounded-none shadow-none cursor-pointer"
                     >
                       {t('common.cancel')}
                     </button>
@@ -3004,19 +3004,12 @@ function ItemContentBlock({
                 type="button"
                 disabled={isSealed || isGenerating || item.is_human_locked}
                 onClick={onDiscard}
-                className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#0F172A] dark:hover:border-[#F3F4F6] transition-colors text-[#94A3B8] dark:text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                className="w-full text-left px-[13px] py-[6px] bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#0F172A] dark:hover:border-[#F3F4F6] transition-colors text-[#94A3B8] dark:text-[#5A6072] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:opacity-40 disabled:pointer-events-none text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
               >
                 {t('vault_dashboard.item_actions.discard_item')}
               </button>
             </div>
 
-            <VaultPilotFeedbackBox
-              globalAssetId={catalogId}
-              pillarId={pillarId}
-              itemId={item.item_id}
-              isSealed={isSealed}
-              isTestPilot={isTestPilot}
-            />
 
           </div>
 
@@ -3030,7 +3023,7 @@ function ItemContentBlock({
             <div className="flex items-center justify-between pb-4 border-b border-[#E2E8F0] dark:border-[#12151C]">
               <div>
                 <h3 className="text-sm font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6]">{t('vault_dashboard.history.title')}</h3>
-                <p className="text-[11px] text-[#475569] dark:text-[#8A93A6]">{item.title}</p>
+                <p className="text-microcopy text-[#475569] dark:text-[#8A93A6]">{item.title}</p>
               </div>
               <M3IconButton
                 icon="close"
@@ -3044,17 +3037,17 @@ function ItemContentBlock({
 
             <div className="flex-1 overflow-y-auto py-4 space-y-4 custom-scrollbar">
               {!item.historial_cambios || item.historial_cambios.length === 0 ? (
-                <p className="text-[12px] text-[#94A3B8] dark:text-[#5A6072] text-center py-8">{t('vault_dashboard.history.empty')}</p>
+                <p className="text-data-dense text-[#94A3B8] dark:text-[#5A6072] text-center py-8">{t('vault_dashboard.history.empty')}</p>
               ) : (
                 [...item.historial_cambios].reverse().map((log: HistorialAuditoria, index) => (
                   <div key={index} className="p-3 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] space-y-2 rounded-none">
                     <div className="flex items-start justify-between gap-3">
                       <div className="space-y-0.5">
-                        <span className="text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6]">
+                        <span className="text-microcopy font-bold uppercase tracking-widest px-1.5 py-0.5 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6]">
                           {log.accion.replace(/_/g, ' ')}
                         </span>
-                        <div className="text-[10px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
-                          {log.actor} · <span className="font-mono tabular-nums text-[9px] text-[#94A3B8] dark:text-[#5A6072]">{new Date(log.fecha).toLocaleString()}</span>
+                        <div className="text-microcopy font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                          {log.actor} · <span className="font-mono tabular-nums text-microcopy text-[#94A3B8] dark:text-[#5A6072]">{new Date(log.fecha).toLocaleString()}</span>
                         </div>
                       </div>
                       {log.snapshot_anterior !== undefined && (
@@ -3065,7 +3058,7 @@ function ItemContentBlock({
                             setRollbackConfirmTimestamp(log.fecha);
                             setRollbackConfirmInput('');
                           }}
-                          className="text-[#C68346] text-[10px]"
+                          className="text-[#C68346] text-microcopy"
                         >
                           {t('vault_dashboard.history.restore_version')}
                         </M3Button>
@@ -3073,7 +3066,7 @@ function ItemContentBlock({
                     </div>
                     {rollbackConfirmTimestamp === log.fecha && (
                       <div className="p-2 border border-[#C68346] bg-[#FFFFFF] dark:bg-[#07090D] space-y-2">
-                        <p className="text-[10px] font-bold text-[#C68346]">
+                        <p className="text-microcopy font-bold text-[#C68346]">
                           {t('vault_dashboard.history.confirm_restore_prompt')}
                         </p>
                         <div className="flex gap-2">
@@ -3084,7 +3077,7 @@ function ItemContentBlock({
                             placeholder="ACTUALIZAR"
                             autoComplete="off"
                             spellCheck={false}
-                            className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[10px] font-mono flex-1 text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
+                            className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-microcopy font-mono flex-1 text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
                           />
                           <button
                             type="button"
@@ -3095,7 +3088,7 @@ function ItemContentBlock({
                               setRollbackConfirmInput('');
                               setShowHistoryModal(false);
                             }}
-                            className="px-3 py-1 bg-[#C68346] text-[#FFFFFF] text-[10px] font-bold disabled:opacity-40 rounded-none border-0 cursor-pointer"
+                            className="px-3 py-1 bg-[#C68346] text-[#FFFFFF] text-microcopy font-bold disabled:opacity-40 rounded-none border-0 cursor-pointer"
                           >
                             {t('common.confirm')}
                           </button>
@@ -3105,7 +3098,7 @@ function ItemContentBlock({
                               setRollbackConfirmTimestamp(null);
                               setRollbackConfirmInput('');
                             }}
-                            className="px-3 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[10px] text-[#475569] dark:text-[#8A93A6] rounded-none cursor-pointer"
+                            className="px-3 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-microcopy text-[#475569] dark:text-[#8A93A6] rounded-none cursor-pointer"
                           >
                             {t('common.cancel')}
                           </button>
@@ -3113,17 +3106,17 @@ function ItemContentBlock({
                       </div>
                     )}
                     {log.detalle && (
-                      <p className="text-[11px] text-[#475569] dark:text-[#8A93A6]">
+                      <p className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
                         "{log.detalle}"
                       </p>
                     )}
                     {log.snapshot_anterior !== undefined && (
                       <details className="group border-t border-[#E2E8F0] dark:border-[#12151C] pt-2">
-                        <summary className="text-[9px] font-bold text-[#94A3B8] dark:text-[#5A6072] uppercase tracking-widest cursor-pointer hover:text-[#0F172A] dark:hover:text-[#F3F4F6] list-none flex items-center gap-1">
-                          <span className="material-symbols-outlined !text-[12px] transition-transform group-open:rotate-90">chevron_right</span>
+                        <summary className="text-microcopy font-bold text-[#94A3B8] dark:text-[#5A6072] uppercase tracking-widest cursor-pointer hover:text-[#0F172A] dark:hover:text-[#F3F4F6] list-none flex items-center gap-1">
+                          <span className="material-symbols-outlined !text-[14px] transition-transform group-open:rotate-90">chevron_right</span>
                           {t('vault_dashboard.history.view_snapshot')}
                         </summary>
-                        <div className="mt-2 p-3 bg-[#FFFFFF] dark:bg-[#07090D] max-h-60 overflow-y-auto border border-[#E2E8F0] dark:border-[#12151C] custom-scrollbar text-[11px] text-[#0F172A] dark:text-[#F3F4F6]">
+                        <div className="mt-2 p-3 bg-[#FFFFFF] dark:bg-[#07090D] max-h-60 overflow-y-auto border border-[#E2E8F0] dark:border-[#12151C] custom-scrollbar text-microcopy text-[#0F172A] dark:text-[#F3F4F6]">
                           <MarkdownRenderer content={log.snapshot_anterior} resolvedSymbology={resolvedSymbology} />
                         </div>
                       </details>
@@ -3134,7 +3127,7 @@ function ItemContentBlock({
             </div>
 
             <div className="pt-4 border-t border-[#E2E8F0] dark:border-[#12151C] flex justify-end">
-              <M3Button onClick={() => setShowHistoryModal(false)} className="text-[10px]">
+              <M3Button onClick={() => setShowHistoryModal(false)} className="text-microcopy">
                 {t('common.close')}
               </M3Button>
             </div>
@@ -3206,7 +3199,7 @@ function ItemizedItemsList({
         if (hasExpanded && !secItems.some(it => expandedItems.has(it.item_id))) return null;
         return (
           <div key={sec} className={hasExpanded ? 'flex-1 flex flex-col h-full min-h-0 overflow-hidden' : ''}>
-            {!hasExpanded && <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#475569] dark:text-[#8A93A6] mb-2">{sec}</p>}
+            {!hasExpanded && <p className="text-microcopy font-bold uppercase tracking-[0.2em] text-[#475569] dark:text-[#8A93A6] mb-2">{sec}</p>}
             <div className={hasExpanded ? 'flex-1 flex flex-col h-full min-h-0 overflow-hidden' : 'space-y-3'}>
               {secItems.map(item => {
                 const itemHuntKey = `${pillarId}:${item.item_id}`;
@@ -3270,13 +3263,13 @@ function ItemizedItemsList({
                             <span className="material-symbols-outlined !text-[20px]">arrow_back</span>
                           </button>
                         )}
-                        <span className="text-[11px] font-mono tabular-nums text-[#94A3B8] dark:text-[#5A6072]">{String(item.order).padStart(2, '0')}</span>
+                        <span className="text-microcopy font-mono tabular-nums text-[#94A3B8] dark:text-[#5A6072]">{String(item.order).padStart(2, '0')}</span>
                       </div>
 
                       <div className="flex-1 min-w-0">
                         <div className={canOpenItem ? 'cursor-pointer' : ''} onClick={() => canOpenItem ? onToggleExpand(item.item_id) : undefined}>
                           <p className="text-[13px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">{item.title}</p>
-                          <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] mt-0.5">{item.rationale}</p>
+                          <p className="text-microcopy text-[#475569] dark:text-[#8A93A6] mt-0.5">{item.rationale}</p>
                           {!hasContent && !canCurateAI && (
                             <p className="mt-1">
                               <mark className={PENDING_CONTENT_HIGHLIGHT_CLASS}>{t('opermaq_domains.not_declared')}</mark>
@@ -3284,9 +3277,9 @@ function ItemizedItemsList({
                           )}
                         </div>
                         {item.created_by ? (
-                          <p className="text-[10px] font-mono text-[#C68346] mt-1">{item.created_by}</p>
+                          <p className="text-microcopy font-mono text-[#C68346] mt-1">{item.created_by}</p>
                         ) : item.standard ? (
-                          <p className="text-[10px] font-mono text-[#C68346] mt-1">{item.standard}</p>
+                          <p className="text-microcopy font-mono text-[#C68346] mt-1">{item.standard}</p>
                         ) : null}
                       </div>
 
@@ -3312,7 +3305,7 @@ function ItemizedItemsList({
                                     ? t('vault_dashboard.item_actions.ai_processing_resume_tooltip')
                                     : t('vault_dashboard.item_actions.ai_processing_tooltip')
                                 }
-                                className="bg-transparent border-0 outline-none flex items-center gap-[8px] h-8 px-1.5 text-[12px] font-mono tabular-nums font-bold text-[#C68346] select-none cursor-pointer rounded-none"
+                                className="bg-transparent border-0 outline-none flex items-center gap-[8px] h-8 px-1.5 text-data-dense font-mono tabular-nums font-bold text-[#C68346] select-none cursor-pointer rounded-none"
                                 aria-live="polite"
                               >
                                 <M3CircularProgress
@@ -3333,7 +3326,7 @@ function ItemizedItemsList({
                                 title={t('vault_dashboard.proposals.pending_badge_tooltip', { count: pendingProposalsCount })}
                               >
                                 <span className="material-symbols-outlined !text-[14px]">release_alert</span>
-                                <span className="text-[11px] font-mono tabular-nums font-bold">{pendingProposalsCount}</span>
+                                <span className="text-microcopy font-mono tabular-nums font-bold">{pendingProposalsCount}</span>
                               </span>
                             )}
 
@@ -3350,7 +3343,7 @@ function ItemizedItemsList({
                                   })}
                                 >
                                   <span className="material-symbols-outlined !text-[14px]">pending_actions</span>
-                                  <span className="text-[11px] font-mono tabular-nums font-bold">{totalItemPending}</span>
+                                  <span className="text-microcopy font-mono tabular-nums font-bold">{totalItemPending}</span>
                                 </span>
                               ) : null;
                             })()}
@@ -3359,19 +3352,6 @@ function ItemizedItemsList({
                               <span className="flex items-center justify-center w-8 h-8 shrink-0">
                                 <span className="material-symbols-outlined !text-[20px] text-[#00AEEF]" title={t('vault_dashboard.labels.verified')}>verified</span>
                               </span>
-                            ) : canCurateAI && isInitialHuntActivated && !isExpanded && !isGenerating ? (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onToggleExpand(item.item_id);
-                                }}
-                                title={t('vault_dashboard.item_actions.open_item', 'Abrir contenido del ítem')}
-                                aria-label={t('vault_dashboard.item_actions.open_item', 'Abrir contenido del ítem')}
-                                className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none"
-                              >
-                                <span className="material-symbols-outlined !text-[20px]">edit_document</span>
-                              </button>
                             ) : canCurateAI && !isInitialHuntActivated && !isExpanded && !isGenerating ? (
                               <>
                                 <M3IconButton
@@ -3401,7 +3381,7 @@ function ItemizedItemsList({
                             <M3Button
                               variant="ghost"
                               onClick={() => { if (!isSealed) setConfirmReactivateId(item.item_id); }}
-                              className={`text-[10px] text-[#00AEEF] ${isSealed ? 'opacity-40 cursor-not-allowed' : ''}`}
+                              className={`text-microcopy text-[#00AEEF] ${isSealed ? 'opacity-40 cursor-not-allowed' : ''}`}
                               disabled={isSealed}
                             >
                               {isSealed ? t('vault_dashboard.bloqueado').toUpperCase() : t('vault_dashboard.reactivate').toUpperCase()}
@@ -3410,7 +3390,7 @@ function ItemizedItemsList({
                         )}
 
                         {canCurateAI && !isArchive && item.content_status === 'ERROR' && item.hunt_error && (
-                          <p className="text-[9px] text-[#C68346] font-bold uppercase tracking-tight">{t('common.error')}: {item.hunt_error}</p>
+                          <p className="text-microcopy text-[#C68346] font-bold uppercase tracking-tight">{t('common.error')}: {item.hunt_error}</p>
                         )}
 
                       </div>
@@ -3419,7 +3399,7 @@ function ItemizedItemsList({
                     {/* Confirmación Descarte Inline */}
                     {canCurateAI && confirmDiscardId === item.item_id && (
                       <div className="mt-3 p-3 bg-[#F8FAFC] dark:bg-[#000000] border border-[#C68346] space-y-2 w-full text-left rounded-none">
-                        <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">{t('vault_dashboard.item_actions.confirm_discard_prompt')}</p>
+                        <p className="text-microcopy font-bold text-[#0F172A] dark:text-[#F3F4F6]">{t('vault_dashboard.item_actions.confirm_discard_prompt')}</p>
                         <div className="flex gap-2">
                           <input
                             type="text"
@@ -3428,7 +3408,7 @@ function ItemizedItemsList({
                             placeholder="ACTUALIZAR"
                             autoComplete="off"
                             spellCheck={false}
-                            className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[11px] font-mono flex-1 text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
+                            className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-microcopy font-mono flex-1 text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
                           />
                           <button
                             type="button"
@@ -3438,7 +3418,7 @@ function ItemizedItemsList({
                               setConfirmDiscardId(null);
                               setDiscardConfirmInput('');
                             }}
-                            className="px-3 py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold disabled:opacity-40 text-[11px] rounded-none border-0 cursor-pointer"
+                            className="px-3 py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold disabled:opacity-40 text-microcopy rounded-none border-0 cursor-pointer"
                           >
                             {t('common.confirm')}
                           </button>
@@ -3448,7 +3428,7 @@ function ItemizedItemsList({
                               setConfirmDiscardId(null);
                               setDiscardConfirmInput('');
                             }}
-                            className="px-3 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[11px] rounded-none cursor-pointer"
+                            className="px-3 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-microcopy rounded-none cursor-pointer"
                           >
                             {t('common.cancel')}
                           </button>
@@ -3459,7 +3439,7 @@ function ItemizedItemsList({
                     {/* Confirmación Reactivación Inline */}
                     {canCurateAI && confirmReactivateId === item.item_id && (
                       <div className="mt-3 p-3 bg-[#F8FAFC] dark:bg-[#000000] border border-[#00AEEF] space-y-2 w-full text-left rounded-none">
-                        <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">{t('vault_dashboard.item_actions.confirm_reactivate_prompt')}</p>
+                        <p className="text-microcopy font-bold text-[#0F172A] dark:text-[#F3F4F6]">{t('vault_dashboard.item_actions.confirm_reactivate_prompt')}</p>
                         <div className="flex gap-2">
                           <input
                             type="text"
@@ -3468,7 +3448,7 @@ function ItemizedItemsList({
                             placeholder="ACTUALIZAR"
                             autoComplete="off"
                             spellCheck={false}
-                            className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-[11px] font-mono flex-1 text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
+                            className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-microcopy font-mono flex-1 text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
                           />
                           <button
                             type="button"
@@ -3478,7 +3458,7 @@ function ItemizedItemsList({
                               setConfirmReactivateId(null);
                               setReactivateConfirmInput('');
                             }}
-                            className="px-3 py-1 bg-[#00AEEF] text-[#FFFFFF] font-bold disabled:opacity-40 text-[11px] rounded-none border-0 cursor-pointer"
+                            className="px-3 py-1 bg-[#00AEEF] text-[#FFFFFF] font-bold disabled:opacity-40 text-microcopy rounded-none border-0 cursor-pointer"
                           >
                             {t('common.confirm')}
                           </button>
@@ -3488,7 +3468,7 @@ function ItemizedItemsList({
                               setConfirmReactivateId(null);
                               setReactivateConfirmInput('');
                             }}
-                            className="px-3 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[11px] rounded-none cursor-pointer"
+                            className="px-3 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-microcopy rounded-none cursor-pointer"
                           >
                             {t('common.cancel')}
                           </button>
@@ -3560,7 +3540,7 @@ const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = 
       {/* Cabecera de fila idéntica a ItemizedItemsList */}
       <div className="flex items-start gap-3">
         <div className="flex flex-col items-center gap-1 shrink-0 mt-0.5">
-          <span className="text-[11px] font-mono tabular-nums text-[#00AEEF]">
+          <span className="text-microcopy font-mono tabular-nums text-[#00AEEF]">
             +{String(index + 1).padStart(2, '0')}
           </span>
         </div>
@@ -3569,15 +3549,15 @@ const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = 
           <p className="text-[13px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
             {suggestion.title}
           </p>
-          <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] mt-0.5">
+          <p className="text-microcopy text-[#475569] dark:text-[#8A93A6] mt-0.5">
             {suggestion.rationale}
           </p>
           <div className="flex flex-wrap items-center gap-2 mt-1">
-            <span className="text-[10px] font-mono text-[#00AEEF] uppercase">
+            <span className="text-microcopy font-mono text-[#00AEEF] uppercase">
               {suggestion.section}
             </span>
             {source && (source.author || source.url) && (
-              <span className="text-[10px] font-mono text-[#94A3B8] dark:text-[#5A6072] flex items-center gap-1">
+              <span className="text-microcopy font-mono text-[#94A3B8] dark:text-[#5A6072] flex items-center gap-1">
                 <span>· {source.author || t('vault_dashboard.suggestions.source_fallback')}</span>
                 {source.description && (
                   <span className="truncate max-w-[360px]">"{source.description}"</span>
@@ -3620,7 +3600,7 @@ const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = 
       {/* Confirmación Inline idéntica a ItemizedItemsList */}
       {showConfirmBar && (
         <div className="mt-3 p-3 bg-[#F8FAFC] dark:bg-[#000000] border border-[#C68346] space-y-2 w-full text-left rounded-none">
-          <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+          <p className="text-microcopy font-bold text-[#0F172A] dark:text-[#F3F4F6]">
             {t('vault_dashboard.suggestions.confirm_add_prompt')}
           </p>
           <div className="flex gap-2">
@@ -3632,7 +3612,7 @@ const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = 
               autoComplete="off"
               spellCheck={false}
               disabled={isSubmitting}
-              className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[11px] font-mono flex-1 text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
+              className="px-2 py-1 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-microcopy font-mono flex-1 text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
             />
             <button
               type="button"
@@ -3647,7 +3627,7 @@ const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = 
                   setIsSubmitting(false);
                 }
               }}
-              className="px-3 py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold disabled:opacity-40 text-[11px] rounded-none border-0 cursor-pointer"
+              className="px-3 py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold disabled:opacity-40 text-microcopy rounded-none border-0 cursor-pointer"
             >
               {isSubmitting ? t('common.saving') : t('common.confirm')}
             </button>
@@ -3657,7 +3637,7 @@ const ComplementarySuggestionCard: React.FC<ComplementarySuggestionCardProps> = 
                 setShowConfirmBar(false);
                 setConfirmInput('');
               }}
-              className="px-3 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[11px] rounded-none cursor-pointer"
+              className="px-3 py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-microcopy rounded-none cursor-pointer"
             >
               {t('common.cancel')}
             </button>
@@ -3823,6 +3803,23 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
         prerequisitePillar.currentDigest !== pillar.parent_pillar_digest_sha256))
   );
 
+  const pillarReadAloudText = useMemo(() => {
+    const pillarTitle = t(`vault_dashboard.pillars.${pillarMeta.id}`, pillarMeta.label);
+    const visibleItems = activeItems
+      .filter((it) => expandedItems.size === 0 || expandedItems.has(it.item_id))
+      .slice(0, 12);
+    const summaries = visibleItems
+      .map((it, idx) => {
+        const rawText = it.content
+          ? it.content.replace(/[#*_`|>\[\]]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240)
+          : it.rationale;
+        return `${idx + 1}. ${it.title}. ${rawText || ''}`.trim();
+      })
+      .filter(Boolean)
+      .join(' ');
+    return summaries ? `${pillarTitle}. ${summaries}` : pillarTitle;
+  }, [activeItems, expandedItems, pillarMeta.id, pillarMeta.label, t]);
+
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Toolbar */}
@@ -3849,6 +3846,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
           <h1 className="text-[13px] font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6] leading-none whitespace-nowrap">
             {t(`vault_dashboard.pillars.${pillarMeta.id}`, pillarMeta.label)}
           </h1>
+          <ReadAloudButton compact text={pillarReadAloudText} />
 
           {canCurateAI && itemizeStatus === 'PARTIAL_FROM_INGESTION' && expandedItems.size === 0 && (
             <button
@@ -3858,12 +3856,12 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
               title={
                 isSequenceBlocked && prerequisitePillar
                   ? t('vault_dashboard.pillar_flow.must_itemize_prereq', {
-                      step: prerequisitePillar.stepCode,
-                      label: t(`vault_dashboard.pillars.${prerequisitePillar.id}`, prerequisitePillar.label),
-                    })
+                    step: prerequisitePillar.stepCode,
+                    label: t(`vault_dashboard.pillars.${prerequisitePillar.id}`, prerequisitePillar.label),
+                  })
                   : t('vault_dashboard.pillar_flow.complete_structure_tooltip')
               }
-              className="px-[13px] py-[8px] border border-[#C68346] bg-transparent hover:bg-[#C68346] text-[#C68346] hover:text-[#FFFFFF] text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              className="px-[13px] py-[8px] border border-[#C68346] bg-transparent hover:bg-[#C68346] text-[#C68346] hover:text-[#FFFFFF] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {t('vault_dashboard.pillar_flow.complete_structure_btn')}
             </button>
@@ -3877,12 +3875,12 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
               title={
                 prerequisitePillar
                   ? t('vault_dashboard.pillar_flow.sync_prereq_evolved_tooltip', {
-                      step: prerequisitePillar.stepCode,
-                      label: t(`vault_dashboard.pillars.${prerequisitePillar.id}`, prerequisitePillar.label),
-                    })
+                    step: prerequisitePillar.stepCode,
+                    label: t(`vault_dashboard.pillars.${prerequisitePillar.id}`, prerequisitePillar.label),
+                  })
                   : t('vault_dashboard.pillar_flow.sync_prereq_btn')
               }
-              className="px-[13px] py-[8px] border border-[#00AEEF] bg-transparent hover:bg-[#00AEEF] text-[#00AEEF] hover:text-[#FFFFFF] text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              className="px-[13px] py-[8px] border border-[#00AEEF] bg-transparent hover:bg-[#00AEEF] text-[#00AEEF] hover:text-[#FFFFFF] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {t('vault_dashboard.pillar_flow.sync_prereq_btn')}
             </button>
@@ -3965,7 +3963,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
         {/* Derecha: Estado asíncrono no bloqueante + Progreso M3 Linear Progress Indicator + Timestamp */}
         <div className="flex items-center gap-[13px] shrink-0 ml-auto">
           {activeHuntsCount > 0 && (
-            <span className="text-[10px] font-mono tabular-nums font-bold uppercase tracking-wider text-[#C68346] border border-[#C68346]/40 px-[8px] py-[4px] select-none">
+            <span className="text-microcopy font-mono tabular-nums font-bold uppercase tracking-wider text-[#C68346] border border-[#C68346]/40 px-[8px] py-[4px] select-none">
               {t('vault_dashboard.pillar_flow.background_tasks_badge', { count: activeHuntsCount })}
             </span>
           )}
@@ -3977,14 +3975,14 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                 className="w-[89px]"
                 ariaLabel={t('vault_dashboard.labels.items_progress', { completed: completedItems, total: totalItems })}
               />
-              <span className={`text-[10px] font-bold font-mono tabular-nums ${completedItems === totalItems ? 'text-[#00AEEF]' : 'text-[#C68346]'
+              <span className={`text-microcopy font-bold font-mono tabular-nums ${completedItems === totalItems ? 'text-[#00AEEF]' : 'text-[#C68346]'
                 }`}>
                 {completedItems}/{totalItems}
               </span>
             </div>
           )}
           {pillar?.itemized_at && (
-            <span className="text-[10px] text-[#94A3B8] dark:text-[#5A6072] font-mono tabular-nums">
+            <span className="text-microcopy text-[#94A3B8] dark:text-[#5A6072] font-mono tabular-nums">
               {new Date(pillar.itemized_at).toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' })}
             </span>
           )}
@@ -3993,7 +3991,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
 
       {canCurateAI && showBulkApproveConfirm && expandedItems.size === 0 && (
         <div className="shrink-0 px-5 py-3 border-b border-[#00AEEF] bg-[#F8FAFC] dark:bg-[#07090D] flex flex-wrap items-center justify-between gap-[13px]">
-          <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+          <p className="text-microcopy font-bold text-[#0F172A] dark:text-[#F3F4F6]">
             {t('vault_dashboard.actions.bulk_approve_confirm_prompt', { count: unapprovedCompletedCount })}
           </p>
           <div className="flex items-center gap-[8px]">
@@ -4005,11 +4003,11 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
               autoComplete="off"
               spellCheck={false}
               disabled={isBulkApproving}
-              className="px-[8px] py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+              className="px-[8px] py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none text-microcopy font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
             />
             <button
               type="button"
-              disabled={isBulkApproving || bulkApproveConfirmText.trim() !== 'ACTUALIZAR'}
+              disabled={isBulkApproving || bulkApproveConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'}
               onClick={async () => {
                 setIsBulkApproving(true);
                 try {
@@ -4020,7 +4018,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                   setIsBulkApproving(false);
                 }
               }}
-              className="px-[13px] py-1 bg-[#00AEEF] text-[#FFFFFF] text-[10px] font-bold uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
+              className="px-[13px] py-1 bg-[#00AEEF] text-[#FFFFFF] text-microcopy font-bold uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
             >
               {isBulkApproving ? t('common.saving') : t('common.confirm')}
             </button>
@@ -4031,7 +4029,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                 setShowBulkApproveConfirm(false);
                 setBulkApproveConfirmText('');
               }}
-              className="px-[13px] py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+              className="px-[13px] py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
             >
               {t('common.cancel')}
             </button>
@@ -4056,7 +4054,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
           {canCurateAI && expandedItems.size === 0 && (pillar?.suggested_items_pending || []).length > 0 && (
             <div className="mb-5 space-y-3 rounded-none shadow-none">
               <div className="flex items-center justify-between">
-                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#00AEEF]">
+                <p className="text-microcopy font-bold uppercase tracking-[0.2em] text-[#00AEEF]">
                   {t('vault_dashboard.suggestions.title', 'Ítems Complementarios Sugeridos por IA')} (<span className="font-mono tabular-nums">{(pillar?.suggested_items_pending || []).length}</span>)
                 </p>
                 <button
@@ -4094,14 +4092,14 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
           {/* Formulario de creación manual con validación de IA (exclusivo curación) */}
           {canCurateAI && showCreateForm && (
             <div className="mb-6 p-4 border border-[#C68346]/40 bg-[#F8FAFC] dark:bg-[#07090D] rounded-none shadow-none">
-              <h3 className="text-[12px] font-bold uppercase tracking-wider text-[#C68346] mb-3 font-atkinson">
+              <h3 className="text-data-dense font-bold uppercase tracking-wider text-[#C68346] mb-3 font-atkinson">
                 {t('vault_dashboard.manual_create.title')}
               </h3>
 
               {!correctionResult ? (
                 <div className="space-y-3">
                   <div>
-                    <label className="block text-[10px] font-bold text-[#475569] dark:text-[#8A93A6] uppercase tracking-widest mb-1">
+                    <label className="block text-microcopy font-bold text-[#475569] dark:text-[#8A93A6] uppercase tracking-widest mb-1">
                       {t('vault_dashboard.manual_create.item_title_label')}
                     </label>
                     <input
@@ -4111,12 +4109,12 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                       placeholder={t('vault_dashboard.manual_create.item_title_placeholder')}
                       autoComplete="off"
                       spellCheck={false}
-                      className="w-full h-9 px-3 text-[12px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[#0F172A] dark:text-[#F3F4F6] font-atkinson rounded-none"
+                      className="w-full h-9 px-3 text-data-dense bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[#0F172A] dark:text-[#F3F4F6] font-atkinson rounded-none"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold text-[#475569] dark:text-[#8A93A6] uppercase tracking-widest mb-1">
+                    <label className="block text-microcopy font-bold text-[#475569] dark:text-[#8A93A6] uppercase tracking-widest mb-1">
                       {t('vault_dashboard.manual_create.rationale_label')}
                     </label>
                     <textarea
@@ -4126,7 +4124,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                       autoComplete="off"
                       spellCheck={false}
                       rows={3}
-                      className="w-full p-3 text-[12px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[#0F172A] dark:text-[#F3F4F6] font-atkinson resize-none rounded-none"
+                      className="w-full p-3 text-data-dense bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[#0F172A] dark:text-[#F3F4F6] font-atkinson resize-none rounded-none"
                     />
                   </div>
 
@@ -4138,7 +4136,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                         setCreateFormTitle('');
                         setCreateFormRationale('');
                       }}
-                      className="px-3 py-1.5 text-[11px] font-bold bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] cursor-pointer rounded-none"
+                      className="px-3 py-1.5 text-microcopy font-bold bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] cursor-pointer rounded-none"
                     >
                       {t('common.cancel')}
                     </button>
@@ -4179,7 +4177,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                           setIsCorrecting(false);
                         }
                       }}
-                      className="px-3 py-1.5 text-[11px] font-bold bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] disabled:opacity-50 border-0 cursor-pointer rounded-none"
+                      className="px-3 py-1.5 text-microcopy font-bold bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] disabled:opacity-50 border-0 cursor-pointer rounded-none"
                     >
                       {isCorrecting ? t('vault_dashboard.manual_create.validating_ai') : t('vault_dashboard.manual_create.validate_ai')}
                     </button>
@@ -4188,29 +4186,29 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
               ) : (
                 <div className="space-y-4">
                   <div className="p-3 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] space-y-3 rounded-none">
-                    <p className="text-[11px] font-bold text-[#C68346] uppercase tracking-wider mb-2">{t('vault_dashboard.manual_create.review_header')}</p>
+                    <p className="text-microcopy font-bold text-[#C68346] uppercase tracking-wider mb-2">{t('vault_dashboard.manual_create.review_header')}</p>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-1">
-                        <p className="text-[9px] font-bold text-[#94A3B8] dark:text-[#5A6072] uppercase">{t('vault_dashboard.manual_create.original_title')}</p>
-                        <p className="text-[11px] line-through text-[#475569] dark:text-[#8A93A6]">{createFormTitle}</p>
-                        <p className="text-[9px] font-bold text-[#00AEEF] uppercase mt-2">{t('vault_dashboard.manual_create.suggested_title')}</p>
-                        <p className="text-[12px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">{correctionResult.title}</p>
-                        <p className="text-[9px] font-bold text-[#00AEEF] uppercase mt-2">{t('vault_dashboard.manual_create.assigned_section')}</p>
-                        <p className="text-[11px] font-mono font-bold text-[#C68346]">{correctionResult.section}</p>
+                        <p className="text-microcopy font-bold text-[#94A3B8] dark:text-[#5A6072] uppercase">{t('vault_dashboard.manual_create.original_title')}</p>
+                        <p className="text-microcopy line-through text-[#475569] dark:text-[#8A93A6]">{createFormTitle}</p>
+                        <p className="text-microcopy font-bold text-[#00AEEF] uppercase mt-2">{t('vault_dashboard.manual_create.suggested_title')}</p>
+                        <p className="text-data-dense font-bold text-[#0F172A] dark:text-[#F3F4F6]">{correctionResult.title}</p>
+                        <p className="text-microcopy font-bold text-[#00AEEF] uppercase mt-2">{t('vault_dashboard.manual_create.assigned_section')}</p>
+                        <p className="text-microcopy font-mono font-bold text-[#C68346]">{correctionResult.section}</p>
                       </div>
 
                       <div className="space-y-1">
-                        <p className="text-[9px] font-bold text-[#94A3B8] dark:text-[#5A6072] uppercase">{t('vault_dashboard.manual_create.original_description')}</p>
-                        <p className="text-[11px] line-through text-[#475569] dark:text-[#8A93A6]">{createFormRationale}</p>
-                        <p className="text-[9px] font-bold text-[#00AEEF] uppercase mt-2">{t('vault_dashboard.manual_create.suggested_description')}</p>
-                        <p className="text-[11px] text-[#0F172A] dark:text-[#F3F4F6]">{correctionResult.rationale}</p>
+                        <p className="text-microcopy font-bold text-[#94A3B8] dark:text-[#5A6072] uppercase">{t('vault_dashboard.manual_create.original_description')}</p>
+                        <p className="text-microcopy line-through text-[#475569] dark:text-[#8A93A6]">{createFormRationale}</p>
+                        <p className="text-microcopy font-bold text-[#00AEEF] uppercase mt-2">{t('vault_dashboard.manual_create.suggested_description')}</p>
+                        <p className="text-microcopy text-[#0F172A] dark:text-[#F3F4F6]">{correctionResult.rationale}</p>
                       </div>
                     </div>
                   </div>
 
                   <div className="space-y-2">
-                    <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                    <p className="text-microcopy font-bold text-[#0F172A] dark:text-[#F3F4F6]">
                       {t('vault_dashboard.manual_create.confirm_prompt')}
                     </p>
                     <div className="flex gap-2">
@@ -4221,7 +4219,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                         placeholder="ACTUALIZAR"
                         autoComplete="off"
                         spellCheck={false}
-                        className="px-3 h-9 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[12px] flex-1 text-[#0F172A] dark:text-[#F3F4F6] font-mono rounded-none"
+                        className="px-3 h-9 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-data-dense flex-1 text-[#0F172A] dark:text-[#F3F4F6] font-mono rounded-none"
                       />
                       <button
                         type="button"
@@ -4239,7 +4237,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                           setCorrectionResult(null);
                           setRegisterConfirmation('');
                         }}
-                        className="px-4 h-9 bg-[#C68346] hover:bg-[#b0743e] text-[#FFFFFF] font-bold disabled:opacity-40 text-[11px] transition-colors border-0 cursor-pointer rounded-none"
+                        className="px-4 h-9 bg-[#C68346] hover:bg-[#b0743e] text-[#FFFFFF] font-bold disabled:opacity-40 text-microcopy transition-colors border-0 cursor-pointer rounded-none"
                       >
                         {t('vault_dashboard.manual_create.confirm_btn')}
                       </button>
@@ -4249,7 +4247,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                           setCorrectionResult(null);
                           setRegisterConfirmation('');
                         }}
-                        className="px-4 h-9 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[11px] transition-colors cursor-pointer rounded-none"
+                        className="px-4 h-9 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-microcopy transition-colors cursor-pointer rounded-none"
                       >
                         {t('actions.back')}
                       </button>
@@ -4356,7 +4354,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                     type="button"
                     disabled={isSealed}
                     onClick={() => onItemize(pillarMeta.id)}
-                    className="mt-[8px] bg-transparent border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-[#FFFFFF] px-[21px] py-[8px] text-[10px] font-bold uppercase tracking-wider font-mono transition-colors rounded-none shadow-none cursor-pointer"
+                    className="mt-[8px] bg-transparent border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-[#FFFFFF] px-[21px] py-[8px] text-microcopy font-bold uppercase tracking-wider font-mono transition-colors rounded-none shadow-none cursor-pointer"
                   >
                     {t('vault_dashboard.pillar_flow.retry_itemize_btn')}
                   </button>
@@ -4366,10 +4364,10 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
               isSequenceBlocked && prerequisitePillar ? (
                 <div className="flex flex-col items-center max-w-lg p-[21px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-center gap-[13px] rounded-none shadow-none">
                   <span className="material-symbols-outlined !text-[24px] text-[#94A3B8] dark:text-[#5A6072]">lock</span>
-                  <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6] uppercase tracking-widest font-mono">
+                  <p className="text-microcopy font-bold text-[#0F172A] dark:text-[#F3F4F6] uppercase tracking-widest font-mono">
                     {t('vault_dashboard.pillar_flow.sequence_locked_title')}
                   </p>
-                  <p className="text-[12px] text-[#475569] dark:text-[#8A93A6] leading-relaxed">
+                  <p className="text-data-dense text-[#475569] dark:text-[#8A93A6] leading-relaxed">
                     {t('vault_dashboard.pillar_flow.sequence_locked_desc')}{' '}
                     <span className="font-bold font-mono text-[#C68346]">
                       [{prerequisitePillar.stepCode} · {t(`vault_dashboard.pillars.${prerequisitePillar.id}`, prerequisitePillar.label)}]
@@ -4379,7 +4377,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                     <button
                       type="button"
                       onClick={() => onNavigateToPillar(prerequisitePillar.id)}
-                      className="px-[21px] py-[8px] border border-[#C68346] bg-transparent hover:bg-[#C68346] text-[#C68346] hover:text-[#FFFFFF] text-[10px] font-bold uppercase tracking-wider font-mono rounded-none shadow-none transition-colors cursor-pointer"
+                      className="px-[21px] py-[8px] border border-[#C68346] bg-transparent hover:bg-[#C68346] text-[#C68346] hover:text-[#FFFFFF] text-microcopy font-bold uppercase tracking-wider font-mono rounded-none shadow-none transition-colors cursor-pointer"
                     >
                       {t('vault_dashboard.pillar_flow.go_to_prereq_btn', {
                         step: prerequisitePillar.stepCode,
@@ -4393,10 +4391,10 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                   {pillar?.itemize_status === 'ERROR' && pillar?.itemize_error && (
                     <div className="flex flex-col items-center max-w-md px-6 text-center">
                       <span className="material-symbols-outlined !text-xl text-[#C68346] mb-1">error</span>
-                      <p className="text-[10px] font-bold text-[#C68346] uppercase tracking-widest mb-1">
+                      <p className="text-microcopy font-bold text-[#C68346] uppercase tracking-widest mb-1">
                         {t('vault_dashboard.labels.itemize_error')}
                       </p>
-                      <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] leading-relaxed font-medium">
+                      <p className="text-microcopy text-[#475569] dark:text-[#8A93A6] leading-relaxed font-medium">
                         {pillar.itemize_error}
                       </p>
                     </div>
@@ -4405,10 +4403,10 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                   {isStuck && (
                     <div className="flex flex-col items-center max-w-md px-6 text-center">
                       <span className="material-symbols-outlined !text-xl text-[#C68346] mb-1">warning</span>
-                      <p className="text-[10px] font-bold text-[#C68346] uppercase tracking-widest mb-1">
+                      <p className="text-microcopy font-bold text-[#C68346] uppercase tracking-widest mb-1">
                         {t('vault_dashboard.pillar_flow.interrupted_title')}
                       </p>
-                      <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] leading-relaxed font-medium">
+                      <p className="text-microcopy text-[#475569] dark:text-[#8A93A6] leading-relaxed font-medium">
                         {t('vault_dashboard.pillar_flow.interrupted_desc')}
                       </p>
                     </div>
@@ -4418,7 +4416,7 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
                     type="button"
                     disabled={isSealed}
                     onClick={() => onItemize(pillarMeta.id)}
-                    className="bg-transparent border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-[#FFFFFF] px-[21px] py-[13px] text-[11px] font-bold uppercase tracking-wider transition-colors rounded-none shadow-none cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
+                    className="bg-transparent border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-[#FFFFFF] px-[21px] py-[13px] text-microcopy font-bold uppercase tracking-wider transition-colors rounded-none shadow-none cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
                     title={
                       isStuck
                         ? t('vault_dashboard.pillar_flow.restart_itemize_btn')
@@ -5509,16 +5507,16 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
           <div className="flex items-baseline gap-[8px] leading-none flex-wrap min-w-0">
             <span className="text-[14px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] truncate">{catalog.makeModel}</span>
             {catalog.tipo_equipo && (
-              <span className="text-[12px] text-[#475569] dark:text-[#8A93A6] uppercase tracking-wider">/ {catalog.tipo_equipo}</span>
+              <span className="text-data-dense text-[#475569] dark:text-[#8A93A6] uppercase tracking-wider">/ {catalog.tipo_equipo}</span>
             )}
-            <span className="text-[12px] text-[#475569] dark:text-[#8A93A6] uppercase tracking-wider">
+            <span className="text-data-dense text-[#475569] dark:text-[#8A93A6] uppercase tracking-wider">
               / {catalog.categoria_equipo || t('vault_dashboard.labels.machinery_default')}
             </span>
           </div>
           {catalog.is_sealed && (
             <div className="shrink-0 px-[8px] py-0.5 bg-[#0F172A] dark:bg-[#F3F4F6] text-[#FFFFFF] dark:text-[#000000] flex items-center gap-1 ml-1">
-              <span className="material-symbols-outlined !text-[9px]">lock</span>
-              <span className="text-[7px] font-bold uppercase tracking-[0.2em]">{t('vault_dashboard.labels.sealed')}</span>
+              <span className="material-symbols-outlined !text-microcopy">lock</span>
+              <span className="text-microcopy font-bold uppercase tracking-[0.2em]">{t('vault_dashboard.labels.sealed')}</span>
             </div>
           )}
         </div>
@@ -5566,7 +5564,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
 
       {canCurateAI && showSealConfirm && (
         <div className="no-print shrink-0 px-[21px] py-[8px] border-b border-[#C68346] bg-[#F8FAFC] dark:bg-[#07090D] flex flex-wrap items-center justify-between gap-[13px]">
-          <p className="text-[11px] font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+          <p className="text-microcopy font-bold text-[#0F172A] dark:text-[#F3F4F6]">
             {catalog.is_sealed
               ? t('vault_dashboard.actions.confirm_unseal_prompt')
               : t('vault_dashboard.actions.confirm_seal_prompt')}
@@ -5580,13 +5578,13 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
               autoComplete="off"
               spellCheck={false}
               disabled={isTogglingSeal}
-              className="px-[8px] py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
+              className="px-[8px] py-1 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none text-microcopy font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none"
             />
             <button
               type="button"
               disabled={isTogglingSeal || sealConfirmText.trim() !== 'ACTUALIZAR'}
               onClick={() => void handleToggleVaultSeal()}
-              className="px-[13px] py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-[10px] font-bold uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
+              className="px-[13px] py-1 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] text-microcopy font-bold uppercase tracking-wider disabled:opacity-40 rounded-none shadow-none border-0 cursor-pointer"
             >
               {isTogglingSeal ? t('common.saving') : t('common.confirm')}
             </button>
@@ -5597,7 +5595,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
                 setShowSealConfirm(false);
                 setSealConfirmText('');
               }}
-              className="px-[13px] py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[10px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+              className="px-[13px] py-1 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
             >
               {t('common.cancel')}
             </button>

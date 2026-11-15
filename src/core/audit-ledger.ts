@@ -1,5 +1,6 @@
 import admin, { db } from '../config/firebase';
 import { createHash } from 'crypto';
+import { computeSixYearRetentionTimestamp } from './retention-policy';
 
 /**
  * AUDIT LEDGER INMUTABLE (Capa 3: Trazabilidad Bancaria Web 3.0)
@@ -190,6 +191,7 @@ export class AuditLedger {
                     details: sanitizedDetails,
                     ipAddress,
                     timestamp,
+                    retentionUntil: computeSixYearRetentionTimestamp(timestamp),
                     createdAt: admin.firestore.FieldValue.serverTimestamp(),
                     immutable: true,
                 });

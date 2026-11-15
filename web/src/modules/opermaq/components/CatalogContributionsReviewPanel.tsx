@@ -224,7 +224,7 @@ export const CatalogContributionsReviewPanel: React.FC<CatalogContributionsRevie
                         <button
                             type="button"
                             onClick={() => setStatusFilter('PENDING_HUMAN_REVIEW')}
-                            className={`px-[13px] h-8 text-[11px] font-mono uppercase cursor-pointer border-0 rounded-none ${
+                            className={`px-[13px] h-8 text-microcopy font-mono uppercase cursor-pointer border-0 rounded-none ${
                                 statusFilter === 'PENDING_HUMAN_REVIEW'
                                     ? 'bg-[#C68346] text-white font-bold'
                                     : 'bg-transparent text-[#475569] dark:text-[#8A93A6]'
@@ -235,7 +235,7 @@ export const CatalogContributionsReviewPanel: React.FC<CatalogContributionsRevie
                         <button
                             type="button"
                             onClick={() => setStatusFilter('ALL')}
-                            className={`px-[13px] h-8 text-[11px] font-mono uppercase cursor-pointer border-0 border-l border-[#E2E8F0] dark:border-[#12151C] rounded-none ${
+                            className={`px-[13px] h-8 text-microcopy font-mono uppercase cursor-pointer border-0 border-l border-[#E2E8F0] dark:border-[#12151C] rounded-none ${
                                 statusFilter === 'ALL'
                                     ? 'bg-[#C68346] text-white font-bold'
                                     : 'bg-transparent text-[#475569] dark:text-[#8A93A6]'
@@ -258,7 +258,7 @@ export const CatalogContributionsReviewPanel: React.FC<CatalogContributionsRevie
             </header>
 
             {(errorMsg || noticeMsg) && (
-                <div className="px-[21px] py-[8px] border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-[12px] font-mono">
+                <div className="px-[21px] py-[8px] border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-[0.8125rem] font-mono">
                     {errorMsg && <span className="text-[#C68346]">{errorMsg}</span>}
                     {noticeMsg && <span className="text-[#00AEEF]">{noticeMsg}</span>}
                 </div>
@@ -294,14 +294,14 @@ export const CatalogContributionsReviewPanel: React.FC<CatalogContributionsRevie
                                         <span className="text-[14px] font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate">
                                             {entry.make_model || entry.global_asset_id}
                                         </span>
-                                        <span className="text-[11px] font-mono tabular-nums text-[#C68346] shrink-0">
+                                        <span className="text-microcopy font-mono tabular-nums text-[#C68346] shrink-0">
                                             {entry.proposed_items.length} Δ
                                         </span>
                                     </div>
-                                    <div className="text-[12px] text-[#475569] dark:text-[#8A93A6] truncate mt-0.5">
+                                    <div className="text-[0.8125rem] text-[#475569] dark:text-[#8A93A6] truncate mt-0.5">
                                         {entry.sanitized_filename}
                                     </div>
-                                    <div className="text-[11px] font-mono tabular-nums text-[#00AEEF] mt-1">
+                                    <div className="text-microcopy font-mono tabular-nums text-[#00AEEF] mt-1">
                                         {entry.status}
                                     </div>
                                 </div>
@@ -316,7 +316,7 @@ export const CatalogContributionsReviewPanel: React.FC<CatalogContributionsRevie
                                 {/* Telemetría Anti-Duplicados */}
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-[13px] p-[13px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] font-mono tabular-nums">
                                     <div>
-                                        <div className="text-[10px] uppercase text-[#94A3B8] dark:text-[#5A6072]">
+                                        <div className="text-microcopy uppercase text-[#94A3B8] dark:text-[#5A6072]">
                                             PÁGINAS PDF
                                         </div>
                                         <div className="text-[15px] font-bold">
@@ -324,7 +324,7 @@ export const CatalogContributionsReviewPanel: React.FC<CatalogContributionsRevie
                                         </div>
                                     </div>
                                     <div>
-                                        <div className="text-[10px] uppercase text-[#94A3B8] dark:text-[#5A6072]">
+                                        <div className="text-microcopy uppercase text-[#94A3B8] dark:text-[#5A6072]">
                                             PÁG. DUPLICADAS
                                         </div>
                                         <div className="text-[15px] font-bold">
@@ -332,7 +332,7 @@ export const CatalogContributionsReviewPanel: React.FC<CatalogContributionsRevie
                                         </div>
                                     </div>
                                     <div>
-                                        <div className="text-[10px] uppercase text-[#94A3B8] dark:text-[#5A6072]">
+                                        <div className="text-microcopy uppercase text-[#94A3B8] dark:text-[#5A6072]">
                                             DEDUP SEMÁNTICA
                                         </div>
                                         <div className="text-[15px] font-bold">
@@ -340,7 +340,7 @@ export const CatalogContributionsReviewPanel: React.FC<CatalogContributionsRevie
                                         </div>
                                     </div>
                                     <div>
-                                        <div className="text-[10px] uppercase text-[#94A3B8] dark:text-[#5A6072]">
+                                        <div className="text-microcopy uppercase text-[#94A3B8] dark:text-[#5A6072]">
                                             DELTAS NETOS
                                         </div>
                                         <div className="text-[15px] font-bold text-[#C68346]">
@@ -361,7 +361,7 @@ export const CatalogContributionsReviewPanel: React.FC<CatalogContributionsRevie
                                             >
                                                 <div className="flex items-center justify-between gap-[13px] border-b border-[#E2E8F0] dark:border-[#12151C] pb-[8px]">
                                                     <div className="min-w-0">
-                                                        <span className="text-[11px] font-mono uppercase text-[#C68346] block">
+                                                        <span className="text-microcopy font-mono uppercase text-[#C68346] block">
                                                             {prop.pillar_id} · {prop.section}
                                                         </span>
                                                         <h3 className="text-[15px] font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate">
@@ -383,7 +383,7 @@ export const CatalogContributionsReviewPanel: React.FC<CatalogContributionsRevie
 
                                                 <div className="grid grid-cols-1 xl:grid-cols-[1fr_auto_1fr] gap-[13px] items-stretch">
                                                     <div className="p-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] space-y-[8px]">
-                                                        <div className="text-[10px] font-mono font-bold uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
+                                                        <div className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#94A3B8] dark:text-[#5A6072]">
                                                             [{t('opermaq_domains.hitl_actual')}]
                                                         </div>
                                                         <p className="text-[13px] leading-relaxed text-[#475569] dark:text-[#8A93A6] whitespace-pre-wrap select-text">
@@ -400,11 +400,11 @@ export const CatalogContributionsReviewPanel: React.FC<CatalogContributionsRevie
 
                                                     <div className="p-[13px] bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] space-y-[8px]">
                                                         <div className="flex items-center justify-between gap-[8px]">
-                                                            <span className="text-[10px] font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF]">
+                                                            <span className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF]">
                                                                 [{t('opermaq_domains.hitl_suggested')}]
                                                             </span>
                                                             {prop.source_pages && prop.source_pages.length > 0 && (
-                                                                <span className="text-[10px] font-mono tabular-nums text-[#94A3B8] dark:text-[#5A6072]">
+                                                                <span className="text-microcopy font-mono tabular-nums text-[#94A3B8] dark:text-[#5A6072]">
                                                                     Pág. {prop.source_pages.join(', ')}
                                                                 </span>
                                                             )}
@@ -434,7 +434,7 @@ export const CatalogContributionsReviewPanel: React.FC<CatalogContributionsRevie
                                         />
 
                                         <div>
-                                            <label className="block text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] mb-1">
+                                            <label className="block text-microcopy font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] mb-1">
                                                 {t('adminKnowledge.reviewer_notes')}
                                             </label>
                                             <input
@@ -449,7 +449,7 @@ export const CatalogContributionsReviewPanel: React.FC<CatalogContributionsRevie
 
                                         <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-[13px]">
                                             <div className="flex-1">
-                                                <label className="block text-[11px] font-mono uppercase tracking-[0.05em] text-[#C68346] mb-1">
+                                                <label className="block text-microcopy font-mono uppercase tracking-[0.05em] text-[#C68346] mb-1">
                                                     {t('opermaq_domains.confirm_keyword_prompt')}
                                                 </label>
                                                 <input
@@ -467,7 +467,7 @@ export const CatalogContributionsReviewPanel: React.FC<CatalogContributionsRevie
                                                 disabled={
                                                     submitting || confirmWord.trim().toUpperCase() !== 'ACTUALIZAR'
                                                 }
-                                                className="h-10 px-[21px] bg-[#C68346] hover:bg-[#b0743e] disabled:opacity-40 disabled:cursor-not-allowed text-white text-[11px] font-mono font-bold uppercase tracking-[0.05em] border-0 rounded-none cursor-pointer transition-colors"
+                                                className="h-10 px-[21px] bg-[#C68346] hover:bg-[#b0743e] disabled:opacity-40 disabled:cursor-not-allowed text-white text-microcopy font-mono font-bold uppercase tracking-[0.05em] border-0 rounded-none cursor-pointer transition-colors"
                                             >
                                                 {submitting
                                                     ? t('detail.processing')

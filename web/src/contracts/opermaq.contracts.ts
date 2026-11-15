@@ -432,14 +432,26 @@ export const DisambiguationFacetGroupSchema = z.object({
 
 export type DisambiguationFacetGroup = z.infer<typeof DisambiguationFacetGroupSchema>;
 
-export const FleetUnitRegistrationSchema = z.object({
-    global_asset_id: z.string().optional(),
-    make_oficial: z.string().min(1, 'Marca oficial requerida'),
-    model_oficial: z.string().min(1, 'Modelo oficial requerido'),
-    categoria_equipo: z.string().optional(),
-    tipo_equipo: z.string().optional(),
-    equipment_type_key: z.string().optional(),
-    archetype_id: z.string().optional(),
+export const ResolveAssetBodySchema = z.object({
+    jerga: z.string().max(320).optional(),
+    modelo: z.string().max(160).optional(),
+    marca: z.string().max(160).optional(),
+    tipo: z.string().max(160).optional(),
+    isGeneric: z.boolean().optional().default(false),
+    clarificationContext: z.string().max(1600).optional(),
+    ephemeralImages: z.array(EphemeralIdentificationImageInputSchema).max(3).optional(),
+    includeEnvelope: z.boolean().optional().default(false),
+    forceWebDiscovery: z.boolean().optional().default(false),
+});
+
+export const FleetUnitRegistrationBodySchema = z.object({
+    global_asset_id: z.string().trim().optional(),
+    make_oficial: z.string().trim().min(1, 'make_oficial es obligatorio.'),
+    model_oficial: z.string().trim().min(1, 'model_oficial es obligatorio.'),
+    categoria_equipo: z.string().trim().optional(),
+    tipo_equipo: z.string().trim().optional(),
+    equipment_type_key: z.string().trim().optional(),
+    archetype_id: z.string().trim().optional(),
     physical_traits: AssetPhysicalTraitsSchema.optional(),
     configuration_profile: AssetConfigurationProfileSchema.optional(),
     canonical_specs: z.array(CanonicalSpecSlotSchema).optional(),
@@ -448,20 +460,211 @@ export const FleetUnitRegistrationSchema = z.object({
     contexto_operativo: z.array(z.string()).optional(),
     caracteristicas_principales: z.array(z.string()).optional(),
     chassis_versions: z.array(z.string()).optional(),
-    version: z.string().default('ESTÁNDAR'),
-    official_url: z.string().optional(),
-    original_jargon: z.string().optional(),
+    version: z.string().trim().optional().default('ESTÁNDAR'),
+    official_url: z.string().trim().optional(),
+    original_jargon: z.string().trim().optional(),
+    isGeneric: z.boolean().optional().default(false),
     identifier_type: FleetIdentifierTypeSchema.default('SERIAL_NUMBER'),
-    identifier_value: z.string().trim().min(2, 'Número de serie, patente o identificador único obligatorio').max(80),
+    identifier_value: z
+        .string()
+        .trim()
+        .min(2, 'Ingrese el Número de Serie, Patente, VIN o Código único de la unidad.')
+        .max(80),
     ownership_type: FleetOwnershipConditionSchema.default('PROPIO'),
-    horometer: z.number().nonnegative().default(0),
+    horometer: z.number().nonnegative().optional().default(0),
     odometer_km: z.number().nonnegative().optional(),
     cycles_count: z.number().nonnegative().optional(),
     calibration_due_date: z.string().max(32).optional(),
+    confirm_word: z.string().trim().min(1),
+});
+
+export const FleetUnitRegistrationSchema = FleetUnitRegistrationBodySchema.extend({
     confirm_word: z.literal('ACTUALIZAR'),
 });
 
 export type FleetUnitRegistration = z.infer<typeof FleetUnitRegistrationSchema>;
+
+export const ReviewContributionBodySchema = z.object({
+    acceptedProposalIds: z.array(z.string()).default([]),
+    rejectedProposalIds: z.array(z.string()).default([]),
+    reviewNotes: z.string().max(4000).optional(),
+    publishApprovedItems: z.boolean().optional().default(true),
+    confirmWord: z.string().trim().min(1),
+});
+
+// ── Gobernanza HITL "ACTUALIZAR", Bóveda Técnica y Bucle TEST-PILOT ───────────
+
+export function isValidHitlConfirmWord(raw: unknown): boolean {
+    return String(raw ?? '').trim().toUpperCase() === HITL_CONFIRM_KEYWORD;
+}
+
+export const HitlConfirmWordSchema = z
+    .string()
+    .trim()
+    .refine((val) => val.toUpperCase() === HITL_CONFIRM_KEYWORD, {
+        message: 'CONFIRM_WORD_MISMATCH',
+    });
+
+export const VaultPillarIdSchema = z.enum([
+    'ficha_tecnica',
+    'manual_operaciones',
+    'pauta_mantencion',
+    'matriz_riesgos',
+    'checklist_pre_op',
+]);
+
+export type VaultPillarId = z.infer<typeof VaultPillarIdSchema>;
+
+export const ReframePhotoMetricsSchema = z
+    .object({
+        original_bytes: z.number().nonnegative().optional(),
+        optimized_bytes: z.number().nonnegative().optional(),
+        savings_pct: z.number().nonnegative().optional(),
+        originalBytes: z.number().nonnegative().optional(),
+        optimizedBytes: z.number().nonnegative().optional(),
+        savingsPct: z.number().nonnegative().optional(),
+        sha256: z.string().optional(),
+        width: z.number().positive().optional(),
+        height: z.number().positive().optional(),
+        updated_at: z.string().optional(),
+    })
+    .passthrough();
+
+export type ReframePhotoMetrics = z.infer<typeof ReframePhotoMetricsSchema>;
+
+export const ReframeOfficialPhotoBodySchema = z
+    .object({
+        assetId: z.string().trim().min(1).max(160).optional(),
+        globalAssetId: z.string().trim().min(1).max(160).optional(),
+        previewOnly: z.boolean().optional().default(false),
+        confirmWord: z.string().optional(),
+        proposedUrl: z.string().trim().min(1).max(2048).optional(),
+        proposedSha256: z
+            .string()
+            .trim()
+            .regex(/^[a-f0-9]{64}$/i)
+            .optional(),
+        proposedMetrics: ReframePhotoMetricsSchema.optional(),
+    })
+    .refine((data) => Boolean(data.assetId || data.globalAssetId), {
+        message: 'assetId o globalAssetId es obligatorio.',
+    });
+
+export type ReframeOfficialPhotoBody = z.infer<typeof ReframeOfficialPhotoBodySchema>;
+
+export const ReconcileSidebarProfileBodySchema = z
+    .object({
+        assetId: z.string().trim().min(1).max(160).optional(),
+        globalAssetId: z.string().trim().min(1).max(160).optional(),
+        previewOnly: z.boolean().optional().default(false),
+        confirmWord: z.string().optional(),
+        approvedProfile: z.record(z.string(), z.unknown()).optional(),
+    })
+    .refine((data) => Boolean(data.assetId || data.globalAssetId), {
+        message: 'assetId o globalAssetId es obligatorio.',
+    });
+
+export type ReconcileSidebarProfileBody = z.infer<typeof ReconcileSidebarProfileBodySchema>;
+
+export const PilotHitlConsolidateBodySchema = z.object({
+    decision: z.enum(['APPROVED', 'REJECTED']),
+    confirmWord: HitlConfirmWordSchema,
+    approvedFields: z.record(z.string(), z.unknown()).optional(),
+    curatedDirective: z.string().max(32000).nullable().optional(),
+});
+
+export type PilotHitlConsolidateBody = z.infer<typeof PilotHitlConsolidateBodySchema>;
+
+export const VaultUpdateAssetImageBodySchema = z
+    .object({
+        globalAssetId: z.string().trim().min(1).max(160).optional(),
+        assetId: z.string().trim().min(1).max(160).optional(),
+        tenantAssetId: z.string().trim().max(160).optional(),
+        imageUrl: z.string().max(2048).nullable(),
+        imagePath: z.string().max(1024).nullable().optional(),
+        imageMetadata: z.record(z.string(), z.unknown()).nullable().optional(),
+        fotoMediaTelemetry: z.record(z.string(), z.unknown()).nullable().optional(),
+        fotoVlmAuditVersion: z.number().int().nullable().optional(),
+        officialPhotoCandidates: z.array(z.record(z.string(), z.unknown())).optional(),
+        confirmWord: HitlConfirmWordSchema,
+    })
+    .refine((data) => Boolean(data.globalAssetId || data.assetId), {
+        message: 'globalAssetId o assetId es obligatorio.',
+    });
+
+export const VaultCreateItemBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    pillarId: VaultPillarIdSchema,
+    title: z.string().trim().min(1).max(400),
+    section: z.string().trim().min(1).max(240),
+    rationale: z.string().max(4000).optional(),
+    priority: z.string().trim().max(40).optional(),
+    itemSource: z.record(z.string(), z.unknown()).optional(),
+    confirmWord: HitlConfirmWordSchema,
+});
+
+export const VaultMutateItemHitlBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    pillarId: VaultPillarIdSchema,
+    itemId: z.string().trim().min(1).max(160),
+    confirmWord: HitlConfirmWordSchema,
+});
+
+export const VaultBulkApproveBodySchema = z.object({
+    confirmWord: HitlConfirmWordSchema,
+    items: z
+        .array(
+            z.object({
+                globalAssetId: z.string().trim().min(1).max(160),
+                pillarId: VaultPillarIdSchema,
+                itemId: z.string().trim().min(1).max(160),
+            })
+        )
+        .max(500),
+});
+
+export const VaultUpdateItemContentBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    pillarId: VaultPillarIdSchema,
+    itemId: z.string().trim().min(1).max(160),
+    newContent: z.string().max(250000),
+    confirmWord: HitlConfirmWordSchema,
+});
+
+export const VaultApplyAssistProposalBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    pillarId: VaultPillarIdSchema,
+    itemId: z.string().trim().min(1).max(160),
+    finalContent: z.string().min(1).max(250000),
+    intent: z.string().max(120).optional(),
+    sessionId: z.string().max(160).optional(),
+    messageId: z.string().max(160).optional(),
+    userEmail: z.string().max(320).optional(),
+    confirmWord: HitlConfirmWordSchema,
+});
+
+export const VaultResolveConflictBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    pillarId: VaultPillarIdSchema,
+    itemId: z.string().trim().min(1).max(160),
+    action: z.enum(['ACCEPT', 'REJECT']),
+    proposal: z
+        .object({
+            proposal_id: z.string().optional(),
+            componente: z.string().optional(),
+            zona: z.string().optional(),
+        })
+        .passthrough(),
+    confirmWord: HitlConfirmWordSchema,
+});
+
+export const VaultRollbackVersionBodySchema = z.object({
+    globalAssetId: z.string().trim().min(1).max(160),
+    pillarId: VaultPillarIdSchema,
+    itemId: z.string().trim().min(1).max(160),
+    timestamp: z.string().trim().min(1).max(80),
+    confirmWord: HitlConfirmWordSchema,
+});
 
 export const TenantPrivatePhotoSchema = z.object({
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -483,4 +686,7 @@ export const KnowledgeContributionStatusSchema = z.enum([
 ]);
 
 export type KnowledgeContributionStatus = z.infer<typeof KnowledgeContributionStatusSchema>;
+
+export * from './manufacturers.contracts';
+
 

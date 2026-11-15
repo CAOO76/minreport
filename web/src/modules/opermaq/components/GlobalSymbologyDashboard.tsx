@@ -44,7 +44,7 @@ function renderCasTelemetryBadge(
       ? savings
       : Number(Math.max(0, ((orig - opt) / orig) * 100).toFixed(1));
   return (
-    <p className="text-[10px] font-mono tabular-nums text-[#00AEEF] mt-[4px] select-text">
+    <p className="text-microcopy font-mono tabular-nums text-[#00AEEF] mt-[4px] select-text">
       ORIG: {formatSymbologyBytes(orig)} -&gt; CAS: {formatSymbologyBytes(opt)} (-{pct.toFixed(1)}%)
     </p>
   );
@@ -491,7 +491,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
                 {c.technical_name_es}
               </h3>
             </div>
-            <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] font-mono tabular-nums select-text">
+            <p className="text-microcopy text-[#475569] dark:text-[#8A93A6] font-mono tabular-nums select-text">
               {c.iso_reference}
             </p>
             {renderCasTelemetryBadge(c.original_bytes, c.optimized_bytes, c.savings_pct)}
@@ -522,7 +522,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
               type="button"
               onClick={() => handleBuscar(c.concept_id, c.iso_reference)}
               disabled={isSearching || isDrawing || isRegistering || isUploading}
-              className="px-[13px] h-8 bg-[#C68346] text-[#FFFFFF] font-bold text-[11px] uppercase tracking-[0.05em] hover:bg-[#b07239] transition-colors border-0 cursor-pointer rounded-none shadow-none flex items-center justify-center shrink-0 disabled:opacity-40"
+              className="px-[13px] h-8 bg-[#C68346] text-[#FFFFFF] font-bold text-microcopy uppercase tracking-[0.05em] hover:bg-[#b07239] transition-colors border-0 cursor-pointer rounded-none shadow-none flex items-center justify-center shrink-0 disabled:opacity-40"
             >
               {isSearching ? t('symbology_dashboard.btn_searching') : t('symbology_dashboard.btn_search')}
             </button>
@@ -532,13 +532,13 @@ export const GlobalSymbologyDashboard: React.FC = () => {
         {/* Vista comparativa HITL para subida manual directa (`upload-standard`) */}
         {pendingUpload && (
           <div className="border border-[#00AEEF] bg-[#F8FAFC] dark:bg-[#000000] p-[13px] space-y-[13px] rounded-none shadow-none">
-            <p className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#00AEEF]">
+            <p className="text-microcopy font-bold uppercase tracking-[0.05em] text-[#00AEEF]">
               {t('symbology_dashboard.manual_upload_preview_heading')}
             </p>
             <div className="grid grid-cols-2 gap-[13px]">
               <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] p-[8px] flex flex-col items-center justify-center min-h-[100px]">
-                <span className="text-[10px] font-mono font-bold uppercase text-[#475569] dark:text-[#8A93A6] mb-[8px]">
-                  {t('opermaq_domains.hitl_col_current', { defaultValue: t('opermaq_domains.homologate_col_current') })}
+                <span className="text-microcopy font-mono font-bold uppercase text-[#475569] dark:text-[#8A93A6] mb-[8px]">
+                  {t('opermaq_domains.hitl_col_current')}
                 </span>
                 {c.standard_icon_url ? (
                   <img
@@ -550,13 +550,13 @@ export const GlobalSymbologyDashboard: React.FC = () => {
                     className="max-h-[72px] w-auto object-contain select-none pointer-events-none"
                   />
                 ) : (
-                  <span className="text-[11px] font-mono text-[#94A3B8] dark:text-[#5A6072]">
+                  <span className="text-microcopy font-mono text-[#94A3B8] dark:text-[#5A6072]">
                     {t('opermaq_domains.pending_record')}
                   </span>
                 )}
               </div>
               <div className="border border-[#00AEEF] bg-[#FFFFFF] dark:bg-[#07090D] p-[8px] flex flex-col items-center justify-center min-h-[100px]">
-                <span className="text-[10px] font-mono font-bold uppercase text-[#00AEEF] mb-[8px]">
+                <span className="text-microcopy font-mono font-bold uppercase text-[#00AEEF] mb-[8px]">
                   {t('symbology_dashboard.proposed_cas_label')}
                 </span>
                 <img
@@ -588,7 +588,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
                 autoComplete="off"
                 spellCheck={false}
                 disabled={isUploading}
-                className="px-[13px] h-8 text-[12px] bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-center flex-1 rounded-none shadow-none"
+                className="px-[13px] h-8 text-[0.8125rem] bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-center flex-1 rounded-none shadow-none"
               />
               <button
                 type="button"
@@ -596,7 +596,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
                 disabled={
                   isUploading || (uploadStandardConfirmText[c.concept_id] || '').trim() !== 'ACTUALIZAR'
                 }
-                className="px-[13px] h-8 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-[11px] uppercase tracking-[0.05em] disabled:opacity-40 transition-colors border-0 cursor-pointer rounded-none shadow-none"
+                className="px-[13px] h-8 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-microcopy uppercase tracking-[0.05em] disabled:opacity-40 transition-colors border-0 cursor-pointer rounded-none shadow-none"
               >
                 {isUploading ? t('symbology_dashboard.btn_confirming') : t('symbology_dashboard.btn_confirm')}
               </button>
@@ -610,7 +610,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
                     return next;
                   });
                 }}
-                className="px-[13px] h-8 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[11px] font-bold uppercase rounded-none shadow-none cursor-pointer"
+                className="px-[13px] h-8 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-microcopy font-bold uppercase rounded-none shadow-none cursor-pointer"
               >
                 {t('common.cancel')}
               </button>
@@ -621,7 +621,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
         {/* Sección: Candidatos de Wikimedia */}
         {!hasTempIcon && hasCandidates && (
           <div className="space-y-[13px] pt-[13px] border-t border-[#E2E8F0] dark:border-[#12151C]">
-            <p className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+            <p className="text-microcopy font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
               {t('symbology_dashboard.candidates_heading')}
             </p>
             <div className="grid grid-cols-3 gap-[13px]">
@@ -667,7 +667,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
         {/* Sección: Autorización de dibujo (DRAW) */}
         {!hasTempIcon && (selectedIdx !== undefined || c.standard_icon_status === 'pendiente_dibujo_humano') && (
           <div className="bg-[#F8FAFC] dark:bg-[#000000] border border-[#C68346] p-[13px] space-y-[13px] rounded-none shadow-none">
-            <p className="text-[11px] text-[#C68346] font-bold leading-normal">
+            <p className="text-microcopy text-[#C68346] font-bold leading-normal">
               {selectedIdx !== undefined
                 ? t('symbology_dashboard.authorize_candidate_draw', { num: selectedIdx + 1 })
                 : t('symbology_dashboard.authorize_scratch_draw')}
@@ -681,13 +681,13 @@ export const GlobalSymbologyDashboard: React.FC = () => {
                 autoComplete="off"
                 spellCheck={false}
                 disabled={isDrawing}
-                className="px-[13px] h-8 text-[12px] bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-center flex-1 rounded-none shadow-none"
+                className="px-[13px] h-8 text-[0.8125rem] bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-center flex-1 rounded-none shadow-none"
               />
               <button
                 type="button"
                 onClick={() => handleAutorizarDraw(c.concept_id, hasCandidates)}
                 disabled={isDrawing || (drawConfirmText[c.concept_id] || '').trim() !== 'ACTUALIZAR'}
-                className="px-[13px] h-8 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-[11px] uppercase tracking-[0.05em] disabled:opacity-40 transition-colors border-0 cursor-pointer rounded-none shadow-none flex items-center justify-center shrink-0"
+                className="px-[13px] h-8 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-microcopy uppercase tracking-[0.05em] disabled:opacity-40 transition-colors border-0 cursor-pointer rounded-none shadow-none flex items-center justify-center shrink-0"
               >
                 {isDrawing ? t('symbology_dashboard.btn_drawing') : t('symbology_dashboard.btn_authorize_draw')}
               </button>
@@ -698,7 +698,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
         {/* Sección: Confirmación de Dibujo Generado */}
         {hasTempIcon && (
           <div className="border border-[#00AEEF] bg-[#F8FAFC] dark:bg-[#000000] p-[13px] space-y-[13px] rounded-none shadow-none">
-            <p className="text-[11px] font-bold uppercase tracking-[0.05em] text-[#00AEEF]">
+            <p className="text-microcopy font-bold uppercase tracking-[0.05em] text-[#00AEEF]">
               {t('symbology_dashboard.draw_proposal_heading')}
             </p>
             <div className="flex flex-col sm:flex-row gap-[13px] items-center sm:items-start">
@@ -718,7 +718,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
                   c.temp_optimized_bytes ?? c.optimized_bytes,
                   c.temp_savings_pct ?? c.savings_pct
                 )}
-                <label className="text-[11px] font-bold uppercase text-[#475569] dark:text-[#8A93A6] block leading-normal">
+                <label className="text-microcopy font-bold uppercase text-[#475569] dark:text-[#8A93A6] block leading-normal">
                   {t('symbology_dashboard.write_actualizar_to_activate')}
                 </label>
                 <div className="flex gap-[8px]">
@@ -730,13 +730,13 @@ export const GlobalSymbologyDashboard: React.FC = () => {
                     autoComplete="off"
                     spellCheck={false}
                     disabled={isRegistering}
-                    className="px-[13px] h-8 text-[12px] bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-center flex-1 rounded-none shadow-none"
+                    className="px-[13px] h-8 text-[0.8125rem] bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-center flex-1 rounded-none shadow-none"
                   />
                   <button
                     type="button"
                     onClick={() => handleRegistrar(c.concept_id)}
                     disabled={isRegistering || (registerConfirmText[c.concept_id] || '').trim() !== 'ACTUALIZAR'}
-                    className="px-[13px] h-8 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-[11px] uppercase tracking-[0.05em] disabled:opacity-40 transition-colors border-0 cursor-pointer rounded-none shadow-none flex items-center justify-center shrink-0"
+                    className="px-[13px] h-8 bg-[#C68346] hover:bg-[#b07239] text-[#FFFFFF] font-bold text-microcopy uppercase tracking-[0.05em] disabled:opacity-40 transition-colors border-0 cursor-pointer rounded-none shadow-none flex items-center justify-center shrink-0"
                   >
                     {isRegistering ? t('symbology_dashboard.btn_confirming') : t('symbology_dashboard.btn_confirm')}
                   </button>
@@ -779,10 +779,10 @@ export const GlobalSymbologyDashboard: React.FC = () => {
             )}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] font-mono tabular-nums select-text">
+            <p className="text-microcopy text-[#475569] dark:text-[#8A93A6] font-mono tabular-nums select-text">
               {c.iso_reference}
             </p>
-            <h4 className="text-[12px] font-bold text-[#0F172A] dark:text-[#F3F4F6] truncate uppercase">
+            <h4 className="text-[0.8125rem] font-bold text-[#0F172A] dark:text-[#F3F4F6] truncate uppercase">
               {c.technical_name_es}
             </h4>
             {renderCasTelemetryBadge(c.original_bytes, c.optimized_bytes, c.savings_pct)}
@@ -814,13 +814,13 @@ export const GlobalSymbologyDashboard: React.FC = () => {
                 placeholder={t('symbology_dashboard.oem_brand_placeholder')}
                 autoComplete="off"
                 spellCheck={false}
-                className="px-[8px] h-8 text-[11px] bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono flex-1 rounded-none shadow-none select-text"
+                className="px-[8px] h-8 text-microcopy bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono flex-1 rounded-none shadow-none select-text"
               />
               <button
                 type="button"
                 disabled={isGeneratingVar || !(variantBrandInput[c.concept_id] || '').trim()}
                 onClick={() => handleGenerateVariant(c.concept_id)}
-                className="px-[13px] h-8 bg-[#C68346] text-[#FFFFFF] text-[10px] font-bold uppercase rounded-none shadow-none border-0 cursor-pointer disabled:opacity-40"
+                className="px-[13px] h-8 bg-[#C68346] text-[#FFFFFF] text-microcopy font-bold uppercase rounded-none shadow-none border-0 cursor-pointer disabled:opacity-40"
               >
                 {isGeneratingVar ? t('symbology_dashboard.btn_drawing') : t('symbology_dashboard.btn_propose_variant')}
               </button>
@@ -830,8 +830,8 @@ export const GlobalSymbologyDashboard: React.FC = () => {
               <div className="border border-[#00AEEF] p-[8px] bg-[#F8FAFC] dark:bg-[#000000] space-y-[8px] rounded-none shadow-none">
                 <div className="grid grid-cols-2 gap-[8px]">
                   <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] p-[8px] flex flex-col items-center">
-                    <span className="text-[9px] font-mono font-bold uppercase text-[#475569] dark:text-[#8A93A6] mb-[4px]">
-                      {t('opermaq_domains.homologate_col_current')}
+                    <span className="text-microcopy font-mono font-bold uppercase text-[#475569] dark:text-[#8A93A6] mb-[4px]">
+                      {t('opermaq_domains.hitl_col_current')}
                     </span>
                     {c.standard_icon_url && (
                       <img
@@ -845,7 +845,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
                     )}
                   </div>
                   <div className="border border-[#00AEEF] bg-[#FFFFFF] dark:bg-[#07090D] p-[8px] flex flex-col items-center">
-                    <span className="text-[9px] font-mono font-bold uppercase text-[#00AEEF] mb-[4px]">
+                    <span className="text-microcopy font-mono font-bold uppercase text-[#00AEEF] mb-[4px]">
                       {t('symbology_dashboard.proposed_cas_label')}
                     </span>
                     <img
@@ -869,7 +869,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
                     autoComplete="off"
                     spellCheck={false}
                     disabled={isRegisteringVar}
-                    className="px-[8px] h-8 text-[11px] bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-center flex-1 rounded-none shadow-none"
+                    className="px-[8px] h-8 text-microcopy bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] outline-none font-mono text-center flex-1 rounded-none shadow-none"
                   />
                   <button
                     type="button"
@@ -877,7 +877,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
                       isRegisteringVar || (variantConfirmText[c.concept_id] || '').trim() !== 'ACTUALIZAR'
                     }
                     onClick={() => handleRegisterVariant(c.concept_id)}
-                    className="px-[13px] h-8 bg-[#C68346] text-[#FFFFFF] text-[10px] font-bold uppercase rounded-none shadow-none border-0 cursor-pointer disabled:opacity-40"
+                    className="px-[13px] h-8 bg-[#C68346] text-[#FFFFFF] text-microcopy font-bold uppercase rounded-none shadow-none border-0 cursor-pointer disabled:opacity-40"
                   >
                     {isRegisteringVar ? t('symbology_dashboard.btn_confirming') : t('symbology_dashboard.btn_confirm')}
                   </button>
@@ -894,7 +894,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
     <div className="h-full w-full flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-atkinson overflow-hidden select-none rounded-none shadow-none">
       {/* Barra Superior Minimalista Uniforme (Cero Duplicación) */}
       <header className="h-12 px-[21px] border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-between gap-[21px] shrink-0">
-        <h1 className="text-[12px] font-mono font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6] shrink-0">
+        <h1 className="text-[0.8125rem] font-mono font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6] shrink-0">
           {t('symbology_dashboard.title')}
         </h1>
 
@@ -931,10 +931,10 @@ export const GlobalSymbologyDashboard: React.FC = () => {
           {/* Área Mayor (61.8%): PENDIENTES */}
           <section className="w-full lg:w-[61.8%] flex flex-col h-full overflow-hidden">
             <div className="px-[21px] py-[8px] border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-between shrink-0">
-              <h2 className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#C68346]">
+              <h2 className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#C68346]">
                 {t('symbology_dashboard.pending_heading')}
               </h2>
-              <span className="font-mono tabular-nums text-[11px] font-bold text-[#C68346]">
+              <span className="font-mono tabular-nums text-microcopy font-bold text-[#C68346]">
                 {pendingList.length}
               </span>
             </div>
@@ -944,7 +944,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
                   <M3CircularProgress size={24} strokeWidth={3} tone="copper" />
                 </div>
               ) : pendingList.length === 0 ? (
-                <div className="p-[34px] text-center text-[12px] font-mono text-[#94A3B8] dark:text-[#5A6072]">
+                <div className="p-[34px] text-center text-[0.8125rem] font-mono text-[#94A3B8] dark:text-[#5A6072]">
                   {t('symbology_dashboard.empty_pending')}
                 </div>
               ) : (
@@ -956,10 +956,10 @@ export const GlobalSymbologyDashboard: React.FC = () => {
           {/* Área Menor (38.2%): CONSOLIDADOS */}
           <section className="w-full lg:w-[38.2%] flex flex-col h-full overflow-hidden">
             <div className="px-[21px] py-[8px] border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-between shrink-0">
-              <h2 className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF]">
+              <h2 className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF]">
                 {t('symbology_dashboard.consolidated_heading')}
               </h2>
-              <span className="font-mono tabular-nums text-[11px] font-bold text-[#00AEEF]">
+              <span className="font-mono tabular-nums text-microcopy font-bold text-[#00AEEF]">
                 {consolidatedList.length}
               </span>
             </div>
@@ -969,7 +969,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
                   <M3CircularProgress size={24} strokeWidth={3} tone="copper" />
                 </div>
               ) : consolidatedList.length === 0 ? (
-                <div className="p-[34px] text-center text-[12px] font-mono text-[#94A3B8] dark:text-[#5A6072]">
+                <div className="p-[34px] text-center text-[0.8125rem] font-mono text-[#94A3B8] dark:text-[#5A6072]">
                   {t('opermaq_domains.not_declared')}
                 </div>
               ) : (
@@ -988,7 +988,7 @@ export const GlobalSymbologyDashboard: React.FC = () => {
               <M3CircularProgress size={24} strokeWidth={3} tone="copper" />
             </div>
           ) : consolidatedList.length === 0 ? (
-            <div className="p-[34px] text-center text-[12px] font-mono text-[#94A3B8] dark:text-[#5A6072]">
+            <div className="p-[34px] text-center text-[0.8125rem] font-mono text-[#94A3B8] dark:text-[#5A6072]">
               {t('opermaq_domains.not_declared')}
             </div>
           ) : (

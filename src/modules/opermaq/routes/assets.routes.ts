@@ -1,6 +1,5 @@
 import { createHash } from 'crypto';
 import { Router, type Response } from 'express';
-import { FieldValue } from 'firebase-admin/firestore';
 import multer from 'multer';
 import { z } from 'zod';
 import { db } from '../../../config/firebase';
@@ -12,14 +11,11 @@ import type { ScopedRequest } from '../../../middleware/sessionScope';
 import { inferAssetPhysicalTraits } from '../services/AssetOntologyEngine';
 import { resolveMachineryCandidates } from '../services/AssetResolverService';
 import { resolveFromLocalCommonsCatalog } from '../services/CanonicalEntityResolver';
-import { enrichCatalogProfile, proposeCatalogHomologation } from '../services/CatalogProfileEnricher';
+import { enrichCatalogProfile } from '../services/CatalogProfileEnricher';
 import { upsertGlobalAssetCatalog } from '../services/CatalogUpsertService';
+import { listRegisteredEquipmentTypes } from '../services/EquipmentTypeRegistryService';
+import { triggerAsyncManufacturerDiscovery } from '../services/ManufacturerRegistryService';
 import {
-    listRegisteredEquipmentTypes,
-    resolveOrLearnEquipmentType,
-} from '../services/EquipmentTypeRegistryService';
-import {
-    ApplyCatalogHomologationBodySchema,
     AssetConfigurationProfileSchema,
     CanonicalSpecSlotSchema,
     FleetUnitRegistrationBodySchema,
@@ -28,7 +24,6 @@ import {
 } from '../types/vault.types';
 import {
     buildHomologousEquipmentDescription,
-    cleanDynamicAxisValue,
     extractHomologousAxisValues,
     MISSING_FULL_TECH_SPEC,
     serializeCanonicalSlotsToSpecsArray,
@@ -36,10 +31,7 @@ import {
     type MachineryArchetypeId,
 } from '../utils/canonicalArchetypeSpecs';
 import { DomainRejectionError, validateIndustrialDomain } from '../utils/domainGuard';
-import {
-    formatTransmissionCategoryLabelEs,
-    inferAssetConfigurationProfile,
-} from '../utils/lockedVariantDirective';
+import { inferAssetConfigurationProfile } from '../utils/lockedVariantDirective';
 
 /**
  * OPERMAQ — Assets Routes (Etapa 1: Catálogo Maestro OEM y Control de Flota por Tenant)
@@ -159,35 +151,22 @@ function sanitizeOperationalSpec(raw: unknown): string | null {
 }
 
 /**
- * Proyecta determinísticamente la firma física homóloga del equipo según su arquetipo mecánico,
- * sin prosa comercial, sin alucinaciones y sin truncamiento de caracteres.
+ * Proyecta determinísticamente la firma física sintética del equipo para listados (`CATÁLOGO` y `FLOTA`):
+ * máximo 4 tokens verificados sin duplicados, etiquetas compactas, unidad SI pura y cero `[No declarado en ficha]`.
  */
 function buildConciseEquipmentDescription(docData: Record<string, any>): string {
-    const base = buildHomologousEquipmentDescription(docData);
-    const cfg = docData?.configuration_profile;
-    if (!cfg || typeof cfg !== 'object') return base;
-    const baseUpper = base.toUpperCase();
-    const extras: string[] = [];
-    if (
-        cfg.axle_or_undercarriage_config &&
-        !baseUpper.includes(String(cfg.axle_or_undercarriage_config).toUpperCase())
-    ) {
-        extras.push(String(cfg.axle_or_undercarriage_config));
-    }
-    const txLabel =
-        cfg.transmission_model_spec ||
-        (cfg.transmission_category && cfg.transmission_category !== 'NOT_APPLICABLE'
-            ? formatTransmissionCategoryLabelEs(cfg.transmission_category)
-            : '');
-    if (txLabel && !baseUpper.includes(String(txLabel).toUpperCase().slice(0, 12))) {
-        extras.push(String(txLabel));
-    }
-    if (cfg.work_body_or_implement && !baseUpper.includes(String(cfg.work_body_or_implement).toUpperCase().slice(0, 10))) {
-        extras.push(String(cfg.work_body_or_implement));
-    }
-    if (extras.length === 0) return base;
-    if (!base || base.startsWith('[')) return extras.join(' · ');
-    return `${base} · ${extras.join(' · ')}`;
+    return buildHomologousEquipmentDescription({
+        equipment_type_key: docData?.equipment_type_key,
+        archetype_id: docData?.archetype_id,
+        tipo_equipo: docData?.tipo_equipo,
+        categoria_equipo: docData?.categoria_equipo,
+        canonical_specs: docData?.canonical_specs,
+        caracteristicas_principales: docData?.caracteristicas_principales,
+        configuration_profile:
+            docData?.configuration_profile && typeof docData.configuration_profile === 'object'
+                ? docData.configuration_profile
+                : null,
+    });
 }
 
 function handleRouteError(res: Response, err: unknown, fallbackMsg: string) {
@@ -384,208 +363,6 @@ assetsRouter.get('/catalog', async (req: ScopedRequest, res: Response) => {
         return res.status(200).json({ items });
     } catch (err) {
         return handleRouteError(res, err, 'Error listando el Catálogo Maestro.');
-    }
-});
-
-/**
- * POST /api/assets/catalog/:id/propose-homologation
- * Propuesta HITL de solo lectura (`[Actual] ➔ [Sugerido Grounded]`) mediante el pipeline
- * de 2 pasadas con evidencia web/PDF obligatoria. Cero mutación automática de datos maestros.
- */
-assetsRouter.post('/catalog/:id/propose-homologation', async (req: ScopedRequest, res: Response) => {
-    try {
-        if (!req.opermaqContext?.capabilities?.canCurateAI) {
-            return res.status(403).json({
-                error: 'CATALOG_CURATOR_ONLY',
-                message: 'La verificación y homologación del Catálogo Maestro es exclusiva de curadores MINREPORT.',
-            });
-        }
-
-        const parsedParams = AssetIdParamSchema.safeParse(req.params || {});
-        if (!parsedParams.success) {
-            return res.status(400).json({ error: 'Identificador de activo inválido.' });
-        }
-        const docId = parsedParams.data.id;
-        const docSnap = await db.collection('global_asset_catalog').doc(docId).get();
-        if (!docSnap.exists) {
-            return res.status(404).json({ error: 'Equipo no encontrado en el Catálogo Maestro.' });
-        }
-
-        const proposal = await proposeCatalogHomologation(docId, docSnap.data() || {});
-        return res.status(200).json({ success: true, proposal });
-    } catch (err) {
-        return handleRouteError(res, err, 'Error generando propuesta de homologación verificada.');
-    }
-});
-
-/**
- * PATCH /api/assets/catalog/:id/apply-homologation
- * Consolida únicamente los ejes físicos autorizados 1 a 1 por un humano tras escribir `"ACTUALIZAR"`,
- * validados contra el esquema canónico del `TIPO` (`global_equipment_types/{typeKey}`),
- * purga cualquier `caracteristica_diferenciadora` de prosa previa y registra el evento en `AuditLedger`.
- */
-assetsRouter.patch('/catalog/:id/apply-homologation', async (req: ScopedRequest, res: Response) => {
-    try {
-        const ctx = req.opermaqContext!;
-        if (!ctx.capabilities.canCurateAI) {
-            return res.status(403).json({
-                error: 'CATALOG_CURATOR_ONLY',
-                message: 'Permisos insuficientes para modificar registros maestros del Catálogo.',
-            });
-        }
-
-        const parsedParams = AssetIdParamSchema.safeParse(req.params || {});
-        if (!parsedParams.success) {
-            return res.status(400).json({ error: 'Identificador de activo inválido.' });
-        }
-
-        const parsed = ApplyCatalogHomologationBodySchema.safeParse(req.body || {});
-        if (!parsed.success) {
-            return res.status(400).json({
-                error: parsed.error.issues[0]?.message || 'Payload de homologación inválido.',
-                details: parsed.error.format(),
-            });
-        }
-
-        const body = parsed.data;
-        if (body.confirm_word.trim().toUpperCase() !== HITL_CONFIRM_KEYWORD) {
-            return res.status(400).json({
-                error: `Confirmación obligatoria inválida. Escriba exactamente "${HITL_CONFIRM_KEYWORD}".`,
-            });
-        }
-
-        const docId = parsedParams.data.id;
-        const docRef = db.collection('global_asset_catalog').doc(docId);
-        const docSnap = await docRef.get();
-        if (!docSnap.exists) {
-            return res.status(404).json({ error: 'Equipo no encontrado en el Catálogo Maestro.' });
-        }
-
-        const existingData = docSnap.data() || {};
-        const nextTipoHint = body.tipo_equipo
-            ? cleanMachineryType(body.tipo_equipo)
-            : cleanMachineryType(existingData.tipo_equipo);
-        const nextCategoria = (
-            body.categoria_equipo ||
-            existingData.categoria_equipo ||
-            'EQUIPAMIENTO INDUSTRIAL'
-        )
-            .trim()
-            .toUpperCase();
-
-        const { typeDoc } = await resolveOrLearnEquipmentType({
-            rawTypeKey: body.equipment_type_key || existingData.equipment_type_key,
-            rawTypeHint: nextTipoHint,
-            rawCategoryHint: nextCategoria,
-            assetQueryContext: `${existingData.make_oficial || ''} ${existingData.model_oficial || ''}`.trim(),
-        });
-
-        const targetArchetypeId: MachineryArchetypeId =
-            typeDoc.archetype_id || 'HERRAMIENTA_INDUSTRIAL_GENERAL';
-        const finalCanonicalTipo = typeDoc.canonical_type_es;
-
-        const incomingMap = new Map(body.approved_slots.map((s) => [s.axis_key, s]));
-        const consolidatedSlots: CanonicalSpecSlot[] = typeDoc.spec_schema.map((axisSchema) => {
-            const incoming = incomingMap.get(axisSchema.axis_key);
-            const cleaned = incoming?.value_si
-                ? cleanDynamicAxisValue(incoming.value_si, axisSchema)
-                : null;
-            return {
-                axis_key: axisSchema.axis_key,
-                label_es: axisSchema.label_es,
-                value_si: cleaned,
-                unit_si: axisSchema.unit_si,
-                mandatory: axisSchema.mandatory,
-                is_differentiator: axisSchema.is_differentiator,
-                value_kind: axisSchema.value_kind,
-                ...(axisSchema.allowed_enum_values ? { allowed_enum_values: axisSchema.allowed_enum_values } : {}),
-                source_url: cleaned ? incoming?.source_url || null : null,
-                verbatim_evidence: cleaned ? incoming?.verbatim_evidence || null : null,
-            };
-        });
-
-        const serializedSpecs = serializeCanonicalSlotsToSpecsArray(consolidatedSlots);
-        const resolvedTraits =
-            body.physical_traits ||
-            typeDoc.physical_traits ||
-            inferAssetPhysicalTraits({
-                rawTypeText: finalCanonicalTipo,
-                rawCategoryText: nextCategoria,
-                makeModelText: `${existingData.make_oficial || ''} ${existingData.model_oficial || ''}`.trim(),
-            });
-        const nextConfigProfile = inferAssetConfigurationProfile({
-            make_oficial: existingData.make_oficial || '',
-            model_oficial: existingData.model_oficial || '',
-            tipo_equipo: finalCanonicalTipo,
-            categoria_equipo: nextCategoria,
-            canonical_specs: consolidatedSlots,
-            caracteristicas_principales: serializedSpecs,
-            ambiente_operativo: existingData.ambiente_operativo,
-            contexto_operativo: existingData.contexto_operativo,
-            physical_traits: resolvedTraits,
-            existing_profile: body.configuration_profile || existingData.configuration_profile || null,
-        });
-        const updatePayload: Record<string, any> = {
-            equipment_type_key: typeDoc.type_key,
-            archetype_id: targetArchetypeId,
-            physical_traits: resolvedTraits,
-            configuration_profile: nextConfigProfile,
-            tipo_equipo: finalCanonicalTipo,
-            categoria_equipo: nextCategoria,
-            canonical_specs: consolidatedSlots,
-            caracteristicas_principales: serializedSpecs,
-            caracteristica_diferenciadora: FieldValue.delete(),
-            homologated_by: ctx.actorEmail,
-            homologated_at: new Date().toISOString(),
-            updatedAt: Date.now(),
-        };
-        if (body.energy_consumption_profile) {
-            updatePayload.energy_consumption_profile = body.energy_consumption_profile;
-        }
-        if (body.official_url && body.official_url.startsWith('http')) {
-            updatePayload.official_url = body.official_url.trim();
-        }
-
-        await docRef.update(updatePayload);
-        invalidateCatalogProjectionCache();
-
-        const updatedRecord = {
-            ...existingData,
-            equipment_type_key: typeDoc.type_key,
-            archetype_id: targetArchetypeId,
-            tipo_equipo: finalCanonicalTipo,
-            categoria_equipo: nextCategoria,
-            canonical_specs: consolidatedSlots,
-            caracteristicas_principales: serializedSpecs,
-        };
-        delete (updatedRecord as any).caracteristica_diferenciadora;
-
-        await AuditLedger.record({
-            tenantId: ctx.tenantId || 'GLOBAL',
-            actorUid: ctx.actorId,
-            actorEmail: ctx.actorEmail,
-            action: 'OPERMAQ_CATALOG_HOMOLOGATION_HITL_APPLIED',
-            module: 'opermaq',
-            targetEntity: docId,
-            details: {
-                equipmentTypeKey: typeDoc.type_key,
-                archetypeId: targetArchetypeId,
-                tipoEquipo: finalCanonicalTipo,
-                verifiedSlotsCount: consolidatedSlots.filter((s) => Boolean(s.value_si)).length,
-            },
-        }).catch(() => {});
-
-        return res.status(200).json({
-            success: true,
-            id: docId,
-            equipment_type_key: typeDoc.type_key,
-            archetype_id: targetArchetypeId,
-            tipo_equipo: finalCanonicalTipo,
-            canonical_specs: consolidatedSlots,
-            short_description: buildHomologousEquipmentDescription(updatedRecord),
-        });
-    } catch (err) {
-        return handleRouteError(res, err, 'Error aplicando homologación HITL en el Catálogo Maestro.');
     }
 });
 
@@ -820,7 +597,10 @@ assetsRouter.get('/my-fleet', async (req: ScopedRequest, res: Response) => {
                 unit.tipo_equipo || cat?.tipo_equipo || unit.categoria_equipo || cat?.categoria_equipo
             );
             const shortDescription = cat
-                ? buildConciseEquipmentDescription(cat)
+                ? buildConciseEquipmentDescription({
+                      ...cat,
+                      configuration_profile: cat.configuration_profile || unit.configuration_profile,
+                  })
                 : buildConciseEquipmentDescription(unit);
             const privateThumb = unit.primary_private_photo_url || unit.foto_url || undefined;
             const catalogThumb = cat?.foto_url ? String(cat.foto_url) : undefined;
@@ -1145,6 +925,16 @@ assetsRouter.post('/register-fleet-unit', async (req: ScopedRequest, res: Respon
         };
 
         const createdRef = await db.collection(fleetCol).add(unitPayload);
+
+        if (!ctx.isEduSandbox) {
+            triggerAsyncManufacturerDiscovery({
+                rawMake: String(unitPayload.make_oficial || ''),
+                archetypeId: unitPayload.archetype_id ? String(unitPayload.archetype_id) : null,
+                sampleModel: String(unitPayload.model_oficial || ''),
+                sampleEquipmentType: String(unitPayload.tipo_equipo || ''),
+                actorUid: ctx.actorId,
+            });
+        }
 
         await AuditLedger.record({
             tenantId: ctx.tenantId,

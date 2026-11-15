@@ -4,7 +4,8 @@ import path from 'path';
 import os from 'os';
 import sharp from 'sharp';
 import { z } from 'zod';
-import { db, auth, storage } from '../config/firebase';
+import admin, { db, auth, storage } from '../config/firebase';
+import { FieldValue } from 'firebase-admin/firestore';
 import { EmailService } from '../services/EmailService';
 import { env, getCanonicalWebUrl } from '../config/env';
 import { resolveSuperAdminPassword } from '../config/secrets';
@@ -15,7 +16,14 @@ import { isProtectedSystemAccount } from '../services/bootstrap.service';
 import { AuthRequest } from '../middleware/admin';
 import { extractClientIp } from '../middleware/rateLimiter';
 import { AuditLedger } from '../core/audit-ledger';
+import { computeShortTtlTimestamp, computeThirtyDayTtlTimestamp } from '../core/retention-policy';
 import { ResilientAIClient, SWARM_MODELS } from '../core/resilient-ai-client';
+import { TenantMetricsService, formatMetricsPeriod } from '../services/tenant-metrics.service';
+import {
+    UpdateAccountEntitlementsPayloadSchema,
+    resolveEffectiveModuleAccess,
+} from '../contracts/session.contracts';
+import { CasStorageService, type CasBlobStreamHandle } from '../core/media/CasStorageService';
 
 const exchangeCustomTokenForIdToken = async (customToken: string): Promise<string> => {
     try {
@@ -119,18 +127,75 @@ const recordAdminAudit = async (
 
 export const listTenants = async (req: express.Request, res: express.Response) => {
     try {
-        const status = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+        const status = typeof req.query.status === 'string' ? req.query.status.trim().toUpperCase() : '';
         let query: FirebaseFirestore.Query = db.collection('tenants');
 
         if (status) {
-            query = query.where('status', '==', status);
+            if (status === 'PENDING') {
+                query = query.where('status', 'in', ['PENDING', 'PENDING_APPROVAL']);
+            } else {
+                query = query.where('status', '==', status);
+            }
         }
 
         const snapshot = await query.orderBy('createdAt', 'desc').get();
-        const tenants = snapshot.docs.map((doc) => ({
-            id: doc.id,
-            ...doc.data()
-        }));
+        const accountRefs = snapshot.docs.map((doc) => db.collection('accounts').doc(doc.id));
+        const accountMap = new Map<string, Record<string, any>>();
+
+        for (let i = 0; i < accountRefs.length; i += 100) {
+            const chunk = accountRefs.slice(i, i + 100);
+            const snaps =
+                typeof (db as any).getAll === 'function'
+                    ? await (db as any).getAll(...chunk)
+                    : await Promise.all(chunk.map((ref) => ref.get()));
+            for (const snap of snaps) {
+                if (snap && snap.exists) {
+                    accountMap.set(snap.id, snap.data() || {});
+                }
+            }
+        }
+
+        const tenants = snapshot.docs.map((doc) => {
+            const d = doc.data() || {};
+            const acc = accountMap.get(doc.id) || {};
+            const resolvedIsEdu = Boolean(
+                d.isEduSandbox ||
+                    acc.isEduSandbox ||
+                    d.type === 'EDUCATIONAL' ||
+                    acc.type === 'EDUCATIONAL' ||
+                    d.classification === 'edu' ||
+                    acc.classification === 'edu'
+            );
+            const accountType: 'EDU' | 'B2B' = resolvedIsEdu ? 'EDU' : 'B2B';
+            const companyName =
+                String(
+                    acc.name ||
+                        d.company_name ||
+                        d.institution_name ||
+                        d.name ||
+                        d.full_name ||
+                        ''
+                ).trim() || 'Entidad sin denominación';
+            const normalizedStatus = String(d.status || acc.status || 'PENDING_APPROVAL').toUpperCase();
+
+            return {
+                id: doc.id,
+                ...d,
+                countryCode: String(acc.countryCode || acc.country || d.countryCode || d.country || 'CL').toUpperCase(),
+                taxId: acc.taxIdFormatted || acc.taxId || d.rut || d.run || d.taxId || null,
+                companyName,
+                accountType,
+                isEduSandbox: resolvedIsEdu,
+                academicRole: acc.academicRole || d.academicRole || acc.mandatario?.jobTitle || null,
+                ownerEmail: String(acc.mandatario?.email || d.email || acc.billingEmail || '').trim() || null,
+                entitlements: acc.entitlements || d.entitlements || null,
+                corporateLogo: acc.corporateLogo || acc.logo || d.corporateLogo || null,
+                eduInstitutionId: acc.eduInstitutionId || d.eduInstitutionId || null,
+                eduInstitutionName: acc.eduInstitutionName || d.eduInstitutionName || null,
+                eduInstitutionLogo: acc.eduInstitutionLogo || d.eduInstitutionLogo || null,
+                status: normalizedStatus,
+            };
+        });
 
         return res.status(200).json(tenants);
     } catch (error) {
@@ -241,21 +306,35 @@ const tenantUidParamSchema = z.object({
     uid: z.string().min(1).max(128),
 });
 
+function extractHitlConfirmationKeyword(req: express.Request): string {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const rawHeader = req.headers?.['x-hitl-confirmation'];
+    const headerVal = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+    const raw = body.confirmationKeyword ?? body.confirmationWord ?? headerVal ?? '';
+    return String(raw).trim().toUpperCase();
+}
+
 const updateTenantStatusSchema = z.object({
-    status: z.enum(['ACTIVE', 'REJECTED']),
+    status: z.enum(['ACTIVE', 'SUSPENDED', 'REJECTED']),
     rejectionReason: z.string().max(1000).optional().nullable(),
     observations: z.string().max(1000).optional().nullable(),
-    enabledPlugins: z.array(z.enum(['opermaq', 'stockpile'])).max(10).optional()
+    enabledPlugins: z.array(z.enum(['opermaq', 'stockpile'])).max(10).optional(),
+    confirmationWord: z.string().optional(),
+    confirmationKeyword: z.string().optional(),
 });
 
 const approveTenantBodySchema = z.object({
     observations: z.string().max(1000).optional().nullable(),
-    enabledPlugins: z.array(z.enum(['opermaq', 'stockpile'])).max(10).optional()
+    enabledPlugins: z.array(z.enum(['opermaq', 'stockpile'])).max(10).optional(),
+    confirmationWord: z.string().optional(),
+    confirmationKeyword: z.string().optional(),
 });
 
 const rejectTenantBodySchema = z.object({
     rejectionReason: z.string().min(3).max(1000),
     observations: z.string().max(1000).optional().nullable(),
+    confirmationWord: z.string().optional(),
+    confirmationKeyword: z.string().optional(),
 });
 
 export const approveTenant = async (req: AuthRequest, res: express.Response) => {
@@ -263,7 +342,8 @@ export const approveTenant = async (req: AuthRequest, res: express.Response) => 
     if (!parsedBody.success) {
         return res.status(400).json({ error: 'Payload de aprobación inválido', details: parsedBody.error.format() });
     }
-    req.body = { ...parsedBody.data, status: 'ACTIVE' };
+    const confirmationKeyword = extractHitlConfirmationKeyword(req);
+    req.body = { ...parsedBody.data, status: 'ACTIVE', confirmationKeyword };
     return updateTenantStatus(req, res);
 };
 
@@ -272,9 +352,108 @@ export const rejectTenant = async (req: AuthRequest, res: express.Response) => {
     if (!parsedBody.success) {
         return res.status(400).json({ error: 'Payload de rechazo inválido', details: parsedBody.error.format() });
     }
-    req.body = { ...parsedBody.data, status: 'REJECTED' };
+    const confirmationKeyword = extractHitlConfirmationKeyword(req);
+    req.body = { ...parsedBody.data, status: 'REJECTED', confirmationKeyword };
     return updateTenantStatus(req, res);
 };
+
+/**
+ * Sincroniza el estado de todos los miembros de una cuenta y sus perfiles en `/users/{uid}`
+ * al suspender o rechazar un tenant.
+ */
+async function syncTenantMembersOnDeactivation(params: {
+    accountRef: FirebaseFirestore.DocumentReference;
+    accountId: string;
+    targetStatus: 'SUSPENDED' | 'REJECTED';
+    ownerUidCandidate: string;
+    nowMs: number;
+    nowIso: string;
+    ttlExpiresAt?: FirebaseFirestore.Timestamp;
+    disableAuthWhenNoActive: boolean;
+}): Promise<void> {
+    const {
+        accountRef,
+        accountId,
+        targetStatus,
+        ownerUidCandidate,
+        nowMs,
+        nowIso,
+        ttlExpiresAt,
+        disableAuthWhenNoActive,
+    } = params;
+
+    const membersCol = accountRef.collection('members');
+    const memberPatch: Record<string, any> = {
+        status: targetStatus,
+        updatedAt: nowMs,
+        ...(ttlExpiresAt ? { ttlExpiresAt } : {}),
+    };
+
+    const memberUids = new Set<string>();
+    const membersSnap =
+        typeof (membersCol as any).get === 'function'
+            ? await membersCol.get().catch(() => null)
+            : null;
+
+    if (membersSnap && !membersSnap.empty) {
+        for (const memberDoc of membersSnap.docs) {
+            const mData = memberDoc.data() || {};
+            const docId = String(memberDoc.id || '').trim();
+            const memberUid = String(mData.userId || mData.uid || docId).trim();
+            const memberDocRef = memberDoc.ref || (docId ? membersCol.doc(docId) : null);
+            if (memberDocRef) {
+                await memberDocRef.update(memberPatch).catch(() => {});
+            }
+            if (docId) memberUids.add(docId);
+            if (memberUid) memberUids.add(memberUid);
+        }
+    }
+
+    if (ownerUidCandidate && !memberUids.has(ownerUidCandidate)) {
+        await membersCol.doc(ownerUidCandidate).update(memberPatch).catch(() => {});
+        memberUids.add(ownerUidCandidate);
+    }
+
+    for (const memberUid of memberUids) {
+        const uRef = db.collection('users').doc(memberUid);
+        const uSnap = await uRef.get().catch(() => null);
+        let shouldDisableAuth = disableAuthWhenNoActive;
+
+        if (uSnap && uSnap.exists) {
+            const uData = uSnap.data() || {};
+            const mems = Array.isArray(uData.memberships) ? uData.memberships : [];
+            const updatedMems = mems.map((m: any) =>
+                m?.accountId === accountId ? { ...m, status: targetStatus } : m
+            );
+            const hasOtherActive = updatedMems.some(
+                (m: any) => m?.accountId !== accountId && String(m?.status || '').toUpperCase() === 'ACTIVE'
+            );
+            shouldDisableAuth = disableAuthWhenNoActive && !hasOtherActive;
+
+            const userTargetRef = uSnap.ref || uRef;
+            await userTargetRef
+                .update({
+                    memberships: updatedMems,
+                    ...(hasOtherActive
+                        ? {}
+                        : {
+                              status: targetStatus,
+                              ...(ttlExpiresAt ? { ttlExpiresAt } : {}),
+                          }),
+                    updatedAt: nowIso,
+                })
+                .catch(() => {});
+        }
+
+        if (
+            shouldDisableAuth &&
+            !isProtectedSystemAccount(memberUid) &&
+            typeof (auth as any).updateUser === 'function'
+        ) {
+            await auth.updateUser(memberUid, { disabled: true }).catch(() => {});
+        }
+    }
+}
 
 export const updateTenantStatus = async (req: AuthRequest, res: express.Response) => {
     const parsedParams = tenantUidParamSchema.safeParse(req.params);
@@ -287,273 +466,561 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
     if (!parseResult.success) {
         return res.status(400).json({ error: 'Payload inválido', details: parseResult.error.format() });
     }
+    const hitlConfirmation = extractHitlConfirmationKeyword(req);
+    if (hitlConfirmation !== 'ACTUALIZAR') {
+        return res.status(400).json({
+            error: 'Confirmación HITL obligatoria: debe confirmar escribiendo "ACTUALIZAR".',
+        });
+    }
+
     const { status, rejectionReason, observations, enabledPlugins } = parseResult.data;
     const adminEmail = req.user?.email || env.SUPER_ADMIN_EMAIL;
 
     try {
         const tenantRef = db.collection('tenants').doc(uid);
-        const tenantDoc = await tenantRef.get();
+        const accountRef = db.collection('accounts').doc(uid);
+        const [tenantDoc, accountDoc] = await Promise.all([tenantRef.get(), accountRef.get()]);
 
-        if (!tenantDoc.exists) {
+        if (!tenantDoc.exists && !accountDoc.exists) {
             return res.status(404).json({ error: 'Tenant record not found' });
         }
 
-        const tenantData = tenantDoc.data()!;
-        const entityName = tenantData.company_name || tenantData.institution_name || tenantData.full_name || 'Entidad MINREPORT';
+        const tenantData = tenantDoc.exists ? (tenantDoc.data() || {}) : (accountDoc.data() || {});
+        const accountData = accountDoc.exists ? (accountDoc.data() || {}) : {};
+        const isEdu = Boolean(
+            tenantData.isEduSandbox ||
+                accountData.isEduSandbox ||
+                tenantData.type === 'EDUCATIONAL' ||
+                accountData.type === 'EDUCATIONAL' ||
+                tenantData.classification === 'edu' ||
+                accountData.classification === 'edu'
+        );
+        const countryCode = String(
+            accountData.countryCode || tenantData.countryCode || accountData.country || tenantData.country || 'CL'
+        )
+            .trim()
+            .toUpperCase();
+        const entityName = String(
+            accountData.name ||
+                tenantData.company_name ||
+                tenantData.institution_name ||
+                tenantData.name ||
+                tenantData.full_name ||
+                'Entidad MINREPORT'
+        ).trim();
+        const ownerUidCandidate = String(accountData.ownerId || tenantData.authUid || tenantData.ownerId || '').trim();
+        const nowIso = new Date().toISOString();
+        const nowMs = Date.now();
 
         if (status === 'ACTIVE') {
-            const taxId = 'rut' in tenantData ? tenantData.rut : ('run' in tenantData ? tenantData.run : null);
-            if (!taxId) {
-                return res.status(400).json({ error: 'Falta RUT/RUN en el registro del tenant.' });
+            const rawTaxId = accountData.taxId || tenantData.rut || tenantData.run || tenantData.taxId || '';
+            const rawTaxIdStr = String(rawTaxId || '').trim();
+            const cleanTaxId = rawTaxIdStr ? (countryCode === 'CL' ? cleanRut(rawTaxIdStr) : rawTaxIdStr) : '';
+            const formattedTaxId = rawTaxIdStr
+                ? accountData.taxIdFormatted || (countryCode === 'CL' ? formatRut(cleanTaxId) : rawTaxIdStr)
+                : '';
+
+            const realEmail = String(
+                accountData.mandatario?.email ||
+                    tenantData.email ||
+                    accountData.billingEmail ||
+                    (cleanTaxId ? `${cleanTaxId.toLowerCase()}@minreport.com` : '')
+            )
+                .toLowerCase()
+                .trim();
+
+            if (!realEmail && !ownerUidCandidate) {
+                return res.status(400).json({ error: 'Falta correo o identificador titular en el registro del tenant.' });
             }
 
-            const cleanTaxId = cleanRut(String(taxId));
-            const formattedTaxId = formatRut(cleanTaxId);
-            const realEmail = String(tenantData.email || `${cleanTaxId.toLowerCase()}@minreport.com`).toLowerCase().trim();
-
-            let userRecord;
-            try {
-                userRecord = await auth.getUserByEmail(realEmail);
-            } catch (authError: any) {
-                if (authError.code === 'auth/user-not-found') {
-                    userRecord = await auth.createUser({
-                        email: realEmail,
-                        emailVerified: true,
-                        displayName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
-                        disabled: false
-                    });
-                } else {
-                    throw authError;
+            let userRecord: any = null;
+            if (ownerUidCandidate) {
+                try {
+                    userRecord = await auth.getUser(ownerUidCandidate);
+                } catch (authError: any) {
+                    if (authError?.code !== 'auth/user-not-found') {
+                        throw authError;
+                    }
                 }
             }
+            if (!userRecord && realEmail) {
+                try {
+                    userRecord = await auth.getUserByEmail(realEmail);
+                } catch (authError: any) {
+                    if (authError?.code === 'auth/user-not-found') {
+                        userRecord = await auth.createUser({
+                            email: realEmail,
+                            emailVerified: true,
+                            displayName: entityName,
+                            disabled: false,
+                        });
+                    } else {
+                        throw authError;
+                    }
+                }
+            }
+            if (!userRecord) {
+                return res.status(400).json({ error: 'No fue posible resolver o crear la identidad del titular.' });
+            }
+            if (userRecord.disabled) {
+                await auth.updateUser(userRecord.uid, { disabled: false }).catch(() => {});
+            }
 
+            const resolvedEmail = String(realEmail || userRecord.email || '').toLowerCase().trim();
+            const existingMemberSnap = await accountRef.collection('members').doc(userRecord.uid).get();
+            const existingMemberData = existingMemberSnap.exists ? (existingMemberSnap.data() || {}) : {};
+            const existingMemberRole = String(existingMemberData.role || '').trim().toUpperCase();
+
+            let userRole = 'OWNER';
+            if (isEdu) {
+                const candidateEduRole = String(
+                    existingMemberRole ||
+                        accountData.academicRole ||
+                        tenantData.academicRole ||
+                        accountData.mandatario?.jobTitle ||
+                        ''
+                )
+                    .trim()
+                    .toUpperCase();
+                userRole = candidateEduRole === 'PROFESSOR' || candidateEduRole === 'STUDENT' ? candidateEduRole : 'STUDENT';
+            } else if (existingMemberRole === 'OWNER' || existingMemberRole === 'ADMIN') {
+                userRole = existingMemberRole;
+            }
+
+            const prevClaims =
+                userRecord.customClaims && typeof userRecord.customClaims === 'object' ? userRecord.customClaims : {};
             await auth.setCustomUserClaims(userRecord.uid, {
-                role: 'USER',
-                tier: tenantData.type,
+                ...prevClaims,
+                role: userRole,
+                accountTier: isEdu ? 5 : 4,
+                tier: tenantData.type || accountData.type || (isEdu ? 'EDUCATIONAL' : 'BUSINESS'),
                 tenantId: uid,
                 activeAccountId: uid,
             });
+            if (typeof (auth as any).updateUser === 'function') {
+                await auth.updateUser(userRecord.uid, { emailVerified: true, disabled: false }).catch(() => {});
+            }
+
+            const existingEntitlements = accountData.entitlements || tenantData.entitlements || null;
+            let resolvedPlugins: string[] = [];
+            let nextEntitlements = existingEntitlements;
+
+            if (enabledPlugins && enabledPlugins.length > 0) {
+                resolvedPlugins = Array.from(new Set(enabledPlugins));
+                nextEntitlements = {
+                    basePackage: existingEntitlements?.basePackage || (isEdu ? 'ACADEMIC_SANDBOX' : 'CORE_BASE'),
+                    ...(existingEntitlements?.baseModules ? { baseModules: existingEntitlements.baseModules } : {}),
+                    addonModules: {
+                        opermaq: { active: resolvedPlugins.includes('opermaq'), updatedAt: nowMs },
+                        stockpile: { active: resolvedPlugins.includes('stockpile'), updatedAt: nowMs },
+                    },
+                    maxProjects: existingEntitlements?.maxProjects ?? (isEdu ? 3 : null),
+                };
+            } else if (existingEntitlements) {
+                const opOk = resolveEffectiveModuleAccess({
+                    moduleKey: 'opermaq',
+                    globalModuleActive: true,
+                    entitlements: existingEntitlements,
+                });
+                const stOk = resolveEffectiveModuleAccess({
+                    moduleKey: 'stockpile',
+                    globalModuleActive: true,
+                    entitlements: existingEntitlements,
+                });
+                resolvedPlugins = [...(opOk ? ['opermaq'] : []), ...(stOk ? ['stockpile'] : [])];
+            } else {
+                resolvedPlugins = isEdu ? ['opermaq'] : ['opermaq', 'stockpile'];
+                nextEntitlements = {
+                    basePackage: isEdu ? 'ACADEMIC_SANDBOX' : 'CORE_BASE',
+                    addonModules: {
+                        opermaq: { active: resolvedPlugins.includes('opermaq'), updatedAt: nowMs },
+                        stockpile: { active: resolvedPlugins.includes('stockpile'), updatedAt: nowMs },
+                    },
+                    maxProjects: isEdu ? 3 : null,
+                };
+            }
 
             const accountId = uid;
-            const baseUrl = getCanonicalWebUrl();
-            const { rawToken, hashedToken, expiresAt } = generateSetupToken();
-            const resolvedPlugins = enabledPlugins && enabledPlugins.length > 0 ? enabledPlugins : ['opermaq', 'stockpile'];
-
-            await tenantRef.update({
-                status: 'APPROVED',
-                authUid: userRecord.uid,
-                processedAt: new Date().toISOString(),
-                processedBy: adminEmail,
-                observations: observations || null,
-                enabledPlugins: resolvedPlugins,
-                updatedAt: new Date().toISOString()
-            });
-
-            await db.collection('accounts').doc(accountId).set({
-                id: accountId,
-                name: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
-                type: tenantData.type,
-                status: 'ACTIVE',
-                taxId: formattedTaxId,
-                ownerId: userRecord.uid,
-                enabledPlugins: resolvedPlugins,
-                contract: {
-                    plan: tenantData.type === 'EDUCATIONAL' ? 'ACADEMIC_SANDBOX' : 'ENTERPRISE_B2B_CORE',
+            await tenantRef.set(
+                {
                     status: 'ACTIVE',
-                    activeModules: {
+                    authUid: userRecord.uid,
+                    processedAt: nowIso,
+                    processedBy: adminEmail,
+                    observations: observations || null,
+                    enabledPlugins: resolvedPlugins,
+                    entitlements: nextEntitlements,
+                    updatedAt: nowIso,
+                },
+                { merge: true }
+            );
+
+            if (accountDoc.exists) {
+                await accountRef.update({
+                    status: 'ACTIVE',
+                    enabledPlugins: resolvedPlugins,
+                    entitlements: nextEntitlements,
+                    'contract.status': 'ACTIVE',
+                    'contract.activatedAt': nowMs,
+                    'contract.activeModules': {
                         opermaq: resolvedPlugins.includes('opermaq'),
                         stockpile: resolvedPlugins.includes('stockpile'),
                     },
-                    activatedAt: Date.now(),
-                },
-                licensing: tenantData.type === 'EDUCATIONAL'
-                    ? { maxUsers: 1, allowInternalUsers: false, isCommercial: false, watermarkRequired: true }
-                    : { maxUsers: 100, allowInternalUsers: true, isCommercial: true, watermarkRequired: false },
-                giro: tenantData.industry || '',
-                direccionComercial: tenantData.address || '',
-                postal_code: tenantData.postal_code || '',
-                city: tenantData.city || '',
-                commune: tenantData.commune || '',
-                region: tenantData.region || '',
-                emailTributario: tenantData.billing_email || '',
-                email_domain: tenantData.email_domain || '',
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            }, { merge: true });
+                    updatedAt: nowMs,
+                });
+            } else {
+                await accountRef.set(
+                    {
+                        id: accountId,
+                        name: entityName,
+                        type: isEdu ? 'EDUCATIONAL' : tenantData.type || 'BUSINESS',
+                        classification: isEdu ? 'edu' : 'b2b',
+                        country: countryCode,
+                        countryCode,
+                        status: 'ACTIVE',
+                        isEduSandbox: isEdu,
+                        ...(formattedTaxId ? { taxId: cleanTaxId, taxIdFormatted: formattedTaxId } : {}),
+                        ownerId: userRecord.uid,
+                        enabledPlugins: resolvedPlugins,
+                        entitlements: nextEntitlements,
+                        contract: {
+                            plan: nextEntitlements.basePackage,
+                            status: 'ACTIVE',
+                            activeModules: {
+                                opermaq: resolvedPlugins.includes('opermaq'),
+                                stockpile: resolvedPlugins.includes('stockpile'),
+                            },
+                            activatedAt: nowMs,
+                        },
+                        licensing: isEdu
+                            ? { maxUsers: 1, allowInternalUsers: false, isCommercial: false, watermarkRequired: true }
+                            : { maxUsers: 100, allowInternalUsers: true, isCommercial: true, watermarkRequired: false },
+                        giro: tenantData.industry || '',
+                        direccionComercial: tenantData.address || '',
+                        postal_code: tenantData.postal_code || '',
+                        city: tenantData.city || '',
+                        commune: tenantData.commune || '',
+                        region: tenantData.region || '',
+                        emailTributario: tenantData.billing_email || '',
+                        email_domain: tenantData.email_domain || '',
+                        createdAt: nowMs,
+                        updatedAt: nowMs,
+                    },
+                    { merge: true }
+                );
+            }
 
-            const userRole = tenantData.type === 'ENTERPRISE' ? 'BILLING_ONLY' : 'OWNER';
-            const memberships = [{
+            const newMembership = {
                 accountId,
                 role: userRole,
-                companyName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
-                status: 'APPROVED',
-                joinedAt: Date.now()
-            }];
+                accountName: entityName,
+                companyName: entityName,
+                type: isEdu ? 'EDUCATIONAL' : 'BUSINESS',
+                countryCode,
+                status: 'ACTIVE',
+                joinedAt: existingMemberData.joinedAt ?? nowMs,
+            };
 
             const existingUserDoc = await db.collection('users').doc(userRecord.uid).get();
             if (existingUserDoc.exists) {
-                const userData = existingUserDoc.data();
-                const existingMems = Array.isArray(userData?.memberships) ? userData!.memberships : [];
+                const userData = existingUserDoc.data() || {};
+                const existingMems = Array.isArray(userData.memberships) ? userData.memberships : [];
                 const cleanedMems = existingMems
                     .filter((m: any) => m.accountId !== accountId)
                     .map(({ passwordHash: _legacy, ...rest }: any) => rest);
-                cleanedMems.push(...memberships);
+                cleanedMems.push(newMembership);
+
+                const currentUserRole = String(userData.role || '').toUpperCase();
+                const shouldPreserveSpecialRole =
+                    currentUserRole === 'DEV_ROOT' ||
+                    currentUserRole === 'SUPER_ADMIN' ||
+                    currentUserRole === 'TEST_PILOT';
 
                 await db.collection('users').doc(userRecord.uid).update({
                     memberships: cleanedMems,
-                    updatedAt: new Date().toISOString()
+                    status: 'ACTIVE',
+                    role: shouldPreserveSpecialRole ? currentUserRole : userRole,
+                    primaryAccountId: userData.primaryAccountId || accountId,
+                    lastActiveAccountId: userData.lastActiveAccountId || accountId,
+                    updatedAt: nowIso,
                 });
             } else {
                 await db.collection('users').doc(userRecord.uid).set({
                     uid: userRecord.uid,
-                    email: realEmail,
-                    taxId: formattedTaxId,
-                    displayName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (tenantData.company_name || tenantData.institution_name),
-                    role: 'USER',
-                    memberships,
+                    email: resolvedEmail,
+                    ...(formattedTaxId ? { taxId: formattedTaxId } : {}),
+                    displayName: entityName,
+                    role: userRole,
+                    classification: isEdu ? 'edu' : 'b2b',
+                    countryCode,
+                    memberships: [newMembership],
+                    primaryAccountId: accountId,
                     lastActiveAccountId: accountId,
-                    status: 'APPROVED',
+                    status: 'ACTIVE',
                     entitlements: {
                         pluginsEnabled: resolvedPlugins,
-                        storageLimit: 1073741824
+                        storageLimit: 1073741824,
                     },
                     stats: {
                         storageUsed: 0,
-                        lastLogin: null
+                        lastLogin: null,
                     },
-                    createdAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString()
+                    createdAt: nowIso,
+                    updatedAt: nowIso,
                 });
             }
 
-            // Sincronizar user_directory con `uid` explícito para evitar fractura de ID
-            const accountRefEntry = {
-                accountId,
-                uid: userRecord.uid,
-                authEmail: realEmail,
-                role: userRole,
-                type: tenantData.type,
-                accountName: entityName,
-                status: 'APPROVED'
-            };
+            if (cleanTaxId && countryCode === 'CL') {
+                const accountRefEntry = {
+                    accountId,
+                    uid: userRecord.uid,
+                    authEmail: resolvedEmail,
+                    role: userRole,
+                    type: isEdu ? 'EDUCATIONAL' : tenantData.type || 'BUSINESS',
+                    accountName: entityName,
+                    status: 'ACTIVE',
+                };
 
-            const dirKeys = Array.from(new Set([String(taxId), cleanTaxId, formattedTaxId]));
-            for (const dirKey of dirKeys) {
-                const userDirRef = db.collection('user_directory').doc(dirKey);
-                const userDirSnap = await userDirRef.get();
+                const dirKeys = Array.from(new Set([rawTaxIdStr, cleanTaxId, formattedTaxId].filter(Boolean)));
+                for (const dirKey of dirKeys) {
+                    const userDirRef = db.collection('user_directory').doc(dirKey);
+                    const userDirSnap = await userDirRef.get();
 
-                if (userDirSnap.exists) {
-                    const dirData = userDirSnap.data();
-                    let accounts = Array.isArray(dirData?.accounts) ? dirData!.accounts : [];
+                    if (userDirSnap.exists) {
+                        const dirData = userDirSnap.data();
+                        let accounts = Array.isArray(dirData?.accounts) ? dirData!.accounts : [];
 
-                    if (tenantData.type === 'PERSONAL') {
-                        accounts = accounts.filter((a: any) => a.type !== 'PERSONAL');
-                    } else if (tenantData.type === 'EDUCATIONAL') {
-                        const prevEdu = accounts.find((a: any) => a.type === 'EDUCATIONAL');
-                        if (prevEdu && prevEdu.accountId !== accountId) {
-                            await db.collection('tenants').doc(prevEdu.accountId).update({
-                                status: 'REPLACED_BY_NEW_ENROLLMENT',
-                                updatedAt: new Date().toISOString()
-                            }).catch(() => {});
-                            await db.collection('accounts').doc(prevEdu.accountId).update({
-                                status: 'REPLACED_BY_NEW_ENROLLMENT',
-                                updatedAt: new Date().toISOString()
-                            }).catch(() => {});
+                        if (tenantData.type === 'PERSONAL') {
+                            accounts = accounts.filter((a: any) => a.type !== 'PERSONAL');
+                        } else if (isEdu) {
+                            const prevEdu = accounts.find((a: any) => a.type === 'EDUCATIONAL');
+                            if (prevEdu && prevEdu.accountId !== accountId) {
+                                await db
+                                    .collection('tenants')
+                                    .doc(prevEdu.accountId)
+                                    .update({
+                                        status: 'REPLACED_BY_NEW_ENROLLMENT',
+                                        updatedAt: nowIso,
+                                    })
+                                    .catch(() => {});
+                                await db
+                                    .collection('accounts')
+                                    .doc(prevEdu.accountId)
+                                    .update({
+                                        status: 'REPLACED_BY_NEW_ENROLLMENT',
+                                        updatedAt: nowMs,
+                                    })
+                                    .catch(() => {});
+                            }
+                            accounts = accounts.filter((a: any) => a.type !== 'EDUCATIONAL');
+                        } else {
+                            accounts = accounts.filter((a: any) => a.accountId !== accountId);
                         }
-                        accounts = accounts.filter((a: any) => a.type !== 'EDUCATIONAL');
+
+                        accounts.push(accountRefEntry);
+
+                        await userDirRef.update({
+                            uid: userRecord.uid,
+                            accounts,
+                            fullName:
+                                tenantData.type === 'PERSONAL'
+                                    ? tenantData.full_name
+                                    : dirData?.fullName || entityName,
+                            updatedAt: nowIso,
+                        });
                     } else {
-                        accounts = accounts.filter((a: any) => a.accountId !== accountId);
+                        await userDirRef.set({
+                            uid: userRecord.uid,
+                            run: formattedTaxId,
+                            fullName: tenantData.type === 'PERSONAL' ? tenantData.full_name : entityName,
+                            accounts: [accountRefEntry],
+                            createdAt: nowIso,
+                            updatedAt: nowIso,
+                        });
                     }
-
-                    accounts.push(accountRefEntry);
-
-                    await userDirRef.update({
-                        uid: userRecord.uid,
-                        accounts,
-                        fullName: tenantData.type === 'PERSONAL' ? tenantData.full_name : (dirData?.fullName || entityName),
-                        updatedAt: new Date().toISOString()
-                    });
-                } else {
-                    await userDirRef.set({
-                        uid: userRecord.uid,
-                        run: formattedTaxId,
-                        fullName: tenantData.type === 'PERSONAL' ? tenantData.full_name : entityName,
-                        accounts: [accountRefEntry],
-                        createdAt: new Date().toISOString(),
-                        updatedAt: new Date().toISOString()
-                    });
                 }
             }
 
-            await db.collection('accounts').doc(accountId).collection('members').doc(userRecord.uid).set({
-                userId: userRecord.uid,
-                email: realEmail,
-                fullName: tenantData.type === 'PERSONAL' ? tenantData.full_name : entityName,
-                run: formattedTaxId,
-                role: userRole,
-                status: 'ACTIVE',
-                joinedAt: Date.now()
-            });
+            await accountRef
+                .collection('members')
+                .doc(userRecord.uid)
+                .set(
+                    {
+                        id: userRecord.uid,
+                        userId: userRecord.uid,
+                        email: resolvedEmail,
+                        fullName: existingMemberData.fullName || tenantData.full_name || entityName,
+                        ...(formattedTaxId ? { run: formattedTaxId } : {}),
+                        role: userRole,
+                        status: 'ACTIVE',
+                        countryCode,
+                        isOwner: !isEdu && userRole === 'OWNER',
+                        joinedAt: existingMemberData.joinedAt ?? nowMs,
+                    },
+                    { merge: true }
+                );
 
-            await db.collection('setup_tokens').doc(rawToken).set({
-                accountId,
-                uid: userRecord.uid,
-                taxId: cleanTaxId,
-                hashedToken,
-                expiresAt,
-                used: false,
-                createdAt: Date.now()
-            });
+            const credDoc = await db.collection('user_auth_credentials').doc(userRecord.uid).get();
+            const hasPriorCredentials = Boolean(
+                credDoc.exists ||
+                    accountData.hasInitialPassword === true ||
+                    tenantData.hasInitialPassword === true ||
+                    Boolean(userRecord.passwordHash)
+            );
+            const baseUrl = getCanonicalWebUrl();
 
-            const actionLink = `${baseUrl}/setup-access?accountId=${encodeURIComponent(uid)}&taxId=${encodeURIComponent(cleanTaxId)}&name=${encodeURIComponent(entityName)}&type=${encodeURIComponent(tenantData.type)}&token=${encodeURIComponent(rawToken)}`;
+            if (!hasPriorCredentials && resolvedEmail) {
+                const { rawToken, hashedToken, expiresAt } = generateSetupToken();
+                await db.collection('setup_tokens').doc(rawToken).set({
+                    accountId,
+                    uid: userRecord.uid,
+                    taxId: cleanTaxId || userRecord.uid,
+                    hashedToken,
+                    expiresAt,
+                    ttlExpiresAt: computeShortTtlTimestamp(24 * 60 * 60 * 1000),
+                    used: false,
+                    createdAt: nowMs,
+                });
 
-            await EmailService.sendEmail({
-                from: 'MINREPORT System <support@minreport.com>',
-                to: realEmail,
-                subject: 'Solicitud de Registro Aprobada',
-                html: `
-                    <div style="font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; max-width: 600px; color: #334155; padding: 34px 21px;">
-                        <div style="background: #F8FAFC; border-left: 4px solid #C68346; padding: 21px; margin-bottom: 21px;">
-                            <h2 style="color: #0F172A; font-size: 18px; margin-top: 0; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 13px;">Solicitud Aprobada</h2>
-                            <p style="margin: 0; font-size: 15px; line-height: 1.5;">
-                                Solicitud de registro validada para operar en MINREPORT.
-                            </p>
-                            <div style="margin-top: 21px; background: #FFFFFF; border: 1px solid #E2E8F0; padding: 13px;">
-                                <p style="margin: 0 0 8px 0; font-size: 11px; color: #475569; text-transform: uppercase; font-weight: 700;">Entidad Registrada</p>
-                                <p style="margin: 0 0 13px 0; font-size: 15px; color: #0F172A; font-weight: 700;">${entityName}</p>
-                                <p style="margin: 0 0 8px 0; font-size: 11px; color: #475569; text-transform: uppercase; font-weight: 700;">Correo Asociado</p>
-                                <p style="margin: 0; font-size: 14px; color: #0F172A;">${realEmail}</p>
+                const actionLink = `${baseUrl}/setup-access?accountId=${encodeURIComponent(uid)}&taxId=${encodeURIComponent(cleanTaxId || userRecord.uid)}&name=${encodeURIComponent(entityName)}&type=${encodeURIComponent(isEdu ? 'EDUCATIONAL' : tenantData.type || 'BUSINESS')}&token=${encodeURIComponent(rawToken)}`;
+
+                EmailService.sendEmail({
+                    from: 'MINREPORT System <support@minreport.com>',
+                    to: resolvedEmail,
+                    subject: 'Solicitud de Registro Aprobada',
+                    html: `
+                        <div style="font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; max-width: 600px; color: #334155; padding: 34px 21px;">
+                            <div style="background: #F8FAFC; border-left: 4px solid #C68346; padding: 21px; margin-bottom: 21px;">
+                                <h2 style="color: #0F172A; font-size: 18px; margin-top: 0; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 13px;">Solicitud Aprobada</h2>
+                                <p style="margin: 0; font-size: 15px; line-height: 1.5;">
+                                    Solicitud de registro validada para operar en MINREPORT.
+                                </p>
+                                <div style="margin-top: 21px; background: #FFFFFF; border: 1px solid #E2E8F0; padding: 13px;">
+                                    <p style="margin: 0 0 8px 0; font-size: 11px; color: #475569; text-transform: uppercase; font-weight: 700;">Entidad Registrada</p>
+                                    <p style="margin: 0 0 13px 0; font-size: 15px; color: #0F172A; font-weight: 700;">${entityName}</p>
+                                    <p style="margin: 0 0 8px 0; font-size: 11px; color: #475569; text-transform: uppercase; font-weight: 700;">Correo Asociado</p>
+                                    <p style="margin: 0; font-size: 14px; color: #0F172A;">${resolvedEmail}</p>
+                                </div>
+                            </div>
+                            <div style="text-align: center; margin: 34px 0;">
+                                <a href="${actionLink}" style="background: #0F172A; color: #FFFFFF; padding: 13px 34px; text-decoration: none; font-weight: 700; display: inline-block; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;">Configurar Acceso Seguro</a>
                             </div>
                         </div>
-                        <div style="text-align: center; margin: 34px 0;">
-                            <a href="${actionLink}" style="background: #0F172A; color: #FFFFFF; padding: 13px 34px; text-decoration: none; font-weight: 700; display: inline-block; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;">Configurar Acceso Seguro</a>
+                    `,
+                }).catch((err) => console.warn('[ADMIN] Non-blocking setup email warning:', err?.message || err));
+            } else if (resolvedEmail) {
+                EmailService.sendEmail({
+                    from: 'MINREPORT System <support@minreport.com>',
+                    to: resolvedEmail,
+                    subject: 'Cuenta Activada en MINREPORT',
+                    html: `
+                        <div style="font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; max-width: 600px; color: #334155; padding: 34px 21px;">
+                            <div style="background: #F8FAFC; border-left: 4px solid #00AEEF; padding: 21px; margin-bottom: 21px;">
+                                <h2 style="color: #0F172A; font-size: 18px; margin-top: 0; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 13px;">Cuenta Activada</h2>
+                                <p style="margin: 0; font-size: 15px; line-height: 1.5;">
+                                    La cuenta <strong>${entityName}</strong> ha sido validada y se encuentra operativa. Inicie sesión con sus credenciales registradas en <a href="${baseUrl}/access">${baseUrl}/access</a>.
+                                </p>
+                            </div>
                         </div>
-                    </div>
-                `
-            });
+                    `,
+                }).catch((err) => console.warn('[ADMIN] Non-blocking welcome email warning:', err?.message || err));
+            }
 
             await recordAdminAudit(
                 req,
                 'APPROVE_TENANT',
                 uid,
-                { type: tenantData.type, ownerUid: userRecord.uid, enabledPlugins: resolvedPlugins },
+                {
+                    type: isEdu ? 'EDUCATIONAL' : tenantData.type || 'BUSINESS',
+                    countryCode,
+                    isEdu,
+                    ownerUid: userRecord.uid,
+                    role: userRole,
+                    enabledPlugins: resolvedPlugins,
+                    hadPriorCredentials: hasPriorCredentials,
+                },
                 accountId
+            );
+        } else if (status === 'SUSPENDED') {
+            await tenantRef.set(
+                {
+                    status: 'SUSPENDED',
+                    observations: observations || null,
+                    suspendedAt: nowIso,
+                    processedBy: adminEmail,
+                    updatedAt: nowIso,
+                },
+                { merge: true }
+            );
+
+            if (accountDoc.exists) {
+                await accountRef.update({
+                    status: 'SUSPENDED',
+                    'contract.status': 'SUSPENDED',
+                    updatedAt: nowMs,
+                });
+            }
+
+            await syncTenantMembersOnDeactivation({
+                accountRef,
+                accountId: uid,
+                targetStatus: 'SUSPENDED',
+                ownerUidCandidate,
+                nowMs,
+                nowIso,
+                disableAuthWhenNoActive: false,
+            });
+
+            await recordAdminAudit(
+                req,
+                'SUSPEND_TENANT',
+                uid,
+                { observations: observations || null },
+                uid
             );
         } else if (status === 'REJECTED') {
             const effectiveReason = rejectionReason || 'Documentación no validada según políticas vigentes.';
-            await tenantRef.update({
-                status: 'REJECTED',
-                rejectionReason: effectiveReason,
-                processedAt: new Date().toISOString(),
-                processedBy: adminEmail,
-                observations: observations || null,
-                updatedAt: new Date().toISOString()
+            const rejectionTtl = computeThirtyDayTtlTimestamp();
+
+            await tenantRef.set(
+                {
+                    status: 'REJECTED',
+                    rejectionReason: effectiveReason,
+                    processedAt: nowIso,
+                    processedBy: adminEmail,
+                    observations: observations || null,
+                    expiresAt: rejectionTtl,
+                    ttlExpiresAt: rejectionTtl,
+                    updatedAt: nowIso,
+                },
+                { merge: true }
+            );
+
+            if (accountDoc.exists) {
+                await accountRef.update({
+                    status: 'REJECTED',
+                    'contract.status': 'REJECTED',
+                    ttlExpiresAt: rejectionTtl,
+                    updatedAt: nowMs,
+                });
+            }
+
+            await syncTenantMembersOnDeactivation({
+                accountRef,
+                accountId: uid,
+                targetStatus: 'REJECTED',
+                ownerUidCandidate,
+                nowMs,
+                nowIso,
+                ttlExpiresAt: rejectionTtl,
+                disableAuthWhenNoActive: true,
             });
 
-            if (tenantData.email) {
-                await EmailService.sendEmail({
+            const targetEmail = String(tenantData.email || accountData.mandatario?.email || '').trim();
+            if (targetEmail) {
+                EmailService.sendEmail({
                     from: 'MINREPORT <ops@minreport.com>',
-                    to: tenantData.email,
+                    to: targetEmail,
                     subject: 'Estado de Solicitud MINREPORT',
                     html: `
                         <div style="font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; max-width: 600px; color: #334155; padding: 34px 21px;">
@@ -563,8 +1030,8 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
                                 <p style="margin: 13px 0 0 0; font-size: 14px; line-height: 1.5;"><strong>Motivo:</strong> ${effectiveReason}</p>
                             </div>
                         </div>
-                    `
-                });
+                    `,
+                }).catch((err) => console.warn('[ADMIN] Non-blocking rejection email warning:', err?.message || err));
             }
 
             await recordAdminAudit(
@@ -583,32 +1050,195 @@ export const updateTenantStatus = async (req: AuthRequest, res: express.Response
     }
 };
 
+/**
+ * PATCH /api/admin/accounts/:accountId/entitlements
+ * Gobierno granular de paquete base, add-ons (OPERMAQ/STOCKPILE), cuota maxProjects e institución EDU.
+ */
+export const updateAccountEntitlements = async (req: AuthRequest, res: express.Response) => {
+    try {
+        const accountId = String(req.params.accountId || '').trim();
+        if (!accountId || accountId.length > 128) {
+            return res.status(400).json({ error: 'accountId inválido' });
+        }
+
+        const bodyObj = req.body && typeof req.body === 'object' ? req.body : {};
+        const confirmationKeyword = extractHitlConfirmationKeyword(req);
+        const parsed = UpdateAccountEntitlementsPayloadSchema.safeParse({
+            ...bodyObj,
+            confirmationKeyword,
+        });
+
+        if (!parsed.success) {
+            return res.status(400).json({
+                error: parsed.error.issues[0]?.message || 'Payload de entitlements inválido.',
+                details: parsed.error.format(),
+            });
+        }
+
+        const accountRef = db.collection('accounts').doc(accountId);
+        const accountSnap = await accountRef.get();
+        if (!accountSnap.exists) {
+            return res.status(404).json({ error: 'Cuenta no encontrada.' });
+        }
+
+        const accountData = accountSnap.data() || {};
+        const { basePackage, addonModules, maxProjects, eduInstitutionId } = parsed.data;
+        const nowMs = Date.now();
+
+        let eduFields: Record<string, any> = {};
+        let eduHydratedMaxProjects: number | undefined;
+
+        if (eduInstitutionId !== undefined) {
+            const cleanedInstId = eduInstitutionId ? eduInstitutionId.trim() : '';
+            if (cleanedInstId) {
+                const instSnap = await db.collection('edu_institutions').doc(cleanedInstId).get();
+                if (!instSnap.exists) {
+                    return res.status(404).json({ error: 'Institución EDU no encontrada.' });
+                }
+                const instData = instSnap.data() || {};
+                eduFields = {
+                    eduInstitutionId: instSnap.id,
+                    eduInstitutionName: String(instData.name || ''),
+                    eduInstitutionLogo: instData.eduInstitutionLogo ?? null,
+                };
+                if (typeof instData.defaultMaxProjects === 'number') {
+                    eduHydratedMaxProjects = instData.defaultMaxProjects;
+                }
+            } else {
+                eduFields = {
+                    eduInstitutionId: null,
+                    eduInstitutionName: null,
+                    eduInstitutionLogo: null,
+                };
+            }
+        }
+
+        const resolvedMaxProjects =
+            maxProjects !== undefined
+                ? maxProjects
+                : eduHydratedMaxProjects ??
+                  accountData.entitlements?.maxProjects ??
+                  (basePackage === 'ACADEMIC_SANDBOX' ? 3 : null);
+
+        const nextEntitlements = {
+            basePackage,
+            baseModules: {
+                opermaq:
+                    basePackage === 'OPERMAQ_BASE' ||
+                    basePackage === 'FULL_SUITE' ||
+                    basePackage === 'ACADEMIC_SANDBOX',
+                stockpile: basePackage === 'FULL_SUITE',
+            },
+            addonModules: {
+                opermaq: { active: addonModules.opermaq, updatedAt: nowMs },
+                stockpile: { active: addonModules.stockpile, updatedAt: nowMs },
+            },
+            maxProjects: resolvedMaxProjects,
+        };
+
+        const opermaqEffective = resolveEffectiveModuleAccess({
+            moduleKey: 'opermaq',
+            globalModuleActive: true,
+            entitlements: nextEntitlements,
+        });
+        const stockpileEffective = resolveEffectiveModuleAccess({
+            moduleKey: 'stockpile',
+            globalModuleActive: true,
+            entitlements: nextEntitlements,
+        });
+
+        const nextEnabledPlugins = [
+            ...(opermaqEffective ? ['opermaq'] : []),
+            ...(stockpileEffective ? ['stockpile'] : []),
+        ];
+
+        const syncPayload = {
+            entitlements: nextEntitlements,
+            enabledPlugins: nextEnabledPlugins,
+            'contract.plan': basePackage,
+            'contract.activeModules': {
+                opermaq: opermaqEffective,
+                stockpile: stockpileEffective,
+            },
+            ...eduFields,
+            updatedAt: nowMs,
+        };
+
+        await accountRef.update(syncPayload);
+
+        const tenantRef = db.collection('tenants').doc(accountId);
+        const tenantSnap = await tenantRef.get();
+        if (tenantSnap.exists) {
+            await tenantRef.update(syncPayload).catch(() => {});
+        }
+
+        await recordAdminAudit(
+            req,
+            'ACCOUNT_ENTITLEMENTS_UPDATED',
+            accountId,
+            {
+                basePackage,
+                addonModules,
+                maxProjects: resolvedMaxProjects,
+                enabledPlugins: nextEnabledPlugins,
+                eduInstitutionId: eduFields.eduInstitutionId ?? accountData.eduInstitutionId ?? null,
+            },
+            accountId
+        );
+
+        return res.status(200).json({
+            success: true,
+            accountId,
+            entitlements: nextEntitlements,
+            enabledPlugins: nextEnabledPlugins,
+            ...eduFields,
+        });
+    } catch (error) {
+        console.error('[ADMIN] Error updating account entitlements:', error);
+        return res.status(500).json({ error: 'Error actualizando entitlements de la cuenta.' });
+    }
+};
+
 async function cleanupAccountMembers(accountId: string, isPurge: boolean = false) {
     try {
-        const membersSnap = await db.collection('accounts').doc(accountId).collection('members').get();
-        if (membersSnap.empty) {
-            const usersSnap = await db.collection('users').get();
-            for (const userDoc of usersSnap.docs) {
-                const userData = userDoc.data();
-                const memberships = userData.memberships || [];
-                if (memberships.some((m: any) => m.accountId === accountId)) {
-                    await processUserCleanup(userDoc.id, userData.taxId, accountId, memberships, isPurge);
-                }
-            }
+        const [membersSnap, accountSnap] = await Promise.all([
+            db.collection('accounts').doc(accountId).collection('members').get(),
+            db.collection('accounts').doc(accountId).get(),
+        ]);
+
+        const candidateTaxIdByUid = new Map<string, string | undefined>();
+        for (const memberDoc of membersSnap.docs) {
+            const memberData = memberDoc.data() || {};
+            const resolvedUid = String(memberData.userId || memberDoc.id || '').trim();
+            if (!resolvedUid) continue;
+            const taxId = memberData.run || memberData.rut || memberData.taxId;
+            candidateTaxIdByUid.set(resolvedUid, taxId ? String(taxId) : undefined);
+        }
+
+        const ownerId = accountSnap.exists ? String(accountSnap.data()?.ownerId || '').trim() : '';
+        if (ownerId && !candidateTaxIdByUid.has(ownerId)) {
+            candidateTaxIdByUid.set(ownerId, undefined);
+        }
+
+        const uidList = Array.from(candidateTaxIdByUid.keys());
+        if (uidList.length === 0) {
             return;
         }
 
-        for (const memberDoc of membersSnap.docs) {
-            const userId = memberDoc.id;
-            const memberData = memberDoc.data();
-            const taxId = memberData.run || memberData.rut || memberData.taxId;
+        const CHUNK_SIZE = 100;
+        for (let i = 0; i < uidList.length; i += CHUNK_SIZE) {
+            const chunk = uidList.slice(i, i + CHUNK_SIZE);
+            if (chunk.length === 0) continue;
+            const userRefs = chunk.map((u) => db.collection('users').doc(u));
+            const userSnaps = await db.getAll(...userRefs);
 
-            const userDoc = await db.collection('users').doc(userId).get();
-            if (userDoc.exists) {
-                const userData = userDoc.data()!;
-                const memberships = userData.memberships || [];
-                const actualTaxId = userData.taxId || taxId;
-                await processUserCleanup(userId, actualTaxId, accountId, memberships, isPurge);
+            for (const userDoc of userSnaps) {
+                if (!userDoc.exists) continue;
+                const userData = userDoc.data() || {};
+                const memberships = Array.isArray(userData.memberships) ? userData.memberships : [];
+                const fallbackTaxId = candidateTaxIdByUid.get(userDoc.id);
+                const actualTaxId = String(userData.taxId || fallbackTaxId || '');
+                await processUserCleanup(userDoc.id, actualTaxId, accountId, memberships, isPurge);
             }
         }
     } catch (e) {
@@ -675,10 +1305,15 @@ export const deleteTenant = async (req: express.Request, res: express.Response) 
             return res.status(403).json({ error: 'Operación denegada: No se pueden eliminar cuentas raíz de desarrollo o del sistema.' });
         }
 
+        const softDeleteTtl = computeThirtyDayTtlTimestamp();
+        const deletedAtIso = new Date().toISOString();
+
         await db.collection('tenants').doc(uid).update({
             status: 'DELETED',
-            deletedAt: new Date().toISOString(),
-            deletedBy: actor
+            deletedAt: deletedAtIso,
+            deletedBy: actor,
+            expiresAt: softDeleteTtl,
+            ttlExpiresAt: softDeleteTtl,
         });
 
         const accountRef = db.collection('accounts').doc(uid);
@@ -686,7 +1321,9 @@ export const deleteTenant = async (req: express.Request, res: express.Response) 
         if (accountDoc.exists) {
             await accountRef.update({
                 status: 'DELETED',
-                deletedAt: new Date().toISOString()
+                deletedAt: deletedAtIso,
+                expiresAt: softDeleteTtl,
+                ttlExpiresAt: softDeleteTtl,
             });
         }
 
@@ -766,16 +1403,138 @@ const brandingThemeAssetsSchema = z.object({
     appIcon: z.string().max(2048).optional(),
 }).passthrough();
 
+const brandingLogoSetKeySchema = z.enum([
+    'isotype',
+    'logotype',
+    'imagotype',
+    'imagotypeVertical',
+    'pwaIcon',
+    'appIcon',
+]);
+
+const brandingAssetTelemetryItemSchema = z.object({
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    originalBytes: z.number().nonnegative().max(104857600),
+    optimizedBytes: z.number().nonnegative().max(20971520),
+    savingsPct: z.number().min(0).max(100),
+    profile: z.enum(['IMAGE_ISO_SYMBOL', 'VECTOR_SVG_CLEAN']),
+});
+
 const updateBrandingSettingsSchema = z.object({
     siteName: z.string().min(1).max(120).optional(),
     primaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
     secondaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
     light: brandingThemeAssetsSchema.optional(),
     dark: brandingThemeAssetsSchema.optional(),
+    assetTelemetry: z.record(brandingLogoSetKeySchema, brandingAssetTelemetryItemSchema).optional(),
+    confirmationWord: z.string().optional(),
+    confirmationKeyword: z.string().optional(),
 }).passthrough();
+
+function hasInlineDataOrBase64(value: unknown): boolean {
+    if (typeof value === 'string') {
+        const lower = value.trim().toLowerCase();
+        if (!lower) return false;
+        return lower.includes('data:') || lower.includes(';base64,');
+    }
+    if (Array.isArray(value)) {
+        return value.some((item) => hasInlineDataOrBase64(item));
+    }
+    if (value && typeof value === 'object') {
+        return Object.values(value as Record<string, unknown>).some((v) => hasInlineDataOrBase64(v));
+    }
+    return false;
+}
+
+async function readCasStreamToBuffer(
+    stream: NodeJS.ReadableStream,
+    maxBytes: number = 20 * 1024 * 1024
+): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+        const chunks: Buffer[] = [];
+        let total = 0;
+        stream.on('data', (chunk: Buffer | Uint8Array | string) => {
+            const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            total += buf.length;
+            if (total > maxBytes) {
+                const destroyable = stream as NodeJS.ReadableStream & { destroy?: () => void };
+                if (typeof destroyable.destroy === 'function') {
+                    destroyable.destroy();
+                }
+                reject(new Error('El activo CAS excede el límite máximo de 20 MB para icono PWA.'));
+                return;
+            }
+            chunks.push(buf);
+        });
+        stream.on('end', () => resolve(Buffer.concat(chunks)));
+        stream.on('error', (err) => reject(err));
+    });
+}
+
+async function resolveCasBrandingIconBuffer(pwaIconUrl: string): Promise<Buffer | null> {
+    const cleanUrl = pwaIconUrl.trim();
+    const symbologyMatch = cleanUrl.match(
+        /^\/api\/media\/blob\/symbology\/([a-f0-9]{64})\.([a-z0-9]{2,16})(?:[?#].*)?$/i
+    );
+    const globalOemMatch = cleanUrl.match(
+        /^\/api\/media\/blob\/global_oem\/([a-f0-9]{64})\.([a-z0-9]{2,16})(?:[?#].*)?$/i
+    );
+    const casShaMatch = cleanUrl.match(/^\/api\/media\/cas\/([a-f0-9]{64})(?:[?#].*)?$/i);
+
+    let blobHandle: CasBlobStreamHandle | null = null;
+    if (symbologyMatch) {
+        const casPath = `assets/symbology/cas/${symbologyMatch[1].toLowerCase()}.${symbologyMatch[2].toLowerCase()}`;
+        blobHandle = await CasStorageService.openCasBlobStream(casPath);
+    } else if (globalOemMatch) {
+        const casPath = CasStorageService.buildStoragePath(
+            'GLOBAL_OEM',
+            globalOemMatch[1].toLowerCase(),
+            globalOemMatch[2].toLowerCase()
+        );
+        blobHandle = await CasStorageService.openCasBlobStream(casPath);
+    } else if (casShaMatch) {
+        blobHandle = await CasStorageService.openCasBlobStream(casShaMatch[1].toLowerCase());
+    }
+
+    if (!blobHandle) return null;
+    return readCasStreamToBuffer(blobHandle.stream);
+}
 
 export const updateBrandingSettings = async (req: express.Request, res: express.Response) => {
     try {
+        const devUser = (req as any).devUser;
+        const authUser = (req as AuthRequest).user;
+        const actorEmailLower = String(devUser?.email || authUser?.email || '').trim().toLowerCase();
+        const isDevRootRequester = Boolean(
+            devUser ||
+            authUser?.role === 'DEV_ROOT' ||
+            authUser?.isMasterDev === true ||
+            authUser?.uid === 'dev-master-root-uid' ||
+            actorEmailLower === 'dev@minreport.com'
+        );
+
+        if (!isDevRootRequester) {
+            return res.status(403).json({
+                error: 'Forbidden: Identidad maestra MINREPORT reservada exclusivamente a 1º DEV (DEV_ROOT).',
+            });
+        }
+
+        if (extractHitlConfirmationKeyword(req) !== 'ACTUALIZAR') {
+            return res.status(400).json({
+                error: 'Confirmación HITL obligatoria: debe confirmar escribiendo "ACTUALIZAR".',
+            });
+        }
+
+        if (
+            hasInlineDataOrBase64(req.body?.light) ||
+            hasInlineDataOrBase64(req.body?.dark) ||
+            hasInlineDataOrBase64(req.body?.svgDataUris)
+        ) {
+            return res.status(400).json({
+                error: 'Prohibido persistir Data URIs o Base64 en identidad maestra. Utilice activos CAS /api/media/.',
+            });
+        }
+
         const parsed = updateBrandingSettingsSchema.safeParse(req.body);
         if (!parsed.success) {
             return res.status(400).json({ error: 'Configuración de marca inválida', details: parsed.error.format() });
@@ -784,59 +1543,104 @@ export const updateBrandingSettings = async (req: express.Request, res: express.
         const settings = parsed.data;
         const generatedAssets: Record<string, string> = {};
 
-        // Procesamiento seguro en memoria con `safeFetchExternal` + `sharp` (Cero RCE, cero `curl`, cero `sips`)
+        // Procesamiento seguro en memoria con CAS / `safeFetchExternal` + `sharp` (Cero RCE, cero `curl`, cero `sips`)
         const pwaIconUrl = settings.light?.pwaIcon || settings.dark?.pwaIcon || settings.light?.isotype;
-        if (pwaIconUrl && (pwaIconUrl.startsWith('https://') || pwaIconUrl.startsWith('http://'))) {
-            try {
-                const rawIconBuf = await downloadSafeAssetBuffer(pwaIconUrl);
-                const [png192, png512] = await Promise.all([
-                    renderSquarePngIcon(rawIconBuf, 192),
-                    renderSquarePngIcon(rawIconBuf, 512),
-                ]);
-
-                const bucket = storage.bucket();
-                const file192 = bucket.file('branding/pwa-192x192.png');
-                const file512 = bucket.file('branding/pwa-512x512.png');
-
-                await Promise.all([
-                    file192.save(png192, { contentType: 'image/png', resumable: false }),
-                    file512.save(png512, { contentType: 'image/png', resumable: false }),
-                ]);
-
-                generatedAssets.pwaIcon192Path = 'branding/pwa-192x192.png';
-                generatedAssets.pwaIcon512Path = 'branding/pwa-512x512.png';
-
-                // Si se habilita explícitamente sincronización de iconos Android en entorno local controlado
-                if (process.env.ENABLE_LOCAL_ANDROID_MIPMAP_SYNC === 'true') {
-                    const tmpOutDir = path.join(os.tmpdir(), 'minreport-android-icons');
-                    fs.mkdirSync(tmpOutDir, { recursive: true });
-                    const mipmapSizes = [48, 72, 96, 144, 192];
-                    await Promise.all(
-                        mipmapSizes.map(async (sz) => {
-                            const safePng = await renderSafeZonePngIcon(rawIconBuf, sz);
-                            fs.writeFileSync(path.join(tmpOutDir, `ic_launcher_${sz}.png`), safePng);
-                        })
-                    );
+        if (pwaIconUrl) {
+            let rawIconBuf: Buffer | null = null;
+            if (pwaIconUrl.startsWith('/api/media/')) {
+                try {
+                    rawIconBuf = await resolveCasBrandingIconBuffer(pwaIconUrl);
+                } catch (casErr: any) {
+                    console.warn('[BRANDING] No se pudo resolver icono PWA desde CAS:', casErr?.message || casErr);
                 }
-            } catch (iconErr: any) {
-                console.warn('[BRANDING] No se pudo procesar icono PWA remoto con sharp:', iconErr?.message || iconErr);
+            } else if (pwaIconUrl.startsWith('https://') || pwaIconUrl.startsWith('http://')) {
+                try {
+                    rawIconBuf = await downloadSafeAssetBuffer(pwaIconUrl);
+                } catch (iconErr: any) {
+                    console.warn('[BRANDING] No se pudo descargar icono PWA remoto:', iconErr?.message || iconErr);
+                }
+            }
+
+            if (rawIconBuf) {
+                try {
+                    const [png192, png512] = await Promise.all([
+                        renderSquarePngIcon(rawIconBuf, 192),
+                        renderSquarePngIcon(rawIconBuf, 512),
+                    ]);
+
+                    const bucket = storage.bucket();
+                    const file192 = bucket.file('branding/pwa-192x192.png');
+                    const file512 = bucket.file('branding/pwa-512x512.png');
+
+                    await Promise.all([
+                        file192.save(png192, { contentType: 'image/png', resumable: false }),
+                        file512.save(png512, { contentType: 'image/png', resumable: false }),
+                    ]);
+
+                    generatedAssets.pwaIcon192Path = 'branding/pwa-192x192.png';
+                    generatedAssets.pwaIcon512Path = 'branding/pwa-512x512.png';
+
+                    // Si se habilita explícitamente sincronización de iconos Android en entorno local controlado
+                    if (process.env.ENABLE_LOCAL_ANDROID_MIPMAP_SYNC === 'true') {
+                        const tmpOutDir = path.join(os.tmpdir(), 'minreport-android-icons');
+                        fs.mkdirSync(tmpOutDir, { recursive: true });
+                        const mipmapSizes = [48, 72, 96, 144, 192];
+                        await Promise.all(
+                            mipmapSizes.map(async (sz) => {
+                                const safePng = await renderSafeZonePngIcon(rawIconBuf!, sz);
+                                fs.writeFileSync(path.join(tmpOutDir, `ic_launcher_${sz}.png`), safePng);
+                            })
+                        );
+                    }
+                } catch (iconErr: any) {
+                    console.warn('[BRANDING] No se pudo procesar icono PWA con sharp:', iconErr?.message || iconErr);
+                }
             }
         }
 
-        const payloadToSave = {
-            ...settings,
+        const {
+            confirmationWord: _cw,
+            confirmationKeyword: _ck,
+            svgDataUris: _legacySvgDataUris,
+            ...cleanSettings
+        } = settings as Record<string, any>;
+
+        const deleteFieldSentinel =
+            typeof (admin as any)?.firestore?.FieldValue?.delete === 'function'
+                ? (admin as any).firestore.FieldValue.delete()
+                : typeof FieldValue?.delete === 'function'
+                  ? FieldValue.delete()
+                  : undefined;
+
+        const payloadToSave: Record<string, any> = {
+            ...cleanSettings,
+            primaryColor: '#C68346',
             ...(Object.keys(generatedAssets).length > 0 ? { generatedAssets } : {}),
+            ...(deleteFieldSentinel !== undefined ? { svgDataUris: deleteFieldSentinel } : {}),
             updatedAt: new Date().toISOString(),
         };
 
         await db.collection('settings').doc('branding').set(payloadToSave, { merge: true });
 
-        await recordAdminAudit(req, 'UPDATE_BRANDING_SETTINGS', 'settings/branding', {
-            updatedKeys: Object.keys(settings),
-            generatedPwaIcons: Object.keys(generatedAssets).length > 0,
+        const actorUid = String(devUser?.uid || authUser?.uid || 'dev-master-root-uid');
+        const actorEmail = String(devUser?.email || authUser?.email || 'dev@minreport.com');
+        await AuditLedger.record({
+            tenantId: 'dev-master-sandbox',
+            actorUid,
+            actorEmail,
+            action: 'GLOBAL_BRANDING_UPDATED',
+            module: 'core',
+            targetEntity: 'settings/branding',
+            details: {
+                updatedKeys: Object.keys(cleanSettings),
+                primaryColor: '#C68346',
+                generatedPwaIcons: Object.keys(generatedAssets).length > 0,
+                hasAssetTelemetry: Boolean(cleanSettings.assetTelemetry),
+            },
+            ipAddress: extractClientIp(req),
         });
 
-        return res.json({ success: true, generatedAssets });
+        return res.json({ success: true, primaryColor: '#C68346', generatedAssets });
     } catch (error) {
         console.error('Error updating branding settings:', error);
         return res.status(500).json({ message: 'Internal server error.' });
@@ -1029,21 +1833,114 @@ export const getAccountUsers = async (req: express.Request, res: express.Respons
             return res.status(400).json({ error: 'accountId is required' });
         }
 
-        const snapshot = await db.collection('users').get();
-        const accountUsers = snapshot.docs
-            .map((d) => {
-                const raw = d.data();
-                const sanitizedMemberships = Array.isArray(raw.memberships)
-                    ? raw.memberships.map(({ passwordHash: _ph, ...rest }: any) => rest)
-                    : [];
-                return { uid: d.id, ...raw, memberships: sanitizedMemberships };
-            })
-            .filter((u: any) => u.memberships?.some((m: any) => m.accountId === accountId.data));
+        const membersSnap = await db
+            .collection('accounts')
+            .doc(accountId.data)
+            .collection('members')
+            .get();
+
+        if (membersSnap.empty) {
+            return res.status(200).json([]);
+        }
+
+        const memberByUid = new Map<string, Record<string, any>>();
+        for (const mDoc of membersSnap.docs) {
+            const mData = mDoc.data() || {};
+            const uid = String(mData.userId || mDoc.id || '').trim();
+            if (uid) {
+                memberByUid.set(uid, { memberDocId: mDoc.id, ...mData });
+            }
+        }
+
+        const uidList = Array.from(memberByUid.keys());
+        if (uidList.length === 0) {
+            return res.status(200).json([]);
+        }
+
+        const accountUsers: Record<string, any>[] = [];
+        const CHUNK_SIZE = 100;
+        for (let i = 0; i < uidList.length; i += CHUNK_SIZE) {
+            const chunk = uidList.slice(i, i + CHUNK_SIZE);
+            if (chunk.length === 0) continue;
+            const userRefs = chunk.map((u) => db.collection('users').doc(u));
+            const userSnaps = await db.getAll(...userRefs);
+
+            userSnaps.forEach((uSnap, idx) => {
+                const uid = chunk[idx];
+                const memberMeta = memberByUid.get(uid) || {};
+                if (uSnap.exists) {
+                    const raw = uSnap.data() || {};
+                    const sanitizedMemberships = Array.isArray(raw.memberships)
+                        ? raw.memberships.map(({ passwordHash: _ph, ...rest }: any) => rest)
+                        : [];
+                    accountUsers.push({
+                        uid: uSnap.id,
+                        ...raw,
+                        role: raw.role || memberMeta.role || 'OPERATOR',
+                        status: raw.status || memberMeta.status || 'ACTIVE',
+                        memberships: sanitizedMemberships,
+                    });
+                } else {
+                    accountUsers.push({
+                        uid,
+                        email: memberMeta.email || '',
+                        fullName: memberMeta.fullName || '',
+                        taxId: memberMeta.run || memberMeta.taxId || '',
+                        role: memberMeta.role || 'OPERATOR',
+                        status: memberMeta.status || 'PENDING',
+                        memberships: [
+                            {
+                                accountId: accountId.data,
+                                role: memberMeta.role || 'OPERATOR',
+                                status: memberMeta.status || 'PENDING',
+                            },
+                        ],
+                    });
+                }
+            });
+        }
 
         return res.status(200).json(accountUsers);
     } catch (error) {
         console.error('[ADMIN] Error fetching account users:', error);
         return res.status(500).json({ error: 'Failed to fetch account users' });
+    }
+};
+
+const tenantMetricsQuerySchema = z.object({
+    segment: z.enum(['B2B', 'EDU']).default('B2B'),
+    period: z
+        .string()
+        .regex(/^\d{4}_(0[1-9]|1[0-2])$/)
+        .optional(),
+    limit: z.coerce.number().int().min(1).max(200).optional().default(100),
+});
+
+/**
+ * GET /api/admin/metrics/tenants?segment=B2B|EDU&period=YYYY_MM
+ * Consulta telemetría mensual atómica separando estrictamente cuentas B2B de sandboxes académicos EDU.
+ */
+export const getTenantMetricsBySegment = async (req: express.Request, res: express.Response) => {
+    try {
+        const parsed = tenantMetricsQuerySchema.safeParse(req.query || {});
+        if (!parsed.success) {
+            return res.status(400).json({
+                error: 'Parámetros de consulta de métricas inválidos (segment=B2B|EDU, period=YYYY_MM).',
+                details: parsed.error.format(),
+            });
+        }
+
+        const effectivePeriod = parsed.data.period || formatMetricsPeriod();
+        const result = await TenantMetricsService.listMetricsBySegment({
+            segment: parsed.data.segment,
+            period: effectivePeriod,
+            limit: parsed.data.limit,
+        });
+
+        return res.status(200).json(result);
+    } catch (error) {
+        console.error('[ADMIN] Error fetching segmented tenant metrics:', error);
+        return res.status(500).json({ error: 'Failed to fetch segmented tenant metrics' });
     }
 };
 
@@ -1056,7 +1953,7 @@ export const getAITelemetry = async (_req: express.Request, res: express.Respons
         const [swarmSnapshot, aiLogsSnap, m2mLogsSnap, receiptsCountSnap] = await Promise.all([
             ResilientAIClient.getTelemetrySnapshot(),
             db.collection('audit_ledger')
-                .where('action', '==', 'AI_INFERENCE_REQUEST')
+                .where('action', 'in', ['AI_INFERENCE_HITL_REQUEST', 'AI_INFERENCE_REQUEST'])
                 .limit(50)
                 .get()
                 .catch(() => null),

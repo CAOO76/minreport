@@ -1,3 +1,37 @@
 {
-    "java.configuration.updateBuildConfiguration": "interactive"
+    "gradle.nestedProjects": [
+        "web/android"
+    ],
+    "java.gradle.buildServer.enabled": "on",
+    "java.jdt.ls.java.home": "/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home",
+    "java.configuration.updateBuildConfiguration": "automatic",
+    "java.import.gradle.wrapper.enabled": true,
+    "java.import.gradle.java.home": "/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home",
+    "java.configuration.runtimes": [
+        {
+            "name": "JavaSE-17",
+            "path": "/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home",
+            "default": true
+        },
+        {
+            "name": "JavaSE-21",
+            "path": "/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"
+        }
+    ],
+    "java.import.exclusions": [
+        "**/node_modules/**",
+        "**/.metadata/**",
+        "**/archetype-resources/**",
+        "**/META-INF/maven/**",
+        "**/dist/**",
+        "**/web/dist/**"
+    ],
+    "files.exclude": {
+        "**/node_modules/@capacitor/**/android/bin": true
+    },
+    "files.watcherExclude": {
+        "**/node_modules/**": true,
+        "**/web/android/.gradle/**": true,
+        "**/web/android/app/build/**": true
+    }
 }

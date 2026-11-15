@@ -24,14 +24,36 @@ service firebase.storage {
     }
 
     function isTestPilot() {
-      return isAuthenticated() && (
-        request.auth.token.role == 'TEST_PILOT' ||
-        request.auth.token.role == 'PILOT_LEAD'
-      );
+      return isAuthenticated() &&
+        request.auth.token.role == 'TEST_PILOT' &&
+        (
+          !('pilotExpiresAt' in request.auth.token) ||
+          !(request.auth.token.pilotExpiresAt is int) ||
+          request.time.toMillis() < request.auth.token.pilotExpiresAt
+        );
+    }
+
+    function isAdmin() {
+      return isDevRoot() || isSuperAdmin();
     }
 
     function isSystemPrivileged() {
       return isDevRoot() || isSuperAdmin() || isTestPilot();
+    }
+
+    function isTenantMemberOrAdmin(tenantId) {
+      return isAuthenticated() &&
+        tenantId is string &&
+        tenantId.size() > 0 && (
+          isAdmin() ||
+          request.auth.token.activeAccountId == tenantId ||
+          request.auth.token.tenantId == tenantId ||
+          firestore.exists(/databases/(default)/documents/accounts/$(tenantId)/members/$(request.auth.uid)) ||
+          (
+            firestore.exists(/databases/(default)/documents/accounts/$(tenantId)) &&
+            firestore.get(/databases/(default)/documents/accounts/$(tenantId)).data.ownerId == request.auth.uid
+          )
+        );
     }
 
     function isTenantAuthorized(tenantId) {
@@ -79,31 +101,28 @@ service firebase.storage {
         isAllowedTechnicalMedia();
     }
 
-    // CAS SHA-256 — Activos Globales OEM Verificados
+    // CAS SHA-256 — Activos Globales OEM Verificados (ingesta exclusiva vía servidor CAS)
     match /cas_blobs/global_oem/{allPaths=**} {
       allow read: if isAuthenticated();
-      allow delete: if isDevRoot() || isSuperAdmin();
-      allow create, update: if isSystemPrivileged() &&
-        request.resource.size < 80 * 1024 * 1024 &&
-        isAllowedTechnicalMedia();
+      allow write: if false;
     }
 
-    // CAS SHA-256 — Simbología Industrial Vectorial Maestra
+    // CAS SHA-256 — Simbología Industrial Vectorial Maestra (ingesta exclusiva vía servidor CAS)
     match /cas_blobs/symbology/{allPaths=**} {
       allow read: if true;
-      allow delete: if isDevRoot() || isSuperAdmin();
-      allow create, update: if isSystemPrivileged() &&
-        request.resource.size < 5 * 1024 * 1024 &&
-        request.resource.contentType.matches('image/(svg\\+xml|webp|png)');
+      allow write: if false;
     }
 
-    // CAS SHA-256 — Bóveda Privada Aislada por Tenant (ISO 27001 — Cero cruce entre empresas)
+    // CAS SHA-256 — Bóveda Privada Aislada por Tenant (auditoría DEV/ADMIN + titular; cero escritura directa cliente)
     match /cas_blobs/tenants/{tenantId}/{allPaths=**} {
-      allow read: if isTenantAuthorized(tenantId);
-      allow delete: if isTenantAuthorized(tenantId);
-      allow create, update: if isTenantAuthorized(tenantId) &&
-        request.resource.size < 50 * 1024 * 1024 &&
-        isAllowedTechnicalMedia();
+      allow read: if isTenantMemberOrAdmin(tenantId);
+      allow write: if false;
+    }
+
+    // CAS SHA-256 — Cobertura de auditoría soberana DEV/ADMIN y bloqueo total de escritura directa en subrutas CAS
+    match /cas_blobs/{allPaths=**} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // Bóveda Vectorial Pública de Simbología Industrial (SVG/WebP inmutable)

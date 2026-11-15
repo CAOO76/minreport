@@ -42,7 +42,9 @@ export const PWAInstallPrompt: React.FC = () => {
     };
 
     const isAuthPage = typeof window !== 'undefined' &&
-        (window.location.pathname.includes('/login') || window.location.pathname.includes('/register'));
+        (window.location.pathname.includes('/access') ||
+            window.location.pathname.includes('/login') ||
+            window.location.pathname.includes('/register'));
 
     if (!isVisible || isAuthPage) return null;
 

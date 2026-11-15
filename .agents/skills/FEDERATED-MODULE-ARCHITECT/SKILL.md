@@ -22,9 +22,9 @@ Esta skill gobierna la arquitectura de todos los módulos operativos de **MINREP
 
 ## 3. Jerarquía Soberana de 5 Tipos de Cuenta
 Todo módulo y endpoint debe reconocer y respetar los 5 niveles de identidad:
-1. **`1º DEV` (`DEV_ROOT` / `dev@minreport.com`):** Control total de ingeniería y creación exclusiva de cuentas `TEST-PILOT`.
+1. **`1º DEV` (`DEV_ROOT` / `dev@minreport.com`):** Control total de ingeniería, bóvedas maestras ISO, monitoreo pasivo de métricas de usuarios `TEST-PILOT` (`[Desarrollo pendiente]`) y acceso exclusivo actual a la versión móvil de pruebas `MINREPORT TEST` (`com.minreport.app.fieldtest`). Prohibidas las funciones operativas `TEST-PILOT` en `/dev`.
 2. **`2º ADMIN` (`SUPER_ADMIN` / `admin@minreport.com`):** Operación comercial de MINREPORT, gestión B2B/EDU y disponibilidad de módulos.
-3. **`3º TEST-PILOT` (`TEST_PILOT` / `PILOT_LEAD`):** Expertos acreditados por `DEV` con acceso a una interfaz dedicada (pendiente de desarrollo) para simular proyectos mineros, comentar en contexto (`pilot_feedback`) y entrenar/curar la IA interna (`hitl_candidates`). No se mezcla con la interfaz `DEV`.
+3. **`3º TEST-PILOT` (`TEST_PILOT` / `PILOT_LEAD`):** Interfaz `/pilot` 100% independiente y hermética respecto de `DEV`, `ADMIN`, `B2B` y `EDU` (cero HUD transversal en otros módulos). Idéntica a la interfaz `4º B2B` final (`OPERMAQ` en modo cliente + `GEOLAPP®` sobre sandbox `pilot-*`, sin acceso al catálogo maestro `CATALOG`), preparada para incorporar posteriormente módulos de interacción con IA para corregir, mejorar y opinar.
 4. **`4º CLIENTES B2B` (`OWNER`, `ADMIN`, `SUPERVISOR`, `OPERATOR`, `VIEWER`, `BILLING_ONLY`):** Aislamiento estricto por `tenantId` (`accountId`).
 5. **`5º EDU` (`STUDENT`, `PROFESSOR`):** Entorno académico controlado (`isEduSandbox: true`).
 

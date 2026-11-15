@@ -1118,7 +1118,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
     const renderHitlListPreview = (items?: string[]) => {
         const clean = Array.isArray(items) && items.length > 0 ? items : [t('opermaq_domains.not_declared')];
         return (
-            <ul className="space-y-1 text-[10px] font-mono text-[#475569] dark:text-[#8A93A6] tabular-nums">
+            <ul className="space-y-1 text-microcopy font-mono text-[#475569] dark:text-[#8A93A6] tabular-nums">
                 {clean.slice(0, 6).map((line, i) => (
                     <li key={i} className="leading-tight break-words">
                         • {line}
@@ -1161,7 +1161,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         : t('vault_sidebar.status_auditing_photo')
                                 }
                             />
-                            <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] text-center">
+                            <span className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] text-center">
                                 {isHuntingPhoto
                                     ? t('vault_sidebar.status_hunting_photo')
                                     : isReframingPhoto
@@ -1181,7 +1181,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
                                 className="w-full h-full object-contain select-none pointer-events-none"
                             />
-                            <div className="absolute top-1.5 right-1.5 px-1.5 py-0.5 bg-[#000000]/80 text-[8px] font-mono font-bold text-[#00AEEF] uppercase tracking-wider tabular-nums select-none pointer-events-none">
+                            <div className="absolute top-1.5 right-1.5 px-1.5 py-0.5 bg-[#000000]/80 text-microcopy font-mono font-bold text-[#00AEEF] uppercase tracking-wider tabular-nums select-none pointer-events-none">
                                 {photoCandidates[selectedCandidateIdx]?.framing_mode === 'STUDIO_88'
                                     ? t('vault_sidebar.badge_oem_studio_88')
                                     : t('vault_sidebar.badge_oem_4x3')}
@@ -1208,7 +1208,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                             }`}
                         >
                             <span className="material-symbols-outlined !text-xl">image_search</span>
-                            <span className="text-[9px] font-bold uppercase tracking-widest text-center px-[8px]">
+                            <span className="text-microcopy font-bold uppercase tracking-widest text-center px-[8px]">
                                 {isManualFallbackActive
                                     ? t('vault_sidebar.no_candidates_retry_cta')
                                     : t('vault_sidebar.hunt_official_photo_cta')}
@@ -1216,7 +1216,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                         </div>
                     ) : (
                         <div className="w-full h-full flex items-center justify-center p-[13px] text-center">
-                            <span className="text-[11px] text-[#94A3B8] dark:text-[#5A6072]">
+                            <span className="text-microcopy text-[#94A3B8] dark:text-[#5A6072]">
                                 {t('opermaq_domains.not_declared')}
                             </span>
                         </div>
@@ -1230,7 +1230,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 type="button"
                                 onClick={handleStartOfficialPhotoHunt}
                                 disabled={isUploadingPhoto || isReframingPhoto}
-                                className="flex-1 py-1.5 px-[8px] border border-[#C68346] bg-[#C68346]/10 hover:bg-[#C68346] text-[#C68346] hover:text-[#000000] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                                className="flex-1 py-1.5 px-[8px] border border-[#C68346] bg-[#C68346]/10 hover:bg-[#C68346] text-[#C68346] hover:text-[#000000] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                             >
                                 {isHuntingPhoto
                                     ? t('vault_sidebar.btn_updating_now')
@@ -1242,7 +1242,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 type="button"
                                 onClick={() => fileInputRef.current?.click()}
                                 disabled={isHuntingPhoto || isUploadingPhoto || isReframingPhoto}
-                                className="py-1.5 px-[8px] border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                                className="py-1.5 px-[8px] border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                             >
                                 {t('vault_sidebar.btn_upload_manual')}
                             </button>
@@ -1252,7 +1252,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 type="button"
                                 onClick={handleOpenStoredAlternatives}
                                 disabled={isHuntingPhoto || isUploadingPhoto || isReframingPhoto}
-                                className="w-full py-1 px-[8px] border border-[#00AEEF] text-[#00AEEF] hover:bg-[#00AEEF] hover:text-[#000000] text-[9px] font-mono font-bold uppercase tracking-wider tabular-nums rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                                className="w-full py-1 px-[8px] border border-[#00AEEF] text-[#00AEEF] hover:bg-[#00AEEF] hover:text-[#000000] text-microcopy font-mono font-bold uppercase tracking-wider tabular-nums rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                             >
                                 {t('vault_sidebar.btn_view_saved_alternatives', {
                                     count: verifiedStoredCandidates.length,
@@ -1268,7 +1268,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                         {catalog.foto_url && (
                             <div className="grid grid-cols-2 gap-[8px] p-[8px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] rounded-none">
                                 <div className="flex flex-col gap-[4px]">
-                                    <span className="text-[8px] font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
+                                    <span className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
                                         {t('vault_sidebar.hitl_label_current')}
                                     </span>
                                     <div className="aspect-[4/3] w-full bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-center overflow-hidden">
@@ -1283,7 +1283,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                     </div>
                                 </div>
                                 <div className="flex flex-col gap-[4px]">
-                                    <span className="text-[8px] font-mono font-bold uppercase tracking-wider text-[#00AEEF]">
+                                    <span className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#00AEEF]">
                                         {t('vault_sidebar.hitl_label_proposed')}
                                     </span>
                                     <div className="aspect-[4/3] w-full bg-[#FFFFFF] dark:bg-[#07090D] border border-[#00AEEF] flex items-center justify-center overflow-hidden">
@@ -1300,7 +1300,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                             </div>
                         )}
 
-                        <div className="flex items-center justify-between px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-[9px] font-mono tabular-nums rounded-none">
+                        <div className="flex items-center justify-between px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] text-microcopy font-mono tabular-nums rounded-none">
                             <button
                                 type="button"
                                 onClick={() =>
@@ -1382,11 +1382,11 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                                 }
                                                 className="w-full h-full object-contain select-none pointer-events-none"
                                             />
-                                            <span className="absolute bottom-0 left-0 px-1 bg-[#000000]/80 text-[8px] font-mono font-bold text-[#F3F4F6] tabular-nums select-none pointer-events-none">
+                                            <span className="absolute bottom-0 left-0 px-1 bg-[#000000]/80 text-microcopy font-mono font-bold text-[#F3F4F6] tabular-nums select-none pointer-events-none">
                                                 #{idx + 1}
                                             </span>
                                             {isPublished && (
-                                                <span className="absolute top-0 right-0 px-1 bg-[#00AEEF] text-[7px] font-mono font-bold text-[#000000] uppercase select-none pointer-events-none">
+                                                <span className="absolute top-0 right-0 px-1 bg-[#00AEEF] text-microcopy font-mono font-bold text-[#000000] uppercase select-none pointer-events-none">
                                                     {t('vault_sidebar.badge_active_short')}
                                                 </span>
                                             )}
@@ -1401,7 +1401,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 type="button"
                                 onClick={handleStartOfficialPhotoHunt}
                                 disabled={isPublishingCandidate}
-                                className="flex-1 py-1 border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-[#000000] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                                className="flex-1 py-1 border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-[#000000] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                             >
                                 {isHuntingPhoto
                                     ? t('vault_sidebar.btn_updating_short')
@@ -1411,13 +1411,13 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 type="button"
                                 onClick={() => fileInputRef.current?.click()}
                                 disabled={isPublishingCandidate}
-                                className="px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                                className="px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                             >
                                 {t('vault_sidebar.btn_manual_short')}
                             </button>
                         </div>
 
-                        <div className="px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] flex flex-col gap-[4px] font-mono tabular-nums text-[9px] rounded-none">
+                        <div className="px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] flex flex-col gap-[4px] font-mono tabular-nums text-microcopy rounded-none">
                             <div className="flex items-center justify-between gap-[8px]">
                                 <span className="text-[#00AEEF] font-bold uppercase truncate">
                                     {photoCandidates[selectedCandidateIdx]?.verified_variant_summary ||
@@ -1449,7 +1449,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                         </div>
 
                         <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] rounded-none">
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
+                            <span className="text-microcopy font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
                                 {t('vault_sidebar.prompt_type_actualizar_publish')}
                             </span>
                             <input
@@ -1471,7 +1471,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 placeholder="ACTUALIZAR"
                                 autoComplete="off"
                                 spellCheck={false}
-                                className="w-full px-[8px] py-1 text-[11px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                                className="w-full px-[8px] py-1 text-microcopy font-mono uppercase bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
                             />
                             <div className="flex gap-[8px]">
                                 <button
@@ -1481,14 +1481,14 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         isPublishingCandidate ||
                                         candidateConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'
                                     }
-                                    className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
+                                    className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
                                 >
                                     {t('vault_sidebar.btn_confirm')}
                                 </button>
                                 <button
                                     type="button"
                                     onClick={handleDiscardCandidates}
-                                    className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                                    className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                                 >
                                     {t('vault_sidebar.btn_close')}
                                 </button>
@@ -1499,11 +1499,11 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
 
                 {photoCandidates.length === 0 && manualAuditRejection && (
                     <div className="mt-[8px] p-[8px] border border-[#C68346] bg-[#C68346]/10 flex flex-col gap-[8px] rounded-none">
-                        <div className="flex items-center gap-[8px] text-[#C68346] text-[9px] font-bold uppercase tracking-wider">
+                        <div className="flex items-center gap-[8px] text-[#C68346] text-microcopy font-bold uppercase tracking-wider">
                             <span className="material-symbols-outlined !text-[14px]">warning</span>
                             <span>{t('vault_sidebar.oem_auditor_rejection_title')}</span>
                         </div>
-                        <p className="text-[10px] text-[#0F172A] dark:text-[#F3F4F6] font-mono leading-tight">
+                        <p className="text-microcopy text-[#0F172A] dark:text-[#F3F4F6] font-mono leading-tight">
                             {manualAuditRejection}
                         </p>
                     </div>
@@ -1513,7 +1513,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                     <>
                         <div className="mt-[8px] px-[8px] py-1 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] flex items-center justify-between gap-[8px] rounded-none">
                             {catalog.foto_media_telemetry ? (
-                                <div className="flex items-center gap-[8px] font-mono tabular-nums text-[9px] min-w-0">
+                                <div className="flex items-center gap-[8px] font-mono tabular-nums text-microcopy min-w-0">
                                     <span className="text-[#475569] dark:text-[#8A93A6] truncate">
                                         {formatPhotoBytes(
                                             catalog.foto_media_telemetry.original_bytes
@@ -1530,7 +1530,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                     )}
                                 </div>
                             ) : (
-                                <span className="font-mono text-[9px] text-[#94A3B8] dark:text-[#5A6072]">
+                                <span className="font-mono text-microcopy text-[#94A3B8] dark:text-[#5A6072]">
                                     CAS
                                 </span>
                             )}
@@ -1644,12 +1644,12 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                         {/* A-04 Panel Comparativo HITL [Actual] -> [Sugerido] para Re-encuadre 88% */}
                         {canCurateAI && reframePreview && (
                             <div className="flex flex-col gap-[8px] w-full mt-[8px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] rounded-none shadow-none">
-                                <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-[#00AEEF]">
+                                <span className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#00AEEF]">
                                     {t('vault_sidebar.reframe_hitl_title')}
                                 </span>
                                 <div className="grid grid-cols-2 gap-[8px]">
                                     <div className="flex flex-col gap-[4px]">
-                                        <span className="text-[8px] font-mono font-bold uppercase text-[#475569] dark:text-[#8A93A6]">
+                                        <span className="text-microcopy font-mono font-bold uppercase text-[#475569] dark:text-[#8A93A6]">
                                             {t('vault_sidebar.hitl_label_current')}
                                         </span>
                                         <div className="aspect-[4/3] w-full bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-center overflow-hidden">
@@ -1668,7 +1668,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         </div>
                                     </div>
                                     <div className="flex flex-col gap-[4px]">
-                                        <span className="text-[8px] font-mono font-bold uppercase text-[#00AEEF]">
+                                        <span className="text-microcopy font-mono font-bold uppercase text-[#00AEEF]">
                                             {t('vault_sidebar.hitl_label_proposed')}
                                         </span>
                                         <div className="aspect-[4/3] w-full bg-[#FFFFFF] dark:bg-[#07090D] border border-[#00AEEF] flex items-center justify-center overflow-hidden">
@@ -1687,7 +1687,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         </div>
                                     </div>
                                 </div>
-                                <div className="flex items-center justify-between gap-[8px] font-mono tabular-nums text-[9px]">
+                                <div className="flex items-center justify-between gap-[8px] font-mono tabular-nums text-microcopy">
                                     <span className="text-[#475569] dark:text-[#8A93A6] truncate">
                                         ORIG:{' '}
                                         {formatPhotoBytes(
@@ -1702,7 +1702,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         -{reframePreview.proposedMetrics.savings_pct}%
                                     </span>
                                 </div>
-                                <span className="text-[10px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
+                                <span className="text-microcopy font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
                                     {t('vault_sidebar.prompt_type_actualizar_consolidate')}
                                 </span>
                                 <input
@@ -1724,7 +1724,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                     placeholder="ACTUALIZAR"
                                     autoComplete="off"
                                     spellCheck={false}
-                                    className="w-full px-[8px] py-1 text-[11px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                                    className="w-full px-[8px] py-1 text-microcopy font-mono uppercase bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
                                 />
                                 <div className="flex gap-[8px]">
                                     <button
@@ -1734,7 +1734,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                             isConsolidatingReframe ||
                                             reframeConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'
                                         }
-                                        className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
+                                        className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
                                     >
                                         {t('vault_sidebar.btn_confirm')}
                                     </button>
@@ -1745,7 +1745,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                             setReframeConfirmText('');
                                         }}
                                         disabled={isConsolidatingReframe}
-                                        className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                                        className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                                     >
                                         {t('vault_sidebar.btn_cancel')}
                                     </button>
@@ -1759,7 +1759,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                             !reframePreview &&
                             isLegacyPreV4Photo && (
                                 <div className="mt-[8px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] flex flex-col gap-[8px] rounded-none shadow-none select-none">
-                                    <span className="text-[10px] font-mono leading-tight text-[#475569] dark:text-[#8A93A6] tabular-nums">
+                                    <span className="text-microcopy font-mono leading-tight text-[#475569] dark:text-[#8A93A6] tabular-nums">
                                         {t('vault_sidebar.legacy_photo_audit_notice')}
                                     </span>
                                     <button
@@ -1768,7 +1768,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         disabled={
                                             isHuntingPhoto || isReframingPhoto || isUploadingPhoto
                                         }
-                                        className="w-full py-1 px-[8px] border border-[#C68346] bg-[#C68346]/10 hover:bg-[#C68346] text-[#C68346] hover:text-[#000000] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
+                                        className="w-full py-1 px-[8px] border border-[#C68346] bg-[#C68346]/10 hover:bg-[#C68346] text-[#C68346] hover:text-[#000000] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none transition-colors cursor-pointer disabled:opacity-40"
                                     >
                                         {t('vault_sidebar.btn_replace_with_oem_photo')}
                                     </button>
@@ -1778,7 +1778,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                         {canCurateAI && showPhotoDeleteConfirm && (
                             <div className="flex flex-col gap-[8px] w-full mt-[8px]">
                                 <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] rounded-none">
-                                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
+                                    <span className="text-microcopy font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
                                         {t('vault_sidebar.prompt_type_actualizar_delete')}
                                     </span>
                                     <input
@@ -1790,7 +1790,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         placeholder="ACTUALIZAR"
                                         autoComplete="off"
                                         spellCheck={false}
-                                        className="w-full px-[8px] py-1 text-[11px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                                        className="w-full px-[8px] py-1 text-microcopy font-mono uppercase bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
                                     />
                                     <div className="flex gap-[8px]">
                                         <button
@@ -1801,7 +1801,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                                 photoDeleteConfirmText.trim().toUpperCase() !==
                                                     'ACTUALIZAR'
                                             }
-                                            className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
+                                            className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
                                         >
                                             {t('vault_sidebar.btn_confirm')}
                                         </button>
@@ -1811,7 +1811,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                                 setShowPhotoDeleteConfirm(false);
                                                 setPhotoDeleteConfirmText('');
                                             }}
-                                            className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                                            className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                                         >
                                             {t('vault_sidebar.btn_cancel')}
                                         </button>
@@ -1840,7 +1840,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                 {/* A-04 Panel Comparativo HITL [Actual] -> [Sugerido] para Reconciliación de Ficha Lateral */}
                 {canCurateAI && reconcilePreview && (
                     <div className="flex flex-col gap-[8px] p-[8px] border border-[#C68346] bg-[#F8FAFC] dark:bg-[#000000] rounded-none shadow-none">
-                        <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-[#00AEEF]">
+                        <span className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#00AEEF]">
                             {t('vault_sidebar.reconcile_hitl_title')}
                         </span>
 
@@ -1887,16 +1887,16 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         spellCheck={false}
                                         className="rounded-none accent-[#C68346] cursor-pointer"
                                     />
-                                    <span className="text-[9px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
+                                    <span className="text-microcopy font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
                                         {sec.label}
                                     </span>
                                 </label>
                                 <div className="flex flex-col gap-[4px] pt-[4px] border-t border-[#E2E8F0] dark:border-[#12151C]">
-                                    <span className="text-[8px] font-mono font-bold uppercase text-[#94A3B8] dark:text-[#5A6072]">
+                                    <span className="text-microcopy font-mono font-bold uppercase text-[#94A3B8] dark:text-[#5A6072]">
                                         {t('vault_sidebar.hitl_label_current')}
                                     </span>
                                     {renderHitlListPreview(sec.current)}
-                                    <span className="text-[8px] font-mono font-bold uppercase text-[#00AEEF] mt-[4px]">
+                                    <span className="text-microcopy font-mono font-bold uppercase text-[#00AEEF] mt-[4px]">
                                         {'->'} {t('vault_sidebar.hitl_label_proposed')}
                                     </span>
                                     {renderHitlListPreview(sec.proposed)}
@@ -1904,7 +1904,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                             </div>
                         ))}
 
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
+                        <span className="text-microcopy font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
                             {t('vault_sidebar.prompt_type_actualizar_consolidate')}
                         </span>
                         <input
@@ -1924,7 +1924,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                             placeholder="ACTUALIZAR"
                             autoComplete="off"
                             spellCheck={false}
-                            className="w-full px-[8px] py-1 text-[11px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                            className="w-full px-[8px] py-1 text-microcopy font-mono uppercase bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
                         />
                         <div className="flex gap-[8px]">
                             <button
@@ -1937,7 +1937,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         !reconcileApproveFields.ambiente &&
                                         !reconcileApproveFields.contexto)
                                 }
-                                className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
+                                className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
                             >
                                 {t('vault_sidebar.btn_confirm')}
                             </button>
@@ -1948,7 +1948,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                     setReconcileConfirmText('');
                                 }}
                                 disabled={isConsolidatingReconcile}
-                                className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                                className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                             >
                                 {t('vault_sidebar.btn_cancel')}
                             </button>
@@ -1959,7 +1959,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                 {/* CARACTERÍSTICAS PRINCIPALES */}
                 <div className="flex flex-col">
                     <div className="flex items-center justify-between mb-[8px]">
-                        <h3 className="text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider">
+                        <h3 className="text-microcopy font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider">
                             {t('vault_sidebar.section_main_specs')}
                         </h3>
                         {canCurateAI && !catalog.is_sealed && (
@@ -1999,7 +1999,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 autoComplete="off"
                                 spellCheck={false}
                                 placeholder={t('vault_sidebar.placeholder_main_specs')}
-                                className="w-full p-[8px] text-[11px] font-mono bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                                className="w-full p-[8px] text-microcopy font-mono bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
                             />
                             <input
                                 type="text"
@@ -2010,7 +2010,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 placeholder="ACTUALIZAR"
                                 autoComplete="off"
                                 spellCheck={false}
-                                className="w-full px-[8px] py-1 text-[10px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                                className="w-full px-[8px] py-1 text-microcopy font-mono uppercase bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
                             />
                             <div className="flex gap-[8px]">
                                 <button
@@ -2020,28 +2020,28 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         isSavingSidebarHitl ||
                                         sidebarConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'
                                     }
-                                    className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                                    className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                                 >
                                     {t('vault_sidebar.btn_save')}
                                 </button>
                                 <button
                                     type="button"
                                     onClick={() => setEditingSidebarSection(null)}
-                                    className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                                    className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                                 >
                                     {t('vault_sidebar.btn_cancel')}
                                 </button>
                             </div>
                         </div>
                     ) : (
-                        <ul className="space-y-1.5 text-[12px] font-normal text-[#475569] dark:text-[#8A93A6] tabular-nums">
+                        <ul className="space-y-1.5 text-[0.8125rem] font-normal text-[#475569] dark:text-[#8A93A6] tabular-nums">
                             {normalizedMainSpecs.length ? (
                                 normalizedMainSpecs.map((item, idx) => (
                                     <li
                                         key={idx}
                                         className="flex items-start gap-[8px] leading-tight"
                                     >
-                                        <span className="text-[#C68346] shrink-0 mt-px text-[10px]">
+                                        <span className="text-[#C68346] shrink-0 mt-px text-microcopy">
                                             •
                                         </span>
                                         <span>{highlightUndeclared(item)}</span>
@@ -2061,7 +2061,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                 {/* CONDICIONES DE DISEÑO */}
                 <div className="flex flex-col">
                     <div className="flex items-center justify-between mb-[8px]">
-                        <h3 className="text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider">
+                        <h3 className="text-microcopy font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider">
                             {t('vault_sidebar.section_design_conditions')}
                         </h3>
                         {canCurateAI && !catalog.is_sealed && (
@@ -2085,7 +2085,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 autoComplete="off"
                                 spellCheck={false}
                                 placeholder={t('vault_sidebar.placeholder_design_conditions')}
-                                className="w-full p-[8px] text-[11px] font-mono bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                                className="w-full p-[8px] text-microcopy font-mono bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
                             />
                             <input
                                 type="text"
@@ -2096,7 +2096,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 placeholder="ACTUALIZAR"
                                 autoComplete="off"
                                 spellCheck={false}
-                                className="w-full px-[8px] py-1 text-[10px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                                className="w-full px-[8px] py-1 text-microcopy font-mono uppercase bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
                             />
                             <div className="flex gap-[8px]">
                                 <button
@@ -2106,28 +2106,28 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         isSavingSidebarHitl ||
                                         sidebarConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'
                                     }
-                                    className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                                    className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                                 >
                                     {t('vault_sidebar.btn_save')}
                                 </button>
                                 <button
                                     type="button"
                                     onClick={() => setEditingSidebarSection(null)}
-                                    className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                                    className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                                 >
                                     {t('vault_sidebar.btn_cancel')}
                                 </button>
                             </div>
                         </div>
                     ) : (
-                        <ul className="space-y-1.5 text-[12px] font-normal text-[#475569] dark:text-[#8A93A6]">
+                        <ul className="space-y-1.5 text-[0.8125rem] font-normal text-[#475569] dark:text-[#8A93A6]">
                             {normalizedDesignConditions.length ? (
                                 normalizedDesignConditions.map((item, idx) => (
                                     <li
                                         key={idx}
                                         className="flex items-start gap-[8px] leading-tight"
                                     >
-                                        <span className="text-[#C68346] shrink-0 mt-px text-[10px]">
+                                        <span className="text-[#C68346] shrink-0 mt-px text-microcopy">
                                             •
                                         </span>
                                         <span>{highlightUndeclared(item)}</span>
@@ -2147,7 +2147,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                 {/* CONTEXTO Y TRABAJO */}
                 <div className="flex flex-col">
                     <div className="flex items-center justify-between mb-[8px]">
-                        <h3 className="text-[11px] font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider">
+                        <h3 className="text-microcopy font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] tracking-wider">
                             {t('vault_sidebar.section_work_context')}
                         </h3>
                         {canCurateAI && !catalog.is_sealed && (
@@ -2171,7 +2171,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 autoComplete="off"
                                 spellCheck={false}
                                 placeholder={t('vault_sidebar.placeholder_work_context')}
-                                className="w-full p-[8px] text-[11px] font-mono bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                                className="w-full p-[8px] text-microcopy font-mono bg-[#F8FAFC] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
                             />
                             <input
                                 type="text"
@@ -2182,7 +2182,7 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                 placeholder="ACTUALIZAR"
                                 autoComplete="off"
                                 spellCheck={false}
-                                className="w-full px-[8px] py-1 text-[10px] font-mono uppercase bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
+                                className="w-full px-[8px] py-1 text-microcopy font-mono uppercase bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] border border-[#E2E8F0] dark:border-[#12151C] rounded-none outline-none focus:border-[#C68346] select-text"
                             />
                             <div className="flex gap-[8px]">
                                 <button
@@ -2192,28 +2192,28 @@ export const VaultCatalogSidebar: React.FC<VaultCatalogSidebarProps> = ({
                                         isSavingSidebarHitl ||
                                         sidebarConfirmText.trim().toUpperCase() !== 'ACTUALIZAR'
                                     }
-                                    className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                                    className="flex-1 py-1 bg-[#C68346] text-[#000000] disabled:opacity-40 text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                                 >
                                     {t('vault_sidebar.btn_save')}
                                 </button>
                                 <button
                                     type="button"
                                     onClick={() => setEditingSidebarSection(null)}
-                                    className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-[9px] font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
+                                    className="flex-1 py-1 border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] text-microcopy font-bold uppercase tracking-wider rounded-none shadow-none cursor-pointer"
                                 >
                                     {t('vault_sidebar.btn_cancel')}
                                 </button>
                             </div>
                         </div>
                     ) : (
-                        <ul className="space-y-1.5 text-[12px] font-normal text-[#475569] dark:text-[#8A93A6]">
+                        <ul className="space-y-1.5 text-[0.8125rem] font-normal text-[#475569] dark:text-[#8A93A6]">
                             {normalizedWorkContext.length ? (
                                 normalizedWorkContext.map((item, idx) => (
                                     <li
                                         key={idx}
                                         className="flex items-start gap-[8px] leading-tight"
                                     >
-                                        <span className="text-[#C68346] shrink-0 mt-px text-[10px]">
+                                        <span className="text-[#C68346] shrink-0 mt-px text-microcopy">
                                             •
                                         </span>
                                         <span>{highlightUndeclared(item)}</span>

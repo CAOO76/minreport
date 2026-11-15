@@ -1,0 +1,85 @@
+/* MINREPORT — GEOLAPP® Module Scoped Styles
+ * Hereda variables globales duales de web/src/index.css (:root / .dark)
+ * Tipografía exclusiva: Atkinson Hyperlegible Next & Atkinson Hyperlegible Mono
+ * Geometría estricta: 0px (rounded-none), 0 sombras (shadow-none)
+ */
+
+.geolapp-scope {
+  font-family: "Atkinson Hyperlegible Next", -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.geolapp-scope input,
+.geolapp-scope textarea,
+.geolapp-scope select,
+.geolapp-scope .select-text {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.geolapp-scope .tabular-nums,
+.geolapp-scope .font-mono {
+  font-family: "Atkinson Hyperlegible Mono", ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "cv05" 1;
+}
+
+.geolapp-scope img,
+.geolapp-scope svg.secure-media {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+
+.geolapp-scope .grid-overlay {
+  background-image:
+    linear-gradient(to right, rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(148, 163, 184, 0.08) 1px, transparent 1px);
+  background-size: 34px 34px;
+}
+
+.dark .geolapp-scope .grid-overlay {
+  background-image:
+    linear-gradient(to right, rgba(198, 131, 70, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(198, 131, 70, 0.06) 1px, transparent 1px);
+}
+
+.geolapp-scope .custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.geolapp-scope .custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.geolapp-scope .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 0px;
+}
+
+.dark .geolapp-scope .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(138, 147, 166, 0.3);
+}
+
+.geolapp-scope .hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.geolapp-scope .hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* M3 Dual Contrast Utility Guard (0px radius / zero shadow) */
+.geolapp-scope * {
+  box-shadow: none;
+}
+
+@media print {
+  .geolapp-scope .no-print {
+    display: none !important;
+  }
+}

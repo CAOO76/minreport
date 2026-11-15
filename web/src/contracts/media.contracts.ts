@@ -12,6 +12,7 @@ export const MediaDigestionProfileSchema = z.enum([
     'IMAGE_ISO_SYMBOL',
     'VECTOR_SVG_CLEAN',
     'VIDEO_FIELD_COMPACT',
+    'MESH_3D_GLB',
 ]);
 
 export type MediaDigestionProfile = z.infer<typeof MediaDigestionProfileSchema>;
@@ -47,3 +48,36 @@ export const DigestedMediaDescriptorSchema = z.object({
 
 export type DigestedMediaDescriptor = z.infer<typeof DigestedMediaDescriptorSchema>;
 
+export const DigestUploadQuerySchema = z.object({
+    profile: MediaDigestionProfileSchema.optional().default('IMAGE_FIELD_EVIDENCE'),
+    scope: CasStorageScopeSchema.optional().default('TENANT_PRIVATE'),
+    clientOriginalBytes: z.coerce.number().int().nonnegative().optional(),
+    enableSelectivePdfRaster: z
+        .union([z.boolean(), z.enum(['true', 'false'])])
+        .optional()
+        .transform((v) => v === true || v === 'true'),
+});
+
+export const TenantLogoDescriptorSchema = z.object({
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    downloadUrl: z
+        .string()
+        .min(1)
+        .max(512)
+        .refine(
+            (u) =>
+                !u.startsWith('data:') &&
+                !u.includes(';base64,') &&
+                (u.startsWith('/api/media/') || u.startsWith('https://')),
+            'URL de logo debe iniciar con /api/media/ o https:// sin data: ni ;base64,'
+        ),
+    mimeType: z.string().min(3).max(64),
+    extension: z.string().min(2).max(16).optional(),
+    profile: z.enum(['IMAGE_ISO_SYMBOL', 'VECTOR_SVG_CLEAN']),
+    originalBytes: z.number().nonnegative().max(104857600),
+    optimizedBytes: z.number().nonnegative().max(20971520),
+    savingsPct: z.number().min(0).max(100),
+    updatedAt: z.union([z.number(), z.string().max(64)]).optional(),
+});
+
+export type TenantLogoDescriptor = z.infer<typeof TenantLogoDescriptorSchema>;

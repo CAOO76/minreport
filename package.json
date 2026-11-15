@@ -14,7 +14,7 @@
     "serve:emulators": "unset _JAVA_OPTIONS && unset GOOGLE_APPLICATION_CREDENTIALS && [ -d \"/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home\" ] && export JAVA_HOME=\"/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home\" && export PATH=\"$JAVA_HOME/bin:$PATH\"; npx firebase-tools emulators:start --only auth,firestore,storage --import=./data --export-on-exit=./data",
     "serve:emulators:full": "unset _JAVA_OPTIONS && unset GOOGLE_APPLICATION_CREDENTIALS && [ -d \"/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home\" ] && export JAVA_HOME=\"/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home\" && export PATH=\"$JAVA_HOME/bin:$PATH\"; npx firebase-tools emulators:start --only auth,firestore,functions,hosting,storage --import=./data --export-on-exit=./data",
     "export:emulators": "npx firebase-tools emulators:export --force ./data",
-    "backup:data": "npm run export:emulators && git add data && git commit -m \"Data Backup $(date)\"",
+    "backup:data": "npm run export:emulators",
     "dev:all": "npx concurrently --kill-others --names \"EMU,API,WEB\" --prefix-colors \"yellow,blue,green\" \"npm run serve:emulators\" \"npm run dev:server\" \"npm run dev --prefix web\"",
     "dev:ecosystem": "npm run dev:all",
     "dev:full": "bash scripts/dev-full.sh",
@@ -25,14 +25,11 @@
     "test:seed": "ts-node tests/utils/db-seeder.ts"
   },
   "dependencies": {
-    "@ai-sdk/google": "^1.2.19",
     "@google-cloud/secret-manager": "^5.6.0",
     "@google-cloud/tasks": "^6.2.2",
     "@google/genai": "^1.50.1",
-    "@iso-safety-signs/assets": "^2.0.0",
     "@iso-safety-signs/core": "^1.1.0",
     "@visioncortex/vtracer": "^1.0.0-alpha.4",
-    "ai": "^4.3.16",
     "cors": "^2.8.5",
     "dotenv": "^16.4.1",
     "express": "^4.18.2",
@@ -40,15 +37,13 @@
     "firebase-functions": "^6.6.0",
     "google-auth-library": "^10.6.2",
     "helmet": "^7.1.0",
-    "mammoth": "^1.12.0",
     "multer": "^2.1.1",
     "mupdf": "^1.28.1",
     "pdf-lib": "^1.17.1",
     "resend": "^3.1.0",
     "sharp": "^0.34.5",
     "svgo": "^4.1.0",
-    "xlsx": "^0.18.5",
-    "zod": "^3.22.4"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

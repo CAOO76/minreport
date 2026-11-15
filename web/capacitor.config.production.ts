@@ -1,18 +1,17 @@
 import { CapacitorConfig } from '@capacitor/cli';
 
-// Configuración para APK de PRUEBAS en dispositivos reales
-// Este APK se conectará a los emuladores de Firebase en tu iMac
-// Requisito: Tu móvil debe estar en la misma red WiFi que tu iMac
-
+/**
+ * MINREPORT · GEOLAPP - Configuracion Capacitor 6 de Produccion (Android APK Standalone)
+ * Enforce obligatorio de Secure Context HTTPS (androidScheme: 'https', cleartext: false)
+ * requerido para crypto.subtle SHA-256 CAS, Passkeys FIDO2 y sensores en terreno.
+ */
 const config: CapacitorConfig = {
     appId: 'com.minreport.app',
-    appName: 'MinReport',
+    appName: 'MINREPORT · GEOLAPP',
     webDir: 'dist',
     server: {
-        // Sin URL = carga archivos locales del APK
-        // La app se conectará a emuladores vía firebase.ts (192.168.1.87:9190 y :8085)
-        cleartext: true,
-        androidScheme: 'http'
+        androidScheme: 'https',
+        cleartext: false
     },
     plugins: {
         Camera: {

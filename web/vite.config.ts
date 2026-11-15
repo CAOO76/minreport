@@ -10,7 +10,7 @@ export default defineConfig({
     resolve: {
         alias: {
             '@opermaq': path.resolve(__dirname, './src/modules/opermaq'),
-            '@stockpile': path.resolve(__dirname, './src/modules/stockpile'),
+            '@geolapp': path.resolve(__dirname, './src/modules/geolapp'),
         },
         preserveSymlinks: true,
         dedupe: ['react', 'react-dom', 'firebase']
@@ -54,7 +54,7 @@ export default defineConfig({
             devOptions: {
                 enabled: true
             },
-            includeAssets: ['favicon.ico', 'favicon.svg', 'pwa-192x192.png', 'pwa-512x512.png'],
+            includeAssets: ['favicon.ico', 'favicon.svg', 'pwa-192x192.png', 'pwa-512x512.png', 'theme-init.js'],
             manifest: {
                 id: '/',
                 name: 'MINREPORT',

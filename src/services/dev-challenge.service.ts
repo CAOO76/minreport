@@ -8,6 +8,7 @@ import { resolveDevRootPassword } from '../config/secrets';
 import { constantTimeEqualStrings } from '../utils/security';
 import { DEV_ROOT_EMAIL, DEV_ROOT_UID, ensureDevRootAccount } from './bootstrap.service';
 import { EmailService } from './EmailService';
+import { computeShortTtlTimestamp, toEpochMillis } from '../core/retention-policy';
 
 /**
  * Obtiene dinámicamente la IP de red local del equipo (ej. Wi-Fi 192.168.x.x)
@@ -30,7 +31,6 @@ export const getLocalLanIp = (): string => {
 export interface DevChallengeRecord {
     id: string;
     clientTokenHash: string;
-    clientToken?: string;
     emailTokenHash: string;
     otpHash: string;
     status: 'PENDING_EMAIL' | 'EMAIL_CONFIRMED' | 'OTP_VERIFIED' | 'COMPLETED' | 'REVOKED';
@@ -39,6 +39,7 @@ export interface DevChallengeRecord {
     userAgent: string;
     createdAt: number;
     expiresAt: number;
+    ttlExpiresAt?: FirebaseFirestore.Timestamp;
     confirmedAt?: number;
     verifiedAt?: number;
     stepTokenHash?: string;
@@ -56,7 +57,7 @@ const CHALLENGE_COLLECTION = 'dev_challenges';
 const META_COLLECTION = 'system_dev_meta';
 const CREDENTIALS_DOC = 'credentials';
 const ROTATION_DAYS = 30;
-const TTL_MS = 180 * 1000; // 3 minutos de validez estricta
+const TTL_MS = 600 * 1000; // 10 minutos (600s) para accesibilidad universal sin ansiedad de reloj
 
 const sha256 = (data: string): string => {
     return crypto.createHash('sha256').update(data).digest('hex');
@@ -125,7 +126,6 @@ export class DevChallengeService {
         const record: DevChallengeRecord = {
             id: challengeId,
             clientTokenHash: sha256(clientToken),
-            clientToken,
             emailTokenHash: sha256(emailToken),
             otpHash,
             status: 'PENDING_EMAIL',
@@ -133,7 +133,8 @@ export class DevChallengeService {
             ip: ip || '127.0.0.1',
             userAgent: userAgent || 'Desconocido',
             createdAt,
-            expiresAt
+            expiresAt,
+            ttlExpiresAt: computeShortTtlTimestamp(TTL_MS, createdAt),
         };
 
         await db.collection(CHALLENGE_COLLECTION).doc(challengeId).set(record);
@@ -176,8 +177,8 @@ export class DevChallengeService {
                 <div style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-size: 42px; font-weight: 700; letter-spacing: 0.25em; font-variant-numeric: tabular-nums; color: #0F172A; margin: 13px 0;">
                     ${otpDisplay}
                 </div>
-                <div style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-size: 11px; color: #8A93A6; margin-top: 13px;">
-                    180s // ${new Date().toISOString()}
+                <div style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-size: 13px; color: #475569; margin-top: 13px;">
+                    600s (10 min) // ${new Date().toISOString()}
                 </div>
             </div>
         `;
@@ -246,12 +247,12 @@ export class DevChallengeService {
 
         const record = snapshot.data() as DevChallengeRecord;
 
-        if (Date.now() > record.expiresAt) {
+        if (Date.now() > toEpochMillis(record.expiresAt)) {
             await docRef.update({ status: 'REVOKED' });
             return {
                 success: false,
                 status: 302,
-                redirectUrl: `${webBase}/dev?error=${encodeURIComponent('El enlace de confirmación ha caducado (180s). Inicie una nueva solicitud.')}`
+                redirectUrl: `${webBase}/dev?error=${encodeURIComponent('El enlace de confirmación ha caducado (600s / 10 min). Inicie una nueva solicitud.')}`
             };
         }
 
@@ -278,11 +279,10 @@ export class DevChallengeService {
             });
         }
 
-        const clientToken = record.clientToken || '';
         return {
             success: true,
             status: 302,
-            redirectUrl: `${webBase}/dev?cid=${encodeURIComponent(challengeId)}&token=${encodeURIComponent(clientToken)}`
+            redirectUrl: `${webBase}/dev?cid=${encodeURIComponent(challengeId)}`
         };
     }
 
@@ -303,7 +303,7 @@ export class DevChallengeService {
             return { status: 'REVOKED', attemptsRemaining: 0 };
         }
 
-        if (Date.now() > record.expiresAt && record.status !== 'COMPLETED') {
+        if (Date.now() > toEpochMillis(record.expiresAt) && record.status !== 'COMPLETED') {
             await docRef.update({ status: 'REVOKED' });
             return { status: 'REVOKED', attemptsRemaining: 0 };
         }
@@ -331,7 +331,7 @@ export class DevChallengeService {
             return { success: false, error: 'Cliente no autorizado' };
         }
 
-        if (Date.now() > record.expiresAt) {
+        if (Date.now() > toEpochMillis(record.expiresAt)) {
             await docRef.update({ status: 'REVOKED' });
             return { success: false, error: 'Sesión expirada' };
         }
@@ -490,6 +490,16 @@ export class DevChallengeService {
             await credsRef.set(effectiveCreds, { merge: true }).catch(() => {});
         }
 
+        const resolveDevRootUser = async () => {
+            try {
+                return await auth.getUser(DEV_ROOT_UID);
+            } catch {
+                await ensureDevRootAccount();
+                return await auth.getUser(DEV_ROOT_UID);
+            }
+        };
+
+        let userRecord: Awaited<ReturnType<typeof auth.getUser>> | undefined;
         const elapsedMs = effectiveCreds ? Date.now() - effectiveCreds.passwordRotatedAt : 0;
         const maxMs = ((effectiveCreds?.rotationDays || ROTATION_DAYS) * 24 * 60 * 60 * 1000);
         const isExpired = elapsedMs >= maxMs;
@@ -503,6 +513,8 @@ export class DevChallengeService {
             if (constantTimeEqualStrings(cleanNewPassword, password.trim())) {
                 return { success: false, error: 'La nueva clave debe ser diferente a la anterior.' };
             }
+
+            userRecord = await resolveDevRootUser();
 
             const newSalt = crypto.randomBytes(16).toString('hex');
             const newHash = hashPassword(cleanNewPassword, newSalt);
@@ -538,27 +550,22 @@ export class DevChallengeService {
             } catch { }
         }
 
-        let userRecord;
-        try {
-            userRecord = await auth.getUser(DEV_ROOT_UID);
-        } catch {
-            await ensureDevRootAccount();
-            userRecord = await auth.getUser(DEV_ROOT_UID);
+        if (!userRecord) {
+            userRecord = await resolveDevRootUser();
         }
 
         const uid = userRecord.uid;
-
-        await auth.setCustomUserClaims(uid, {
+        const devClaims = {
             role: 'DEV_ROOT',
+            accountTier: 1,
+            classification: 'dev-root',
             isMasterDev: true,
             suiteAccess: true
-        });
+        };
 
-        const customToken = await auth.createCustomToken(uid, {
-            role: 'DEV_ROOT',
-            isMasterDev: true,
-            suiteAccess: true
-        });
+        await auth.setCustomUserClaims(uid, devClaims);
+
+        const customToken = await auth.createCustomToken(uid, devClaims);
 
         let idToken = customToken;
         const emulatorHost = process.env.FIREBASE_AUTH_EMULATOR_HOST;
@@ -591,7 +598,10 @@ export class DevChallengeService {
                 uid,
                 email: DEV_ROOT_EMAIL,
                 role: 'DEV_ROOT',
-                isMasterDev: true
+                accountTier: 1,
+                classification: 'dev-root',
+                isMasterDev: true,
+                suiteAccess: true
             }
         };
     }

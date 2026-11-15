@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { collection, getCountFromServer, query, where } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
@@ -9,6 +10,7 @@ import { syncQueueEngine } from '../../core/offline/SyncQueueEngine';
 import SecureImage from '../../components/common/SecureImage';
 
 const MobileDashboard: React.FC = () => {
+    const { t } = useTranslation();
     const { user, profile, currentAccount } = useAuth();
     const { session, hasModuleAccess } = useMinReportSession();
     const navigate = useNavigate();
@@ -61,7 +63,7 @@ const MobileDashboard: React.FC = () => {
     const roleLabel =
         profile?.memberships?.find((m: any) => m.accountId === currentAccount?.id)?.role ||
         session?.role ||
-        'OPERADOR';
+        t('core_mobile.role_operator');
 
     return (
         <div className="space-y-fib-21 pb-20 px-fib-13 pt-fib-13 font-sans select-none">
@@ -69,16 +71,16 @@ const MobileDashboard: React.FC = () => {
             <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
                 <div>
                     <h1 className="text-h2-section uppercase text-[#0F172A] dark:text-[#F3F4F6]">
-                        {user?.displayName || user?.email?.split('@')[0] || 'Operador'}
+                        {user?.displayName || user?.email?.split('@')[0] || t('core_mobile.role_operator_display')}
                     </h1>
                     <p className="text-xs text-[#475569] dark:text-[#8A93A6] mt-0.5 font-mono">
-                        {roleLabel} · {currentAccount?.name || session?.tenantName || '[Organizacion no declarada]'}
+                        {roleLabel} · {currentAccount?.name || session?.tenantName || t('core_shell.undeclared_org')}
                     </p>
                 </div>
 
                 <div className="w-12 h-12 rounded-none bg-[#F8FAFC] dark:bg-[#07090D] flex items-center justify-center border border-[#E2E8F0] dark:border-[#12151C] shadow-none overflow-hidden">
                     {user?.photoURL ? (
-                        <SecureImage src={user.photoURL} alt="Avatar" className="w-full h-full object-cover" />
+                        <SecureImage src={user.photoURL} alt={t('core_mobile.avatar_alt')} className="w-full h-full object-cover" />
                     ) : (
                         <span className="text-sm font-bold text-[#C68346] font-mono">
                             {(user?.displayName || user?.email || 'U').charAt(0).toUpperCase()}
@@ -92,7 +94,7 @@ const MobileDashboard: React.FC = () => {
                 <div className="bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none flex items-center justify-between">
                     <div>
                         <span className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] block">
-                            Cola Transaccional Offline (`SyncQueueEngine`)
+                            {t('core_mobile.offline_queue_label')}
                         </span>
                         <span className="text-kpi-display font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] block mt-1">
                             {pendingSyncCount}
@@ -105,24 +107,24 @@ const MobileDashboard: React.FC = () => {
                     <div className="w-[61.8%] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none">
                         <div className="flex items-center justify-between">
                             <span className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
-                                Equipos en Flota
+                                {t('core_mobile.fleet_count_label')}
                             </span>
                             <span className="material-symbols-outlined text-[18px] text-[#C68346]">local_shipping</span>
                         </div>
                         <span className="text-h1-header font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] block mt-2">
-                            {fleetCount !== null ? fleetCount : '[Pendiente de registro]'}
+                            {fleetCount !== null ? fleetCount : t('core_mobile.pending_record')}
                         </span>
                     </div>
 
                     <div className="w-[38.2%] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none">
                         <div className="flex items-center justify-between">
                             <span className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
-                                Acopios
+                                {t('core_mobile.stockpiles_count_label')}
                             </span>
                             <span className="material-symbols-outlined text-[18px] text-[#00AEEF]">layers</span>
                         </div>
                         <span className="text-h1-header font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] block mt-2">
-                            {stockpileCount !== null ? stockpileCount : '[Pendiente]'}
+                            {stockpileCount !== null ? stockpileCount : t('core_mobile.pending_short')}
                         </span>
                     </div>
                 </div>
@@ -132,16 +134,16 @@ const MobileDashboard: React.FC = () => {
             <div>
                 <div className="flex items-center justify-between mb-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] pb-2">
                     <h2 className="text-xs font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
-                        Modulos Operativos Habilitados
+                        {t('core_mobile.enabled_modules_heading')}
                     </h2>
-                    <span className="text-[11px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                    <span className="text-microcopy font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
                         {activeModules.length}
                     </span>
                 </div>
 
                 {activeModules.length === 0 ? (
                     <div className="p-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] text-xs font-mono text-[#94A3B8] dark:text-[#5A6072]">
-                        [Sin modulos asignados a esta cuenta]
+                        {t('core_mobile.no_modules_assigned')}
                     </div>
                 ) : (
                     <div className="space-y-fib-13">
@@ -155,10 +157,10 @@ const MobileDashboard: React.FC = () => {
                                 <span className="material-symbols-outlined text-[22px] text-[#C68346] shrink-0">{module.icon}</span>
                                 <div className="flex-1 min-w-0">
                                     <h3 className="font-bold text-xs uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6] truncate">
-                                        {module.name}
+                                        {t(`core_shell.modules.${module.id}.name`, module.name)}
                                     </h3>
-                                    <p className="text-[11px] text-[#475569] dark:text-[#8A93A6] line-clamp-1 font-mono mt-0.5">
-                                        {module.scope}
+                                    <p className="text-microcopy text-[#475569] dark:text-[#8A93A6] line-clamp-1 font-mono mt-0.5">
+                                        {t(`core_shell.modules.${module.id}.scope`, module.scope)}
                                     </p>
                                 </div>
                                 <span className="material-symbols-outlined text-[#94A3B8] dark:text-[#5A6072] text-[18px]">chevron_right</span>

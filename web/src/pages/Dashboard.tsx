@@ -1,32 +1,29 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { GeneralAdminDashboard } from './b2b/GeneralAdminDashboard';
 import { OperationalDashboard } from './OperationalDashboard';
 import { useMemo } from 'react';
 
 // Componente Principal: Dispatcher
 export const Dashboard = () => {
-    const { currentAccount, profile } = useAuth();
+    const { currentAccount, profile, user } = useAuth();
 
     // Calcular el rol actual
     const currentRole = useMemo(() => {
-        if (!currentAccount || !profile?.memberships) return null;
-        const membership = profile.memberships.find(m => m.accountId === currentAccount.id);
-        return membership?.role || null;
-    }, [currentAccount, profile]);
+        if (!currentAccount) return null;
+        const membership = profile?.memberships?.find((m) => m.accountId === currentAccount.id);
+        if (membership?.role) return membership.role;
+        if (user && currentAccount.ownerId === user.uid) return 'OWNER';
+        return null;
+    }, [currentAccount, profile, user]);
 
-    // Si no hay cuenta o rol definido, retornar null sin pantallas intermedias
     if (!currentAccount || !currentRole) {
         return null;
     }
 
-    // Lógica de Despacho B2B
-    // ── ENTIDADES B2B EXTERNAS ──
+    // Legacy billing-only roles redirigen a ficha de empresa
     const isB2BAdmin = currentRole === 'SUBSCRIPTION_ADMIN' || currentRole === 'BILLING_ONLY';
     if (isB2BAdmin) return <Navigate to="/b2b/empresa" replace />;
-    if (currentRole === 'GENERAL_ADMIN') return <GeneralAdminDashboard />;
 
-    // Default: Dashboard Operativo (ADMIN, OWNER, OPERATOR)
-    // Se asume que si tiene rol operativo, debe ver el dashboard completo.
+    // Resto de roles operativos/académicos (OWNER, ADMIN, OPERATOR, VIEWER, PROFESSOR, STUDENT)
     return <OperationalDashboard />;
 };

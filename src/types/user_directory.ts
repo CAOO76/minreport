@@ -11,6 +11,8 @@ export interface AccountReference {
     type: AccountType;      // Tipo de cuenta (B2B, EDU, PERSONAL)
     avatar?: string;        // Avatar específico para esta cuenta
     accountName: string;    // Nombre de la cuenta para UI
+    status?: string;
+    jobProfileId?: string;
 }
 
 /**
@@ -25,6 +27,7 @@ export interface AccountReference {
 export interface UserDirectory {
     run: string;                    // RUN del usuario (ID del documento)
     fullName: string;               // Nombre completo del usuario
+    accountId?: string;
     accounts: AccountReference[];   // Array de cuentas asociadas
     createdAt: number;
     updatedAt: number;

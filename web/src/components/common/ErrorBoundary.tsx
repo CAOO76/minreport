@@ -1,5 +1,6 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
 import { Capacitor } from '@capacitor/core';
+import i18n from '../../i18n';
 
 interface Props {
     children: ReactNode;
@@ -51,17 +52,19 @@ class ErrorBoundary extends Component<Props, State> {
 
                         <div className="text-center space-y-fib-8">
                             <h1 className="text-microcopy font-mono font-bold uppercase text-red-500">
-                                [EXCEPCIÓN CRÍTICA DE INTERFAZ]
+                                {i18n.t('core_common.error_boundary_title', '[EXCEPCIÓN CRÍTICA DE INTERFAZ]')}
                             </h1>
                             <p className="text-data-dense text-[#475569] dark:text-[#8A93A6]">
-                                Se interrumpió el ciclo de renderizado del componente activo.
+                                {i18n.t('core_common.error_boundary_desc', 'Se interrumpió el ciclo de renderizado del componente activo.')}
                             </p>
                         </div>
 
                         <div className="w-full bg-[#FFFFFF] dark:bg-[#000000] rounded-none p-fib-13 border border-[#E2E8F0] dark:border-[#12151C]">
-                            <p className="text-microcopy font-mono text-red-500 mb-fib-8">[DETALLE TÉCNICO]</p>
+                            <p className="text-microcopy font-mono text-red-500 mb-fib-8">
+                                {i18n.t('core_common.error_boundary_detail', '[DETALLE TÉCNICO]')}
+                            </p>
                             <p className="text-data-dense font-mono text-[#0F172A] dark:text-[#F3F4F6] break-all select-text">
-                                {this.state.error?.message || 'Error de ejecución no especificado'}
+                                {this.state.error?.message || i18n.t('core_common.error_boundary_unspecified', 'Error de ejecución no especificado')}
                             </p>
                             {this.state.errorInfo && (
                                 <p className="text-microcopy font-mono text-[#94A3B8] dark:text-[#5A6072] mt-fib-8 overflow-hidden max-h-20">
@@ -75,7 +78,7 @@ class ErrorBoundary extends Component<Props, State> {
                             onClick={this.handleReset}
                             className="w-full py-fib-13 px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white font-mono font-bold text-microcopy uppercase rounded-none shadow-none transition-colors cursor-pointer"
                         >
-                            RESTABLECER SESIÓN OPERATIVA
+                            {i18n.t('core_common.error_boundary_reset', 'RESTABLECER SESIÓN OPERATIVA')}
                         </button>
                     </div>
                 </div>

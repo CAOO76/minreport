@@ -1,0 +1,559 @@
+import React, { useEffect, useState } from 'react';
+import { Navigate, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { signInWithCustomToken } from 'firebase/auth';
+import { auth } from '../../config/firebase';
+import { useMinReportSession } from '../../context/MinReportSessionContext';
+import { authenticateWithPasskey, isPasskeySupported } from '../../services/passkeyService';
+import { getApiUrl } from '../../utils/network';
+import BrandLogo from '../../components/BrandLogo';
+import { ThemeSwitch } from '../../components/ThemeSwitch';
+import { LanguageSwitch } from '../../components/LanguageSwitch';
+import ErgonomicScaleSwitch from '../../components/common/ErgonomicScaleSwitch';
+import { M3LinearProgress } from '../../components/common/M3LinearProgress';
+
+type DevAuthStep = 'IDLE' | 'OTP' | 'USER' | 'PASSWORD' | 'PASSWORD_ROTATION';
+
+function formatChallengeCountdown(seconds: number): string {
+    const safe = Math.max(0, Math.floor(seconds));
+    const mins = String(Math.floor(safe / 60)).padStart(2, '0');
+    const secs = String(safe % 60).padStart(2, '0');
+    return `${mins}:${secs}`;
+}
+
+export const DevFieldTestLogin: React.FC = () => {
+    const { t } = useTranslation();
+    const navigate = useNavigate();
+    const { session, isLoaded } = useMinReportSession();
+
+    const [authStep, setAuthStep] = useState<DevAuthStep>('IDLE');
+    const [loading, setLoading] = useState<boolean>(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const [challengeId, setChallengeId] = useState<string>('');
+    const [clientToken, setClientToken] = useState<string>('');
+    const [stepToken, setStepToken] = useState<string>('');
+    const [expiresAt, setExpiresAt] = useState<number>(0);
+    const [timeLeft, setTimeLeft] = useState<number>(600);
+    const [attemptsRemaining, setAttemptsRemaining] = useState<number>(3);
+
+    const [otpCode, setOtpCode] = useState<string>('');
+    const [loginEmail, setLoginEmail] = useState<string>('');
+    const [loginPassword, setLoginPassword] = useState<string>('');
+    const [oldPassword, setOldPassword] = useState<string>('');
+    const [newPassword, setNewPassword] = useState<string>('');
+    const [confirmPassword, setConfirmPassword] = useState<string>('');
+    const [nonDevBlocked, setNonDevBlocked] = useState<boolean>(false);
+
+    const passkeyAvailable = isPasskeySupported();
+    const apiBase = getApiUrl('/api/dev');
+
+    // Guard estricto: MINREPORT TEST admite exclusivamente 1º DEV (dev@minreport.com / DEV_ROOT)
+    useEffect(() => {
+        if (!isLoaded || !session) {
+            return;
+        }
+        if (!session.isDevRoot) {
+            setNonDevBlocked(true);
+            setError(t('core_dev_fieldtest.login.non_dev_rejected'));
+            localStorage.removeItem('dev_auth_token');
+            localStorage.removeItem('dev_vault_token');
+            void auth.signOut().catch(() => {});
+        }
+    }, [isLoaded, session, t]);
+
+    useEffect(() => {
+        if (authStep === 'IDLE' || !expiresAt) {
+            return;
+        }
+        const timer = setInterval(() => {
+            const diff = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+            setTimeLeft(diff);
+            if (diff <= 0) {
+                clearInterval(timer);
+                setAuthStep('IDLE');
+                setChallengeId('');
+                setClientToken('');
+                setStepToken('');
+                setOtpCode('');
+                setError(t('core_dev_vault.auth.session_expired_180'));
+            }
+        }, 1000);
+        return () => clearInterval(timer);
+    }, [authStep, expiresAt, t]);
+
+    if (isLoaded && session?.isDevRoot) {
+        return <Navigate to="/mobile/dev-launchpad" replace />;
+    }
+
+    const handlePasskeyLogin = async () => {
+        setError(null);
+        setNonDevBlocked(false);
+        setLoading(true);
+        try {
+            const cred = await authenticateWithPasskey('dev@minreport.com');
+            const tokenResult = await cred.user.getIdTokenResult(true);
+            const roleClaim = String(tokenResult.claims?.role || '').toUpperCase();
+            const isMasterDevClaim = tokenResult.claims?.isMasterDev === true;
+            const emailLower = (cred.user.email || '').trim().toLowerCase();
+
+            if (!isMasterDevClaim && roleClaim !== 'DEV_ROOT' && emailLower !== 'dev@minreport.com') {
+                await auth.signOut().catch(() => {});
+                setNonDevBlocked(true);
+                throw new Error(t('core_dev_fieldtest.login.non_dev_rejected'));
+            }
+
+            localStorage.setItem('dev_auth_token', tokenResult.token);
+            navigate('/mobile/dev-launchpad', { replace: true });
+        } catch (err: any) {
+            setError(err?.message || t('core_dev_fieldtest.login.passkey_failed'));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleInitChallenge = async () => {
+        if (loading) return;
+        setError(null);
+        setNonDevBlocked(false);
+        setLoading(true);
+        try {
+            const resp = await fetch(`${apiBase}/auth/challenge/init`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({}),
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                throw new Error(data.error || t('core_dev_vault.auth.challenge_init_failed'));
+            }
+            setChallengeId(data.challengeId);
+            setClientToken(data.clientToken);
+            setExpiresAt(data.expiresAt);
+            setTimeLeft(600);
+            setAttemptsRemaining(3);
+            setOtpCode('');
+            setAuthStep('OTP');
+        } catch (err: any) {
+            setError(err?.message || t('core_dev_vault.auth.challenge_start_error'));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleVerifyOtp = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const normalizedOtp = otpCode.replace(/\D/g, '').slice(0, 6);
+        if (normalizedOtp.length !== 6) {
+            setError(t('core_dev_fieldtest.login.otp_required'));
+            return;
+        }
+        setError(null);
+        setLoading(true);
+        try {
+            const resp = await fetch(`${apiBase}/auth/challenge/verify-otp`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    challengeId,
+                    clientToken,
+                    otp: normalizedOtp,
+                }),
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                if (typeof data.attemptsRemaining === 'number' && data.attemptsRemaining <= 0) {
+                    setAuthStep('IDLE');
+                    setOtpCode('');
+                    throw new Error(t('core_dev_vault.auth.otp_attempts_exceeded'));
+                }
+                if (typeof data.attemptsRemaining === 'number') {
+                    setAttemptsRemaining(data.attemptsRemaining);
+                }
+                setOtpCode('');
+                throw new Error(data.error || t('core_dev_vault.auth.otp_validation_error'));
+            }
+            setStepToken(data.stepToken);
+            setAuthStep('USER');
+        } catch (err: any) {
+            setError(err?.message || t('core_dev_vault.auth.otp_validation_error'));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleVerifyUser = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError(null);
+        setLoading(true);
+        try {
+            const cleanUser = loginEmail.trim().toLowerCase();
+            const resp = await fetch(`${apiBase}/auth/challenge/verify-user`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    challengeId,
+                    clientToken,
+                    stepToken,
+                    username: cleanUser,
+                }),
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                throw new Error(data.error || t('core_dev_vault.auth.identity_unauthorized'));
+            }
+            setAuthStep(data.requiresPasswordRotation ? 'PASSWORD_ROTATION' : 'PASSWORD');
+        } catch (err: any) {
+            setError(err?.message || t('core_dev_vault.auth.identity_unauthorized'));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleLoginFinal = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError(null);
+        setLoading(true);
+        try {
+            if (authStep === 'PASSWORD_ROTATION') {
+                if (!newPassword || newPassword.trim().length < 8) {
+                    throw new Error(t('core_dev_vault.auth.rotation_min_length'));
+                }
+                if (newPassword !== confirmPassword) {
+                    throw new Error(t('core_dev_vault.auth.rotation_mismatch'));
+                }
+                if (newPassword === oldPassword) {
+                    throw new Error(t('core_dev_vault.auth.rotation_same_key'));
+                }
+            }
+
+            const payload: Record<string, string> = {
+                challengeId,
+                clientToken,
+                stepToken,
+                username: loginEmail.trim().toLowerCase(),
+                password: authStep === 'PASSWORD_ROTATION' ? oldPassword : loginPassword,
+            };
+            if (authStep === 'PASSWORD_ROTATION') {
+                payload.newPassword = newPassword.trim();
+            }
+
+            const resp = await fetch(`${apiBase}/auth/challenge/login-final`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                throw new Error(data.error || t('core_dev_vault.auth.invalid_credentials'));
+            }
+
+            let effectiveToken = data.token || data.firebaseToken || '';
+            if (data.firebaseToken) {
+                const cred = await signInWithCustomToken(auth, data.firebaseToken);
+                effectiveToken = await cred.user.getIdToken(true);
+            }
+
+            if (effectiveToken) {
+                localStorage.setItem('dev_auth_token', effectiveToken);
+            }
+            navigate('/mobile/dev-launchpad', { replace: true });
+        } catch (err: any) {
+            setError(err?.message || t('core_dev_vault.auth.auth_failed'));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleAbortChallenge = () => {
+        setAuthStep('IDLE');
+        setChallengeId('');
+        setClientToken('');
+        setStepToken('');
+        setOtpCode('');
+        setLoginPassword('');
+        setOldPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+        setError(null);
+    };
+
+    const ttlPct = Math.max(0, Math.min(100, (timeLeft / 600) * 100));
+
+    return (
+        <div className="min-h-[100dvh] bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col font-sans select-none antialiased">
+            <header className="h-16 px-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-fib-13 min-w-0">
+                    <BrandLogo variant="logotype" className="h-5 w-auto object-contain pointer-events-none" />
+                    <span className="border-l border-[#E2E8F0] dark:border-[#12151C] pl-fib-13 text-microcopy font-mono uppercase tracking-wider text-[#C68346] truncate">
+                        MINREPORT TEST
+                    </span>
+                </div>
+                <div className="flex items-center gap-fib-8 shrink-0">
+                    <ErgonomicScaleSwitch compact />
+                    <ThemeSwitch />
+                    <LanguageSwitch />
+                </div>
+            </header>
+
+            <main className="flex-1 flex items-center justify-center p-fib-21">
+                <div className="w-full max-w-md border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-34 rounded-none shadow-none space-y-fib-21">
+                    <div className="flex items-start justify-between gap-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-21">
+                        <div className="space-y-fib-8">
+                            <p className="text-microcopy font-mono uppercase tracking-widest text-[#C68346]">
+                                {t('core_dev_fieldtest.login.eyebrow')}
+                            </p>
+                            <h1 className="text-h1-header font-semibold uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6]">
+                                {t('core_dev_fieldtest.login.title')}
+                            </h1>
+                            <p className="text-body-main text-[#475569] dark:text-[#8A93A6]">
+                                {t('core_dev_fieldtest.login.subtitle')}
+                            </p>
+                        </div>
+                        <BrandLogo variant="isotype" className="h-8 w-8 object-contain pointer-events-none shrink-0" />
+                    </div>
+
+                    {loading && (
+                        <M3LinearProgress indeterminate ariaLabel={t('core_dev_fieldtest.login.authenticating_aria')} />
+                    )}
+
+                    {(error || nonDevBlocked) && (
+                        <div
+                            role="alert"
+                            className="border border-red-500/40 bg-red-500/10 p-fib-13 text-data-dense font-mono text-red-600 dark:text-red-400 rounded-none"
+                        >
+                            {error || t('core_dev_fieldtest.login.non_dev_rejected')}
+                        </div>
+                    )}
+
+                    {authStep === 'IDLE' && (
+                        <div className="space-y-fib-13">
+                            {passkeyAvailable && (
+                                <button
+                                    type="button"
+                                    onClick={handlePasskeyLogin}
+                                    disabled={loading}
+                                    className="w-full min-h-[56px] px-fib-21 py-fib-13 bg-[#C68346] hover:bg-[#B0743E] text-white font-mono font-bold text-microcopy uppercase tracking-wider rounded-none shadow-none border-0 cursor-pointer flex items-center justify-center gap-fib-13 transition-colors disabled:opacity-50"
+                                >
+                                    <span className="material-symbols-outlined text-[22px]">fingerprint</span>
+                                    <span>{t('core_dev_fieldtest.login.passkey_btn')}</span>
+                                </button>
+                            )}
+
+                            <button
+                                type="button"
+                                onClick={handleInitChallenge}
+                                disabled={loading}
+                                className="w-full min-h-[52px] px-fib-21 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#0F172A] dark:text-[#F3F4F6] font-mono font-bold text-microcopy uppercase tracking-wider rounded-none shadow-none cursor-pointer flex items-center justify-center gap-fib-13 transition-colors disabled:opacity-50"
+                            >
+                                <span className="material-symbols-outlined text-[20px] text-[#00AEEF]">shield_lock</span>
+                                <span>{t('core_dev_fieldtest.login.oob_btn')}</span>
+                            </button>
+                        </div>
+                    )}
+
+                    {authStep === 'OTP' && (
+                        <form onSubmit={handleVerifyOtp} autoComplete="off" spellCheck={false} className="space-y-fib-21">
+                            <div className="space-y-fib-8">
+                                <div className="flex items-center justify-between text-microcopy font-mono">
+                                    <span className="text-[#475569] dark:text-[#8A93A6]">
+                                        {t('core_dev_fieldtest.login.otp_ttl_label')}
+                                    </span>
+                                    <span className="tabular-nums text-[#C68346] font-bold">
+                                        {formatChallengeCountdown(timeLeft)} · {attemptsRemaining}/3
+                                    </span>
+                                </div>
+                                <M3LinearProgress value={ttlPct} ariaLabel={t('core_dev_fieldtest.login.otp_ttl_label')} />
+                            </div>
+
+                            <div className="space-y-fib-8">
+                                <label
+                                    htmlFor="dev-ft-otp"
+                                    className="block text-microcopy font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]"
+                                >
+                                    {t('core_dev_fieldtest.login.otp_label')}
+                                </label>
+                                <input
+                                    id="dev-ft-otp"
+                                    type="text"
+                                    inputMode="numeric"
+                                    maxLength={6}
+                                    value={otpCode}
+                                    onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                                    placeholder="000000"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    required
+                                    className="w-full min-h-[52px] px-fib-13 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono tabular-nums text-h1-header tracking-[0.35em] text-center rounded-none shadow-none outline-none select-text"
+                                />
+                            </div>
+
+                            <div className="flex gap-fib-13">
+                                <button
+                                    type="button"
+                                    onClick={handleAbortChallenge}
+                                    className="min-h-[48px] px-fib-13 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-white font-mono text-microcopy uppercase rounded-none cursor-pointer"
+                                >
+                                    {t('core_dev_vault.common.cancel')}
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={loading}
+                                    className="flex-1 min-h-[48px] px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white font-mono font-bold text-microcopy uppercase tracking-wider rounded-none border-0 cursor-pointer disabled:opacity-50"
+                                >
+                                    {t('core_dev_fieldtest.login.verify_otp_btn')}
+                                </button>
+                            </div>
+                        </form>
+                    )}
+
+                    {authStep === 'USER' && (
+                        <form onSubmit={handleVerifyUser} autoComplete="off" spellCheck={false} className="space-y-fib-21">
+                            <div className="space-y-fib-8">
+                                <label
+                                    htmlFor="dev-ft-email"
+                                    className="block text-microcopy font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]"
+                                >
+                                    {t('core_dev_fieldtest.login.email_label')}
+                                </label>
+                                <input
+                                    id="dev-ft-email"
+                                    type="email"
+                                    value={loginEmail}
+                                    onChange={(e) => setLoginEmail(e.target.value)}
+                                    placeholder="dev@minreport.com"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    required
+                                    className="w-full min-h-[48px] px-fib-13 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
+                                />
+                            </div>
+                            <div className="flex gap-fib-13">
+                                <button
+                                    type="button"
+                                    onClick={handleAbortChallenge}
+                                    className="min-h-[48px] px-fib-13 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-white font-mono text-microcopy uppercase rounded-none cursor-pointer"
+                                >
+                                    {t('core_dev_vault.common.cancel')}
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={loading}
+                                    className="flex-1 min-h-[48px] px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white font-mono font-bold text-microcopy uppercase tracking-wider rounded-none border-0 cursor-pointer disabled:opacity-50"
+                                >
+                                    {t('core_dev_fieldtest.login.verify_user_btn')}
+                                </button>
+                            </div>
+                        </form>
+                    )}
+
+                    {(authStep === 'PASSWORD' || authStep === 'PASSWORD_ROTATION') && (
+                        <form onSubmit={handleLoginFinal} autoComplete="off" spellCheck={false} className="space-y-fib-21">
+                            {authStep === 'PASSWORD_ROTATION' ? (
+                                <div className="space-y-fib-13">
+                                    <div className="space-y-fib-8">
+                                        <label
+                                            htmlFor="dev-ft-old-pwd"
+                                            className="block text-microcopy font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]"
+                                        >
+                                            {t('core_dev_fieldtest.login.current_password_label')}
+                                        </label>
+                                        <input
+                                            id="dev-ft-old-pwd"
+                                            type="password"
+                                            value={oldPassword}
+                                            onChange={(e) => setOldPassword(e.target.value)}
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            required
+                                            className="w-full min-h-[48px] px-fib-13 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
+                                        />
+                                    </div>
+                                    <div className="space-y-fib-8">
+                                        <label
+                                            htmlFor="dev-ft-new-pwd"
+                                            className="block text-microcopy font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]"
+                                        >
+                                            {t('core_dev_fieldtest.login.new_password_label')}
+                                        </label>
+                                        <input
+                                            id="dev-ft-new-pwd"
+                                            type="password"
+                                            value={newPassword}
+                                            onChange={(e) => setNewPassword(e.target.value)}
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            required
+                                            className="w-full min-h-[48px] px-fib-13 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
+                                        />
+                                    </div>
+                                    <div className="space-y-fib-8">
+                                        <label
+                                            htmlFor="dev-ft-confirm-pwd"
+                                            className="block text-microcopy font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]"
+                                        >
+                                            {t('core_dev_fieldtest.login.confirm_password_label')}
+                                        </label>
+                                        <input
+                                            id="dev-ft-confirm-pwd"
+                                            type="password"
+                                            value={confirmPassword}
+                                            onChange={(e) => setConfirmPassword(e.target.value)}
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            required
+                                            className="w-full min-h-[48px] px-fib-13 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
+                                        />
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="space-y-fib-8">
+                                    <label
+                                        htmlFor="dev-ft-pwd"
+                                        className="block text-microcopy font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]"
+                                    >
+                                        {t('core_dev_fieldtest.login.password_label')}
+                                    </label>
+                                    <input
+                                        id="dev-ft-pwd"
+                                        type="password"
+                                        value={loginPassword}
+                                        onChange={(e) => setLoginPassword(e.target.value)}
+                                        autoComplete="off"
+                                        spellCheck={false}
+                                        required
+                                        className="w-full min-h-[48px] px-fib-13 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
+                                    />
+                                </div>
+                            )}
+
+                            <div className="flex gap-fib-13">
+                                <button
+                                    type="button"
+                                    onClick={handleAbortChallenge}
+                                    className="min-h-[48px] px-fib-13 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-white font-mono text-microcopy uppercase rounded-none cursor-pointer"
+                                >
+                                    {t('core_dev_vault.common.cancel')}
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={loading}
+                                    className="flex-1 min-h-[48px] px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white font-mono font-bold text-microcopy uppercase tracking-wider rounded-none border-0 cursor-pointer disabled:opacity-50"
+                                >
+                                    {t('core_dev_fieldtest.login.enter_btn')}
+                                </button>
+                            </div>
+                        </form>
+                    )}
+
+                    <div className="border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-13 flex items-center justify-between text-microcopy font-mono text-[#94A3B8] dark:text-[#5A6072]">
+                        <span>com.minreport.app.fieldtest</span>
+                        <span>southamerica-west1</span>
+                    </div>
+                </div>
+            </main>
+        </div>
+    );
+};
+
+export default DevFieldTestLogin;

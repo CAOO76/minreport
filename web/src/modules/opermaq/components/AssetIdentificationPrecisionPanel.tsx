@@ -162,13 +162,13 @@ export const AssetIdentificationPrecisionPanel: React.FC<AssetIdentificationPrec
                         isOpen
                             ? 'border-[#C68346] text-[#C68346]'
                             : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                    } outline-none py-[4px] px-0 text-[11px] font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer rounded-none shadow-none`}
+                    } outline-none py-[4px] px-0 text-microcopy font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer rounded-none shadow-none`}
                 >
                     {t('registration.precision_toggle_open')}
                 </button>
 
                 {ephemeralImages.length > 0 && (
-                    <span className="text-[11px] font-mono font-bold tabular-nums uppercase tracking-[0.05em] text-[#00AEEF]">
+                    <span className="text-microcopy font-mono font-bold tabular-nums uppercase tracking-[0.05em] text-[#00AEEF]">
                         {t('registration.precision_active_count', { count: ephemeralImages.length })}
                     </span>
                 )}
@@ -183,7 +183,7 @@ export const AssetIdentificationPrecisionPanel: React.FC<AssetIdentificationPrec
                     }}
                     className="pt-[8px] flex flex-col gap-[8px]"
                 >
-                    <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                    <label className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                         {t('registration.precision_specs_label')}
                     </label>
 
@@ -236,7 +236,7 @@ export const AssetIdentificationPrecisionPanel: React.FC<AssetIdentificationPrec
                                 type="button"
                                 disabled={ephemeralImages.length >= MAX_EPHEMERAL_ID_IMAGES || isEncoding || isBusy}
                                 onClick={() => fileInputRef.current?.click()}
-                                className="px-[13px] h-9 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] disabled:opacity-40 bg-transparent text-[#0F172A] dark:text-[#F3F4F6] text-[11px] font-mono tabular-nums font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer disabled:cursor-not-allowed rounded-none shadow-none"
+                                className="px-[13px] h-9 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] disabled:opacity-40 bg-transparent text-[#0F172A] dark:text-[#F3F4F6] text-microcopy font-mono tabular-nums font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer disabled:cursor-not-allowed rounded-none shadow-none"
                             >
                                 {t('registration.precision_attach_btn', {
                                     current: ephemeralImages.length,
@@ -260,7 +260,7 @@ export const AssetIdentificationPrecisionPanel: React.FC<AssetIdentificationPrec
                                     type="button"
                                     disabled={!canTriggerSearch || isBusy || isEncoding}
                                     onClick={onApplyPrecisionSearch}
-                                    className="px-[13px] h-9 border border-[#C68346] bg-[#C68346] text-[#FFFFFF] hover:opacity-90 disabled:opacity-40 text-[11px] font-mono font-bold uppercase tracking-[0.05em] transition-opacity cursor-pointer disabled:cursor-not-allowed rounded-none shadow-none"
+                                    className="px-[13px] h-9 border border-[#C68346] bg-[#C68346] text-[#FFFFFF] hover:opacity-90 disabled:opacity-40 text-microcopy font-mono font-bold uppercase tracking-[0.05em] transition-opacity cursor-pointer disabled:cursor-not-allowed rounded-none shadow-none"
                                 >
                                     {t('registration.precision_apply_btn')}
                                 </button>
@@ -283,10 +283,10 @@ export const AssetIdentificationPrecisionPanel: React.FC<AssetIdentificationPrec
                                         className="w-10 h-10 object-cover select-none pointer-events-none"
                                     />
                                     <div className="flex flex-col min-w-0">
-                                        <span className="text-[11px] font-mono text-[#0F172A] dark:text-[#F3F4F6] truncate max-w-[140px]">
+                                        <span className="text-microcopy font-mono text-[#0F172A] dark:text-[#F3F4F6] truncate max-w-[140px]">
                                             {img.name}
                                         </span>
-                                        <span className="text-[10px] font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
+                                        <span className="text-microcopy font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
                                             {formatEphemeralBytes(img.originalBytes)} ➔ RAM{' '}
                                             {formatEphemeralBytes(img.ephemeralBytes)}
                                         </span>
@@ -304,7 +304,7 @@ export const AssetIdentificationPrecisionPanel: React.FC<AssetIdentificationPrec
                         </div>
                     )}
 
-                    <p className="text-[11px] text-[#0F172A] dark:text-[#F3F4F6] leading-snug">
+                    <p className="text-microcopy text-[#0F172A] dark:text-[#F3F4F6] leading-snug">
                         {t('registration.precision_ram_privacy_notice')}
                     </p>
                 </div>
@@ -356,10 +356,10 @@ export const OpticalAndFacetsStrip: React.FC<OpticalAndFacetsStripProps> = ({
         <div className="shrink-0 flex flex-col gap-[8px]">
             {opticalItems.length > 0 && (
                 <div className="border-l-2 border-[#00AEEF] pl-[13px] py-[4px] flex flex-col gap-[2px]">
-                    <span className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF]">
+                    <span className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF]">
                         {t('registration.optical_summary_title')}
                     </span>
-                    <p className="text-[12px] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] leading-snug">
+                    <p className="text-[0.8125rem] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] leading-snug">
                         {opticalItems.join(' · ')}
                     </p>
                 </div>
@@ -368,14 +368,14 @@ export const OpticalAndFacetsStrip: React.FC<OpticalAndFacetsStripProps> = ({
             {facets.length > 0 && (
                 <div className="border-b border-[#E2E8F0] dark:border-[#12151C] pb-[8px] flex flex-col gap-[8px]">
                     <div className="flex items-center justify-between gap-[8px]">
-                        <span className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                        <span className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                             {t('registration.facets_filter_heading')}
                         </span>
                         {hasActiveFacetFilter && (
                             <button
                                 type="button"
                                 onClick={onResetFacets}
-                                className="bg-transparent border-0 outline-none p-0 text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none"
+                                className="bg-transparent border-0 outline-none p-0 text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF] hover:opacity-80 cursor-pointer rounded-none shadow-none"
                             >
                                 {t('registration.facets_reset_btn')}
                             </button>
@@ -392,7 +392,7 @@ export const OpticalAndFacetsStrip: React.FC<OpticalAndFacetsStripProps> = ({
                                     key={group.facet_key}
                                     className="flex flex-wrap items-center gap-[8px]"
                                 >
-                                    <span className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] min-w-[130px]">
+                                    <span className="text-microcopy font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] min-w-[130px]">
                                         {group.label_es}:
                                     </span>
                                     <div className="flex flex-wrap gap-[8px]">
@@ -409,7 +409,7 @@ export const OpticalAndFacetsStrip: React.FC<OpticalAndFacetsStripProps> = ({
                                                             onSelectFacetOption(group.facet_key, opt.value);
                                                         }
                                                     }}
-                                                    className={`px-[8px] py-[4px] border text-[11px] font-mono tabular-nums font-bold uppercase tracking-[0.03em] transition-colors cursor-pointer rounded-none shadow-none ${
+                                                    className={`px-[8px] py-[4px] border text-microcopy font-mono tabular-nums font-bold uppercase tracking-[0.03em] transition-colors cursor-pointer rounded-none shadow-none ${
                                                         isSelected
                                                             ? 'border-[#C68346] bg-[#C68346] text-[#FFFFFF]'
                                                             : 'border-[#E2E8F0] dark:border-[#12151C] bg-transparent text-[#0F172A] dark:text-[#F3F4F6] hover:border-[#00AEEF]'

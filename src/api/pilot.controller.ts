@@ -5,12 +5,17 @@ import { env } from '../config/env';
 import { AuditLedger } from '../core/audit-ledger';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { extractClientIp } from '../middleware/rateLimiter';
+import { evaluatePilotExpiration } from '../contracts/session.contracts';
+import {
+    ExtractWisdomInputSchema,
+    PilotWisdomExtractorService,
+} from '../services/pilot-wisdom-extractor.service';
 
 const router = Router();
 
 const CreatePilotFeedbackSchema = z.object({
     tenantId: z.string().min(1).max(128).default('dev-master-sandbox'),
-    module: z.enum(['core', 'opermaq', 'stockpile']).default('core'),
+    module: z.enum(['core', 'opermaq', 'stockpile', 'geolapp']).default('core'),
     executionMode: z.enum(['integrated', 'standalone']).default('integrated'),
     category: z
         .enum(['AI_KNOWLEDGE_TRAINING', 'CHANGE_REQUEST', 'BUG_CORRECTION', 'FIELD_SIMULATION'])
@@ -23,18 +28,20 @@ const CreatePilotFeedbackSchema = z.object({
 });
 
 const ListPilotFeedbackQuerySchema = z.object({
-    module: z.enum(['core', 'opermaq', 'stockpile']).optional(),
+    module: z.enum(['core', 'opermaq', 'stockpile', 'geolapp']).optional(),
 });
 
 const UpdatePilotFeedbackStatusSchema = z.object({
     status: z.enum(['OPEN', 'IN_REVIEW', 'APPLIED_TO_AI', 'RESOLVED']),
     confirmationWord: z.string().max(32).optional(),
+    confirmationKeyword: z.string().max(32).optional(),
     reviewNotes: z.string().max(1000).optional(),
 });
 
 type VerifiedPilotAuthority = {
     authorized: boolean;
-    isSovereignCurator: boolean; // Solo DEV_ROOT o SUPER_ADMIN pueden aprobar APPLIED_TO_AI
+    expired?: boolean;
+    isSovereignCurator: boolean; // Únicamente DEV_ROOT puede curar/aprobar APPLIED_TO_AI
     role: string;
     uid: string;
     email: string;
@@ -66,10 +73,13 @@ async function resolvePilotAuthority(req: AuthRequest): Promise<VerifiedPilotAut
                 (emailLower === 'admin@minreport.com' ||
                     emailLower === env.SUPER_ADMIN_EMAIL.toLowerCase())));
 
+    // Aislamiento hermético 100%: /api/pilot/* solo autoriza cuentas activas 3º TEST-PILOT.
+    // 1º DEV y 2º ADMIN no operan dentro de la interfaz 3º TEST-PILOT.
     if (isDevRoot || isSuperAdmin) {
         return {
-            authorized: true,
-            isSovereignCurator: true,
+            authorized: false,
+            expired: false,
+            isSovereignCurator: false,
             role: isDevRoot ? 'DEV_ROOT' : 'SUPER_ADMIN',
             uid,
             email: emailLower,
@@ -78,6 +88,7 @@ async function resolvePilotAuthority(req: AuthRequest): Promise<VerifiedPilotAut
 
     let serverRole = '';
     let userDisabled = false;
+    let serverPilotExpiresAt: unknown = undefined;
     try {
         const userSnap = await db.collection('users').doc(uid).get();
         if (userSnap.exists) {
@@ -85,6 +96,7 @@ async function resolvePilotAuthority(req: AuthRequest): Promise<VerifiedPilotAut
             serverRole = String(uData.role || '').toUpperCase();
             const st = String(uData.status || 'ACTIVE').toUpperCase();
             userDisabled = st === 'REVOKED' || st === 'SUSPENDED';
+            serverPilotExpiresAt = uData.pilotExpiresAt;
         }
     } catch {
         serverRole = '';
@@ -92,16 +104,54 @@ async function resolvePilotAuthority(req: AuthRequest): Promise<VerifiedPilotAut
 
     const effectiveRole = tokenRole || serverRole;
     const isAccreditedPilot =
-        !userDisabled &&
-        (effectiveRole === 'TEST_PILOT' ||
-            effectiveRole === 'PILOT_LEAD' ||
-            serverRole === 'TEST_PILOT' ||
-            serverRole === 'PILOT_LEAD');
+        !userDisabled && (effectiveRole === 'TEST_PILOT' || serverRole === 'TEST_PILOT');
+
+    if (!isAccreditedPilot) {
+        return {
+            authorized: false,
+            expired: false,
+            isSovereignCurator: false,
+            role: effectiveRole,
+            uid,
+            email: emailLower,
+        };
+    }
+
+    let pilotExpired =
+        evaluatePilotExpiration(user.pilotExpiresAt) ||
+        evaluatePilotExpiration(serverPilotExpiresAt);
+
+    if (!pilotExpired) {
+        try {
+            const pilotsSnap = await db.collection('test_pilots').where('userId', '==', uid).get();
+            if (!pilotsSnap.empty) {
+                const docs = pilotsSnap.docs.map((d) => d.data() || {});
+                const activeDocs = docs.filter((p) => String(p.status || '').toUpperCase() === 'ACTIVE');
+                if (activeDocs.length > 0 && activeDocs.every((p) => evaluatePilotExpiration(p.expiresAt))) {
+                    pilotExpired = true;
+                }
+            }
+        } catch {
+            // Keep prior expiration state if test_pilots unreadable
+        }
+    }
+
+    if (pilotExpired) {
+        return {
+            authorized: false,
+            expired: true,
+            isSovereignCurator: false,
+            role: 'TEST_PILOT',
+            uid,
+            email: emailLower,
+        };
+    }
 
     return {
-        authorized: isAccreditedPilot,
+        authorized: true,
+        expired: false,
         isSovereignCurator: false,
-        role: effectiveRole,
+        role: 'TEST_PILOT',
         uid,
         email: emailLower,
     };
@@ -109,11 +159,17 @@ async function resolvePilotAuthority(req: AuthRequest): Promise<VerifiedPilotAut
 
 /**
  * GET /api/pilot/feedback
- *Exige rol verificado TEST_PILOT, PILOT_LEAD, DEV_ROOT o SUPER_ADMIN.
+ * Exige rol verificado TEST_PILOT, DEV_ROOT o SUPER_ADMIN (aislado por authorUid para pilotos).
  */
 router.get('/feedback', requireAuth, async (req: AuthRequest, res: Response) => {
     try {
         const authority = await resolvePilotAuthority(req);
+        if (authority.expired) {
+            return res.status(403).json({
+                error: 'Cuenta 3º TEST-PILOT expirada.',
+                code: 'PILOT_ACCOUNT_EXPIRED',
+            });
+        }
         if (!authority.authorized) {
             return res.status(403).json({
                 error: 'Prohibido: Acceso exclusivo a colaboradores TEST-PILOT acreditados, DEV_ROOT o SUPER_ADMIN.',
@@ -127,20 +183,39 @@ router.get('/feedback', requireAuth, async (req: AuthRequest, res: Response) => 
             return res.status(400).json({ error: 'Filtro de módulo inválido' });
         }
 
-        let queryRef: FirebaseFirestore.Query = db
-            .collection('pilot_feedback')
-            .orderBy('createdAt', 'desc')
-            .limit(50);
-
-        if (parsedQuery.data.module) {
-            queryRef = db
+        let items: Record<string, any>[];
+        if (authority.isSovereignCurator) {
+            let queryRef: FirebaseFirestore.Query = db
                 .collection('pilot_feedback')
-                .where('module', '==', parsedQuery.data.module)
+                .orderBy('createdAt', 'desc')
                 .limit(50);
+
+            if (parsedQuery.data.module) {
+                queryRef = db
+                    .collection('pilot_feedback')
+                    .where('module', '==', parsedQuery.data.module)
+                    .limit(100);
+            }
+
+            const snap = await queryRef.get();
+            items = snap.docs
+                .map((doc) => ({ id: doc.id, ...doc.data() } as Record<string, any>))
+                .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+                .slice(0, 50);
+        } else {
+            const snap = await db
+                .collection('pilot_feedback')
+                .where('authorUid', '==', authority.uid)
+                .limit(100)
+                .get();
+
+            items = snap.docs
+                .map((doc) => ({ id: doc.id, ...doc.data() } as Record<string, any>))
+                .filter((item) => !parsedQuery.data.module || item.module === parsedQuery.data.module)
+                .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+                .slice(0, 50);
         }
 
-        const snap = await queryRef.get();
-        const items = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
         return res.status(200).json({ success: true, items });
     } catch (error: any) {
         console.error('[PILOT-API] Error listando feedback:', error);
@@ -151,14 +226,20 @@ router.get('/feedback', requireAuth, async (req: AuthRequest, res: Response) => 
 /**
  * POST /api/pilot/feedback
  * Guarda SIEMPRE con `status: 'OPEN'` (inclusive `AI_KNOWLEDGE_TRAINING`) para impedir
- * Cross-Tenant Prompt Poisoning hasta aprobación HITL de DEV_ROOT / SUPER_ADMIN.
+ * Cross-Tenant Prompt Poisoning hasta aprobación HITL exclusiva de DEV_ROOT.
  */
 router.post('/feedback', requireAuth, async (req: AuthRequest, res: Response) => {
     try {
         const authority = await resolvePilotAuthority(req);
+        if (authority.expired) {
+            return res.status(403).json({
+                error: 'Cuenta 3º TEST-PILOT expirada.',
+                code: 'PILOT_ACCOUNT_EXPIRED',
+            });
+        }
         if (!authority.authorized) {
             return res.status(403).json({
-                error: 'Prohibido: Solo cuentas TEST_PILOT, PILOT_LEAD, DEV_ROOT o SUPER_ADMIN pueden registrar feedback.',
+                error: 'Prohibido: Solo cuentas TEST_PILOT, DEV_ROOT o SUPER_ADMIN pueden registrar feedback.',
             });
         }
 
@@ -221,7 +302,7 @@ router.post('/feedback', requireAuth, async (req: AuthRequest, res: Response) =>
 
 /**
  * Handler compartido para PATCH `/feedback/:id/status` y `/feedback/:id`
- * Solo `DEV_ROOT` o `SUPER_ADMIN` con confirmación HITL `'ACTUALIZAR'` pueden promover a `'APPLIED_TO_AI'`.
+ * Solo `DEV_ROOT` con confirmación HITL `'ACTUALIZAR'` puede cambiar el estado o promover a `'APPLIED_TO_AI'`.
  */
 const handleUpdateFeedbackStatus = async (req: AuthRequest, res: Response) => {
     try {
@@ -233,7 +314,7 @@ const handleUpdateFeedbackStatus = async (req: AuthRequest, res: Response) => {
         const authority = await resolvePilotAuthority(req);
         if (!authority.isSovereignCurator) {
             return res.status(403).json({
-                error: 'Prohibido: Solo DEV_ROOT o SUPER_ADMIN pueden cambiar el estado de curación de feedback TEST-PILOT.',
+                error: 'Prohibido: Interfaz 3º TEST-PILOT hermética; sin curación externa habilitada.',
             });
         }
 
@@ -242,15 +323,19 @@ const handleUpdateFeedbackStatus = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ error: 'Payload de estado inválido', details: parsed.error.format() });
         }
 
-        const { status, confirmationWord, reviewNotes } = parsed.data;
-        const effectiveConfirmation = (
-            confirmationWord ||
-            String(req.headers['x-hitl-confirmation'] || '')
-        ).trim();
+        const { status, confirmationWord, confirmationKeyword, reviewNotes } = parsed.data;
+        const effectiveConfirmation = String(
+            confirmationKeyword ||
+                confirmationWord ||
+                req.headers['x-hitl-confirmation'] ||
+                ''
+        )
+            .trim()
+            .toUpperCase();
 
-        if (status === 'APPLIED_TO_AI' && effectiveConfirmation !== 'ACTUALIZAR') {
+        if (effectiveConfirmation !== 'ACTUALIZAR') {
             return res.status(400).json({
-                error: 'Confirmación HITL obligatoria: escriba exactamente "ACTUALIZAR" para inyectar esta regla en el Enjambre IA.',
+                error: 'Confirmación HITL obligatoria: escriba exactamente "ACTUALIZAR" para modificar el estado del registro.',
             });
         }
 
@@ -296,5 +381,51 @@ const handleUpdateFeedbackStatus = async (req: AuthRequest, res: Response) => {
 
 router.patch('/feedback/:id/status', requireAuth, handleUpdateFeedbackStatus);
 router.patch('/feedback/:id', requireAuth, handleUpdateFeedbackStatus);
+
+/**
+ * POST /api/pilot/feedback/extract-wisdom
+ * Estructura relatos orales o escritos del maestro minero (1º DEV / 3º TEST-PILOT)
+ * detrás de ConfidentialityAirlockService + ResilientAIClient sin persistir audio crudo (CAS).
+ */
+router.post('/feedback/extract-wisdom', requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+        const authority = await resolvePilotAuthority(req);
+        if (authority.expired) {
+            return res.status(403).json({
+                error: 'Cuenta 3º TEST-PILOT expirada.',
+                code: 'PILOT_ACCOUNT_EXPIRED',
+            });
+        }
+        if (!authority.authorized) {
+            return res.status(403).json({
+                error: 'Prohibido: Solo cuentas TEST_PILOT, DEV_ROOT o SUPER_ADMIN pueden estructurar aportes.',
+            });
+        }
+
+        const parsed = ExtractWisdomInputSchema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({
+                error: 'Payload de extracción inválido.',
+                details: parsed.error.format(),
+            });
+        }
+
+        if (!parsed.data.rawNarrative.trim() && !parsed.data.ephemeralAudio) {
+            return res.status(400).json({
+                error: 'Debe ingresar un relato escrito o grabar audio breve para ordenarlo.',
+            });
+        }
+
+        const extraction = await PilotWisdomExtractorService.extractWisdom(parsed.data);
+
+        return res.status(200).json({
+            success: true,
+            extraction,
+        });
+    } catch (error: any) {
+        console.error('[PILOT-API] Error estructurando sabiduría piloto:', error);
+        return res.status(500).json({ error: error.message || 'Error procesando relato técnico' });
+    }
+});
 
 export default router;

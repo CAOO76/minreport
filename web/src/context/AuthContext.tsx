@@ -1,42 +1,67 @@
-
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { User, onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth';
 import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import type { UserProfile, Account } from '../../../src/types/auth';
-import { checkAndClaimInvitations } from '../utils/invitationHandler';
 
 interface AuthContextType {
     user: User | null;
     profile: UserProfile | null;
     currentAccount: Account | null;
     loading: boolean;
+    isMfaVerified: boolean;
+    markMfaVerified: (ticket?: string) => void;
     switchAccount: (accountId: string) => Promise<void>;
     signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const MFA_STORAGE_PREFIX = 'minreport_mfa_verified_v1_';
+const ACTIVE_ACCOUNT_STORAGE_KEY = 'minreport_active_account_id';
+
+function readStoredMfaToken(uid: string): string | null {
+    if (typeof window === 'undefined') return null;
+    try {
+        return sessionStorage.getItem(`${MFA_STORAGE_PREFIX}${uid}`);
+    } catch {
+        return null;
+    }
+}
+
+function writeStoredMfaToken(uid: string, value: string): void {
+    if (typeof window === 'undefined') return;
+    try {
+        sessionStorage.setItem(`${MFA_STORAGE_PREFIX}${uid}`, value);
+    } catch {
+        // Ignorar restricciones de almacenamiento en modo privado
+    }
+}
+
+function clearStoredMfaToken(uid: string): void {
+    if (typeof window === 'undefined') return;
+    try {
+        sessionStorage.removeItem(`${MFA_STORAGE_PREFIX}${uid}`);
+    } catch {
+        // No-op
+    }
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [user, setUser] = useState<User | null>(null);
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [currentAccount, setCurrentAccount] = useState<Account | null>(null);
     const [loading, setLoading] = useState(true);
+    const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
+    const [isMfaVerified, setIsMfaVerified] = useState<boolean>(false);
+    const [sessionNonce, setSessionNonce] = useState<string>('');
 
-    // 0. Auto-Discovery Logic (Delegate to Utility)
-    const checkPendingInvites = async (currentUser: User) => {
-        await checkAndClaimInvitations(currentUser, db);
-    };
-
-    // 1. Listen to Firebase Auth state
+    // 1. Escucha de estado Firebase Auth
     useEffect(() => {
-        // [SAFETY HATCH] If auth takes more than 10 seconds, stop loading
         const safetyTimeout = setTimeout(() => {
-            if (loading) {
-                console.warn("[AUTH-CONTEXT] Safety timeout reached. Forcing loading to false.");
-                setLoading(false);
-            }
-        }, 2000);
+            setLoading(false);
+        }, 2500);
 
         const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
             clearTimeout(safetyTimeout);
@@ -44,141 +69,216 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (!currentUser) {
                 setProfile(null);
                 setCurrentAccount(null);
+                setActiveAccountId(null);
+                setIsMfaVerified(false);
+                setSessionNonce('');
                 setLoading(false);
             } else {
                 setLoading(true);
-                checkPendingInvites(currentUser);
             }
         });
+
         return () => {
             unsubscribe();
             clearTimeout(safetyTimeout);
         };
     }, []);
 
-    // 2. Listen to User Profile (Firestore) when User is authenticated
+    // 2. Escucha en tiempo real del perfil en `/users/{uid}`
     useEffect(() => {
         if (!user) return;
 
         const userRef = doc(db, 'users', user.uid);
-        const unsubscribe = onSnapshot(userRef, (snapshot) => {
-            console.log(`[AUTH-CONTEXT] Snapshot for UID ${user.uid} exists:`, snapshot.exists());
-            if (snapshot.exists()) {
-                const data = snapshot.data() as UserProfile;
-                setProfile(data);
-            } else {
-                setProfile(null);
+        const unsubscribe = onSnapshot(
+            userRef,
+            (snapshot) => {
+                if (snapshot.exists()) {
+                    setProfile(snapshot.data() as UserProfile);
+                } else {
+                    setProfile(null);
+                    setLoading(false);
+                }
+            },
+            () => {
                 setLoading(false);
             }
-        }, (error) => {
-            console.error("Error fetching user profile:", error);
-            setLoading(false);
-        });
+        );
 
         return unsubscribe;
     }, [user]);
 
-
-
-    // NEW STATE for stability
-    const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
-
-    // 3.1 Resolve ID
+    // 3. Resolución de `activeAccountId` (prioridad: selección usuario > única membresía > claims) y compuerta MFA 3 pasos
     useEffect(() => {
+        let active = true;
         if (!user) {
             setActiveAccountId(null);
+            setIsMfaVerified(false);
             setLoading(false);
             return;
         }
 
-        let targetId: string | null = null;
+        user.getIdTokenResult()
+            .then((res) => {
+                if (!active) return;
 
-        // Claims Check (Priority 1)
-        user.getIdTokenResult().then(res => {
-            if (res.claims.activeAccountId) {
-                targetId = res.claims.activeAccountId as string;
-            }
-            // Fallback Profile (Priority 2)
-            if (!targetId && profile) {
-                if (profile.memberships?.length === 1) targetId = profile.memberships[0].accountId;
-                else if (profile.lastActiveAccountId) {
-                    if (profile.memberships?.some(m => m.accountId === profile.lastActiveAccountId)) {
-                        targetId = profile.lastActiveAccountId;
-                    }
+                const claims = res.claims || {};
+                const emailLower = (user.email || '').toLowerCase();
+                const currentNonce = String(claims.auth_time || user.metadata.lastSignInTime || 'active');
+                setSessionNonce(currentNonce);
+
+                const isDevIdentity =
+                    claims.isMasterDev === true ||
+                    claims.role === 'DEV_ROOT' ||
+                    user.uid === 'dev-master-root-uid' ||
+                    emailLower === 'dev@minreport.com';
+
+                const mfaOtpAt = typeof claims.mfaOtpAt === 'number' ? claims.mfaOtpAt : 0;
+                const authTime = typeof claims.auth_time === 'number' ? claims.auth_time : 0;
+                const mfaSatisfiedByClaim = mfaOtpAt > 0 && (authTime === 0 || mfaOtpAt >= authTime - 60);
+                const mfaSatisfiedByStorage = readStoredMfaToken(user.uid) === currentNonce;
+                const isCustomOrNativeProvider =
+                    res.signInProvider === 'custom' || Capacitor.isNativePlatform();
+
+                setIsMfaVerified(
+                    Boolean(
+                        isDevIdentity ||
+                        isCustomOrNativeProvider ||
+                        mfaSatisfiedByClaim ||
+                        mfaSatisfiedByStorage
+                    )
+                );
+
+                // Prioridad de resolución de cuenta activa:
+                // 1) Selección explícita persistida (`lastActiveAccountId` en `/users/{uid}` o `localStorage`)
+                // 2) Única membresía disponible
+                // 3) Claim `activeAccountId`
+                // 4) `primaryAccountId` o primera membresía
+                const memberships = Array.isArray(profile?.memberships) ? profile!.memberships : [];
+                const validMemberships = memberships.filter((m) => {
+                    const st = String(m?.status || 'ACTIVE').toUpperCase();
+                    return st !== 'SUSPENDED' && st !== 'REVOKED' && st !== 'INACTIVE' && st !== 'DELETED';
+                });
+                const candidateMemberships = validMemberships.length > 0 ? validMemberships : memberships;
+                const hasMember = (id?: string | null) =>
+                    Boolean(id && candidateMemberships.some((m) => m.accountId === id));
+
+                const storedAccountId =
+                    typeof window !== 'undefined' ? localStorage.getItem(ACTIVE_ACCOUNT_STORAGE_KEY) : null;
+                const claimAccountId =
+                    typeof claims.activeAccountId === 'string' ? claims.activeAccountId : null;
+
+                let targetId: string | null = null;
+                if (hasMember(profile?.lastActiveAccountId)) {
+                    targetId = profile!.lastActiveAccountId!;
+                } else if (hasMember(storedAccountId)) {
+                    targetId = storedAccountId;
+                } else if (candidateMemberships.length === 1) {
+                    targetId = candidateMemberships[0].accountId;
+                } else if (claimAccountId && (candidateMemberships.length === 0 || hasMember(claimAccountId))) {
+                    targetId = claimAccountId;
+                } else if (hasMember(profile?.primaryAccountId)) {
+                    targetId = profile!.primaryAccountId!;
+                } else if (candidateMemberships.length > 0) {
+                    targetId = candidateMemberships[0].accountId;
                 }
-            }
 
-            // Set ID (triggers listener)
-            setActiveAccountId(targetId);
+                setActiveAccountId(targetId);
+                if (!targetId) {
+                    setLoading(false);
+                }
+            })
+            .catch(() => {
+                if (active) setLoading(false);
+            });
 
-            // Stop loading if no target account resolved
-            if (!targetId) setLoading(false);
-
-        }).catch(err => {
-            console.error("Token error", err);
-            setLoading(false);
-        });
-
+        return () => {
+            active = false;
+        };
     }, [user, profile]);
 
-    // 3.2 Listen to Account Data
+    // 4. Suscripción al documento `/accounts/{activeAccountId}`
     useEffect(() => {
         if (!activeAccountId) {
             setCurrentAccount(null);
             return;
         }
 
-        console.log(`[AUTH-CONTEXT] Subscribing to Account: ${activeAccountId}`);
         const accountRef = doc(db, 'accounts', activeAccountId);
-
-        const unsubscribe = onSnapshot(accountRef, (snapshot) => {
-            if (snapshot.exists()) {
-                setCurrentAccount({ id: snapshot.id, ...snapshot.data() } as Account);
-            } else {
-                console.warn("Account not found");
-                setCurrentAccount(null);
+        const unsubscribe = onSnapshot(
+            accountRef,
+            (snapshot) => {
+                if (snapshot.exists()) {
+                    setCurrentAccount({ id: snapshot.id, ...snapshot.data() } as Account);
+                } else {
+                    setCurrentAccount(null);
+                }
+                setLoading(false);
+            },
+            () => {
+                setLoading(false);
             }
-            setLoading(false); // Data ready
-        }, (err) => {
-            console.error("Account listen error", err);
-            setLoading(false);
-        });
+        );
 
         return () => unsubscribe();
     }, [activeAccountId]);
 
+    const markMfaVerified = useCallback(
+        (_ticket?: string) => {
+            if (!user) return;
+            const nonce = sessionNonce || String(user.metadata.lastSignInTime || 'active');
+            writeStoredMfaToken(user.uid, nonce);
+            setIsMfaVerified(true);
+        },
+        [user, sessionNonce]
+    );
+
     const switchAccount = async (accountId: string) => {
         if (!user || !profile) return;
 
-        // Verify membership
-        const hasMembership = profile.memberships?.some(m => m.accountId === accountId);
+        const hasMembership = profile.memberships?.some((m) => m.accountId === accountId);
         if (!hasMembership) {
-            throw new Error("User is not a member of this account.");
+            throw new Error('El usuario no pertenece a la cuenta seleccionada.');
         }
 
-        // Update local state (optimistic) and Firestore
+        setActiveAccountId(accountId);
+        if (typeof window !== 'undefined') {
+            localStorage.setItem(ACTIVE_ACCOUNT_STORAGE_KEY, accountId);
+        }
+
         try {
             const userRef = doc(db, 'users', user.uid);
             await updateDoc(userRef, { lastActiveAccountId: accountId });
-            // The snapshot listener in useEffect #2 will update 'profile', 
-            // triggering useEffect #3 to fetch 'currentAccount'
         } catch (error) {
-            console.error("Error switching account:", error);
+            console.error('[AUTH-CONTEXT] Error actualizando lastActiveAccountId:', error);
             throw error;
         }
     };
 
     const signOut = async () => {
         try {
+            if (user?.uid) {
+                clearStoredMfaToken(user.uid);
+            }
+            setIsMfaVerified(false);
             await firebaseSignOut(auth);
-            // State defaults to null via useEffect #1
         } catch (error) {
-            console.error("Error signing out:", error);
+            console.error('[AUTH-CONTEXT] Error al cerrar sesión:', error);
         }
     };
 
     return (
-        <AuthContext.Provider value={{ user, profile, currentAccount, loading, switchAccount, signOut }}>
+        <AuthContext.Provider
+            value={{
+                user,
+                profile,
+                currentAccount,
+                loading,
+                isMfaVerified,
+                markMfaVerified,
+                switchAccount,
+                signOut,
+            }}
+        >
             {children}
         </AuthContext.Provider>
     );

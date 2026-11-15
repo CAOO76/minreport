@@ -36,11 +36,11 @@ export default {
             fontSize: {
                 'hero-display': ['clamp(2.5rem, 6vw, 5rem)', { lineHeight: '0.95', letterSpacing: '-0.03em', fontWeight: '700' }],
                 'kpi-display': ['2.25rem', { lineHeight: '1.15', letterSpacing: '-0.02em', fontWeight: '700' }],
-                'h1-header': ['1.375rem', { lineHeight: '1.25', letterSpacing: '-0.01em', fontWeight: '600' }],
-                'h2-section': ['1.0625rem', { lineHeight: '1.35', letterSpacing: '0em', fontWeight: '600' }],
-                'body-main': ['0.9375rem', { lineHeight: '1.45', letterSpacing: '0em', fontWeight: '400' }],
-                'data-dense': ['0.8125rem', { lineHeight: '1.35', letterSpacing: '0.01em', fontWeight: '400' }],
-                'microcopy': ['0.6875rem', { lineHeight: '1.20', letterSpacing: '0.05em', fontWeight: '700' }],
+                'h1-header': ['1.5rem', { lineHeight: '1.25', letterSpacing: '-0.01em', fontWeight: '600' }],
+                'h2-section': ['1.1875rem', { lineHeight: '1.35', letterSpacing: '0em', fontWeight: '600' }],
+                'body-main': ['1.0625rem', { lineHeight: '1.5', letterSpacing: '0em', fontWeight: '400' }],
+                'data-dense': ['0.9375rem', { lineHeight: '1.4', letterSpacing: '0.01em', fontWeight: '400' }],
+                'microcopy': ['0.8125rem', { lineHeight: '1.3', letterSpacing: '0.04em', fontWeight: '700' }],
             },
             spacing: {
                 'fib-8': '8px',

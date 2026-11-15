@@ -7,6 +7,8 @@ import { resolveX402HmacSecret } from '../config/secrets';
 import { constantTimeEqualStrings } from '../utils/security';
 import { extractClientIp } from './rateLimiter';
 import { AuditLedger, canonicalJsonStringify } from '../core/audit-ledger';
+import { computeSixYearRetentionTimestamp } from '../core/retention-policy';
+import { TenantMetricsService } from '../services/tenant-metrics.service';
 
 /**
  * PROTOCOLO x402 GATEKEEPER (Capa 3: Monetización Agéntica M2M)
@@ -17,8 +19,10 @@ import { AuditLedger, canonicalJsonStringify } from '../core/audit-ledger';
  *   membresía activa del usuario en `tenantId` y `accounts/{tenantId}.contract.status === 'ACTIVE'`.
  * - Vía B (Wallet Programática M2M x402): `X-402-Token` o `PAYMENT-SIGNATURE` con payload firmado,
  *   ventana temporal ±5 min, anti-replay atómico en `x402_receipts/{nonce}`, verificación criptográfica
- *   (`HMAC-SHA256` o llave pública `Ed25519` en `m2m_wallets/{agentId}`) y descuento atómico de saldo.
- * - Rechazo: `HTTP 402 Payment Required` con cabeceras estándar `WWW-Authenticate` y `PAYMENT-REQUIRED`.
+ *   asimétrica `Ed25519` en `m2m_wallets/{agentId}` (fallback simétrico `HMAC-SHA256` bloqueado salvo
+ *   `NODE_ENV === 'test' && ALLOW_TEST_X402_HMAC === 'true'`) y descuento atómico de saldo.
+ * - Rechazo: `HTTP 402 Payment Required` con cabeceras estándar `WWW-Authenticate` y `PAYMENT-REQUIRED`
+ *   (sin escritura a `AuditLedger` en descubrimiento anónimo sin credenciales para evitar DoS / contención).
  */
 
 export interface X402PaymentRequirement {
@@ -149,7 +153,6 @@ async function verifyCorporateContractAccess(
                 effectiveRole === 'DEV_ROOT' ||
                 effectiveRole === 'SUPER_ADMIN' ||
                 effectiveRole === 'TEST_PILOT' ||
-                effectiveRole === 'PILOT_LEAD' ||
                 uid === 'dev-master-root-uid' ||
                 uid === 'super-admin-uid' ||
                 (emailVerifiedOk &&
@@ -236,26 +239,12 @@ export const x402Gatekeeper = (requirement: X402PaymentRequirement) => {
         // VÍA A: Contrato Corporativo Activo con identidad verificada y membresía real
         const corpResult = await verifyCorporateContractAccess(req);
         if (corpResult.authorized && corpResult.tenantId && corpResult.uid) {
-            await AuditLedger.record({
-                tenantId: corpResult.tenantId,
-                actorUid: corpResult.uid,
-                actorEmail: corpResult.email || `${corpResult.uid}@corporate.minreport.internal`,
-                action: 'M2M_CORPORATE_CONTRACT_ACCESS',
-                module: 'web3-m2m',
-                targetEntity: requirement.resourceId,
-                details: {
-                    mode: 'CORPORATE_CONTRACT',
-                    resource: req.originalUrl,
-                    priceMicroUsdCoveredByContract: requirement.priceMicroUSD,
-                },
-                ipAddress: clientIp,
-            }).catch(() => {});
-
             req.x402Context = {
                 mode: 'CORPORATE_CONTRACT',
                 tenantId: corpResult.tenantId,
                 uid: corpResult.uid,
             };
+            TenantMetricsService.recordM2mRequest({ accountId: corpResult.tenantId }).catch(() => {});
             return next();
         }
 
@@ -263,9 +252,11 @@ export const x402Gatekeeper = (requirement: X402PaymentRequirement) => {
         const rawPaymentHeader =
             (req.headers['payment-signature'] as string) ||
             (req.headers['x-402-token'] as string) ||
+            (req.headers['x-payment-proof'] as string) ||
             '';
 
         let rejectionReason = 'MISSING_PAYMENT_OR_ACTIVE_CONTRACT';
+        let identifiedAgent: { agentId: string; tenantId: string } | null = null;
 
         if (rawPaymentHeader && typeof rawPaymentHeader === 'string') {
             try {
@@ -301,6 +292,10 @@ export const x402Gatekeeper = (requirement: X402PaymentRequirement) => {
                             rejectionReason = 'X402_UNKNOWN_AGENT_WALLET';
                         } else {
                             const walletData = walletSnap.data() || {};
+                            identifiedAgent = {
+                                agentId: proof.agentId,
+                                tenantId: String(walletData.tenantId || `m2m_${proof.agentId}`),
+                            };
                             const walletStatus = String(walletData.status || 'ACTIVE').toUpperCase();
                             if (walletStatus !== 'ACTIVE') {
                                 rejectionReason = 'X402_WALLET_SUSPENDED';
@@ -328,7 +323,15 @@ export const x402Gatekeeper = (requirement: X402PaymentRequirement) => {
                                     );
                                 }
 
-                                if (!signatureVerified && walletData.authMode !== 'ED25519_ONLY') {
+                                const isTestHmacAllowed =
+                                    process.env.NODE_ENV === 'test' &&
+                                    process.env.ALLOW_TEST_X402_HMAC === 'true';
+
+                                if (
+                                    !signatureVerified &&
+                                    isTestHmacAllowed &&
+                                    walletData.authMode !== 'ED25519_ONLY'
+                                ) {
                                     const hmacSecret = (await resolveX402HmacSecret())?.trim() || '';
                                     if (hmacSecret) {
                                         for (const msg of candidateMessages) {
@@ -353,7 +356,7 @@ export const x402Gatekeeper = (requirement: X402PaymentRequirement) => {
                                 } else {
                                     // Liquidación atómica anti-replay en Firestore
                                     const receiptRef = db.collection('x402_receipts').doc(proof.nonce);
-                                    let settledTenantId = String(walletData.tenantId || 'm2m-network');
+                                    let settledTenantId = String(walletData.tenantId || `m2m_${proof.agentId}`);
 
                                     try {
                                         await db.runTransaction(async (tx) => {
@@ -380,7 +383,7 @@ export const x402Gatekeeper = (requirement: X402PaymentRequirement) => {
                                             }
 
                                             const nextBalance = currentBalance - proof.amountMicroUsd;
-                                            settledTenantId = String(wData.tenantId || 'm2m-network');
+                                            settledTenantId = String(wData.tenantId || `m2m_${proof.agentId}`);
 
                                             tx.update(walletRef, {
                                                 balanceMicroUsd: nextBalance,
@@ -388,16 +391,22 @@ export const x402Gatekeeper = (requirement: X402PaymentRequirement) => {
                                                 lastSettlementNonce: proof.nonce,
                                             });
 
+                                            const settledAtMs = Date.now();
                                             tx.set(receiptRef, {
                                                 nonce: proof.nonce,
                                                 agentId: proof.agentId,
                                                 tenantId: settledTenantId,
                                                 resource: proof.resource,
                                                 amountMicroUsd: proof.amountMicroUsd,
-                                                settledAt: Date.now(),
+                                                settledAt: settledAtMs,
+                                                retentionUntil: computeSixYearRetentionTimestamp(settledAtMs),
                                                 ipAddress: clientIp,
                                             });
                                         });
+
+                                        TenantMetricsService.recordM2mRequest({
+                                            accountId: settledTenantId,
+                                        }).catch(() => {});
 
                                         await AuditLedger.record({
                                             tenantId: settledTenantId,
@@ -464,21 +473,26 @@ export const x402Gatekeeper = (requirement: X402PaymentRequirement) => {
         );
         res.setHeader('PAYMENT-REQUIRED', paymentRequiredBase64);
 
-        await AuditLedger.record({
-            tenantId: 'm2m-unauthenticated',
-            actorUid: 'anonymous-m2m',
-            actorEmail: 'anonymous@m2m.external',
-            action: 'X402_PAYMENT_REQUIRED_REJECTED',
-            module: 'web3-m2m',
-            targetEntity: requirement.resourceId,
-            details: {
-                reason: rejectionReason,
-                resource: req.originalUrl,
-                requiredMicroUsd: requirement.priceMicroUSD,
-                challengeNonce,
-            },
-            ipAddress: clientIp,
-        }).catch(() => {});
+        // Solo auditar intentos con agente M2M identificado (firma fallida, replay, saldo insuficiente o suspensión).
+        // El descubrimiento anónimo HTTP 402 no escribe en Firestore para evitar contención/DoS en audit_ledger_head.
+        if (identifiedAgent) {
+            await AuditLedger.record({
+                tenantId: identifiedAgent.tenantId,
+                actorUid: `m2m:${identifiedAgent.agentId}`,
+                actorEmail: `${identifiedAgent.agentId}@m2m.minreport.internal`,
+                action: 'X402_PAYMENT_REQUIRED_REJECTED',
+                module: 'web3-m2m',
+                targetEntity: requirement.resourceId,
+                details: {
+                    agentId: identifiedAgent.agentId,
+                    reason: rejectionReason,
+                    resource: req.originalUrl,
+                    requiredMicroUsd: requirement.priceMicroUSD,
+                    challengeNonce,
+                },
+                ipAddress: clientIp,
+            }).catch(() => {});
+        }
 
         return res.status(402).json({
             error: 'HTTP 402 Payment Required',

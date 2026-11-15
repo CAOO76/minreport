@@ -15,9 +15,11 @@ import {
     cleanMachineryTypeLabel,
     countPublishedPillars,
     groupEquipmentByBrandAndType,
+    groupEquipmentHierarchyByBrandAndType,
     MISSING_AXIS_VALUE,
     MISSING_TECH_SPEC,
     normalizeCompactSerialIdentifier,
+    resolveModelWithinBrandLabel,
     sortEquipmentByBrandAndType,
     validateCrossAxisPhysicalPlausibility,
 } from '../opermaqDomainProjection';
@@ -69,6 +71,56 @@ describe('OPERMAQ — Separación Estricta de Dominios CATÁLOGO y FLOTA', () =>
             'CAT0242D-010',
         ]);
         expect(groups[2].brandLabel).toBe('KOMATSU');
+    });
+
+    it('agrupa jerárquicamente en 2 niveles (Marca única -> Subgrupos por Tipo de Equipo) sin repetir la marca', () => {
+        const records = [
+            {
+                id: 'cat-1',
+                make_oficial: 'Caterpillar',
+                model_oficial: '966H',
+                tipo_equipo: 'Cargador Frontal de Ruedas',
+            },
+            {
+                id: 'cat-2',
+                make_oficial: 'CATERPILLAR',
+                model_oficial: 'Caterpillar 242D ESTANDAR',
+                tipo_equipo: 'Minicargador Frontal',
+            },
+            {
+                id: 'cat-3',
+                make_oficial: 'CATERPILLAR',
+                model_oficial: '272D XHP',
+                tipo_equipo: 'Minicargador Frontal',
+            },
+            {
+                id: 'kom-1',
+                make_oficial: 'KOMATSU',
+                model_oficial: 'PC200-8',
+                tipo_equipo: 'Excavadora Hidráulica',
+            },
+        ];
+
+        const hierarchy = groupEquipmentHierarchyByBrandAndType(records);
+        expect(hierarchy).toHaveLength(2);
+
+        expect(hierarchy[0].brandKey).toBe('CATERPILLAR');
+        expect(hierarchy[0].brandLabel).toBe('CATERPILLAR');
+        expect(hierarchy[0].totalCount).toBe(3);
+        expect(hierarchy[0].subgroups).toHaveLength(2);
+        expect(hierarchy[0].subgroups[0].machineryTypeLabel).toBe('CARGADOR FRONTAL DE RUEDAS');
+        expect(hierarchy[0].subgroups[0].items).toHaveLength(1);
+        expect(hierarchy[0].subgroups[1].machineryTypeLabel).toBe('MINICARGADOR FRONTAL');
+        expect(hierarchy[0].subgroups[1].items).toHaveLength(2);
+
+        expect(hierarchy[1].brandKey).toBe('KOMATSU');
+        expect(hierarchy[1].totalCount).toBe(1);
+        expect(hierarchy[1].subgroups).toHaveLength(1);
+
+        expect(resolveModelWithinBrandLabel('CATERPILLAR', '242D ESTANDAR')).toBe('242D ESTANDAR');
+        expect(resolveModelWithinBrandLabel('CATERPILLAR', 'Caterpillar 242D ESTANDAR')).toBe(
+            '242D ESTANDAR'
+        );
     });
 
     it('contabiliza en los 5 pilares únicamente aquellos con ítems APROBADO_HUMANO publicados', () => {
@@ -136,7 +188,8 @@ describe('OPERMAQ — Separación Estricta de Dominios CATÁLOGO y FLOTA', () =>
         ).toBe('Minicargador de Chasis Rígido sobre Neumáticos');
 
         // 1. Cortafuegos Anti-Alucinación (Caso real CAT 242D):
-        // Bloquea la afirmación falsa "carga de camiones" / "mayor alcance" y proyecta el vector canónico homólogo SSL
+        // Bloquea la afirmación falsa "carga de camiones" / "mayor alcance", omite ejes no declarados
+        // y limpia conversiones imperiales secundarias dejando unidades SI puras.
         const contaminatedCat242d = buildEquipmentShortDescription({
             tipo_equipo:
                 'Minicargador de Chasis Rígido sobre Neumáticos (Skid Steer Loader — Cinemática de Levante Vertical, Serie D)',
@@ -150,9 +203,8 @@ describe('OPERMAQ — Separación Estricta de Dominios CATÁLOGO y FLOTA', () =>
         });
         expect(contaminatedCat242d).not.toContain('camiones');
         expect(contaminatedCat242d).not.toContain('mayor alcance');
-        expect(contaminatedCat242d).toBe(
-            `ROC: 975 kg (2.150 lb) · Altura máx. descarga: ${MISSING_AXIS_VALUE} · Potencia neta: ${MISSING_AXIS_VALUE} · Peso operativo: 3.166 kg (6.980 lb) · Cinemática: Levante vertical`
-        );
+        expect(contaminatedCat242d).not.toContain(MISSING_AXIS_VALUE);
+        expect(contaminatedCat242d).toBe('ROC: 975 kg · Peso: 3.166 kg · Levante vertical');
 
         // Tampoco infiere cinemática desde una oración contaminada con marketing si `tipo_equipo` no la declara
         const untrustedKinematics = buildEquipmentShortDescription({
@@ -163,12 +215,11 @@ describe('OPERMAQ — Separación Estricta de Dominios CATÁLOGO y FLOTA', () =>
             ],
         });
         expect(untrustedKinematics).not.toContain('Levante vertical');
-        expect(untrustedKinematics).toBe(
-            `ROC: 800 kg · Altura máx. descarga: ${MISSING_AXIS_VALUE} · Potencia neta: ${MISSING_AXIS_VALUE} · Peso operativo: ${MISSING_AXIS_VALUE}`
-        );
+        expect(untrustedKinematics).not.toContain(MISSING_AXIS_VALUE);
+        expect(untrustedKinematics).toBe('ROC: 800 kg');
 
-        // 2. Comparabilidad 1 a 1 entre equipos de la misma familia (`BULLDOZER SOBRE ORUGAS`: D10 NEXT GEN vs D10N)
-        // Ambos exponen exactamente los mismos 3 ejes obligatorios en idéntico orden: Potencia neta · Peso operativo · Hoja
+        // 2. Equipos con datos parciales (`BULLDOZER SOBRE ORUGAS`: D10 NEXT GEN vs D10N):
+        // Emiten únicamente ejes con valor positivo verificado (cero `[No declarado en ficha]`) y etiquetas compactas
         const d10NextGenLegacy = buildEquipmentShortDescription({
             tipo_equipo: 'Bulldozer sobre Orugas',
             contexto_operativo: ['Empuje masivo de material'],
@@ -186,14 +237,10 @@ describe('OPERMAQ — Separación Estricta de Dominios CATÁLOGO y FLOTA', () =>
             ],
         });
 
-        expect(d10NextGenLegacy).toBe(
-            `Potencia neta: 449 kW (602 HP) · Peso operativo: ${MISSING_AXIS_VALUE} · Hoja: 34.4 m³`
-        );
-        expect(d10nLegacy).toBe(
-            `Potencia neta: 388 kW (520 HP) · Peso operativo: ${MISSING_AXIS_VALUE} · Hoja: ${MISSING_AXIS_VALUE}`
-        );
+        expect(d10NextGenLegacy).toBe('Potencia: 449 kW · Hoja: 34.4 m³');
+        expect(d10nLegacy).toBe('Potencia: 388 kW');
 
-        // Tras consolidación HITL (`canonical_specs`), el vector completo se proyecta íntegro sin truncar
+        // Tras consolidación HITL (`canonical_specs`), preserva paréntesis técnicos `(U)` y respeta tope de 4 tokens
         const d10NextGenHomologated = buildEquipmentShortDescription({
             archetype_id: 'BULLDOZER_ORUGAS',
             tipo_equipo: 'Bulldozer sobre Orugas',
@@ -202,13 +249,16 @@ describe('OPERMAQ — Separación Estricta de Dominios CATÁLOGO y FLOTA', () =>
                 { axis_key: 'peso_operativo', label_es: 'Peso operativo', value_si: '70.170 kg' },
                 { axis_key: 'capacidad_hoja', label_es: 'Hoja', value_si: '34,4 m³ (U)' },
                 { axis_key: 'tren_rodaje', label_es: 'Rodaje', value_si: 'Rueda cabilla elevada' },
+                { axis_key: 'fuente_energia', label_es: 'Fuente energía', value_si: 'Diésel' },
+                { axis_key: 'consumo_energetico_nominal', label_es: 'Consumo horario combustible', value_si: '68 L/h' },
             ],
         });
         expect(d10NextGenHomologated).toBe(
-            'Potencia neta: 449 kW (602 HP) · Peso operativo: 70.170 kg · Hoja: 34,4 m³ (U) · Rodaje: Rueda cabilla elevada'
+            'Potencia: 449 kW · Peso: 70.170 kg · Hoja: 34,4 m³ (U) · Rodaje: Rueda cabilla elevada'
         );
+        expect(d10NextGenHomologated.split(' · ').length).toBeLessThanOrEqual(4);
 
-        // 3. Cobertura universal de vehículos (ej. Pick-up 4x4 PEUGEOT LANDTREK vs TOYOTA HILUX)
+        // 3. Cobertura universal de vehículos (ej. Pick-up 4x4 PEUGEOT LANDTREK) y extras compactos de `configuration_profile`
         const peugeotLandtrek = buildEquipmentShortDescription({
             tipo_equipo: 'Camioneta Pick-up Doble Cabina',
             caracteristicas_principales: [
@@ -219,8 +269,25 @@ describe('OPERMAQ — Separación Estricta de Dominios CATÁLOGO y FLOTA', () =>
             ],
         });
         expect(peugeotLandtrek).toBe(
-            'Potencia: 110 kW (150 HP) · Torque: 350 N·m · Carga útil: 1.020 kg · Tracción: 4x4'
+            'Potencia: 110 kW · Torque: 350 N·m · Carga útil: 1.020 kg · Tracción: 4x4'
         );
+
+        const dumpTruckConcise = buildEquipmentShortDescription({
+            archetype_id: 'CAMION_TOLVA_CAEX',
+            tipo_equipo: 'Camión Tolva',
+            canonical_specs: [
+                { axis_key: 'carga_util_nominal', label_es: 'Carga útil nominal', value_si: '28 t' },
+                { axis_key: 'potencia_motor', label_es: 'Potencia motor', value_si: '330 kW (449 HP)' },
+                { axis_key: 'fuente_energia', label_es: 'Fuente energía', value_si: 'Eléctrico Batería (BEV)' },
+                { axis_key: 'consumo_energetico_nominal', label_es: 'Energía horaria', value_si: '85 kWh/h' },
+            ],
+            configuration_profile: {
+                axle_or_undercarriage_config: '8x4',
+                transmission_category: 'AUTOMATED_MANUAL_AMT',
+            },
+        });
+        expect(dumpTruckConcise).toBe('Carga útil: 28 t · Potencia: 330 kW · 8x4 · Automatizada (AMT)');
+        expect(dumpTruckConcise.split(' · ')).toHaveLength(4);
     });
 
     it('valida plausibilidad física cruzada entre ejes (ISO 14397 ROC vs Peso operativo y envolvente de descarga)', () => {
@@ -420,13 +487,12 @@ describe('OPERMAQ — Separación Estricta de Dominios CATÁLOGO y FLOTA', () =>
         });
 
         expect(cat140m).toBe(
-            'Potencia neta: 136 kW (183 HP) · Vertedera: 3.700 mm · Tracción hoja: 105,1 kN · Peso operativo: 15.130 kg'
+            'Potencia: 136 kW · Vertedera: 3.700 mm · Tracción hoja: 105,1 kN · Peso: 15.130 kg'
         );
-        expect(komatsuGd655).toBe(
-            `Potencia neta: 163 kW (218 HP) · Vertedera: 3.710 mm · Tracción hoja: ${MISSING_AXIS_VALUE} · Peso operativo: 16.595 kg`
-        );
+        expect(komatsuGd655).not.toContain(MISSING_AXIS_VALUE);
+        expect(komatsuGd655).toBe('Potencia: 163 kW · Vertedera: 3.710 mm · Peso: 16.595 kg');
 
-        // 2. COMPRESOR DE AIRE: Cero "capacidad de balde", solo caudal, presión y potencia
+        // 2. COMPRESOR DE AIRE: Cero "capacidad de balde", solo caudal, presión y potencia en unidades SI limpias
         const compressor = buildEquipmentShortDescription({
             equipment_type_key: 'compresor_aire',
             tipo_equipo: 'COMPRESOR DE AIRE',
@@ -460,9 +526,7 @@ describe('OPERMAQ — Separación Estricta de Dominios CATÁLOGO y FLOTA', () =>
                 },
             ],
         });
-        expect(compressor).toBe(
-            'Caudal aire libre: 5,3 m³/min (185 CFM) · Presión trabajo: 7 bar (100 psi) · Potencia motor: 36 kW (49 HP)'
-        );
+        expect(compressor).toBe('Caudal aire libre: 5,3 m³/min · Presión trabajo: 7 bar · Potencia: 36 kW');
         expect(compressor.toLowerCase()).not.toContain('balde');
 
         // 3. TIPO INÉDITO AUTO-APRENDIDO ("CHANCADOR DE MANDÍBULAS") sin tocar ningún switch estático en frontend

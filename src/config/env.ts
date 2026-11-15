@@ -9,6 +9,7 @@ const envSchema = z.object({
     GEMINI_API_KEY: z.string().optional().default(''),
     GEMINI_DEV_API_KEY: z.string().optional().default(''),
     GOOGLE_API_KEY: z.string().optional().default(''),
+    GOOGLE_GEOCODING_API_KEY: z.string().optional().default(''),
     PORT: z.string().default('8080'),
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
     GCP_PROJECT_ID: z.string().default('minreport-8f2a8'),

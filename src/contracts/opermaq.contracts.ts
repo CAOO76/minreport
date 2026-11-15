@@ -483,25 +483,39 @@ export const FleetUnitRegistrationBodySchema = z.object({
     confirm_word: z.string().trim().min(1),
 });
 
+export const FleetUnitRegistrationSchema = FleetUnitRegistrationBodySchema.extend({
+    confirm_word: z.literal('ACTUALIZAR'),
+});
+
+export type FleetUnitRegistration = z.infer<typeof FleetUnitRegistrationSchema>;
+
+export const TenantPrivatePhotoSchema = z.object({
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    url: z.string().min(1),
+    caption: z.string().max(160).optional(),
+    width: z.number().int().positive().optional(),
+    height: z.number().int().positive().optional(),
+    uploadedAt: z.string(),
+    uploadedBy: z.string().optional(),
+});
+
+export type TenantPrivatePhoto = z.infer<typeof TenantPrivatePhotoSchema>;
+
+export const KnowledgeContributionStatusSchema = z.enum([
+    'PENDING_HUMAN_REVIEW',
+    'AUTO_DEDUPLICATED_NO_DELTA',
+    'APPROVED',
+    'REJECTED',
+]);
+
+export type KnowledgeContributionStatus = z.infer<typeof KnowledgeContributionStatusSchema>;
+
 export const ReviewContributionBodySchema = z.object({
     acceptedProposalIds: z.array(z.string()).default([]),
     rejectedProposalIds: z.array(z.string()).default([]),
     reviewNotes: z.string().max(4000).optional(),
     publishApprovedItems: z.boolean().optional().default(true),
     confirmWord: z.string().trim().min(1),
-});
-
-export const ApplyCatalogHomologationBodySchema = z.object({
-    equipment_type_key: z.string().trim().min(2).optional(),
-    archetype_id: z.string().trim().min(1).optional(),
-    tipo_equipo: z.string().trim().min(2).optional(),
-    categoria_equipo: z.string().trim().min(2).optional(),
-    official_url: z.string().trim().optional(),
-    physical_traits: AssetPhysicalTraitsSchema.optional(),
-    configuration_profile: AssetConfigurationProfileSchema.optional(),
-    approved_slots: z.array(CanonicalSpecSlotSchema).min(1),
-    energy_consumption_profile: EnergyConsumptionProfileSchema.optional(),
-    confirm_word: z.string().trim().min(1),
 });
 
 // ── Gobernanza HITL "ACTUALIZAR", Bóveda Técnica y Bucle TEST-PILOT ───────────
@@ -677,5 +691,8 @@ export const VaultRollbackVersionBodySchema = z.object({
     timestamp: z.string().trim().min(1).max(80),
     confirmWord: HitlConfirmWordSchema,
 });
+
+export * from './manufacturers.contracts';
+
 
 

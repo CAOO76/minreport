@@ -16,9 +16,9 @@
 - **Servicios Permitidos:** Cloud Firestore, Cloud Storage, Cloud Functions Gen 2, Cloud Run, Firebase Hosting / Firebase App Hosting, Cloud Secret Manager.
 
 ### 1.1 Jerarquía Soberana de 5 Tipos de Cuenta
-1. **1º DEV (`DEV_ROOT` / `dev@minreport.com`):** Gobierno de ingeniería, arquitectura núcleo, bóvedas maestras ISO y creación/gestión exclusiva de colaboradores `TEST-PILOT`.
+1. **1º DEV (`DEV_ROOT` / `dev@minreport.com`):** Gobierno de ingeniería, arquitectura núcleo, bóvedas maestras ISO, monitoreo de métricas de usuarios `TEST-PILOT` (`[Desarrollo pendiente]`) y uso exclusivo actual de la app móvil de pruebas `MINREPORT TEST` (`com.minreport.app.fieldtest`). Quedan prohibidas las funciones operativas `TEST-PILOT` dentro de `/dev` (cero creación/gestión operativa en UI o bandejas `pilot_feedback`).
 2. **2º ADMIN (`SUPER_ADMIN` / `admin@minreport.com`):** Operación comercial y administrativa del negocio MINREPORT, clientes B2B, aprobaciones EDU, disponibilidad de módulos (`modules_status`) y auditoría del ledger.
-3. **3º TEST-PILOT (`TEST_PILOT` / `PILOT_LEAD`):** Expertos humanos acreditados por `DEV`. Operan mediante una interfaz y HUD transversal dedicado con acceso total a todos los módulos (integrados en MINREPORT e independientes en `OPERMAQ` y `STOCKPILE CONTROL`) para simular proyectos mineros, registrar comentarios/solicitudes de cambio (`pilot_feedback`) y entrenar/curar la IA interna (`hitl_candidates`).
+3. **3º TEST-PILOT (`TEST_PILOT` / `PILOT_LEAD`):** Interfaz `/pilot` 100% independiente y hermética respecto de `DEV`, `ADMIN`, `B2B` y `EDU` (cero HUD transversal y cero acceso al catálogo maestro `CATALOG`). Opera como réplica funcional del entorno final `4º B2B` (integrando `OPERMAQ` en modo cliente y `GEOLAPP®` / `STOCKPILE CONTROL` sobre su propio sandbox `pilot-*`), con integración posterior planificada de módulos IA para corregir, mejorar y opinar (`[Desarrollo pendiente]`).
 4. **4º CLIENTES B2B (`B2B`):** Empresas y faenas mineras con aislamiento multi-tenant estricto por `accountId` (`tenantId`).
 5. **5º EDU (`EDUCATIONAL`):** Universidades y centros académicos en entorno sandbox controlado (`isEduSandbox: true`).
 

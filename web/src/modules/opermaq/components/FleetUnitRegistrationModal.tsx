@@ -150,8 +150,8 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                         [...items, ...existingCache].forEach((entry) => {
                             const key = String(
                                 entry.global_asset_id ||
-                                    entry.catalog_key ||
-                                    `${entry.make_oficial}_${entry.model_oficial}`
+                                entry.catalog_key ||
+                                `${entry.make_oficial}_${entry.model_oficial}`
                             ).toLowerCase();
                             if (!mergedById.has(key)) mergedById.set(key, entry);
                         });
@@ -440,20 +440,14 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
     const uploadOptionalPrivatePhoto = async (tenantAssetId: string, file: File) => {
         try {
             let uploadFile: File | Blob = file;
-            let preflightSha256 = '';
             try {
                 const digested = await mediaDigestorClient.digestFile(file, 'IMAGE_FIELD_EVIDENCE');
                 uploadFile = digested.blob;
-                preflightSha256 = digested.sha256;
             } catch {
                 uploadFile = file;
             }
             const form = new FormData();
             form.append('file', uploadFile, file.name || 'equipo_flota.webp');
-            form.append('clientOriginalBytes', String(file.size));
-            if (preflightSha256) {
-                form.append('sha256', preflightSha256);
-            }
             await authFetch(`${API_BASE_URL}/assets/${tenantAssetId}/private-photo`, {
                 method: 'POST',
                 headers: tenantId ? { 'X-Active-Account-Id': tenantId } : undefined,
@@ -598,13 +592,6 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                     optimisticRow,
                     ...existingOfflineFleet,
                 ]);
-                void syncQueue.saveOfflineKnowledge(
-                    `opermaq_unit_detail_${tenantId || 'default'}_${queuedId}`,
-                    {
-                        ...optimisticRow,
-                        private_photos: [],
-                    }
-                );
 
                 onSuccess({
                     tenantAssetId: queuedId,
@@ -644,7 +631,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                 <span className="material-symbols-outlined text-[18px]">arrow_back</span>
                             </button>
                         )}
-                        <span className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                        <span className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6] truncate">
                             {step === 'DETECT_OR_HUNT'
                                 ? t('opermaq_domains.step1_title')
                                 : t('opermaq_domains.step2_title')}
@@ -657,11 +644,10 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                         setSearchScope('brand');
                                         setHuntedCandidates([]);
                                     }}
-                                    className={`h-full px-[13px] text-[11px] font-mono font-bold uppercase tracking-[0.05em] border-0 border-b-2 transition-colors cursor-pointer rounded-none shadow-none ${
-                                        searchScope === 'brand'
-                                            ? 'border-[#C68346] text-[#C68346] bg-transparent'
-                                            : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] bg-transparent'
-                                    }`}
+                                    className={`h-full px-[13px] text-microcopy font-mono font-bold uppercase tracking-[0.05em] border-0 border-b-2 transition-colors cursor-pointer rounded-none shadow-none ${searchScope === 'brand'
+                                        ? 'border-[#C68346] text-[#C68346] bg-transparent'
+                                        : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] bg-transparent'
+                                        }`}
                                 >
                                     {t('registration.by_brand')}
                                 </button>
@@ -671,11 +657,10 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                         setSearchScope('generic');
                                         setHuntedCandidates([]);
                                     }}
-                                    className={`h-full px-[13px] text-[11px] font-mono font-bold uppercase tracking-[0.05em] border-0 border-b-2 transition-colors cursor-pointer rounded-none shadow-none ${
-                                        searchScope === 'generic'
-                                            ? 'border-[#C68346] text-[#C68346] bg-transparent'
-                                            : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] bg-transparent'
-                                    }`}
+                                    className={`h-full px-[13px] text-microcopy font-mono font-bold uppercase tracking-[0.05em] border-0 border-b-2 transition-colors cursor-pointer rounded-none shadow-none ${searchScope === 'generic'
+                                        ? 'border-[#C68346] text-[#C68346] bg-transparent'
+                                        : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] bg-transparent'
+                                        }`}
                                 >
                                     {t('registration.generic')}
                                 </button>
@@ -846,7 +831,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                 {localMatches.length > 0 && (
                                     <div className="flex flex-col gap-[8px]">
                                         <div className="flex items-center justify-between pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C]">
-                                            <span className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF] tabular-nums">
+                                            <span className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF] tabular-nums">
                                                 {t('opermaq_domains.catalog_match_found')} ({localMatches.length})
                                             </span>
                                             <button
@@ -882,7 +867,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                                                 <span className="text-[15px] font-semibold font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] whitespace-normal break-words">
                                                                     {officialName}
                                                                 </span>
-                                                                <span className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
+                                                                <span className="text-microcopy font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
                                                                     {cleanType}
                                                                 </span>
                                                             </div>
@@ -890,7 +875,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                                                 {operationalDesc}
                                                             </div>
                                                         </div>
-                                                        <div className="flex items-center gap-[13px] shrink-0 text-[11px] font-mono tabular-nums uppercase tracking-[0.05em]">
+                                                        <div className="flex items-center gap-[13px] shrink-0 text-microcopy font-mono tabular-nums uppercase tracking-[0.05em]">
                                                             {itemVersions.length > 1 && (
                                                                 <span className="text-[#475569] dark:text-[#8A93A6]">
                                                                     {t('registration.versions_count', {
@@ -922,7 +907,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                             <button
                                                 type="button"
                                                 onClick={() => void triggerCandidateHunter(false)}
-                                                className="px-[13px] py-[8px] bg-[#C68346] hover:bg-[#b0743e] text-white text-[11px] font-mono font-bold uppercase tracking-[0.05em] border-0 rounded-none cursor-pointer shrink-0 shadow-none"
+                                                className="px-[13px] py-[8px] bg-[#C68346] hover:bg-[#b0743e] text-white text-microcopy font-mono font-bold uppercase tracking-[0.05em] border-0 rounded-none cursor-pointer shrink-0 shadow-none"
                                             >
                                                 {t('opermaq_domains.search_global_candidates')}
                                             </button>
@@ -940,7 +925,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                         ) : (
                                             <>
                                                 <div className="flex flex-wrap items-center justify-between pb-[8px] border-b border-[#E2E8F0] dark:border-[#12151C] gap-[13px]">
-                                                    <span className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#C68346] tabular-nums">
+                                                    <span className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#C68346] tabular-nums">
                                                         {t('registration.matches_count', {
                                                             count: filteredHuntedCandidates.length,
                                                         })}
@@ -956,7 +941,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                                                 )}
                                                                 autoComplete="off"
                                                                 spellCheck={false}
-                                                                className="w-full sm:w-72 h-8 px-[13px] bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] text-[12px] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] outline-none rounded-none shadow-none select-text"
+                                                                className="w-full sm:w-72 h-8 px-[13px] bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] text-[0.8125rem] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] outline-none rounded-none shadow-none select-text"
                                                             />
                                                         )}
                                                         <button
@@ -997,7 +982,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                                                         <span className="text-[15px] font-semibold font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] whitespace-normal break-words">
                                                                             {fullName}
                                                                         </span>
-                                                                        <span className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
+                                                                        <span className="text-microcopy font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
                                                                             {cleanType}
                                                                         </span>
                                                                     </div>
@@ -1006,7 +991,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                                                             {configBadges.map((badge) => (
                                                                                 <span
                                                                                     key={badge}
-                                                                                    className="px-[8px] py-[2px] border border-[#E2E8F0] dark:border-[#12151C] text-[11px] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6]"
+                                                                                    className="px-[8px] py-[2px] border border-[#E2E8F0] dark:border-[#12151C] text-microcopy font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6]"
                                                                                 >
                                                                                     {badge}
                                                                                 </span>
@@ -1017,7 +1002,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                                                         {operationalDesc}
                                                                     </div>
                                                                 </div>
-                                                                <div className="flex items-center gap-[13px] shrink-0 text-[11px] font-mono tabular-nums uppercase tracking-[0.05em]">
+                                                                <div className="flex items-center gap-[13px] shrink-0 text-microcopy font-mono tabular-nums uppercase tracking-[0.05em]">
                                                                     {candVersions.length > 1 && (
                                                                         <span className="text-[#475569] dark:text-[#8A93A6]">
                                                                             {t('registration.versions_count', {
@@ -1071,7 +1056,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                 {/* Selector de Versión si tiene múltiples */}
                                 {selectedVersions.length > 1 && (
                                     <div className="flex flex-col gap-[8px]">
-                                        <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] tabular-nums">
+                                        <label className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] tabular-nums">
                                             {t('registration.design_versions', { count: selectedVersions.length })}
                                         </label>
                                         <div className="flex flex-wrap gap-[8px]">
@@ -1080,11 +1065,10 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                                     key={ver}
                                                     type="button"
                                                     onClick={() => setSelectedVersion(ver)}
-                                                    className={`px-[13px] py-[8px] text-[12px] font-mono tabular-nums border rounded-none shadow-none cursor-pointer transition-colors ${
-                                                        selectedVersion === ver
-                                                            ? 'bg-[#C68346] text-white border-[#C68346]'
-                                                            : 'bg-transparent border-[#E2E8F0] dark:border-[#12151C] text-[#0F172A] dark:text-[#F3F4F6] hover:border-[#C68346]'
-                                                    }`}
+                                                    className={`px-[13px] py-[8px] text-[0.8125rem] font-mono tabular-nums border rounded-none shadow-none cursor-pointer transition-colors ${selectedVersion === ver
+                                                        ? 'bg-[#C68346] text-white border-[#C68346]'
+                                                        : 'bg-transparent border-[#E2E8F0] dark:border-[#12151C] text-[#0F172A] dark:text-[#F3F4F6] hover:border-[#C68346]'
+                                                        }`}
                                                 >
                                                     {ver}
                                                 </button>
@@ -1096,7 +1080,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                 {/* Identificador Único (Número de Serie / Patente / VIN / TAG) */}
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-[21px]">
                                     <div className="flex flex-col gap-[8px]">
-                                        <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                                        <label className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                                             {t('opermaq_domains.identifier_type_label')}
                                         </label>
                                         <select
@@ -1112,7 +1096,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                     </div>
 
                                     <div className="flex flex-col gap-[8px]">
-                                        <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#C68346]">
+                                        <label className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#C68346]">
                                             {t('opermaq_domains.identifier_value_label')} *
                                         </label>
                                         <input
@@ -1132,7 +1116,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                 {/* Régimen de Pertenencia + Telemetría Adaptativa según Ontología Física */}
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-[21px]">
                                     <div className="flex flex-col gap-[8px]">
-                                        <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                                        <label className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                                             {t('opermaq_domains.ownership_label')}
                                         </label>
                                         <select
@@ -1151,7 +1135,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
 
                                     {showHorometer && (
                                         <div className="flex flex-col gap-[8px]">
-                                            <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                                            <label className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                                                 {t('opermaq_domains.horometer_label')}
                                             </label>
                                             <input
@@ -1169,7 +1153,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
 
                                     {showOdometerKm && (
                                         <div className="flex flex-col gap-[8px]">
-                                            <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                                            <label className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                                                 {t('opermaq_domains.odometer_km_label', 'ODÓMETRO INICIAL (KM)')}
                                             </label>
                                             <input
@@ -1187,7 +1171,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
 
                                     {showCyclesCount && (
                                         <div className="flex flex-col gap-[8px]">
-                                            <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                                            <label className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                                                 {t('opermaq_domains.cycles_count_label', 'CICLOS / VUELOS ACUMULADOS')}
                                             </label>
                                             <input
@@ -1205,7 +1189,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
 
                                     {showCalibrationDueDate && (
                                         <div className="flex flex-col gap-[8px]">
-                                            <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF]">
+                                            <label className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#00AEEF]">
                                                 {t(
                                                     'opermaq_domains.calibration_due_date_label',
                                                     'VENCIMIENTO CALIBRACIÓN METROLÓGICA'
@@ -1225,7 +1209,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
 
                                 {/* Foto Privada Opcional */}
                                 <div className="flex flex-col gap-[8px]">
-                                    <label className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                                    <label className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                                         {t('opermaq_domains.private_photo_optional')}
                                     </label>
                                     <div className="flex items-center gap-[13px]">
@@ -1233,15 +1217,13 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                             ref={photoInputRef}
                                             type="file"
                                             accept="image/jpeg,image/png,image/webp"
-                                            autoComplete="off"
-                                            spellCheck={false}
                                             onChange={(e) => setPrivatePhotoFile(e.target.files?.[0] || null)}
                                             className="hidden"
                                         />
                                         <button
                                             type="button"
                                             onClick={() => photoInputRef.current?.click()}
-                                            className="px-[13px] h-9 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] bg-transparent text-[11px] font-mono uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer"
+                                            className="px-[13px] h-9 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] bg-transparent text-microcopy font-mono uppercase tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer"
                                         >
                                             {privatePhotoFile
                                                 ? privatePhotoFile.name
@@ -1263,7 +1245,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
 
                             {/* Confirmación Quirúrgica por Palabra Clave "ACTUALIZAR" */}
                             <div className="pt-[13px] border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-col gap-[13px] shrink-0">
-                                <label className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                                <label className="text-microcopy font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                                     {t('opermaq_domains.confirm_keyword_prompt')}
                                 </label>
                                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-[13px]">
@@ -1283,7 +1265,7 @@ export const FleetUnitRegistrationModal: React.FC<FleetUnitRegistrationModalProp
                                             identifierValue.trim().length < 2 ||
                                             confirmKeyword.trim().toUpperCase() !== 'ACTUALIZAR'
                                         }
-                                        className="px-[21px] h-10 bg-[#C68346] hover:bg-[#b0743e] disabled:opacity-40 text-white text-[11px] font-mono font-bold uppercase tracking-[0.05em] border-0 rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
+                                        className="px-[21px] h-10 bg-[#C68346] hover:bg-[#b0743e] disabled:opacity-40 text-white text-microcopy font-mono font-bold uppercase tracking-[0.05em] border-0 rounded-none shadow-none cursor-pointer disabled:cursor-not-allowed"
                                     >
                                         {isSubmitting
                                             ? t('detail.registering')

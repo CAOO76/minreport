@@ -210,7 +210,7 @@ export const VaultSymbologyReadOnlyPanel: React.FC<VaultSymbologyReadOnlyPanelPr
                     <h1 className="text-[13px] font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6] leading-none">
                         {t('symbology_readonly.title')}
                     </h1>
-                    <span className="font-mono tabular-nums text-[10px] font-bold uppercase text-[#94A3B8] dark:text-[#5A6072]">
+                    <span className="font-mono tabular-nums text-microcopy font-bold uppercase text-[#94A3B8] dark:text-[#5A6072]">
                         {t('symbology_readonly.readonly_badge')}
                     </span>
                 </div>
@@ -238,7 +238,7 @@ export const VaultSymbologyReadOnlyPanel: React.FC<VaultSymbologyReadOnlyPanelPr
                             className="w-[89px]"
                             ariaLabel={t('symbology_readonly.progress_aria')}
                         />
-                        <span className="text-[10px] font-bold font-mono tabular-nums text-[#00AEEF]">
+                        <span className="text-microcopy font-bold font-mono tabular-nums text-[#00AEEF]">
                             {t('symbology_readonly.counter_summary', {
                                 symbols: entries.length,
                                 hunted: huntedItemsCount,
@@ -255,10 +255,10 @@ export const VaultSymbologyReadOnlyPanel: React.FC<VaultSymbologyReadOnlyPanelPr
                         <span className="material-symbols-outlined !text-[24px] text-[#94A3B8] dark:text-[#5A6072]">
                             info
                         </span>
-                        <p className="text-[12px] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6] font-mono">
+                        <p className="text-[0.8125rem] font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6] font-mono">
                             {t('symbology_readonly.empty_hunted_title')}
                         </p>
-                        <p className="text-[12px] text-[#475569] dark:text-[#8A93A6] leading-relaxed">
+                        <p className="text-[0.8125rem] text-[#475569] dark:text-[#8A93A6] leading-relaxed">
                             {t('symbology_readonly.empty_hunted_desc')}
                         </p>
                     </div>
@@ -273,16 +273,16 @@ export const VaultSymbologyReadOnlyPanel: React.FC<VaultSymbologyReadOnlyPanelPr
                         <table className="w-full border-collapse text-left">
                             <thead>
                                 <tr className="border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D]">
-                                    <th className="p-[13px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] w-[89px]">
+                                    <th className="p-[13px] text-microcopy font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] w-[89px]">
                                         {t('symbology_readonly.col_symbol')}
                                     </th>
-                                    <th className="p-[13px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] w-[190px]">
+                                    <th className="p-[13px] text-microcopy font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] w-[190px]">
                                         {t('symbology_readonly.col_code')}
                                     </th>
-                                    <th className="p-[13px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] w-[260px]">
+                                    <th className="p-[13px] text-microcopy font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] w-[260px]">
                                         {t('symbology_readonly.col_meaning')}
                                     </th>
-                                    <th className="p-[13px] text-[11px] font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                                    <th className="p-[13px] text-microcopy font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                                         {t('symbology_readonly.col_application')}
                                     </th>
                                 </tr>
@@ -310,13 +310,13 @@ export const VaultSymbologyReadOnlyPanel: React.FC<VaultSymbologyReadOnlyPanelPr
                                             </div>
                                         </td>
                                         <td className="p-[13px] font-mono tabular-nums">
-                                            <p className="text-[12px] font-bold text-[#0F172A] dark:text-[#F3F4F6] select-text">
+                                            <p className="text-[0.8125rem] font-bold text-[#0F172A] dark:text-[#F3F4F6] select-text">
                                                 {entry.concept_id}
                                             </p>
-                                            <p className="text-[11px] text-[#C68346] font-bold mt-[4px]">
+                                            <p className="text-microcopy text-[#C68346] font-bold mt-[4px]">
                                                 {entry.iso_code || entry.category}
                                             </p>
-                                            <p className="text-[10px] text-[#94A3B8] dark:text-[#5A6072] mt-[4px]">
+                                            <p className="text-microcopy text-[#94A3B8] dark:text-[#5A6072] mt-[4px]">
                                                 {entry.source_mode === 'BRAND_VARIANT'
                                                     ? t('symbology_readonly.mode_oem_verified')
                                                     : t('symbology_readonly.mode_iso_standard')}
@@ -326,7 +326,7 @@ export const VaultSymbologyReadOnlyPanel: React.FC<VaultSymbologyReadOnlyPanelPr
                                             <p className="text-[13px] font-semibold text-[#0F172A] dark:text-[#F3F4F6]">
                                                 {entry.technical_name_es}
                                             </p>
-                                            <p className="text-[12px] text-[#475569] dark:text-[#8A93A6] mt-[4px] leading-snug">
+                                            <p className="text-[0.8125rem] text-[#475569] dark:text-[#8A93A6] mt-[4px] leading-snug">
                                                 {entry.description_es}
                                             </p>
                                         </td>
@@ -337,10 +337,10 @@ export const VaultSymbologyReadOnlyPanel: React.FC<VaultSymbologyReadOnlyPanelPr
                                                         key={`${entry.concept_id}-ch-${idx}`}
                                                         className="border-l-2 border-[#C68346] pl-[8px]"
                                                     >
-                                                        <p className="font-mono tabular-nums text-[11px] font-bold text-[#00AEEF]">
+                                                        <p className="font-mono tabular-nums text-microcopy font-bold text-[#00AEEF]">
                                                             [{ch.pillar_label}] {ch.item_title}
                                                         </p>
-                                                        <p className="text-[12px] text-[#0F172A] dark:text-[#F3F4F6] mt-[2px] leading-snug">
+                                                        <p className="text-[0.8125rem] text-[#0F172A] dark:text-[#F3F4F6] mt-[2px] leading-snug">
                                                             {ch.context_excerpt}
                                                         </p>
                                                     </div>

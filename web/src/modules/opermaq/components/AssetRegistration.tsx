@@ -467,29 +467,27 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                 {/* Header Técnico Plano con Selector de Modo Integrado */}
                 <header className="px-[21px] h-[55px] flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] shrink-0 gap-[13px]">
                     <div className="flex items-center gap-[21px] min-w-0 h-full">
-                        <span className="text-[11px] font-mono font-bold tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6] uppercase truncate">
+                        <span className="text-microcopy font-mono font-bold tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6] uppercase truncate">
                             {t('common.new_catalog')}
                         </span>
                         <div className="flex items-center h-full">
                             <button
                                 type="button"
                                 onClick={() => handleSwitchMode('brand')}
-                                className={`h-full px-[13px] text-[11px] font-mono font-bold uppercase tracking-[0.05em] border-0 border-b-2 transition-colors cursor-pointer rounded-none shadow-none ${
-                                    mode === 'brand'
+                                className={`h-full px-[13px] text-microcopy font-mono font-bold uppercase tracking-[0.05em] border-0 border-b-2 transition-colors cursor-pointer rounded-none shadow-none ${mode === 'brand'
                                         ? 'border-[#C68346] text-[#C68346] bg-transparent'
                                         : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] bg-transparent'
-                                }`}
+                                    }`}
                             >
                                 {t('registration.by_brand')}
                             </button>
                             <button
                                 type="button"
                                 onClick={() => handleSwitchMode('generic')}
-                                className={`h-full px-[13px] text-[11px] font-mono font-bold uppercase tracking-[0.05em] border-0 border-b-2 transition-colors cursor-pointer rounded-none shadow-none ${
-                                    mode === 'generic'
+                                className={`h-full px-[13px] text-microcopy font-mono font-bold uppercase tracking-[0.05em] border-0 border-b-2 transition-colors cursor-pointer rounded-none shadow-none ${mode === 'generic'
                                         ? 'border-[#C68346] text-[#C68346] bg-transparent'
                                         : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] bg-transparent'
-                                }`}
+                                    }`}
                             >
                                 {t('registration.generic')}
                             </button>
@@ -619,7 +617,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                 info
                             </span>
                             <div className="flex-1 min-w-0">
-                                <span className="block text-[11px] font-mono font-bold text-[#00AEEF] uppercase tracking-[0.05em]">
+                                <span className="block text-microcopy font-mono font-bold text-[#00AEEF] uppercase tracking-[0.05em]">
                                     {t('registration.clarification_required')}
                                 </span>
                                 <p className="text-[13px] text-[#0F172A] dark:text-[#F3F4F6] leading-snug">
@@ -637,7 +635,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                     error
                                 </span>
                                 <div className="flex-1 min-w-0">
-                                    <span className="block text-[11px] font-mono font-bold text-[#C68346] uppercase tracking-[0.05em]">
+                                    <span className="block text-microcopy font-mono font-bold text-[#C68346] uppercase tracking-[0.05em]">
                                         {t('common.error')}
                                     </span>
                                     <p className="text-[13px] text-[#0F172A] dark:text-[#F3F4F6] leading-snug break-words">
@@ -659,7 +657,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                     <button
                                         type="button"
                                         onClick={handleEnableOfflineDraft}
-                                        className="px-[13px] py-[8px] border border-[#C68346] bg-transparent text-[#C68346] hover:bg-[#C68346]/10 text-[11px] font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer rounded-none shadow-none"
+                                        className="px-[13px] py-[8px] border border-[#C68346] bg-transparent text-[#C68346] hover:bg-[#C68346]/10 text-microcopy font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer rounded-none shadow-none"
                                     >
                                         {t('registration.offline_manual_fallback_btn')}
                                     </button>
@@ -672,7 +670,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                     {isResolving && (
                         <div className="flex-1 flex flex-col items-center justify-center gap-[13px]">
                             <M3CircularProgress size={28} strokeWidth={3} tone="copper" />
-                            <span className="text-[11px] font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
+                            <span className="text-microcopy font-mono font-bold uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6]">
                                 {t('registration.analyzing')}
                             </span>
                         </div>
@@ -687,7 +685,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                         security_update_warning
                                     </span>
                                     <div className="space-y-[8px]">
-                                        <span className="block text-[11px] font-mono font-bold uppercase text-[#C68346] tracking-[0.05em]">
+                                        <span className="block text-microcopy font-mono font-bold uppercase text-[#C68346] tracking-[0.05em]">
                                             {t('registration.security_rejection')}
                                         </span>
                                         <p className="text-[13px] text-[#0F172A] dark:text-[#F3F4F6] leading-snug">
@@ -700,10 +698,10 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                     {/* Barra de Cabecera del Listado + Filtro Rápido */}
                                     <div className="flex flex-wrap items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-[8px] gap-[13px] shrink-0">
                                         <div className="flex items-center gap-[13px]">
-                                            <span className="text-[11px] font-mono font-bold text-[#475569] dark:text-[#8A93A6] uppercase tracking-[0.05em]">
+                                            <span className="text-microcopy font-mono font-bold text-[#475569] dark:text-[#8A93A6] uppercase tracking-[0.05em]">
                                                 {t('admin_catalog.tab_candidates')}
                                             </span>
-                                            <span className="text-[11px] font-mono font-bold tabular-nums text-[#C68346] uppercase tracking-[0.05em]">
+                                            <span className="text-microcopy font-mono font-bold tabular-nums text-[#C68346] uppercase tracking-[0.05em]">
                                                 {t('registration.matches_count', { count: filteredCandidates.length })}
                                             </span>
                                         </div>
@@ -719,7 +717,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                                         autoComplete="off"
                                                         spellCheck={false}
                                                         aria-label={t('registration.filter_versions_placeholder')}
-                                                        className="w-full h-8 px-[13px] pr-8 text-[12px] bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] text-[#0F172A] dark:text-[#F3F4F6] placeholder:text-[#94A3B8] dark:placeholder:text-[#5A6072] outline-none rounded-none shadow-none select-text font-mono tabular-nums"
+                                                        className="w-full h-8 px-[13px] pr-8 text-[0.8125rem] bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] text-[#0F172A] dark:text-[#F3F4F6] placeholder:text-[#94A3B8] dark:placeholder:text-[#5A6072] outline-none rounded-none shadow-none select-text font-mono tabular-nums"
                                                     />
                                                     {candidateFilter.length > 0 && (
                                                         <button
@@ -754,7 +752,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                         {isRegistering && (
                                             <div className="absolute inset-0 z-20 bg-[#FFFFFF] dark:bg-[#07090D] flex flex-col items-center justify-center gap-[8px]">
                                                 <M3CircularProgress size={24} strokeWidth={3} tone="copper" />
-                                                <span className="text-[11px] font-mono font-bold tracking-[0.05em] text-[#C68346] uppercase">
+                                                <span className="text-microcopy font-mono font-bold tracking-[0.05em] text-[#C68346] uppercase">
                                                     {t('registration.indexing_profile')}
                                                 </span>
                                             </div>
@@ -774,9 +772,8 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                                 return (
                                                     <div
                                                         key={candidateKey}
-                                                        className={`py-[13px] px-[8px] hover:bg-[#F8FAFC] dark:hover:bg-[#000000] transition-colors cursor-pointer flex items-center justify-between gap-[21px] ${
-                                                            isRegistering ? 'opacity-20 pointer-events-none' : ''
-                                                        }`}
+                                                        className={`py-[13px] px-[8px] hover:bg-[#F8FAFC] dark:hover:bg-[#000000] transition-colors cursor-pointer flex items-center justify-between gap-[21px] ${isRegistering ? 'opacity-20 pointer-events-none' : ''
+                                                            }`}
                                                         onClick={() => {
                                                             setSelectedCandidate(c);
                                                             setConfirmText('');
@@ -788,7 +785,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                                                 <span className="text-[15px] font-semibold font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6] whitespace-normal break-words">
                                                                     {c.make_oficial} {c.model_oficial}
                                                                 </span>
-                                                                <span className="text-[11px] font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
+                                                                <span className="text-microcopy font-mono uppercase tracking-[0.05em] text-[#475569] dark:text-[#8A93A6] whitespace-normal break-words">
                                                                     {cleanType}
                                                                 </span>
                                                             </div>
@@ -797,7 +794,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                                                     {configBadges.map((badge) => (
                                                                         <span
                                                                             key={badge}
-                                                                            className="px-[8px] py-[2px] border border-[#E2E8F0] dark:border-[#12151C] text-[11px] font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6]"
+                                                                            className="px-[8px] py-[2px] border border-[#E2E8F0] dark:border-[#12151C] text-microcopy font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6]"
                                                                         >
                                                                             {badge}
                                                                         </span>
@@ -809,7 +806,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                                             </p>
                                                         </div>
 
-                                                        <div className="flex items-center gap-[13px] shrink-0 text-[11px] font-mono tabular-nums uppercase tracking-[0.05em]">
+                                                        <div className="flex items-center gap-[13px] shrink-0 text-microcopy font-mono tabular-nums uppercase tracking-[0.05em]">
                                                             {candVersions.length > 1 && (
                                                                 <span className="text-[#475569] dark:text-[#8A93A6]">
                                                                     {t('registration.versions_count', {
@@ -855,14 +852,14 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                 <button
                                     type="button"
                                     onClick={handleConfirmCancel}
-                                    className="flex-1 px-[13px] py-[8px] border border-[#C68346] bg-[#C68346] text-[#FFFFFF] hover:opacity-90 text-[11px] font-mono font-bold uppercase tracking-[0.05em] transition-opacity cursor-pointer rounded-none shadow-none"
+                                    className="flex-1 px-[13px] py-[8px] border border-[#C68346] bg-[#C68346] text-[#FFFFFF] hover:opacity-90 text-microcopy font-mono font-bold uppercase tracking-[0.05em] transition-opacity cursor-pointer rounded-none shadow-none"
                                 >
                                     {t('registration.yes_cancel')}
                                 </button>
                                 <button
                                     type="button"
                                     onClick={() => setShowCancelConfirm(false)}
-                                    className="flex-1 px-[13px] py-[8px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] hover:border-[#C68346] hover:text-[#C68346] text-[11px] font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer rounded-none shadow-none"
+                                    className="flex-1 px-[13px] py-[8px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6] hover:border-[#C68346] hover:text-[#C68346] text-microcopy font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer rounded-none shadow-none"
                                 >
                                     {t('registration.no_continue')}
                                 </button>
@@ -889,7 +886,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                 >
                                     <span className="material-symbols-outlined text-[18px]">arrow_back</span>
                                 </button>
-                                <span className="text-[11px] font-mono font-bold tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6] uppercase">
+                                <span className="text-microcopy font-mono font-bold tracking-[0.05em] text-[#0F172A] dark:text-[#F3F4F6] uppercase">
                                     {t('registration.confirm_title')}
                                 </span>
                             </div>
@@ -912,13 +909,12 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                             {/* Identidad Técnica Principal */}
                             <div className="pb-[21px] space-y-[8px]">
                                 <div className="flex items-center justify-between gap-[13px]">
-                                    <span className="text-[11px] font-mono font-bold text-[#C68346] uppercase tracking-[0.05em]">
+                                    <span className="text-microcopy font-mono font-bold text-[#C68346] uppercase tracking-[0.05em]">
                                         {selectedCandidate.make_oficial}
                                     </span>
                                     <span
-                                        className={`text-[11px] font-mono font-bold uppercase tracking-[0.05em] ${
-                                            selectedCandidate.isNew ? 'text-[#00AEEF]' : 'text-[#C68346]'
-                                        }`}
+                                        className={`text-microcopy font-mono font-bold uppercase tracking-[0.05em] ${selectedCandidate.isNew ? 'text-[#00AEEF]' : 'text-[#C68346]'
+                                            }`}
                                     >
                                         {selectedCandidate.isNew
                                             ? t('registration.status_new_catalog')
@@ -939,7 +935,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                             (badge) => (
                                                 <span
                                                     key={badge}
-                                                    className="px-[8px] py-[4px] border border-[#C68346] text-[11px] font-mono tabular-nums font-bold text-[#0F172A] dark:text-[#F3F4F6]"
+                                                    className="px-[8px] py-[4px] border border-[#C68346] text-microcopy font-mono tabular-nums font-bold text-[#0F172A] dark:text-[#F3F4F6]"
                                                 >
                                                     {badge}
                                                 </span>
@@ -951,7 +947,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
 
                             {/* Selector Plano de Versión / Configuración */}
                             <div className="py-[21px] space-y-[13px]">
-                                <span className="block text-[11px] font-mono font-bold text-[#475569] dark:text-[#8A93A6] uppercase tracking-[0.05em] tabular-nums">
+                                <span className="block text-microcopy font-mono font-bold text-[#475569] dark:text-[#8A93A6] uppercase tracking-[0.05em] tabular-nums">
                                     {t('registration.design_versions', { count: selectedCandidateVersions.length })}
                                 </span>
                                 <div className="flex flex-wrap gap-[8px]">
@@ -960,11 +956,10 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                             key={ver}
                                             type="button"
                                             onClick={() => setSelectedVersion(ver)}
-                                            className={`px-[13px] py-[8px] border text-[12px] font-mono tabular-nums font-bold uppercase tracking-[0.03em] transition-colors cursor-pointer rounded-none shadow-none ${
-                                                selectedVersion === ver
+                                            className={`px-[13px] py-[8px] border text-[0.8125rem] font-mono tabular-nums font-bold uppercase tracking-[0.03em] transition-colors cursor-pointer rounded-none shadow-none ${selectedVersion === ver
                                                     ? 'border-[#C68346] bg-[#C68346] text-[#FFFFFF]'
                                                     : 'border-[#E2E8F0] dark:border-[#12151C] bg-transparent text-[#0F172A] dark:text-[#F3F4F6] hover:border-[#C68346]'
-                                            }`}
+                                                }`}
                                         >
                                             {ver}
                                         </button>
@@ -974,7 +969,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
 
                             {/* Especificaciones Principales Homólogas */}
                             <div className="py-[21px] space-y-[8px]">
-                                <span className="block text-[11px] font-mono font-bold text-[#475569] dark:text-[#8A93A6] uppercase tracking-[0.05em]">
+                                <span className="block text-microcopy font-mono font-bold text-[#475569] dark:text-[#8A93A6] uppercase tracking-[0.05em]">
                                     {t('registration.main_specs')}
                                 </span>
                                 <p className="text-[15px] font-mono tabular-nums leading-[1.45] text-[#0F172A] dark:text-[#F3F4F6] whitespace-normal break-words select-text">
@@ -999,7 +994,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                             className="border-t border-[#E2E8F0] dark:border-[#12151C] pt-[13px] shrink-0 flex flex-col gap-[13px]"
                         >
                             <div className="flex flex-wrap items-baseline justify-between gap-[8px]">
-                                <span className="text-[12px] text-[#475569] dark:text-[#8A93A6]">
+                                <span className="text-[0.8125rem] text-[#475569] dark:text-[#8A93A6]">
                                     {t('registration.confirm_scale_prefix')}{' '}
                                     <strong className="font-mono tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">
                                         {selectedCandidate.make_oficial} {selectedCandidate.model_oficial} (
@@ -1019,7 +1014,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                         setSelectedCandidate(null);
                                         setConfirmText('');
                                     }}
-                                    className="px-[21px] h-10 border border-[#E2E8F0] dark:border-[#12151C] bg-transparent text-[#0F172A] dark:text-[#F3F4F6] hover:border-[#C68346] hover:text-[#C68346] text-[11px] font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer rounded-none shadow-none"
+                                    className="px-[21px] h-10 border border-[#E2E8F0] dark:border-[#12151C] bg-transparent text-[#0F172A] dark:text-[#F3F4F6] hover:border-[#C68346] hover:text-[#C68346] text-microcopy font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer rounded-none shadow-none"
                                 >
                                     {t('common.back')}
                                 </button>
@@ -1035,7 +1030,7 @@ export const AssetRegistration: React.FC<AssetRegistrationProps> = ({ onSuccess,
                                 <button
                                     type="submit"
                                     disabled={confirmText.trim().toUpperCase() !== 'ACTUALIZAR' || isRegistering}
-                                    className="px-[21px] h-10 border border-[#C68346] bg-[#C68346] text-[#FFFFFF] hover:opacity-90 disabled:border-[#E2E8F0] dark:disabled:border-[#12151C] disabled:bg-[#F8FAFC] dark:disabled:bg-[#000000] disabled:text-[#94A3B8] dark:disabled:text-[#5A6072] text-[11px] font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer disabled:cursor-not-allowed rounded-none shadow-none"
+                                    className="px-[21px] h-10 border border-[#C68346] bg-[#C68346] text-[#FFFFFF] hover:opacity-90 disabled:border-[#E2E8F0] dark:disabled:border-[#12151C] disabled:bg-[#F8FAFC] dark:disabled:bg-[#000000] disabled:text-[#94A3B8] dark:disabled:text-[#5A6072] text-microcopy font-mono font-bold uppercase tracking-[0.05em] transition-colors cursor-pointer disabled:cursor-not-allowed rounded-none shadow-none"
                                 >
                                     {t('common.register_action')}
                                 </button>

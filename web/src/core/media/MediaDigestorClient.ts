@@ -560,6 +560,41 @@ class MinreportMediaDigestorEngine {
     }
 
     /**
+     * Validación determinista y sellado SHA-256 en cliente para mallas glTF 2.0 (`.glb`).
+     */
+    public async digestGlb(file: File | Blob): Promise<ClientDigestedMedia> {
+        const arrayBuffer = await file.arrayBuffer();
+        if (arrayBuffer.byteLength < 12) {
+            throw new Error(
+                'Binario MESH_3D_GLB inválido: tamaño insuficiente para cabecera glTF 2.0.'
+            );
+        }
+        const view = new DataView(arrayBuffer);
+        if (view.getUint32(0, true) !== 0x46546c67 || view.getUint32(4, true) !== 2) {
+            throw new Error(
+                'Binario MESH_3D_GLB inválido: cabecera magic glTF 2.0 (0x46546c67 v2) ausente o corrupta.'
+            );
+        }
+
+        const sha256 = await this.computeSha256Hex(arrayBuffer);
+        const outBlob =
+            file.type === 'model/gltf-binary'
+                ? file
+                : new Blob([arrayBuffer], { type: 'model/gltf-binary' });
+
+        return {
+            blob: outBlob,
+            sha256,
+            mimeType: 'model/gltf-binary',
+            extension: 'glb',
+            profile: 'MESH_3D_GLB',
+            originalBytes: arrayBuffer.byteLength,
+            optimizedBytes: arrayBuffer.byteLength,
+            savingsRatio: 0,
+        };
+    }
+
+    /**
      * Digestión polimórfica automática por archivo
      */
     public async digestFile(
@@ -569,6 +604,13 @@ class MinreportMediaDigestorEngine {
         const mime = (file.type || '').toLowerCase();
         const name = file instanceof File ? file.name.toLowerCase() : '';
 
+        if (
+            requestedProfile === 'MESH_3D_GLB' ||
+            mime.includes('gltf-binary') ||
+            name.endsWith('.glb')
+        ) {
+            return this.digestGlb(file);
+        }
         if (mime.includes('svg') || name.endsWith('.svg') || requestedProfile === 'VECTOR_SVG_CLEAN') {
             return this.digestSvg(file);
         }
@@ -629,6 +671,7 @@ class MinreportMediaDigestorEngine {
             scope?: CasStorageScope;
             tenantId?: string;
             filename?: string;
+            clientOriginalBytes?: number;
         } = {}
     ): Promise<{ descriptor: DigestedMediaDescriptor; digested: ClientDigestedMedia }> {
         const digested = await this.digestFile(file, options.profile);
@@ -636,6 +679,24 @@ class MinreportMediaDigestorEngine {
         const filename =
             options.filename ||
             (file instanceof File ? file.name : `asset_${digested.sha256.slice(0, 10)}.${digested.extension}`);
+
+        const effectiveOriginalBytes = Math.max(
+            digested.originalBytes,
+            typeof options.clientOriginalBytes === 'number' && Number.isFinite(options.clientOriginalBytes)
+                ? Math.round(options.clientOriginalBytes)
+                : 0
+        );
+        const effectiveSavingsRatio =
+            effectiveOriginalBytes > 0 && effectiveOriginalBytes > digested.optimizedBytes
+                ? Math.max(
+                      0,
+                      Number(
+                          ((effectiveOriginalBytes - digested.optimizedBytes) / effectiveOriginalBytes).toFixed(4)
+                      )
+                  )
+                : digested.savingsRatio;
+        digested.originalBytes = effectiveOriginalBytes;
+        digested.savingsRatio = effectiveSavingsRatio;
 
         // Guardar en caché CAS local IndexedDB para disponibilidad inmediata en terreno sin red
         await offlineStorage
@@ -646,7 +707,7 @@ class MinreportMediaDigestorEngine {
                 profile: digested.profile,
                 scope,
                 filename,
-                originalBytes: digested.originalBytes,
+                originalBytes: effectiveOriginalBytes,
                 optimizedBytes: digested.optimizedBytes,
                 updatedAt: Date.now(),
             })
@@ -665,9 +726,10 @@ class MinreportMediaDigestorEngine {
                     mimeType: digested.mimeType,
                     extension: digested.extension,
                     originalFilename: filename,
-                    originalBytes: digested.originalBytes,
+                    originalBytes: effectiveOriginalBytes,
                     optimizedBytes: digested.optimizedBytes,
-                    savingsRatio: digested.savingsRatio,
+                    savingsRatio: effectiveSavingsRatio,
+                    savingsPct: Math.max(0, Math.round(effectiveSavingsRatio * 1000) / 10),
                     width: digested.width,
                     height: digested.height,
                     pageCount: digested.pageCount,
@@ -703,7 +765,7 @@ class MinreportMediaDigestorEngine {
         form.append('file', digested.blob, filename);
         form.append('profile', digested.profile);
         form.append('scope', scope);
-        form.append('clientOriginalBytes', String(digested.originalBytes));
+        form.append('clientOriginalBytes', String(effectiveOriginalBytes));
 
         const uploadRes = await fetch(`${apiBase}/media/digest-upload`, {
             method: 'POST',

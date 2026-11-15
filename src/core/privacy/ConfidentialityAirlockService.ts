@@ -5,6 +5,7 @@ import { AuditLedger } from '../audit-ledger';
 import { CasStorageService } from '../media/CasStorageService';
 import { MediaDigestorServer } from '../media/MediaDigestorServer';
 import { ResilientAIClient } from '../resilient-ai-client';
+import { validateTaxId } from '../../utils/taxIdValidator';
 
 /**
  * CONFIDENTIALITY AIRLOCK SERVICE v4.0 (Zero-Trust Commons Gatekeeper — ISO 27001)
@@ -66,17 +67,28 @@ export interface AirlockEvaluationResult {
 
 export class ConfidentialityAirlockService {
     /**
-     * Redacción determinista de primera línea (0 ms, 100% determinista — Ley N° 19.628 y Nueva Ley N° 21.719).
-     * Cubre RUT, correos, teléfonos +56, coordenadas GPS decimales y UTM (husos 18/19), contratos/OC,
-     * patentes chilenas contextualizadas (preservando códigos OEM como PC200-8, WA380-6, ISO 7000),
-     * truncado de cola privada en VIN/PIN de 17 caracteres (ISO 3779 / ISO 10261) y números de serie S/N.
+     * Redacción determinista de primera línea (0 ms, 100% determinista — Ley N° 19.628, Nueva Ley N° 21.719 y Multi-País).
+     * Cubre RUT (CL), RUC (PE), CNPJ/CPF (BR), CUIT/CUIL (AR), correos, teléfonos +56 e internacionales E.164,
+     * coordenadas GPS WGS84 y UTM globales (husos 01..60), contratos/OC, patentes chilenas contextualizadas
+     * (preservando códigos OEM como PC200-8, WA380-6, ISO 7000), truncado de cola privada en VIN/PIN de 17 caracteres
+     * (ISO 3779 / ISO 10261) y números de serie S/N.
      */
-    public static scrubDeterministicPii(rawText: string): {
+    public static scrubDeterministicPii(
+        rawText: string,
+        countryOrOptions?: string | { countryCode?: string }
+    ): {
         scrubbed: string;
         redactedCategories: string[];
     } {
         let s = rawText || '';
         const cats = new Set<string>();
+        const normalizedCountry = (
+            typeof countryOrOptions === 'string'
+                ? countryOrOptions
+                : countryOrOptions?.countryCode || ''
+        )
+            .trim()
+            .toUpperCase();
 
         const applyRule = (regex: RegExp, replacement: string, category: string) => {
             regex.lastIndex = 0;
@@ -87,25 +99,81 @@ export class ConfidentialityAirlockService {
             }
         };
 
-        // 1. RUT Chileno (ej. 12.345.678-9, 76543210-K)
-        applyRule(/\b\d{1,2}\.?\d{3}\.?\d{3}-[\dkK]\b/g, '[RUT_RESERVADO]', 'RUT_IDENTIFICADOR');
-
-        // 2. Emails corporativos o personales
+        // 1. Emails corporativos o personales (antes de teléfonos/IDs para proteger dominios con dígitos)
         applyRule(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[EMAIL_RESERVADO]', 'EMAIL');
 
-        // 3. Teléfonos móviles y fijos de Chile (+56 9 ..., +56 2 ..., 9 XXXX XXXX)
+        // 2. Identificadores Tributarios Multi-País (BR CNPJ/CPF, AR CUIT/CUIL, PE RUC, CL RUT)
+        // 2.a CNPJ Brasileño formateado (XX.XXX.XXX/XXXX-XX) o etiquetado (CNPJ: 14 dígitos)
+        applyRule(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g, '[CNPJ_RESERVADO]', 'CNPJ_IDENTIFICADOR');
+        applyRule(/\bCNPJ\s*[:#-]?\s*\d{14}\b/gi, '[CNPJ_RESERVADO]', 'CNPJ_IDENTIFICADOR');
+        if (normalizedCountry === 'BR') {
+            s = s.replace(/(?<![+\d./-])\b\d{14}\b(?![./-\d])/g, (match) => {
+                if (validateTaxId(match, 'BR').valid) {
+                    cats.add('CNPJ_IDENTIFICADOR');
+                    return '[CNPJ_RESERVADO]';
+                }
+                return match;
+            });
+            applyRule(/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g, '[CPF_RESERVADO]', 'CPF_IDENTIFICADOR');
+        }
+
+        // 2.b CUIT / CUIL Argentino formateado (20/23/24/27/30/33/34-XXXXXXXX-X) o etiquetado (antes de RUT para no truncar prefijo XX-)
+        applyRule(
+            /\b(?:20|23|24|27|30|33|34)-\d{8}-\d\b/g,
+            '[CUIT_RESERVADO]',
+            'CUIT_IDENTIFICADOR'
+        );
+        applyRule(
+            /\b(?:CUIT|CUIL)\s*[:#-]?\s*(?:20|23|24|27|30|33|34)-?\d{8}-?\d\b/gi,
+            '[CUIT_RESERVADO]',
+            'CUIT_IDENTIFICADOR'
+        );
+        if (normalizedCountry === 'AR') {
+            s = s.replace(/(?<![+\d-])\b(?:20|23|24|27|30|33|34)\d{9}\b(?![-\d])/g, (match) => {
+                if (validateTaxId(match, 'AR').valid) {
+                    cats.add('CUIT_IDENTIFICADOR');
+                    return '[CUIT_RESERVADO]';
+                }
+                return match;
+            });
+        }
+
+        // 2.c RUC Peruano SUNAT (etiquetado o 11 dígitos con prefijo SUNAT válido y Módulo-11 verificado; excluye teléfonos con '+')
+        applyRule(
+            /\bRUC\s*[:#-]?\s*(?:10|15|16|17|20)\d{9}\b/gi,
+            '[RUC_RESERVADO]',
+            'RUC_IDENTIFICADOR'
+        );
+        s = s.replace(/(?<![+\d./-])\b(?:10|15|16|17|20)\d{9}\b(?![./-\d])/g, (match) => {
+            if (validateTaxId(match, 'PE').valid) {
+                cats.add('RUC_IDENTIFICADOR');
+                return '[RUC_RESERVADO]';
+            }
+            return match;
+        });
+
+        // 2.d RUT Chileno (ej. 12.345.678-9, 76543210-K)
+        applyRule(/(?<![\d-])\b\d{1,2}\.?\d{3}\.?\d{3}-[\dkK]\b/g, '[RUT_RESERVADO]', 'RUT_IDENTIFICADOR');
+
+        // 3. Teléfonos móviles/fijos de Chile (+56 9 ..., +56 2 ..., 9 XXXX XXXX) e internacionales ITU-T E.164 (+[1-9]\d{6,14})
         applyRule(
             /(?<![\dA-Za-z])(?:\+?56[\s.-]*)?(?:9[\s.-]*\d{4}[\s.-]*\d{4}|2[\s.-]*\d{4}[\s.-]*\d{4})\b/g,
             '[TEL_RESERVADO]',
             'TELEFONO'
         );
+        applyRule(/(?<![\w.])\+[1-9]\d{6,14}\b/g, '[TEL_RESERVADO]', 'TELEFONO');
+        applyRule(
+            /(?<![\w.])\+[1-9]\d{0,2}(?:[\s().-]+\d{2,5}){2,4}\b/g,
+            '[TEL_RESERVADO]',
+            'TELEFONO'
+        );
 
-        // 4. Coordenadas GPS decimales explícitas
+        // 4. Coordenadas GPS decimales explícitas (WGS84)
         applyRule(/[-+]?\d{1,2}\.\d{4,}\s*,\s*[-+]?\d{1,3}\.\d{4,}/g, '[COORD_FAENA_RESERVADA]', 'GPS_FAENA');
 
-        // 5. Coordenadas UTM en husos chilenos 18 y 19 (bandas F, G, H, J, K)
+        // 5. Coordenadas UTM globales (husos 01..60, bandas latitudinales C..X excluyendo I y O y Northings ecuatoriales hasta 10000000 mN)
         applyRule(
-            /\b(?:UTM\s*[:#-]?\s*)?(?:18|19)\s*[FGHJK](?:\s+|\s*[,;/-]\s*)\d{6}(?:[.,]\d+)?(?:\s*m?\s*E)?[\s,;/-]+\d{7}(?:[.,]\d+)?(?:\s*m?\s*N)?\b/gi,
+            /\b(?:(?:UTM|ZONA|ZONE)\s*[:#-]?\s*)?(?:0?[1-9]|[1-5]\d|60)\s*[C-HJ-NP-X](?:\s+|\s*[,;/-]\s*)\d{6}(?:[.,]\d+)?(?:\s*m?\s*E)?[\s,;/-]+(?:10000000|0?\d{6,7}|\d{1,8}(?=(?:[.,]\d+)?\s*m\s*N\b))(?:[.,]\d+)?(?:\s*m?\s*N)?\b/gi,
             '[UTM_FAENA_RESERVADA]',
             'UTM_FAENA'
         );

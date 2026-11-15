@@ -7,6 +7,7 @@ import { safeFetchExternal } from '../utils/ssrfGuard';
 import { AuthRequest } from '../middleware/admin';
 import { extractClientIp } from '../middleware/rateLimiter';
 import { AuditLedger } from '../core/audit-ledger';
+import { UpsertEduInstitutionPayloadSchema } from '../contracts/session.contracts';
 
 function assertAdminOrDevCaller(req: AuthRequest): boolean {
     const u = req.user;
@@ -55,19 +56,53 @@ export const validateEduRequest = async (req: AuthRequest, res: Response) => {
         }
 
         const data = requestSnap.data()!;
-        if (data.type !== 'EDUCATIONAL') {
+        const isEduRequest =
+            data.type === 'EDUCATIONAL' ||
+            data.isEduSandbox === true ||
+            data.classification === 'edu';
+        if (!isEduRequest) {
             return res.status(400).json({ error: 'Not an educational request' });
         }
 
-        const domainCheck = await EduGatekeeper.verifyDomain(String(data.email || ''));
-        const hipoCheck = await EduGatekeeper.verifyHipoList(String(data.run || ''), String(data.email || ''));
-        const gatekeeperStatus = domainCheck.valid && hipoCheck.matched ? 'VERIFIED' : 'NEEDS_REVIEW';
+        const emailStr = String(data.email || '').trim().toLowerCase();
+        const emailDomain = emailStr.includes('@') ? emailStr.split('@')[1].trim() : '';
+
+        let matchedInstitution: { id: string; name: string; domainMatched: string } | null = null;
+        if (emailDomain) {
+            const activeInstSnap = await db
+                .collection('edu_institutions')
+                .where('status', '==', 'ACTIVE')
+                .get();
+            for (const instDoc of activeInstSnap.docs) {
+                const instData = instDoc.data() || {};
+                const domains = Array.isArray(instData.domains) ? instData.domains : [];
+                const foundDomain = domains.find((rawD: unknown) => {
+                    const d = String(rawD || '').trim().toLowerCase().replace(/^@/, '');
+                    return d && (emailDomain === d || emailDomain.endsWith(`.${d}`));
+                });
+                if (foundDomain) {
+                    matchedInstitution = {
+                        id: instDoc.id,
+                        name: String(instData.name || ''),
+                        domainMatched: String(foundDomain),
+                    };
+                    break;
+                }
+            }
+        }
+
+        const domainCheck = await EduGatekeeper.verifyDomain(emailStr);
+        const hipoCheck = await EduGatekeeper.verifyHipoList(String(data.run || data.taxId || ''), emailStr);
+        const domainValid = domainCheck.valid || Boolean(matchedInstitution);
+        const gatekeeperStatus =
+            domainValid && (hipoCheck.matched || Boolean(matchedInstitution)) ? 'VERIFIED' : 'NEEDS_REVIEW';
 
         await requestSnap.ref.update({
             gatekeeperFindings: {
-                domainValid: domainCheck.valid,
+                domainValid,
                 hipoMatched: hipoCheck.matched,
                 hipoData: hipoCheck.data || null,
+                matchedInstitution,
                 validatedAt: new Date().toISOString()
             },
             gatekeeperStatus,
@@ -80,14 +115,18 @@ export const validateEduRequest = async (req: AuthRequest, res: Response) => {
             action: 'EDU_VALIDATE_REQUEST',
             module: 'edu',
             targetEntity: requestId,
-            details: { domainValid: domainCheck.valid, hipoMatched: hipoCheck.matched, gatekeeperStatus },
+            details: { domainValid, hipoMatched: hipoCheck.matched, matchedInstitution, gatekeeperStatus },
             ipAddress: extractClientIp(req),
         });
 
         return res.status(200).json({
             success: true,
             findings: {
-                domain: domainCheck,
+                domain: {
+                    ...domainCheck,
+                    valid: domainValid,
+                    matchedInstitution,
+                },
                 hipo: hipoCheck
             }
         });
@@ -196,5 +235,268 @@ export const analyzeEduDocument = async (req: AuthRequest, res: Response) => {
             error: 'AI Analysis failed',
             aiResult: { verified: false, confidence: 0, summary: 'Error procesando documento (Fail-Closed).' },
         });
+    }
+};
+
+function normalizeEduDomains(rawDomains: unknown): unknown {
+    if (!Array.isArray(rawDomains)) return rawDomains;
+    return Array.from(
+        new Set(
+            rawDomains
+                .map((d) => String(d || '').trim().toLowerCase().replace(/^@/, ''))
+                .filter((d) => d.length > 0)
+        )
+    );
+}
+
+function buildEduInstitutionCandidate(req: AuthRequest) {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const headerConfirmation =
+        typeof req.headers?.['x-hitl-confirmation'] === 'string'
+            ? req.headers['x-hitl-confirmation'].trim().toUpperCase()
+            : undefined;
+    const rawConfirm = body.confirmationKeyword ?? body.confirmationWord ?? headerConfirmation;
+    return {
+        ...body,
+        domains: normalizeEduDomains(body.domains),
+        confirmationKeyword: typeof rawConfirm === 'string' ? rawConfirm.trim().toUpperCase() : rawConfirm,
+    };
+}
+
+/**
+ * GET /api/auth/access/edu-institutions
+ * Catálogo público de instituciones académicas acreditadas activas.
+ */
+export const listPublicEduInstitutions = async (_req: AuthRequest, res: Response) => {
+    try {
+        const snapshot = await db
+            .collection('edu_institutions')
+            .where('status', '==', 'ACTIVE')
+            .get();
+
+        const institutions = snapshot.docs
+            .map((doc) => {
+                const d = doc.data() || {};
+                return {
+                    id: doc.id,
+                    name: String(d.name || ''),
+                    countryCode: String(d.countryCode || 'CL').toUpperCase(),
+                    domains: Array.isArray(d.domains) ? d.domains.map((x: unknown) => String(x)) : [],
+                    defaultMaxProjects: Number(d.defaultMaxProjects || 3),
+                    eduInstitutionLogo: d.eduInstitutionLogo || null,
+                };
+            })
+            .sort((a, b) => a.name.localeCompare(b.name, 'es'));
+
+        return res.status(200).json({ success: true, institutions });
+    } catch (error) {
+        console.error('[EDU] Error listPublicEduInstitutions:', error);
+        return res.status(500).json({ error: 'No se pudo cargar el catálogo de instituciones EDU.' });
+    }
+};
+
+/**
+ * GET /api/admin/edu-institutions
+ * Lista completa para 2º ADMIN / 1º DEV.
+ */
+export const listAdminEduInstitutions = async (req: AuthRequest, res: Response) => {
+    try {
+        if (!assertAdminOrDevCaller(req)) {
+            return res.status(403).json({ error: 'Prohibido: Acceso exclusivo a SUPER_ADMIN o DEV_ROOT.' });
+        }
+
+        const snapshot = await db.collection('edu_institutions').get();
+        const institutions = snapshot.docs
+            .map((doc) => {
+                const d = doc.data() || {};
+                return {
+                    id: doc.id,
+                    name: String(d.name || ''),
+                    countryCode: String(d.countryCode || 'CL').toUpperCase(),
+                    domains: Array.isArray(d.domains) ? d.domains.map((x: unknown) => String(x)) : [],
+                    status: d.status === 'SUSPENDED' ? 'SUSPENDED' : 'ACTIVE',
+                    defaultMaxProjects: Number(d.defaultMaxProjects || 3),
+                    eduInstitutionLogo: d.eduInstitutionLogo || null,
+                    createdAt: d.createdAt ?? null,
+                    updatedAt: d.updatedAt ?? null,
+                };
+            })
+            .sort((a, b) => {
+                const diff = Number(b.updatedAt || 0) - Number(a.updatedAt || 0);
+                return diff !== 0 ? diff : a.name.localeCompare(b.name, 'es');
+            });
+
+        return res.status(200).json({ success: true, institutions });
+    } catch (error) {
+        console.error('[EDU] Error listAdminEduInstitutions:', error);
+        return res.status(500).json({ error: 'Error listando instituciones EDU.' });
+    }
+};
+
+/**
+ * POST /api/admin/edu-institutions
+ * Registra nueva institución EDU acreditada con logo CAS opcional y HITL "ACTUALIZAR".
+ */
+export const createAdminEduInstitution = async (req: AuthRequest, res: Response) => {
+    try {
+        if (!assertAdminOrDevCaller(req)) {
+            return res.status(403).json({ error: 'Prohibido: Acceso exclusivo a SUPER_ADMIN o DEV_ROOT.' });
+        }
+
+        const candidate = buildEduInstitutionCandidate(req);
+        const parsed = UpsertEduInstitutionPayloadSchema.safeParse(candidate);
+        if (!parsed.success) {
+            return res.status(400).json({
+                error: parsed.error.issues[0]?.message || 'Payload de institución EDU inválido.',
+                details: parsed.error.format(),
+            });
+        }
+
+        const { name, countryCode, domains, status, defaultMaxProjects, eduInstitutionLogo } = parsed.data;
+        const normalizedDomains = normalizeEduDomains(domains) as string[];
+        if (normalizedDomains.length === 0) {
+            return res.status(400).json({ error: 'Debe especificar al menos un dominio institucional válido.' });
+        }
+
+        const nowMs = Date.now();
+        const docRef = db.collection('edu_institutions').doc();
+        const institutionDoc = {
+            id: docRef.id,
+            name,
+            countryCode,
+            domains: normalizedDomains,
+            status,
+            defaultMaxProjects,
+            eduInstitutionLogo: eduInstitutionLogo ?? null,
+            createdAt: nowMs,
+            updatedAt: nowMs,
+            createdByUid: String(req.user?.uid || ''),
+        };
+
+        await docRef.set(institutionDoc);
+
+        await AuditLedger.record({
+            tenantId: docRef.id,
+            actorUid: String(req.user?.uid || ''),
+            actorEmail: String(req.user?.email || ''),
+            action: 'EDU_INSTITUTION_CREATED',
+            module: 'edu',
+            targetEntity: docRef.id,
+            details: {
+                name,
+                countryCode,
+                domains: normalizedDomains,
+                status,
+                defaultMaxProjects,
+                hasLogo: Boolean(eduInstitutionLogo),
+            },
+            ipAddress: extractClientIp(req),
+        });
+
+        return res.status(201).json({ success: true, institution: institutionDoc });
+    } catch (error) {
+        console.error('[EDU] Error createAdminEduInstitution:', error);
+        return res.status(500).json({ error: 'Error creando institución EDU.' });
+    }
+};
+
+/**
+ * PATCH /api/admin/edu-institutions/:id
+ * Actualiza institución EDU y propaga eduInstitutionLogo + eduInstitutionName a cuentas/tenants vinculados.
+ */
+export const updateAdminEduInstitution = async (req: AuthRequest, res: Response) => {
+    try {
+        if (!assertAdminOrDevCaller(req)) {
+            return res.status(403).json({ error: 'Prohibido: Acceso exclusivo a SUPER_ADMIN o DEV_ROOT.' });
+        }
+
+        const id = String(req.params.id || '').trim();
+        if (!id || id.length > 128) {
+            return res.status(400).json({ error: 'ID de institución EDU inválido.' });
+        }
+
+        const instRef = db.collection('edu_institutions').doc(id);
+        const instSnap = await instRef.get();
+        if (!instSnap.exists) {
+            return res.status(404).json({ error: 'Institución EDU no encontrada.' });
+        }
+
+        const candidate = buildEduInstitutionCandidate(req);
+        const parsed = UpsertEduInstitutionPayloadSchema.safeParse(candidate);
+        if (!parsed.success) {
+            return res.status(400).json({
+                error: parsed.error.issues[0]?.message || 'Payload de actualización EDU inválido.',
+                details: parsed.error.format(),
+            });
+        }
+
+        const { name, countryCode, domains, status, defaultMaxProjects, eduInstitutionLogo } = parsed.data;
+        const normalizedDomains = normalizeEduDomains(domains) as string[];
+        if (normalizedDomains.length === 0) {
+            return res.status(400).json({ error: 'Debe especificar al menos un dominio institucional válido.' });
+        }
+
+        const nowMs = Date.now();
+        const existingData = instSnap.data() || {};
+        const updatedDoc = {
+            id,
+            name,
+            countryCode,
+            domains: normalizedDomains,
+            status,
+            defaultMaxProjects,
+            eduInstitutionLogo: eduInstitutionLogo ?? null,
+            createdAt: existingData.createdAt ?? nowMs,
+            updatedAt: nowMs,
+            updatedByUid: String(req.user?.uid || ''),
+        };
+
+        await instRef.set(updatedDoc, { merge: true });
+
+        const [linkedAccountsSnap, linkedTenantsSnap] = await Promise.all([
+            db.collection('accounts').where('eduInstitutionId', '==', id).get(),
+            db.collection('tenants').where('eduInstitutionId', '==', id).get(),
+        ]);
+
+        const propagationUpdates = {
+            eduInstitutionName: name,
+            eduInstitutionLogo: eduInstitutionLogo ?? null,
+            updatedAt: nowMs,
+        };
+
+        await Promise.all([
+            ...linkedAccountsSnap.docs.map((doc) => doc.ref.update(propagationUpdates).catch(() => {})),
+            ...linkedTenantsSnap.docs.map((doc) => doc.ref.update(propagationUpdates).catch(() => {})),
+        ]);
+
+        await AuditLedger.record({
+            tenantId: id,
+            actorUid: String(req.user?.uid || ''),
+            actorEmail: String(req.user?.email || ''),
+            action: 'EDU_INSTITUTION_UPDATED',
+            module: 'edu',
+            targetEntity: id,
+            details: {
+                name,
+                countryCode,
+                domains: normalizedDomains,
+                status,
+                defaultMaxProjects,
+                hasLogo: Boolean(eduInstitutionLogo),
+                propagatedAccounts: linkedAccountsSnap.size,
+                propagatedTenants: linkedTenantsSnap.size,
+            },
+            ipAddress: extractClientIp(req),
+        });
+
+        return res.status(200).json({
+            success: true,
+            institution: updatedDoc,
+            propagatedAccounts: linkedAccountsSnap.size,
+            propagatedTenants: linkedTenantsSnap.size,
+        });
+    } catch (error) {
+        console.error('[EDU] Error updateAdminEduInstitution:', error);
+        return res.status(500).json({ error: 'Error actualizando institución EDU.' });
     }
 };

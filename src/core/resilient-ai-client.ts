@@ -10,6 +10,8 @@ import {
 import { CasStorageService } from './media/CasStorageService';
 import { MediaDigestorServer } from './media/MediaDigestorServer';
 import { ConfidentialityAirlockService } from './privacy/ConfidentialityAirlockService';
+import { computeThirtyDayTtlTimestamp } from './retention-policy';
+import { TenantMetricsService } from '../services/tenant-metrics.service';
 
 export { Type };
 
@@ -20,8 +22,8 @@ export { Type };
  * 1. Prohibidas respuestas simuladas o datos inventados (Fail-Closed).
  * 2. Enjambre jerárquico vigente (Gemini 3.x):
  *    - Primario (Pro): gemini-3.1-pro-preview
- *    - Secundario (Flash): gemini-3.8-flash
- *    - Ancla HA (Flash-Lite): gemini-3.5-flash-lite
+ *    - Secundario (Flash): gemini-3-flash-preview
+ *    - Ancla HA (Flash-Lite): gemini-3.1-flash-lite-preview
  * 3. Retroceso exponencial invariante con jitter:
  *    D(n) = min(32s, 2.0s * 2^n) + jitter(0, 1s)
  * 4. Soporte nativo de Grounding Web (googleSearch, urlContext, codeExecution),
@@ -32,7 +34,7 @@ export { Type };
 
 export type ThinkingLevel = 'none' | 'low' | 'medium' | 'high';
 export type SwarmTier = 'PRIMARY' | 'SECONDARY' | 'ANCHOR_HA';
-export type AIModuleScope = 'opermaq' | 'stockpile' | 'core' | 'test-pilot';
+export type AIModuleScope = 'opermaq' | 'stockpile' | 'geolapp' | 'core' | 'test-pilot';
 
 export interface GroundingSource {
     title: string;
@@ -54,6 +56,8 @@ export interface AIInferenceRequest {
     systemInstruction?: string;
     module: AIModuleScope;
     tenantId?: string;
+    isEduSandbox?: boolean;
+    countryCode?: string;
     thinkingLevel?: ThinkingLevel;
     thinkingBudget?: number;
     preferredTier?: SwarmTier;
@@ -459,7 +463,8 @@ export class ResilientAIClient {
         baseInstruction?: string
     ): Promise<string | undefined> {
         const now = Date.now();
-        const cached = pilotRulesCache.get(module);
+        const cacheScope: AIModuleScope = module === 'geolapp' ? 'stockpile' : module;
+        const cached = pilotRulesCache.get(cacheScope);
         let rulesBlock = '';
 
         if (cached && cached.expiresAt > now) {
@@ -469,12 +474,21 @@ export class ResilientAIClient {
                 const snap = await db
                     .collection('pilot_feedback')
                     .where('status', '==', 'APPLIED_TO_AI')
+                    .limit(50)
                     .get();
 
                 if (!snap.empty) {
+                    const matchesModule = (feedbackModule: unknown): boolean => {
+                        if (!feedbackModule) return true;
+                        if (cacheScope === 'stockpile') {
+                            return feedbackModule === 'stockpile' || feedbackModule === 'geolapp';
+                        }
+                        return feedbackModule === cacheScope;
+                    };
+
                     const rules = snap.docs
                         .map((d) => d.data() || {})
-                        .filter((data) => !data.module || data.module === module)
+                        .filter((data) => matchesModule(data.module))
                         .sort((a, b) => {
                             const tsA = this.parseFeedbackTimestampMs(
                                 a.appliedAt ?? a.updatedAt ?? a.timestamp ?? a.createdAt
@@ -497,17 +511,24 @@ export class ResilientAIClient {
             } catch {
                 // No bloquear inferencia si la colección aún no está disponible
             }
-            pilotRulesCache.set(module, { expiresAt: now + PILOT_RULES_TTL_MS, rulesBlock });
+            pilotRulesCache.set(cacheScope, { expiresAt: now + PILOT_RULES_TTL_MS, rulesBlock });
         }
 
         if (!baseInstruction && !rulesBlock) return undefined;
         return `${baseInstruction || ''}${rulesBlock}`.trim();
     }
 
-    private static resolveEffectiveTier(req: AIInferenceRequest): SwarmTier {
+    public static resolveEffectiveTier(req: AIInferenceRequest): SwarmTier {
+        // Cuentas académicas EDU (5ª cuenta soberana): siempre forzar ANCHOR_HA (Flash-Lite) por control FinOps
+        if (req.isEduSandbox === true) {
+            return 'ANCHOR_HA';
+        }
         if (req.preferredTier) return req.preferredTier;
-        // Optimización de costos: extracciones estructuradas deterministas (Temp <= 0.1) sin búsqueda web
-        // ni mutación HITL crítica se enrutan por defecto a SECONDARY (Flash) ahorrando ~80% de tokens frente a Pro.
+        // Consultas conversacionales sin responseSchema (salvo requerimiento HITL explícito): usar SECONDARY (Flash)
+        if (!req.responseSchema) {
+            return req.requireHITL ? 'PRIMARY' : 'SECONDARY';
+        }
+        // Extracciones estructuradas deterministas (Temp <= 0.1) sin búsqueda web ni mutación HITL crítica usan Flash
         const isDeterministicSchemaExtraction =
             Boolean(req.responseSchema) &&
             !req.useGoogleSearch &&
@@ -733,8 +754,8 @@ export class ResilientAIClient {
      * Delega de forma unificada en `ConfidentialityAirlockService.scrubDeterministicPii` para purgar RUT, patentes PPU
      * contextualizadas, teléfonos +56, correos, coordenadas GPS/UTM, colas VIN/PIN de 17 caracteres, S/N y contratos OC/PO.
      */
-    public static sanitizePromptForLey21719(rawText: string): string {
-        return ConfidentialityAirlockService.scrubDeterministicPii(rawText || '').scrubbed;
+    public static sanitizePromptForLey21719(rawText: string, countryCode?: string): string {
+        return ConfidentialityAirlockService.scrubDeterministicPii(rawText || '', countryCode).scrubbed;
     }
 
     /**
@@ -745,11 +766,11 @@ export class ResilientAIClient {
         const startTime = Date.now();
         const sanitizedSystemInstruction =
             typeof rawReq.systemInstruction === 'string'
-                ? this.sanitizePromptForLey21719(rawReq.systemInstruction)
+                ? this.sanitizePromptForLey21719(rawReq.systemInstruction, rawReq.countryCode)
                 : undefined;
         const req: AIInferenceRequest = {
             ...rawReq,
-            prompt: this.sanitizePromptForLey21719(rawReq.prompt),
+            prompt: this.sanitizePromptForLey21719(rawReq.prompt, rawReq.countryCode),
             systemInstruction: sanitizedSystemInstruction,
         };
 
@@ -787,6 +808,14 @@ export class ResilientAIClient {
                         l1MemoryHit: true,
                         success: true,
                     });
+                    if (req.tenantId) {
+                        TenantMetricsService.recordAiUsage({
+                            accountId: req.tenantId,
+                            isEduSandbox: req.isEduSandbox,
+                            cacheHit: true,
+                            tier: l1Hit.tierUsed,
+                        }).catch(() => {});
+                    }
                     return {
                         text: l1Hit.text,
                         model: l1Hit.model,
@@ -835,6 +864,14 @@ export class ResilientAIClient {
                             cached: true,
                             success: true,
                         });
+                        if (req.tenantId) {
+                            TenantMetricsService.recordAiUsage({
+                                accountId: req.tenantId,
+                                isEduSandbox: req.isEduSandbox,
+                                cacheHit: true,
+                                tier: hitTier,
+                            }).catch(() => {});
+                        }
                         return {
                             text: cachedData.text,
                             model: hitModel,
@@ -994,6 +1031,20 @@ export class ResilientAIClient {
                         success: true,
                     });
 
+                    if (req.tenantId) {
+                        const usageMeta = (response as any)?.usageMetadata;
+                        const promptTokens = Number(usageMeta?.promptTokenCount || 0);
+                        const outputTokens = Number(usageMeta?.candidatesTokenCount || 0);
+                        TenantMetricsService.recordAiUsage({
+                            accountId: req.tenantId,
+                            isEduSandbox: req.isEduSandbox,
+                            cacheHit: false,
+                            tier,
+                            tokensInput: promptTokens,
+                            tokensOutput: outputTokens,
+                        }).catch(() => {});
+                    }
+
                     // Prohibido contaminar `ai_inference_cache` con respuestas sin fuentes cuando `useGoogleSearch` estaba activo
                     const canPersistCache =
                         isCacheable && cacheKey && !(req.useGoogleSearch && sources.length === 0);
@@ -1007,6 +1058,7 @@ export class ResilientAIClient {
                             webSearchQueries: queries,
                             expiresAt: Date.now() + MEMORY_INFERENCE_TTL_MS,
                         });
+                        const cacheTtl = computeThirtyDayTtlTimestamp();
                         db.collection(this.CACHE_COLLECTION)
                             .doc(cacheKey)
                             .set({
@@ -1017,6 +1069,8 @@ export class ResilientAIClient {
                                 text,
                                 groundingSources: sources,
                                 webSearchQueries: queries,
+                                expiresAt: cacheTtl,
+                                ttlExpiresAt: cacheTtl,
                                 createdAt: new Date().toISOString(),
                             })
                             .catch(() => { });
@@ -1252,6 +1306,7 @@ export class ResilientAIClient {
                     clientOriginalBytes: rawBuf.length,
                 });
 
+                const imgCacheTtl = computeThirtyDayTtlTimestamp();
                 await db.collection(this.CACHE_COLLECTION).doc(cacheKey).set({
                     cacheKey,
                     module: 'opermaq',
@@ -1264,6 +1319,8 @@ export class ResilientAIClient {
                     originalBytes: cas.originalBytes,
                     optimizedBytes: cas.optimizedBytes,
                     savingsPct: cas.savingsPct ?? 0,
+                    expiresAt: imgCacheTtl,
+                    ttlExpiresAt: imgCacheTtl,
                     createdAt: new Date().toISOString(),
                 });
             })().catch(() => { });
@@ -1443,6 +1500,7 @@ export class ResilientAIClient {
                 }
                 memoryEmbeddingCache.set(cacheKey, normalized);
 
+                const embCacheTtl = computeThirtyDayTtlTimestamp();
                 db.collection(this.CACHE_COLLECTION)
                     .doc(cacheKey)
                     .set({
@@ -1453,6 +1511,8 @@ export class ResilientAIClient {
                         taskType,
                         dim,
                         embedding: normalized,
+                        expiresAt: embCacheTtl,
+                        ttlExpiresAt: embCacheTtl,
                         createdAt: new Date().toISOString(),
                     })
                     .catch(() => { });

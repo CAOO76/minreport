@@ -77,7 +77,7 @@ export const M3TextField: React.FC<M3TextFieldProps> = ({
                 )}
                 {hasLabel && (
                     <label className={`absolute left-[13px] origin-left truncate max-w-[calc(100%-5rem)] pointer-events-none transition-all duration-200 font-bold uppercase tracking-widest select-none
-                        ${(hasValue || placeholder) ? 'top-[8px] text-[10px] scale-90' : 'top-[13px] text-[10px]'}
+                        ${(hasValue || placeholder) ? 'top-[8px] text-microcopy scale-90' : 'top-[13px] text-microcopy'}
                         ${hasError ? 'text-[#C68346]' : 'text-[#475569] dark:text-[#8A93A6] focus-within:text-[#C68346]'}`}>
                         {label}
                         {required && <span className="text-[#C68346] ml-[8px]">*</span>}
@@ -86,13 +86,13 @@ export const M3TextField: React.FC<M3TextFieldProps> = ({
             </div>
 
             {error && (
-                <div className="mt-[8px] text-[10px] text-[#C68346] px-[13px] flex items-center gap-[8px] uppercase font-bold tracking-tighter">
+                <div className="mt-[8px] text-microcopy text-[#C68346] px-[13px] flex items-center gap-[8px] uppercase font-bold tracking-tighter">
                     <span className="material-symbols-outlined text-sm">error</span> {error}
                 </div>
             )}
 
             {helperText && !error && (
-                <div className="mt-[8px] text-[10px] text-[#94A3B8] dark:text-[#5A6072] px-[13px] uppercase font-bold tracking-tighter">
+                <div className="mt-[8px] text-microcopy text-[#94A3B8] dark:text-[#5A6072] px-[13px] uppercase font-bold tracking-tighter">
                     {helperText}
                 </div>
             )}

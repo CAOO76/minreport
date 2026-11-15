@@ -1,36 +1,110 @@
+import { Fragment, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { MiningAICopilot } from '../components/ai/MiningAICopilot';
-import { TestPilotTransversalHUD } from '../components/pilot/TestPilotTransversalHUD';
-import { Outlet, NavLink, useLocation } from 'react-router-dom';
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import BrandLogo from '../components/BrandLogo';
+import SecureImage from '../components/common/SecureImage';
+import ContextOrientationBar from '../components/common/ContextOrientationBar';
+import ErgonomicScaleSwitch from '../components/common/ErgonomicScaleSwitch';
 import { LanguageSwitch } from '../components/LanguageSwitch';
 import { ThemeSwitch } from '../components/ThemeSwitch';
 import { useAuth } from '../context/AuthContext';
 import { useMinReportSession } from '../context/MinReportSessionContext';
+import { CORE_MODULES } from '../core/modules/module-registry';
+import { getApiUrl } from '../utils/network';
+
+const SIDEBAR_CALLOUT_CLASS =
+    'pointer-events-none opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 absolute left-full ml-3 top-1/2 -translate-y-1/2 z-50 whitespace-nowrap bg-[#0F172A] text-[#F3F4F6] dark:bg-[#F8FAFC] dark:text-[#0F172A] px-fib-13 py-fib-8 text-data-dense font-mono border border-[#C68346] rounded-none shadow-none';
 
 const ClientLayout = () => {
+    const { t } = useTranslation();
     const location = useLocation();
-    const isFullBleedModule = location.pathname.startsWith('/opermaq') || location.pathname.startsWith('/stockpile');
-    const { signOut: signOutContext, profile, currentAccount } = useAuth();
+    const navigate = useNavigate();
+    const cleanPath = location.pathname.replace(/\/+$/, '') || '/dashboard';
+    const isGeolappRoute = cleanPath.startsWith('/geolapp') || cleanPath.startsWith('/stockpile');
+    const isFullBleedModule =
+        location.pathname.startsWith('/opermaq') ||
+        location.pathname.startsWith('/stockpile') ||
+        location.pathname.startsWith('/geolapp');
+    const [activeFloatingPanel, setActiveFloatingPanel] = useState<'none' | 'copilot'>('none');
+    const { signOut: signOutContext, profile, currentAccount, switchAccount } = useAuth();
     const { session, hasModuleAccess } = useMinReportSession();
+
+    const isHomeRoute = cleanPath === '/dashboard' || cleanPath === '/';
+
+    const orientationTrail: string[] = (() => {
+        if (isHomeRoute) return [t('core_orientation.home_summary')];
+        if (cleanPath.startsWith('/opermaq')) {
+            return [t('core_orientation.home_summary'), t('core_orientation.opermaq_workspace')];
+        }
+        if (cleanPath.startsWith('/geolapp/geomensura')) {
+            return [
+                t('core_orientation.home_summary'),
+                t('core_orientation.geolapp_workspace'),
+                t('core_orientation.geolapp_geomensura'),
+            ];
+        }
+        if (cleanPath.startsWith('/geolapp/exploracion')) {
+            return [
+                t('core_orientation.home_summary'),
+                t('core_orientation.geolapp_workspace'),
+                t('core_orientation.geolapp_exploracion'),
+            ];
+        }
+        if (cleanPath.startsWith('/geolapp/estructural')) {
+            return [
+                t('core_orientation.home_summary'),
+                t('core_orientation.geolapp_workspace'),
+                t('core_orientation.geolapp_estructural'),
+            ];
+        }
+        if (cleanPath.startsWith('/geolapp') || cleanPath.startsWith('/stockpile')) {
+            return [
+                t('core_orientation.home_summary'),
+                t('core_orientation.geolapp_workspace'),
+                t('core_orientation.stockpile_workspace'),
+            ];
+        }
+        if (cleanPath.startsWith('/b2b/equipo')) {
+            return [t('core_orientation.home_summary'), t('core_shell.nav_team')];
+        }
+        if (cleanPath.startsWith('/b2b/solicitud-equipos')) {
+            return [t('core_orientation.home_summary'), t('core_shell.nav_equipment_onboarding')];
+        }
+        if (cleanPath.startsWith('/b2b/empresa')) {
+            return [t('core_orientation.home_summary'), t('core_shell.nav_company')];
+        }
+        if (cleanPath.startsWith('/b2b/metricas')) {
+            return [t('core_orientation.home_summary'), t('core_shell.nav_metrics')];
+        }
+        if (cleanPath.startsWith('/b2b/suscripcion')) {
+            return [t('core_orientation.home_summary'), t('core_shell.nav_subscription')];
+        }
+        return [t('core_orientation.home_summary')];
+    })();
 
     const membership = profile?.memberships?.find((m: any) => m.accountId === currentAccount?.id);
     const isSubscriptionAdmin = membership?.role === 'SUBSCRIPTION_ADMIN' || membership?.role === 'BILLING_ONLY';
     const isEduSandbox = Boolean(session?.isEduSandbox);
 
     const effectiveRole = session?.role || membership?.role;
-    const isAdminOrOwner = Boolean(
+    const isAdminOrOwner = !isSubscriptionAdmin && Boolean(
         session?.isDevRoot ||
         session?.isSuperAdmin ||
         effectiveRole === 'OWNER' ||
-        effectiveRole === 'ADMIN' ||
+        effectiveRole === 'ADMIN'
+    );
+    const canViewBilling = Boolean(
+        isAdminOrOwner ||
+        Boolean((membership as any)?.canViewBilling) ||
         isSubscriptionAdmin
     );
 
     const navLinkClasses = ({ isActive }: { isActive: boolean }) =>
-        `w-12 h-12 flex items-center justify-center rounded-none shadow-none transition-colors mb-2 cursor-pointer ${
+        `group relative min-w-[48px] min-h-[48px] w-12 h-12 flex items-center justify-center rounded-none shadow-none bg-transparent border-y-0 border-r-0 border-l-2 transition-colors mb-2 cursor-pointer ${
             isActive
-                ? 'bg-[#C68346] text-white'
-                : 'text-[#8A93A6] hover:bg-black/5 dark:hover:bg-white/5 hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                ? 'border-l-[#C68346] text-[#C68346]'
+                : 'border-l-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
         }`;
 
     return (
@@ -39,14 +113,54 @@ const ClientLayout = () => {
             <header className="h-16 bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between px-fib-21 sticky top-0 z-50">
                 <div className="flex items-center gap-fib-21">
                     <BrandLogo variant="logotype" className="h-7 w-auto object-contain" />
+                    {session?.coBrandingLogoUrl && (
+                        <>
+                            <div className="w-[1px] h-6 bg-[#E2E8F0] dark:bg-[#12151C]" />
+                            <SecureImage
+                                src={
+                                    session.coBrandingLogoUrl.startsWith('/api/')
+                                        ? getApiUrl(session.coBrandingLogoUrl)
+                                        : session.coBrandingLogoUrl
+                                }
+                                alt={
+                                    session.coBrandingName ||
+                                    session.tenantName ||
+                                    t('core_shell.institutional_logo_alt', 'Logo institucional')
+                                }
+                                className="h-7 max-w-[140px] object-contain"
+                            />
+                        </>
+                    )}
                     {isEduSandbox && (
-                        <span className="px-fib-13 py-1 border border-[#00AEEF]/40 text-[#00AEEF] text-microcopy font-mono uppercase tracking-wider">
-                            ENTORNO ACADÉMICO SANDBOX (EDU)
+                        <span className="px-fib-13 py-1 border border-[#00AEEF]/40 text-[#00AEEF] text-microcopy font-mono tabular-nums uppercase tracking-wider">
+                            {t('core_shell.edu_sandbox_banner', {
+                                count: session?.maxProjects ?? 3,
+                                defaultValue: `ENTORNO ACADÉMICO SANDBOX (EDU) · MÁX. ${session?.maxProjects ?? 3} PROYECTOS`,
+                            })}
                         </span>
                     )}
                 </div>
 
                 <div className="flex items-center gap-fib-13">
+                    {(profile?.memberships?.length || 0) > 1 && (
+                        <select
+                            aria-label={t('core_shell.org_selector_aria', 'Selector de organización')}
+                            value={currentAccount?.id || ''}
+                            onChange={(e) => {
+                                if (e.target.value) {
+                                    switchAccount(e.target.value);
+                                }
+                            }}
+                            className="h-8 px-fib-8 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-data-dense font-mono text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none outline-none cursor-pointer"
+                        >
+                            {(profile?.memberships || []).map((m: any) => (
+                                <option key={m.accountId} value={m.accountId}>
+                                    {(m.accountName || m.companyName || m.accountId)} · {m.role}
+                                </option>
+                            ))}
+                        </select>
+                    )}
+                    <ErgonomicScaleSwitch compact />
                     <LanguageSwitch />
                     <ThemeSwitch />
                 </div>
@@ -54,121 +168,211 @@ const ClientLayout = () => {
 
             {/* 2. SECCION INFERIOR (Sidebar + Escritorio) */}
             <div className="flex flex-1 overflow-hidden relative">
-                <aside className="w-20 bg-[#F8FAFC] dark:bg-[#07090D] border-r border-[#E2E8F0] dark:border-[#12151C] flex flex-col items-center py-fib-21 z-10 transition-colors">
+                <aside className="w-20 bg-[#F8FAFC] dark:bg-[#07090D] border-r border-[#E2E8F0] dark:border-[#12151C] flex flex-col items-center py-fib-21 z-30 relative transition-colors">
                     <div className="mb-fib-21">
                         <BrandLogo variant="isotype" className="h-10 w-10 object-contain" />
                     </div>
 
-                    <nav className="flex-1 flex flex-col gap-1">
-                        {isSubscriptionAdmin ? (
+                    <nav
+                        aria-label={t('core_shell.primary_nav_aria', 'Navegación principal')}
+                        className="flex-1 flex flex-col gap-1"
+                    >
+                        <NavLink
+                            to="/dashboard"
+                            className={navLinkClasses}
+                            title={t('core_shell.nav_dashboard', 'Panel Principal')}
+                        >
+                            <span className="material-symbols-outlined text-2xl">dashboard</span>
+                            <span className="sr-only">{t('core_shell.nav_dashboard', 'Panel Principal')}</span>
+                            <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
+                                {t('core_shell.nav_dashboard', 'Panel Principal')}
+                            </span>
+                        </NavLink>
+                        {CORE_MODULES.filter((mod) => hasModuleAccess(mod.id)).map((mod) => {
+                            if (mod.id === 'stockpile') {
+                                const visibleNavItems = isGeolappRoute
+                                    ? mod.clientNavItems
+                                    : mod.clientNavItems.slice(0, 1);
+                                return (
+                                    <Fragment key={mod.id}>
+                                        <div className="w-8 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[8px] mx-auto shrink-0" />
+                                        <div
+                                            aria-label={t('core_shell.modules.stockpile.domain_selector_aria', 'Dominios GEOLAPP®')}
+                                            className="flex flex-col items-center gap-0.5"
+                                        >
+                                            {visibleNavItems.map((navItem) => {
+                                                const navLabel = t(navItem.titleKey, navItem.title);
+                                                return (
+                                                    <NavLink
+                                                        key={navItem.to}
+                                                        to={navItem.to}
+                                                        end={navItem.end}
+                                                        className={({ isActive }) =>
+                                                            `group relative min-w-[48px] min-h-[44px] w-12 h-11 flex items-center justify-center rounded-none shadow-none bg-transparent border-y-0 border-r-0 border-l-2 transition-colors cursor-pointer ${
+                                                                isActive
+                                                                    ? 'border-l-[#C68346] text-[#C68346]'
+                                                                    : 'border-l-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                                                            }`
+                                                        }
+                                                        title={navLabel}
+                                                    >
+                                                        <span className="material-symbols-outlined text-2xl">{navItem.icon}</span>
+                                                        <span className="sr-only">{navLabel}</span>
+                                                        <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
+                                                            {navLabel}
+                                                        </span>
+                                                    </NavLink>
+                                                );
+                                            })}
+                                        </div>
+                                    </Fragment>
+                                );
+                            }
+
+                            return (
+                                <Fragment key={mod.id}>
+                                    <div className="w-8 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[8px] mx-auto shrink-0" />
+                                    {mod.clientNavItems.map((navItem) => {
+                                        const navLabel = t(navItem.titleKey, navItem.title);
+                                        return (
+                                            <NavLink
+                                                key={navItem.to}
+                                                to={navItem.to}
+                                                end={navItem.end}
+                                                onClick={
+                                                    navItem.resetEvent
+                                                        ? () => window.dispatchEvent(new CustomEvent(navItem.resetEvent!))
+                                                        : undefined
+                                                }
+                                                className={navLinkClasses}
+                                                title={navLabel}
+                                            >
+                                                <span className="material-symbols-outlined text-2xl">{navItem.icon}</span>
+                                                <span className="sr-only">{navLabel}</span>
+                                                <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
+                                                    {navLabel}
+                                                </span>
+                                            </NavLink>
+                                        );
+                                    })}
+                                </Fragment>
+                            );
+                        })}
+                        {!isEduSandbox && isAdminOrOwner && (
                             <>
-                                <NavLink to="/b2b/empresa" className={navLinkClasses} title="Datos de la Empresa">
+                                <div className="w-8 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[8px] mx-auto shrink-0" />
+                                <NavLink
+                                    to="/b2b/equipo"
+                                    className={navLinkClasses}
+                                    title={t('core_shell.nav_team', 'Equipo y Accesos')}
+                                >
+                                    <span className="material-symbols-outlined text-2xl">groups</span>
+                                    <span className="sr-only">{t('core_shell.nav_team', 'Equipo y Accesos')}</span>
+                                    <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
+                                        {t('core_shell.nav_team', 'Equipo y Accesos')}
+                                    </span>
+                                </NavLink>
+                                <NavLink
+                                    to="/b2b/solicitud-equipos"
+                                    className={navLinkClasses}
+                                    title={t('core_shell.nav_equipment_onboarding', 'Solicitud de Equipos')}
+                                >
+                                    <span className="material-symbols-outlined text-2xl">precision_manufacturing</span>
+                                    <span className="sr-only">{t('core_shell.nav_equipment_onboarding', 'Solicitud de Equipos')}</span>
+                                    <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
+                                        {t('core_shell.nav_equipment_onboarding', 'Solicitud de Equipos')}
+                                    </span>
+                                </NavLink>
+                            </>
+                        )}
+                        {canViewBilling && (
+                            <>
+                                <div className="w-8 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[8px] mx-auto shrink-0" />
+                                <NavLink
+                                    to="/b2b/empresa"
+                                    className={navLinkClasses}
+                                    title={t('core_shell.nav_company', 'Datos de la Empresa')}
+                                >
                                     <span className="material-symbols-outlined text-2xl">business</span>
-                                    <span className="sr-only">Datos de la Empresa</span>
+                                    <span className="sr-only">{t('core_shell.nav_company', 'Datos de la Empresa')}</span>
+                                    <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
+                                        {t('core_shell.nav_company', 'Datos de la Empresa')}
+                                    </span>
                                 </NavLink>
-                                <NavLink to="/b2b/admins" className={navLinkClasses} title="Administradores Generales">
-                                    <span className="material-symbols-outlined text-2xl">manage_accounts</span>
-                                    <span className="sr-only">Administradores Generales</span>
-                                </NavLink>
-                                <NavLink to="/b2b/branding" className={navLinkClasses} title="Gestor de Logos e Identidad">
-                                    <span className="material-symbols-outlined text-2xl">palette</span>
-                                    <span className="sr-only">Gestor de Logos</span>
-                                </NavLink>
-                                <NavLink to="/b2b/metricas" className={navLinkClasses} title="Metricas Operacionales">
+                                <NavLink
+                                    to="/b2b/metricas"
+                                    className={navLinkClasses}
+                                    title={t('core_shell.nav_metrics', 'Métricas Operacionales')}
+                                >
                                     <span className="material-symbols-outlined text-2xl">bar_chart</span>
-                                    <span className="sr-only">Metricas</span>
+                                    <span className="sr-only">{t('core_shell.nav_metrics', 'Métricas Operacionales')}</span>
+                                    <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
+                                        {t('core_shell.nav_metrics', 'Métricas Operacionales')}
+                                    </span>
                                 </NavLink>
                                 {!isEduSandbox && (
-                                    <NavLink to="/b2b/suscripcion" className={navLinkClasses} title="Contrato y Suscripcion">
+                                    <NavLink
+                                        to="/b2b/suscripcion"
+                                        className={navLinkClasses}
+                                        title={t('core_shell.nav_subscription', 'Contrato y Suscripción')}
+                                    >
                                         <span className="material-symbols-outlined text-2xl">receipt_long</span>
-                                        <span className="sr-only">Suscripcion</span>
+                                        <span className="sr-only">{t('core_shell.nav_subscription', 'Contrato y Suscripción')}</span>
+                                        <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
+                                            {t('core_shell.nav_subscription', 'Contrato y Suscripción')}
+                                        </span>
                                     </NavLink>
                                 )}
                             </>
-                        ) : (
-                            <>
-                                <NavLink to="/dashboard" className={navLinkClasses} title="Panel Principal">
-                                    <span className="material-symbols-outlined text-2xl">dashboard</span>
-                                    <span className="sr-only">Panel Principal</span>
-                                </NavLink>
-                                {hasModuleAccess('opermaq') && (
-                                    <>
-                                        <div className="w-8 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[8px] mx-auto shrink-0" />
-                                        <NavLink
-                                            to="/opermaq"
-                                            end
-                                            onClick={() => window.dispatchEvent(new CustomEvent('opermaq:navigate-home'))}
-                                            className={navLinkClasses}
-                                            title="FLOTA"
-                                        >
-                                            <span className="material-symbols-outlined text-2xl">lists</span>
-                                            <span className="sr-only">FLOTA</span>
-                                        </NavLink>
-                                        <NavLink
-                                            to="/opermaq/simbologia"
-                                            onClick={() => window.dispatchEvent(new CustomEvent('opermaq:navigate-home'))}
-                                            className={navLinkClasses}
-                                            title="SIMBOLOGÍA"
-                                        >
-                                            <span className="material-symbols-outlined text-2xl">shapes</span>
-                                            <span className="sr-only">SIMBOLOGÍA</span>
-                                        </NavLink>
-                                    </>
-                                )}
-                                {hasModuleAccess('stockpile') && (
-                                    <>
-                                        <div className="w-8 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[8px] mx-auto shrink-0" />
-                                        <NavLink to="/stockpile" className={navLinkClasses} title="STOCKPILE">
-                                            <span className="material-symbols-outlined text-2xl">layers</span>
-                                            <span className="sr-only">STOCKPILE</span>
-                                        </NavLink>
-                                    </>
-                                )}
-                                {isAdminOrOwner && (
-                                    <NavLink to="/job-profiles" className={navLinkClasses} title="Perfiles de Cargo">
-                                        <span className="material-symbols-outlined text-2xl">demography</span>
-                                        <span className="sr-only">Perfiles de Cargo</span>
-                                    </NavLink>
-                                )}
-                                {isAdminOrOwner && !isEduSandbox && (
-                                    <NavLink to="/staff" className={navLinkClasses} title="Personal de Terreno">
-                                        <span className="material-symbols-outlined text-2xl">badge</span>
-                                        <span className="sr-only">Personal de Terreno</span>
-                                    </NavLink>
-                                )}
-                                {session?.isSuperAdmin && (
-                                    <NavLink to="/admin" className={navLinkClasses} title="Consola 2º ADMIN">
-                                        <span className="material-symbols-outlined text-2xl">admin_panel_settings</span>
-                                        <span className="sr-only">Consola Admin</span>
-                                    </NavLink>
-                                )}
-                                {(session?.isTestPilot || session?.isDevRoot) && (
-                                    <NavLink to="/pilot" className={navLinkClasses} title="Cabina 3º TEST-PILOT">
-                                        <span className="material-symbols-outlined text-2xl">science</span>
-                                        <span className="sr-only">Cabina Test-Pilot</span>
-                                    </NavLink>
-                                )}
-                            </>
+                        )}
+                        {session?.isSuperAdmin && (
+                            <NavLink
+                                to="/admin"
+                                className={navLinkClasses}
+                                title={t('core_shell.nav_admin_console', 'Consola 2º ADMIN')}
+                            >
+                                <span className="material-symbols-outlined text-2xl">admin_panel_settings</span>
+                                <span className="sr-only">{t('core_shell.nav_admin_console', 'Consola 2º ADMIN')}</span>
+                                <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
+                                    {t('core_shell.nav_admin_console', 'Consola 2º ADMIN')}
+                                </span>
+                            </NavLink>
                         )}
                     </nav>
 
                     <button
                         type="button"
                         onClick={() => signOutContext()}
-                        className="w-10 h-10 flex items-center justify-center rounded-none transition-colors mt-auto text-[#475569] dark:text-[#8A93A6] hover:text-red-500 bg-transparent border-0 cursor-pointer"
-                        title="Cerrar Sesion"
+                        className="group relative min-w-[48px] min-h-[48px] w-12 h-12 flex items-center justify-center rounded-none transition-colors mt-auto text-[#475569] dark:text-[#8A93A6] hover:text-red-500 bg-transparent border-0 cursor-pointer"
+                        title={t('auth.logout', 'Cerrar Sesión')}
+                        aria-label={t('auth.logout', 'Cerrar Sesión')}
                     >
                         <span className="material-symbols-outlined text-2xl">logout</span>
+                        <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
+                            {t('auth.logout', 'Cerrar Sesión')}
+                        </span>
                     </button>
                 </aside>
 
                 {/* ESCRITORIO */}
-                <main className={`flex-1 ${isFullBleedModule ? 'p-0 overflow-hidden flex flex-col' : 'p-fib-34 overflow-auto'} relative`}>
-                    <Outlet />
+                <main className={`flex-1 flex flex-col ${isFullBleedModule ? 'p-0 overflow-hidden' : 'overflow-auto'} relative`}>
+                    <ContextOrientationBar
+                        hidden={isFullBleedModule}
+                        includeScaleSwitch={false}
+                        compact={isFullBleedModule}
+                        trail={orientationTrail}
+                        onBack={!isHomeRoute ? () => navigate('/dashboard') : undefined}
+                    />
+                    <div className={isFullBleedModule ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'p-fib-34 flex-1'}>
+                        <Outlet />
+                    </div>
                 </main>
 
-                <TestPilotTransversalHUD />
-                <MiningAICopilot />
+                <MiningAICopilot
+                    externalOpen={activeFloatingPanel === 'copilot'}
+                    hideTrigger={activeFloatingPanel !== 'none'}
+                    onOpenChange={(next) => setActiveFloatingPanel(next ? 'copilot' : 'none')}
+                />
             </div>
         </div>
     );

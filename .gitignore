@@ -50,6 +50,7 @@ _backups/
 firebase-data/
 
 # Editor directories and files
+*.code-workspace
 .vscode/dist/
 /_plugins/
 /scripts/plugin_aliases.json

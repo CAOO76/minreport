@@ -1095,6 +1095,7 @@ export function extractHomologousAxisValues(record: {
     categoria_equipo?: string;
     canonical_specs?: CanonicalSpecSlot[] | Record<string, any> | null;
     caracteristicas_principales?: string[];
+    configuration_profile?: Record<string, any> | null;
 }): { archetype: ArchetypeDefinition; slots: CanonicalSpecSlot[] } {
     const explicitArch =
         record.archetype_id && record.archetype_id in ARCHETYPE_DEFINITIONS
@@ -1271,6 +1272,7 @@ export function buildHomologousEquipmentDescription(record: {
     categoria_equipo?: string;
     canonical_specs?: CanonicalSpecSlot[] | Record<string, any> | null;
     caracteristicas_principales?: string[];
+    configuration_profile?: Record<string, any> | null;
 }): string {
     const { slots } = extractHomologousAxisValues(record);
 
@@ -1575,18 +1577,18 @@ export function resolveEnergyAxisSemantics(params?: {
                 consumptionLabelEs: isRoadOrUtilityVehicle
                     ? 'Consumo eléctrico nominal'
                     : isDroneOrCyclicBattery
-                    ? 'Autonomía por carga'
-                    : 'Consumo eléctrico horario',
+                        ? 'Autonomía por carga'
+                        : 'Consumo eléctrico horario',
                 consumptionUnitSi: isRoadOrUtilityVehicle
                     ? 'kWh/100 km'
                     : isDroneOrCyclicBattery
-                    ? 'min · Wh'
-                    : 'kWh/h',
+                        ? 'min · Wh'
+                        : 'kWh/h',
                 consumptionKeywords: isRoadOrUtilityVehicle
                     ? ['consumo eléctrico', 'kWh/100 km', 'autonomía WLTP', 'autonomía km']
                     : isDroneOrCyclicBattery
-                    ? ['tiempo máximo de vuelo', 'max flight time', 'autonomía', 'min', 'Wh']
-                    : ['consumo eléctrico', 'kWh/h', 'autonomía operativa'],
+                        ? ['tiempo máximo de vuelo', 'max flight time', 'autonomía', 'min', 'Wh']
+                        : ['consumo eléctrico', 'kWh/h', 'autonomía operativa'],
                 capacityLabelEs: 'Capacidad banco baterías',
                 capacityUnitSi: 'kWh · Wh',
                 capacityKeywords: ['capacidad batería', 'battery capacity', 'banco de baterías', 'kWh', 'Wh', 'Ah'],
@@ -1617,24 +1619,24 @@ export function resolveEnergyAxisSemantics(params?: {
                 consumptionUnitSi: isRoadOrUtilityVehicle ? 'km/L (L/100 km) · L/h' : 'L/h · g/kWh',
                 consumptionKeywords: isRoadOrUtilityVehicle
                     ? [
-                          'consumo de combustible',
-                          'rendimiento de combustible',
-                          'fuel consumption',
-                          'km/L',
-                          'L/100 km',
-                          'L/h',
-                          'g/kWh',
-                      ]
+                        'consumo de combustible',
+                        'rendimiento de combustible',
+                        'fuel consumption',
+                        'km/L',
+                        'L/100 km',
+                        'L/h',
+                        'g/kWh',
+                    ]
                     : [
-                          'consumo de combustible',
-                          'fuel consumption',
-                          'consumo horario',
-                          'L/h',
-                          'gal/h',
-                          'consumo específico',
-                          'BSFC',
-                          'g/kWh',
-                      ],
+                        'consumo de combustible',
+                        'fuel consumption',
+                        'consumo horario',
+                        'L/h',
+                        'gal/h',
+                        'consumo específico',
+                        'BSFC',
+                        'g/kWh',
+                    ],
                 capacityLabelEs: 'Capacidad estanque combustible',
                 capacityUnitSi: 'L',
                 capacityKeywords: [
@@ -1829,8 +1831,8 @@ export function buildUniversalEnergySpecAxesForType(
                 semantics.energyKind === 'TOWED_PASSIVE'
                     ? 'Remolcado / Auxiliar 12V-24V'
                     : semantics.energyKind === 'MANUAL_MECHANICAL'
-                    ? 'Manual / Mecánico'
-                    : 'Diésel | Gasolina | Eléctrico | Híbrido | GLP/GNV | Neumático',
+                        ? 'Manual / Mecánico'
+                        : 'Diésel | Gasolina | Eléctrico | Híbrido | GLP/GNV | Neumático',
             value_kind: 'CLOSED_ENUM',
             allowed_enum_values: UNIVERSAL_ENERGY_SOURCE_ENUM_VALUES,
             search_keywords: [
@@ -2186,17 +2188,17 @@ export function deriveEnergyConsumptionProfile(params: {
     | 'NO_DECLARADO';
     energy_spec_label: string | null;
     cost_driver_unit:
-        | 'L/h'
-        | 'km/L'
-        | 'L/100km'
-        | 'kWh/h'
-        | 'kWh/100km'
-        | 'kWh/ciclo'
-        | 'L/s'
-        | 'L/min'
-        | 'bar (700 bar Hidr.)'
-        | '0 L/h (Remolcado)'
-        | '0 L/h (Manual)';
+    | 'L/h'
+    | 'km/L'
+    | 'L/100km'
+    | 'kWh/h'
+    | 'kWh/100km'
+    | 'kWh/ciclo'
+    | 'L/s'
+    | 'L/min'
+    | 'bar (700 bar Hidr.)'
+    | '0 L/h (Remolcado)'
+    | '0 L/h (Manual)';
     hourly_consumption_by_load: {
         idle_or_pto: string | null;
         low_load_25_35pct: string | null;
@@ -2453,19 +2455,19 @@ export function deriveEnergyConsumptionProfile(params: {
     const requiresDef = explicitNoDefInCorpus
         ? false
         : Boolean(
-              defPctRaw ||
-                  defTankRaw ||
-                  (/\b(adblue|reducci[oó]n\s+catal[ií]tica\s+selectiva\s+scr)\b/i.test(corpusText) &&
-                      !/\b(no\s+aplica|sin\s+scr|sin\s+adblue)\b/i.test(corpusText)) ||
-                  prev?.def_adblue_consumption?.requires_def
-          );
+            defPctRaw ||
+            defTankRaw ||
+            (/\b(adblue|reducci[oó]n\s+catal[ií]tica\s+selectiva\s+scr)\b/i.test(corpusText) &&
+                !/\b(no\s+aplica|sin\s+scr|sin\s+adblue)\b/i.test(corpusText)) ||
+            prev?.def_adblue_consumption?.requires_def
+        );
 
     const defTankMatch = requiresDef
         ? defTankRaw ||
-          (prev?.def_adblue_consumption?.tank_capacity_liters &&
-          !/^1[.,]5\s*L$/i.test(prev.def_adblue_consumption.tank_capacity_liters)
-              ? prev.def_adblue_consumption.tank_capacity_liters
-              : null)
+        (prev?.def_adblue_consumption?.tank_capacity_liters &&
+            !/^1[.,]5\s*L$/i.test(prev.def_adblue_consumption.tank_capacity_liters)
+            ? prev.def_adblue_consumption.tank_capacity_liters
+            : null)
         : null;
 
     const defPctMatch = requiresDef
@@ -2828,18 +2830,18 @@ export function sanitizePositivePresenceMarkdown(
     const stage2Lines =
         options?.pillarId === 'ficha_tecnica' && hasAnyTable
             ? stage1Lines.filter((l) => {
-                  const t = l.trim();
-                  if (!t) return true;
-                  if (/^#{1,6}\s+/.test(t)) return true;
-                  if (t.startsWith('|')) return true;
-                  if (/^!\[/.test(t) || /^\[(?:IMAGEN[_\s-]PENDIENTE|FIGURA|DIAGRAMA|S[ÍI]MBOLO)\b/i.test(t)) {
-                      return true;
-                  }
-                  if (t.length <= 160 && EXPLICIT_VISUAL_CITATION_LINE_REGEX.test(t)) {
-                      return true;
-                  }
-                  return false;
-              })
+                const t = l.trim();
+                if (!t) return true;
+                if (/^#{1,6}\s+/.test(t)) return true;
+                if (t.startsWith('|')) return true;
+                if (/^!\[/.test(t) || /^\[(?:IMAGEN[_\s-]PENDIENTE|FIGURA|DIAGRAMA|S[ÍI]MBOLO)\b/i.test(t)) {
+                    return true;
+                }
+                if (t.length <= 160 && EXPLICIT_VISUAL_CITATION_LINE_REGEX.test(t)) {
+                    return true;
+                }
+                return false;
+            })
             : stage1Lines;
 
     // Etapa 3: Podar encabezados `##`..`######` huérfanos que hayan quedado vacíos tras eliminar filas/párrafos

@@ -5,12 +5,13 @@ import { hashPassword, verifySetupTokenHash } from '../utils/security';
 import { formatRut, cleanRut, getRutVariants } from '../utils/rut';
 import { extractClientIp } from '../middleware/rateLimiter';
 import { AuditLedger } from '../core/audit-ledger';
+import { computeThirtyDayTtlTimestamp, toEpochMillis } from '../core/retention-policy';
 
 const setupPasswordSchema = z.object({
     token: z.string().min(16).max(256),
     accountId: z.string().min(1).max(128),
     password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres').max(256),
-    taxId: z.string().min(3).max(64),
+    taxId: z.string().max(64).optional().default(''),
 });
 
 /**
@@ -114,7 +115,7 @@ export const setupAccountPassword = async (req: Request, res: Response) => {
             return res.status(403).json({ error: 'Este enlace ya fue utilizado. Solicita uno nuevo si es necesario.' });
         }
 
-        if (Date.now() > Number(tokenData.expiresAt || 0)) {
+        if (Date.now() > toEpochMillis(tokenData.expiresAt)) {
             return res.status(403).json({ error: 'El enlace ha expirado por políticas de seguridad (24 horas).' });
         }
 
@@ -126,12 +127,28 @@ export const setupAccountPassword = async (req: Request, res: Response) => {
             return res.status(403).json({ error: 'Inconsistencia de seguridad: La cuenta solicitada no coincide con el token.' });
         }
 
-        const cleanRequestTaxId = cleanRut(requestTaxId);
-        if (cleanRut(String(tokenData.taxId || '')) !== cleanRequestTaxId && tokenData.taxId !== requestTaxId) {
-            return res.status(403).json({ error: 'Inconsistencia de seguridad: La identidad no coincide con el token.' });
+        const rawRequestTaxId = String(requestTaxId || '').trim();
+        const isChileanRutCandidate = /^(\d{1,2}(\.\d{3}){2}-?|\d{7,8}-?)[0-9kK]$/i.test(rawRequestTaxId);
+        const cleanRequestTaxId = isChileanRutCandidate
+            ? cleanRut(rawRequestTaxId)
+            : rawRequestTaxId.toUpperCase();
+        const tokenStoredTaxId = String(tokenData.taxId || '').trim();
+
+        if (tokenStoredTaxId && tokenStoredTaxId !== tokenData.uid) {
+            const isStoredChileanRut = /^(\d{1,2}(\.\d{3}){2}-?|\d{7,8}-?)[0-9kK]$/i.test(tokenStoredTaxId);
+            const matchesNormalized =
+                tokenStoredTaxId.toUpperCase() === rawRequestTaxId.toUpperCase() ||
+                (isChileanRutCandidate &&
+                    isStoredChileanRut &&
+                    cleanRut(tokenStoredTaxId) === cleanRequestTaxId);
+            if (!matchesNormalized) {
+                return res.status(403).json({ error: 'Inconsistencia de seguridad: La identidad no coincide con el token.' });
+            }
         }
 
-        const formattedTaxId = formatRut(cleanRequestTaxId);
+        const formattedTaxId = isChileanRutCandidate
+            ? formatRut(cleanRequestTaxId)
+            : rawRequestTaxId.toUpperCase();
         const userDoc = await resolveTargetUserDoc(
             cleanRequestTaxId,
             accountId,
@@ -159,7 +176,8 @@ export const setupAccountPassword = async (req: Request, res: Response) => {
         if (res.statusCode === 200) {
             await tokenRef.update({
                 used: true,
-                usedAt: Date.now()
+                usedAt: Date.now(),
+                ttlExpiresAt: computeThirtyDayTtlTimestamp(),
             });
         }
 
@@ -274,16 +292,85 @@ export const updateUserPassword = async (
 
         const tenantSnap = await db.collection('tenants').doc(accountId).get();
         if (tenantSnap.exists) {
-            await tenantSnap.ref.update({
-                status: 'ACTIVE',
-                activatedAt: activatedAtIso
+            const tenantStatus = String(tenantSnap.data()?.status || '').toUpperCase();
+            if (tenantStatus === 'APPROVED' || tenantStatus === 'PENDING_SETUP') {
+                await tenantSnap.ref.update({
+                    status: 'ACTIVE',
+                    activatedAt: activatedAtIso,
+                });
+            }
+        }
+
+        const [accountSnap, pilotSnap] = await Promise.all([
+            db.collection('accounts').doc(accountId).get(),
+            db.collection('test_pilots').doc(accountId).get(),
+        ]);
+        if (accountSnap.exists) {
+            const accStatus = String(accountSnap.data()?.status || '').toUpperCase();
+            await accountSnap.ref
+                .update({
+                    ...(accStatus === 'PENDING_SETUP' || accStatus === 'APPROVED' ? { status: 'ACTIVE' } : {}),
+                    activatedAt: activatedAtIso,
+                    updatedAt: Date.now(),
+                })
+                .catch(() => {});
+        }
+        if (pilotSnap.exists) {
+            const pilotStatus = String(pilotSnap.data()?.status || '').toUpperCase();
+            await pilotSnap.ref
+                .update({
+                    ...(pilotStatus === 'PENDING_SETUP' ? { status: 'ACTIVE' } : {}),
+                    activatedAt: activatedAtIso,
+                })
+                .catch(() => {});
+        }
+
+        const activeMembership = sanitizedMemberships[mIndex] || {};
+        const existingAuthUser =
+            typeof (auth as any).getUser === 'function'
+                ? await auth.getUser(userUid).catch(() => null)
+                : null;
+        const prevClaims =
+            existingAuthUser?.customClaims && typeof existingAuthUser.customClaims === 'object'
+                ? existingAuthUser.customClaims
+                : {};
+        const resolvedClaimRole = String(prevClaims.role || activeMembership.role || 'OPERATOR');
+        const resolvedPilotExpiresAt =
+            typeof prevClaims.pilotExpiresAt === 'number'
+                ? prevClaims.pilotExpiresAt
+                : pilotSnap.exists && typeof pilotSnap.data()?.expiresAt === 'number'
+                  ? pilotSnap.data()?.expiresAt
+                  : undefined;
+        const pilotClaimFields =
+            typeof resolvedPilotExpiresAt === 'number'
+                ? { pilotExpiresAt: resolvedPilotExpiresAt }
+                : {};
+        const nextClaims = {
+            ...prevClaims,
+            activeAccountId: accountId,
+            role: resolvedClaimRole,
+            ...pilotClaimFields,
+        };
+
+        if (typeof (auth as any).setCustomUserClaims === 'function') {
+            await auth.setCustomUserClaims(userUid, nextClaims).catch(() => {});
+        }
+
+        let customToken: string | undefined;
+        try {
+            customToken = await auth.createCustomToken(userUid, {
+                activeAccountId: accountId,
+                role: resolvedClaimRole,
+                ...pilotClaimFields,
             });
+        } catch {
+            customToken = undefined;
         }
 
         await AuditLedger.record({
             tenantId: accountId,
             actorUid: userUid,
-            actorEmail: 'setup-tunnel@minreport.internal',
+            actorEmail: String(activeMembership.authEmail || activeMembership.email || 'setup-tunnel@minreport.internal'),
             action: 'ACCOUNT_PASSWORD_SETUP_COMPLETED',
             module: 'auth',
             targetEntity: userUid,
@@ -293,7 +380,8 @@ export const updateUserPassword = async (
 
         return res.status(200).json({
             success: true,
-            message: 'Password established successfully. You can now log in.'
+            message: 'Password established successfully. You can now log in.',
+            ...(customToken ? { customToken } : {}),
         });
     } catch (error) {
         console.error('[AUTH-TUNNEL] Setup Password Error:', error);

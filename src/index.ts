@@ -6,10 +6,10 @@ import { db } from './config/firebase';
 import { env } from './config/env';
 import { hydrateCoreSecrets } from './config/secrets';
 import { x402Gatekeeper, X402AuthenticatedRequest } from './middleware/x402Gatekeeper';
-import { authRateLimiter, aiRateLimiter, mutationRateLimiter } from './middleware/rateLimiter';
+import { authRateLimiter, aiRateLimiter, mutationRateLimiter, m2mRateLimiter, extractClientIp } from './middleware/rateLimiter';
 import { ResilientAIClient, AISwarmUnavailableError } from './core/resilient-ai-client';
-import { AuditLedger } from './core/audit-ledger';
-import { register, inviteUser } from './api/auth.controller';
+import { AuditLedger, type AuditLedgerModule } from './core/audit-ledger';
+import { evaluatePilotExpiration } from './contracts/session.contracts';
 import {
     adminLogin,
     listTenants,
@@ -24,53 +24,52 @@ import {
     getBrandingSettings,
     updateBrandingSettings,
     getSystemMetrics,
+    getTenantMetricsBySegment,
     getAuditLogs,
     verifyAuditLedgerChain,
     getUIAssetsSettings,
     updateUIAssetsSettings,
     updateModuleAvailability,
+    updateAccountEntitlements,
 } from './api/admin.controller';
-import { getPublicBrandingSettings, getAccountsById } from './api/public.controller';
-import { challengeAccountAccess } from './api/auth_tunnel.controller';
+import { getPublicBrandingSettings } from './api/public.controller';
+import {
+    lookupAccessIdentity,
+    sendAccessEmailOtp,
+    verifyAccessEmailOtp,
+    submitAccessOrgApplication,
+} from './api/access.controller';
 import { setupAccountPassword } from './api/setup.controller';
-import { validateEduRequest, analyzeEduDocument } from './api/edu.controller';
+import {
+    validateEduRequest,
+    analyzeEduDocument,
+    listPublicEduInstitutions,
+    listAdminEduInstitutions,
+    createAdminEduInstitution,
+    updateAdminEduInstitution,
+} from './api/edu.controller';
 import staffRoutes from './api/staff.controller';
+import equipmentOnboardingRouter from './api/equipment-onboarding.controller';
 import pilotRoutes from './api/pilot.controller';
 import mediaRoutes from './api/media.routes';
+import geoRoutes from './api/geo.controller';
+import geolappRoutes, { postGeolappReconstruct3d } from './api/geolapp.controller';
 import { webauthnRouter } from './api/webauthn.controller';
+import { registerM2mGeolappAdapterRoutes } from './api/m2m-geolapp.adapter';
+import { registerM2mOpermaqAdapterRoutes } from './api/m2m-opermaq.adapter';
+import { SupplierChannelResolveQuerySchema } from './contracts/manufacturers.contracts';
 import { registerOpermaqModuleRoutes } from './modules/opermaq';
-import { AssetOntologyEngine } from './modules/opermaq/services/AssetOntologyEngine';
-import { compileEquipmentCostMatrixFromPillars } from './modules/opermaq/services/EquipmentCostMatrixCompiler';
-import {
-    GLOBAL_EQUIPMENT_TYPES_COLLECTION,
-    listRegisteredEquipmentTypes,
-    normalizeEquipmentTypeAlias,
-    normalizeEquipmentTypeKey,
-    upgradeEquipmentTypeSchemaIfNeeded,
-} from './modules/opermaq/services/EquipmentTypeRegistryService';
-import { computePillarStructureDigestSha256, computeVaultMerkleRootSha256 } from './modules/opermaq/services/ItemizerService';
+import { SupplierChannelResolverService } from './modules/opermaq/services/SupplierChannelResolverService';
 import { startHuntTaskWatchdog } from './modules/opermaq/services/TaskQueueService';
-import { VaultPersistenceService } from './modules/opermaq/services/VaultPersistenceService';
-import {
-    type GlobalEquipmentTypeDoc,
-    PILLAR_PREREQUISITE_MAP,
-    PillarDocument,
-    PillarId,
-} from './modules/opermaq/types/vault.types';
-import {
-    normalizeCanonicalSlotsByResolvedEnergy,
-    normalizeLegacySpecLinesByEnergy,
-    sanitizeDesignAndWorkContextItems,
-} from './modules/opermaq/utils/canonicalArchetypeSpecs';
 import { requireSuperAdmin } from './middleware/admin';
 import { requireAuth } from './middleware/auth';
+import { resolveMinReportSessionScope } from './middleware/sessionScope';
 import {
     devLogin,
     requireDevRoot,
     createTestPilotAccount,
     listTestPilots,
     revokeTestPilot,
-    impersonateClient,
     initDevChallenge,
     confirmDevChallenge,
     getDevChallengeStatus,
@@ -78,6 +77,7 @@ import {
     verifyDevChallengeUser,
     loginDevChallengeFinal,
     syncDevFirebaseSession,
+    getDevPilotMetrics,
 } from './api/dev.controller';
 import { ensureDevRootAccount } from './services/bootstrap.service';
 import { DevEmulatorCheckpointService } from './core/dev-emulator-checkpoint';
@@ -93,26 +93,51 @@ const isProd = process.env.NODE_ENV === 'production';
 // Perímetro CSP estricto (Cero Google Fonts externas, cero scripts de terceros en cliente)
 app.use(
     helmet({
+        hsts: isProd
+            ? {
+                  maxAge: 63072000,
+                  includeSubDomains: true,
+                  preload: true,
+              }
+            : false,
         contentSecurityPolicy: isProd
             ? {
                   directives: {
                       defaultSrc: ["'self'"],
                       scriptSrc: ["'self'"],
+                      workerSrc: ["'self'", 'blob:'],
                       styleSrc: ["'self'", "'unsafe-inline'"],
                       fontSrc: ["'self'", 'data:'],
-                      imgSrc: ["'self'", 'data:', 'https:'],
+                      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+                      mediaSrc: [
+                          "'self'",
+                          'blob:',
+                          'https://storage.googleapis.com',
+                          'https://firebasestorage.googleapis.com',
+                      ],
                       connectSrc: [
                           "'self'",
                           'https://minreport-access.web.app',
+                          'https://*.web.app',
+                          'https://*.firebaseapp.com',
                           'https://*.googleapis.com',
                           'https://*.firebaseio.com',
+                          'wss://*.firebaseio.com',
+                          'https://*.cloudfunctions.net',
+                          'https://*.run.app',
                       ],
+                      manifestSrc: ["'self'"],
                       frameAncestors: ["'none'"],
                       objectSrc: ["'none'"],
                       baseUri: ["'self'"],
+                      formAction: ["'self'"],
                   },
               }
             : false,
+        referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+        xFrameOptions: { action: 'deny' },
+        xPermittedCrossDomainPolicies: { permittedPolicies: 'none' },
+        crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
         crossOriginResourcePolicy: { policy: 'cross-origin' },
     })
 );
@@ -163,6 +188,8 @@ app.use(
             'x-active-account-id',
             'X-Tenant-Id',
             'x-tenant-id',
+            'X-Agent-Id',
+            'x-agent-id',
             'X-402-Token',
             'x-402-token',
             'PAYMENT-SIGNATURE',
@@ -213,470 +240,66 @@ app.get('/health', (_req, res) => {
 // Public Read-Only Routes
 app.get('/api/settings/branding', getPublicBrandingSettings);
 app.get('/api/settings/ui-assets', getUIAssetsSettings);
-app.get('/api/public/accounts-by-id/:taxId([^/]+)', getAccountsById);
 
-// Auth, Passkeys / WebAuthn FIDO2 & Onboarding Routes (Rate-Limited)
-app.post('/api/auth/register', authRateLimiter, register);
+// Auth, Puerta Soberana /access (3 Pasos), Passkeys FIDO2 & Onboarding (Rate-Limited)
+app.post('/api/auth/access/lookup', authRateLimiter, lookupAccessIdentity);
+app.post('/api/auth/access/send-otp', requireAuth, authRateLimiter, sendAccessEmailOtp);
+app.post('/api/auth/access/verify-otp', requireAuth, authRateLimiter, verifyAccessEmailOtp);
+app.post('/api/auth/access/apply', authRateLimiter, submitAccessOrgApplication);
+app.get('/api/auth/access/edu-institutions', authRateLimiter, listPublicEduInstitutions);
 app.use('/api/auth/passkey', webauthnRouter);
-app.post('/api/auth/tunnel/challenge', authRateLimiter, challengeAccountAccess);
 app.post('/api/auth/tunnel/setup-password', authRateLimiter, setupAccountPassword);
-app.post('/api/auth/invite', requireAuth, mutationRateLimiter, inviteUser);
 
-// [WEB 3.0 M2M GATEKEEPER] Endpoint monetizado agéntico real con HTTP 402 (Cero datos inventados)
+// [WEB 3.0 M2M GATEKEEPER] Perímetro de ráfagas M2M (120 req / 60s por IP + x-agent-id) + HTTP 402
+app.use('/api/m2m', m2mRateLimiter);
+
+registerM2mGeolappAdapterRoutes(app);
+
+registerM2mOpermaqAdapterRoutes(app);
+
 app.get(
-    '/api/m2m/data-feed',
+    '/api/m2m/suppliers/resolve',
     x402Gatekeeper({
-        priceMicroUSD: 25000, // $0.025 USD por consulta agéntica verificada
+        priceMicroUSD: 15000,
         destinationWallet: process.env.X402_TREASURY_ACCOUNT || 'minreport-treasury-southamerica-west1',
         acceptedTokens: ['USDC', 'X402_CREDIT'],
-        resourceId: 'mining-telemetry-feed',
+        resourceId: 'opermaq-suppliers-4d-resolver',
     }),
     async (req: X402AuthenticatedRequest, res) => {
         try {
-            const x402Ctx = req.x402Context;
-            const scopedTenantId =
-                x402Ctx?.mode === 'CORPORATE_CONTRACT' && x402Ctx.tenantId ? x402Ctx.tenantId : null;
-
-            const stockpilesQuery = scopedTenantId
-                ? db.collection('stockpiles').where('accountId', '==', scopedTenantId).limit(25)
-                : db.collection('stockpiles').where('isPublicBenchmark', '==', true).limit(25);
-
-            const [stockpilesSnap, benchmarksSnap] = await Promise.all([
-                stockpilesQuery.get().catch(() => null),
-                db.collection('benchmark_events').limit(25).get().catch(() => null),
-            ]);
-
-            const stockpiles = stockpilesSnap
-                ? stockpilesSnap.docs.map((doc) => {
-                      const d = doc.data();
-                      return {
-                          id: doc.id,
-                          materialType: d.materialType ?? null,
-                          volumeM3: typeof d.volumeM3 === 'number' ? d.volumeM3 : null,
-                          tonnageMetric: typeof d.tonnage === 'number' ? d.tonnage : null,
-                          recordedAt: d.updatedAt ?? d.createdAt ?? null,
-                      };
-                  })
-                : [];
-
-            const benchmarkAggregates = benchmarksSnap
-                ? benchmarksSnap.docs.map((doc) => {
-                      const d = doc.data();
-                      return {
-                          id: doc.id,
-                          module: d.module ?? null,
-                          targetCanonicalId: d.targetCanonicalId ?? null,
-                          metricKind: d.metricKind ?? null,
-                          numericValue: typeof d.numericValue === 'number' ? d.numericValue : null,
-                          unitSi: d.unitSi ?? null,
-                          recordedAt: d.createdAt ?? null,
-                      };
-                  })
-                : [];
-
-            return res.status(200).json({
-                success: true,
-                protocol: 'x402 Foundation v1.0',
-                region: 'southamerica-west1',
-                timestamp: new Date().toISOString(),
-                settlementMode: x402Ctx?.mode || 'VERIFIED',
-                feed: {
-                    scopedTenantId,
-                    totalStockpileRecords: stockpiles.length,
-                    totalBenchmarkEvents: benchmarkAggregates.length,
-                    stockpiles,
-                    benchmarkEvents: benchmarkAggregates,
-                },
-            });
-        } catch (err: any) {
-            console.error('[M2M-DATA-FEED] Error consultando agregados verificados:', err);
-            return res.status(500).json({ error: 'Error consultando agregados operacionales verificados.' });
-        }
-    }
-);
-
-app.get(
-    '/api/m2m/opermaq/vault-blueprint/:assetId',
-    x402Gatekeeper({ priceMicroUSD: 35000, resourceId: 'opermaq-vault-merkle-blueprint' }),
-    async (req: X402AuthenticatedRequest, res) => {
-        try {
-            const x402Ctx = req.x402Context;
-            const assetId = String(req.params.assetId || '').trim();
-            if (!assetId) {
-                return res.status(400).json({ error: 'Identificador de activo requerido.' });
-            }
-
-            const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(assetId);
-            if (!hydrated.exists || !hydrated.data) {
-                return res.status(404).json({ error: 'Activo no encontrado en bóveda soberana OPERMAQ.' });
-            }
-
-            const data = hydrated.data;
-            const vault = (data.knowledge_vault || {}) as Record<string, any>;
-            const orderedPillars: PillarId[] = [
-                'ficha_tecnica',
-                'manual_operaciones',
-                'pauta_mantencion',
-                'matriz_riesgos',
-                'checklist_pre_op',
-            ];
-
-            const pillarsBlueprint: Record<string, any> = {};
-            let isMerkleChainIntact = true;
-
-            for (const pId of orderedPillars) {
-                const pDoc = vault[pId];
-                const activeItems = Array.isArray(pDoc?.items)
-                    ? pDoc.items
-                          .filter((it: any) => !it?.is_discarded)
-                          .map((it: any, idx: number) => ({
-                              item_id: it.item_id,
-                              order_index: typeof it.order === 'number' ? it.order : idx + 1,
-                              section: it.section,
-                              title: it.title,
-                              criticality: it.priority || 'IMPORTANTE',
-                              content_status: it.content_status,
-                              estado_aprobacion: it.estado_aprobacion,
-                          }))
-                    : [];
-
-                const computedDigest =
-                    activeItems.length > 0 ? computePillarStructureDigestSha256(pDoc.items) : null;
-                const storedDigest = pDoc?.structure_digest_sha256 || computedDigest;
-
-                const prereqId = PILLAR_PREREQUISITE_MAP[pId];
-                const expectedParentDigest = prereqId
-                    ? pillarsBlueprint[prereqId]?.structure_digest_sha256 ?? null
-                    : null;
-                const storedParentDigest = pDoc?.parent_pillar_digest_sha256 ?? null;
-
-                const isSynchronizedWithParent =
-                    !prereqId ||
-                    !storedParentDigest ||
-                    !expectedParentDigest ||
-                    storedParentDigest === expectedParentDigest;
-
-                if (!isSynchronizedWithParent) {
-                    isMerkleChainIntact = false;
-                }
-
-                pillarsBlueprint[pId] = {
-                    itemize_status: pDoc?.itemize_status || 'IDLE',
-                    active_items_count: activeItems.length,
-                    structure_digest_sha256: storedDigest,
-                    parent_pillar_digest_sha256: storedParentDigest,
-                    is_synchronized_with_parent: isSynchronizedWithParent,
-                    chapters: activeItems,
-                };
-            }
-
-            const vaultMerkleRootSha256 =
-                vault.vault_merkle_root_sha256 || computeVaultMerkleRootSha256(vault);
-
-            return res.status(200).json({
-                success: true,
-                protocol: 'x402 Foundation v1.0',
-                region: 'southamerica-west1',
-                timestamp: new Date().toISOString(),
-                settlementMode: x402Ctx?.mode || 'VERIFIED',
-                blueprint: {
-                    assetId: hydrated.id,
-                    make: data.make_oficial || data.make || 'GENÉRICO',
-                    model: data.model_oficial || data.model || '',
-                    categoria_equipo: data.categoria_equipo || null,
-                    tipo_equipo: data.tipo_equipo || null,
-                    physical_traits: data.physical_traits || null,
-                    is_sealed: Boolean(data.is_sealed),
-                    vault_merkle_root_sha256: vaultMerkleRootSha256,
-                    is_merkle_chain_intact: isMerkleChainIntact,
-                    canonical_specs: data.canonical_specs || {},
-                    energy_consumption_profile: data.energy_consumption_profile || null,
-                    pillars: pillarsBlueprint,
-                },
-            });
-        } catch (err: any) {
-            console.error('[M2M-VAULT-BLUEPRINT] Error exportando blueprint criptográfico:', err);
-            return res.status(500).json({ error: 'Error consultando blueprint criptográfico de bóveda OPERMAQ.' });
-        }
-    }
-);
-
-const M2mAssetIdParamSchema = z.object({
-    assetId: z.string().trim().min(1).max(128),
-});
-
-const M2mTypeKeyParamSchema = z.object({
-    typeKey: z.string().trim().min(2).max(96),
-});
-
-function normalizeSidebarProfileLists(data: Record<string, any>): {
-    canonical_specs: any[];
-    caracteristicas_principales: string[];
-    ambiente_operativo: string[];
-    contexto_operativo: string[];
-} {
-    const typeContextText = `${data.make_model || ''} ${data.tipo_equipo || ''} ${data.categoria_equipo || ''}`.trim();
-    const primaryEnergy = data.physical_traits?.primary_energy || null;
-    const energyValueText =
-        data.energy_consumption_profile?.energy_spec_label ||
-        (data.energy_consumption_profile?.energy_source &&
-        data.energy_consumption_profile.energy_source !== 'NO_DECLARADO'
-            ? data.energy_consumption_profile.energy_source
-            : null);
-
-    const canonicalSpecs = Array.isArray(data.canonical_specs)
-        ? normalizeCanonicalSlotsByResolvedEnergy(data.canonical_specs, {
-              typeContextText,
-              primaryEnergy,
-              energyValueText,
-          })
-        : [];
-
-    const caracteristicasPrincipales = Array.isArray(data.caracteristicas_principales)
-        ? normalizeLegacySpecLinesByEnergy(data.caracteristicas_principales, {
-              typeContextText,
-              primaryEnergy,
-              energyValueText,
-          })
-        : [];
-
-    const ambienteOperativo = Array.isArray(data.ambiente_operativo)
-        ? sanitizeDesignAndWorkContextItems(data.ambiente_operativo, undefined, {
-              canonicalTypeEs: data.tipo_equipo || null,
-          })
-        : [];
-
-    const contextoOperativo = Array.isArray(data.contexto_operativo)
-        ? sanitizeDesignAndWorkContextItems(data.contexto_operativo, undefined, {
-              canonicalTypeEs: data.tipo_equipo || null,
-          })
-        : [];
-
-    return {
-        canonical_specs: canonicalSpecs,
-        caracteristicas_principales: caracteristicasPrincipales,
-        ambiente_operativo: ambienteOperativo,
-        contexto_operativo: contextoOperativo,
-    };
-}
-
-async function resolveReadOnlyEquipmentTypeOntology(rawTypeKey: string): Promise<GlobalEquipmentTypeDoc | null> {
-    const normalizedKey = normalizeEquipmentTypeKey(rawTypeKey);
-    const normalizedAlias = normalizeEquipmentTypeAlias(rawTypeKey.replace(/_/g, ' '));
-
-    if (normalizedKey) {
-        const directSnap = await db.collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION).doc(normalizedKey).get();
-        if (directSnap.exists) {
-            const existing = directSnap.data() as GlobalEquipmentTypeDoc;
-            if (Array.isArray(existing?.spec_schema) && existing.spec_schema.length >= 2) {
-                return upgradeEquipmentTypeSchemaIfNeeded(existing).doc;
-            }
-        }
-    }
-
-    if (rawTypeKey !== normalizedKey) {
-        const rawSnap = await db.collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION).doc(rawTypeKey).get();
-        if (rawSnap.exists) {
-            const existing = rawSnap.data() as GlobalEquipmentTypeDoc;
-            if (Array.isArray(existing?.spec_schema) && existing.spec_schema.length >= 2) {
-                return upgradeEquipmentTypeSchemaIfNeeded(existing).doc;
-            }
-        }
-    }
-
-    if (normalizedAlias.length >= 2) {
-        const aliasSnap = await db
-            .collection(GLOBAL_EQUIPMENT_TYPES_COLLECTION)
-            .where('type_aliases', 'array-contains', normalizedAlias)
-            .limit(1)
-            .get();
-        if (!aliasSnap.empty) {
-            const existing = aliasSnap.docs[0].data() as GlobalEquipmentTypeDoc;
-            if (Array.isArray(existing?.spec_schema) && existing.spec_schema.length >= 2) {
-                return upgradeEquipmentTypeSchemaIfNeeded(existing).doc;
-            }
-        }
-    }
-
-    const registeredAndSeeded = await listRegisteredEquipmentTypes();
-    const staticHit = registeredAndSeeded.find((candidate) => {
-        if (candidate.type_key === normalizedKey || candidate.type_key === rawTypeKey) {
-            return true;
-        }
-        if (normalizeEquipmentTypeAlias(candidate.canonical_type_es) === normalizedAlias) {
-            return true;
-        }
-        return (
-            Array.isArray(candidate.type_aliases) &&
-            candidate.type_aliases.some((alias) => normalizeEquipmentTypeAlias(alias) === normalizedAlias)
-        );
-    });
-
-    return staticHit ? upgradeEquipmentTypeSchemaIfNeeded(staticHit).doc : null;
-}
-
-app.get(
-    '/api/m2m/opermaq/vault/:assetId/specs',
-    x402Gatekeeper({ priceMicroUSD: 20000, resourceId: 'opermaq-vault-canonical-specs' }),
-    async (req: X402AuthenticatedRequest, res) => {
-        try {
-            const x402Ctx = req.x402Context;
-            const parsedParams = M2mAssetIdParamSchema.safeParse(req.params || {});
-            if (!parsedParams.success) {
-                return res.status(400).json({ error: 'Identificador de activo requerido.' });
-            }
-            const { assetId } = parsedParams.data;
-
-            const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(assetId);
-            if (!hydrated.exists || !hydrated.data) {
-                return res.status(404).json({ error: 'Activo no encontrado en bóveda soberana OPERMAQ.' });
-            }
-
-            const data = hydrated.data;
-            const vault = (data.knowledge_vault || {}) as Record<string, any>;
-            const vaultMerkleRootSha256 =
-                computeVaultMerkleRootSha256(vault) || vault.vault_merkle_root_sha256 || null;
-            const normalizedLists = normalizeSidebarProfileLists(data);
-
-            return res.status(200).json({
-                success: true,
-                protocol: 'x402 Foundation v1.0',
-                region: 'southamerica-west1',
-                timestamp: new Date().toISOString(),
-                settlementMode: x402Ctx?.mode || 'VERIFIED',
-                asset: {
-                    assetId: hydrated.id,
-                    make: data.make_oficial || data.make || 'GENÉRICO',
-                    model: data.model_oficial || data.model || '',
-                    categoria_equipo: data.categoria_equipo || null,
-                    tipo_equipo: data.tipo_equipo || null,
-                    is_sealed: Boolean(data.is_sealed),
-                    vault_merkle_root_sha256: vaultMerkleRootSha256,
-                    canonical_specs: normalizedLists.canonical_specs,
-                    caracteristicas_principales: normalizedLists.caracteristicas_principales,
-                    ambiente_operativo: normalizedLists.ambiente_operativo,
-                    contexto_operativo: normalizedLists.contexto_operativo,
-                    energy_consumption_profile: data.energy_consumption_profile || null,
-                    physical_traits: data.physical_traits || null,
-                },
-            });
-        } catch (err: any) {
-            console.error('[M2M-VAULT-SPECS] Error exportando especificaciones canónicas M2M:', err);
-            return res.status(500).json({ error: 'Error consultando especificaciones canónicas M2M.' });
-        }
-    }
-);
-
-app.get(
-    '/api/m2m/opermaq/vault/:assetId/cost-matrix',
-    x402Gatekeeper({ priceMicroUSD: 30000, resourceId: 'opermaq-vault-cost-matrix' }),
-    async (req: X402AuthenticatedRequest, res) => {
-        try {
-            const x402Ctx = req.x402Context;
-            const parsedParams = M2mAssetIdParamSchema.safeParse(req.params || {});
-            if (!parsedParams.success) {
-                return res.status(400).json({ error: 'Identificador de activo requerido.' });
-            }
-            const { assetId } = parsedParams.data;
-
-            const hydrated = await VaultPersistenceService.loadHydratedAssetCatalog(assetId);
-            if (!hydrated.exists || !hydrated.data) {
-                return res.status(404).json({ error: 'Activo no encontrado en bóveda soberana OPERMAQ.' });
-            }
-
-            const assetData = hydrated.data;
-            const cachedMatrix = assetData.operational_cost_matrix;
-            const costMatrix =
-                cachedMatrix && cachedMatrix.version === '3.0.0'
-                    ? cachedMatrix
-                    : compileEquipmentCostMatrixFromPillars({
-                          assetData,
-                          fichaDoc: (assetData.knowledge_vault?.ficha_tecnica || null) as PillarDocument | null,
-                          mantencionDoc: (assetData.knowledge_vault?.pauta_mantencion || null) as PillarDocument | null,
-                      });
-
-            return res.status(200).json({
-                success: true,
-                protocol: 'x402 Foundation v1.0',
-                region: 'southamerica-west1',
-                timestamp: new Date().toISOString(),
-                settlementMode: x402Ctx?.mode || 'VERIFIED',
-                assetId: hydrated.id,
-                make: assetData.make_oficial || assetData.make || 'GENÉRICO',
-                model: assetData.model_oficial || assetData.model || '',
-                tipo_equipo: assetData.tipo_equipo || null,
-                cost_matrix: costMatrix,
-            });
-        } catch (err: any) {
-            console.error('[M2M-VAULT-COST-MATRIX] Error exportando matriz de costos M2M:', err);
-            return res.status(500).json({ error: 'Error consultando matriz de costos operacionales M2M.' });
-        }
-    }
-);
-
-app.get(
-    '/api/m2m/opermaq/ontology/:typeKey',
-    x402Gatekeeper({ priceMicroUSD: 15000, resourceId: 'opermaq-asset-ontology' }),
-    async (req: X402AuthenticatedRequest, res) => {
-        try {
-            const x402Ctx = req.x402Context;
-            const parsedParams = M2mTypeKeyParamSchema.safeParse(req.params || {});
-            if (!parsedParams.success) {
-                return res.status(400).json({ error: 'Identificador typeKey requerido.' });
-            }
-            const { typeKey } = parsedParams.data;
-
-            const typeDoc = await resolveReadOnlyEquipmentTypeOntology(typeKey);
-            if (!typeDoc) {
-                return res.status(404).json({
-                    error: 'Tipo de equipo no encontrado en el registro ontológico OPERMAQ.',
+            const parsed = SupplierChannelResolveQuerySchema.safeParse(req.query);
+            if (!parsed.success) {
+                return res.status(400).json({
+                    error: 'Parámetros 4D inválidos para resolución M2M de proveedores.',
+                    details: parsed.error.format(),
                 });
             }
 
-            const traits =
-                typeDoc.physical_traits ||
-                AssetOntologyEngine.inferAssetPhysicalTraits({
-                    type_key: typeDoc.type_key,
-                    canonical_type_es: typeDoc.canonical_type_es,
-                    categoria_equipo: typeDoc.categoria_equipo,
-                    archetype_id: typeDoc.archetype_id,
-                    spec_schema: typeDoc.spec_schema,
-                });
-
-            const orderedPillars: PillarId[] = [
-                'ficha_tecnica',
-                'manual_operaciones',
-                'pauta_mantencion',
-                'matriz_riesgos',
-                'checklist_pre_op',
-            ];
-            const pillarBlueprints: Record<string, any> = {};
-            for (const pId of orderedPillars) {
-                pillarBlueprints[pId] = AssetOntologyEngine.buildCompositionalPillarBlueprint(pId, typeDoc);
-            }
+            const resolved = await SupplierChannelResolverService.resolveSupplierChannels({
+                manufacturerKey: parsed.data.manufacturerKey || null,
+                make: parsed.data.make || null,
+                archetypeId: parsed.data.archetypeId || null,
+                equipmentClass: parsed.data.equipmentClass || null,
+                regionIso: parsed.data.regionIso || null,
+                channelIntent: parsed.data.channelIntent || null,
+                areaQuery: parsed.data.areaQuery || null,
+                includeIndependentSpecialists: parsed.data.includeIndependentSpecialists,
+                tenantId: null,
+            });
 
             return res.status(200).json({
                 success: true,
                 protocol: 'x402 Foundation v1.0',
                 region: 'southamerica-west1',
-                timestamp: new Date().toISOString(),
-                settlementMode: x402Ctx?.mode || 'VERIFIED',
-                reused_existing_schema: true,
-                ontology: {
-                    type_key: typeDoc.type_key,
-                    canonical_type_es: typeDoc.canonical_type_es,
-                    categoria_equipo: typeDoc.categoria_equipo,
-                    physical_traits: traits,
-                    spec_schema: typeDoc.spec_schema,
-                    cost_schema_blueprint:
-                        typeDoc.cost_schema_blueprint ||
-                        AssetOntologyEngine.buildDynamicCostMatrixTaxonomy(traits, typeDoc.canonical_type_es),
-                    pillar_blueprints: pillarBlueprints,
-                },
+                settlementMode: req.x402Context?.mode || 'VERIFIED',
+                query: resolved.query,
+                officialMatches: resolved.officialMatches,
+                independentMatches: resolved.independentMatches,
+                latencyMs: resolved.latencyMs,
             });
-        } catch (err: any) {
-            console.error('[M2M-ONTOLOGY] Error exportando ontología industrial M2M:', err);
-            return res.status(500).json({ error: 'Error consultando ontología industrial M2M.' });
+        } catch (err) {
+            console.error('[M2M-SUPPLIERS-RESOLVE] Error resolviendo canales M2M:', err);
+            return res.status(500).json({ error: 'Error resolviendo canales comerciales 4D en endpoint M2M.' });
         }
     }
 );
@@ -684,7 +307,8 @@ app.get(
 const AIInferencePayloadSchema = z.object({
     prompt: z.string().min(1, 'El prompt no puede estar vacío').max(64000),
     systemInstruction: z.string().max(16000).optional(),
-    module: z.enum(['opermaq', 'stockpile', 'core', 'test-pilot', 'mining-swarm']).optional().default('core'),
+    module: z.enum(['opermaq', 'stockpile', 'geolapp', 'core', 'test-pilot']).optional().default('core'),
+    preferredTier: z.enum(['PRIMARY', 'SECONDARY', 'ANCHOR_HA']).optional(),
     thinkingLevel: z.enum(['none', 'low', 'medium', 'high']).optional().default('medium'),
     requireHITL: z.boolean().optional().default(false),
     media: z
@@ -698,6 +322,121 @@ const AIInferencePayloadSchema = z.object({
         .optional(),
 });
 
+async function resolveAuthorizedAiTenantContext(req: express.Request): Promise<{
+    authorized: boolean;
+    tenantId: string;
+    isEduSandbox: boolean;
+    countryCode?: string;
+}> {
+    const user = (req as any).user || {};
+    const uid = String(user.uid || '').trim();
+    const emailLower = String(user.email || '').toLowerCase();
+    const roleUpper = String(user.role || '').trim().toUpperCase();
+    const isAcademicRole =
+        user.role === 'STUDENT' ||
+        user.role === 'PROFESSOR' ||
+        roleUpper === 'STUDENT' ||
+        roleUpper === 'PROFESSOR';
+    const isSystemPrivileged =
+        user.role === 'DEV_ROOT' ||
+        user.role === 'SUPER_ADMIN' ||
+        user.role === 'TEST_PILOT' ||
+        user.isMasterDev === true ||
+        user.admin === true ||
+        uid === 'dev-master-root-uid' ||
+        uid === 'super-admin-uid' ||
+        (user.email_verified === true &&
+            (emailLower === 'dev@minreport.com' || emailLower === 'admin@minreport.com'));
+
+    const headerAccountId = String(
+        req.headers['x-active-account-id'] || req.headers['x-tenant-id'] || ''
+    ).trim();
+    const tokenAccountId = String(user.activeAccountId || user.tenantId || '').trim();
+    const candidateAccountId = headerAccountId || tokenAccountId;
+
+    if (!candidateAccountId) {
+        return {
+            authorized: true,
+            tenantId: isSystemPrivileged ? 'dev-master-sandbox' : 'default',
+            isEduSandbox: isAcademicRole,
+        };
+    }
+
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(candidateAccountId)) {
+        return { authorized: false, tenantId: '', isEduSandbox: false };
+    }
+
+    if (candidateAccountId === 'dev-master-sandbox') {
+        return {
+            authorized: isSystemPrivileged,
+            tenantId: candidateAccountId,
+            isEduSandbox: false,
+        };
+    }
+
+    const accountSnap = await db.collection('accounts').doc(candidateAccountId).get();
+    const accountData = accountSnap.exists ? accountSnap.data() || {} : {};
+    const accountClassLower = String(accountData.classification || '').toLowerCase();
+    const isEduAccount =
+        isAcademicRole ||
+        String(accountData.type || '').toUpperCase() === 'EDUCATIONAL' ||
+        accountClassLower === 'edu' ||
+        accountClassLower === 'educational' ||
+        accountData.isEduSandbox === true;
+    const countryCode = typeof accountData.country === 'string' ? accountData.country : undefined;
+
+    if (isSystemPrivileged) {
+        return {
+            authorized: true,
+            tenantId: candidateAccountId,
+            isEduSandbox: isEduAccount,
+            countryCode,
+        };
+    }
+
+    if (!accountSnap.exists) {
+        return { authorized: false, tenantId: '', isEduSandbox: false };
+    }
+
+    let isMember =
+        tokenAccountId === candidateAccountId ||
+        String(accountData.ownerId || '') === uid;
+
+    if (!isMember && uid) {
+        const memberSnap = await db
+            .collection('accounts')
+            .doc(candidateAccountId)
+            .collection('members')
+            .doc(uid)
+            .get();
+        if (memberSnap.exists) {
+            const st = String(memberSnap.data()?.status || 'ACTIVE').toUpperCase();
+            isMember = st !== 'SUSPENDED' && st !== 'REVOKED' && st !== 'INACTIVE';
+        }
+    }
+
+    if (!isMember && uid) {
+        const userSnap = await db.collection('users').doc(uid).get();
+        if (userSnap.exists) {
+            const memberships = userSnap.data()?.memberships;
+            if (Array.isArray(memberships)) {
+                isMember = memberships.some((m: any) => {
+                    if (m?.accountId !== candidateAccountId) return false;
+                    const st = String(m?.status || 'ACTIVE').toUpperCase();
+                    return st !== 'SUSPENDED' && st !== 'REVOKED' && st !== 'INACTIVE';
+                });
+            }
+        }
+    }
+
+    return {
+        authorized: isMember,
+        tenantId: candidateAccountId,
+        isEduSandbox: isEduAccount,
+        countryCode,
+    };
+}
+
 // [WEB 3.0 ENJAMBRE GEMINI] Endpoint de Inferencia Resiliente
 app.post('/api/ai/inference', requireAuth, aiRateLimiter, async (req, res) => {
     try {
@@ -709,34 +448,55 @@ app.post('/api/ai/inference', requireAuth, aiRateLimiter, async (req, res) => {
             });
         }
 
-        const { prompt, systemInstruction, module: targetModule, thinkingLevel, requireHITL, media } = validation.data;
-        const tenantId = (req as any).user?.activeAccountId || 'default';
-        const mappedModule = targetModule === 'mining-swarm' ? 'core' : targetModule;
+        const tenantCtx = await resolveAuthorizedAiTenantContext(req);
+        if (!tenantCtx.authorized) {
+            return res.status(403).json({
+                error: 'Acceso denegado al espacio de trabajo solicitado en X-Active-Account-Id.',
+            });
+        }
+
+        const {
+            prompt,
+            systemInstruction,
+            module: targetModule,
+            preferredTier,
+            thinkingLevel,
+            requireHITL,
+            media,
+        } = validation.data;
+        const resolvedAiModule = targetModule === 'geolapp' ? 'stockpile' : targetModule;
 
         const aiResponse = await ResilientAIClient.generate({
             prompt,
             systemInstruction,
-            module: mappedModule,
-            tenantId,
+            module: resolvedAiModule,
+            tenantId: tenantCtx.tenantId,
+            isEduSandbox: tenantCtx.isEduSandbox,
+            countryCode: tenantCtx.countryCode,
+            preferredTier,
             thinkingLevel,
             requireHITL,
             media,
         });
 
-        await AuditLedger.record({
-            tenantId,
-            actorUid: (req as any).user?.uid || 'system',
-            actorEmail: (req as any).user?.email || 'ai-agent@minreport.internal',
-            action: 'AI_INFERENCE_REQUEST',
-            module: mappedModule,
-            targetEntity: 'gemini-swarm',
-            details: {
-                tier: aiResponse.tierUsed,
-                model: aiResponse.model,
-                latencyMs: aiResponse.latencyMs,
-                requireHITL,
-            },
-        });
+        // FinOps Firestore: los turnos conversacionales simples registran telemetría atómica vía TenantMetricsService;
+        // AuditLedger se reserva para inferencias críticas / sujetas a aprobación humana HITL.
+        if (requireHITL) {
+            await AuditLedger.record({
+                tenantId: tenantCtx.tenantId,
+                actorUid: (req as any).user?.uid || 'system',
+                actorEmail: (req as any).user?.email || 'ai-agent@minreport.internal',
+                action: 'AI_INFERENCE_HITL_REQUEST',
+                module: resolvedAiModule,
+                targetEntity: 'gemini-swarm',
+                details: {
+                    tier: aiResponse.tierUsed,
+                    model: aiResponse.model,
+                    latencyMs: aiResponse.latencyMs,
+                    requireHITL: true,
+                },
+            });
+        }
 
         return res.status(200).json({ success: true, ...aiResponse });
     } catch (err: any) {
@@ -747,6 +507,232 @@ app.post('/api/ai/inference', requireAuth, aiRateLimiter, async (req, res) => {
     }
 });
 
+const HitlCandidateIdParamSchema = z.string().trim().min(1).max(128);
+const HitlResolveBodySchema = z.object({
+    status: z.enum(['APPROVED', 'REJECTED']),
+    confirmKeyword: z.string().max(32).optional(),
+});
+const VALID_HITL_AUDIT_MODULES = new Set<AuditLedgerModule>([
+    'opermaq',
+    'stockpile',
+    'b2b-core',
+    'core',
+    'test-pilot',
+    'web3-m2m',
+    'auth',
+    'edu',
+]);
+
+function isEduAccountRecord(accountData: Record<string, any>): boolean {
+    const accountTypeUpper = String(accountData.type || '').toUpperCase();
+    const accountClassLower = String(accountData.classification || '').toLowerCase();
+    return (
+        accountData.isEduSandbox === true ||
+        accountTypeUpper === 'EDUCATIONAL' ||
+        accountClassLower === 'edu' ||
+        accountClassLower === 'educational'
+    );
+}
+
+async function isActiveVerifiedTestPilot(
+    uid: string,
+    tokenRole: string,
+    tokenPilotExpiresAt: unknown
+): Promise<boolean> {
+    const userSnap = await db.collection('users').doc(uid).get();
+    const userData = userSnap.exists ? userSnap.data() || {} : {};
+    const userStatus = String(userData.status || 'ACTIVE').trim().toUpperCase();
+    if (
+        userStatus === 'REVOKED' ||
+        userStatus === 'SUSPENDED' ||
+        userStatus === 'INACTIVE' ||
+        userStatus === 'DELETED'
+    ) {
+        return false;
+    }
+
+    const serverRole = String(userData.role || '').trim().toUpperCase();
+    if (tokenRole !== 'TEST_PILOT' && serverRole !== 'TEST_PILOT') {
+        return false;
+    }
+    if (
+        evaluatePilotExpiration(tokenPilotExpiresAt) ||
+        evaluatePilotExpiration(userData.pilotExpiresAt)
+    ) {
+        return false;
+    }
+
+    const pilotsSnap = await db.collection('test_pilots').where('userId', '==', uid).get();
+    if (!pilotsSnap.empty) {
+        const pilotDocs = pilotsSnap.docs.map((d) => d.data() || {});
+        const activeDocs = pilotDocs.filter(
+            (p) => String(p.status || '').trim().toUpperCase() === 'ACTIVE'
+        );
+        if (activeDocs.length === 0 || activeDocs.every((p) => evaluatePilotExpiration(p.expiresAt))) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+async function isAuthorizedToResolveHitlCandidate(
+    user: Record<string, any>,
+    candTenantId: string
+): Promise<boolean> {
+    const uid = String(user.uid || '').trim();
+    if (!uid) return false;
+
+    const emailLower = String(user.email || '').trim().toLowerCase();
+    const tokenRole = String(user.role || '').trim().toUpperCase();
+
+    const isDevRoot =
+        user.isMasterDev === true ||
+        tokenRole === 'DEV_ROOT' ||
+        uid === 'dev-master-root-uid' ||
+        (emailLower === 'dev@minreport.com' && user.email_verified !== false);
+    if (isDevRoot) return true;
+
+    const isSuperAdmin =
+        user.admin === true ||
+        tokenRole === 'SUPER_ADMIN' ||
+        uid === 'super-admin-uid' ||
+        ((emailLower === 'admin@minreport.com' ||
+            emailLower === env.SUPER_ADMIN_EMAIL.toLowerCase()) &&
+            user.email_verified !== false);
+    if (isSuperAdmin) return true;
+
+    if (await isActiveVerifiedTestPilot(uid, tokenRole, user.pilotExpiresAt)) {
+        return true;
+    }
+
+    if (tokenRole === 'STUDENT' || tokenRole === 'PROFESSOR') {
+        return false;
+    }
+
+    if (!candTenantId) {
+        return false;
+    }
+
+    const accountSnap = await db.collection('accounts').doc(candTenantId).get();
+    if (!accountSnap.exists) {
+        return false;
+    }
+
+    const accountData = accountSnap.data() || {};
+    if (isEduAccountRecord(accountData)) {
+        return false;
+    }
+
+    const accountTypeUpper = String(accountData.type || '').toUpperCase();
+    const accountClassLower = String(accountData.classification || '').toLowerCase();
+    if (accountTypeUpper === 'TEST_PILOT' || accountClassLower === 'test-pilot') {
+        return false;
+    }
+
+    const accountStatus = String(accountData.status || 'ACTIVE').trim().toUpperCase();
+    if (accountStatus === 'SUSPENDED' || accountStatus === 'REJECTED' || accountStatus === 'REVOKED') {
+        return false;
+    }
+
+    const memberSnap = await db
+        .collection('accounts')
+        .doc(candTenantId)
+        .collection('members')
+        .doc(uid)
+        .get();
+    if (memberSnap.exists) {
+        const memberData = memberSnap.data() || {};
+        const memberStatus = String(memberData.status || '').trim().toUpperCase();
+        const memberRole = String(memberData.role || '').trim().toUpperCase();
+        if (memberStatus !== 'ACTIVE') {
+            return false;
+        }
+        if (memberRole === 'OWNER' || memberRole === 'ADMIN') {
+            return true;
+        }
+        return String(accountData.ownerId || '').trim() === uid;
+    }
+
+    return String(accountData.ownerId || '').trim() === uid;
+}
+
+// [HITL IA] Resolución server-side de propuestas de IA (B2B OWNER/ADMIN, TEST-PILOT, ADMIN, DEV)
+app.post('/api/ai/hitl-candidates/:id/resolve', requireAuth, mutationRateLimiter, async (req, res) => {
+    try {
+        const idParsed = HitlCandidateIdParamSchema.safeParse(req.params.id);
+        if (!idParsed.success) {
+            return res.status(400).json({ error: 'Identificador de candidato HITL inválido.' });
+        }
+        const id = idParsed.data;
+
+        const bodyParsed = HitlResolveBodySchema.safeParse(req.body);
+        if (!bodyParsed.success) {
+            return res.status(400).json({
+                error: 'Validación de payload HITL fallida.',
+                details: bodyParsed.error.format(),
+            });
+        }
+
+        const { status, confirmKeyword } = bodyParsed.data;
+        if (status === 'APPROVED' && String(confirmKeyword || '').trim().toUpperCase() !== 'ACTUALIZAR') {
+            return res.status(400).json({
+                error: 'Confirmación humana obligatoria: debe ingresar la palabra clave "ACTUALIZAR".',
+            });
+        }
+
+        const candidateRef = db.collection('hitl_candidates').doc(id);
+        const candidateSnap = await candidateRef.get();
+        if (!candidateSnap.exists) {
+            return res.status(404).json({ error: 'Candidato HITL no encontrado.' });
+        }
+
+        const user = (req as any).user || {};
+        const uid = String(user.uid || '').trim();
+        if (!uid) {
+            return res.status(401).json({ error: 'Acceso no autorizado: sesión ausente.' });
+        }
+        const email = String(user.email || '').trim();
+
+        const candData = candidateSnap.data() || {};
+        const candTenantId = String(candData.tenantId || '').trim();
+
+        const authorized = await isAuthorizedToResolveHitlCandidate(user, candTenantId);
+        if (!authorized) {
+            return res.status(403).json({
+                error: 'Acceso denegado para resolver propuestas HITL en esta cuenta.',
+            });
+        }
+
+        const nowMs = Date.now();
+        await candidateRef.update({
+            status,
+            reviewedByUid: uid,
+            reviewedByEmail: email,
+            reviewedAt: new Date(nowMs).toISOString(),
+            updatedAt: nowMs,
+        });
+
+        const rawModule = String(candData.module || 'core').trim().toLowerCase() as AuditLedgerModule;
+        const resolvedModule: AuditLedgerModule = VALID_HITL_AUDIT_MODULES.has(rawModule) ? rawModule : 'core';
+
+        await AuditLedger.record({
+            tenantId: candTenantId || 'global',
+            actorUid: uid || 'system',
+            actorEmail: email || 'hitl@minreport.internal',
+            action: status === 'APPROVED' ? 'AI_HITL_CANDIDATE_APPROVED' : 'AI_HITL_CANDIDATE_REJECTED',
+            module: resolvedModule,
+            targetEntity: `hitl_candidates/${id}`,
+            details: { status, hitlConfirmed: status === 'APPROVED' },
+            ipAddress: extractClientIp(req),
+        });
+
+        return res.status(200).json({ success: true, id, status });
+    } catch (err: any) {
+        return res.status(500).json({ error: err?.message || 'Error resolviendo candidato HITL.' });
+    }
+});
+
 // Gobernanza EDU (Restringida a SUPER_ADMIN / DEV_ROOT)
 app.post('/api/edu/validate/:requestId', requireSuperAdmin, mutationRateLimiter, validateEduRequest);
 app.post('/api/edu/analyze-doc', requireSuperAdmin, aiRateLimiter, analyzeEduDocument);
@@ -754,11 +740,26 @@ app.post('/api/edu/analyze-doc', requireSuperAdmin, aiRateLimiter, analyzeEduDoc
 // Staff Routes (Protegidas con requireAuth + verificación de OWNER/ADMIN en controlador)
 app.use('/api/staff', requireAuth, mutationRateLimiter, staffRoutes);
 
+// Solicitudes de Incorporación de Equipos Nuevos (4º B2B -> 1º DEV -> Catálogo Maestro + Flota)
+app.use('/api/equipment-onboarding', requireAuth, equipmentOnboardingRouter);
+
 // Test-Pilot Feedback & AI Training Routes (3º TEST-PILOT + HITL)
 app.use('/api/pilot', mutationRateLimiter, pilotRoutes);
 
 // Digestor Multimedia Universal y Almacenamiento CAS (PDF, Imagen, Video, SVG)
 app.use('/api/media', mediaRoutes);
+
+// Núcleo Geoespacial Multi-Dispositivo, PMTiles v3 y Sellos Georreferenciados
+app.use('/api/geo', geoRoutes);
+
+// Núcleo GEOLAPP (Mutaciones Oficiales HITL + Reconstrucción 3D .glb + Trazabilidad AuditLedger)
+app.post(
+    '/api/geolapp/stockpiles/:id/reconstruct-3d',
+    requireAuth,
+    resolveMinReportSessionScope,
+    postGeolappReconstruct3d
+);
+app.use('/api/geolapp', geolappRoutes);
 
 // Flujo Out-of-Band y Desafío Progresivo DEV (Rate-Limited)
 app.post('/api/dev/auth/challenge/init', authRateLimiter, initDevChallenge);
@@ -771,16 +772,22 @@ app.post('/api/dev/auth/login', authRateLimiter, devLogin);
 app.post('/api/dev/auth/session-sync', requireDevRoot, authRateLimiter, syncDevFirebaseSession);
 
 // DEV Root & Test-Pilot Governance Routes
+app.get('/api/dev/settings/branding', requireDevRoot, getBrandingSettings);
+app.put('/api/dev/settings/branding', requireDevRoot, mutationRateLimiter, updateBrandingSettings);
 app.post('/api/dev/test-pilots', requireDevRoot, mutationRateLimiter, createTestPilotAccount);
 app.get('/api/dev/test-pilots', requireDevRoot, listTestPilots);
 app.delete('/api/dev/test-pilots/:id', requireDevRoot, mutationRateLimiter, revokeTestPilot);
-app.post('/api/dev/impersonate-client', requireDevRoot, mutationRateLimiter, impersonateClient);
+app.get('/api/dev/pilot-metrics', requireDevRoot, getDevPilotMetrics);
 
 // Admin Routes (Protected)
 app.post('/api/admin/login', authRateLimiter, adminLogin);
 app.get('/api/admin/tenants', requireSuperAdmin, listTenants);
 app.get('/api/admin/accounts', requireSuperAdmin, listAccounts);
 app.get('/api/admin/accounts/:accountId/users', requireSuperAdmin, getAccountUsers);
+app.patch('/api/admin/accounts/:accountId/entitlements', requireSuperAdmin, mutationRateLimiter, updateAccountEntitlements);
+app.get('/api/admin/edu-institutions', requireSuperAdmin, listAdminEduInstitutions);
+app.post('/api/admin/edu-institutions', requireSuperAdmin, mutationRateLimiter, createAdminEduInstitution);
+app.patch('/api/admin/edu-institutions/:id', requireSuperAdmin, mutationRateLimiter, updateAdminEduInstitution);
 app.get('/api/admin/ai-telemetry', requireSuperAdmin, getAITelemetry);
 app.post('/api/admin/tenants/:uid/approve', requireSuperAdmin, mutationRateLimiter, approveTenant);
 app.post('/api/admin/tenants/:uid/reject', requireSuperAdmin, mutationRateLimiter, rejectTenant);
@@ -788,8 +795,9 @@ app.patch('/api/admin/tenants/:uid', requireSuperAdmin, mutationRateLimiter, upd
 app.delete('/api/admin/tenants/:uid', requireSuperAdmin, mutationRateLimiter, deleteTenant);
 app.delete('/api/admin/tenants/:uid/purge', requireSuperAdmin, mutationRateLimiter, purgeTenant);
 app.get('/api/admin/settings/branding', requireSuperAdmin, getBrandingSettings);
-app.put('/api/admin/settings/branding', requireSuperAdmin, mutationRateLimiter, updateBrandingSettings);
+app.put('/api/admin/settings/branding', requireDevRoot, mutationRateLimiter, updateBrandingSettings);
 app.get('/api/admin/metrics', requireSuperAdmin, getSystemMetrics);
+app.get('/api/admin/metrics/tenants', requireSuperAdmin, getTenantMetricsBySegment);
 app.get('/api/admin/audit-logs', requireSuperAdmin, getAuditLogs);
 app.get('/api/admin/audit-ledger/verify', requireSuperAdmin, verifyAuditLedgerChain);
 app.get('/api/admin/settings/ui-assets', requireSuperAdmin, getUIAssetsSettings);
@@ -860,6 +868,8 @@ async function startServer(): Promise<void> {
     bindWithRetry();
 }
 
-void startServer();
+if (process.env.NODE_ENV !== 'test' || require.main === module) {
+    void startServer();
+}
 
 export default app;
