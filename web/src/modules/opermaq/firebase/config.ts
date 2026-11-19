@@ -1,4 +1,5 @@
 import { app as coreApp, auth as coreAuth, db as coreDb, storage as coreStorage } from '../../../config/firebase';
+import { getApiUrl } from '../../../utils/network';
 
 /**
  * MINREPORT — Módulo Funcional OPERMAQ: Configuración Unificada de Firebase
@@ -36,11 +37,12 @@ export function getOpermaqActiveAccountId(): string | null {
     return stored ? stored : null;
 }
 
-const rawApiBase: string =
-    (import.meta as any).env?.VITE_OPERMAQ_API_URL ||
-    (import.meta as any).env?.VITE_API_URL ||
-    '/api';
+const explicitOpermaqBase = (import.meta as any).env?.VITE_OPERMAQ_API_URL?.trim();
 
-export const API_BASE_URL: string = rawApiBase.endsWith('/api')
-    ? rawApiBase
-    : `${rawApiBase.replace(/\/+$/, '')}/api`;
+export const API_BASE_URL: string =
+    explicitOpermaqBase &&
+    !/^https?:\/\/(localhost|127\.0\.0\.1|10\.0\.2\.2|192\.168\.)/i.test(explicitOpermaqBase)
+        ? explicitOpermaqBase.endsWith('/api')
+            ? explicitOpermaqBase
+            : `${explicitOpermaqBase.replace(/\/+$/, '')}/api`
+        : getApiUrl('/api');

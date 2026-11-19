@@ -1,7 +1,7 @@
 /**
- * GEOLAPP® Headless Core Barrel (Fase 4)
+ * GEOLAPP® Headless Core Barrel (STOCKPILE CONTROL)
  *
- * Exporta tipos, cálculos geocientíficos puros, adaptadores de hardware/superficie
+ * Exporta tipos, cálculos volumétricos/geo-metalúrgicos Cu puros, adaptadores de hardware/superficie
  * (UAV, LiDAR móvil, GNSS/RTK NMEA), constructores glTF 2.0 `.glb`, servicios de
  * datos/almacenamiento, generadores PDF vectoriales y hook de clinometría IMU.
  *
@@ -9,7 +9,6 @@
  */
 
 export * from './types/GeolappTypes';
-export * from './utils/geoscienceCalculations';
 
 export * from './adapters/ISurfaceSourceAdapter';
 export * from './adapters/UavPointCloudAdapter';

@@ -3,7 +3,11 @@ import { z } from 'zod';
 import { db } from '../config/firebase';
 import { x402Gatekeeper, type X402AuthenticatedRequest } from '../middleware/x402Gatekeeper';
 import { AssetOntologyEngine } from '../modules/opermaq/services/AssetOntologyEngine';
-import { compileEquipmentCostMatrixFromPillars } from '../modules/opermaq/services/EquipmentCostMatrixCompiler';
+import {
+    compileEquipmentCostMatrixFromPillars,
+    computeCostMatrixSourceDigest,
+    COST_MATRIX_SCHEMA_VERSION,
+} from '../modules/opermaq/services/EquipmentCostMatrixCompiler';
 import {
     GLOBAL_EQUIPMENT_TYPES_COLLECTION,
     listRegisteredEquipmentTypes,
@@ -329,15 +333,37 @@ export function registerM2mOpermaqAdapterRoutes(app: express.Application): void 
                 }
 
                 const assetData = hydrated.data;
+                const cleanTraits = AssetOntologyEngine.inferAssetPhysicalTraits({
+                    type_key: assetData.equipment_type_key,
+                    canonical_type_es: assetData.tipo_equipo,
+                    categoria_equipo: assetData.categoria_equipo,
+                    archetype_id: assetData.archetype_id,
+                    make_oficial: assetData.make_oficial || assetData.make,
+                    model_oficial: assetData.model_oficial || assetData.model,
+                    caracteristicas_principales: assetData.caracteristicas_principales,
+                    ambiente_operativo: assetData.ambiente_operativo,
+                    contexto_operativo: assetData.contexto_operativo,
+                    existing_traits: assetData.physical_traits,
+                });
+                const fichaDoc = (assetData.knowledge_vault?.ficha_tecnica || null) as PillarDocument | null;
+                const mantencionDoc = (assetData.knowledge_vault?.pauta_mantencion ||
+                    null) as PillarDocument | null;
+                const expectedDigest = computeCostMatrixSourceDigest({
+                    assetData,
+                    fichaDoc,
+                    mantencionDoc,
+                    traits: cleanTraits,
+                });
                 const cachedMatrix = assetData.operational_cost_matrix;
                 const costMatrix =
-                    cachedMatrix && cachedMatrix.version === '3.0.0'
+                    cachedMatrix &&
+                    cachedMatrix.version === COST_MATRIX_SCHEMA_VERSION &&
+                    (!expectedDigest || cachedMatrix.source_merkle_root_sha256 === expectedDigest)
                         ? cachedMatrix
                         : compileEquipmentCostMatrixFromPillars({
-                              assetData,
-                              fichaDoc: (assetData.knowledge_vault?.ficha_tecnica || null) as PillarDocument | null,
-                              mantencionDoc: (assetData.knowledge_vault?.pauta_mantencion ||
-                                  null) as PillarDocument | null,
+                              assetData: { ...assetData, physical_traits: cleanTraits },
+                              fichaDoc,
+                              mantencionDoc,
                           });
 
                 return res.status(200).json({

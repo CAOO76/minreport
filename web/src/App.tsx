@@ -1,7 +1,6 @@
 import React, { lazy, Suspense } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MinReportSessionProvider, useMinReportSession, resolveSessionHomePath } from './context/MinReportSessionContext';
-import { ErgonomicScaleProvider } from './context/ErgonomicScaleContext';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
 import { Dashboard } from './pages/Dashboard';
@@ -26,8 +25,8 @@ const MobileLogin = lazy(() => import('./pages/mobile/MobileLogin'));
 const MobileDashboard = lazy(() => import('./pages/mobile/MobileDashboard'));
 const MobileTools = lazy(() => import('./pages/mobile/MobileTools'));
 const DevFieldTestLogin = lazy(() => import('./pages/mobile/DevFieldTestLogin'));
-const DevFieldTestLaunchpad = lazy(() => import('./pages/mobile/DevFieldTestLaunchpad'));
-const DevFieldTestModuleShell = lazy(() => import('./pages/mobile/DevFieldTestModuleShell'));
+const DevFieldTestLaunchpad = lazy(() => import('./pages/mobile/DevFieldTestLaunchpad').then(m => ({ default: m.DevFieldTestLaunchpad })));
+const DevFieldTestModuleShell = lazy(() => import('./pages/mobile/DevFieldTestModuleShell').then(m => ({ default: m.DevFieldTestModuleShell })));
 const SuperAdminConsole = lazy(() => import('./pages/admin/SuperAdminConsole').then(m => ({ default: m.SuperAdminConsole })));
 const TestPilotWorkspace = lazy(() => import('./pages/pilot/TestPilotWorkspace').then(m => ({ default: m.TestPilotWorkspace })));
 const AccessPage = lazy(() => import('./pages/AccessPage').then(m => ({ default: m.AccessPage })));
@@ -50,7 +49,9 @@ const RequireAuthLayout = () => {
     if (loading || !isLoaded) {
         return <M3ModuleHudFallback label={t('core_shell.verifying_sovereign_session', 'VERIFICANDO SESIÓN SOBERANA')} />;
     }
-    if (!user) return <Navigate to="/access" replace />;
+    if (!user && !(Capacitor.isNativePlatform() && session)) {
+        return <Navigate to={Capacitor.isNativePlatform() ? '/mobile/login' : '/access'} replace />;
+    }
 
     const isDesktop = !isMobile && !Capacitor.isNativePlatform();
     if (isDesktop && !isMfaVerified && !session?.isDevRoot) {
@@ -65,11 +66,11 @@ const RequireAuthLayout = () => {
         return <Navigate to="/dev" replace />;
     }
 
-    if (!currentAccount) {
+    if (!currentAccount && !(Capacitor.isNativePlatform() && session?.tenantId)) {
         const mappedAccounts: AccountReference[] = (profile?.memberships || [])
             .map((m: any): AccountReference => ({
                 accountId: m.accountId || m.id || '',
-                authEmail: m.authEmail || user.email || '',
+                authEmail: m.authEmail || user?.email || session?.email || '',
                 role: m.role || 'OPERATOR',
                 type: m.type || 'BUSINESS',
                 avatar: m.avatar,
@@ -280,12 +281,13 @@ const AppRoutes = () => {
             ? '/access?step=otp'
             : authenticatedHome;
 
-    // Variante exclusiva MINREPORT TEST (com.minreport.app.fieldtest): 1º DEV + botón único GEOLAPP®
+    // Variante exclusiva MINREPORT TEST (com.minreport.app.fieldtest): 1º DEV -> Home MINREPORT -> Módulos
     if (isFieldTestApp()) {
         return (
             <Routes>
                 <Route path="/mobile/dev-login" element={<DevFieldTestLogin />} />
-                <Route path="/mobile/dev-launchpad" element={<DevFieldTestLaunchpad />} />
+                <Route path="/mobile/dev-home" element={<DevFieldTestLaunchpad />} />
+                <Route path="/mobile/dev-launchpad" element={<Navigate to="/mobile/dev-home" replace />} />
                 <Route path="/mobile/dev-geolapp" element={<DevFieldTestModuleShell />} />
                 <Route
                     path="/"
@@ -294,7 +296,7 @@ const AppRoutes = () => {
                             <M3ModuleHudFallback label={t('core_shell.verifying_sovereign_session')} />
                         ) : (
                             <Navigate
-                                to={session?.isDevRoot ? '/mobile/dev-launchpad' : '/mobile/dev-login'}
+                                to={session?.isDevRoot ? '/mobile/dev-home' : '/mobile/dev-login'}
                                 replace
                             />
                         )
@@ -307,7 +309,7 @@ const AppRoutes = () => {
                             <M3ModuleHudFallback label={t('core_shell.verifying_sovereign_session')} />
                         ) : (
                             <Navigate
-                                to={session?.isDevRoot ? '/mobile/dev-launchpad' : '/mobile/dev-login'}
+                                to={session?.isDevRoot ? '/mobile/dev-home' : '/mobile/dev-login'}
                                 replace
                             />
                         )
@@ -371,18 +373,6 @@ const AppRoutes = () => {
                     element={<ModuleHost moduleId="stockpile" embedded={true} domainMode="STOCKPILE" />}
                 />
                 <Route
-                    path="/geolapp/geomensura"
-                    element={<ModuleHost moduleId="stockpile" embedded={true} domainMode="GEOMENSURA_GEO" />}
-                />
-                <Route
-                    path="/geolapp/exploracion"
-                    element={<ModuleHost moduleId="stockpile" embedded={true} domainMode="EXPLORACION_SONDAJES" />}
-                />
-                <Route
-                    path="/geolapp/estructural"
-                    element={<ModuleHost moduleId="stockpile" embedded={true} domainMode="ESTRUCTURAL_HIDRO" />}
-                />
-                <Route
                     path="/geolapp"
                     element={<Navigate to="/geolapp/stockpiles" replace />}
                 />
@@ -442,12 +432,16 @@ const AppRoutes = () => {
             {/* Root & Fallback */}
             <Route path="/" element={
                 Capacitor.isNativePlatform()
-                    ? <Navigate to="/mobile/login" replace />
+                    ? (!isLoaded || loading
+                        ? <M3ModuleHudFallback label={t('core_shell.verifying_sovereign_session')} />
+                        : <Navigate to={session ? (session.isDevRoot ? '/mobile/dev-home' : '/mobile/dashboard') : '/mobile/login'} replace />)
                     : (loading ? <M3ModuleHudFallback label={t('core_shell.verifying_sovereign_session')} /> : <Navigate to={fallbackAuthTarget} replace />)
             } />
             <Route path="*" element={
                 Capacitor.isNativePlatform()
-                    ? <Navigate to="/mobile/login" replace />
+                    ? (!isLoaded || loading
+                        ? <M3ModuleHudFallback label={t('core_shell.verifying_sovereign_session')} />
+                        : <Navigate to={session ? (session.isDevRoot ? '/mobile/dev-home' : '/mobile/dashboard') : '/mobile/login'} replace />)
                     : (loading ? <M3ModuleHudFallback label={t('core_shell.verifying_sovereign_session')} /> : <Navigate to={fallbackAuthTarget} replace />)
             } />
         </Routes>
@@ -462,8 +456,7 @@ function App() {
                 <BrandingProvider>
                     <AuthProvider>
                         <MinReportSessionProvider>
-                            <ErgonomicScaleProvider>
-                                <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+                            <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
                                     <div className="min-h-screen bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] transition-colors">
                                         <Suspense fallback={<M3ModuleHudFallback label={t('core_shell.loading_minreport_ui')} />}>
                                             <AppRoutes />
@@ -471,7 +464,6 @@ function App() {
                                         <PWAInstallPrompt />
                                     </div>
                                 </BrowserRouter>
-                            </ErgonomicScaleProvider>
                         </MinReportSessionProvider>
                     </AuthProvider>
                 </BrandingProvider>

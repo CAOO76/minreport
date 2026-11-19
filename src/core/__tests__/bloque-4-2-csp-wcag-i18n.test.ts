@@ -437,6 +437,7 @@ function testI18nLocalesAndRuntimeBehavior() {
         const i18nMod = loadWebTsModuleCjs('web/src/i18n.ts');
         const i18n = i18nMod.default;
         const resolveNormalizedLang: (raw?: string | null) => string = i18nMod.resolveNormalizedLang;
+        const resolveDeviceLang: () => string = i18nMod.resolveDeviceLang;
 
         assert.equal(typeof resolveNormalizedLang, 'function', 'web/src/i18n.ts must export resolveNormalizedLang');
         assert.equal(resolveNormalizedLang('es-CL'), 'es');
@@ -444,6 +445,31 @@ function testI18nLocalesAndRuntimeBehavior() {
         assert.equal(resolveNormalizedLang('pt-BR'), 'pt');
         assert.equal(resolveNormalizedLang('fr'), 'es');
         assert.equal(resolveNormalizedLang(null), 'es');
+
+        assert.equal(typeof resolveDeviceLang, 'function', 'web/src/i18n.ts must export resolveDeviceLang');
+        const prevNavigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+        const setMockNavigator = (langs: string[], language: string) => {
+            Object.defineProperty(globalThis, 'navigator', {
+                value: { languages: langs, language, userAgent: 'Mozilla/5.0' },
+                configurable: true,
+            });
+        };
+        try {
+            setMockNavigator(['en-US', 'es-CL'], 'en-US');
+            assert.equal(resolveDeviceLang(), 'en');
+            setMockNavigator(['pt-BR', 'en-US'], 'pt-BR');
+            assert.equal(resolveDeviceLang(), 'pt');
+            setMockNavigator(['es-CL'], 'es-CL');
+            assert.equal(resolveDeviceLang(), 'es');
+            setMockNavigator(['fr-FR'], 'fr-FR');
+            assert.equal(resolveDeviceLang(), 'es');
+        } finally {
+            if (prevNavigatorDescriptor) {
+                Object.defineProperty(globalThis, 'navigator', prevNavigatorDescriptor);
+            } else {
+                delete g.navigator;
+            }
+        }
 
         const opts = i18n.options;
         assert.equal(opts.detection?.lookupLocalStorage, 'i18nextLng');
@@ -536,6 +562,7 @@ function testBalancedJsxFormsI18nPortalsAndGuardrails() {
         'web/src/core/modules/ModuleHost.tsx',
         'web/src/components/LanguageSwitch.tsx',
         'web/src/components/ThemeSwitch.tsx',
+        'web/src/components/mobile/MobileAppTopBar.tsx',
         'web/src/components/admin/BrandingManager.tsx',
         'web/src/components/ai/MiningAICopilot.tsx',
         'web/src/components/auth/AccountSelector.tsx',
@@ -577,8 +604,8 @@ function testBalancedJsxFormsI18nPortalsAndGuardrails() {
         );
     }
 
-    // Portals mounting <LanguageSwitch
-    const portalFiles = [
+    // Portales Web Desktop conservan <LanguageSwitch />; App Móvil Nativa adopta el SO automáticamente
+    const webDesktopPortalFiles = [
         'web/src/layouts/ClientLayout.tsx',
         'web/src/pages/AccessPage.tsx',
         'web/src/pages/SetupAccess.tsx',
@@ -586,15 +613,31 @@ function testBalancedJsxFormsI18nPortalsAndGuardrails() {
         'web/src/pages/admin/SuperAdminConsole.tsx',
         'web/src/pages/pilot/TestPilotWorkspace.tsx',
         'web/src/pages/dev/DevVaultGateway.tsx',
+    ];
+    for (const portalPath of webDesktopPortalFiles) {
+        const src = readRepoFile(portalPath);
+        assert.ok(src.includes('<LanguageSwitch'), `${portalPath} must mount <LanguageSwitch />`);
+    }
+
+    const nativeMobilePortalFiles = [
         'web/src/pages/mobile/DevFieldTestLogin.tsx',
         'web/src/pages/mobile/DevFieldTestLaunchpad.tsx',
         'web/src/pages/mobile/DevFieldTestModuleShell.tsx',
         'web/src/pages/mobile/MobileLogin.tsx',
         'web/src/pages/mobile/MobileProfile.tsx',
     ];
-    for (const portalPath of portalFiles) {
-        const src = readRepoFile(portalPath);
-        assert.ok(src.includes('<LanguageSwitch'), `${portalPath} must mount <LanguageSwitch />`);
+    for (const mobilePath of nativeMobilePortalFiles) {
+        const src = readRepoFile(mobilePath);
+        assert.equal(
+            src.includes('<LanguageSwitch'),
+            false,
+            `${mobilePath} must inherit device OS language without <LanguageSwitch />`
+        );
+        assert.equal(
+            src.includes('<ThemeSwitch'),
+            false,
+            `${mobilePath} must inherit device OS dark/light mode without <ThemeSwitch />`
+        );
     }
 
     // UI/UX & security guardrails across non-module web/src files

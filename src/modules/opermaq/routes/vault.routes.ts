@@ -39,11 +39,14 @@ import {
     VaultUpdateAssetImageBodySchema,
     VaultUpdateItemContentBodySchema,
 } from '../../../contracts/opermaq.contracts';
+import { AssetOntologyEngine } from '../services/AssetOntologyEngine';
 import { resolveOrLearnEquipmentType } from '../services/EquipmentTypeRegistryService';
 import { buildAndPersistAssetSymbologyPack } from '../services/EquipmentSymbologyPackBuilder';
 import {
     buildAndPersistEquipmentCostMatrix,
     compileEquipmentCostMatrixFromPillars,
+    computeCostMatrixSourceDigest,
+    COST_MATRIX_SCHEMA_VERSION,
 } from '../services/EquipmentCostMatrixCompiler';
 import {
     huntVaultItem,
@@ -4478,23 +4481,83 @@ vaultRouter.get('/asset/:globalAssetId', async (req: ScopedRequest, res: Respons
 
         const rawData = hydrated.data;
         const vault = rawData.knowledge_vault || null;
-        const storedMatrix = rawData.operational_cost_matrix;
-        const currentMerkle = vault?.vault_merkle_root_sha256 || null;
+        const cleanTraits = AssetOntologyEngine.inferAssetPhysicalTraits({
+            type_key: rawData.equipment_type_key,
+            canonical_type_es: rawData.tipo_equipo,
+            categoria_equipo: rawData.categoria_equipo,
+            archetype_id: rawData.archetype_id,
+            make_oficial: rawData.make_oficial || rawData.make,
+            model_oficial: rawData.model_oficial || rawData.model,
+            caracteristicas_principales: rawData.caracteristicas_principales,
+            ambiente_operativo: rawData.ambiente_operativo,
+            contexto_operativo: rawData.contexto_operativo,
+            existing_traits: rawData.physical_traits,
+        });
 
-        const effectiveCostMatrix =
+        const filterOmittedDrillingItems = (items: any[] | undefined) => {
+            if (!Array.isArray(items) || cleanTraits.functional_domain === 'DRILLING_AND_GROUND_SUPPORT') {
+                return items;
+            }
+            return items.filter((item) => {
+                const keyText = `${item?.id || ''} ${item?.title || ''}`;
+                const contentText = String(item?.content || '');
+                const isDrillingTitle = /(unidad[_ ]de[_ ]perforaci[oó]n|perforaci[oó]n.*martillo|drilling[_ ]unit)/i.test(
+                    keyText
+                );
+                const isExplicitOmission =
+                    /(secci[oó]n omitida al 100%|no posee f[ií]sicamente unidad de perforaci[oó]n|omitted 100%)/i.test(
+                        contentText
+                    );
+                return !(isDrillingTitle || isExplicitOmission);
+            });
+        };
+
+        const cleanedVault = vault
+            ? {
+                  ...vault,
+                  ficha_tecnica: vault.ficha_tecnica
+                      ? {
+                            ...vault.ficha_tecnica,
+                            items: filterOmittedDrillingItems(vault.ficha_tecnica.items),
+                        }
+                      : vault.ficha_tecnica,
+              }
+            : null;
+
+        const storedMatrix = rawData.operational_cost_matrix;
+        const expectedDigest = computeCostMatrixSourceDigest({
+            assetData: rawData,
+            fichaDoc: cleanedVault?.ficha_tecnica || null,
+            mantencionDoc: cleanedVault?.pauta_mantencion || null,
+            traits: cleanTraits,
+        });
+
+        const isCacheFresh = Boolean(
             storedMatrix &&
-            storedMatrix.version === '3.0.0' &&
-            (!currentMerkle || storedMatrix.source_merkle_root_sha256 === currentMerkle)
-                ? storedMatrix
-                : compileEquipmentCostMatrixFromPillars({
-                      assetData: rawData,
-                      fichaDoc: vault?.ficha_tecnica || null,
-                      mantencionDoc: vault?.pauta_mantencion || null,
-                  });
+                storedMatrix.version === COST_MATRIX_SCHEMA_VERSION &&
+                (!expectedDigest || storedMatrix.source_merkle_root_sha256 === expectedDigest)
+        );
+
+        const effectiveCostMatrix = isCacheFresh
+            ? storedMatrix
+            : compileEquipmentCostMatrixFromPillars({
+                  assetData: { ...rawData, physical_traits: cleanTraits },
+                  fichaDoc: cleanedVault?.ficha_tecnica || null,
+                  mantencionDoc: cleanedVault?.pauta_mantencion || null,
+              });
+
+        if (!isCacheFresh && effectiveCostMatrix) {
+            void VaultPersistenceService.saveDerivedCostMatrix(globalAssetId, effectiveCostMatrix, {
+                energy_consumption_profile: effectiveCostMatrix.energy_consumption,
+                physical_traits: cleanTraits,
+            }).catch(() => null);
+        }
 
         const resolved = await resolveAssetSymbology({
             id: hydrated.id,
             ...rawData,
+            knowledge_vault: cleanedVault,
+            physical_traits: cleanTraits,
             operational_cost_matrix: effectiveCostMatrix,
             energy_consumption_profile: effectiveCostMatrix.energy_consumption,
         });

@@ -3,13 +3,11 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { signInWithCustomToken } from 'firebase/auth';
 import { auth } from '../../config/firebase';
-import { useMinReportSession } from '../../context/MinReportSessionContext';
+import { useMinReportSession, type MinReportSession } from '../../context/MinReportSessionContext';
+import { saveOfflineSessionSnapshot } from '../../core/offline/OfflineSessionVault';
 import { authenticateWithPasskey, isPasskeySupported } from '../../services/passkeyService';
 import { getApiUrl } from '../../utils/network';
 import BrandLogo from '../../components/BrandLogo';
-import { ThemeSwitch } from '../../components/ThemeSwitch';
-import { LanguageSwitch } from '../../components/LanguageSwitch';
-import ErgonomicScaleSwitch from '../../components/common/ErgonomicScaleSwitch';
 import { M3LinearProgress } from '../../components/common/M3LinearProgress';
 
 type DevAuthStep = 'IDLE' | 'OTP' | 'USER' | 'PASSWORD' | 'PASSWORD_ROTATION';
@@ -48,6 +46,47 @@ export const DevFieldTestLogin: React.FC = () => {
     const passkeyAvailable = isPasskeySupported();
     const apiBase = getApiUrl('/api/dev');
 
+    const persistDevOfflineSession = async (uid: string, email: string) => {
+        const snapshot: MinReportSession = {
+            uid: uid || 'dev-master-root-uid',
+            email: email || 'dev@minreport.com',
+            displayName: 'DEV_ROOT',
+            tenantId: 'dev-master-sandbox',
+            tenantName: 'DEV Master Sandbox',
+            countryCode: 'CL',
+            role: 'DEV_ROOT',
+            classification: 'dev',
+            accountTier: 1,
+            isDevRoot: true,
+            isSuperAdmin: false,
+            isTestPilot: false,
+            isEduSandbox: false,
+            isMfaVerified: true,
+            activeModules: { opermaq: true, stockpile: true },
+            permissions: {
+                opermaq: {
+                    canInspect: true,
+                    canManageFleet: true,
+                    canViewVaults: true,
+                    canViewMasterCatalog: true,
+                    canCurateAI: true,
+                },
+                stockpile: {
+                    canScan: true,
+                    canCalculate: true,
+                    canExportReport: true,
+                    canTrainVisionAI: true,
+                },
+                pilot: {
+                    canCommentAndRequestChanges: false,
+                    canSimulateProjects: false,
+                    canTrainInternalAI: false,
+                },
+            },
+        };
+        await saveOfflineSessionSnapshot(snapshot);
+    };
+
     // Guard estricto: MINREPORT TEST admite exclusivamente 1º DEV (dev@minreport.com / DEV_ROOT)
     useEffect(() => {
         if (!isLoaded || !session) {
@@ -83,7 +122,7 @@ export const DevFieldTestLogin: React.FC = () => {
     }, [authStep, expiresAt, t]);
 
     if (isLoaded && session?.isDevRoot) {
-        return <Navigate to="/mobile/dev-launchpad" replace />;
+        return <Navigate to="/mobile/dev-home" replace />;
     }
 
     const handlePasskeyLogin = async () => {
@@ -104,7 +143,8 @@ export const DevFieldTestLogin: React.FC = () => {
             }
 
             localStorage.setItem('dev_auth_token', tokenResult.token);
-            navigate('/mobile/dev-launchpad', { replace: true });
+            await persistDevOfflineSession(cred.user.uid, emailLower);
+            navigate('/mobile/dev-home', { replace: true });
         } catch (err: any) {
             setError(err?.message || t('core_dev_fieldtest.login.passkey_failed'));
         } finally {
@@ -257,7 +297,11 @@ export const DevFieldTestLogin: React.FC = () => {
             if (effectiveToken) {
                 localStorage.setItem('dev_auth_token', effectiveToken);
             }
-            navigate('/mobile/dev-launchpad', { replace: true });
+            await persistDevOfflineSession(
+                data.user?.uid || auth.currentUser?.uid || 'dev-master-root-uid',
+                data.user?.email || loginEmail.trim().toLowerCase() || 'dev@minreport.com'
+            );
+            navigate('/mobile/dev-home', { replace: true });
         } catch (err: any) {
             setError(err?.message || t('core_dev_vault.auth.auth_failed'));
         } finally {
@@ -281,36 +325,17 @@ export const DevFieldTestLogin: React.FC = () => {
     const ttlPct = Math.max(0, Math.min(100, (timeLeft / 600) * 100));
 
     return (
-        <div className="min-h-[100dvh] bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col font-sans select-none antialiased">
-            <header className="h-16 px-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-fib-13 min-w-0">
-                    <BrandLogo variant="logotype" className="h-5 w-auto object-contain pointer-events-none" />
-                    <span className="border-l border-[#E2E8F0] dark:border-[#12151C] pl-fib-13 text-microcopy font-mono uppercase tracking-wider text-[#C68346] truncate">
-                        MINREPORT TEST
-                    </span>
-                </div>
-                <div className="flex items-center gap-fib-8 shrink-0">
-                    <ErgonomicScaleSwitch compact />
-                    <ThemeSwitch />
-                    <LanguageSwitch />
+        <div className="min-h-[100dvh] bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col font-atkinson select-none antialiased">
+            <header className="min-h-[56px] pt-[env(safe-area-inset-top)] px-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-fib-8 min-w-0">
+                    <BrandLogo variant="imagotype" className="h-5 w-auto object-contain pointer-events-none" />
                 </div>
             </header>
 
             <main className="flex-1 flex items-center justify-center p-fib-21">
-                <div className="w-full max-w-md border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-34 rounded-none shadow-none space-y-fib-21">
-                    <div className="flex items-start justify-between gap-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-21">
-                        <div className="space-y-fib-8">
-                            <p className="text-microcopy font-mono uppercase tracking-widest text-[#C68346]">
-                                {t('core_dev_fieldtest.login.eyebrow')}
-                            </p>
-                            <h1 className="text-h1-header font-semibold uppercase tracking-tight text-[#0F172A] dark:text-[#F3F4F6]">
-                                {t('core_dev_fieldtest.login.title')}
-                            </h1>
-                            <p className="text-body-main text-[#475569] dark:text-[#8A93A6]">
-                                {t('core_dev_fieldtest.login.subtitle')}
-                            </p>
-                        </div>
-                        <BrandLogo variant="isotype" className="h-8 w-8 object-contain pointer-events-none shrink-0" />
+                <div className="w-full max-w-md bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-fib-34 rounded-none shadow-none space-y-fib-21">
+                    <div className="flex justify-center pb-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C]">
+                        <BrandLogo variant="isotype" className="h-8 w-8 object-contain pointer-events-none" />
                     </div>
 
                     {loading && (
@@ -327,16 +352,17 @@ export const DevFieldTestLogin: React.FC = () => {
                     )}
 
                     {authStep === 'IDLE' && (
-                        <div className="space-y-fib-13">
+                        <div className="flex items-center gap-fib-13">
                             {passkeyAvailable && (
                                 <button
                                     type="button"
                                     onClick={handlePasskeyLogin}
                                     disabled={loading}
-                                    className="w-full min-h-[56px] px-fib-21 py-fib-13 bg-[#C68346] hover:bg-[#B0743E] text-white font-mono font-bold text-microcopy uppercase tracking-wider rounded-none shadow-none border-0 cursor-pointer flex items-center justify-center gap-fib-13 transition-colors disabled:opacity-50"
+                                    title={t('core_dev_fieldtest.login.passkey_btn')}
+                                    aria-label={t('core_dev_fieldtest.login.passkey_btn')}
+                                    className="flex-1 min-h-[56px] px-fib-21 py-fib-13 bg-[#C68346] hover:bg-[#B0743E] text-white rounded-none shadow-none border-0 cursor-pointer flex items-center justify-center transition-colors disabled:opacity-50"
                                 >
-                                    <span className="material-symbols-outlined text-[22px]">fingerprint</span>
-                                    <span>{t('core_dev_fieldtest.login.passkey_btn')}</span>
+                                    <span className="material-symbols-outlined text-[24px]">fingerprint</span>
                                 </button>
                             )}
 
@@ -344,10 +370,11 @@ export const DevFieldTestLogin: React.FC = () => {
                                 type="button"
                                 onClick={handleInitChallenge}
                                 disabled={loading}
-                                className="w-full min-h-[52px] px-fib-21 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#0F172A] dark:text-[#F3F4F6] font-mono font-bold text-microcopy uppercase tracking-wider rounded-none shadow-none cursor-pointer flex items-center justify-center gap-fib-13 transition-colors disabled:opacity-50"
+                                title={t('core_dev_fieldtest.login.oob_btn')}
+                                aria-label={t('core_dev_fieldtest.login.oob_btn')}
+                                className="flex-1 min-h-[56px] px-fib-21 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#00AEEF] rounded-none shadow-none cursor-pointer flex items-center justify-center transition-colors disabled:opacity-50"
                             >
-                                <span className="material-symbols-outlined text-[20px] text-[#00AEEF]">shield_lock</span>
-                                <span>{t('core_dev_fieldtest.login.oob_btn')}</span>
+                                <span className="material-symbols-outlined text-[24px]">shield_lock</span>
                             </button>
                         </div>
                     )}
@@ -356,9 +383,7 @@ export const DevFieldTestLogin: React.FC = () => {
                         <form onSubmit={handleVerifyOtp} autoComplete="off" spellCheck={false} className="space-y-fib-21">
                             <div className="space-y-fib-8">
                                 <div className="flex items-center justify-between text-microcopy font-mono">
-                                    <span className="text-[#475569] dark:text-[#8A93A6]">
-                                        {t('core_dev_fieldtest.login.otp_ttl_label')}
-                                    </span>
+                                    <span className="material-symbols-outlined text-[18px] text-[#C68346]">mark_email_read</span>
                                     <span className="tabular-nums text-[#C68346] font-bold">
                                         {formatChallengeCountdown(timeLeft)} · {attemptsRemaining}/3
                                     </span>
@@ -366,10 +391,10 @@ export const DevFieldTestLogin: React.FC = () => {
                                 <M3LinearProgress value={ttlPct} ariaLabel={t('core_dev_fieldtest.login.otp_ttl_label')} />
                             </div>
 
-                            <div className="space-y-fib-8">
+                            <div>
                                 <label
                                     htmlFor="dev-ft-otp"
-                                    className="block text-microcopy font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]"
+                                    className="sr-only"
                                 >
                                     {t('core_dev_fieldtest.login.otp_label')}
                                 </label>
@@ -378,6 +403,7 @@ export const DevFieldTestLogin: React.FC = () => {
                                     type="text"
                                     inputMode="numeric"
                                     maxLength={6}
+                                    aria-label={t('core_dev_fieldtest.login.otp_label')}
                                     value={otpCode}
                                     onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                                     placeholder="000000"
@@ -388,20 +414,24 @@ export const DevFieldTestLogin: React.FC = () => {
                                 />
                             </div>
 
-                            <div className="flex gap-fib-13">
+                            <div className="flex items-center gap-fib-13">
                                 <button
                                     type="button"
                                     onClick={handleAbortChallenge}
-                                    className="min-h-[48px] px-fib-13 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-white font-mono text-microcopy uppercase rounded-none cursor-pointer"
+                                    title={t('core_dev_vault.common.cancel')}
+                                    aria-label={t('core_dev_vault.common.cancel')}
+                                    className="bg-transparent border-0 outline-none p-2 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                                 >
-                                    {t('core_dev_vault.common.cancel')}
+                                    <span className="material-symbols-outlined text-[20px]">close</span>
                                 </button>
                                 <button
                                     type="submit"
                                     disabled={loading}
-                                    className="flex-1 min-h-[48px] px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white font-mono font-bold text-microcopy uppercase tracking-wider rounded-none border-0 cursor-pointer disabled:opacity-50"
+                                    title={t('core_dev_fieldtest.login.verify_otp_btn')}
+                                    aria-label={t('core_dev_fieldtest.login.verify_otp_btn')}
+                                    className="flex-1 min-h-[48px] px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white rounded-none border-0 cursor-pointer disabled:opacity-50 flex items-center justify-center"
                                 >
-                                    {t('core_dev_fieldtest.login.verify_otp_btn')}
+                                    <span className="material-symbols-outlined text-[20px]">arrow_forward</span>
                                 </button>
                             </div>
                         </form>
@@ -409,39 +439,49 @@ export const DevFieldTestLogin: React.FC = () => {
 
                     {authStep === 'USER' && (
                         <form onSubmit={handleVerifyUser} autoComplete="off" spellCheck={false} className="space-y-fib-21">
-                            <div className="space-y-fib-8">
+                            <div>
                                 <label
                                     htmlFor="dev-ft-email"
-                                    className="block text-microcopy font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]"
+                                    className="sr-only"
                                 >
                                     {t('core_dev_fieldtest.login.email_label')}
                                 </label>
-                                <input
-                                    id="dev-ft-email"
-                                    type="email"
-                                    value={loginEmail}
-                                    onChange={(e) => setLoginEmail(e.target.value)}
-                                    placeholder="dev@minreport.com"
-                                    autoComplete="off"
-                                    spellCheck={false}
-                                    required
-                                    className="w-full min-h-[48px] px-fib-13 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
-                                />
+                                <div className="relative flex items-center">
+                                    <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">
+                                        person
+                                    </span>
+                                    <input
+                                        id="dev-ft-email"
+                                        type="email"
+                                        aria-label={t('core_dev_fieldtest.login.email_label')}
+                                        value={loginEmail}
+                                        onChange={(e) => setLoginEmail(e.target.value)}
+                                        placeholder="dev@minreport.com"
+                                        autoComplete="off"
+                                        spellCheck={false}
+                                        required
+                                        className="w-full min-h-[48px] pl-11 pr-3 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
+                                    />
+                                </div>
                             </div>
-                            <div className="flex gap-fib-13">
+                            <div className="flex items-center gap-fib-13">
                                 <button
                                     type="button"
                                     onClick={handleAbortChallenge}
-                                    className="min-h-[48px] px-fib-13 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-white font-mono text-microcopy uppercase rounded-none cursor-pointer"
+                                    title={t('core_dev_vault.common.cancel')}
+                                    aria-label={t('core_dev_vault.common.cancel')}
+                                    className="bg-transparent border-0 outline-none p-2 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                                 >
-                                    {t('core_dev_vault.common.cancel')}
+                                    <span className="material-symbols-outlined text-[20px]">close</span>
                                 </button>
                                 <button
                                     type="submit"
                                     disabled={loading}
-                                    className="flex-1 min-h-[48px] px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white font-mono font-bold text-microcopy uppercase tracking-wider rounded-none border-0 cursor-pointer disabled:opacity-50"
+                                    title={t('core_dev_fieldtest.login.verify_user_btn')}
+                                    aria-label={t('core_dev_fieldtest.login.verify_user_btn')}
+                                    className="flex-1 min-h-[48px] px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white rounded-none border-0 cursor-pointer disabled:opacity-50 flex items-center justify-center"
                                 >
-                                    {t('core_dev_fieldtest.login.verify_user_btn')}
+                                    <span className="material-symbols-outlined text-[20px]">arrow_forward</span>
                                 </button>
                             </div>
                         </form>
@@ -451,105 +491,120 @@ export const DevFieldTestLogin: React.FC = () => {
                         <form onSubmit={handleLoginFinal} autoComplete="off" spellCheck={false} className="space-y-fib-21">
                             {authStep === 'PASSWORD_ROTATION' ? (
                                 <div className="space-y-fib-13">
-                                    <div className="space-y-fib-8">
+                                    <div>
                                         <label
                                             htmlFor="dev-ft-old-pwd"
-                                            className="block text-microcopy font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]"
+                                            className="sr-only"
                                         >
                                             {t('core_dev_fieldtest.login.current_password_label')}
                                         </label>
-                                        <input
-                                            id="dev-ft-old-pwd"
-                                            type="password"
-                                            value={oldPassword}
-                                            onChange={(e) => setOldPassword(e.target.value)}
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            required
-                                            className="w-full min-h-[48px] px-fib-13 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
-                                        />
+                                        <div className="relative flex items-center">
+                                            <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">key</span>
+                                            <input
+                                                id="dev-ft-old-pwd"
+                                                type="password"
+                                                aria-label={t('core_dev_fieldtest.login.current_password_label')}
+                                                value={oldPassword}
+                                                onChange={(e) => setOldPassword(e.target.value)}
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                required
+                                                className="w-full min-h-[48px] pl-11 pr-3 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
+                                            />
+                                        </div>
                                     </div>
-                                    <div className="space-y-fib-8">
+                                    <div>
                                         <label
                                             htmlFor="dev-ft-new-pwd"
-                                            className="block text-microcopy font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]"
+                                            className="sr-only"
                                         >
                                             {t('core_dev_fieldtest.login.new_password_label')}
                                         </label>
-                                        <input
-                                            id="dev-ft-new-pwd"
-                                            type="password"
-                                            value={newPassword}
-                                            onChange={(e) => setNewPassword(e.target.value)}
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            required
-                                            className="w-full min-h-[48px] px-fib-13 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
-                                        />
+                                        <div className="relative flex items-center">
+                                            <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">lock</span>
+                                            <input
+                                                id="dev-ft-new-pwd"
+                                                type="password"
+                                                aria-label={t('core_dev_fieldtest.login.new_password_label')}
+                                                value={newPassword}
+                                                onChange={(e) => setNewPassword(e.target.value)}
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                required
+                                                className="w-full min-h-[48px] pl-11 pr-3 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
+                                            />
+                                        </div>
                                     </div>
-                                    <div className="space-y-fib-8">
+                                    <div>
                                         <label
                                             htmlFor="dev-ft-confirm-pwd"
-                                            className="block text-microcopy font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]"
+                                            className="sr-only"
                                         >
                                             {t('core_dev_fieldtest.login.confirm_password_label')}
                                         </label>
-                                        <input
-                                            id="dev-ft-confirm-pwd"
-                                            type="password"
-                                            value={confirmPassword}
-                                            onChange={(e) => setConfirmPassword(e.target.value)}
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            required
-                                            className="w-full min-h-[48px] px-fib-13 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
-                                        />
+                                        <div className="relative flex items-center">
+                                            <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">verified_user</span>
+                                            <input
+                                                id="dev-ft-confirm-pwd"
+                                                type="password"
+                                                aria-label={t('core_dev_fieldtest.login.confirm_password_label')}
+                                                value={confirmPassword}
+                                                onChange={(e) => setConfirmPassword(e.target.value)}
+                                                autoComplete="off"
+                                                spellCheck={false}
+                                                required
+                                                className="w-full min-h-[48px] pl-11 pr-3 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
+                                            />
+                                        </div>
                                     </div>
                                 </div>
                             ) : (
-                                <div className="space-y-fib-8">
+                                <div>
                                     <label
                                         htmlFor="dev-ft-pwd"
-                                        className="block text-microcopy font-mono uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]"
+                                        className="sr-only"
                                     >
                                         {t('core_dev_fieldtest.login.password_label')}
                                     </label>
-                                    <input
-                                        id="dev-ft-pwd"
-                                        type="password"
-                                        value={loginPassword}
-                                        onChange={(e) => setLoginPassword(e.target.value)}
-                                        autoComplete="off"
-                                        spellCheck={false}
-                                        required
-                                        className="w-full min-h-[48px] px-fib-13 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
-                                    />
+                                    <div className="relative flex items-center">
+                                        <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">key</span>
+                                        <input
+                                            id="dev-ft-pwd"
+                                            type="password"
+                                            aria-label={t('core_dev_fieldtest.login.password_label')}
+                                            value={loginPassword}
+                                            onChange={(e) => setLoginPassword(e.target.value)}
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            required
+                                            className="w-full min-h-[48px] pl-11 pr-3 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
+                                        />
+                                    </div>
                                 </div>
                             )}
 
-                            <div className="flex gap-fib-13">
+                            <div className="flex items-center gap-fib-13">
                                 <button
                                     type="button"
                                     onClick={handleAbortChallenge}
-                                    className="min-h-[48px] px-fib-13 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-white font-mono text-microcopy uppercase rounded-none cursor-pointer"
+                                    title={t('core_dev_vault.common.cancel')}
+                                    aria-label={t('core_dev_vault.common.cancel')}
+                                    className="bg-transparent border-0 outline-none p-2 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                                 >
-                                    {t('core_dev_vault.common.cancel')}
+                                    <span className="material-symbols-outlined text-[20px]">close</span>
                                 </button>
                                 <button
                                     type="submit"
                                     disabled={loading}
-                                    className="flex-1 min-h-[48px] px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white font-mono font-bold text-microcopy uppercase tracking-wider rounded-none border-0 cursor-pointer disabled:opacity-50"
+                                    title={t('core_dev_fieldtest.login.enter_btn')}
+                                    aria-label={t('core_dev_fieldtest.login.enter_btn')}
+                                    className="flex-1 min-h-[48px] px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white rounded-none border-0 cursor-pointer disabled:opacity-50 flex items-center justify-center"
                                 >
-                                    {t('core_dev_fieldtest.login.enter_btn')}
+                                    <span className="material-symbols-outlined text-[20px]">lock_open</span>
                                 </button>
                             </div>
                         </form>
                     )}
-
-                    <div className="border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-13 flex items-center justify-between text-microcopy font-mono text-[#94A3B8] dark:text-[#5A6072]">
-                        <span>com.minreport.app.fieldtest</span>
-                        <span>southamerica-west1</span>
-                    </div>
                 </div>
             </main>
         </div>

@@ -5,6 +5,7 @@ import type {
     MediaDigestionProfile,
 } from '../../contracts/media.contracts';
 import { offlineStorage } from '../offline/OfflineStorage';
+import { getApiUrl } from '../../utils/network';
 import type { WorkerDigestRequest, WorkerDigestResponse } from './mediaDigestor.worker';
 
 /**
@@ -631,14 +632,16 @@ class MinreportMediaDigestorEngine {
     }
 
     private resolveApiBase(): string {
-        const rawBase: string =
-            (import.meta as any).env?.VITE_OPERMAQ_API_URL ||
-            (import.meta as any).env?.VITE_API_URL ||
-            (typeof window !== 'undefined' &&
-            (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-                ? 'http://localhost:8080/api'
-                : '/api');
-        return rawBase.endsWith('/api') ? rawBase : `${rawBase.replace(/\/+$/, '')}/api`;
+        const explicitOpermaqBase = (import.meta as any).env?.VITE_OPERMAQ_API_URL?.trim();
+        if (
+            explicitOpermaqBase &&
+            !/^https?:\/\/(localhost|127\.0\.0\.1|10\.0\.2\.2|192\.168\.)/i.test(explicitOpermaqBase)
+        ) {
+            return explicitOpermaqBase.endsWith('/api')
+                ? explicitOpermaqBase
+                : `${explicitOpermaqBase.replace(/\/+$/, '')}/api`;
+        }
+        return getApiUrl('/api');
     }
 
     private async buildAuthHeaders(tenantId?: string): Promise<Record<string, string>> {

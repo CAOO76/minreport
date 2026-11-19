@@ -30,12 +30,7 @@ export const CORE_MODULE_REGISTRY: Record<CoreModuleId, BackendModuleDescriptor>
         name: 'STOCKPILE CONTROL',
         basePath: '/api/stockpile',
         version: '2.0.0',
-        domainModes: [
-            'STOCKPILE',
-            'GEOMENSURA_GEO',
-            'EXPLORACION_SONDAJES',
-            'ESTRUCTURAL_HIDRO',
-        ] as const,
+        domainModes: ['STOCKPILE'] as const,
         defaultEnabled: true,
     },
 };

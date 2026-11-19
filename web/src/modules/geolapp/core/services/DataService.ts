@@ -27,56 +27,31 @@ import { coreAuthFetch } from '../../../../core/network/coreAuthFetch';
 import { offlineStorage, type StockpileMeasurementRecord } from '../../../../core/offline/OfflineStorage';
 import { syncQueueEngine } from '../../../../core/offline/SyncQueueEngine';
 import type {
-    EstructuralHidroPayload,
-    ExploracionSondajePayload,
-    GeolappDomainPayload,
-    GeolappDomainRecord,
-    GeolappDomainRecordStatus,
-    GeolappDomainUtmFix,
-    GeolappNonStockpileDomainMode,
-    GeomensuraSurveyPayload,
     HitlFieldDiff,
+    MiningSiteProfile,
     StockpileAsset,
+    StockpileClosureReason,
     StockpileMeasurement,
 } from '../types/GeolappTypes';
+import {
+    calculationEngine,
+    computeStockpileMeasurementChain,
+} from './calculation-engine';
 import { storageService } from './StorageService';
 
 export type StockpileData = StockpileAsset;
 export type Unsubscribe = () => void;
 
-export interface GeolappDomainRecordInput {
-    id?: string;
-    tenantId?: string;
-    accountId?: string;
-    domainMode: GeolappNonStockpileDomainMode;
-    code: string;
-    title: string;
-    status?: GeolappDomainRecordStatus;
-    utmFix?: GeolappDomainUtmFix;
-    payload: GeolappDomainPayload;
-    notes?: string;
-    createdAt?: number;
-    updatedAt?: number;
-    createdBy?: string;
-    updatedBy?: string;
-    synced?: boolean;
-}
-
-export interface GeolappDomainRecordHitlPatch {
-    code?: string;
-    title?: string;
-    status?: GeolappDomainRecordStatus;
-    utmFix?: GeolappDomainUtmFix;
-    notes?: string;
-    payload?:
-        | Partial<GeomensuraSurveyPayload>
-        | Partial<ExploracionSondajePayload>
-        | Partial<EstructuralHidroPayload>;
-}
-
 export interface TenantContextInput {
     tenantId?: string;
     userId?: string;
+}
+
+export interface ShipmentClosureInput {
+    dispatchReference: string;
+    shippedWeightT?: number | null;
+    photoUrl?: string;
+    confirmationKeyword: string;
 }
 
 type CanonicalSurveyShape =
@@ -95,71 +70,8 @@ const K = {
     assetIds: (safeTenant: string) => `geolapp:${safeTenant}:asset_ids`,
     asset: (safeTenant: string, id: string) => `geolapp:${safeTenant}:asset:${id}`,
     profiles: (safeTenant: string) => `geolapp:${safeTenant}:material_profiles`,
-    domainRecords: (safeTenant: string) => `geolapp:${safeTenant}:domain_records`,
+    sites: (safeTenant: string) => `geolapp:${safeTenant}:mining_sites`,
 } as const;
-
-const DOMAIN_DATA_URI_REGEX = /^\s*data:/i;
-const DOMAIN_EMBEDDED_BASE64_REGEX = /data:[a-z0-9.+\/-]*;base64,/i;
-
-function containsDataBase64Url(value: unknown, depth = 0): boolean {
-    if (depth > 16 || value === null || value === undefined) return false;
-    if (typeof value === 'string') {
-        return DOMAIN_DATA_URI_REGEX.test(value) || DOMAIN_EMBEDDED_BASE64_REGEX.test(value);
-    }
-    if (Array.isArray(value)) {
-        for (const item of value) {
-            if (containsDataBase64Url(item, depth + 1)) return true;
-        }
-        return false;
-    }
-    if (typeof value === 'object') {
-        for (const v of Object.values(value as Record<string, unknown>)) {
-            if (containsDataBase64Url(v, depth + 1)) return true;
-        }
-    }
-    return false;
-}
-
-function buildTypedDomainRecord(
-    common: {
-        id: string;
-        tenantId: string;
-        accountId: string;
-        code: string;
-        title: string;
-        status: GeolappDomainRecordStatus;
-        utmFix?: GeolappDomainUtmFix;
-        notes?: string;
-        createdAt: number;
-        updatedAt: number;
-        createdBy: string;
-        updatedBy?: string;
-        synced?: boolean;
-    },
-    domainMode: GeolappNonStockpileDomainMode,
-    payload: GeolappDomainPayload
-): GeolappDomainRecord {
-    switch (domainMode) {
-        case 'GEOMENSURA_GEO':
-            return {
-                ...common,
-                domainMode: 'GEOMENSURA_GEO',
-                payload: payload as GeomensuraSurveyPayload,
-            };
-        case 'EXPLORACION_SONDAJES':
-            return {
-                ...common,
-                domainMode: 'EXPLORACION_SONDAJES',
-                payload: payload as ExploracionSondajePayload,
-            };
-        case 'ESTRUCTURAL_HIDRO':
-            return {
-                ...common,
-                domainMode: 'ESTRUCTURAL_HIDRO',
-                payload: payload as EstructuralHidroPayload,
-            };
-    }
-}
 
 function mapDeclaredGeometryToShape(rawGeometry?: string): CanonicalSurveyShape | undefined {
     switch (rawGeometry) {
@@ -198,7 +110,10 @@ function sanitizeHitlPatch(patch: Partial<StockpileAsset>): Record<string, unkno
     for (const [key, value] of Object.entries(patch || {})) {
         if (blockedKeys.has(key) || value === undefined) continue;
         if (
-            (key === 'initial_photo_url' || key === 'thumbnail_url' || key === 'last_photo_url') &&
+            (key === 'initial_photo_url' ||
+                key === 'thumbnail_url' ||
+                key === 'last_photo_url' ||
+                key === 'static_map_url') &&
             typeof value === 'string' &&
             value.startsWith('data:')
         ) {
@@ -245,6 +160,7 @@ export class DataService {
     private isHydratingFromCloud = false;
     private memoryCache = new Map<string, unknown>();
     private tenantAssetsSnapshotUnsub: Unsubscribe | null = null;
+    private tenantSitesSnapshotUnsub: Unsubscribe | null = null;
     private measurementSnapshots = new Map<string, { unsub: Unsubscribe; refCount: number }>();
 
     constructor() {
@@ -310,6 +226,10 @@ export class DataService {
             this.tenantAssetsSnapshotUnsub();
             this.tenantAssetsSnapshotUnsub = null;
         }
+        if (this.tenantSitesSnapshotUnsub) {
+            this.tenantSitesSnapshotUnsub();
+            this.tenantSitesSnapshotUnsub = null;
+        }
         for (const entry of this.measurementSnapshots.values()) {
             entry.unsub();
         }
@@ -327,16 +247,34 @@ export class DataService {
             async (snap) => {
                 if (this.tenantId !== activeTenant) return;
                 let changed = false;
-                for (const docSnap of snap.docs) {
-                    const raw = docSnap.data();
-                    if (this.matchesActiveTenant(raw)) {
-                        await this.hydrateRemoteDocToLocal({ id: docSnap.id, ...raw });
-                        changed = true;
+                const changedAssetIds: string[] = [];
+                for (const change of snap.docChanges()) {
+                    if (change.type === 'added' || change.type === 'modified') {
+                        const raw = change.doc.data();
+                        if (this.matchesActiveTenant(raw)) {
+                            await this.hydrateRemoteDocToLocal({ id: change.doc.id, ...raw });
+                            changed = true;
+                            changedAssetIds.push(change.doc.id);
+                        }
+                    }
+                }
+                if (!changed && snap.docs.length > 0) {
+                    for (const docSnap of snap.docs) {
+                        const raw = docSnap.data();
+                        if (this.matchesActiveTenant(raw)) {
+                            await this.hydrateRemoteDocToLocal({ id: docSnap.id, ...raw });
+                            changed = true;
+                        }
                     }
                 }
                 if (changed) {
                     const all = await this.getAllAssetsLocal();
                     bus.emit('assets', all);
+                    for (const changedId of changedAssetIds.slice(0, 12)) {
+                        await this.getMeasurements(changedId).catch(() => []);
+                    }
+                    bus.emit('meas_any', await this.getAllMeasurements());
+                    bus.emit('sites', await this.getMiningSites());
                 }
             },
             (err) => {
@@ -345,9 +283,62 @@ export class DataService {
         );
     }
 
+    private ensureTenantSitesSnapshot(): void {
+        if (this.tenantSitesSnapshotUnsub || !firebaseDb || !this.tenantId) {
+            return;
+        }
+        const activeTenant = this.tenantId;
+        const q = query(
+            collection(firebaseDb, 'project_profiles'),
+            where('tenantId', '==', activeTenant)
+        );
+        this.tenantSitesSnapshotUnsub = onSnapshot(
+            q,
+            async (snap) => {
+                if (this.tenantId !== activeTenant) return;
+                const stored = (await this.readMeta<MiningSiteProfile[]>(K.sites(this.safeTenant))) ?? [];
+                const byId = new Map<string, MiningSiteProfile>();
+                for (const s of stored) {
+                    if (s?.id) byId.set(s.id, s);
+                }
+                for (const docSnap of snap.docs) {
+                    const raw = docSnap.data() as Record<string, any>;
+                    if (!this.matchesActiveTenant(raw)) continue;
+                    const name = String(raw.name || '').trim();
+                    if (!name) continue;
+                    byId.set(docSnap.id, {
+                        id: docSnap.id,
+                        tenantId: activeTenant,
+                        accountId: activeTenant,
+                        name,
+                        code: typeof raw.code === 'string' ? raw.code : undefined,
+                        status: raw.status === 'ARCHIVED' ? 'ARCHIVED' : 'ACTIVE',
+                        source:
+                            raw.source === 'MINREPORT_PROJECTS_MODULE'
+                                ? 'MINREPORT_PROJECTS_MODULE'
+                                : 'DEV_MANUAL_REGISTRY',
+                        createdAt:
+                            typeof raw.createdAt === 'number' ? raw.createdAt : Date.now(),
+                        createdBy: String(raw.createdBy || ''),
+                        updatedAt:
+                            typeof raw.updatedAt === 'number' ? raw.updatedAt : Date.now(),
+                    });
+                }
+                const nextList = Array.from(byId.values()).sort((a, b) =>
+                    a.name.localeCompare(b.name)
+                );
+                await this.writeMeta(K.sites(this.safeTenant), nextList);
+                bus.emit('sites', await this.getMiningSites());
+            },
+            (err) => {
+                console.warn('[DataService] Listener onSnapshot project_profiles pausado:', err.message);
+            }
+        );
+    }
+
     private acquireMeasurementSnapshot(assetId: string): Unsubscribe {
         if (!firebaseDb || !this.tenantId || !assetId) {
-            return () => {};
+            return () => { };
         }
 
         const key = `${this.safeTenant}:${assetId}`;
@@ -461,10 +452,13 @@ export class DataService {
             this.cleanupListeners();
             this.getAllAssetsLocal()
                 .then((assets) => bus.emit('assets', assets))
-                .catch(() => {});
+                .catch(() => { });
             this.getAllMeasurements()
                 .then((meas) => bus.emit('meas_any', meas))
-                .catch(() => {});
+                .catch(() => { });
+            this.getMiningSites()
+                .then((sites) => bus.emit('sites', sites))
+                .catch(() => { });
         }
 
         this.syncWithMinReport().catch((err) =>
@@ -510,9 +504,9 @@ export class DataService {
         const verifiedConfidence =
             typeof rawConfidence === 'number' && Number.isFinite(rawConfidence)
                 ? Math.min(
-                      100,
-                      Math.max(0, rawConfidence <= 1 ? Math.round(rawConfidence * 100) : Math.round(rawConfidence))
-                  )
+                    100,
+                    Math.max(0, rawConfidence <= 1 ? Math.round(rawConfidence * 100) : Math.round(rawConfidence))
+                )
                 : undefined;
 
         const surveyDateIso = new Date(asset.last_measured_at || asset.createdAt || Date.now()).toISOString();
@@ -568,14 +562,16 @@ export class DataService {
             updatedAt: Date.now(),
         });
 
-        if (activeTenant && declaredShape) {
+        const effectiveSurveyShape = declaredShape || 'elliptic-cone';
+
+        if (activeTenant) {
             try {
                 await offlineStorage.saveStockpileSurvey({
                     id: asset.id,
                     tenantId: activeTenant,
                     tag: asset.name,
                     material: asset.clase || 'mineral',
-                    shape: declaredShape,
+                    shape: effectiveSurveyShape,
                     volumeM3: Number.isFinite(volumeM3) ? volumeM3 : 0,
                     density:
                         typeof declaredDensity === 'number' && declaredDensity > 0
@@ -592,23 +588,29 @@ export class DataService {
             }
         }
 
-        if (activeTenant && typeof declaredDensity === 'number' && declaredDensity > 0) {
+        const hasPendingOfflineMedia = JSON.stringify(compactCloudPayload).includes(
+            'offline-cas://'
+        );
+        const surveyTaskId = `sync_stk_${this.safeTenant}_${asset.id}`;
+        if (activeTenant) {
             try {
                 await syncQueueEngine.enqueueTask(
                     'STOCKPILE_SURVEY',
                     compactCloudPayload,
-                    `sync_stk_${this.safeTenant}_${asset.id}`
+                    surveyTaskId
                 );
             } catch (err) {
                 console.warn('[DataService] No se pudo encolar STOCKPILE_SURVEY:', err);
             }
         }
 
-        if (firebaseDb && this.isOnline && activeTenant) {
+        if (firebaseDb && this.isOnline && activeTenant && !hasPendingOfflineMedia) {
             try {
                 await setDoc(doc(firebaseDb, 'stockpiles', asset.id), compactCloudPayload, {
                     merge: true,
                 });
+                await offlineStorage.deleteSyncTask(surveyTaskId).catch(() => {});
+                await syncQueueEngine.refreshPendingCount().catch(() => {});
             } catch (err) {
                 console.warn('[DataService] Guardado remoto de activo diferido a cola offline:', err);
             }
@@ -639,17 +641,20 @@ export class DataService {
             updatedAt: Date.now(),
         });
 
+        const hasPendingOfflineMedia = JSON.stringify(cloudMeasPayload).includes('offline-cas://');
+        const measTaskId = `sync_meas_${this.safeTenant}_${meas.assetId}_${meas.id}`;
+
         try {
             await syncQueueEngine.enqueueTask(
                 'STOCKPILE_MEASUREMENT',
                 cloudMeasPayload,
-                `sync_meas_${this.safeTenant}_${meas.assetId}_${meas.id}`
+                measTaskId
             );
         } catch (err) {
             console.warn('[DataService] No se pudo encolar STOCKPILE_MEASUREMENT:', err);
         }
 
-        if (firebaseDb && this.isOnline) {
+        if (firebaseDb && this.isOnline && !hasPendingOfflineMedia) {
             try {
                 await setDoc(
                     doc(firebaseDb, 'stockpiles', meas.assetId, 'measurements', meas.id),
@@ -657,6 +662,8 @@ export class DataService {
                     { merge: true }
                 );
                 await this.saveMeasurementLocal(meas, true);
+                await offlineStorage.deleteSyncTask(measTaskId).catch(() => {});
+                await syncQueueEngine.refreshPendingCount().catch(() => {});
             } catch (err) {
                 console.warn(
                     '[DataService] Guardado remoto en subcoleccion measurements diferido a cola offline:',
@@ -692,32 +699,44 @@ export class DataService {
             tenantId: activeTenant,
             accountId: activeTenant,
             name: rawDoc.name || rawDoc.tag || `ACOPIO-${rawDoc.id}`,
+            description:
+                typeof rawDoc.description === 'string' ? rawDoc.description : undefined,
             clase:
                 rawDoc.clase ||
                 (rawDoc.material === 'esteril' || rawDoc.material === 'baja_ley'
                     ? rawDoc.material
                     : 'mineral'),
-            status: rawDoc.status,
+            status: rawDoc.status || 'ACTIVE',
             createdAt:
                 typeof rawDoc.createdAt === 'number'
                     ? rawDoc.createdAt
                     : typeof rawDoc.timestamp === 'number'
-                      ? rawDoc.timestamp
-                      : Date.now(),
+                        ? rawDoc.timestamp
+                        : Date.now(),
             createdBy: rawDoc.createdBy || '',
             updatedAt: typeof rawDoc.updatedAt === 'number' ? rawDoc.updatedAt : undefined,
+            project_id: rawDoc.project_id ?? null,
+            project_name: rawDoc.project_name ?? null,
             geo_point: hasValidCoords
                 ? {
-                      latitude: rawLat,
-                      longitude: rawLng,
-                      altitude: rawDoc.geo_point?.altitude ?? null,
-                      accuracy:
-                          typeof rawDoc.geo_point?.accuracy === 'number'
-                              ? rawDoc.geo_point.accuracy
-                              : undefined,
-                  }
+                    latitude: rawLat,
+                    longitude: rawLng,
+                    altitude: rawDoc.geo_point?.altitude ?? null,
+                    accuracy:
+                        typeof rawDoc.geo_point?.accuracy === 'number'
+                            ? rawDoc.geo_point.accuracy
+                            : undefined,
+                }
                 : undefined,
             location_ref: rawDoc.location_ref,
+            static_map_url:
+                rawDoc.static_map_url && !String(rawDoc.static_map_url).startsWith('data:')
+                    ? rawDoc.static_map_url
+                    : undefined,
+            static_map_sha256: rawDoc.static_map_sha256,
+            static_map_original_bytes: rawDoc.static_map_original_bytes,
+            static_map_optimized_bytes: rawDoc.static_map_optimized_bytes,
+            static_map_savings_pct: rawDoc.static_map_savings_pct,
             initial_photo_url:
                 rawDoc.initial_photo_url && !String(rawDoc.initial_photo_url).startsWith('data:')
                     ? rawDoc.initial_photo_url
@@ -731,9 +750,19 @@ export class DataService {
             last_photo_url:
                 rawDoc.last_photo_url && !String(rawDoc.last_photo_url).startsWith('data:')
                     ? rawDoc.last_photo_url
-                    : undefined,
+                    : rawDoc.initial_photo_url && !String(rawDoc.initial_photo_url).startsWith('data:')
+                        ? rawDoc.initial_photo_url
+                        : undefined,
             last_measured_at: rawDoc.last_measured_at ?? rawDoc.timestamp,
             last_geometry_type: rawDoc.last_geometry_type ?? rawDoc.geometria ?? rawDoc.shape,
+            last_delta_volumen_m3: rawDoc.last_delta_volumen_m3 ?? null,
+            last_delta_volumen_pct: rawDoc.last_delta_volumen_pct ?? null,
+            closed_at: rawDoc.closed_at ?? null,
+            closed_by: rawDoc.closed_by ?? null,
+            closure_reason: rawDoc.closure_reason ?? null,
+            dispatch_reference: rawDoc.dispatch_reference ?? null,
+            shipped_weight_t: rawDoc.shipped_weight_t ?? null,
+            pre_closure_volume_m3: rawDoc.pre_closure_volume_m3 ?? null,
             volumen: rawDoc.volumen ?? rawDoc.volumeM3 ?? rawDoc.last_volume_m3 ?? 0,
             volume_m3: rawDoc.volume_m3 ?? rawDoc.volumeM3 ?? rawDoc.last_volume_m3 ?? 0,
             weight_t: rawDoc.weight_t ?? rawDoc.tonnage ?? rawDoc.last_weight_t ?? 0,
@@ -762,6 +791,18 @@ export class DataService {
             cas_savings_pct: rawDoc.cas_savings_pct,
             copper_governance_alerts: Array.isArray(rawDoc.copper_governance_alerts)
                 ? rawDoc.copper_governance_alerts
+                : undefined,
+            mesh_url: rawDoc.mesh_url,
+            mesh_sha256: rawDoc.mesh_sha256,
+            mesh_source: rawDoc.mesh_source,
+            tin_volume_m3: rawDoc.tin_volume_m3,
+            mesh_original_bytes: rawDoc.mesh_original_bytes,
+            mesh_optimized_bytes: rawDoc.mesh_optimized_bytes,
+            mesh_savings_pct: rawDoc.mesh_savings_pct,
+            p80_mm: rawDoc.p80_mm,
+            rosin_rammler: rawDoc.rosin_rammler,
+            boulder_detections: Array.isArray(rawDoc.boulder_detections)
+                ? rawDoc.boulder_detections
                 : undefined,
         };
 
@@ -797,6 +838,8 @@ export class DataService {
         const newAsset: StockpileAsset = {
             ...asset,
             id,
+            status: asset.status || 'ACTIVE',
+            last_photo_url: asset.last_photo_url || asset.initial_photo_url,
             tenantId: activeTenant,
             accountId: activeTenant,
             createdAt: Date.now(),
@@ -812,6 +855,163 @@ export class DataService {
         this.getAllAssetsLocal().then((all) => bus.emit('assets', all));
 
         return id;
+    }
+
+    /**
+     * Creación atómica de Acopio + Medición Inicial (Fase 1 GEOLAPP®):
+     * Garantiza cero activos huérfanos con 0 m³ antes de medir.
+     */
+    async createAssetWithInitialMeasurement(params: {
+        asset: Omit<StockpileAsset, 'id' | 'createdAt' | 'createdBy'> & { id?: string };
+        measurement: Omit<StockpileMeasurement, 'id' | 'assetId'>;
+    }): Promise<{ assetId: string; measurementId: string }> {
+        const rawMeasPhoto = params.measurement.photo_url || '';
+        const rawAssetPhoto = params.asset.initial_photo_url || '';
+        if (rawMeasPhoto.startsWith('data:') || rawAssetPhoto.startsWith('data:')) {
+            throw new Error(
+                'Prohibido persistir cadenas Base64 crudas; utilice CAS Multimedia.'
+            );
+        }
+
+        const now = Date.now();
+        const assetId = params.asset.id || `asset_${now}`;
+        const measurementId = `meas_${now}_${Math.random().toString(36).slice(2, 6)}`;
+        const st = this.safeTenant;
+        const activeTenant = (
+            this.tenantId ||
+            params.asset.tenantId ||
+            params.measurement.tenantId ||
+            ''
+        ).slice(0, 128);
+
+        const safeVol =
+            typeof params.measurement.volumen_m3 === 'number' &&
+            Number.isFinite(params.measurement.volumen_m3)
+                ? Math.max(0, params.measurement.volumen_m3)
+                : 0;
+        const safeWeight =
+            safeVol <= 0
+                ? 0
+                : typeof params.measurement.peso_t === 'number' &&
+                    Number.isFinite(params.measurement.peso_t)
+                  ? Math.max(0, params.measurement.peso_t)
+                  : 0;
+
+        const resolvedPhotoUrl = rawMeasPhoto || rawAssetPhoto || '';
+        const measTimestamp = params.measurement.timestamp || now;
+
+        const metaLoc = params.measurement.location_metadata;
+        const assetGeoPoint =
+            params.asset.geo_point ||
+            (metaLoc &&
+            Number.isFinite(metaLoc.lat) &&
+            Number.isFinite(metaLoc.lng) &&
+            (metaLoc.lat !== 0 || metaLoc.lng !== 0)
+                ? {
+                      latitude: metaLoc.lat,
+                      longitude: metaLoc.lng,
+                      altitude: null,
+                      accuracy:
+                          typeof metaLoc.accuracy === 'number' ? metaLoc.accuracy : undefined,
+                  }
+                : undefined);
+
+        const draftM: StockpileMeasurement = {
+            ...params.measurement,
+            id: measurementId,
+            assetId,
+            tenantId: activeTenant || undefined,
+            accountId: activeTenant || undefined,
+            user_id: params.measurement.user_id || this.getUserId() || undefined,
+            timestamp: measTimestamp,
+            captured_at: params.measurement.captured_at || measTimestamp,
+            volumen_m3: safeVol,
+            peso_t: safeWeight,
+            photo_url: resolvedPhotoUrl,
+            previous_measurement_id: null,
+            previous_photo_url: null,
+            delta_volumen: 0,
+            delta_volumen_pct: null,
+            delta_peso: 0,
+        };
+
+        const chain = computeStockpileMeasurementChain([draftM], resolvedPhotoUrl || undefined);
+        const newM = chain.enrichedMeasurements.find((item) => item.id === measurementId) || draftM;
+
+        const resolvedName =
+            String(params.asset.name || '').trim() || `STK-${String(now).slice(-6)}`;
+
+        const newAsset: StockpileAsset = {
+            ...params.asset,
+            id: assetId,
+            name: resolvedName,
+            clase: params.asset.clase || 'mineral',
+            status: params.asset.status || 'ACTIVE',
+            tenantId: activeTenant,
+            accountId: activeTenant,
+            createdAt: now,
+            createdBy: this.getUserId(),
+            updatedAt: now,
+            ...(assetGeoPoint ? { geo_point: assetGeoPoint } : {}),
+            ...(resolvedPhotoUrl
+                ? {
+                      initial_photo_url: resolvedPhotoUrl,
+                      last_photo_url: resolvedPhotoUrl,
+                  }
+                : {}),
+            last_volume_m3: safeVol,
+            last_weight_t: safeWeight,
+            volumen: safeVol,
+            volume_m3: safeVol,
+            weight_t: safeWeight,
+            peso_final_toneladas: safeWeight,
+            last_measured_at: measTimestamp,
+            last_geometry_type: newM.geometry?.type ?? params.asset.last_geometry_type,
+            geometria: newM.geometry?.type ?? params.asset.geometria,
+            density_factor: newM.density_factor ?? params.asset.density_factor,
+            last_delta_volumen_m3: 0,
+            last_delta_volumen_pct: null,
+            cas_original_bytes: newM.cas_original_bytes ?? params.asset.cas_original_bytes,
+            cas_optimized_bytes: newM.cas_optimized_bytes ?? params.asset.cas_optimized_bytes,
+            cas_savings_pct: newM.cas_savings_pct ?? params.asset.cas_savings_pct,
+            analysis_status: newM.analysis_status ?? params.asset.analysis_status,
+            detected_slope_angle_deg:
+                newM.detected_slope_angle_deg ?? params.asset.detected_slope_angle_deg,
+            slope_warning: newM.slope_warning ?? params.asset.slope_warning,
+            scale_anchor_type: newM.scale_anchor_type ?? params.asset.scale_anchor_type,
+            wall_confinement: newM.wall_confinement ?? params.asset.wall_confinement,
+            gnss_status: newM.gnss_status ?? params.asset.gnss_status,
+            underground_sector: newM.underground_sector ?? params.asset.underground_sector,
+            captured_at: newM.captured_at ?? params.asset.captured_at,
+        };
+
+        await this.writeMeta(K.asset(st, assetId), newAsset);
+        await this.addToList(K.assetIds(st), assetId);
+        await this.saveMeasurementLocal(newM, false);
+
+        await this.persistAssetToCloudAndQueue(newAsset, [newM]);
+        await this.persistMeasurementToCloudAndQueue(newM);
+
+        if (
+            assetGeoPoint &&
+            Number.isFinite(assetGeoPoint.latitude) &&
+            Number.isFinite(assetGeoPoint.longitude) &&
+            (assetGeoPoint.latitude !== 0 || assetGeoPoint.longitude !== 0)
+        ) {
+            void this.ensureStaticSatelliteMap(
+                assetId,
+                assetGeoPoint.latitude,
+                assetGeoPoint.longitude
+            ).catch(() => null);
+        }
+
+        bus.emit(`asset:${assetId}`, newAsset);
+        this.getAllAssetsLocal().then((all) => bus.emit('assets', all));
+        bus.emit(`meas:${assetId}`, chain.enrichedMeasurements);
+        bus.emit('meas_any', await this.getAllMeasurements());
+        bus.emit(`meas_item:${measurementId}`, newM);
+
+        return { assetId, measurementId };
     }
 
     async getAsset(id: string): Promise<StockpileAsset | null> {
@@ -1114,6 +1314,29 @@ export class DataService {
 
     // ─── MEDICIONES (SUBCOLECCIÓN + LEGACY HYDRATION) ─────────
 
+    private attemptedStaticMapKeys = new Set<string>();
+
+    private async persistChainMeasurementUpdates(
+        beforeList: StockpileMeasurement[],
+        afterList: StockpileMeasurement[]
+    ): Promise<void> {
+        const prevMap = new Map(beforeList.map((m) => [m.id, m]));
+        for (const item of afterList) {
+            const old = prevMap.get(item.id);
+            if (!old) continue;
+            const changed =
+                old.previous_measurement_id !== item.previous_measurement_id ||
+                old.previous_photo_url !== item.previous_photo_url ||
+                old.delta_volumen !== item.delta_volumen ||
+                old.delta_volumen_pct !== item.delta_volumen_pct ||
+                old.delta_peso !== item.delta_peso;
+            if (changed) {
+                await this.saveMeasurementLocal(item, false);
+                await this.persistMeasurementToCloudAndQueue(item);
+            }
+        }
+    }
+
     async addMeasurement(
         measurement: Omit<StockpileMeasurement, 'id'> & { ai_confidence?: number }
     ): Promise<string> {
@@ -1126,54 +1349,145 @@ export class DataService {
             );
         }
 
+        const asset = await this.getAsset(measurement.assetId);
+        if (asset?.status === 'CLOSED') {
+            throw new Error(
+                'CYCLE_CLOSED: El historial de este acopio esta cerrado; ejecute reapertura HITL ("ACTUALIZAR") antes de registrar nuevas mediciones.'
+            );
+        }
+
         const activeTenant = (this.tenantId || measurement.tenantId || '').slice(0, 128);
-        const id = `meas_${Date.now()}`;
-        const newM: StockpileMeasurement = {
+        const now = Date.now();
+        const id = `meas_${now}_${Math.random().toString(36).slice(2, 6)}`;
+        const existingMeasurements = await this.getMeasurementsLocal(measurement.assetId);
+        const safeVol =
+            typeof measurement.volumen_m3 === 'number' && Number.isFinite(measurement.volumen_m3)
+                ? Math.max(0, measurement.volumen_m3)
+                : 0;
+        const safeWeight =
+            safeVol <= 0
+                ? 0
+                : typeof measurement.peso_t === 'number' && Number.isFinite(measurement.peso_t)
+                    ? Math.max(0, measurement.peso_t)
+                    : 0;
+
+        const isPendingAi =
+            measurement.analysis_status === 'PENDING_AI_SYNC' ||
+            measurement.analysis_status === 'PENDING_SCALE';
+        const isZeroClosure = safeVol <= 0 && !isPendingAi;
+        const draftM: StockpileMeasurement = {
             ...measurement,
+            volumen_m3: safeVol,
+            peso_t: safeWeight,
             id,
+            captured_at: measurement.captured_at || measurement.timestamp || now,
             tenantId: activeTenant || undefined,
             accountId: activeTenant || undefined,
             user_id: measurement.user_id || this.getUserId() || undefined,
+            ...(isZeroClosure
+                ? {
+                    is_closure_measurement: true,
+                    closure_reason: measurement.closure_reason || 'ZERO_VOLUME',
+                    wet_weight_thm: 0,
+                    dry_weight_tms: 0,
+                    fine_cu_t: 0,
+                }
+                : {}),
         };
+
+        const chain = computeStockpileMeasurementChain(
+            [...existingMeasurements, draftM],
+            asset?.initial_photo_url
+        );
+        const newM = chain.enrichedMeasurements.find((item) => item.id === id) || draftM;
 
         await this.saveMeasurementLocal(newM, false);
         await this.persistMeasurementToCloudAndQueue(newM);
+        await this.persistChainMeasurementUpdates(existingMeasurements, chain.enrichedMeasurements);
 
-        const allAssetMeasurements = await this.getMeasurementsLocal(measurement.assetId);
+        const allAssetMeasurements = chain.enrichedMeasurements;
 
-        const asset = await this.getAsset(measurement.assetId);
         if (asset) {
             const st = this.safeTenant;
+            const prevActiveVol =
+                chain.summary.previousActive?.volumen_m3 ?? asset.last_volume_m3 ?? 0;
+            const closureReason: StockpileClosureReason | null = isZeroClosure
+                ? newM.closure_reason || 'ZERO_VOLUME'
+                : asset.closure_reason ?? null;
+
             const updated: StockpileAsset = {
                 ...asset,
                 tenantId: activeTenant || asset.tenantId,
                 accountId: activeTenant || asset.accountId,
-                last_volume_m3: measurement.volumen_m3,
-                last_weight_t: measurement.peso_t,
-                last_photo_url: measurement.photo_url || asset.last_photo_url,
-                last_measured_at: measurement.timestamp,
-                last_geometry_type: measurement.geometry?.type ?? asset.last_geometry_type,
-                volumen: measurement.volumen_m3,
-                volume_m3: measurement.volumen_m3,
-                weight_t: measurement.peso_t,
-                peso_final_toneladas: measurement.peso_t,
-                density_factor: measurement.density_factor ?? asset.density_factor,
-                geometria: measurement.geometry?.type ?? asset.geometria,
-                copper_domain: measurement.copper_domain ?? asset.copper_domain,
+                status: isZeroClosure ? 'CLOSED' : asset.status || 'ACTIVE',
+                last_volume_m3: isZeroClosure
+                    ? 0
+                    : isPendingAi
+                      ? asset.last_volume_m3
+                      : newM.volumen_m3,
+                last_weight_t: isZeroClosure
+                    ? 0
+                    : isPendingAi
+                      ? asset.last_weight_t
+                      : newM.peso_t,
+                last_photo_url: chain.summary.lastPhotoUrl || asset.last_photo_url || asset.initial_photo_url,
+                last_measured_at: newM.timestamp,
+                last_geometry_type: newM.geometry?.type ?? asset.last_geometry_type,
+                last_delta_volumen_m3: newM.delta_volumen ?? null,
+                last_delta_volumen_pct: newM.delta_volumen_pct ?? null,
+                volumen: isZeroClosure ? 0 : isPendingAi ? asset.volumen : newM.volumen_m3,
+                volume_m3: isZeroClosure ? 0 : isPendingAi ? asset.volume_m3 : newM.volumen_m3,
+                weight_t: isZeroClosure ? 0 : isPendingAi ? asset.weight_t : newM.peso_t,
+                peso_final_toneladas: isZeroClosure
+                    ? 0
+                    : isPendingAi
+                      ? asset.peso_final_toneladas
+                      : newM.peso_t,
+                analysis_status: newM.analysis_status ?? asset.analysis_status,
+                detected_slope_angle_deg:
+                    newM.detected_slope_angle_deg ?? asset.detected_slope_angle_deg,
+                slope_warning: newM.slope_warning ?? asset.slope_warning,
+                scale_anchor_type: newM.scale_anchor_type ?? asset.scale_anchor_type,
+                wall_confinement: newM.wall_confinement ?? asset.wall_confinement,
+                density_factor: newM.density_factor ?? asset.density_factor,
+                geometria: newM.geometry?.type ?? asset.geometria,
+                copper_domain: newM.copper_domain ?? asset.copper_domain,
                 moisture_pct:
-                    measurement.moisture_pct !== undefined
-                        ? measurement.moisture_pct
-                        : asset.moisture_pct,
-                tml_pct: measurement.tml_pct !== undefined ? measurement.tml_pct : asset.tml_pct,
+                    newM.moisture_pct !== undefined ? newM.moisture_pct : asset.moisture_pct,
+                tml_pct: newM.tml_pct !== undefined ? newM.tml_pct : asset.tml_pct,
+                wet_weight_thm: isZeroClosure
+                    ? 0
+                    : newM.wet_weight_thm !== undefined
+                        ? newM.wet_weight_thm
+                        : asset.wet_weight_thm,
+                dry_weight_tms: isZeroClosure
+                    ? 0
+                    : newM.dry_weight_tms !== undefined
+                        ? newM.dry_weight_tms
+                        : asset.dry_weight_tms,
+                fine_cu_t: isZeroClosure
+                    ? 0
+                    : newM.fine_cu_t !== undefined
+                        ? newM.fine_cu_t
+                        : asset.fine_cu_t,
                 residence_days:
-                    measurement.residence_days !== undefined
-                        ? measurement.residence_days
-                        : asset.residence_days,
+                    newM.residence_days !== undefined ? newM.residence_days : asset.residence_days,
                 copper_governance_alerts:
-                    measurement.copper_governance_alerts ?? asset.copper_governance_alerts,
-                cas_original_bytes: measurement.cas_original_bytes ?? asset.cas_original_bytes,
-                cas_optimized_bytes: measurement.cas_optimized_bytes ?? asset.cas_optimized_bytes,
-                cas_savings_pct: measurement.cas_savings_pct ?? asset.cas_savings_pct,
+                    newM.copper_governance_alerts ?? asset.copper_governance_alerts,
+                cas_original_bytes: newM.cas_original_bytes ?? asset.cas_original_bytes,
+                cas_optimized_bytes: newM.cas_optimized_bytes ?? asset.cas_optimized_bytes,
+                cas_savings_pct: newM.cas_savings_pct ?? asset.cas_savings_pct,
+                ...(isZeroClosure
+                    ? {
+                        closed_at: newM.timestamp,
+                        closed_by: newM.user_id || this.getUserId() || 'field-operator',
+                        closure_reason: closureReason,
+                        pre_closure_volume_m3: prevActiveVol,
+                        ...(newM.dispatch_reference
+                            ? { dispatch_reference: newM.dispatch_reference }
+                            : {}),
+                    }
+                    : {}),
             };
             await this.writeMeta(K.asset(st, measurement.assetId), updated);
             await this.persistAssetToCloudAndQueue(updated, allAssetMeasurements);
@@ -1244,7 +1558,9 @@ export class DataService {
                 }
             }
 
-            return Array.from(byId.values()).sort((a, b) => b.timestamp - a.timestamp);
+            const rawList = Array.from(byId.values());
+            const asset = await this.readMeta<StockpileAsset>(K.asset(st, assetId));
+            return computeStockpileMeasurementChain(rawList, asset?.initial_photo_url).enrichedMeasurements;
         } catch (e) {
             console.error(`[DataService] Error al obtener mediciones para ${assetId}:`, e);
             return [];
@@ -1292,38 +1608,46 @@ export class DataService {
             await this.persistMeasurementToCloudAndQueue(updatedMeas);
         }
 
-        const measurements = await this.getMeasurementsLocal(assetId);
-        const valid = measurements.find((item) => !item.ignored);
+        const asset = await this.getAsset(assetId);
+        const beforeList = await this.getMeasurementsLocal(assetId);
+        const patchedBefore = beforeList.map((item) =>
+            item.id === measurementId ? { ...item, ignored: newStatus } : item
+        );
+        const chain = computeStockpileMeasurementChain(patchedBefore, asset?.initial_photo_url);
+        await this.persistChainMeasurementUpdates(patchedBefore, chain.enrichedMeasurements);
+
+        const valid = chain.summary.latestActive;
         await this.saveStockpileData(
             valid
                 ? {
-                      last_volume_m3: valid.volumen_m3,
-                      last_weight_t: valid.peso_t,
-                      last_photo_url: valid.photo_url || undefined,
-                      last_measured_at: valid.timestamp,
-                      volumen: valid.volumen_m3,
-                      volume_m3: valid.volumen_m3,
-                      weight_t: valid.peso_t,
-                      peso_final_toneladas: valid.peso_t,
-                      density_factor: valid.density_factor,
-                  }
+                    last_volume_m3: valid.volumen_m3,
+                    last_weight_t: valid.peso_t,
+                    last_photo_url: chain.summary.lastPhotoUrl || asset?.initial_photo_url,
+                    last_measured_at: valid.timestamp,
+                    last_delta_volumen_m3: chain.summary.lastDeltaVolumenM3,
+                    last_delta_volumen_pct: chain.summary.lastDeltaVolumenPct,
+                    volumen: valid.volumen_m3,
+                    volume_m3: valid.volumen_m3,
+                    weight_t: valid.peso_t,
+                    peso_final_toneladas: valid.peso_t,
+                    density_factor: valid.density_factor,
+                }
                 : {
-                      last_volume_m3: 0,
-                      last_weight_t: 0,
-                      volumen: 0,
-                      volume_m3: 0,
-                      weight_t: 0,
-                      peso_final_toneladas: 0,
-                  },
+                    last_volume_m3: 0,
+                    last_weight_t: 0,
+                    last_photo_url: asset?.initial_photo_url,
+                    last_delta_volumen_m3: null,
+                    last_delta_volumen_pct: null,
+                    volumen: 0,
+                    volume_m3: 0,
+                    weight_t: 0,
+                    peso_final_toneladas: 0,
+                },
             assetId
         );
 
-        bus.emit(
-            `meas:${assetId}`,
-            measurements.map((item) =>
-                item.id === measurementId ? { ...item, ignored: newStatus } : item
-            )
-        );
+        bus.emit(`meas:${assetId}`, chain.enrichedMeasurements);
+        bus.emit('meas_any', await this.getAllMeasurements());
     }
 
     // ─── PERFILES DE MATERIAL ─────────────────
@@ -1341,6 +1665,114 @@ export class DataService {
 
     async saveMaterialProfiles(profiles: Record<string, number>): Promise<void> {
         await this.writeMeta(K.profiles(this.safeTenant), profiles);
+    }
+
+    // ─── FAENAS MINERAS / PROJECT_PROFILES (CON CACHÉ OFFLINE + TEMPO REAL) ───
+
+    async getMiningSites(): Promise<MiningSiteProfile[]> {
+        const stored = (await this.readMeta<MiningSiteProfile[]>(K.sites(this.safeTenant))) ?? [];
+        const byId = new Map<string, MiningSiteProfile>();
+        for (const site of stored) {
+            if (site?.id && site.name) byId.set(site.id, site);
+        }
+
+        const assets = await this.getAllAssetsLocal();
+        const activeTenant = this.tenantId || '';
+        for (const asset of assets) {
+            if (asset.project_id && asset.project_name && !byId.has(asset.project_id)) {
+                byId.set(asset.project_id, {
+                    id: asset.project_id,
+                    tenantId: asset.tenantId || activeTenant,
+                    accountId: asset.accountId || activeTenant,
+                    name: asset.project_name,
+                    status: 'ACTIVE',
+                    source: 'MINREPORT_PROJECTS_MODULE',
+                    createdAt: asset.createdAt || Date.now(),
+                    createdBy: asset.createdBy || '',
+                    updatedAt: asset.updatedAt || asset.createdAt || Date.now(),
+                });
+            }
+        }
+
+        return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    subscribeToMiningSites(cb: (sites: MiningSiteProfile[]) => void): Unsubscribe {
+        this.ensureTenantSitesSnapshot();
+        this.getMiningSites().then(cb);
+        const busUnsub = bus.on('sites', cb);
+        return () => {
+            busUnsub();
+            if (!bus.hasSubscribers('sites') && this.tenantSitesSnapshotUnsub) {
+                this.tenantSitesSnapshotUnsub();
+                this.tenantSitesSnapshotUnsub = null;
+            }
+        };
+    }
+
+    async registerDevMiningSite(input: { name: string; code?: string }): Promise<MiningSiteProfile> {
+        const cleanName = String(input.name || '').trim().slice(0, 180);
+        if (!cleanName) {
+            throw new Error('El nombre de la faena minera es obligatorio.');
+        }
+
+        const existingList = await this.getMiningSites();
+        const normalizedTarget = cleanName.toLowerCase();
+        const existingMatch = existingList.find(
+            (s) => s.name.trim().toLowerCase() === normalizedTarget
+        );
+        if (existingMatch) {
+            return existingMatch;
+        }
+
+        const now = Date.now();
+        const slug = cleanName
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '_')
+            .replace(/^_+|_+$/g, '')
+            .slice(0, 32);
+        const siteId = `faena_${slug || 'site'}_${String(now).slice(-6)}`;
+        const activeTenant = (this.tenantId || '').slice(0, 128);
+        const site: MiningSiteProfile = {
+            id: siteId,
+            tenantId: activeTenant,
+            accountId: activeTenant,
+            name: cleanName,
+            ...(input.code?.trim() ? { code: input.code.trim().slice(0, 40) } : {}),
+            status: 'ACTIVE',
+            source: 'DEV_MANUAL_REGISTRY',
+            createdAt: now,
+            createdBy: this.getUserId() || 'dev-root',
+            updatedAt: now,
+        };
+
+        const stored = (await this.readMeta<MiningSiteProfile[]>(K.sites(this.safeTenant))) ?? [];
+        const nextStored = [...stored.filter((s) => s.id !== site.id), site];
+        await this.writeMeta(K.sites(this.safeTenant), nextStored);
+
+        const taskId = `sync_site_${this.safeTenant}_${site.id}`;
+        if (activeTenant) {
+            const payload = sanitizeForFirestore(site);
+            await syncQueueEngine
+                .enqueueTask('MINING_SITE_PROFILE', payload, taskId)
+                .catch(() => {});
+
+            if (firebaseDb && this.isOnline) {
+                try {
+                    await setDoc(doc(firebaseDb, 'project_profiles', site.id), payload, {
+                        merge: true,
+                    });
+                    await offlineStorage.deleteSyncTask(taskId).catch(() => {});
+                    await syncQueueEngine.refreshPendingCount().catch(() => {});
+                } catch (err) {
+                    console.warn('[DataService] Registro de faena diferido a cola offline:', err);
+                }
+            }
+        }
+
+        const updatedAll = await this.getMiningSites();
+        bus.emit('sites', updatedAll);
+        return site;
     }
 
     // ─── SUBSCRIPCIONES REACTIVAS (onSnapshot + CLEANUP) ───
@@ -1390,382 +1822,269 @@ export class DataService {
         return bus.on(`meas_item:${id}`, cb);
     }
 
-    // ─── DOMINIOS GEOCIENTÍFICOS FASE 4 (OFFLINE-FIRST + API) ───
+    // ─── CICLO DE VIDA NEXT-GEN (CIERRE POR EMBARQUE / REAPERTURA HITL / MAPA ESTÁTICO) ───
 
-    private async readDomainRecordsMap(): Promise<Record<string, GeolappDomainRecord>> {
-        const raw = await this.readMeta<unknown>(K.domainRecords(this.safeTenant));
-        if (!raw) return {};
-        if (Array.isArray(raw)) {
-            const mapped: Record<string, GeolappDomainRecord> = {};
-            for (const item of raw) {
-                if (item && typeof item === 'object' && typeof (item as GeolappDomainRecord).id === 'string') {
-                    const rec = item as GeolappDomainRecord;
-                    mapped[rec.id] = rec;
-                }
-            }
-            return mapped;
+    async closeAssetByShipment(
+        assetId: string,
+        params: ShipmentClosureInput
+    ): Promise<StockpileAsset> {
+        const dispatchRef = String(params.dispatchReference || '').trim();
+        if (!dispatchRef) {
+            throw new Error('La referencia de embarque o lote es obligatoria.');
         }
-        if (typeof raw === 'object') {
-            return { ...(raw as Record<string, GeolappDomainRecord>) };
-        }
-        return {};
-    }
-
-    private async writeDomainRecordsMap(map: Record<string, GeolappDomainRecord>): Promise<void> {
-        await this.writeMeta(K.domainRecords(this.safeTenant), map);
-    }
-
-    private emitDomainRecordsBus(map: Record<string, GeolappDomainRecord>): void {
-        const all = Object.values(map)
-            .filter((rec) => !this.tenantId || rec.tenantId === this.tenantId)
-            .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-        bus.emit('domain_records', all);
-        for (const mode of ['GEOMENSURA_GEO', 'EXPLORACION_SONDAJES', 'ESTRUCTURAL_HIDRO'] as const) {
-            bus.emit(
-                `domain_records:${mode}`,
-                all.filter((r) => r.domainMode === mode)
-            );
-        }
-    }
-
-    async listDomainRecords(
-        domainMode?: GeolappNonStockpileDomainMode
-    ): Promise<GeolappDomainRecord[]> {
-        const localMap = await this.readDomainRecordsMap();
-
-        if (this.isOnline && this.tenantId) {
-            try {
-                const queryParams = new URLSearchParams({ tenantId: this.tenantId });
-                if (domainMode) {
-                    queryParams.set('domainMode', domainMode);
-                }
-                const resp = await coreAuthFetch(
-                    `/api/geolapp/domain-records?${queryParams.toString()}`
-                );
-                if (resp.ok) {
-                    const data = (await resp.json().catch(() => null)) as {
-                        items?: GeolappDomainRecord[];
-                    } | null;
-                    const remoteItems = Array.isArray(data?.items) ? data.items : [];
-                    for (const remoteItem of remoteItems) {
-                        if (!remoteItem || !remoteItem.id) continue;
-                        if (remoteItem.tenantId && remoteItem.tenantId !== this.tenantId) continue;
-                        const existing = localMap[remoteItem.id];
-                        if (
-                            !existing ||
-                            existing.synced !== false ||
-                            (remoteItem.updatedAt || 0) >= (existing.updatedAt || 0)
-                        ) {
-                            localMap[remoteItem.id] = {
-                                ...remoteItem,
-                                synced: true,
-                            };
-                        }
-                    }
-                    await this.writeDomainRecordsMap(localMap);
-                }
-            } catch (err) {
-                console.warn(
-                    '[DataService] Consulta remota domain-records diferida a cache local:',
-                    err
-                );
-            }
+        if (String(params.confirmationKeyword || '').trim().toUpperCase() !== 'ACTUALIZAR') {
+            throw new Error('Confirmacion HITL requerida: escriba exactamente "ACTUALIZAR".');
         }
 
-        return Object.values(localMap)
-            .filter((rec) => {
-                if (!rec || !rec.id) return false;
-                if (this.tenantId && rec.tenantId !== this.tenantId) return false;
-                if (domainMode && rec.domainMode !== domainMode) return false;
-                return true;
-            })
-            .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-    }
+        const asset = await this.getAsset(assetId);
+        if (!asset) {
+            throw new Error(`Acopio ${assetId} no encontrado.`);
+        }
+        if (asset.status === 'CLOSED') {
+            throw new Error('CYCLE_ALREADY_CLOSED: El historial del acopio ya se encuentra cerrado.');
+        }
 
-    async saveDomainRecord(recordInput: GeolappDomainRecordInput): Promise<GeolappDomainRecord> {
-        if (containsDataBase64Url(recordInput)) {
+        const gov = calculationEngine.evaluateCopperGovernance({
+            copperDomain: asset.copper_domain,
+            residenceDays: asset.residence_days,
+            moisturePct: asset.moisture_pct,
+            tmlLimitPct: asset.tml_pct,
+        });
+        if (gov.hasCriticalBlock) {
             throw new Error(
-                'BASE64_PROHIBITED: Prohibido almacenar contenido data: Base64 en registros GEOLAPP®.'
+                gov.alerts.find((a) => a.severity === 'BLOCK')?.message ||
+                'IMSBC_TML_BLOCK: Humedad >= TML bloquea embarque de concentrado.'
             );
         }
 
+        const existingMeas = await this.getMeasurementsLocal(assetId);
         const now = Date.now();
-        const activeTenant = (recordInput.tenantId || this.tenantId || '').trim().slice(0, 128);
-        const id =
-            (recordInput.id || '').trim() ||
-            `geo-${now}-${Math.random().toString(36).slice(2, 8)}`;
+        const activeTenant = (this.tenantId || asset.tenantId || '').slice(0, 128);
+        const actor = this.getUserId() || 'operator';
+        const prevVol =
+            typeof asset.last_volume_m3 === 'number' && Number.isFinite(asset.last_volume_m3)
+                ? asset.last_volume_m3
+                : 0;
+        const cleanPhoto =
+            params.photoUrl && !params.photoUrl.startsWith('data:')
+                ? params.photoUrl
+                : asset.last_photo_url || asset.initial_photo_url || '';
 
-        const localRecord = buildTypedDomainRecord(
-            {
-                id,
-                tenantId: activeTenant,
-                accountId: activeTenant,
-                code: recordInput.code.trim(),
-                title: recordInput.title.trim(),
-                status: recordInput.status || 'ACTIVE',
-                ...(recordInput.utmFix ? { utmFix: recordInput.utmFix } : {}),
-                ...(recordInput.notes !== undefined ? { notes: recordInput.notes } : {}),
-                createdAt: recordInput.createdAt || now,
-                updatedAt: now,
-                createdBy:
-                    (recordInput.createdBy || '').trim() || this.getUserId() || 'field-operator',
-                ...(recordInput.updatedBy ? { updatedBy: recordInput.updatedBy } : {}),
-                synced: false,
-            },
-            recordInput.domainMode,
-            recordInput.payload
-        );
-
-        const localMap = await this.readDomainRecordsMap();
-        localMap[id] = localRecord;
-        await this.writeDomainRecordsMap(localMap);
-        this.emitDomainRecordsBus(localMap);
-
-        const enqueueOfflineCreate = async (): Promise<GeolappDomainRecord> => {
-            await syncQueueEngine.enqueueApiMutation(
-                '/api/geolapp/domain-records',
-                localRecord,
-                'GEOLAPP_DOMAIN_RECORD_CREATED',
-                activeTenant || this.tenantId,
-                'POST'
-            );
-            return localRecord;
+        const closureMeasId = `meas_${now}`;
+        const draftClosureMeas: StockpileMeasurement = {
+            id: closureMeasId,
+            assetId,
+            tenantId: activeTenant || undefined,
+            accountId: activeTenant || undefined,
+            timestamp: now,
+            volumen_m3: 0,
+            peso_t: 0,
+            photo_url: cleanPhoto,
+            method: 'manual',
+            user_id: actor,
+            is_closure_measurement: true,
+            closure_reason: 'SHIPPED',
+            dispatch_reference: dispatchRef,
+            wet_weight_thm: 0,
+            dry_weight_tms: 0,
+            fine_cu_t: 0,
         };
 
-        if (!this.isOnline || !activeTenant) {
-            return enqueueOfflineCreate();
-        }
+        const chain = computeStockpileMeasurementChain(
+            [...existingMeas, draftClosureMeas],
+            asset.initial_photo_url
+        );
+        const enrichedClosureMeas =
+            chain.enrichedMeasurements.find((item) => item.id === closureMeasId) || draftClosureMeas;
 
-        try {
-            const resp = await coreAuthFetch('/api/geolapp/domain-records', {
-                method: 'POST',
-                body: JSON.stringify(localRecord),
-            });
+        const diffs: HitlFieldDiff[] = [
+            {
+                field: 'status',
+                current: String(asset.status || 'ACTIVE'),
+                suggested: 'CLOSED (SHIPPED)',
+            },
+            {
+                field: 'dispatch_reference',
+                current: String(asset.dispatch_reference || '--'),
+                suggested: dispatchRef,
+            },
+            {
+                field: 'last_volume_m3',
+                current: `${prevVol.toFixed(2)} m³`,
+                suggested: '0.00 m³',
+            },
+        ];
 
-            if (resp.ok) {
-                const json = (await resp.json().catch(() => null)) as {
-                    record?: GeolappDomainRecord;
-                } | null;
-                const syncedRecord: GeolappDomainRecord = {
-                    ...(json?.record || localRecord),
-                    synced: true,
-                };
-                const refreshedMap = await this.readDomainRecordsMap();
-                refreshedMap[syncedRecord.id] = syncedRecord;
-                await this.writeDomainRecordsMap(refreshedMap);
-                this.emitDomainRecordsBus(refreshedMap);
-                return syncedRecord;
-            }
+        const updatedAsset = await this.updateAssetWithHitl(
+            assetId,
+            {
+                status: 'CLOSED',
+                closure_reason: 'SHIPPED',
+                closed_at: now,
+                closed_by: actor,
+                dispatch_reference: dispatchRef,
+                shipped_weight_t:
+                    typeof params.shippedWeightT === 'number' &&
+                        Number.isFinite(params.shippedWeightT) &&
+                        params.shippedWeightT >= 0
+                        ? params.shippedWeightT
+                        : null,
+                pre_closure_volume_m3: prevVol,
+                last_volume_m3: 0,
+                last_weight_t: 0,
+                wet_weight_thm: 0,
+                dry_weight_tms: 0,
+                fine_cu_t: 0,
+                volumen: 0,
+                volume_m3: 0,
+                weight_t: 0,
+                peso_final_toneladas: 0,
+                last_measured_at: now,
+                last_delta_volumen_m3: enrichedClosureMeas.delta_volumen ?? (prevVol > 0 ? -prevVol : 0),
+                last_delta_volumen_pct:
+                    enrichedClosureMeas.delta_volumen_pct ?? (prevVol > 0 ? -100 : null),
+                ...(cleanPhoto ? { last_photo_url: cleanPhoto } : {}),
+            },
+            confirmationKeywordTrimmed(params.confirmationKeyword),
+            diffs
+        );
 
-            if (
-                resp.status >= 400 &&
-                resp.status < 500 &&
-                resp.status !== 408 &&
-                resp.status !== 429
-            ) {
-                const errPayload = (await resp.json().catch(() => null)) as {
-                    error?: string;
-                } | null;
-                throw new Error(errPayload?.error || `Error guardando domain-record (${resp.status}).`);
-            }
+        await this.saveMeasurementLocal(enrichedClosureMeas, false);
+        await this.persistMeasurementToCloudAndQueue(enrichedClosureMeas);
+        bus.emit(`meas:${assetId}`, chain.enrichedMeasurements);
+        bus.emit('meas_any', await this.getAllMeasurements());
+        bus.emit(`meas_item:${closureMeasId}`, enrichedClosureMeas);
 
-            return enqueueOfflineCreate();
-        } catch (err) {
-            if (
-                err instanceof Error &&
-                (err.message.includes('BASE64_PROHIBITED') ||
-                    err.message.includes('TENANT_ACCESS_DENIED') ||
-                    err.message.includes('Error guardando domain-record'))
-            ) {
-                throw err;
-            }
-            return enqueueOfflineCreate();
-        }
+        return updatedAsset;
     }
 
-    async updateDomainRecordWithHitl(
-        recordId: string,
-        patch: GeolappDomainRecordHitlPatch,
+    async reopenClosedAssetWithHitl(
+        assetId: string,
         confirmationKeyword: string,
-        diffSummary?: HitlFieldDiff[]
-    ): Promise<GeolappDomainRecord> {
-        if (confirmationKeyword !== 'ACTUALIZAR') {
-            throw new Error(
-                'HITL_CONFIRMATION_REQUIRED: Se requiere confirmar escribiendo exactamente "ACTUALIZAR".'
-            );
+        reasonNote?: string
+    ): Promise<StockpileAsset> {
+        const asset = await this.getAsset(assetId);
+        if (!asset) {
+            throw new Error(`Acopio ${assetId} no encontrado.`);
         }
-
-        if (containsDataBase64Url(patch)) {
-            throw new Error(
-                'BASE64_PROHIBITED: Prohibido almacenar contenido data: Base64 en actualización HITL.'
-            );
-        }
-
-        const rawPatchMeta = patch as Record<string, unknown>;
-        let localMap = await this.readDomainRecordsMap();
-        let existing = localMap[recordId];
-        if (!existing && this.isOnline && this.tenantId) {
-            await this.listDomainRecords();
-            localMap = await this.readDomainRecordsMap();
-            existing = localMap[recordId];
-        }
-
-        if (!existing) {
-            throw new Error(`DOMAIN_RECORD_NOT_FOUND: Registro ${recordId} no encontrado.`);
-        }
-
-        if (
-            (rawPatchMeta.id !== undefined && String(rawPatchMeta.id) !== existing.id) ||
-            (rawPatchMeta.tenantId !== undefined &&
-                String(rawPatchMeta.tenantId) !== existing.tenantId) ||
-            (rawPatchMeta.accountId !== undefined &&
-                String(rawPatchMeta.accountId) !== existing.accountId) ||
-            (rawPatchMeta.domainMode !== undefined &&
-                rawPatchMeta.domainMode !== existing.domainMode)
-        ) {
-            throw new Error(
-                'IMMUTABLE_FIELD_ERROR: No se permite modificar id, tenantId, accountId ni domainMode.'
-            );
-        }
-
-        const mergedPayload: GeolappDomainPayload = patch.payload
-            ? ({
-                  ...existing.payload,
-                  ...patch.payload,
-              } as GeolappDomainPayload)
-            : existing.payload;
-
-        const sanitizedPatch: Record<string, unknown> = {};
-        if (patch.code !== undefined) sanitizedPatch.code = patch.code;
-        if (patch.title !== undefined) sanitizedPatch.title = patch.title;
-        if (patch.status !== undefined) sanitizedPatch.status = patch.status;
-        if (patch.utmFix !== undefined) sanitizedPatch.utmFix = patch.utmFix;
-        if (patch.notes !== undefined) sanitizedPatch.notes = patch.notes;
-        if (patch.payload !== undefined) sanitizedPatch.payload = mergedPayload;
-
-        if (Object.keys(sanitizedPatch).length === 0) {
-            throw new Error('HITL_EMPTY_PATCH: Debe incluir al menos un campo técnico modificado.');
-        }
-
-        const now = Date.now();
-        const localUpdated = buildTypedDomainRecord(
+        const diffs: HitlFieldDiff[] = [
             {
-                id: existing.id,
-                tenantId: existing.tenantId,
-                accountId: existing.accountId,
-                code: patch.code !== undefined ? patch.code : existing.code,
-                title: patch.title !== undefined ? patch.title : existing.title,
-                status: patch.status !== undefined ? patch.status : existing.status,
-                utmFix: patch.utmFix !== undefined ? patch.utmFix : existing.utmFix,
-                notes: patch.notes !== undefined ? patch.notes : existing.notes,
-                createdAt: existing.createdAt,
-                updatedAt: now,
-                createdBy: existing.createdBy,
-                updatedBy: this.getUserId() || existing.updatedBy || existing.createdBy,
-                synced: false,
+                field: 'status',
+                current: String(asset.status || 'CLOSED'),
+                suggested: 'ACTIVE',
             },
-            existing.domainMode,
-            mergedPayload
+            ...(reasonNote && reasonNote.trim()
+                ? [{ field: 'reopen_note', current: '--', suggested: reasonNote.trim() }]
+                : []),
+        ];
+        return this.updateAssetWithHitl(
+            assetId,
+            {
+                status: 'ACTIVE',
+                closed_at: null,
+                closed_by: null,
+                closure_reason: null,
+            },
+            confirmationKeywordTrimmed(confirmationKeyword),
+            diffs
         );
-
-        localMap[recordId] = localUpdated;
-        await this.writeDomainRecordsMap(localMap);
-        this.emitDomainRecordsBus(localMap);
-
-        const endpoint = `/api/geolapp/domain-records/${encodeURIComponent(recordId)}/hitl-update`;
-        const bodyPayload = {
-            confirmationKeyword: 'ACTUALIZAR' as const,
-            patch: sanitizedPatch,
-            ...(diffSummary && diffSummary.length > 0 ? { diffSummary } : {}),
-        };
-        const scopedTenant = existing.tenantId || this.tenantId;
-
-        const enqueueOfflineHitl = async (): Promise<GeolappDomainRecord> => {
-            await syncQueueEngine.enqueueApiMutation(
-                endpoint,
-                bodyPayload,
-                'GEOLAPP_DOMAIN_RECORD_HITL_UPDATED',
-                scopedTenant,
-                'PATCH'
-            );
-            return localUpdated;
-        };
-
-        if (!this.isOnline || !scopedTenant) {
-            return enqueueOfflineHitl();
-        }
-
-        try {
-            const resp = await coreAuthFetch(endpoint, {
-                method: 'PATCH',
-                body: JSON.stringify(bodyPayload),
-            });
-
-            if (resp.ok) {
-                const json = (await resp.json().catch(() => null)) as {
-                    record?: GeolappDomainRecord;
-                } | null;
-                const syncedRecord: GeolappDomainRecord = {
-                    ...(json?.record || localUpdated),
-                    synced: true,
-                };
-                const refreshedMap = await this.readDomainRecordsMap();
-                refreshedMap[recordId] = syncedRecord;
-                await this.writeDomainRecordsMap(refreshedMap);
-                this.emitDomainRecordsBus(refreshedMap);
-                return syncedRecord;
-            }
-
-            if (
-                resp.status >= 400 &&
-                resp.status < 500 &&
-                resp.status !== 408 &&
-                resp.status !== 429
-            ) {
-                const errPayload = (await resp.json().catch(() => null)) as {
-                    error?: string;
-                } | null;
-                throw new Error(
-                    errPayload?.error || `Error en actualización HITL (${resp.status}).`
-                );
-            }
-
-            return enqueueOfflineHitl();
-        } catch (err) {
-            if (
-                err instanceof Error &&
-                (err.message.includes('HITL_') ||
-                    err.message.includes('BASE64_') ||
-                    err.message.includes('IMMUTABLE_') ||
-                    err.message.includes('TENANT_ACCESS_DENIED') ||
-                    err.message.includes('Error en actualización HITL'))
-            ) {
-                throw err;
-            }
-            return enqueueOfflineHitl();
-        }
     }
 
-    subscribeToDomainRecords(
-        domainMode: GeolappNonStockpileDomainMode | undefined,
-        cb: (records: GeolappDomainRecord[]) => void
-    ): Unsubscribe {
-        this.listDomainRecords(domainMode).then(cb);
-        const channel = domainMode ? `domain_records:${domainMode}` : 'domain_records';
-        return bus.on(channel, cb);
+    async ensureStaticSatelliteMap(
+        assetId: string,
+        lat: number,
+        lng: number
+    ): Promise<string | null> {
+        if (
+            !assetId ||
+            !Number.isFinite(lat) ||
+            !Number.isFinite(lng) ||
+            (lat === 0 && lng === 0)
+        ) {
+            return null;
+        }
+        const existing = await this.getAsset(assetId);
+        if (existing?.static_map_url && !existing.static_map_url.startsWith('data:')) {
+            return existing.static_map_url;
+        }
+
+        const dedupKey = `${this.safeTenant}:${assetId}:${lat.toFixed(5)}:${lng.toFixed(5)}`;
+        if (this.attemptedStaticMapKeys.has(dedupKey) || !this.isOnline || !this.tenantId) {
+            return existing?.static_map_url || null;
+        }
+        this.attemptedStaticMapKeys.add(dedupKey);
+
+        try {
+            const resp = await coreAuthFetch(
+                `/api/geolapp/stockpiles/${encodeURIComponent(assetId)}/static-map`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Active-Account-Id': this.tenantId,
+                    },
+                    body: JSON.stringify({ latitude: lat, longitude: lng }),
+                }
+            );
+            if (!resp.ok) {
+                return existing?.static_map_url || null;
+            }
+            const json = (await resp.json().catch(() => null)) as {
+                available?: boolean;
+                staticMapUrl?: string;
+                sha256?: string;
+                originalBytes?: number;
+                optimizedBytes?: number;
+                savingsPct?: number;
+            } | null;
+
+            if (
+                json?.available &&
+                typeof json.staticMapUrl === 'string' &&
+                json.staticMapUrl.trim().length > 0 &&
+                !json.staticMapUrl.startsWith('data:')
+            ) {
+                if (existing) {
+                    const st = this.safeTenant;
+                    const updated: StockpileAsset = {
+                        ...existing,
+                        static_map_url: json.staticMapUrl,
+                        static_map_sha256: json.sha256 ?? existing.static_map_sha256,
+                        static_map_original_bytes:
+                            json.originalBytes ?? existing.static_map_original_bytes,
+                        static_map_optimized_bytes:
+                            json.optimizedBytes ?? existing.static_map_optimized_bytes,
+                        static_map_savings_pct:
+                            json.savingsPct ?? existing.static_map_savings_pct,
+                        updatedAt: Date.now(),
+                    };
+                    await this.writeMeta(K.asset(st, assetId), updated);
+                    bus.emit(`asset:${assetId}`, updated);
+                    this.getAllAssetsLocal().then((all) => bus.emit('assets', all));
+                }
+                return json.staticMapUrl;
+            }
+            return existing?.static_map_url || null;
+        } catch {
+            return existing?.static_map_url || null;
+        }
     }
 
     // ─── SINCRONIZACIÓN CON CLOUD FIRESTORE & SYNC QUEUE ───
 
     async syncWithMinReport(): Promise<void> {
-        await syncQueueEngine.drainQueue();
+        await syncQueueEngine.triggerReconnectSync();
         const allAssets = await this.getAllAssets();
         const allMeas = await this.getAllMeasurements();
-        const allDomainRecords = await this.listDomainRecords().catch(() => []);
+        const allSites = await this.getMiningSites();
         bus.emit('assets', allAssets);
         bus.emit('meas_any', allMeas);
-        bus.emit('domain_records', allDomainRecords);
+        bus.emit('sites', allSites);
     }
+}
+
+function confirmationKeywordTrimmed(raw: string): string {
+    return String(raw || '').trim().toUpperCase();
 }
 
 export const dataService = new DataService();

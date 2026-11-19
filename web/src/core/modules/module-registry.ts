@@ -4,11 +4,7 @@ export type CoreModuleId = 'opermaq' | 'stockpile';
 
 export type OpermaqDomainMode = 'CATALOG' | 'FLEET' | 'SYMBOLOGY' | 'MANUFACTURERS' | 'SUPPLIERS';
 
-export type GeolappDomainMode =
-    | 'STOCKPILE'
-    | 'GEOMENSURA_GEO'
-    | 'EXPLORACION_SONDAJES'
-    | 'ESTRUCTURAL_HIDRO';
+export type GeolappDomainMode = 'STOCKPILE';
 
 export const OpermaqLazyComponent = lazy(() =>
     import('../../modules/opermaq/OpermaqModule').then((m) => ({ default: m.OpermaqModule }))
@@ -96,11 +92,11 @@ export const CORE_MODULES: CoreModuleDescriptor[] = [
     },
     {
         id: 'stockpile',
-        name: 'GEOLAPP®',
+        name: 'GEOLAPP® · STOCKPILE CONTROL',
         nameKey: 'core_shell.modules.stockpile.name',
-        description: 'GEOLAPP® · Geociencias y Control Minero Cu',
+        description: 'GEOLAPP® · Control de Stockpiles Cu',
         descriptionKey: 'core_shell.modules.stockpile.description',
-        scope: 'GEOLAPP®: control geológico-volumétrico de stockpiles Cu, geomensura UTM/RTK, sondajes DDH/RC y mapeo estructural/hidrogeológico.',
+        scope: 'Control volumétrico, fotográfico, granulométrico y geo-metalúrgico de acopios minerales Cu.',
         scopeKey: 'core_shell.modules.stockpile.scope',
         path: '/geolapp/stockpiles',
         icon: 'layers',
@@ -110,31 +106,10 @@ export const CORE_MODULES: CoreModuleDescriptor[] = [
         clientNavItems: [
             {
                 to: '/geolapp/stockpiles',
-                title: 'GEOLAPP® · STOCKPILES',
+                title: 'GEOLAPP® · STOCKPILE CONTROL',
                 titleKey: 'core_shell.modules.stockpile.nav_stockpile',
                 icon: 'layers',
                 domainMode: 'STOCKPILE',
-            },
-            {
-                to: '/geolapp/geomensura',
-                title: 'GEOLAPP® · GEOMENSURA',
-                titleKey: 'core_shell.modules.stockpile.nav_geomensura',
-                icon: 'straighten',
-                domainMode: 'GEOMENSURA_GEO',
-            },
-            {
-                to: '/geolapp/exploracion',
-                title: 'GEOLAPP® · EXPLORACIÓN',
-                titleKey: 'core_shell.modules.stockpile.nav_exploracion',
-                icon: 'explore',
-                domainMode: 'EXPLORACION_SONDAJES',
-            },
-            {
-                to: '/geolapp/estructural',
-                title: 'GEOLAPP® · ESTRUCTURAL',
-                titleKey: 'core_shell.modules.stockpile.nav_estructural',
-                icon: 'architecture',
-                domainMode: 'ESTRUCTURAL_HIDRO',
             },
         ],
     },

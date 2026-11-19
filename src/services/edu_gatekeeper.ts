@@ -1,13 +1,6 @@
-import { z } from 'zod';
 import { db } from '../config/firebase';
 import { PUBLIC_EMAIL_DOMAINS } from '../core/constants';
 import { ResilientAIClient } from '../core/resilient-ai-client';
-
-const eduAiResultSchema = z.object({
-    confidence: z.number().min(0).max(1),
-    verified: z.boolean(),
-    summary: z.string().min(1).max(1000),
-});
 
 export interface EduDocumentVerificationInput {
     fileBuffer?: Buffer | null;
@@ -78,40 +71,79 @@ export class EduGatekeeper {
             };
         }
 
-        const mimeType = (input.mimeType || 'application/pdf').trim();
+        const mimeType = (input.mimeType || 'application/pdf').split(';')[0].trim().toLowerCase();
 
         try {
-            const textSection = cleanText
-                ? `\nContenido textual extraído del documento:\n"""\n${cleanText.slice(0, 12000)}\n"""`
-                : '';
+            const inputText = [
+                `Institución académica esperada: "${input.expectedInstitution}"`,
+                cleanText
+                    ? `\nContenido textual extraído del documento:\n"""\n${cleanText.slice(0, 12000)}\n"""`
+                    : '',
+            ]
+                .filter(Boolean)
+                .join('\n');
 
-            const prompt = `Evalúa rigurosamente si el documento adjunto constituye un certificado de alumno regular, credencial académica o acreditación institucional vigente emitida por "${input.expectedInstitution}".${textSection}
-Si el documento es ilegible, vacío, irrelevante o no acredita vínculo académico con la institución indicada, debes responder verified: false y confidence: 0.
-Responde estrictamente en JSON con las claves exactas: {"confidence": number (0 a 1), "verified": boolean, "summary": string}.`;
-
-            const { data } = await ResilientAIClient.generateStructured(
-                {
-                    prompt,
-                    module: 'core',
-                    tenantId: 'edu-gatekeeper',
-                    thinkingLevel: 'low',
-                    bypassCache: true,
-                    media: hasBinary
-                        ? [
-                              {
-                                  mimeType,
-                                  dataBase64: input.fileBuffer!.toString('base64'),
-                              },
-                          ]
-                        : undefined,
+            const decisionRes = await ResilientAIClient.decide({
+                module: 'core',
+                tenantId: 'edu-gatekeeper',
+                dataClassification: 'TENANT_PRIVATE',
+                isEduSandbox: true,
+                bypassCache: true,
+                inputText,
+                media: hasBinary
+                    ? [
+                          {
+                              mimeType,
+                              dataBase64: input.fileBuffer!.toString('base64'),
+                              ...(mimeType.startsWith('image/') ? { resolution: 'medium' as const } : {}),
+                          },
+                      ]
+                    : undefined,
+                questions: {
+                    is_valid_academic_certificate: {
+                        type: 'noul',
+                        instructions:
+                            '¿El documento adjunto es legible y corresponde a un certificado de alumno regular, credencial académica o acreditación institucional vigente?',
+                        criteria: {
+                            true_description:
+                                'Documento legible que acredita matrícula, condición vigente de estudiante o vínculo académico formal.',
+                            false_description:
+                                'Documento ilegible, vacío, irrelevante, expirado o sin respaldo académico verificable.',
+                        },
+                    },
+                    matches_expected_institution: {
+                        type: 'noul',
+                        instructions: `¿El documento acredita vínculo académico directo con la institución "${input.expectedInstitution}"?`,
+                        criteria: {
+                            true_description: `El nombre, membrete, timbre o dominio oficial en el documento corresponde a "${input.expectedInstitution}".`,
+                            false_description:
+                                'Pertenece a otra institución, no menciona la institución esperada o no permite verificación.',
+                        },
+                    },
                 },
-                eduAiResultSchema
-            );
+            });
+
+            const ansValid = decisionRes.answers.is_valid_academic_certificate;
+            const ansInst = decisionRes.answers.matches_expected_institution;
+
+            if (ansValid?.type !== 'noul' || ansInst?.type !== 'noul') {
+                throw new Error('Respuesta incompleta desde compuerta Decisions EDU.');
+            }
+
+            const pValid = ansValid.noul;
+            const pInst = ansInst.noul;
+            const verified =
+                pValid >= 0.7 &&
+                pInst >= 0.7 &&
+                ansValid.confidence >= 0.7 &&
+                ansInst.confidence >= 0.7;
+            const combinedScore = Number(Math.min(pValid, pInst).toFixed(3));
+            const confidence = verified ? combinedScore : Math.min(combinedScore, 0.49);
 
             return {
-                confidence: data.verified ? data.confidence : Math.min(data.confidence, 0.49),
-                verified: Boolean(data.verified && data.confidence >= 0.7),
-                summary: data.summary,
+                confidence,
+                verified,
+                summary: `Validación documental calibrada (${decisionRes.engineUsed}): P(certificado)=${pValid.toFixed(2)}, P(institución)=${pInst.toFixed(2)}.`,
             };
         } catch (error: any) {
             console.error('[EDU-GATEKEEPER] Fallo en verificación IA (Fail-Closed):', error?.message || error);

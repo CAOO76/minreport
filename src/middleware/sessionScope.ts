@@ -3,6 +3,7 @@ import { auth, db } from '../config/firebase';
 import { env } from '../config/env';
 import { evaluatePilotExpiration, resolveEffectiveModuleAccess } from '../contracts/session.contracts';
 import { CoreModuleId, isCoreModuleId } from '../core/modules/module-registry';
+import { logThrottledAuthFailure } from './auth';
 
 const lastModulesStatusTimeoutByModule = new Map<CoreModuleId, number>();
 
@@ -93,7 +94,13 @@ export function resolveModuleSessionScope(moduleId: CoreModuleId = 'opermaq') {
             }
 
             // Validación criptográfica obligatoria vía Firebase Admin Auth (sin fallback Base64 sin firma)
-            const decoded = await auth.verifyIdToken(token);
+            let decoded: Awaited<ReturnType<typeof auth.verifyIdToken>>;
+            try {
+                decoded = await auth.verifyIdToken(token);
+            } catch (authErr) {
+                logThrottledAuthFailure('MINREPORT-SESSION-SCOPE', req, authErr);
+                return res.status(401).json({ error: 'No autorizado: Fallo al verificar sesión MINREPORT.' });
+            }
             req.user = decoded;
 
             const uid: string = decoded.uid;

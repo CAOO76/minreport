@@ -4,7 +4,6 @@ import { auth } from '../../config/firebase';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
 import { getApiUrl } from '../../utils/network';
 import M3LinearProgress from '../common/M3LinearProgress';
-import ReadAloudButton from '../common/ReadAloudButton';
 import SovereignVoiceInput, { type EphemeralVoiceAudioPayload } from '../common/SovereignVoiceInput';
 
 export type PilotAiContextModule = 'geolapp' | 'opermaq' | 'core';
@@ -280,12 +279,11 @@ export const TestPilotAiStudio: React.FC<TestPilotAiStudioProps> = ({ activeCont
         }
     };
 
-    const studioSpeechText = `${t('core_pilot_ws.ai_studio.heading')}. ${t('core_pilot_ws.ai_studio.subtitle')}`;
     const isHitlConfirmed = confirmKeyword.trim().toUpperCase() === 'ACTUALIZAR';
 
     return (
         <div className="flex-1 min-h-0 overflow-y-auto p-fib-34 space-y-fib-21 bg-[#FFFFFF] dark:bg-[#000000]">
-            <div className="border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-21 flex flex-wrap items-end justify-between gap-fib-21">
+            <div className="border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-21">
                 <div className="space-y-fib-8">
                     <p className="text-microcopy font-mono uppercase tracking-widest text-[#C68346]">
                         {t('core_pilot_ws.ai_studio.eyebrow')}
@@ -297,7 +295,6 @@ export const TestPilotAiStudio: React.FC<TestPilotAiStudioProps> = ({ activeCont
                         {t('core_pilot_ws.ai_studio.subtitle')}
                     </p>
                 </div>
-                <ReadAloudButton compact text={studioSpeechText} />
             </div>
 
             {/* Macro-Layout Paramétrico Áureo 61.8% / 38.2% */}
@@ -580,17 +577,6 @@ export const TestPilotAiStudio: React.FC<TestPilotAiStudioProps> = ({ activeCont
                             </p>
                         </div>
                         <div className="flex items-center gap-fib-8">
-                            <ReadAloudButton
-                                compact
-                                text={
-                                    logItems.length > 0
-                                        ? `${t('core_pilot_ws.ai_studio.log_heading')}. ${logItems
-                                              .slice(0, 5)
-                                              .map((it) => `${it.module}: ${it.observation}`)
-                                              .join('. ')}`
-                                        : `${t('core_pilot_ws.ai_studio.log_heading')}. ${t('core_pilot_ws.ai_studio.log_empty')}`
-                                }
-                            />
                             <button
                                 type="button"
                                 onClick={() => void fetchOwnLog()}
@@ -662,10 +648,6 @@ export const TestPilotAiStudio: React.FC<TestPilotAiStudioProps> = ({ activeCont
                                         <span className="text-microcopy font-mono tabular-nums text-[#94A3B8] dark:text-[#5A6072]">
                                             {formattedTs || t('core_pilot_ws.pending_record')}
                                         </span>
-                                        <ReadAloudButton
-                                            compact
-                                            text={`${entry.module}. ${entry.observation}. ${entry.expectedAiBehavior || ''}`}
-                                        />
                                     </div>
                                 </article>
                             );

@@ -1,14 +1,19 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { useAuth } from './AuthContext';
 import {
+    loadOfflineSessionSnapshot,
+    saveOfflineSessionSnapshot,
+} from '../core/offline/OfflineSessionVault';
+import {
     evaluatePilotExpiration,
     resolveEffectiveModuleAccess,
-    resolveSessionHomePath,
     type AccountClassification,
     type SystemRole,
 } from '../contracts';
+export { resolveSessionHomePath } from '../contracts';
 
 /**
  * CONTEXTO DE SESION UNIFICADA WEB 3.0 (MINREPORT CORE & MODULOS INTEGRADOS)
@@ -106,10 +111,32 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
     const { user, profile, currentAccount, loading, isMfaVerified } = useAuth();
     const [tokenClaims, setTokenClaims] = useState<Record<string, unknown>>({});
     const [claimsLoaded, setClaimsLoaded] = useState<boolean>(false);
+    const [offlineSnapshot, setOfflineSnapshot] = useState<MinReportSession | null>(null);
+    const [snapshotLoaded, setSnapshotLoaded] = useState<boolean>(false);
     const [globalModuleStatus, setGlobalModuleStatus] = useState<{ opermaq: boolean; stockpile: boolean }>({
         opermaq: true,
         stockpile: true,
     });
+
+    // 0. Hidratación instantánea offline-first desde bóveda local persistente
+    useEffect(() => {
+        let active = true;
+        loadOfflineSessionSnapshot()
+            .then((snap) => {
+                if (active) {
+                    setOfflineSnapshot(snap);
+                    setSnapshotLoaded(true);
+                }
+            })
+            .catch(() => {
+                if (active) {
+                    setSnapshotLoaded(true);
+                }
+            });
+        return () => {
+            active = false;
+        };
+    }, []);
 
     // 1. Verificación de Custom Claims reales desde Firebase ID Token
     useEffect(() => {
@@ -483,23 +510,66 @@ export const MinReportSessionProvider: React.FC<{ children: React.ReactNode }> =
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
-        if (session?.tenantId) {
-            localStorage.setItem('minreport_active_account_id', session.tenantId);
+        const onUpdated = (evt: Event) => {
+            const detail = (evt as CustomEvent<{ session?: MinReportSession }>).detail;
+            if (detail?.session) {
+                setOfflineSnapshot(detail.session);
+            }
+        };
+        const onCleared = () => {
+            setOfflineSnapshot(null);
+        };
+        window.addEventListener('minreport:offline-session-updated', onUpdated);
+        window.addEventListener('minreport:offline-session-cleared', onCleared);
+        return () => {
+            window.removeEventListener('minreport:offline-session-updated', onUpdated);
+            window.removeEventListener('minreport:offline-session-cleared', onCleared);
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!session) return;
+        setOfflineSnapshot(session);
+        void saveOfflineSessionSnapshot(session);
+    }, [session]);
+
+    const useOfflineFallback =
+        !session &&
+        Boolean(offlineSnapshot) &&
+        (Capacitor.isNativePlatform() || (typeof navigator !== 'undefined' && !navigator.onLine));
+
+    const effectiveSession = session || (useOfflineFallback ? offlineSnapshot : null);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        if (effectiveSession?.tenantId) {
+            localStorage.setItem('minreport_active_account_id', effectiveSession.tenantId);
         }
-    }, [session?.tenantId]);
+    }, [effectiveSession?.tenantId]);
 
     const hasModuleAccess = (moduleKey: 'opermaq' | 'stockpile'): boolean => {
-        if (!session || session.pilotExpired) return false;
-        if (session.isDevRoot || session.isSuperAdmin || session.isTestPilot) return true;
-        return Boolean(session.activeModules[moduleKey]);
+        if (!effectiveSession || effectiveSession.pilotExpired) return false;
+        if (effectiveSession.isDevRoot || effectiveSession.isSuperAdmin || effectiveSession.isTestPilot) {
+            return true;
+        }
+        return Boolean(effectiveSession.activeModules[moduleKey]);
     };
 
+    const effectiveLoaded =
+        (!loading && claimsLoaded) ||
+        (snapshotLoaded && Boolean(offlineSnapshot) && !user && Capacitor.isNativePlatform());
+
     return (
-        <MinReportSessionContext.Provider value={{ session, isLoaded: !loading && claimsLoaded, hasModuleAccess }}>
+        <MinReportSessionContext.Provider
+            value={{
+                session: effectiveSession,
+                isLoaded: effectiveLoaded,
+                hasModuleAccess,
+            }}
+        >
             {children}
         </MinReportSessionContext.Provider>
     );
 };
 
 export const useMinReportSession = () => useContext(MinReportSessionContext);
-export { resolveSessionHomePath };

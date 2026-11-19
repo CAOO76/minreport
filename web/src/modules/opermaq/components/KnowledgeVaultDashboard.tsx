@@ -36,7 +36,6 @@ import { toast } from 'react-toastify';
 import { M3IconButton } from './M3IconButton';
 import { M3Button } from './M3Button';
 import { M3LinearProgress, M3CircularProgress } from './M3ProgressIndicator';
-import { ReadAloudButton } from '../../../components/common/ReadAloudButton';
 import { useTranslation } from 'react-i18next';
 import i18n from '../locales/i18n';
 import { mediaDigestorClient } from '../../../core/media/MediaDigestorClient';
@@ -3803,23 +3802,6 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
         prerequisitePillar.currentDigest !== pillar.parent_pillar_digest_sha256))
   );
 
-  const pillarReadAloudText = useMemo(() => {
-    const pillarTitle = t(`vault_dashboard.pillars.${pillarMeta.id}`, pillarMeta.label);
-    const visibleItems = activeItems
-      .filter((it) => expandedItems.size === 0 || expandedItems.has(it.item_id))
-      .slice(0, 12);
-    const summaries = visibleItems
-      .map((it, idx) => {
-        const rawText = it.content
-          ? it.content.replace(/[#*_`|>\[\]]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240)
-          : it.rationale;
-        return `${idx + 1}. ${it.title}. ${rawText || ''}`.trim();
-      })
-      .filter(Boolean)
-      .join(' ');
-    return summaries ? `${pillarTitle}. ${summaries}` : pillarTitle;
-  }, [activeItems, expandedItems, pillarMeta.id, pillarMeta.label, t]);
-
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Toolbar */}
@@ -3846,7 +3828,6 @@ const PillarTabContent: React.FC<PillarTabContentProps> = ({
           <h1 className="text-[13px] font-bold uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6] leading-none whitespace-nowrap">
             {t(`vault_dashboard.pillars.${pillarMeta.id}`, pillarMeta.label)}
           </h1>
-          <ReadAloudButton compact text={pillarReadAloudText} />
 
           {canCurateAI && itemizeStatus === 'PARTIAL_FROM_INGESTION' && expandedItems.size === 0 && (
             <button
@@ -4651,7 +4632,7 @@ export const KnowledgeVaultDashboard: React.FC<VaultDashboardProps> = ({
         ? data.knowledge_vault.pauta_mantencion.items
         : [];
       const needsCostMatrixInit =
-        (!data?.operational_cost_matrix || data?.operational_cost_matrix?.version !== '3.0.0') &&
+        (!data?.operational_cost_matrix || data?.operational_cost_matrix?.version !== '4.0.0') &&
         (fichaItems.length > 0 || pmItems.length > 0 || Boolean(data?.operational_cost_matrix));
       if (
         (!hasPillars || needsCostMatrixInit) &&

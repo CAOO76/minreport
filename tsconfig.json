@@ -20,6 +20,7 @@
     "node_modules",
     "sdk",
     "src/sdk",
+    "web",
     "**/*.spec.ts"
   ]
 }

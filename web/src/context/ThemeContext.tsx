@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { isNativeMobileRuntime } from '../i18n';
 
 type Theme = 'light' | 'dark';
 
@@ -9,43 +10,84 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
-export const ThemeProvider = ({ children }: { children: ReactNode }) => {
-  const [theme, setTheme] = useState<Theme>(() => {
-    const storedTheme = localStorage.getItem('theme');
-    if (storedTheme) return storedTheme as Theme;
-
-    // Si no hay preferencia guardada, usamos la del sistema
+function readSystemTheme(): Theme {
+  if (typeof window === 'undefined') return 'light';
+  const nativeDark = (window as unknown as { __MINREPORT_NATIVE_DARK__?: boolean }).__MINREPORT_NATIVE_DARK__;
+  if (isNativeMobileRuntime() && typeof nativeDark === 'boolean') {
+    return nativeDark ? 'dark' : 'light';
+  }
+  if (typeof window.matchMedia === 'function') {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  return 'light';
+}
+
+export const ThemeProvider = ({ children }: { children: ReactNode }) => {
+  const isNative = isNativeMobileRuntime();
+
+  const [theme, setTheme] = useState<Theme>(() => {
+    if (isNative) {
+      try {
+        localStorage.removeItem('theme');
+      } catch {
+        // Ignorar en entornos restringidos
+      }
+      return readSystemTheme();
+    }
+    const storedTheme = localStorage.getItem('theme');
+    if (storedTheme === 'dark' || storedTheme === 'light') return storedTheme;
+    return readSystemTheme();
   });
 
   useEffect(() => {
-    // 1. Aplicar clase al DOM
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
     }
+    document.documentElement.style.colorScheme = theme;
+    const themeMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeMeta) {
+      themeMeta.setAttribute('content', theme === 'dark' ? '#000000' : '#FFFFFF');
+    }
   }, [theme]);
 
-  // 2. Escuchar cambios del sistema (solo si el usuario no ha elegido manualmente)
   useEffect(() => {
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const mediaQuery =
+      typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        ? window.matchMedia('(prefers-color-scheme: dark)')
+        : null;
 
     const handleChange = (e: MediaQueryListEvent) => {
-      const hasManualSetting = localStorage.getItem('theme');
-      if (!hasManualSetting) {
+      if (isNative || !localStorage.getItem('theme')) {
         setTheme(e.matches ? 'dark' : 'light');
       }
     };
 
-    mediaQuery.addEventListener('change', handleChange);
-    return () => mediaQuery.removeEventListener('change', handleChange);
-  }, []);
+    const handleOsConfigChange = (e: Event) => {
+      if (!isNative) return;
+      const custom = e as CustomEvent<{ isDark?: boolean }>;
+      if (typeof custom.detail?.isDark === 'boolean') {
+        setTheme(custom.detail.isDark ? 'dark' : 'light');
+      } else {
+        setTheme(readSystemTheme());
+      }
+    };
+
+    mediaQuery?.addEventListener('change', handleChange);
+    window.addEventListener('minreport:os-config-change', handleOsConfigChange);
+    return () => {
+      mediaQuery?.removeEventListener('change', handleChange);
+      window.removeEventListener('minreport:os-config-change', handleOsConfigChange);
+    };
+  }, [isNative]);
 
   const toggleTheme = () => {
-    const newTheme = theme === 'light' ? 'dark' : 'light';
+    const newTheme: Theme = theme === 'light' ? 'dark' : 'light';
     setTheme(newTheme);
-    localStorage.setItem('theme', newTheme); // Guardado explícito manual
+    if (!isNative) {
+      localStorage.setItem('theme', newTheme);
+    }
   };
 
   return (

@@ -41,35 +41,23 @@ export const OperationalDashboard: React.FC = () => {
                     </p>
                 </div>
 
-                <div className="flex items-center gap-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] p-fib-13 rounded-none shadow-none border border-[#E2E8F0] dark:border-[#12151C]">
-                    <div className="px-fib-13 border-r border-[#E2E8F0] dark:border-[#12151C]">
-                        <p className="text-microcopy font-mono text-[#475569] dark:text-[#8A93A6] uppercase mb-0.5">
-                            {t('core_shell.network_status_label', 'ESTADO RED')}
-                        </p>
-                        <div className="flex items-center gap-fib-8">
-                            <div className={`w-2 h-2 rounded-none ${isOnline ? 'bg-[#00AEEF]' : 'bg-red-500'}`} />
-                            <span className="text-microcopy font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
-                                {isOnline
-                                    ? t('core_shell.status_online', 'En línea')
-                                    : t('core_shell.status_offline', 'Modo Offline')}
-                            </span>
-                        </div>
-                    </div>
-                    <div className="px-fib-13">
-                        <p className="text-microcopy font-mono text-[#475569] dark:text-[#8A93A6] uppercase mb-0.5">
-                            {t('core_shell.version_label', 'VERSIÓN')}
-                        </p>
-                        <p className="text-microcopy font-mono font-bold tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">{APP_VERSION}</p>
-                    </div>
+                <div className="flex items-center gap-fib-13 text-[#475569] dark:text-[#8A93A6]">
+                    <span
+                        title={isOnline ? t('core_shell.status_online', 'En línea') : t('core_shell.status_offline', 'Modo Offline')}
+                        aria-label={isOnline ? t('core_shell.status_online', 'En línea') : t('core_shell.status_offline', 'Modo Offline')}
+                        className={`inline-flex items-center ${isOnline ? 'text-[#00AEEF]' : 'text-red-500'}`}
+                    >
+                        <span className="material-symbols-outlined text-[18px]">{isOnline ? 'wifi' : 'wifi_off'}</span>
+                    </span>
+                    <span className="text-microcopy font-mono font-bold tabular-nums text-[#0F172A] dark:text-[#F3F4F6]">{APP_VERSION}</span>
                 </div>
             </header>
 
             {/* Módulos Industriales Integrados */}
             <section className="space-y-fib-21">
                 <div className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-13">
-                    <h2 className="text-microcopy font-mono font-bold uppercase text-[#475569] dark:text-[#8A93A6] flex items-center gap-fib-8">
-                        <span className="material-symbols-outlined text-[18px] text-[#C68346]">apps</span>
-                        <span>{t('core_shell.integrated_modules_title', 'Módulos Operativos Integrados')}</span>
+                    <h2 className="text-microcopy font-mono font-bold uppercase text-[#475569] dark:text-[#8A93A6]">
+                        {t('core_shell.integrated_modules_title', 'Módulos Operativos Integrados')}
                     </h2>
                     <span className="text-microcopy font-mono tabular-nums text-[#475569] dark:text-[#8A93A6]">
                         {t('core_shell.enabled_modules_count', {
@@ -120,9 +108,8 @@ export const OperationalDashboard: React.FC = () => {
                                     </p>
                                 </div>
 
-                                <div className="pt-fib-13 mt-fib-21 border-t border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between text-microcopy font-mono font-bold uppercase text-[#C68346]">
-                                    <span>{t('core_shell.open_module', 'Abrir módulo')}</span>
-                                    <span className="material-symbols-outlined text-[16px] group-hover:translate-x-1 transition-transform">
+                                <div className="pt-fib-13 mt-fib-21 border-t border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-end text-[#C68346]">
+                                    <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform">
                                         arrow_forward
                                     </span>
                                 </div>

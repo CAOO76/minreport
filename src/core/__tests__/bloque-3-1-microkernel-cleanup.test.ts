@@ -210,9 +210,6 @@ async function run() {
         assert.equal(CORE_MODULE_REGISTRY.stockpile.basePath, '/api/stockpile');
         assert.deepEqual(CORE_MODULE_REGISTRY.stockpile.domainModes, [
             'STOCKPILE',
-            'GEOMENSURA_GEO',
-            'EXPLORACION_SONDAJES',
-            'ESTRUCTURAL_HIDRO',
         ]);
         assert.equal(CORE_MODULE_REGISTRY.stockpile.defaultEnabled, true);
     });

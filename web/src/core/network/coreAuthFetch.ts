@@ -1,27 +1,61 @@
 import { auth } from '../../config/firebase';
 import { getApiUrl } from '../../utils/network';
+import {
+    clearDevTokensFromStorage,
+    evictExpiredDevTokensFromStorage,
+    isClientCachedJwtFresh,
+} from '../../utils/jwtFreshness';
+
+function isCurrentUserDevRoot(): boolean {
+    const current = auth.currentUser;
+    if (!current) return false;
+    return (
+        current.uid === 'dev-master-root-uid' ||
+        current.email?.toLowerCase() === 'dev@minreport.com'
+    );
+}
 
 /**
  * Resuelve el token Bearer activo para llamadas HTTP hacia Core API.
- * En `/dev` sin impersonación activa prioriza `dev_auth_token`; en el resto
- * utiliza `auth.currentUser?.getIdToken()` con respaldo en tokens locales DEV.
+ * En `/dev` sin impersonación activa prioriza un ID Token vivo de Firebase si `DEV_ROOT`
+ * está autenticado y solo usa `dev_auth_token` si pasa validación de expiración cliente.
  */
 export async function resolveCoreAuthToken(): Promise<string | null> {
+    evictExpiredDevTokensFromStorage();
+
     const hasWindow = typeof window !== 'undefined';
     const isDevRoute = hasWindow && window.location.pathname.startsWith('/dev');
     const isImpersonating = hasWindow && localStorage.getItem('dev_is_impersonating') === 'true';
-    const storedDevAuthToken = hasWindow ? localStorage.getItem('dev_auth_token') : null;
-    const storedDevVaultToken = hasWindow ? localStorage.getItem('dev_vault_token') : null;
-
-    if (isDevRoute && !isImpersonating && storedDevAuthToken) {
-        return storedDevAuthToken;
-    }
 
     if (typeof auth.authStateReady === 'function') {
         try {
             await auth.authStateReady();
         } catch {
             // Continuar con resolución actual de credenciales
+        }
+    }
+
+    const storedDevAuthToken = hasWindow ? localStorage.getItem('dev_auth_token') : null;
+    const storedDevVaultToken = hasWindow ? localStorage.getItem('dev_vault_token') : null;
+    const freshDevAuthToken = isClientCachedJwtFresh(storedDevAuthToken) ? storedDevAuthToken : null;
+    const freshDevVaultToken = isClientCachedJwtFresh(storedDevVaultToken) ? storedDevVaultToken : null;
+
+    if (isDevRoute && !isImpersonating) {
+        if (isCurrentUserDevRoot() && auth.currentUser) {
+            try {
+                const idToken = await auth.currentUser.getIdToken();
+                if (idToken) {
+                    if (hasWindow) {
+                        localStorage.setItem('dev_auth_token', idToken);
+                    }
+                    return idToken;
+                }
+            } catch {
+                // Continuar con token DEV en caché si sigue fresco
+            }
+        }
+        if (freshDevAuthToken) {
+            return freshDevAuthToken;
         }
     }
 
@@ -34,7 +68,7 @@ export async function resolveCoreAuthToken(): Promise<string | null> {
         }
     }
 
-    return storedDevAuthToken || storedDevVaultToken || null;
+    return freshDevAuthToken || freshDevVaultToken || null;
 }
 
 /**
@@ -51,8 +85,9 @@ export async function coreAuthFetch(
         : getApiUrl(endpointOrUrl);
 
     const headers = new Headers(init.headers);
+    const callerProvidedAuth = headers.has('Authorization');
 
-    if (!headers.has('Authorization')) {
+    if (!callerProvidedAuth) {
         const token = await resolveCoreAuthToken();
         if (token) {
             headers.set('Authorization', `Bearer ${token}`);
@@ -66,8 +101,44 @@ export async function coreAuthFetch(
         }
     }
 
-    return fetch(resolvedUrl, {
+    let response = await fetch(resolvedUrl, {
         ...init,
         headers,
     });
+
+    if (response.status === 401 && !callerProvidedAuth) {
+        if (auth.currentUser) {
+            try {
+                const refreshedToken = await auth.currentUser.getIdToken(true);
+                if (refreshedToken) {
+                    if (
+                        typeof window !== 'undefined' &&
+                        window.location.pathname.startsWith('/dev') &&
+                        localStorage.getItem('dev_is_impersonating') !== 'true' &&
+                        isCurrentUserDevRoot()
+                    ) {
+                        localStorage.setItem('dev_auth_token', refreshedToken);
+                    }
+                    headers.set('Authorization', `Bearer ${refreshedToken}`);
+                    response = await fetch(resolvedUrl, {
+                        ...init,
+                        headers,
+                    });
+                }
+            } catch {
+                // Mantener respuesta 401 si la renovación falla
+            }
+        }
+
+        if (
+            response.status === 401 &&
+            typeof window !== 'undefined' &&
+            window.location.pathname.startsWith('/dev') &&
+            !isCurrentUserDevRoot()
+        ) {
+            clearDevTokensFromStorage();
+        }
+    }
+
+    return response;
 }

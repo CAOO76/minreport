@@ -1,11 +1,9 @@
 import { Fragment, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MiningAICopilot } from '../components/ai/MiningAICopilot';
-import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import BrandLogo from '../components/BrandLogo';
 import SecureImage from '../components/common/SecureImage';
-import ContextOrientationBar from '../components/common/ContextOrientationBar';
-import ErgonomicScaleSwitch from '../components/common/ErgonomicScaleSwitch';
 import { LanguageSwitch } from '../components/LanguageSwitch';
 import { ThemeSwitch } from '../components/ThemeSwitch';
 import { useAuth } from '../context/AuthContext';
@@ -13,15 +11,9 @@ import { useMinReportSession } from '../context/MinReportSessionContext';
 import { CORE_MODULES } from '../core/modules/module-registry';
 import { getApiUrl } from '../utils/network';
 
-const SIDEBAR_CALLOUT_CLASS =
-    'pointer-events-none opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 absolute left-full ml-3 top-1/2 -translate-y-1/2 z-50 whitespace-nowrap bg-[#0F172A] text-[#F3F4F6] dark:bg-[#F8FAFC] dark:text-[#0F172A] px-fib-13 py-fib-8 text-data-dense font-mono border border-[#C68346] rounded-none shadow-none';
-
 const ClientLayout = () => {
     const { t } = useTranslation();
     const location = useLocation();
-    const navigate = useNavigate();
-    const cleanPath = location.pathname.replace(/\/+$/, '') || '/dashboard';
-    const isGeolappRoute = cleanPath.startsWith('/geolapp') || cleanPath.startsWith('/stockpile');
     const isFullBleedModule =
         location.pathname.startsWith('/opermaq') ||
         location.pathname.startsWith('/stockpile') ||
@@ -29,59 +21,6 @@ const ClientLayout = () => {
     const [activeFloatingPanel, setActiveFloatingPanel] = useState<'none' | 'copilot'>('none');
     const { signOut: signOutContext, profile, currentAccount, switchAccount } = useAuth();
     const { session, hasModuleAccess } = useMinReportSession();
-
-    const isHomeRoute = cleanPath === '/dashboard' || cleanPath === '/';
-
-    const orientationTrail: string[] = (() => {
-        if (isHomeRoute) return [t('core_orientation.home_summary')];
-        if (cleanPath.startsWith('/opermaq')) {
-            return [t('core_orientation.home_summary'), t('core_orientation.opermaq_workspace')];
-        }
-        if (cleanPath.startsWith('/geolapp/geomensura')) {
-            return [
-                t('core_orientation.home_summary'),
-                t('core_orientation.geolapp_workspace'),
-                t('core_orientation.geolapp_geomensura'),
-            ];
-        }
-        if (cleanPath.startsWith('/geolapp/exploracion')) {
-            return [
-                t('core_orientation.home_summary'),
-                t('core_orientation.geolapp_workspace'),
-                t('core_orientation.geolapp_exploracion'),
-            ];
-        }
-        if (cleanPath.startsWith('/geolapp/estructural')) {
-            return [
-                t('core_orientation.home_summary'),
-                t('core_orientation.geolapp_workspace'),
-                t('core_orientation.geolapp_estructural'),
-            ];
-        }
-        if (cleanPath.startsWith('/geolapp') || cleanPath.startsWith('/stockpile')) {
-            return [
-                t('core_orientation.home_summary'),
-                t('core_orientation.geolapp_workspace'),
-                t('core_orientation.stockpile_workspace'),
-            ];
-        }
-        if (cleanPath.startsWith('/b2b/equipo')) {
-            return [t('core_orientation.home_summary'), t('core_shell.nav_team')];
-        }
-        if (cleanPath.startsWith('/b2b/solicitud-equipos')) {
-            return [t('core_orientation.home_summary'), t('core_shell.nav_equipment_onboarding')];
-        }
-        if (cleanPath.startsWith('/b2b/empresa')) {
-            return [t('core_orientation.home_summary'), t('core_shell.nav_company')];
-        }
-        if (cleanPath.startsWith('/b2b/metricas')) {
-            return [t('core_orientation.home_summary'), t('core_shell.nav_metrics')];
-        }
-        if (cleanPath.startsWith('/b2b/suscripcion')) {
-            return [t('core_orientation.home_summary'), t('core_shell.nav_subscription')];
-        }
-        return [t('core_orientation.home_summary')];
-    })();
 
     const membership = profile?.memberships?.find((m: any) => m.accountId === currentAccount?.id);
     const isSubscriptionAdmin = membership?.role === 'SUBSCRIPTION_ADMIN' || membership?.role === 'BILLING_ONLY';
@@ -160,7 +99,6 @@ const ClientLayout = () => {
                             ))}
                         </select>
                     )}
-                    <ErgonomicScaleSwitch compact />
                     <LanguageSwitch />
                     <ThemeSwitch />
                 </div>
@@ -184,51 +122,8 @@ const ClientLayout = () => {
                         >
                             <span className="material-symbols-outlined text-2xl">dashboard</span>
                             <span className="sr-only">{t('core_shell.nav_dashboard', 'Panel Principal')}</span>
-                            <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
-                                {t('core_shell.nav_dashboard', 'Panel Principal')}
-                            </span>
                         </NavLink>
                         {CORE_MODULES.filter((mod) => hasModuleAccess(mod.id)).map((mod) => {
-                            if (mod.id === 'stockpile') {
-                                const visibleNavItems = isGeolappRoute
-                                    ? mod.clientNavItems
-                                    : mod.clientNavItems.slice(0, 1);
-                                return (
-                                    <Fragment key={mod.id}>
-                                        <div className="w-8 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[8px] mx-auto shrink-0" />
-                                        <div
-                                            aria-label={t('core_shell.modules.stockpile.domain_selector_aria', 'Dominios GEOLAPP®')}
-                                            className="flex flex-col items-center gap-0.5"
-                                        >
-                                            {visibleNavItems.map((navItem) => {
-                                                const navLabel = t(navItem.titleKey, navItem.title);
-                                                return (
-                                                    <NavLink
-                                                        key={navItem.to}
-                                                        to={navItem.to}
-                                                        end={navItem.end}
-                                                        className={({ isActive }) =>
-                                                            `group relative min-w-[48px] min-h-[44px] w-12 h-11 flex items-center justify-center rounded-none shadow-none bg-transparent border-y-0 border-r-0 border-l-2 transition-colors cursor-pointer ${
-                                                                isActive
-                                                                    ? 'border-l-[#C68346] text-[#C68346]'
-                                                                    : 'border-l-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
-                                                            }`
-                                                        }
-                                                        title={navLabel}
-                                                    >
-                                                        <span className="material-symbols-outlined text-2xl">{navItem.icon}</span>
-                                                        <span className="sr-only">{navLabel}</span>
-                                                        <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
-                                                            {navLabel}
-                                                        </span>
-                                                    </NavLink>
-                                                );
-                                            })}
-                                        </div>
-                                    </Fragment>
-                                );
-                            }
-
                             return (
                                 <Fragment key={mod.id}>
                                     <div className="w-8 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[8px] mx-auto shrink-0" />
@@ -249,9 +144,6 @@ const ClientLayout = () => {
                                             >
                                                 <span className="material-symbols-outlined text-2xl">{navItem.icon}</span>
                                                 <span className="sr-only">{navLabel}</span>
-                                                <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
-                                                    {navLabel}
-                                                </span>
                                             </NavLink>
                                         );
                                     })}
@@ -268,9 +160,6 @@ const ClientLayout = () => {
                                 >
                                     <span className="material-symbols-outlined text-2xl">groups</span>
                                     <span className="sr-only">{t('core_shell.nav_team', 'Equipo y Accesos')}</span>
-                                    <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
-                                        {t('core_shell.nav_team', 'Equipo y Accesos')}
-                                    </span>
                                 </NavLink>
                                 <NavLink
                                     to="/b2b/solicitud-equipos"
@@ -279,9 +168,6 @@ const ClientLayout = () => {
                                 >
                                     <span className="material-symbols-outlined text-2xl">precision_manufacturing</span>
                                     <span className="sr-only">{t('core_shell.nav_equipment_onboarding', 'Solicitud de Equipos')}</span>
-                                    <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
-                                        {t('core_shell.nav_equipment_onboarding', 'Solicitud de Equipos')}
-                                    </span>
                                 </NavLink>
                             </>
                         )}
@@ -295,9 +181,6 @@ const ClientLayout = () => {
                                 >
                                     <span className="material-symbols-outlined text-2xl">business</span>
                                     <span className="sr-only">{t('core_shell.nav_company', 'Datos de la Empresa')}</span>
-                                    <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
-                                        {t('core_shell.nav_company', 'Datos de la Empresa')}
-                                    </span>
                                 </NavLink>
                                 <NavLink
                                     to="/b2b/metricas"
@@ -306,9 +189,6 @@ const ClientLayout = () => {
                                 >
                                     <span className="material-symbols-outlined text-2xl">bar_chart</span>
                                     <span className="sr-only">{t('core_shell.nav_metrics', 'Métricas Operacionales')}</span>
-                                    <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
-                                        {t('core_shell.nav_metrics', 'Métricas Operacionales')}
-                                    </span>
                                 </NavLink>
                                 {!isEduSandbox && (
                                     <NavLink
@@ -318,9 +198,6 @@ const ClientLayout = () => {
                                     >
                                         <span className="material-symbols-outlined text-2xl">receipt_long</span>
                                         <span className="sr-only">{t('core_shell.nav_subscription', 'Contrato y Suscripción')}</span>
-                                        <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
-                                            {t('core_shell.nav_subscription', 'Contrato y Suscripción')}
-                                        </span>
                                     </NavLink>
                                 )}
                             </>
@@ -333,9 +210,6 @@ const ClientLayout = () => {
                             >
                                 <span className="material-symbols-outlined text-2xl">admin_panel_settings</span>
                                 <span className="sr-only">{t('core_shell.nav_admin_console', 'Consola 2º ADMIN')}</span>
-                                <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
-                                    {t('core_shell.nav_admin_console', 'Consola 2º ADMIN')}
-                                </span>
                             </NavLink>
                         )}
                     </nav>
@@ -343,26 +217,16 @@ const ClientLayout = () => {
                     <button
                         type="button"
                         onClick={() => signOutContext()}
-                        className="group relative min-w-[48px] min-h-[48px] w-12 h-12 flex items-center justify-center rounded-none transition-colors mt-auto text-[#475569] dark:text-[#8A93A6] hover:text-red-500 bg-transparent border-0 cursor-pointer"
+                        className="min-w-[48px] min-h-[48px] w-12 h-12 flex items-center justify-center rounded-none transition-colors mt-auto text-[#475569] dark:text-[#8A93A6] hover:text-red-500 bg-transparent border-0 cursor-pointer"
                         title={t('auth.logout', 'Cerrar Sesión')}
                         aria-label={t('auth.logout', 'Cerrar Sesión')}
                     >
                         <span className="material-symbols-outlined text-2xl">logout</span>
-                        <span aria-hidden="true" className={SIDEBAR_CALLOUT_CLASS}>
-                            {t('auth.logout', 'Cerrar Sesión')}
-                        </span>
                     </button>
                 </aside>
 
                 {/* ESCRITORIO */}
                 <main className={`flex-1 flex flex-col ${isFullBleedModule ? 'p-0 overflow-hidden' : 'overflow-auto'} relative`}>
-                    <ContextOrientationBar
-                        hidden={isFullBleedModule}
-                        includeScaleSwitch={false}
-                        compact={isFullBleedModule}
-                        trail={orientationTrail}
-                        onBack={!isHomeRoute ? () => navigate('/dashboard') : undefined}
-                    />
                     <div className={isFullBleedModule ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'p-fib-34 flex-1'}>
                         <Outlet />
                     </div>

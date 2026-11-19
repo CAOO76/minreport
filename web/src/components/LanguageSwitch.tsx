@@ -33,7 +33,7 @@ export const LanguageSwitch = () => {
             onClick={toggleLanguage}
             aria-label={label}
             title={label}
-            className="min-w-[48px] min-h-[48px] px-3 py-2 text-microcopy font-bold rounded-none shadow-none border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] text-[#334155] dark:text-[#CBD5E1] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] hover:border-[#C68346] dark:hover:border-[#C68346] transition-colors uppercase tracking-widest font-mono tabular-nums cursor-pointer flex items-center justify-center shrink-0"
+            className="bg-transparent border-0 outline-none p-1 text-microcopy font-bold rounded-none shadow-none text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors uppercase tracking-widest font-mono tabular-nums cursor-pointer flex items-center justify-center shrink-0"
         >
             {currentLang.toUpperCase()}
         </button>

@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { auth, db } from '../config/firebase';
 import { doc, getDoc } from 'firebase/firestore';
+import { MobileAppTopBar } from '../components/mobile/MobileAppTopBar';
 
 const MobileLayout: React.FC = () => {
     const { t } = useTranslation();
@@ -37,9 +38,11 @@ const MobileLayout: React.FC = () => {
     const isActive = (path: string) => location.pathname.startsWith(path);
 
     return (
-        <div className="fixed inset-0 flex flex-col bg-white dark:bg-[#030406] text-[#0F172A] dark:text-[#F3F4F6] select-none font-sans">
+        <div className="fixed inset-0 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] select-none font-atkinson">
+            <MobileAppTopBar homePath="/mobile/dashboard" showConnectivity={false} />
+
             {/* Área de Contenido */}
-            <main className="flex-1 overflow-y-auto overscroll-none pb-[calc(env(safe-area-inset-bottom)+70px)]">
+            <main className="flex-1 min-h-0 overflow-y-auto overscroll-none pb-[calc(env(safe-area-inset-bottom)+70px)]">
                 <Outlet />
             </main>
 
@@ -51,36 +54,45 @@ const MobileLayout: React.FC = () => {
                 <div className="flex justify-around items-stretch min-h-[64px]">
 
                     {/* Inicio */}
-                    <Link to="/mobile/dashboard" className="flex flex-col items-center justify-center w-full min-h-[56px] py-1 relative cursor-pointer">
+                    <Link
+                        to="/mobile/dashboard"
+                        title={t('core_mobile.nav_home', 'Inicio')}
+                        aria-label={t('core_mobile.nav_home', 'Inicio')}
+                        className="flex items-center justify-center w-full min-h-[56px] py-1 relative cursor-pointer"
+                    >
                         {isActive('/mobile/dashboard') && <div className="absolute top-0 w-10 h-[3px] bg-[#C68346]"></div>}
                         <span className={`material-symbols-outlined text-[24px] ${isActive('/mobile/dashboard') ? 'text-[#C68346]' : 'text-[#475569] dark:text-[#CBD5E1]'}`}>
                             home
                         </span>
-                        <span className={`text-microcopy font-mono mt-1 ${isActive('/mobile/dashboard') ? 'text-[#C68346] font-bold' : 'text-[#475569] dark:text-[#CBD5E1]'}`}>
-                            {t('core_mobile.nav_home', 'Inicio')}
-                        </span>
+                        <span className="sr-only">{t('core_mobile.nav_home', 'Inicio')}</span>
                     </Link>
 
                     {/* Herramientas (Módulos) */}
-                    <Link to="/mobile/tools" className="flex flex-col items-center justify-center w-full min-h-[56px] py-1 relative cursor-pointer">
+                    <Link
+                        to="/mobile/tools"
+                        title={t('core_mobile.nav_modules', 'Módulos')}
+                        aria-label={t('core_mobile.nav_modules', 'Módulos')}
+                        className="flex items-center justify-center w-full min-h-[56px] py-1 relative cursor-pointer"
+                    >
                         {isActive('/mobile/tools') && <div className="absolute top-0 w-10 h-[3px] bg-[#C68346]"></div>}
                         <span className={`material-symbols-outlined text-[24px] ${isActive('/mobile/tools') ? 'text-[#C68346]' : 'text-[#475569] dark:text-[#CBD5E1]'}`}>
                             grid_view
                         </span>
-                        <span className={`text-microcopy font-mono mt-1 ${isActive('/mobile/tools') ? 'text-[#C68346] font-bold' : 'text-[#475569] dark:text-[#CBD5E1]'}`}>
-                            {t('core_mobile.nav_modules', 'Módulos')}
-                        </span>
+                        <span className="sr-only">{t('core_mobile.nav_modules', 'Módulos')}</span>
                     </Link>
 
                     {/* Perfil */}
-                    <Link to="/mobile/profile" className="flex flex-col items-center justify-center w-full min-h-[56px] py-1 relative cursor-pointer">
+                    <Link
+                        to="/mobile/profile"
+                        title={t('core_mobile.nav_profile', 'Perfil')}
+                        aria-label={t('core_mobile.nav_profile', 'Perfil')}
+                        className="flex items-center justify-center w-full min-h-[56px] py-1 relative cursor-pointer"
+                    >
                         {isActive('/mobile/profile') && <div className="absolute top-0 w-10 h-[3px] bg-[#C68346]"></div>}
                         <span className={`material-symbols-outlined text-[24px] ${isActive('/mobile/profile') ? 'text-[#C68346]' : 'text-[#475569] dark:text-[#CBD5E1]'}`}>
                             person
                         </span>
-                        <span className={`text-microcopy font-mono mt-1 ${isActive('/mobile/profile') ? 'text-[#C68346] font-bold' : 'text-[#475569] dark:text-[#CBD5E1]'}`}>
-                            {t('core_mobile.nav_profile', 'Perfil')}
-                        </span>
+                        <span className="sr-only">{t('core_mobile.nav_profile', 'Perfil')}</span>
                     </Link>
 
                 </div>

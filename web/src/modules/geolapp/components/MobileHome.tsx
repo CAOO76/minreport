@@ -1,56 +1,305 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { M3LinearProgress } from '../../../components/common/M3LinearProgress';
+import { SecureImage } from '../../../components/common/SecureImage';
+import { useResolvedStockpileImage } from '../core/services/StorageService';
+import { UNASSIGNED_FAENA_ID } from '../core/services/stockpile-faena-metrics';
+import type { StockpileAsset } from '../core/types/GeolappTypes';
+import { triggerFieldImpact } from '../core/utils/fieldHaptics';
 
 interface MobileHomeProps {
-    onStartNewScan: () => void;
-    onViewRecords: () => void;
+    faenaId: string;
+    faenaName: string;
+    isUnassignedBucket?: boolean;
+    assets: StockpileAsset[];
+    isLoading: boolean;
+    onBackToFaenas: () => void;
+    onStartNewStockpile: () => void;
+    onSelectAsset: (asset: StockpileAsset) => void;
 }
 
-/**
- * MobileHome - Pantalla de inicio de campo para GEOLAPP®.
- * Cumple GEMINI.md §3: Minimalismo Industrial Puro, cero badges ficticios, soporte dual light/dark.
- */
-export const MobileHome: React.FC<MobileHomeProps> = ({ onStartNewScan, onViewRecords }) => {
+type CycleFilter = 'ALL' | 'ACTIVE' | 'CLOSED';
+
+const MobileHomeAssetRow: React.FC<{
+    asset: StockpileAsset;
+    onSelect: (asset: StockpileAsset) => void;
+}> = ({ asset, onSelect }) => {
     const { t } = useTranslation();
+    const coverRaw = asset.last_photo_url || asset.initial_photo_url || asset.thumbnail_url;
+    const resolvedCover = useResolvedStockpileImage(coverRaw);
+
+    const volume = asset.last_volume_m3 ?? asset.volumen ?? 0;
+    const tonnage = asset.last_weight_t ?? asset.peso_final_toneladas ?? 0;
+    const isClosed = asset.status === 'CLOSED';
+    const isPendingAi = asset.analysis_status === 'PENDING_AI_SYNC';
+    const isPendingScale = asset.analysis_status === 'PENDING_SCALE';
+    const slopeDeg = asset.detected_slope_angle_deg;
+    const domainLabel = asset.copper_domain
+        ? t(`copper_domains.${asset.copper_domain}`, asset.copper_domain)
+        : asset.underground_sector || asset.clase;
 
     return (
-        <main className="h-full w-full flex-1 min-h-[540px] bg-[#FFFFFF] dark:bg-[#000000] flex flex-col font-atkinson text-[#0F172A] dark:text-[#F3F4F6] overflow-hidden select-none transition-colors duration-200 rounded-none shadow-none">
-            <header className="relative z-10 pt-fib-55 pb-fib-21 px-fib-21 flex flex-col items-center border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D]">
-                <span className="material-symbols-outlined text-[#C68346] text-[44px] mb-fib-8">landscape</span>
-                <h1 className="text-microcopy font-mono font-bold tracking-[0.28em] uppercase text-[#0F172A] dark:text-[#F3F4F6] text-center">
-                    {t('home.brand_header', 'GEOLAPP® · CONTROL DE STOCKPILES')}
-                </h1>
+        <button
+            type="button"
+            onClick={() => {
+                void triggerFieldImpact('LIGHT');
+                onSelect(asset);
+            }}
+            className="w-full text-left py-fib-13 px-fib-13 bg-transparent hover:bg-[#F8FAFC] dark:hover:bg-[#07090D] active:bg-[#F8FAFC] dark:active:bg-[#07090D] border-0 transition-colors flex items-center gap-fib-13 cursor-pointer rounded-none shadow-none"
+        >
+            <div className="w-14 h-14 shrink-0 bg-transparent flex items-center justify-center overflow-hidden rounded-none">
+                {resolvedCover ? (
+                    <SecureImage
+                        src={resolvedCover}
+                        alt={asset.name}
+                        className="w-full h-full object-cover"
+                    />
+                ) : (
+                    <span className="material-symbols-outlined text-[24px] text-[#475569] dark:text-[#8A93A6]">
+                        landscape
+                    </span>
+                )}
+            </div>
+
+            <div className="flex-1 min-w-0 space-y-0.5">
+                <div className="flex items-center justify-between gap-fib-8">
+                    <span className="text-body-main font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                        {asset.name}
+                    </span>
+                    <div className="flex items-center gap-fib-8 shrink-0">
+                        {isPendingAi && (
+                            <span className="text-[#C68346] font-mono text-microcopy font-bold uppercase">
+                                {t('digital_v2.badge_pending_ai', 'PENDIENTE IA')}
+                            </span>
+                        )}
+                        {!isPendingAi && isPendingScale && (
+                            <span className="text-[#00AEEF] font-mono text-microcopy font-bold uppercase">
+                                {t('digital_v2.badge_pending_scale', 'SIN ESCALA')}
+                            </span>
+                        )}
+                        {isClosed && (
+                            <span className="text-[#475569] dark:text-[#8A93A6] font-mono text-microcopy font-bold uppercase">
+                                {t('home.filter_closed', 'CERRADO')}
+                            </span>
+                        )}
+                    </div>
+                </div>
+
+                <span className="block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] truncate">
+                    {domainLabel}
+                </span>
+
+                <div className="flex items-baseline flex-wrap gap-x-fib-13 gap-y-0.5 font-mono tabular-nums">
+                    <span className="text-data-dense font-bold text-[#C68346]">
+                        {volume > 0
+                            ? `${volume.toLocaleString(undefined, { maximumFractionDigits: 1 })} m³`
+                            : isPendingAi || isPendingScale
+                              ? '-- m³'
+                              : '0 m³'}
+                    </span>
+                    {tonnage > 0 && (
+                        <span className="text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                            {tonnage.toLocaleString(undefined, { maximumFractionDigits: 1 })} t
+                        </span>
+                    )}
+                    {typeof slopeDeg === 'number' && Number.isFinite(slopeDeg) && (
+                        <span className="text-microcopy font-bold text-[#00AEEF]">
+                            α {slopeDeg.toFixed(1)}°
+                        </span>
+                    )}
+                </div>
+            </div>
+
+            <span className="material-symbols-outlined text-[20px] text-[#475569] dark:text-[#8A93A6] shrink-0">
+                chevron_right
+            </span>
+        </button>
+    );
+};
+
+export const MobileHome: React.FC<MobileHomeProps> = ({
+    faenaId,
+    faenaName,
+    isUnassignedBucket = false,
+    assets,
+    isLoading,
+    onBackToFaenas,
+    onStartNewStockpile,
+    onSelectAsset,
+}) => {
+    const { t } = useTranslation();
+    const [cycleFilter, setCycleFilter] = useState<CycleFilter>('ACTIVE');
+    const [searchQuery, setSearchQuery] = useState('');
+    const [showSearch, setShowSearch] = useState(false);
+
+    useEffect(() => {
+        if (isUnassignedBucket) return;
+        const handler = () => onStartNewStockpile();
+        window.addEventListener('geolapp:quick-capture', handler);
+        return () => window.removeEventListener('geolapp:quick-capture', handler);
+    }, [isUnassignedBucket, onStartNewStockpile]);
+
+    const filteredAssets = useMemo(() => {
+        const q = searchQuery.trim().toLowerCase();
+        return [...assets]
+            .filter((asset) => {
+                const assetSiteId = (asset.project_id || '').trim();
+                if (faenaId === UNASSIGNED_FAENA_ID) {
+                    if (assetSiteId !== '') return false;
+                } else if (assetSiteId !== faenaId) {
+                    return false;
+                }
+                if (cycleFilter === 'ACTIVE' && asset.status === 'CLOSED') return false;
+                if (cycleFilter === 'CLOSED' && asset.status !== 'CLOSED') return false;
+                if (!q) return true;
+                return (
+                    asset.name.toLowerCase().includes(q) ||
+                    (asset.copper_domain || '').toLowerCase().includes(q) ||
+                    (asset.underground_sector || '').toLowerCase().includes(q) ||
+                    (asset.location_ref || '').toLowerCase().includes(q)
+                );
+            })
+            .sort(
+                (a, b) =>
+                    (b.last_measured_at || b.createdAt) - (a.last_measured_at || a.createdAt)
+            );
+    }, [assets, faenaId, cycleFilter, searchQuery]);
+
+    return (
+        <div className="h-full w-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-atkinson overflow-hidden rounded-none shadow-none select-none">
+            <header className="shrink-0 h-14 px-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-between gap-fib-8">
+                <div className="flex items-center gap-fib-8 min-w-0 flex-1">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            void triggerFieldImpact('LIGHT');
+                            onBackToFaenas();
+                        }}
+                        aria-label={t('common.back_button', 'VOLVER')}
+                        className="min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none p-2 text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] flex items-center justify-center cursor-pointer rounded-none shrink-0"
+                    >
+                        <span className="material-symbols-outlined text-[24px]">arrow_back</span>
+                    </button>
+                    <h1 className="text-h2-section font-mono font-bold uppercase truncate text-[#0F172A] dark:text-[#F3F4F6]">
+                        {faenaName}
+                    </h1>
+                </div>
+
+                {!isUnassignedBucket && (
+                    <button
+                        type="button"
+                        onClick={() => {
+                            void triggerFieldImpact('MEDIUM');
+                            onStartNewStockpile();
+                        }}
+                        aria-label={t('faenas.add_stockpile_aria', 'Nuevo acopio en esta faena')}
+                        title={t('faenas.add_stockpile_aria', 'Nuevo acopio en esta faena')}
+                        className="min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none p-2 text-[#C68346] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] flex items-center justify-center cursor-pointer rounded-none shrink-0"
+                    >
+                        <span className="material-symbols-outlined text-[26px]">add</span>
+                    </button>
+                )}
             </header>
 
-            <section className="relative z-10 flex-1 flex flex-col landscape:flex-row items-center justify-center p-fib-34 gap-fib-21 text-center">
-                <button
-                    type="button"
-                    onClick={onViewRecords}
-                    className="w-full max-w-xs min-h-[144px] p-fib-21 flex flex-col items-center justify-center gap-fib-13 rounded-none shadow-none bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] dark:hover:border-[#C68346] transition-colors cursor-pointer group"
-                    aria-label={t('home.stock')}
-                >
-                    <span className="material-symbols-outlined text-[48px] text-[#475569] dark:text-[#8A93A6] group-hover:text-[#C68346] transition-colors">
-                        list_alt
-                    </span>
-                    <span className="text-microcopy font-mono font-bold uppercase tracking-[0.2em] text-[#475569] dark:text-[#8A93A6] group-hover:text-[#C68346]">
-                        {t('home.stock')}
-                    </span>
-                </button>
+            <div className="shrink-0 px-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+                <div className="flex items-center justify-between gap-fib-8">
+                    <div className="flex-1 grid grid-cols-3">
+                        {(['ACTIVE', 'CLOSED', 'ALL'] as const).map((tab) => {
+                            const active = cycleFilter === tab;
+                            const label =
+                                tab === 'ACTIVE'
+                                    ? t('home.filter_active', 'ACTIVOS')
+                                    : tab === 'CLOSED'
+                                      ? t('home.filter_closed', 'CERRADOS')
+                                      : t('home.filter_all', 'TODOS');
+                            return (
+                                <button
+                                    key={tab}
+                                    type="button"
+                                    onClick={() => {
+                                        void triggerFieldImpact('LIGHT');
+                                        setCycleFilter(tab);
+                                    }}
+                                    className={`min-h-[48px] px-fib-8 bg-transparent border-0 border-b-2 font-mono text-microcopy font-bold uppercase cursor-pointer rounded-none transition-colors ${
+                                        active
+                                            ? 'border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6]'
+                                            : 'border-transparent text-[#475569] dark:text-[#8A93A6]'
+                                    }`}
+                                >
+                                    {label}
+                                </button>
+                            );
+                        })}
+                    </div>
 
-                <button
-                    type="button"
-                    onClick={onStartNewScan}
-                    className="w-full max-w-xs min-h-[144px] p-fib-21 flex flex-col items-center justify-center gap-fib-13 rounded-none shadow-none bg-[#C68346]/5 dark:bg-[#C68346]/10 border border-[#C68346]/50 hover:border-[#C68346] hover:bg-[#C68346]/15 transition-colors cursor-pointer group"
-                    aria-label={t('home.new_registration')}
-                >
-                    <span className="material-symbols-outlined text-[48px] text-[#C68346]">
-                        list_alt_add
-                    </span>
-                    <span className="text-microcopy font-mono font-bold uppercase tracking-[0.2em] text-[#C68346]">
-                        {t('home.new_registration')}
-                    </span>
-                </button>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            void triggerFieldImpact('LIGHT');
+                            setShowSearch((prev) => {
+                                const next = !prev;
+                                if (!next) setSearchQuery('');
+                                return next;
+                            });
+                        }}
+                        aria-label={t('home.search_placeholder', 'BUSCAR ACOPIO')}
+                        className={`min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none flex items-center justify-center cursor-pointer rounded-none shrink-0 transition-colors ${
+                            showSearch
+                                ? 'text-[#00AEEF]'
+                                : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
+                        }`}
+                    >
+                        <span className="material-symbols-outlined text-[22px]">
+                            {showSearch ? 'close' : 'search'}
+                        </span>
+                    </button>
+                </div>
+
+                {showSearch && (
+                    <div className="pb-fib-8">
+                        <input
+                            type="text"
+                            autoComplete="off"
+                            spellCheck={false}
+                            autoFocus
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            placeholder={t('home.search_placeholder', 'BUSCAR POR CÓDIGO O SECTOR')}
+                            aria-label={t('home.search_placeholder', 'BUSCAR POR CÓDIGO O SECTOR')}
+                            className="w-full h-11 px-fib-13 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#00AEEF] outline-none font-mono text-data-dense uppercase text-[#0F172A] dark:text-[#F3F4F6] placeholder-[#475569] dark:placeholder-[#8A93A6] rounded-none"
+                        />
+                    </div>
+                )}
+            </div>
+
+            <section className="flex-1 min-h-0 overflow-y-auto">
+                {isLoading && (
+                    <M3LinearProgress indeterminate ariaLabel={t('common.loading', 'Cargando')} />
+                )}
+
+                {!isLoading && filteredAssets.length === 0 && (
+                    <div className="py-fib-89 px-fib-21 text-center space-y-fib-13">
+                        <span className="material-symbols-outlined text-[36px] text-[#94A3B8] dark:text-[#5A6072]">
+                            landscape
+                        </span>
+                        <p className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
+                            {t('home.empty_state', 'SIN ACOPIOS REGISTRADOS EN ESTE FILTRO')}
+                        </p>
+                    </div>
+                )}
+
+                {filteredAssets.length > 0 && (
+                    <div className="divide-y divide-[#E2E8F0] dark:divide-[#12151C]">
+                        {filteredAssets.map((asset) => (
+                            <MobileHomeAssetRow
+                                key={asset.id}
+                                asset={asset}
+                                onSelect={onSelectAsset}
+                            />
+                        ))}
+                    </div>
+                )}
             </section>
-        </main>
+        </div>
     );
 };

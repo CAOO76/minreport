@@ -47,6 +47,16 @@ function normalizeOntologyText(raw: string): string {
         .trim();
 }
 
+function stripNegatedClauses(norm: string): string {
+    return norm
+        .replace(
+            /\b(?:sin|no\s+(?:posee|cuenta\s+con|tiene|es|aplica|confundir\s+con|usa|incluye|incorpora)|libre\s+de|excepto|descarta\w*|exclu\w*|without|not?\s+equipped\s+with)\s+[^.;,\n()]{1,80}/g,
+            ' '
+        )
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
 /**
  * MOTOR UNIVERSAL ZERO-CODE DE ONTOLOGÍA INDUSTRIAL POR RASGOS (`AssetOntologyEngine v3.0`).
  *
@@ -58,7 +68,7 @@ function normalizeOntologyText(raw: string): string {
  */
 export class AssetOntologyEngine {
     static inferAssetPhysicalTraits(input: OntologyInferenceInput): AssetPhysicalTraits {
-        const text = normalizeOntologyText(
+        const primaryText = normalizeOntologyText(
             [
                 input.type_key || '',
                 input.canonical_type_es || '',
@@ -66,6 +76,12 @@ export class AssetOntologyEngine {
                 input.archetype_id || '',
                 input.make_oficial || '',
                 input.model_oficial || '',
+            ]
+                .filter(Boolean)
+                .join(' ')
+        );
+        const secondaryText = normalizeOntologyText(
+            [
                 ...(Array.isArray(input.caracteristicas_principales) ? input.caracteristicas_principales : []),
                 ...(Array.isArray(input.ambiente_operativo) ? input.ambiente_operativo : []),
                 ...(Array.isArray(input.contexto_operativo) ? input.contexto_operativo : []),
@@ -78,84 +94,137 @@ export class AssetOntologyEngine {
                 ...(Array.isArray(input.spec_schema)
                     ? input.spec_schema.map((s) => `${s.axis_key} ${s.label_es} ${s.unit_si || ''}`)
                     : []),
-            ].join(' ')
+            ]
+                .filter(Boolean)
+                .join(' . ')
         );
+        const text = `${primaryText} ${secondaryText}`.trim();
+        const positiveSecondaryText = stripNegatedClauses(secondaryText);
+        const positiveText = `${primaryText} ${positiveSecondaryText}`.trim();
 
-        const isAerialRpas =
-            /\b(dron|drone|rpas|uav|uas|multirrotor|cuadricoptero|hexacoptero|ala fija|matrice|mavic|wingtra|sensefly|ebee|lidar aereo|aerofotogrametria)\b/.test(
-                text
-            );
-        const isBoltingOrTool =
-            /\b(llave de torque|torquimetro|multiplicador de torque|tensionador de pernos|hytorc|rad torque|enerpac|llave de impacto|esmeril|amoladora|taladro|rotomartillo|atornillador|tronzadora|sierra circular|cortadora manual|herramienta manual|herramienta hidraulica|herramienta electrica|herramienta neumatica|cilindro hidraulico portatil|gato hidraulico|prensa hidraulica|extractor hidraulico)\b/.test(
-                text
-            );
-        const isMetrologyInstrument =
-            /\b(estacion total|receptor gnss|gps rtk|escaner laser|lidar terrestre|nivel topografico|teodolito|analizador|espectrometro|calibrador|manometro patron|multimetro|megohmetro|camara termografica|instrumento|metrologia)\b/.test(
-                text
-            );
-        const isLightingTower =
-            /\b(torre de iluminacion|luminaria movil|mastil de iluminacion|carro de iluminacion|hilight|torre solar|planta de iluminacion)\b/.test(
-                text
-            );
-        const isWelder =
-            /\b(soldadora|motosoldadora|maquina de soldar|arco sumergido|tig\b|mig\b|mag\b|multiproceso|big blue|trailblazer|inversora de soldadura|termofusion|electrofusion)\b/.test(
-                text
-            );
-        const isGensetOrPower =
-            /\b(generador|grupo electrogeno|planta electrica|subestacion|transformador|banco de baterias|ups industrial|inversor solar)\b/.test(
-                text
-            );
-        const isPumpOrCompressor =
-            /\b(bomba sumergible|electrobomba|motobomba|bomba centrifuga|bomba de pulpa|bomba peristaltica|bomba multietapa|bomba hidraulica de trasvasije|grindex|flygt|warman|compresor|soplador|unidad hidraulica|power pack hidraulico)\b/.test(
-                text
-            );
-        const isComminutionOrPlant =
-            /\b(chancador|trituradora|molino|harnero|zaranda|criba|lokotrack|mobirex|mobicone|mobiscreen|alimentador vibratorio|correa transportadora|apilador|stacker|planta dosificadora|planta de hormigon|planta de asfalto)\b/.test(
-                text
-            );
-        const isCableShovelOrDragline =
-            /\b(pala electrica|pala de cables|pala mecanica de cables|dragalina|4100xpc|4800xpc|7495|rope shovel)\b/.test(
-                text
-            );
-        const isDrillingOrSupport =
-            /\b(perforadora|jumbo|simba|boomer|sondaje|diamantina|jackleg|stoper|raisebor|roc\b|smartroc|flexiroc|dth\b|empernador|bolter|robot shotcrete|proyectadora de hormigon)\b/.test(
-                text
-            );
-        const isLiftingOrRigging =
-            /\b(grua|camion pluma|puente grua|polipasto|tecle|winche|huinche|manipulador telescopico|telehandler|horquilla|montacargas|apilador electrico|alza ?hombre|plataforma elevadora|manlift|boom lift|scissor lift|sideboom|tiendetubos)\b/.test(
-                text
-            );
-        const isSurfaceMillingOrCompaction =
-            /\b(fresadora|recicladora de asfalto|pavimentadora|terminadora de asfalto|rodillo compactador|compactador vibratorio|placa compactadora|vibropison|apisonador)\b/.test(
-                text
-            );
-        const isTowedTrailer =
-            !isLightingTower &&
-            /\b(carro de arrastre|remolque|semirremolque|cama baja|lowboy|acoplado|cisterna remolcada|estanque remolcado|dolly|sin propulsion propia)\b/.test(
-                text
-            ) &&
-            !/\b(tractocamion|autopropulsad)\b/.test(text);
-        const isOffRoadMiningHaul =
-            /\b(camion de extraccion|caex|camion minero|ultra class|camion articulado|dumper articulado|dumper subterraneo|camion bajo perfil|th663|ad60|797f|793f|789d|930e|980e|830e)\b/.test(
-                text
-            );
-        const isVocationalServiceVehicle =
-            !isOffRoadMiningHaul &&
-            /\b(camion lubricador|camion aljibe|camion cisterna|camion combustible|camion fabrica|camion mixer|camion hormigonero|camion aspirador|camion limpiafosas|camion grua|camion pluma|camion mantenimiento|ambulancia|carro bomba|vehiculo de rescate|camion canasta|hidroelevador)\b/.test(
-                text
-            );
-        const isRoadOrSiteTruckOrLightVehicle =
-            !isOffRoadMiningHaul &&
-            !isVocationalServiceVehicle &&
-            /\b(camion tolva|camion volquete|tractocamion|camion 6x4|camion 8x4|camion 4x2|camion plano|camion baranda|camioneta|pick ?up|furgon|suv|van|minibus|bus|vehiculo liviano|utilitario|cuatrimoto|utv\b|mack|scania|volvo fh|volvo fmx|mercedes actros|mercedes arocs|kenworth|freightliner|international|hilux|l200|ranger|navara|amarok|dmax)\b/.test(
-                text
-            );
-        const isEarthmoving =
-            !isComminutionOrPlant &&
-            !isSurfaceMillingOrCompaction &&
-            /\b(excavadora|retroexcavadora|cargador frontal|lhd|scooptram|minicargador|skid steer|bulldozer|tractor sobre orugas|tractor de cadenas|wheel dozer|motoniveladora|trailla|mototrailla|pala hidraulica)\b/.test(
-                text
-            );
+        const classifyCoreFlags = (targetText: string) => {
+            const isAerialRpas =
+                /\b(dron|drone|rpas|uav|uas|multirrotor|cuadricoptero|hexacoptero|ala fija|matrice|mavic|wingtra|sensefly|ebee|lidar aereo|aerofotogrametria)\b/.test(
+                    targetText
+                );
+            const isBoltingOrTool =
+                /\b(llave de torque|torquimetro|multiplicador de torque|tensionador de pernos|hytorc|rad torque|enerpac|llave de impacto|esmeril|amoladora|taladro|rotomartillo|atornillador|tronzadora|sierra circular|cortadora manual|herramienta manual|herramienta hidraulica|herramienta electrica|herramienta neumatica|cilindro hidraulico portatil|gato hidraulico|prensa hidraulica|extractor hidraulico)\b/.test(
+                    targetText
+                );
+            const isMetrologyInstrument =
+                /\b(estacion total|receptor gnss|gps rtk|escaner laser|lidar terrestre|nivel topografico|teodolito|analizador|espectrometro|calibrador|manometro patron|multimetro|megohmetro|camara termografica|instrumento|metrologia)\b/.test(
+                    targetText
+                );
+            const isLightingTower =
+                /\b(torre de iluminacion|luminaria movil|mastil de iluminacion|carro de iluminacion|hilight|torre solar|planta de iluminacion)\b/.test(
+                    targetText
+                );
+            const isWelder =
+                /\b(soldadora|motosoldadora|maquina de soldar|arco sumergido|tig\b|mig\b|mag\b|multiproceso|big blue|trailblazer|inversora de soldadura|termofusion|electrofusion)\b/.test(
+                    targetText
+                );
+            const isGensetOrPower =
+                /\b(generador|grupo electrogeno|planta electrica|subestacion|transformador|banco de baterias|ups industrial|inversor solar)\b/.test(
+                    targetText
+                );
+            const isPumpOrCompressor =
+                /\b(bomba sumergible|electrobomba|motobomba|bomba centrifuga|bomba de pulpa|bomba peristaltica|bomba multietapa|bomba hidraulica de trasvasije|grindex|flygt|warman|compresor|soplador|unidad hidraulica|power pack hidraulico)\b/.test(
+                    targetText
+                );
+            const isComminutionOrPlant =
+                /\b(chancador|trituradora|molino|harnero|zaranda|criba|lokotrack|mobirex|mobicone|mobiscreen|alimentador vibratorio|correa transportadora|apilador|stacker|planta dosificadora|planta de hormigon|planta de asfalto)\b/.test(
+                    targetText
+                );
+            const isCableShovelOrDragline =
+                /\b(pala electrica|pala de cables|pala mecanica de cables|dragalina|4100xpc|4800xpc|7495|rope shovel)\b/.test(
+                    targetText
+                );
+            const isDrillingOrSupport =
+                /\b(perforadora|jumbo|simba|boomer|sondaje|diamantina|jackleg|stoper|raisebor|smartroc|flexiroc|powerroc|airroc|(?:epiroc|atlas copco)\s+roc\b|dth\b|empernador|bolter|robot shotcrete|proyectadora de hormigon)\b/.test(
+                    targetText
+                ) && !/\b(capacidad.*roc|rated operating capacity)\b/.test(targetText);
+            const isLiftingOrRigging =
+                /\b(grua|camion pluma|puente grua|polipasto|tecle|winche|huinche|manipulador telescopico|telehandler|horquilla|montacargas|apilador electrico|alza ?hombre|plataforma elevadora|manlift|boom lift|scissor lift|sideboom|tiendetubos)\b/.test(
+                    targetText
+                );
+            const isSurfaceMillingOrCompaction =
+                /\b(fresadora|recicladora de asfalto|pavimentadora|terminadora de asfalto|rodillo compactador|compactador vibratorio|placa compactadora|vibropison|apisonador)\b/.test(
+                    targetText
+                );
+            const isOffRoadMiningHaul =
+                /\b(camion de extraccion|caex|camion minero|ultra class|camion articulado|dumper articulado|dumper subterraneo|camion bajo perfil|th663|ad60|797f|793f|789d|930e|980e|830e)\b/.test(
+                    targetText
+                );
+            const isVocationalServiceVehicle =
+                !isOffRoadMiningHaul &&
+                /\b(camion lubricador|camion aljibe|camion cisterna|camion combustible|camion fabrica|camion mixer|camion hormigonero|camion aspirador|camion limpiafosas|camion grua|camion pluma|camion mantenimiento|ambulancia|carro bomba|vehiculo de rescate|camion canasta|hidroelevador)\b/.test(
+                    targetText
+                );
+            const isRoadOrSiteTruckOrLightVehicle =
+                !isOffRoadMiningHaul &&
+                !isVocationalServiceVehicle &&
+                /\b(camion tolva|camion volquete|tractocamion|camion 6x4|camion 8x4|camion 4x2|camion plano|camion baranda|camioneta|pick ?up|furgon|suv|van|minibus|bus|vehiculo liviano|utilitario|cuatrimoto|utv\b|mack|granite|gu81\d|scania|volvo fh|volvo fmx|mercedes actros|mercedes arocs|kenworth|freightliner|international|hilux|l200|ranger|navara|amarok|dmax)\b/.test(
+                    targetText
+                );
+            const isTowedTrailer =
+                !isLightingTower &&
+                !isOffRoadMiningHaul &&
+                !isVocationalServiceVehicle &&
+                !isRoadOrSiteTruckOrLightVehicle &&
+                /\b(carro de arrastre|remolque|semirremolque|cama baja|lowboy|acoplado|cisterna remolcada|estanque remolcado|dolly|sin propulsion propia)\b/.test(
+                    targetText
+                ) &&
+                !/\b(camion|tractocamion|autopropulsad)\b/.test(targetText);
+            const isEarthmoving =
+                !isComminutionOrPlant &&
+                !isSurfaceMillingOrCompaction &&
+                !isDrillingOrSupport &&
+                /\b(excavadora|retroexcavadora|cargador frontal|lhd|scooptram|minicargador|skid steer|bulldozer|tractor sobre orugas|tractor de cadenas|wheel dozer|motoniveladora|trailla|mototrailla|pala hidraulica)\b/.test(
+                    targetText
+                );
+
+            return {
+                isAerialRpas,
+                isBoltingOrTool,
+                isMetrologyInstrument,
+                isLightingTower,
+                isWelder,
+                isGensetOrPower,
+                isPumpOrCompressor,
+                isComminutionOrPlant,
+                isCableShovelOrDragline,
+                isDrillingOrSupport,
+                isLiftingOrRigging,
+                isSurfaceMillingOrCompaction,
+                isTowedTrailer,
+                isOffRoadMiningHaul,
+                isVocationalServiceVehicle,
+                isRoadOrSiteTruckOrLightVehicle,
+                isEarthmoving,
+            };
+        };
+
+        const primaryFlags = classifyCoreFlags(primaryText);
+        const hasPrimaryDomainMatch = Object.values(primaryFlags).some(Boolean);
+        const {
+            isAerialRpas,
+            isBoltingOrTool,
+            isMetrologyInstrument,
+            isLightingTower,
+            isWelder,
+            isGensetOrPower,
+            isPumpOrCompressor,
+            isComminutionOrPlant,
+            isCableShovelOrDragline,
+            isDrillingOrSupport,
+            isLiftingOrRigging,
+            isSurfaceMillingOrCompaction,
+            isTowedTrailer,
+            isOffRoadMiningHaul,
+            isVocationalServiceVehicle,
+            isRoadOrSiteTruckOrLightVehicle,
+            isEarthmoving,
+        } = hasPrimaryDomainMatch ? primaryFlags : classifyCoreFlags(text);
 
         // 1. Dominio Funcional
         let functional_domain: FunctionalDomainTrait = 'INDUSTRIAL_GENERAL';
@@ -174,97 +243,132 @@ export class AssetOntologyEngine {
             functional_domain = 'EARTHMOVING_EXCAVATION';
         }
 
+        const hasSelfPropelledMachineIdentity =
+            isEarthmoving ||
+            isOffRoadMiningHaul ||
+            isVocationalServiceVehicle ||
+            isRoadOrSiteTruckOrLightVehicle ||
+            isCableShovelOrDragline ||
+            isComminutionOrPlant ||
+            isSurfaceMillingOrCompaction ||
+            isLiftingOrRigging;
+        const explicitlyWheeled = /\b(sobre neumaticos|sobre ruedas|wheeled|skid steer|minicargador sobre neumaticos)\b/.test(
+            positiveText
+        );
+        const explicitlyTracked =
+            /\b(orugas|sobre cadenas|tren de cadenas|tracked|compact track loader|lokotrack|mobirex|mobicone|mobiscreen|bulldozer|tractor de cadenas|excavadora de cadenas|excavadora hidraulica|pala hidraulica|fresadora sobre orugas|perforadora sobre orugas|smartroc|flexiroc|powerroc|airroc|dm45|pv271)\b/.test(
+                positiveText
+            ) ||
+            (/\bcadenas\b/.test(primaryText) && !/\bcajas?\s+de\s+cadenas\b/.test(primaryText)) ||
+            (/\bctl\b/.test(primaryText) && !explicitlyWheeled);
+
         // 2. Movilidad Física
         let mobility: AssetMobilityTrait = 'SKID_STATIONARY';
-        if (isAerialRpas || /\b(barcaza|lancha|dron acuatico|rov submarino)\b/.test(text)) {
+        if (isAerialRpas || /\b(barcaza|lancha|dron acuatico|rov submarino)\b/.test(hasPrimaryDomainMatch ? primaryText : positiveText)) {
             mobility = 'AERIAL_OR_MARINE';
         } else if (
             isBoltingOrTool ||
             isMetrologyInstrument ||
-            /\b(manual|portatil|de mano|jackleg|stoper|placa compactadora|vibropison|motosierra)\b/.test(text)
+            /\b(jackleg|stoper|placa compactadora|vibropison|motosierra)\b/.test(positiveText) ||
+            (!hasSelfPropelledMachineIdentity &&
+                !isDrillingOrSupport &&
+                !isTowedTrailer &&
+                /\b(manual|portatil|de mano)\b/.test(positiveText))
         ) {
             mobility = 'PORTABLE_OR_HANDHELD';
         } else if (
+            !hasSelfPropelledMachineIdentity &&
+            !isDrillingOrSupport &&
+            !isTowedTrailer &&
             /\b(aditamento|implemento|balde desmontable|cucharon desmontable|martillo hidraulico desmontable|garra desmontable|horquilla porta ?palet|cabezal procesador)\b/.test(
-                text
-            ) &&
-            !isEarthmoving &&
-            !isCableShovelOrDragline &&
-            !isLiftingOrRigging &&
-            !isDrillingOrSupport
+                positiveText
+            )
         ) {
             mobility = 'ATTACHMENT_IMPLEMENT';
         } else if (
             isTowedTrailer ||
-            (isLightingTower && !/\b(orugas|autopropulsad|portatil de mano)\b/.test(text)) ||
-            (/\b(remolcable|remolcado|sobre carro|tiro de arrastre)\b/.test(text) && !/\b(orugas)\b/.test(text))
+            (isLightingTower && !/\b(orugas|autopropulsad|portatil de mano)\b/.test(positiveText)) ||
+            (!hasSelfPropelledMachineIdentity &&
+                /\b(remolcable|remolcado|sobre carro|tiro de arrastre)\b/.test(positiveText) &&
+                !/\b(orugas)\b/.test(positiveText))
         ) {
             mobility = 'TOWED_TRAILER';
-        } else if (/\b(puente grua|portico|riel|ferroviario|locomotora)\b/.test(text)) {
+        } else if (/\b(puente grua|portico|riel|ferroviario|locomotora)\b/.test(hasPrimaryDomainMatch ? primaryText : positiveText)) {
             mobility = 'RAIL_OR_GANTRY';
-        } else if (
-            isCableShovelOrDragline ||
-            /\b(orugas|cadenas|tracked|ctl\b|lokotrack|mobirex|mobicone|mobiscreen|bulldozer|excavadora de cadenas|excavadora hidraulica|pala hidraulica|fresadora sobre orugas|perforadora sobre orugas)\b/.test(
-                text
-            ) && !/\b(sobre neumaticos|sobre ruedas|wheeled)\b/.test(text)
-        ) {
+        } else if ((isCableShovelOrDragline || explicitlyTracked) && !explicitlyWheeled) {
             mobility = 'SELF_PROPELLED_TRACKED';
         } else if (
             isOffRoadMiningHaul ||
             isVocationalServiceVehicle ||
             isRoadOrSiteTruckOrLightVehicle ||
             isEarthmoving ||
-            (isSurfaceMillingOrCompaction && !/\b(placa|vibropison|manual)\b/.test(text)) ||
-            (isLiftingOrRigging && !/\b(puente grua|polipasto|tecle|winche|estacionari)\b/.test(text)) ||
-            (isDrillingOrSupport && /\b(jumbo|simba|boomer|camion|neumaticos|autopropulsad)\b/.test(text))
+            (isSurfaceMillingOrCompaction && !/\b(placa|vibropison|manual)\b/.test(positiveText)) ||
+            (isLiftingOrRigging && !/\b(puente grua|polipasto|tecle|winche|estacionari)\b/.test(positiveText)) ||
+            (isDrillingOrSupport && /\b(jumbo|simba|boomer|camion|sobre camion|neumaticos|sobre ruedas|autopropulsad)\b/.test(positiveText))
         ) {
             mobility = 'SELF_PROPELLED_WHEELED';
         }
 
         // 3. Fuente Primaria de Energía
         let primary_energy: EnergySourceCategory = 'NO_DECLARADO';
+        const energySearchText = primaryText || positiveText;
         if (isTowedTrailer) {
             primary_energy = 'REMOLCADO_SIN_PROPULSION_PROPIA';
-        } else if (/\b(torquimetro manual|tecle manual|llave manual|accionamiento manual|sin energia externa)\b/.test(text)) {
+        } else if (
+            !hasSelfPropelledMachineIdentity &&
+            /\b(torquimetro manual|tecle manual|llave manual|accionamiento manual|sin energia externa)\b/.test(
+                positiveText
+            )
+        ) {
             primary_energy = 'MANUAL_MECANICO';
         } else if (
+            (mobility === 'PORTABLE_OR_HANDHELD' || mobility === 'ATTACHMENT_IMPLEMENT') &&
             /\b(llave de torque hidraulica|hytorc|tensionador hidraulico|cilindro hidraulico|martillo hidraulico|aditamento hidraulico|700 bar|10000 psi|unidad hidraulica externa)\b/.test(
-                text
+                positiveText
             )
         ) {
             primary_energy = 'HIDRAULICO_AUXILIAR';
         } else if (
-            /\b(neumatic[oa]|aire comprimido|jackleg|stoper|yt27|yt28|yt29|llave de impacto neumatica|bomba diafragma neumatica)\b/.test(
-                text
+            /\b(accionamiento neumatico|motor neumatico|perforadora neumatica|martillo neumatico|llave de impacto neumatica|bomba diafragma neumatica|aire comprimido|jackleg|stoper|yt27|yt28|yt29)\b/.test(
+                hasSelfPropelledMachineIdentity ? primaryText : positiveText
             ) &&
             !isPumpOrCompressor &&
-            !isRoadOrSiteTruckOrLightVehicle
+            !isRoadOrSiteTruckOrLightVehicle &&
+            !isVocationalServiceVehicle &&
+            !isOffRoadMiningHaul &&
+            !isEarthmoving
         ) {
             primary_energy = 'NEUMATICO_AIRE_COMPRIMIDO';
         } else if (
             isAerialRpas ||
-            /\b(bateria|ion[\s-]*litio|li[\s-]*ion|lfp\b|nmc\b|bev\b|inalambric[oa]|18v|20v|36v|48v|80v|torre solar|solar fotovoltaica)\b/.test(
-                text
-            ) && !/\b(diesel|gasolina)\b/.test(text)
+            (/\b(bateria|ion[\s-]*litio|li[\s-]*ion|lfp\b|nmc\b|bev\b|inalambric[oa]|18v|20v|36v|48v|80v|torre solar|solar fotovoltaica)\b/.test(
+                hasSelfPropelledMachineIdentity ? primaryText : positiveText
+            ) &&
+                !/\b(diesel|gasolina)\b/.test(energySearchText))
         ) {
             primary_energy = 'ELECTRICO_BATERIA_BEV';
-        } else if (/\b(hibrid[oa]|diesel[\s-]*electric|e-drive)\b/.test(text)) {
+        } else if (
+            /\b(propulsion hibrida|motorizacion hibrida|tren motriz hibrido|diesel[\s-]*electric|e-drive)\b/.test(
+                positiveText
+            ) ||
+            (/\bhibrid[oa]\b/.test(primaryText) && !/\bdiesel\b/.test(primaryText))
+        ) {
             primary_energy = 'HIBRIDO_DIESEL_ELECTRICO';
         } else if (
             isCableShovelOrDragline ||
             (/\b(trifasic[oa]|monofasic[oa]|electric[oa]|sumergible|electrobomba|grindex|flygt|puente grua|correa transportadora|molino de bolas|molino sag|subestacion|transformador|inversora de soldadura|380v|400v|440v|480v|4160v|6600v|7200v|13800v)\b/.test(
-                text
+                hasSelfPropelledMachineIdentity ? primaryText : positiveText
             ) &&
-                !/\b(diesel|motosoldadora|motobomba|gasolina|bencin)\b/.test(text))
+                !/\b(diesel|motosoldadora|motobomba|gasolina|bencin)\b/.test(energySearchText))
         ) {
             primary_energy = 'ELECTRICO_RED_AC';
-        } else if (/\b(glp\b|gas licuado|gnv\b|gas natural)\b/.test(text)) {
+        } else if (/\b(glp\b|gas licuado|gnv\b|gas natural)\b/.test(energySearchText)) {
             primary_energy = 'GLP_GNV';
-        } else if (/\b(gasolina|bencin[ao]|2 tiempos|4 tiempos gasolina)\b/.test(text)) {
+        } else if (/\b(gasolina|bencin[ao]|2 tiempos|4 tiempos gasolina)\b/.test(energySearchText)) {
             primary_energy = 'GASOLINA';
         } else if (
-            /\b(diesel|petroleo|cummins|cat c|perkins|detroit|mack mp|volvo d1|volvo d13|scania dc|kubota|yanmar|deutz|isuzu|motosoldadora|grupo electrogeno|torre de iluminacion)\b/.test(
-                text
+            /\b(diesel|petroleo|cummins|cat c|perkins|detroit|mack mp|mp8|mp7|volvo d1|volvo d13|scania dc|kubota|yanmar|deutz|isuzu|motosoldadora|grupo electrogeno|torre de iluminacion)\b/.test(
+                positiveText
             ) ||
             mobility === 'SELF_PROPELLED_TRACKED' ||
             mobility === 'SELF_PROPELLED_WHEELED'
@@ -274,11 +378,11 @@ export class AssetOntologyEngine {
 
         // 4. Interfaz de Operador (elimina Cabina ROPS falsa en herramientas, drones, bombas y chancadores)
         let operator_interface: OperatorInterfaceTrait = 'LOCAL_PANEL_HMI';
-        if (isAerialRpas || /\b(radiocontrol|control remoto|teleoperad|lokotrack|mobirex|mobicone|mobiscreen|robot shotcrete)\b/.test(text)) {
+        if (isAerialRpas || /\b(radiocontrol|control remoto|teleoperad|lokotrack|mobirex|mobicone|mobiscreen|robot shotcrete)\b/.test(positiveText)) {
             operator_interface = 'REMOTE_RADIO_OR_GCS';
         } else if (mobility === 'PORTABLE_OR_HANDHELD' || mobility === 'ATTACHMENT_IMPLEMENT') {
             operator_interface = 'DIRECT_HAND_TRIGGER';
-        } else if (/\b(hombre caminando|walk[\s-]*behind|botonera colgante|pendant|transpaleta)\b/.test(text)) {
+        } else if (/\b(hombre caminando|walk[\s-]*behind|botonera colgante|pendant|transpaleta)\b/.test(positiveText)) {
             operator_interface = 'WALK_BEHIND_OR_PENDANT';
         } else if (isVocationalServiceVehicle || isRoadOrSiteTruckOrLightVehicle) {
             operator_interface = 'HIGHWAY_CABIN';
@@ -337,14 +441,14 @@ export class AssetOntologyEngine {
         const has_compressed_air_system =
             primary_energy === 'NEUMATICO_AIRE_COMPRIMIDO' ||
             /\b(compresor|freno neumatico|frenos de aire|camion|tractocamion|remolque|semirremolque|lubricador|perforadora)\b/.test(
-                text
+                positiveText
             );
 
         const requires_metrology_calibration =
             pm_cadence_basis === 'CALENDAR_AND_METROLOGY' ||
             isAerialRpas ||
             /\b(torque|hytorc|calibracion|iso 6789|pesaje|celda de carga|gnss|rtk|lidar|instrumento|analizador)\b/.test(
-                text
+                primaryText || text
             );
 
         // Clase ISO 14224 + Icono Material Symbols Outlined sin emojis ni cajas
@@ -412,8 +516,11 @@ export class AssetOntologyEngine {
             material_symbol_icon,
         };
 
-        const existingTraits = input.existing_traits || input.existingTraits;
-        if (existingTraits) {
+        const existingTraits = (input.existing_traits || input.existingTraits) as
+            | (Partial<AssetPhysicalTraits> & { locked_by_human?: boolean })
+            | null
+            | undefined;
+        if (existingTraits?.locked_by_human === true) {
             return {
                 ...base,
                 ...Object.fromEntries(

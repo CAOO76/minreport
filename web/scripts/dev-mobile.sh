@@ -23,27 +23,49 @@ fi
 echo "[DEV-MOBILE] Preparando entorno Android Studio + Samsung Galaxy XCover7..."
 
 REVERSE_PORTS=(5173 8080 8085 9099 9190 9195 9196 9199 5001)
-DEVICE_SERIALS=""
-
+HAS_ADB=0
 if command -v adb >/dev/null 2>&1; then
-    DEVICE_SERIALS="$(adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { print $1 }')"
+    HAS_ADB=1
 else
     echo "[AVISO] adb no encontrado en $ANDROID_HOME/platform-tools. Verifica la instalacion de Android SDK Platform-Tools."
 fi
 
-if [ -n "${DEVICE_SERIALS}" ]; then
+apply_adb_reverse_once() {
+    local MODE="${1:-quiet}"
+    if [ "${HAS_ADB}" -ne 1 ]; then
+        return 0
+    fi
+
+    local DEVICE_SERIALS=""
+    DEVICE_SERIALS="$(adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { print $1 }' || true)"
+
+    if [ -z "${DEVICE_SERIALS}" ]; then
+        if [ "${MODE}" = "verbose" ]; then
+            echo "[AVISO] No se detectaron dispositivos autorizados en 'adb devices'."
+            echo "[AVISO] Conecta el Samsung Galaxy XCover7 por USB con Depuracion USB activa o inicia un emulador en Android Studio."
+            echo "[AVISO] Se sincronizara igualmente CAP_SERVER_URL=http://localhost:5173 antes de abrir Android Studio."
+        fi
+        return 0
+    fi
+
     for SERIAL in ${DEVICE_SERIALS}; do
-        echo "[DEV-MOBILE] Dispositivo autorizado detectado (${SERIAL}). Configurando tuneles adb reverse..."
+        local EXISTING_REV=""
+        local APPLIED_ANY=0
+        EXISTING_REV="$(adb -s "${SERIAL}" reverse --list 2>/dev/null || true)"
         for PORT in "${REVERSE_PORTS[@]}"; do
-            adb -s "${SERIAL}" reverse "tcp:${PORT}" "tcp:${PORT}" >/dev/null
+            if ! printf '%s\n' "${EXISTING_REV}" | grep -qE "(^|[[:space:]])tcp:${PORT}([[:space:]]|$)"; then
+                if adb -s "${SERIAL}" reverse "tcp:${PORT}" "tcp:${PORT}" >/dev/null 2>&1; then
+                    APPLIED_ANY=1
+                fi
+            fi
         done
-        echo "[OK] Tuneles adb reverse activos para puertos: ${REVERSE_PORTS[*]}"
+        if [ "${MODE}" = "verbose" ] || [ "${APPLIED_ANY}" -eq 1 ]; then
+            echo "[OK] Tuneles adb reverse activos en ${SERIAL} para puertos: ${REVERSE_PORTS[*]}"
+        fi
     done
-else
-    echo "[AVISO] No se detectaron dispositivos autorizados en 'adb devices'."
-    echo "[AVISO] Conecta el Samsung Galaxy XCover7 por USB con Depuracion USB activa o inicia un emulador en Android Studio."
-    echo "[AVISO] Se sincronizara igualmente CAP_SERVER_URL=http://localhost:5173 antes de abrir Android Studio."
-fi
+}
+
+apply_adb_reverse_once verbose
 
 if [ ! -d "${WEB_DIR}/dist" ]; then
     echo "[DEV-MOBILE] Directorio dist/ ausente; ejecutando build inicial para Capacitor..."
@@ -76,4 +98,30 @@ echo "[DEV-MOBILE] Portal DEV:       http://localhost:5173/dev"
 echo "[DEV-MOBILE] En Android Studio > Build Variants selecciona 'fieldtestDebug' para pruebas DEV exclusivas en Samsung Galaxy XCover7."
 echo ""
 
-exec vite --host --clearScreen false
+ADB_WATCHER_PID=""
+VITE_PID=""
+
+cleanup_dev_mobile() {
+    if [ -n "${ADB_WATCHER_PID}" ]; then
+        kill "${ADB_WATCHER_PID}" 2>/dev/null || true
+    fi
+    if [ -n "${VITE_PID}" ]; then
+        kill "${VITE_PID}" 2>/dev/null || true
+    fi
+}
+
+trap cleanup_dev_mobile EXIT INT TERM
+
+if [ "${HAS_ADB}" -eq 1 ]; then
+    (
+        while true; do
+            sleep 3
+            apply_adb_reverse_once quiet || true
+        done
+    ) &
+    ADB_WATCHER_PID=$!
+fi
+
+vite --host --clearScreen false &
+VITE_PID=$!
+wait "${VITE_PID}"

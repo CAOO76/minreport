@@ -1,11 +1,9 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../../config/firebase';
-import { LanguageSwitch } from '../../components/LanguageSwitch';
-import { ThemeSwitch } from '../../components/ThemeSwitch';
-import { ErgonomicScaleSwitch } from '../../components/common/ErgonomicScaleSwitch';
+import { useMinReportSession } from '../../context/MinReportSessionContext';
 import BrandLogo from '../../components/BrandLogo';
 import { isPasskeySupported, authenticateWithPasskey } from '../../services/passkeyService';
 import M3CircularProgress from '../../components/common/M3CircularProgress';
@@ -13,6 +11,7 @@ import M3CircularProgress from '../../components/common/M3CircularProgress';
 export const MobileLogin: React.FC = () => {
     const { t } = useTranslation();
     const navigate = useNavigate();
+    const { session, isLoaded } = useMinReportSession();
 
     const [identifier, setIdentifier] = useState('');
     const [password, setPassword] = useState('');
@@ -22,6 +21,15 @@ export const MobileLogin: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
 
     const passkeyAvailable = isPasskeySupported();
+
+    if (isLoaded && session) {
+        return (
+            <Navigate
+                to={session.isDevRoot ? '/mobile/dev-home' : '/mobile/dashboard'}
+                replace
+            />
+        );
+    }
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -84,32 +92,14 @@ export const MobileLogin: React.FC = () => {
     };
 
     return (
-        <div className="min-h-screen w-full bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col justify-between p-fib-21 select-none font-sans antialiased">
-            <header className="flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] pb-4">
-                <div className="flex items-center gap-2">
-                    <BrandLogo variant="isotype" className="h-6 w-auto object-contain" />
-                    <span className="font-mono text-xs uppercase tracking-widest text-[#0F172A] dark:text-[#F3F4F6] font-bold">
-                        MINREPORT MOBILE
-                    </span>
-                </div>
-
-                <div className="flex items-center gap-fib-8">
-                    <ErgonomicScaleSwitch compact />
-                    <LanguageSwitch />
-                    <ThemeSwitch />
+        <div className="min-h-screen w-full bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col justify-between select-none font-atkinson antialiased">
+            <header className="min-h-[56px] pt-[env(safe-area-inset-top)] px-fib-21 flex items-center justify-between border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+                <div className="flex items-center">
+                    <BrandLogo variant="imagotype" className="h-5 w-auto object-contain pointer-events-none" />
                 </div>
             </header>
 
-            <main className="w-full max-w-sm mx-auto my-auto space-y-fib-21">
-                <div className="space-y-1">
-                    <h1 className="font-mono text-sm uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6] font-bold">
-                        {t('core_mobile.login_heading')}
-                    </h1>
-                    <p className="font-sans text-xs text-[#475569] dark:text-[#8A93A6]">
-                        {t('core_mobile.login_subtitle')}
-                    </p>
-                </div>
-
+            <main className="w-full max-w-sm mx-auto my-auto p-fib-21 space-y-fib-21">
                 <form onSubmit={handleLogin} autoComplete="off" spellCheck={false} className="bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-fib-21 space-y-4 rounded-none shadow-none">
                     {error && (
                         <div className="p-fib-13 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs font-mono flex items-center gap-2 rounded-none">
@@ -121,7 +111,7 @@ export const MobileLogin: React.FC = () => {
                     )}
 
                     <div>
-                        <label htmlFor="mobile-login-identifier" className="block text-microcopy font-mono text-[#475569] dark:text-[#8A93A6] uppercase tracking-wider mb-1.5">
+                        <label htmlFor="mobile-login-identifier" className="sr-only">
                             {t('core_mobile.login_identifier_label')}
                         </label>
                         <input
@@ -140,7 +130,7 @@ export const MobileLogin: React.FC = () => {
                     </div>
 
                     <div>
-                        <label htmlFor="mobile-login-password" className="block text-microcopy font-mono text-[#475569] dark:text-[#8A93A6] uppercase tracking-wider mb-1.5">
+                        <label htmlFor="mobile-login-password" className="sr-only">
                             {t('form.password')}
                         </label>
                         <div className="relative">
@@ -173,17 +163,16 @@ export const MobileLogin: React.FC = () => {
                     <button
                         type="submit"
                         disabled={loading || passkeyLoading}
-                        className="w-full min-h-[56px] py-3 bg-[#C68346] hover:bg-[#B0743E] text-white font-mono font-bold text-data-dense uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none border-0 flex items-center justify-center gap-2"
+                        title={loading ? t('core_mobile.login_validating') : t('core_mobile.login_submit')}
+                        aria-label={loading ? t('core_mobile.login_validating') : t('core_mobile.login_submit')}
+                        className="w-full min-h-[56px] py-3 bg-[#C68346] hover:bg-[#B0743E] text-white transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none border-0 flex items-center justify-center"
                     >
                         {loading ? (
-                            <span>{t('core_mobile.login_validating')}</span>
+                            <M3CircularProgress size={18} strokeWidth={3} ariaLabel={t('core_mobile.login_validating')} />
                         ) : (
-                            <>
-                                <span>{t('core_mobile.login_submit')}</span>
-                                <span className="material-symbols-outlined text-[18px]">
-                                    arrow_forward
-                                </span>
-                            </>
+                            <span className="material-symbols-outlined text-[20px]">
+                                arrow_forward
+                            </span>
                         )}
                     </button>
 
@@ -192,24 +181,19 @@ export const MobileLogin: React.FC = () => {
                             type="button"
                             onClick={handlePasskeyLogin}
                             disabled={loading || passkeyLoading}
-                            className="w-full min-h-[56px] py-3 bg-[#FFFFFF] dark:bg-[#000000] border border-[#00AEEF] text-[#0F172A] dark:text-[#F3F4F6] font-mono font-bold text-data-dense uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none flex items-center justify-center gap-2"
+                            title={passkeyLoading ? t('core_mobile.login_passkey_verifying') : t('core_mobile.login_passkey_btn')}
+                            aria-label={passkeyLoading ? t('core_mobile.login_passkey_verifying') : t('core_mobile.login_passkey_btn')}
+                            className="w-full min-h-[56px] py-3 bg-[#FFFFFF] dark:bg-[#000000] border border-[#00AEEF] text-[#00AEEF] transition-colors disabled:opacity-50 cursor-pointer rounded-none outline-none flex items-center justify-center"
                         >
                             {passkeyLoading ? (
-                                <M3CircularProgress size={16} ariaLabel={t('core_mobile.login_passkey_verifying_aria')} />
+                                <M3CircularProgress size={18} ariaLabel={t('core_mobile.login_passkey_verifying_aria')} />
                             ) : (
-                                <span className="material-symbols-outlined text-[20px] text-[#00AEEF]">fingerprint</span>
+                                <span className="material-symbols-outlined text-[22px]">fingerprint</span>
                             )}
-                            <span>{passkeyLoading ? t('core_mobile.login_passkey_verifying') : t('core_mobile.login_passkey_btn')}</span>
                         </button>
                     )}
                 </form>
             </main>
-
-            <footer className="border-t border-[#E2E8F0] dark:border-[#12151C] pt-4 text-center">
-                <p className="font-mono text-microcopy text-[#94A3B8] dark:text-[#5A6072] uppercase tracking-widest">
-                    MINREPORT · SOUTHAMERICA-WEST1
-                </p>
-            </footer>
         </div>
     );
 };

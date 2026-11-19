@@ -214,12 +214,55 @@ export const EnergyConsumptionProfileSchema = z.object({
 
 export type EnergyConsumptionProfile = z.infer<typeof EnergyConsumptionProfileSchema>;
 
+export const SupplyItemFamilySchema = z.enum([
+    'COMBUSTIBLE',
+    'POSTRATAMIENTO',
+    'LUBRICANTE',
+    'REFRIGERANTE',
+    'GRASA',
+    'FILTRO',
+    'RESPIRADERO',
+    'SELLO_CORREA_MANGUERA',
+    'NEUMATICO',
+    'RODAJE',
+    'DESGASTE',
+]);
+
+export type SupplyItemFamily = z.infer<typeof SupplyItemFamilySchema>;
+
+export const EquipmentSupplyLineItemSchema = z.object({
+    item_key: z.string(),
+    family: SupplyItemFamilySchema,
+    item_name: z.string(),
+    subsystem: z.string(),
+    oem_spec_or_size: z.string().nullable().default(null),
+    oem_part_number: z.string().nullable().default(null),
+    change_or_installed_qty: z.string().nullable().default(null),
+    numeric_qty: z.number().nullable().default(null),
+    qty_unit: z.string().nullable().default(null),
+    change_interval_or_life: z.string().nullable().default(null),
+    interval_value: z.number().nullable().default(null),
+    interval_basis: z
+        .enum(['h', 'km', 'ciclos', 'L/h', 'km/L', 'kWh/h', 'continuo'])
+        .nullable()
+        .default(null),
+    prorated_per_1000h: z.string().nullable().default(null),
+    numeric_rate_per_1000h: z.number().nullable().default(null),
+    service_note: z.string().nullable().default(null),
+    spec_conflict: z.string().nullable().default(null),
+    source_pillar: z.enum(['ficha_tecnica', 'pauta_mantencion']),
+    source_item_title: z.string(),
+});
+
+export type EquipmentSupplyLineItem = z.infer<typeof EquipmentSupplyLineItemSchema>;
+
 export const OperationalCostMatrixSchema = z.object({
-    version: z.string().default('3.0.0'),
+    version: z.string().default('4.0.0'),
     compiled_at: z.string(),
     source_merkle_root_sha256: z.string().nullable().default(null),
     completeness_status: z.enum(['EMPTY', 'PARTIAL', 'COMPLETE']).default('EMPTY'),
     taxonomy_meta: CostMatrixTaxonomyMetaSchema.optional(),
+    supply_items: z.array(EquipmentSupplyLineItemSchema).default([]),
     capex_and_depreciation: z.object({
         reference_new_price_usd: z.string().nullable().default(null),
         reference_new_price_clp: z.string().nullable().default(null),

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Exclusivo de variantes debug (fieldtestDebug / productionDebug): habilita backend y emuladores locales vía 10.0.2.2, adb reverse o WiFi LAN -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

@@ -11,9 +11,6 @@ import type { GeolappDomainMode } from '../../core/modules/module-registry';
 import BrandLogo from '../../components/BrandLogo';
 import { ThemeSwitch } from '../../components/ThemeSwitch';
 import { LanguageSwitch } from '../../components/LanguageSwitch';
-import ErgonomicScaleSwitch from '../../components/common/ErgonomicScaleSwitch';
-import ContextOrientationBar from '../../components/common/ContextOrientationBar';
-import ReadAloudButton from '../../components/common/ReadAloudButton';
 import type { PilotAiContextModule } from '../../components/pilot/TestPilotAiStudio';
 
 const TestPilotAiStudio = lazy(() => import('../../components/pilot/TestPilotAiStudio'));
@@ -25,28 +22,11 @@ type PilotView =
     | 'OPERMAQ_MANUFACTURERS'
     | 'OPERMAQ_SUPPLIERS'
     | 'GEOLAPP_STOCKPILE'
-    | 'GEOLAPP_GEOMENSURA'
-    | 'GEOLAPP_EXPLORACION'
-    | 'GEOLAPP_ESTRUCTURAL'
     | 'PILOT_AI_STUDIO';
 
 function resolvePilotGeolappDomain(view: PilotView): GeolappDomainMode | null {
-    switch (view) {
-        case 'GEOLAPP_STOCKPILE':
-            return 'STOCKPILE';
-        case 'GEOLAPP_GEOMENSURA':
-            return 'GEOMENSURA_GEO';
-        case 'GEOLAPP_EXPLORACION':
-            return 'EXPLORACION_SONDAJES';
-        case 'GEOLAPP_ESTRUCTURAL':
-            return 'ESTRUCTURAL_HIDRO';
-        default:
-            return null;
-    }
+    return view === 'GEOLAPP_STOCKPILE' ? 'STOCKPILE' : null;
 }
-
-const PILOT_SIDEBAR_CALLOUT_CLASS =
-    'pointer-events-none opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 absolute left-full ml-3 top-1/2 -translate-y-1/2 z-50 whitespace-nowrap bg-[#0F172A] text-[#F3F4F6] dark:bg-[#F8FAFC] dark:text-[#0F172A] px-fib-13 py-fib-8 text-data-dense font-mono border border-[#C68346] rounded-none shadow-none';
 
 export const TestPilotWorkspace: React.FC = () => {
     const { t } = useTranslation();
@@ -151,7 +131,6 @@ export const TestPilotWorkspace: React.FC = () => {
                 <header className="h-16 px-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] flex items-center justify-between">
                     <BrandLogo variant="logotype" className="h-6 w-auto object-contain pointer-events-none" />
                     <div className="flex items-center gap-fib-13">
-                        <ErgonomicScaleSwitch compact />
                         <ThemeSwitch />
                         <LanguageSwitch />
                     </div>
@@ -183,34 +162,6 @@ export const TestPilotWorkspace: React.FC = () => {
     }
 
     const activeGeolappDomain = resolvePilotGeolappDomain(activeView);
-    const isEmbeddedModuleView = activeView.startsWith('OPERMAQ_') || activeGeolappDomain !== null;
-
-    const currentViewLabel = (() => {
-        switch (activeView) {
-            case 'OPERMAQ_FLEET':
-                return t('core_pilot_ws.nav.fleet');
-            case 'OPERMAQ_SYMBOLOGY':
-                return t('core_pilot_ws.nav.symbology');
-            case 'OPERMAQ_MANUFACTURERS':
-                return t('core_pilot_ws.nav.manufacturers');
-            case 'OPERMAQ_SUPPLIERS':
-                return t('core_pilot_ws.nav.suppliers');
-            case 'GEOLAPP_STOCKPILE':
-                return t('core_pilot_ws.nav.geolapp_stockpile');
-            case 'GEOLAPP_GEOMENSURA':
-                return t('core_pilot_ws.nav.geolapp_geomensura');
-            case 'GEOLAPP_EXPLORACION':
-                return t('core_pilot_ws.nav.geolapp_exploracion');
-            case 'GEOLAPP_ESTRUCTURAL':
-                return t('core_pilot_ws.nav.geolapp_estructural');
-            case 'PILOT_AI_STUDIO':
-                return t('core_pilot_ws.nav.ai_studio');
-            default:
-                return t('core_pilot_ws.nav.dashboard');
-        }
-    })();
-
-    const dashboardSpeechText = `${t('core_pilot_ws.dashboard.title')}. ${t('core_pilot_ws.dashboard.subtitle')}. ${t('core_pilot_ws.ai_future.title')}: ${t('core_pilot_ws.ai_future.desc')}`;
 
     const navItems: Array<{ id: PilotView; icon: string; label: string }> = [
         { id: 'DASHBOARD', icon: 'space_dashboard', label: t('core_pilot_ws.nav.dashboard') },
@@ -219,9 +170,6 @@ export const TestPilotWorkspace: React.FC = () => {
         { id: 'OPERMAQ_MANUFACTURERS', icon: 'factory', label: t('core_pilot_ws.nav.manufacturers') },
         { id: 'OPERMAQ_SUPPLIERS', icon: 'storefront', label: t('core_pilot_ws.nav.suppliers') },
         { id: 'GEOLAPP_STOCKPILE', icon: 'layers', label: t('core_pilot_ws.nav.geolapp_stockpile') },
-        { id: 'GEOLAPP_GEOMENSURA', icon: 'straighten', label: t('core_pilot_ws.nav.geolapp_geomensura') },
-        { id: 'GEOLAPP_EXPLORACION', icon: 'explore', label: t('core_pilot_ws.nav.geolapp_exploracion') },
-        { id: 'GEOLAPP_ESTRUCTURAL', icon: 'architecture', label: t('core_pilot_ws.nav.geolapp_estructural') },
         { id: 'PILOT_AI_STUDIO', icon: 'psychology', label: t('core_pilot_ws.nav.ai_studio') },
     ];
 
@@ -251,29 +199,28 @@ export const TestPilotWorkspace: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-fib-13 shrink-0">
-                    <div className="hidden md:flex items-center gap-fib-8 px-fib-13 py-fib-8 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#000000] rounded-none">
-                        <span className={`w-2 h-2 rounded-none ${isOnline ? 'bg-[#00AEEF]' : 'bg-[#C68346]'}`} />
-                        <span className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
-                            {isOnline ? t('core_pilot_ws.telemetry.online') : t('core_pilot_ws.telemetry.offline')}
-                        </span>
-                    </div>
+                    <span
+                        title={isOnline ? t('core_pilot_ws.telemetry.online') : t('core_pilot_ws.telemetry.offline')}
+                        aria-label={isOnline ? t('core_pilot_ws.telemetry.online') : t('core_pilot_ws.telemetry.offline')}
+                        className={`hidden md:inline-flex items-center p-1 ${isOnline ? 'text-[#00AEEF]' : 'text-[#C68346]'}`}
+                    >
+                        <span className="material-symbols-outlined text-[18px]">{isOnline ? 'wifi' : 'wifi_off'}</span>
+                    </span>
 
                     <button
                         type="button"
                         onClick={() => handleSelectView('PILOT_AI_STUDIO')}
                         title={t('core_pilot_ws.ai_studio.open_button_title')}
                         aria-label={t('core_pilot_ws.ai_studio.open_button_title')}
-                        className={`min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none p-1 transition-colors cursor-pointer flex items-center justify-center rounded-none ${
-                            activeView === 'PILOT_AI_STUDIO'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-[#0F172A] dark:hover:text-white'
-                        }`}
+                        className={`bg-transparent border-0 outline-none p-1 transition-colors cursor-pointer flex items-center justify-center rounded-none ${activeView === 'PILOT_AI_STUDIO'
+                            ? 'text-[#C68346]'
+                            : 'text-slate-400 hover:text-[#0F172A] dark:hover:text-white'
+                            }`}
                     >
                         <span className="material-symbols-outlined text-[22px]">psychology</span>
                         <span className="sr-only">{t('core_pilot_ws.ai_studio.open_button_title')}</span>
                     </button>
 
-                    <ErgonomicScaleSwitch compact />
                     <ThemeSwitch />
                     <LanguageSwitch />
 
@@ -282,7 +229,7 @@ export const TestPilotWorkspace: React.FC = () => {
                         onClick={handleLogout}
                         title={t('core_pilot_ws.nav.logout')}
                         aria-label={t('core_pilot_ws.nav.logout')}
-                        className="min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-red-500 transition-colors cursor-pointer flex items-center justify-center rounded-none"
+                        className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-red-500 transition-colors cursor-pointer flex items-center justify-center rounded-none"
                     >
                         <span className="material-symbols-outlined text-[22px]">logout</span>
                         <span className="sr-only">{t('core_pilot_ws.nav.logout')}</span>
@@ -302,20 +249,16 @@ export const TestPilotWorkspace: React.FC = () => {
                                 onClick={() => handleSelectView(item.id)}
                                 title={item.label}
                                 aria-label={item.label}
-                                className={`group min-w-[48px] min-h-[48px] w-full py-fib-13 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${
-                                    active
-                                        ? 'text-[#C68346]'
-                                        : 'text-slate-400 hover:text-[#0F172A] dark:hover:text-white'
-                                }`}
+                                className={`min-w-[48px] min-h-[48px] w-full py-fib-13 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${active
+                                    ? 'text-[#C68346]'
+                                    : 'text-slate-400 hover:text-[#0F172A] dark:hover:text-white'
+                                    }`}
                             >
                                 {active && (
                                     <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-6 bg-[#C68346]" />
                                 )}
                                 <span className="material-symbols-outlined text-[24px]">{item.icon}</span>
                                 <span className="sr-only">{item.label}</span>
-                                <span aria-hidden="true" className={PILOT_SIDEBAR_CALLOUT_CLASS}>
-                                    {item.label}
-                                </span>
                             </button>
                         );
                     })}
@@ -323,16 +266,9 @@ export const TestPilotWorkspace: React.FC = () => {
 
                 {/* Contenedor principal */}
                 <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden bg-[#FFFFFF] dark:bg-[#000000]">
-                    <ContextOrientationBar
-                        hidden={isEmbeddedModuleView}
-                        includeScaleSwitch={false}
-                        trail={[t('core_pilot_ws.nav.root'), currentViewLabel]}
-                        onBack={activeView !== 'DASHBOARD' ? () => handleSelectView('DASHBOARD') : undefined}
-                    />
-
                     {activeView === 'DASHBOARD' && (
                         <div className="flex-1 min-h-0 overflow-y-auto p-fib-34 space-y-fib-34">
-                            <div className="border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-21 flex flex-wrap items-end justify-between gap-fib-21">
+                            <div className="border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-21">
                                 <div className="space-y-fib-8">
                                     <p className="text-microcopy font-mono uppercase tracking-widest text-[#C68346]">
                                         {t('core_pilot_ws.dashboard.eyebrow')}
@@ -344,7 +280,6 @@ export const TestPilotWorkspace: React.FC = () => {
                                         {t('core_pilot_ws.dashboard.subtitle')}
                                     </p>
                                 </div>
-                                <ReadAloudButton compact text={dashboardSpeechText} />
                             </div>
 
                             {/* Macro-Layout Áureo 61.8% / 38.2% idéntico a operativa B2B */}
@@ -407,36 +342,13 @@ export const TestPilotWorkspace: React.FC = () => {
                                                         {stockpileCount !== null ? stockpileCount : t('core_pilot_ws.pending_record')}
                                                     </span>
                                                 </div>
-                                                <div className="grid grid-cols-2 gap-fib-8">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleSelectView('GEOLAPP_STOCKPILE')}
-                                                        className="min-h-[44px] px-fib-8 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] bg-[#FFFFFF] dark:bg-[#000000] text-microcopy font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer transition-colors"
-                                                    >
-                                                        {t('core_pilot_ws.nav.geolapp_stockpile')}
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleSelectView('GEOLAPP_GEOMENSURA')}
-                                                        className="min-h-[44px] px-fib-8 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] bg-[#FFFFFF] dark:bg-[#000000] text-microcopy font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer transition-colors"
-                                                    >
-                                                        {t('core_pilot_ws.nav.geolapp_geomensura')}
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleSelectView('GEOLAPP_EXPLORACION')}
-                                                        className="min-h-[44px] px-fib-8 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] bg-[#FFFFFF] dark:bg-[#000000] text-microcopy font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer transition-colors"
-                                                    >
-                                                        {t('core_pilot_ws.nav.geolapp_exploracion')}
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleSelectView('GEOLAPP_ESTRUCTURAL')}
-                                                        className="min-h-[44px] px-fib-8 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] bg-[#FFFFFF] dark:bg-[#000000] text-microcopy font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer transition-colors"
-                                                    >
-                                                        {t('core_pilot_ws.nav.geolapp_estructural')}
-                                                    </button>
-                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleSelectView('GEOLAPP_STOCKPILE')}
+                                                    className="w-full min-h-[44px] px-fib-13 py-1 border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] bg-[#FFFFFF] dark:bg-[#000000] text-microcopy font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none cursor-pointer transition-colors"
+                                                >
+                                                    {t('core_pilot_ws.nav.geolapp_stockpile')}
+                                                </button>
                                             </div>
                                         </div>
                                     </div>

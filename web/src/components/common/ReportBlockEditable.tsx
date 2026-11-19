@@ -13,8 +13,10 @@ export interface ReportBlockEditableProps {
     onToggleEdit: () => void;
     editAriaLabel?: string;
     headerActions?: React.ReactNode;
+    collapsed?: boolean;
     children: React.ReactNode;
     className?: string;
+    flat?: boolean;
 }
 
 export const ReportBlockEditable: React.FC<ReportBlockEditableProps> = ({
@@ -25,8 +27,10 @@ export const ReportBlockEditable: React.FC<ReportBlockEditableProps> = ({
     onToggleEdit,
     editAriaLabel,
     headerActions,
+    collapsed = false,
     children,
     className,
+    flat = false,
 }) => {
     const { t } = useTranslation();
     const resolvedLabel =
@@ -34,6 +38,55 @@ export const ReportBlockEditable: React.FC<ReportBlockEditableProps> = ({
         (isEditing
             ? t('core_common.report_close_edit', { title, defaultValue: `Cerrar edición: ${title}` })
             : t('core_common.report_edit_block', { title, defaultValue: `Editar bloque: ${title}` }));
+
+    if (flat) {
+        return (
+            <section
+                className={cn(
+                    'bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none',
+                    isEditing && 'border-[#C68346] dark:border-[#C68346]',
+                    className
+                )}
+            >
+                <header
+                    className={cn(
+                        'flex items-center justify-between gap-fib-13 px-0 py-fib-13 bg-transparent border-0',
+                        collapsed && 'opacity-90'
+                    )}
+                >
+                    <div className="flex items-center gap-fib-13 min-w-0">
+                        {code && (
+                            <span className="font-mono text-microcopy uppercase tabular-nums text-[#C68346] shrink-0">
+                                {code}
+                            </span>
+                        )}
+                        <h2 className="text-h2-section font-semibold text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                            {title}
+                        </h2>
+                    </div>
+                    <div className="flex items-center gap-fib-8 shrink-0">
+                        {headerActions}
+                        {canEdit && (
+                            <button
+                                type="button"
+                                onClick={onToggleEdit}
+                                aria-label={resolvedLabel}
+                                title={resolvedLabel}
+                                className="min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none p-1 text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] transition-colors cursor-pointer rounded-none flex items-center justify-center"
+                            >
+                                <span className="material-symbols-outlined text-[18px]">
+                                    {isEditing ? 'close' : 'edit'}
+                                </span>
+                            </button>
+                        )}
+                    </div>
+                </header>
+                {!collapsed && (
+                    <div className="px-0 pb-fib-13 pt-0 bg-transparent">{children}</div>
+                )}
+            </section>
+        );
+    }
 
     return (
         <section
@@ -43,7 +96,12 @@ export const ReportBlockEditable: React.FC<ReportBlockEditableProps> = ({
                 className
             )}
         >
-            <header className="flex items-center justify-between gap-fib-13 px-fib-21 py-fib-13 bg-[#F8FAFC] dark:bg-[#000000] border-b border-[#E2E8F0] dark:border-[#12151C]">
+            <header
+                className={cn(
+                    'flex items-center justify-between gap-fib-13 px-fib-21 py-fib-13 bg-[#F8FAFC] dark:bg-[#000000]',
+                    !collapsed && 'border-b border-[#E2E8F0] dark:border-[#12151C]'
+                )}
+            >
                 <div className="flex items-center gap-fib-13 min-w-0">
                     {code && (
                         <span className="font-mono text-microcopy uppercase tabular-nums text-[#C68346] shrink-0">
@@ -71,7 +129,9 @@ export const ReportBlockEditable: React.FC<ReportBlockEditableProps> = ({
                     )}
                 </div>
             </header>
-            <div className="p-fib-21 bg-[#FFFFFF] dark:bg-[#07090D]">{children}</div>
+            {!collapsed && (
+                <div className="p-fib-21 bg-[#FFFFFF] dark:bg-[#07090D]">{children}</div>
+            )}
         </section>
     );
 };

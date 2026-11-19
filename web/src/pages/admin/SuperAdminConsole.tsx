@@ -19,7 +19,6 @@ import {
 import BrandLogo from '../../components/BrandLogo';
 import { ThemeSwitch } from '../../components/ThemeSwitch';
 import { LanguageSwitch } from '../../components/LanguageSwitch';
-import { ErgonomicScaleSwitch } from '../../components/common/ErgonomicScaleSwitch';
 import { M3Switch } from '../../components/common/M3Switch';
 import CopyButton from '../../components/common/CopyButton';
 
@@ -901,10 +900,7 @@ export const SuperAdminConsole: React.FC = () => {
             {/* Barra Superior Soberana 2º ADMIN */}
             <header className="h-14 px-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] flex items-center justify-between sticky top-0 z-40">
                 <div className="flex items-center gap-fib-21">
-                    <BrandLogo variant="logotype" className="h-6 w-auto object-contain" />
-                    <span className="text-microcopy font-mono uppercase text-[#C68346] border-l border-[#E2E8F0] dark:border-[#12151C] pl-fib-13">
-                        {t('core_superadmin.header.role_badge')}
-                    </span>
+                    <BrandLogo variant="logotype" className="h-6 w-auto object-contain pointer-events-none" />
                 </div>
 
                 <div className="flex items-center gap-fib-13">
@@ -919,7 +915,6 @@ export const SuperAdminConsole: React.FC = () => {
                             <span className="material-symbols-outlined text-[20px]">terminal</span>
                         </button>
                     )}
-                    <ErgonomicScaleSwitch compact />
                     <LanguageSwitch />
                     <ThemeSwitch />
                     <button
@@ -964,14 +959,16 @@ export const SuperAdminConsole: React.FC = () => {
                                 setErrorBanner(null);
                                 setStatusBanner(null);
                             }}
-                            className={`py-fib-13 px-fib-8 bg-transparent border-0 border-b-2 text-xs font-mono uppercase tracking-wider cursor-pointer transition-colors flex items-center gap-fib-8 whitespace-nowrap ${
+                            title={tab.label}
+                            aria-label={tab.label}
+                            className={`py-fib-13 px-fib-13 bg-transparent border-0 border-b-2 cursor-pointer transition-colors flex items-center justify-center ${
                                 active
-                                    ? 'border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-bold'
+                                    ? 'border-[#C68346] text-[#C68346]'
                                     : 'border-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                             }`}
                         >
-                            <span className="material-symbols-outlined text-[18px]">{tab.icon}</span>
-                            <span>{tab.label}</span>
+                            <span className="material-symbols-outlined text-[20px]">{tab.icon}</span>
+                            <span className="sr-only">{tab.label}</span>
                         </button>
                     );
                 })}

@@ -4,81 +4,35 @@ import './i18n/config';
 import { MainLayout, type ViewState } from './layouts/MainLayout';
 import type {
     GeolappDomainMode,
-    GeolappGeometryType,
+    MiningSiteProfile,
     StockpileAsset,
     StockpileMeasurement,
 } from './core/types/GeolappTypes';
 import { dataService } from './core/services/DataService';
+import { UNASSIGNED_FAENA_ID } from './core/services/stockpile-faena-metrics';
 import { usePlatform } from './core/hooks/usePlatform';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
 import { M3LinearProgress } from '../../components/common/M3LinearProgress';
 
-export interface GeolappDomainWorkspaceProps {
-    embedded?: boolean;
-    hostScope?: 'CLIENT' | 'DEV_GATEWAY' | 'TEST_PILOT';
-    tenantId: string;
-    userId: string;
-}
-
-const GeomensuraWorkspace = lazy(() =>
-    import('./components/GeomensuraWorkspace').then((m) => ({
-        default: m.GeomensuraWorkspace,
-    }))
-) as React.LazyExoticComponent<React.ComponentType<GeolappDomainWorkspaceProps>>;
-
-const ExploracionWorkspace = lazy(() =>
-    import('./components/ExploracionWorkspace').then((m) => ({
-        default: m.ExploracionWorkspace,
-    }))
-) as React.LazyExoticComponent<React.ComponentType<GeolappDomainWorkspaceProps>>;
-
-const EstructuralHidroWorkspace = lazy(() =>
-    import('./components/EstructuralHidroWorkspace').then((m) => ({
-        default: m.EstructuralHidroWorkspace,
-    }))
-) as React.LazyExoticComponent<React.ComponentType<GeolappDomainWorkspaceProps>>;
-
-const GEOLAPP_DOMAIN_TABS: Array<{
-    mode: GeolappDomainMode;
-    labelKey: string;
-    defaultLabel: string;
-}> = [
-    {
-        mode: 'STOCKPILE',
-        labelKey: 'core_shell.modules.stockpile.nav_stockpile',
-        defaultLabel: 'STOCKPILES Cu',
-    },
-    {
-        mode: 'GEOMENSURA_GEO',
-        labelKey: 'core_shell.modules.stockpile.nav_geomensura',
-        defaultLabel: 'GEOMENSURA UTM',
-    },
-    {
-        mode: 'EXPLORACION_SONDAJES',
-        labelKey: 'core_shell.modules.stockpile.nav_exploracion',
-        defaultLabel: 'EXPLORACIÓN SONDAJES',
-    },
-    {
-        mode: 'ESTRUCTURAL_HIDRO',
-        labelKey: 'core_shell.modules.stockpile.nav_estructural',
-        defaultLabel: 'ESTRUCTURAL / HIDRO',
-    },
-];
-
+const MobileFaenaList = lazy(() =>
+    import('./components/MobileFaenaList').then((m) => ({ default: m.MobileFaenaList }))
+);
 const MobileHome = lazy(() =>
     import('./components/MobileHome').then((m) => ({ default: m.MobileHome }))
+);
+const MobileFaenaMonitoring = lazy(() =>
+    import('./components/MobileFaenaMonitoring').then((m) => ({
+        default: m.MobileFaenaMonitoring,
+    }))
 );
 const StockList = lazy(() =>
     import('./components/StockList').then((m) => ({ default: m.StockList }))
 );
-const CaptureSelection = lazy(() =>
-    import('./components/CaptureSelection').then((m) => ({ default: m.CaptureSelection }))
+const QuickStockpileCapture = lazy(() =>
+    import('./components/QuickStockpileCapture').then((m) => ({ default: m.QuickStockpileCapture }))
 );
-const GeometrySelection = lazy(() =>
-    import('./components/GeometrySelection').then((m) => ({ default: m.GeometrySelection }))
-);
-const ManualCapture = lazy(() =>
-    import('./components/ManualCapture').then((m) => ({ default: m.ManualCapture }))
+const StockpileDossierView = lazy(() =>
+    import('./components/StockpileDossierView').then((m) => ({ default: m.StockpileDossierView }))
 );
 const MobileScanner = lazy(() =>
     import('./components/MobileScanner').then((m) => ({ default: m.MobileScanner }))
@@ -86,19 +40,8 @@ const MobileScanner = lazy(() =>
 const DesktopAnalytics = lazy(() =>
     import('./components/DesktopAnalytics').then((m) => ({ default: m.DesktopAnalytics }))
 );
-const StockpileRegistration = lazy(() =>
-    import('./components/StockpileRegistration').then((m) => ({
-        default: m.StockpileRegistration,
-    }))
-);
-const StockpileDashboard = lazy(() =>
-    import('./components/StockpileDashboard').then((m) => ({ default: m.StockpileDashboard }))
-);
 const MeasurementDetail = lazy(() =>
     import('./components/MeasurementDetail').then((m) => ({ default: m.MeasurementDetail }))
-);
-const StockpileSummary = lazy(() =>
-    import('./components/StockpileSummary').then((m) => ({ default: m.StockpileSummary }))
 );
 
 export interface GeolappAppProps {
@@ -108,19 +51,12 @@ export interface GeolappAppProps {
 }
 
 export const GeolappApp: React.FC<GeolappAppProps> = ({
-    domainMode = 'STOCKPILE',
     hostScope = 'CLIENT',
     embedded = false,
 }) => {
     const { t } = useTranslation();
     const { isNative } = usePlatform();
     const { session } = useMinReportSession();
-
-    const [activeDomain, setActiveDomain] = useState<GeolappDomainMode>(domainMode);
-
-    useEffect(() => {
-        setActiveDomain(domainMode);
-    }, [domainMode]);
 
     const resolvedTenantId = useMemo(
         () =>
@@ -138,38 +74,38 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
         if (typeof window === 'undefined') return false;
         return !isNative && window.innerWidth >= 1024;
     });
+    const canRegisterDevFaena = Boolean(
+        isDesktopLayout && (hostScope === 'DEV_GATEWAY' || session?.isDevRoot)
+    );
 
     const [view, setView] = useState<ViewState>(() => {
         if (typeof window !== 'undefined' && !isNative && window.innerWidth >= 1024) {
             return 'analytics';
         }
-        return 'home';
+        return 'faenas';
     });
 
     const [assets, setAssets] = useState<StockpileAsset[]>([]);
     const [allMeasurements, setAllMeasurements] = useState<StockpileMeasurement[]>([]);
+    const [miningSites, setMiningSites] = useState<MiningSiteProfile[]>([]);
+    const [activeFaenaId, setActiveFaenaId] = useState<string | 'ALL'>('ALL');
     const [selectedAsset, setSelectedAsset] = useState<StockpileAsset | null>(null);
+    const [captureTargetAsset, setCaptureTargetAsset] = useState<StockpileAsset | null>(null);
+    const [justCreatedAssetId, setJustCreatedAssetId] = useState<string | null>(null);
     const [assetMeasurements, setAssetMeasurements] = useState<StockpileMeasurement[]>([]);
     const [selectedMeasurement, setSelectedMeasurement] = useState<StockpileMeasurement | null>(
         null
     );
-    const [selectedGeometry, setSelectedGeometry] =
-        useState<GeolappGeometryType>('CONO_ELIPTICO');
     const [isLoadingAssets, setIsLoadingAssets] = useState<boolean>(true);
 
-    // Sync responsive breakpoint
     useEffect(() => {
         if (typeof window === 'undefined') return;
-        const onResize = () => {
-            const desktop = !isNative && window.innerWidth >= 1024;
-            setIsDesktopLayout(desktop);
-        };
+        const onResize = () => setIsDesktopLayout(!isNative && window.innerWidth >= 1024);
         onResize();
         window.addEventListener('resize', onResize);
         return () => window.removeEventListener('resize', onResize);
     }, [isNative]);
 
-    // Propagate active multi-tenant session context into DataService
     useEffect(() => {
         if (resolvedTenantId || resolvedUserId) {
             dataService.setTenantContext({
@@ -179,7 +115,6 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
         }
     }, [resolvedTenantId, resolvedUserId]);
 
-    // Subscribe to tenant stockpiles & global measurements
     useEffect(() => {
         setIsLoadingAssets(true);
         const unsubAssets = dataService.subscribeToAllAssets((loaded) => {
@@ -190,18 +125,15 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
                 return loaded.find((a) => a.id === prev.id) ?? prev;
             });
         });
-
-        const unsubMeasAll = dataService.subscribeToMeasurementsAll((loadedMeas) => {
-            setAllMeasurements(loadedMeas);
-        });
-
+        const unsubMeasAll = dataService.subscribeToMeasurementsAll(setAllMeasurements);
+        const unsubSites = dataService.subscribeToMiningSites(setMiningSites);
         return () => {
             unsubAssets();
             unsubMeasAll();
+            unsubSites();
         };
     }, [session?.tenantId]);
 
-    // Subscribe to measurements for the active selected asset
     useEffect(() => {
         if (!selectedAsset?.id) {
             setAssetMeasurements([]);
@@ -217,39 +149,148 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
         return () => unsub();
     }, [selectedAsset?.id]);
 
+    const activeFaenaMeta = useMemo(() => {
+        if (activeFaenaId === 'ALL') return null;
+        if (activeFaenaId === UNASSIGNED_FAENA_ID) {
+            return {
+                id: UNASSIGNED_FAENA_ID,
+                name: t('faenas.unassigned', 'SIN FAENA ASIGNADA'),
+                isUnassigned: true,
+            };
+        }
+        const site = miningSites.find((s) => s.id === activeFaenaId);
+        const fallbackAsset = assets.find((a) => (a.project_id || '') === activeFaenaId);
+        return {
+            id: activeFaenaId,
+            name: site?.name || fallbackAsset?.project_name || activeFaenaId,
+            isUnassigned: false,
+        };
+    }, [activeFaenaId, assets, miningSites, t]);
+
+    const handleRegisterDevFaena = useCallback(async (name: string) => {
+        return dataService.registerDevMiningSite({ name });
+    }, []);
+
+    const handleSelectFaenaFromList = useCallback((faenaId: string) => {
+        setActiveFaenaId(faenaId);
+        setSelectedAsset(null);
+        setSelectedMeasurement(null);
+        setJustCreatedAssetId(null);
+        setView('home');
+    }, []);
+
+    const handleBackToFaenas = useCallback(() => {
+        setSelectedAsset(null);
+        setSelectedMeasurement(null);
+        setJustCreatedAssetId(null);
+        setActiveFaenaId('ALL');
+        setView('faenas');
+    }, []);
+
     const handleSelectAsset = useCallback((asset: StockpileAsset) => {
+        setJustCreatedAssetId(null);
         setSelectedAsset(asset);
         setView('summary');
     }, []);
 
-    const handleStartNewCapture = useCallback(() => {
-        if (selectedAsset) {
-            setView('capture-select');
-        } else {
-            setView('register');
-        }
+    const handleStartNewStockpileInFaena = useCallback(() => {
+        if (isDesktopLayout) return;
+        if (activeFaenaId === 'ALL' || activeFaenaId === UNASSIGNED_FAENA_ID) return;
+        setCaptureTargetAsset(null);
+        setView('quick-capture');
+    }, [activeFaenaId, isDesktopLayout]);
+
+    const handleTriggerNewMeasurement = useCallback(() => {
+        if (!selectedAsset || selectedAsset.status === 'CLOSED') return;
+        setCaptureTargetAsset(selectedAsset);
+        setView('quick-capture');
     }, [selectedAsset]);
 
     const handleNavigate = useCallback(
         (target: ViewState) => {
-            if (target === 'capture-select' && !selectedAsset) {
-                setView('register');
+            if (!isDesktopLayout && target === 'analytics') {
+                setSelectedAsset(null);
+                setSelectedMeasurement(null);
+                setView(activeFaenaMeta ? 'home' : 'faenas');
+                return;
+            }
+            if (target === 'faenas') {
+                if (isDesktopLayout) {
+                    setView('analytics');
+                    return;
+                }
+                handleBackToFaenas();
+                return;
+            }
+            if (target === 'home') {
+                if (isDesktopLayout) {
+                    setSelectedAsset(null);
+                    setSelectedMeasurement(null);
+                    setView('analytics');
+                    return;
+                }
+                if (
+                    view === 'summary' ||
+                    view === 'dashboard' ||
+                    view === 'detail' ||
+                    view === 'monitoring'
+                ) {
+                    setSelectedAsset(null);
+                    setSelectedMeasurement(null);
+                    setView(activeFaenaMeta ? 'home' : 'faenas');
+                    return;
+                }
+                handleBackToFaenas();
+                return;
+            }
+            if (target === 'monitoring') {
+                setSelectedAsset(null);
+                setSelectedMeasurement(null);
+                setView('monitoring');
+                return;
+            }
+            if (target === 'quick-capture' || target === 'register') {
+                if (isDesktopLayout) {
+                    setView('analytics');
+                    return;
+                }
+                if (selectedAsset && selectedAsset.status !== 'CLOSED') {
+                    setCaptureTargetAsset(selectedAsset);
+                    setView('quick-capture');
+                    return;
+                }
+                if (activeFaenaMeta && !activeFaenaMeta.isUnassigned) {
+                    setCaptureTargetAsset(null);
+                    setView('quick-capture');
+                    return;
+                }
+                setView('faenas');
+                return;
+            }
+            if (
+                target === 'capture-select' ||
+                (!isDesktopLayout && (target === 'capture' || target === 'geometry-select'))
+            ) {
+                setCaptureTargetAsset(selectedAsset);
+                setView('quick-capture');
                 return;
             }
             setView(target);
         },
-        [selectedAsset]
+        [activeFaenaMeta, handleBackToFaenas, isDesktopLayout, selectedAsset, view]
     );
 
-    const handleRegistrationSuccess = useCallback(async (assetId: string) => {
-        const created = await dataService.getAsset(assetId);
-        if (created) {
-            setSelectedAsset(created);
+    const handleQuickCaptureComplete = useCallback(
+        async (result: { assetId: string; measurementId: string; isNewAsset: boolean }) => {
+            const loadedAsset = await dataService.getAsset(result.assetId);
+            if (loadedAsset) {
+                setSelectedAsset(loadedAsset);
+            }
+            setJustCreatedAssetId(result.isNewAsset ? result.assetId : null);
             setView('summary');
-        } else {
-            setView('list');
-        }
-    }, []);
+        },
+        []
+    );
 
     const handleMeasurementCreated = useCallback(
         async (measurementId: string) => {
@@ -261,7 +302,7 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
                 setView('detail');
                 return;
             }
-            setView(selectedAsset ? 'summary' : 'list');
+            setView(selectedAsset ? 'summary' : 'home');
         },
         [selectedAsset]
     );
@@ -274,30 +315,77 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
             Boolean(selectedMeasurement.ignored)
         );
         const updated = await dataService.getMeasurement(selectedMeasurement.id);
-        if (updated) {
-            setSelectedMeasurement(updated);
-        }
+        if (updated) setSelectedMeasurement(updated);
     }, [selectedMeasurement]);
 
     const suspenseFallback = (
         <div className="h-full w-full flex-1 flex flex-col justify-start bg-[#FFFFFF] dark:bg-[#000000]">
-            <M3LinearProgress
-                indeterminate
-                ariaLabel={t('common.loading', 'CARGANDO...')}
-            />
+            <M3LinearProgress indeterminate ariaLabel={t('common.loading', 'CARGANDO...')} />
         </div>
     );
 
+    const mobileFaenaListElement = (
+        <MobileFaenaList
+            sites={miningSites}
+            assets={assets}
+            measurements={allMeasurements}
+            isLoading={isLoadingAssets}
+            onSelectFaena={handleSelectFaenaFromList}
+        />
+    );
+
+    const mobileHomeElement = activeFaenaMeta ? (
+        <MobileHome
+            faenaId={activeFaenaMeta.id}
+            faenaName={activeFaenaMeta.name}
+            isUnassignedBucket={activeFaenaMeta.isUnassigned}
+            assets={assets}
+            isLoading={isLoadingAssets}
+            onBackToFaenas={handleBackToFaenas}
+            onStartNewStockpile={handleStartNewStockpileInFaena}
+            onSelectAsset={handleSelectAsset}
+        />
+    ) : (
+        mobileFaenaListElement
+    );
+
+    const activeSiteIdForCapture =
+        activeFaenaMeta && !activeFaenaMeta.isUnassigned ? activeFaenaMeta.id : null;
+
+    const desktopAnalyticsElement = (
+        <DesktopAnalytics
+            assets={assets}
+            measurements={allMeasurements}
+            sites={miningSites}
+            activeFaenaId={activeFaenaId}
+            onSelectFaena={setActiveFaenaId}
+            canRegisterDevFaena={canRegisterDevFaena}
+            onRegisterDevFaena={handleRegisterDevFaena}
+            onSelectAsset={(asset: StockpileAsset) => setSelectedAsset(asset)}
+            onBack={() => setView('faenas')}
+            embedded={embedded}
+        />
+    );
+
     const renderView = () => {
+        if (isDesktopLayout) {
+            return desktopAnalyticsElement;
+        }
+
         switch (view) {
+            case 'faenas':
             case 'analytics':
+                return mobileFaenaListElement;
+
+            case 'monitoring':
                 return (
-                    <DesktopAnalytics
+                    <MobileFaenaMonitoring
                         assets={assets}
                         measurements={allMeasurements}
-                        onSelectAsset={(asset) => setSelectedAsset(asset)}
-                        onBack={() => setView('home')}
-                        embedded={embedded}
+                        sites={miningSites}
+                        activeFaenaId={activeFaenaId}
+                        onSelectFaena={setActiveFaenaId}
+                        onSelectAsset={handleSelectAsset}
                     />
                 );
 
@@ -307,61 +395,60 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
                         assets={assets}
                         isLoading={isLoadingAssets}
                         onSelectAsset={handleSelectAsset}
-                        onBack={() => setView(isDesktopLayout ? 'analytics' : 'home')}
-                        onAddNew={() => setView('register')}
+                        onBack={() => setView(activeFaenaMeta ? 'home' : 'faenas')}
+                        onAddNew={
+                            !activeFaenaMeta || activeFaenaMeta.isUnassigned
+                                ? undefined
+                                : handleStartNewStockpileInFaena
+                        }
                     />
                 );
 
+            case 'quick-capture':
             case 'register':
                 return (
-                    <StockpileRegistration
-                        onSuccess={handleRegistrationSuccess}
-                        onCancel={() => setView(isDesktopLayout ? 'analytics' : 'home')}
+                    <QuickStockpileCapture
+                        existingAsset={captureTargetAsset}
+                        allowManualFallback={false}
+                        sites={miningSites}
+                        selectedFaenaId={activeSiteIdForCapture}
+                        onComplete={(res) => void handleQuickCaptureComplete(res)}
+                        onCancel={() =>
+                            setView(
+                                captureTargetAsset
+                                    ? 'summary'
+                                    : activeFaenaMeta
+                                        ? 'home'
+                                        : 'faenas'
+                            )
+                        }
                     />
                 );
 
             case 'summary':
-                return selectedAsset ? (
-                    <StockpileSummary
-                        asset={selectedAsset}
-                        measurements={assetMeasurements}
-                        onSelectMeasurement={(m) => {
-                            setSelectedMeasurement(m);
-                            setView('detail');
-                        }}
-                        onBack={() => setView('list')}
-                        onNewMeasurement={() => setView('capture-select')}
-                    />
-                ) : (
-                    <StockList
-                        assets={assets}
-                        isLoading={isLoadingAssets}
-                        onSelectAsset={handleSelectAsset}
-                        onBack={() => setView(isDesktopLayout ? 'analytics' : 'home')}
-                        onAddNew={() => setView('register')}
-                    />
-                );
-
             case 'dashboard':
                 return selectedAsset ? (
-                    <StockpileDashboard
+                    <StockpileDossierView
                         asset={selectedAsset}
                         measurements={assetMeasurements}
-                        onBack={() => setView('list')}
-                        onNewMeasurement={() => setView('capture-select')}
+                        justCreated={justCreatedAssetId === selectedAsset.id}
+                        isMobileField={true}
                         onSelectMeasurement={(m) => {
                             setSelectedMeasurement(m);
                             setView('detail');
                         }}
+                        onBack={() => {
+                            setSelectedAsset(null);
+                            setSelectedMeasurement(null);
+                            setView(activeFaenaMeta ? 'home' : 'faenas');
+                        }}
+                        onNewMeasurement={() => {
+                            setCaptureTargetAsset(selectedAsset);
+                            setView('quick-capture');
+                        }}
                     />
                 ) : (
-                    <StockList
-                        assets={assets}
-                        isLoading={isLoadingAssets}
-                        onSelectAsset={handleSelectAsset}
-                        onBack={() => setView(isDesktopLayout ? 'analytics' : 'home')}
-                        onAddNew={() => setView('register')}
-                    />
+                    mobileHomeElement
                 );
 
             case 'detail':
@@ -369,56 +456,28 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
                     <MeasurementDetail
                         measurement={selectedMeasurement}
                         asset={selectedAsset}
-                        onBack={() => setView(selectedAsset ? 'summary' : 'list')}
+                        isMobileField={true}
+                        onBack={() =>
+                            setView(selectedAsset ? 'summary' : activeFaenaMeta ? 'home' : 'faenas')
+                        }
                         onToggleIgnore={handleToggleIgnoreSelectedMeasurement}
                     />
                 ) : (
-                    <StockList
-                        assets={assets}
-                        isLoading={isLoadingAssets}
-                        onSelectAsset={handleSelectAsset}
-                        onBack={() => setView(isDesktopLayout ? 'analytics' : 'home')}
-                        onAddNew={() => setView('register')}
-                    />
+                    mobileHomeElement
                 );
 
             case 'capture-select':
-                return (
-                    <CaptureSelection
-                        onSelection={(method) => {
-                            if (method === 'digital') {
-                                setView('scanner');
-                            } else {
-                                setView('geometry-select');
-                            }
-                        }}
-                        onBack={() => setView(selectedAsset ? 'summary' : 'home')}
-                    />
-                );
-
             case 'geometry-select':
-                return (
-                    <GeometrySelection
-                        onSelection={(geo) => {
-                            setSelectedGeometry(geo);
-                            setView('capture');
-                        }}
-                        onBack={() => setView('capture-select')}
-                    />
-                );
-
             case 'capture':
-                return selectedAsset ? (
-                    <ManualCapture
-                        assetId={selectedAsset.id}
-                        initialGeometry={selectedGeometry}
-                        onSuccess={handleMeasurementCreated}
-                        onBack={() => setView('geometry-select')}
-                    />
-                ) : (
-                    <StockpileRegistration
-                        onSuccess={handleRegistrationSuccess}
-                        onCancel={() => setView('home')}
+                return (
+                    <QuickStockpileCapture
+                        existingAsset={selectedAsset}
+                        sites={miningSites}
+                        selectedFaenaId={activeSiteIdForCapture}
+                        onComplete={(res) => void handleQuickCaptureComplete(res)}
+                        onCancel={() =>
+                            setView(selectedAsset ? 'summary' : activeFaenaMeta ? 'home' : 'faenas')
+                        }
                     />
                 );
 
@@ -430,68 +489,22 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
                         onBack={() => setView('capture-select')}
                     />
                 ) : (
-                    <StockpileRegistration
-                        onSuccess={handleRegistrationSuccess}
-                        onCancel={() => setView('home')}
+                    <QuickStockpileCapture
+                        sites={miningSites}
+                        selectedFaenaId={activeSiteIdForCapture}
+                        onComplete={(res) => void handleQuickCaptureComplete(res)}
+                        onCancel={() => setView(activeFaenaMeta ? 'home' : 'faenas')}
                     />
                 );
 
             case 'home':
             default:
-                return (
-                    <MobileHome
-                        onStartNewScan={handleStartNewCapture}
-                        onViewRecords={() => setView('list')}
-                    />
-                );
+                return mobileHomeElement;
         }
     };
 
-    const renderDomainContent = () => {
-        if (activeDomain === 'GEOMENSURA_GEO') {
-            return (
-                <div className="flex-1 min-h-0 overflow-y-auto bg-[#FFFFFF] dark:bg-[#000000]">
-                    <Suspense fallback={suspenseFallback}>
-                        <GeomensuraWorkspace
-                            embedded={embedded}
-                            hostScope={hostScope}
-                            tenantId={resolvedTenantId}
-                            userId={resolvedUserId}
-                        />
-                    </Suspense>
-                </div>
-            );
-        }
-        if (activeDomain === 'EXPLORACION_SONDAJES') {
-            return (
-                <div className="flex-1 min-h-0 overflow-y-auto bg-[#FFFFFF] dark:bg-[#000000]">
-                    <Suspense fallback={suspenseFallback}>
-                        <ExploracionWorkspace
-                            embedded={embedded}
-                            hostScope={hostScope}
-                            tenantId={resolvedTenantId}
-                            userId={resolvedUserId}
-                        />
-                    </Suspense>
-                </div>
-            );
-        }
-        if (activeDomain === 'ESTRUCTURAL_HIDRO') {
-            return (
-                <div className="flex-1 min-h-0 overflow-y-auto bg-[#FFFFFF] dark:bg-[#000000]">
-                    <Suspense fallback={suspenseFallback}>
-                        <EstructuralHidroWorkspace
-                            embedded={embedded}
-                            hostScope={hostScope}
-                            tenantId={resolvedTenantId}
-                            userId={resolvedUserId}
-                        />
-                    </Suspense>
-                </div>
-            );
-        }
-
-        return (
+    return (
+        <div className="geolapp-scope h-full w-full min-h-0 flex-1 flex flex-col overflow-hidden bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-none">
             <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                 <MainLayout
                     currentView={view}
@@ -499,41 +512,13 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
                     isDesktopLayout={isDesktopLayout}
                     embedded={embedded}
                     domainMode="STOCKPILE"
+                    hasSelectedAsset={Boolean(selectedAsset)}
+                    isSelectedAssetClosed={selectedAsset?.status === 'CLOSED'}
+                    onTriggerNewMeasurement={handleTriggerNewMeasurement}
                 >
                     <Suspense fallback={suspenseFallback}>{renderView()}</Suspense>
                 </MainLayout>
             </div>
-        );
-    };
-
-    return (
-        <div className="geolapp-scope h-full w-full min-h-0 flex-1 flex flex-col overflow-hidden bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-none">
-            <nav
-                role="tablist"
-                aria-label={t('core_shell.modules.stockpile.domain_selector_aria', 'Dominios operativos GEOLAPP®')}
-                className="shrink-0 w-full bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] px-fib-13 flex items-center gap-fib-8 overflow-x-auto no-print"
-            >
-                {GEOLAPP_DOMAIN_TABS.map((item) => {
-                    const isActive = activeDomain === item.mode;
-                    return (
-                        <button
-                            key={item.mode}
-                            type="button"
-                            role="tab"
-                            aria-selected={isActive}
-                            onClick={() => setActiveDomain(item.mode)}
-                            className={`min-h-[44px] px-fib-13 py-fib-8 font-mono text-microcopy font-bold uppercase tracking-wider whitespace-nowrap border-x-0 border-t-0 border-b-2 rounded-none shadow-none cursor-pointer transition-colors ${
-                                isActive
-                                    ? 'border-b-[#C68346] text-[#C68346] bg-[#FFFFFF] dark:bg-[#000000]'
-                                    : 'border-b-transparent text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] bg-transparent'
-                            }`}
-                        >
-                            {t(item.labelKey, item.defaultLabel)}
-                        </button>
-                    );
-                })}
-            </nav>
-            {renderDomainContent()}
         </div>
     );
 };

@@ -5,7 +5,10 @@ import { db, storage } from '../../../config/firebase';
 import { AuditLedger } from '../../../core/audit-ledger';
 import { CasStorageService } from '../../../core/media/CasStorageService';
 import { MediaDigestorServer } from '../../../core/media/MediaDigestorServer';
-import { ResilientAIClient } from '../../../core/resilient-ai-client';
+import {
+    DecisionSafetyBlockedError,
+    ResilientAIClient,
+} from '../../../core/resilient-ai-client';
 import { assertSafeExternalUrl, safeFetchExternal } from '../../../utils/ssrfGuard';
 import { VALID_PILLAR_IDS } from '../types/vault.types';
 import {
@@ -2230,6 +2233,159 @@ export class OfficialEquipmentPhotoService {
             .toBuffer();
 
         const base64Data = previewBuffer.toString('base64');
+
+        // ── Etapa 1: Filtro Forense Calibrado Nivel 0 (`gemini-decision-1`, 0 tokens de salida) ──
+        try {
+            const stage1Context = [
+                `Equipo oficial objetivo: "${make} ${model}" (Designador base: "${variantReqs.cleanModelDesignator}", Serie: "${baseSeries}", Tipo: "${equipmentType}", Arquetipo: "${archetypeProfile.archetypeLabelEs}").`,
+                `Mandato de variante mecánica:\n${variantReqs.vlmVariantMandateEs}`,
+                `Criterio de configuración minera del arquetipo: ${archetypeProfile.vlmExpectedConfigEs}`,
+                `Marcas rivales/hermanas estrictamente prohibidas en máquina o fondo: ${brandPolicy.forbiddenBrandListEs || 'Otras marcas ajenas al fabricante'}.`,
+                isFullDocumentPage
+                    ? 'Nota: La imagen es una página completa de folleto PDF OEM.'
+                    : 'Nota: La imagen es una fotografía individual candidata.',
+            ].join('\n');
+
+            const stage1 = await ResilientAIClient.decide({
+                module: 'opermaq',
+                dataClassification: 'GLOBAL_OEM',
+                inputText: stage1Context,
+                media: [{ mimeType: 'image/jpeg', dataBase64: base64Data, resolution: 'high' }],
+                questions: {
+                    is_authentic_real_photograph: {
+                        type: 'noul',
+                        instructions:
+                            '¿Es una fotografía óptica real de escala 1:1 y NO una imagen sintética de IA, render deforme, modelo a escala (1:50/diecast) o captura de videojuego?',
+                        criteria: {
+                            true_description:
+                                'Fotografía óptica real de maquinaria real sin artefactos de difusión, ejes irreales ni textos ilegibles.',
+                            false_description:
+                                'Imagen generada por IA, render sintético, maqueta a escala, juguete o captura de simulador.',
+                        },
+                    },
+                    is_exact_make_and_model: {
+                        type: 'noul',
+                        instructions: `¿El equipo principal corresponde inequívocamente al fabricante "${make}" y al modelo/serie "${variantReqs.cleanModelDesignator}" (${baseSeries})?`,
+                    },
+                    matches_exact_variant_configuration: {
+                        type: 'noul',
+                        instructions: `¿La imagen cumple exactamente el mandato mecánico de ejes, carrocería o rodado especificado (${variantReqs.vlmVariantMandateEs})?`,
+                    },
+                    is_mining_appropriate_configuration: {
+                        type: 'noul',
+                        instructions: `¿La configuración o implemento montado cumple el criterio minero del arquetipo (${archetypeProfile.vlmExpectedConfigEs})?`,
+                    },
+                    is_valid_industrial_or_studio_context: {
+                        type: 'noul',
+                        instructions:
+                            '¿El fondo es un estudio fotográfico OEM limpio (blanco/gris neutro o recorte de ficha) O un contexto real limpio de minería, movimiento de tierra o planta industrial?',
+                        criteria: {
+                            true_description:
+                                'Estudio OEM limpio o faena minera/construcción/planta industrial despejada.',
+                            false_description:
+                                'Patio comercial abarrotado, subasta/chatarra, calle residencial, tráfico civil o taller desordenado.',
+                        },
+                    },
+                    is_free_of_other_manufacturer_and_dealer_branding: {
+                        type: 'noul',
+                        instructions: `¿La máquina y TODO el fondo están completamente libres de logotipos, letreros, banderas o marcas de agua de concesionarios o marcas ajenas/hermanas (${brandPolicy.forbiddenBrandListEs || 'cualquier otro fabricante'})?`,
+                    },
+                    is_free_of_pii_and_plates: {
+                        type: 'noul',
+                        instructions:
+                            '¿La imagen está libre de rostros humanos reconocibles, personas junto al equipo y placas patentes vehiculares (PPU) legibles?',
+                    },
+                    is_clean_unweathered_machine: {
+                        type: 'noul',
+                        instructions:
+                            '¿La máquina luce en condición limpia o de catálogo OEM, sin barro espeso, corrosión ni daños severos?',
+                    },
+                    authenticity_rubric: {
+                        type: 'score',
+                        instructions: `Evalúa la calidad y autenticidad global de esta imagen como fotografía oficial OEM para "${make} ${model}".`,
+                        criteria: [
+                            'Imagen sintética IA, juguete, otro equipo o irrelevante',
+                            'Equipo similar con variante mecánica errónea o entorno comercial inválido',
+                            'Equipo real con marcas de otro fabricante/concesionario, desgaste severo o PII visible',
+                            'Equipo real, limpio y variante correcta con detalle menor de encuadre o contexto',
+                            'Fotografía oficial OEM real, variante exacta, limpia y sin marcas ajenas ni PII',
+                        ],
+                    },
+                },
+            });
+
+            const checkPass = (key: string): boolean => {
+                const ans = stage1.answers[key];
+                return ans?.type === 'noul' && ans.noul >= 0.65;
+            };
+
+            const isAuth = checkPass('is_authentic_real_photograph');
+            const isMakeModel = checkPass('is_exact_make_and_model');
+            const isVariant = checkPass('matches_exact_variant_configuration');
+            const isMiningCfg = checkPass('is_mining_appropriate_configuration');
+            const isContext = checkPass('is_valid_industrial_or_studio_context');
+            const isNoOtherBrand = checkPass('is_free_of_other_manufacturer_and_dealer_branding');
+            const isNoPii = checkPass('is_free_of_pii_and_plates');
+            const isClean = checkPass('is_clean_unweathered_machine');
+
+            const rubricAns = stage1.answers.authenticity_rubric;
+            const stage1Score =
+                rubricAns?.type === 'score' ? Number((rubricAns.score / 4).toFixed(3)) : 0;
+
+            const rejectionReasons: string[] = [];
+            if (!isAuth) rejectionReasons.push('No supera verificación óptica real anti-IA (Etapa 1)');
+            if (!isMakeModel) rejectionReasons.push(`No coincide marca/modelo "${make} ${variantReqs.cleanModelDesignator}"`);
+            if (!isVariant) rejectionReasons.push('No coincide variante exacta de ejes/carrocería/rodado');
+            if (!isMiningCfg) rejectionReasons.push('Configuración o implemento incompatible con uso minero');
+            if (!isContext) rejectionReasons.push('Contexto visual no corresponde a estudio OEM o faena industrial');
+            if (!isNoOtherBrand) rejectionReasons.push('Presencia de marca rival, marca hermana o concesionario en fondo');
+            if (!isNoPii) rejectionReasons.push('Presencia de rostro humano o patente vehicular visible (Ley 21.719)');
+            if (!isClean) rejectionReasons.push('Equipo sucio, dañado o con desgaste severo');
+            if (stage1Score < 0.78) {
+                rejectionReasons.push(`Puntaje forense calibrado insuficiente (${stage1Score.toFixed(2)} < 0.78)`);
+            }
+
+            if (rejectionReasons.length > 0) {
+                return {
+                    is_authentic_real_photograph: isAuth,
+                    is_exact_make_and_model: isMakeModel,
+                    matches_exact_variant_configuration: isVariant,
+                    is_mining_appropriate_configuration: isMiningCfg,
+                    is_valid_industrial_or_studio_context: isContext,
+                    is_free_of_other_manufacturer_and_dealer_branding: isNoOtherBrand,
+                    is_free_of_pii_and_plates: isNoPii,
+                    is_clean_unweathered_machine: isClean,
+                    authenticity_score: stage1Score,
+                    subject_box_2d: null,
+                    observed_axle_or_track_layout: '',
+                    observed_body_or_attachment: '',
+                    detected_model_description: `Rechazada en Etapa 1 (${stage1.engineUsed})`,
+                    rejection_reasons: rejectionReasons,
+                };
+            }
+        } catch (stage1Err: any) {
+            if (stage1Err instanceof DecisionSafetyBlockedError) {
+                return {
+                    is_authentic_real_photograph: false,
+                    is_exact_make_and_model: false,
+                    matches_exact_variant_configuration: false,
+                    is_mining_appropriate_configuration: false,
+                    is_valid_industrial_or_studio_context: false,
+                    is_free_of_other_manufacturer_and_dealer_branding: false,
+                    is_free_of_pii_and_plates: false,
+                    is_clean_unweathered_machine: false,
+                    authenticity_score: 0.0,
+                    subject_box_2d: null,
+                    observed_axle_or_track_layout: '',
+                    observed_body_or_attachment: '',
+                    detected_model_description: 'Bloqueo de seguridad visual (Decisions API)',
+                    rejection_reasons: ['Imagen rechazada por filtro de seguridad visual (Ley 21.719).'],
+                };
+            }
+            console.warn('[OfficialPhotoService] Etapa 1 Decisions degradada a Etapa 2:', stage1Err?.message || stage1Err);
+        }
+
+        // ── Etapa 2: Extracción Anatómica y Bounding Box (`subject_box_2d`) sobre candidatas aprobadas ──
 
         const systemInstruction = `Eres el Auditor Forense VLM v4.0 de Autenticidad Visual y Control de Catálogos Oficiales de Maquinaria de MINREPORT (OPERMAQ).
 Tu misión es auditar con rigor quirúrgico si la imagen es una FOTOGRAFÍA OFICIAL OEM REAL Y EXACTA para el equipo "${make} ${model}" (Designador base: "${variantReqs.cleanModelDesignator}" | Serie: "${baseSeries}" | Tipo: "${equipmentType}" | Arquetipo: "${archetypeProfile.archetypeLabelEs}").

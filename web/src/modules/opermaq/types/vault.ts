@@ -268,8 +268,10 @@ export type {
   DisambiguationFacetKey,
   EnergyConsumptionProfile,
   EphemeralIdentificationImageInput,
+  EquipmentSupplyLineItem,
   OperationalCostMatrix,
   OpticalIdentificationSummary,
+  SupplyItemFamily,
   TransmissionCategory,
 } from '../../../contracts/opermaq.contracts';
 

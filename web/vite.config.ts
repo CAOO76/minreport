@@ -144,7 +144,7 @@ export default defineConfig({
             ]
         },
         watch: {
-            ignored: ['**/android/**', '**/dist/**'],
+            ignored: ['**/android/**', '**/dist/**', '**/data/**', '**/_backups/**', '**/*.log'],
             awaitWriteFinish: {
                 stabilityThreshold: 250,
                 pollInterval: 40

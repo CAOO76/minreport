@@ -7,7 +7,6 @@ import { auth, db } from '../../config/firebase';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
 import M3CircularProgress from '../common/M3CircularProgress';
 import { SovereignVoiceInput } from '../common/SovereignVoiceInput';
-import { ReadAloudButton } from '../common/ReadAloudButton';
 
 interface AIProposal {
     id: string;
@@ -383,12 +382,6 @@ export const MiningAICopilot: React.FC<MiningAICopilotProps> = ({
                                                             ? t('core_ai.role_error')
                                                             : t('core_ai.role_assistant')}
                                                 </span>
-                                                {m.role === 'assistant' && (
-                                                    <ReadAloudButton
-                                                        compact
-                                                        text={m.isWelcome ? t('core_ai.welcome_message') : m.text}
-                                                    />
-                                                )}
                                             </div>
                                             <p className="whitespace-pre-wrap select-text">{m.isWelcome ? t('core_ai.welcome_message') : m.text}</p>
                                         </div>

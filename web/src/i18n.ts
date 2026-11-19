@@ -16,21 +16,80 @@ export function resolveNormalizedLang(raw?: string | null): SupportedLang {
     return 'es';
 }
 
+export function isNativeMobileRuntime(): boolean {
+    if (typeof window !== 'undefined') {
+        const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } })
+            .Capacitor;
+        if (typeof cap?.isNativePlatform === 'function' && cap.isNativePlatform()) {
+            return true;
+        }
+    }
+    if (typeof navigator !== 'undefined' && typeof navigator.userAgent === 'string') {
+        return navigator.userAgent.includes('MinReportAppId/');
+    }
+    return false;
+}
+
+export function resolveDeviceLang(): SupportedLang {
+    const candidates: Array<string | undefined | null> = [];
+    if (typeof window !== 'undefined') {
+        candidates.push((window as unknown as { __MINREPORT_NATIVE_LOCALE__?: string }).__MINREPORT_NATIVE_LOCALE__);
+    }
+    if (typeof navigator !== 'undefined') {
+        if (typeof navigator.userAgent === 'string') {
+            const uaMatch = /MinReportLocale\/([a-zA-Z-]+)/.exec(navigator.userAgent);
+            if (uaMatch?.[1]) {
+                candidates.push(uaMatch[1]);
+            }
+        }
+        if (Array.isArray(navigator.languages)) {
+            candidates.push(...navigator.languages);
+        }
+        candidates.push(navigator.language);
+    }
+
+    for (const raw of candidates) {
+        const code = String(raw || '').trim().toLowerCase().slice(0, 2);
+        if (code === 'es' || code === 'en' || code === 'pt') {
+            return code;
+        }
+    }
+    return 'es';
+}
+
 const syncHtmlLangAttribute = (rawLang?: string | null) => {
     if (typeof document !== 'undefined' && document.documentElement) {
         document.documentElement.lang = resolveNormalizedLang(rawLang);
     }
 };
 
+const isNativeEnv = isNativeMobileRuntime();
+if (isNativeEnv && typeof window !== 'undefined' && window.localStorage) {
+    try {
+        window.localStorage.removeItem('i18nextLng');
+    } catch {
+        // Ignorar errores en almacenamiento restringido
+    }
+}
+
+const storedDesktopLang =
+    !isNativeEnv && typeof window !== 'undefined' && window.localStorage
+        ? window.localStorage.getItem('i18nextLng')
+        : null;
+const initialLang: SupportedLang = storedDesktopLang
+    ? resolveNormalizedLang(storedDesktopLang)
+    : resolveDeviceLang();
+
 i18n
     .use(LanguageDetector)
     .use(initReactI18next)
     .init({
+        lng: initialLang,
         fallbackLng: 'es',
         supportedLngs: ['es', 'en', 'pt'],
         load: 'languageOnly',
         detection: {
-            order: ['localStorage', 'navigator'],
+            order: ['localStorage'],
             lookupLocalStorage: 'i18nextLng',
             caches: ['localStorage'],
         },
@@ -370,5 +429,23 @@ syncHtmlLangAttribute(i18n.resolvedLanguage || i18n.language);
 i18n.on('languageChanged', (lng) => {
     syncHtmlLangAttribute(lng);
 });
+
+if (typeof window !== 'undefined' && isNativeMobileRuntime() && typeof window.addEventListener === 'function') {
+    const syncNativeLocale = () => {
+        try {
+            window.localStorage?.removeItem('i18nextLng');
+        } catch {
+            // Ignorar errores en almacenamiento restringido
+        }
+        const nextLang = resolveDeviceLang();
+        if (resolveNormalizedLang(i18n.resolvedLanguage || i18n.language) !== nextLang) {
+            void i18n.changeLanguage(nextLang);
+        } else {
+            syncHtmlLangAttribute(nextLang);
+        }
+    };
+    window.addEventListener('languagechange', syncNativeLocale);
+    window.addEventListener('minreport:os-config-change', syncNativeLocale);
+}
 
 export default i18n;

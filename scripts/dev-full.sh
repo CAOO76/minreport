@@ -8,6 +8,8 @@ echo "🟢 Iniciando entorno de desarrollo MINREPORT..."
 # Configurar entorno limpio para Java y Emuladores (aislado de credenciales ADC de producción)
 unset _JAVA_OPTIONS
 unset GOOGLE_APPLICATION_CREDENTIALS
+export NO_UPDATE_NOTIFIER=1
+export NPM_CONFIG_UPDATE_NOTIFIER=false
 
 # Configurar JDK para Firebase Tools Emulators si existe ruta personalizada
 if [ -d "/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" ]; then
@@ -84,7 +86,7 @@ echo "TEST-PILOT (3º):     http://localhost:5173/pilot"
 echo "CORE API:            http://localhost:8080"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-npx concurrently --kill-others \
+npx concurrently --kill-others --pad-prefix \
   --names "EMU,API,WEB" \
   --prefix-colors "yellow,blue,green" \
   "npm run serve:emulators" \

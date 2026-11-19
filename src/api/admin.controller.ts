@@ -1991,6 +1991,22 @@ export const getAITelemetry = async (_req: express.Request, res: express.Respons
                 pro: formatTierTelemetry('PRIMARY', 'Pro (Razonamiento Crítico)'),
                 flash: formatTierTelemetry('SECONDARY', 'Flash (Operación Estándar)'),
                 flashLite: formatTierTelemetry('ANCHOR_HA', 'Flash-Lite (Alta Disponibilidad)'),
+                decisionsGate: {
+                    model: swarmSnapshot.decisionsGate.model,
+                    status:
+                        swarmSnapshot.decisionsGate.calls > 0 ||
+                        swarmSnapshot.decisionsGate.cacheHits > 0
+                            ? 'VERIFIED'
+                            : 'STANDBY',
+                    calls: swarmSnapshot.decisionsGate.calls,
+                    cacheHits: swarmSnapshot.decisionsGate.cacheHits,
+                    fallbackCalls: swarmSnapshot.decisionsGate.fallbackCalls,
+                    errors: swarmSnapshot.decisionsGate.errors,
+                    avgLatencyMs: swarmSnapshot.decisionsGate.avgLatencyMs,
+                    lastLatencyMs: swarmSnapshot.decisionsGate.lastLatencyMs,
+                    lastUsedAt: swarmSnapshot.decisionsGate.lastUsedAt,
+                    tier: 'Nivel 0 (Decisiones Calibradas · 0 Output Tokens)',
+                },
             },
             telemetrySummary: {
                 totalCalls: swarmSnapshot.totalCalls,

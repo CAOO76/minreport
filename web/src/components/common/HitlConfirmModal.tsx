@@ -2,8 +2,6 @@ import React, { useEffect, useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../utils/cn';
 import M3CircularProgress from './M3CircularProgress';
-import SovereignVoiceInput from './SovereignVoiceInput';
-import ReadAloudButton from './ReadAloudButton';
 
 export interface HitlComparisonDiffItem {
     field: string;
@@ -38,7 +36,6 @@ export const HitlConfirmModal: React.FC<HitlConfirmModalProps> = ({
 }) => {
     const { t } = useTranslation();
     const [typedKeyword, setTypedKeyword] = useState('');
-    const [reviewConfirmed, setReviewConfirmed] = useState(false);
     const inputId = useId();
     const expectedKeyword = keyword.trim();
     const resolvedConfirmLabel = confirmLabel || t('core_common.confirm', 'CONFIRMAR');
@@ -48,7 +45,6 @@ export const HitlConfirmModal: React.FC<HitlConfirmModalProps> = ({
     useEffect(() => {
         if (open) {
             setTypedKeyword('');
-            setReviewConfirmed(false);
         }
     }, [open]);
 
@@ -63,21 +59,6 @@ export const HitlConfirmModal: React.FC<HitlConfirmModalProps> = ({
         !isKeywordValid &&
         normalizedTyped.length > 0 &&
         normalizedExpected.startsWith(normalizedTyped);
-
-    const speechSummary = [
-        title,
-        description,
-        ...(comparisonDiff || []).map((d) => `${d.field}: ${d.current} a ${d.suggested}`),
-    ].join('. ');
-
-    const handleVoiceKeyword = (spoken: string) => {
-        const cleanSpoken = spoken.trim().toUpperCase();
-        if (cleanSpoken.includes(normalizedExpected)) {
-            setTypedKeyword(expectedKeyword);
-        } else if (cleanSpoken) {
-            setTypedKeyword(spoken.trim());
-        }
-    };
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -105,16 +86,15 @@ export const HitlConfirmModal: React.FC<HitlConfirmModalProps> = ({
                         </h3>
                     </div>
                     <div className="flex items-center gap-fib-8 shrink-0">
-                        <ReadAloudButton text={speechSummary} compact />
                         <button
                             type="button"
                             onClick={onCancel}
                             disabled={loading}
                             aria-label={closeAriaLabel}
                             title={closeAriaLabel}
-                            className="min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none p-2 text-[#475569] dark:text-[#9CA3AF] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] transition-colors cursor-pointer rounded-none disabled:opacity-40 flex items-center justify-center"
+                            className="bg-transparent border-0 outline-none p-1 text-[#475569] dark:text-[#9CA3AF] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] transition-colors cursor-pointer rounded-none disabled:opacity-40 flex items-center justify-center"
                         >
-                            <span className="material-symbols-outlined text-[22px]">close</span>
+                            <span className="material-symbols-outlined text-[20px]">close</span>
                         </button>
                     </div>
                 </header>
@@ -167,72 +147,28 @@ export const HitlConfirmModal: React.FC<HitlConfirmModalProps> = ({
                             <span className="text-[#C68346] select-text">{expectedKeyword}</span>
                         </label>
 
-                        <div className="flex items-stretch gap-fib-8">
-                            <input
-                                id={inputId}
-                                type="text"
-                                value={typedKeyword}
-                                onChange={(e) => setTypedKeyword(e.target.value)}
-                                autoComplete="off"
-                                spellCheck={false}
-                                disabled={loading}
-                                placeholder={expectedKeyword}
-                                className="flex-1 min-h-[52px] px-fib-13 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] focus:outline-none text-body-main font-mono tracking-widest tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text uppercase"
-                            />
-                            <SovereignVoiceInput
-                                compact
-                                disabled={loading}
-                                onTranscript={handleVoiceKeyword}
-                            />
-                        </div>
+                        <input
+                            id={inputId}
+                            type="text"
+                            value={typedKeyword}
+                            onChange={(e) => setTypedKeyword(e.target.value)}
+                            autoComplete="off"
+                            spellCheck={false}
+                            disabled={loading}
+                            placeholder={expectedKeyword}
+                            className="w-full min-h-[52px] px-fib-13 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] focus:outline-none text-body-main font-mono tracking-widest tabular-nums text-[#0F172A] dark:text-[#F3F4F6] rounded-none shadow-none select-text uppercase"
+                        />
 
-                        <p
-                            className={cn(
-                                'text-microcopy font-mono',
-                                isKeywordValid
-                                    ? 'text-[#00AEEF]'
-                                    : isPartialMatch
-                                      ? 'text-[#C68346]'
-                                      : 'text-[#475569] dark:text-[#9CA3AF]'
-                            )}
-                        >
-                            {isKeywordValid
-                                ? t('core_common.hitl_keyword_ready', 'Palabra válida — listo para confirmar.')
-                                : t('core_common.hitl_keyword_case_hint', {
-                                      keyword: expectedKeyword,
-                                      defaultValue: `Puede escribir ${expectedKeyword} en mayúsculas o minúsculas, o dictar por voz.`,
-                                  })}
-                        </p>
-
-                        {/* Asistencia motora guiada de 2 pasos conscientes */}
-                        <div className="pt-fib-8 border-t border-[#E2E8F0] dark:border-[#12151C] flex flex-wrap items-center justify-between gap-fib-13">
-                            <button
-                                type="button"
-                                onClick={() => setReviewConfirmed((prev) => !prev)}
-                                disabled={loading}
-                                aria-pressed={reviewConfirmed}
-                                className="min-h-[48px] px-fib-13 py-fib-8 bg-transparent border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#C68346] text-data-dense font-mono text-[#0F172A] dark:text-[#F3F4F6] inline-flex items-center gap-fib-8 rounded-none shadow-none cursor-pointer"
-                            >
-                                <span className="material-symbols-outlined text-[20px] text-[#C68346]">
-                                    {reviewConfirmed ? 'check_box' : 'check_box_outline_blank'}
-                                </span>
-                                <span>{t('core_common.hitl_step1_reviewed', '1. Revisé el cambio propuesto')}</span>
-                            </button>
-
-                            {reviewConfirmed && !isKeywordValid && (
-                                <button
-                                    type="button"
-                                    onClick={() => setTypedKeyword(expectedKeyword)}
-                                    disabled={loading}
-                                    className="min-h-[48px] px-fib-13 py-fib-8 border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-white font-mono text-data-dense font-bold uppercase rounded-none shadow-none cursor-pointer transition-colors"
-                                >
-                                    {t('core_common.hitl_step2_insert', {
-                                        keyword: expectedKeyword,
-                                        defaultValue: `2. Escribir "${expectedKeyword}"`,
-                                    })}
-                                </button>
-                            )}
-                        </div>
+                        {isKeywordValid && (
+                            <p className="text-microcopy font-mono text-[#00AEEF]">
+                                {t('core_common.hitl_keyword_ready', 'Palabra válida — listo para confirmar.')}
+                            </p>
+                        )}
+                        {isPartialMatch && (
+                            <p className="text-microcopy font-mono text-[#C68346]">
+                                {expectedKeyword}
+                            </p>
+                        )}
                     </div>
 
                     <div className="flex flex-wrap items-center justify-end gap-fib-13 pt-fib-13 border-t border-[#E2E8F0] dark:border-[#12151C]">

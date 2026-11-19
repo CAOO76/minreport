@@ -1,20 +1,36 @@
-import { randomUUID } from 'crypto';
 import { Router, type Response } from 'express';
 import { z } from 'zod';
 import { env } from '../config/env';
 import { db } from '../config/firebase';
 import { evaluatePilotExpiration } from '../contracts/session.contracts';
 import { AuditLedger } from '../core/audit-ledger';
+import {
+    AISwarmUnavailableError,
+    ResilientAIClient,
+} from '../core/resilient-ai-client';
 import { CasStorageService } from '../core/media/CasStorageService';
 import { MediaDigestorServer } from '../core/media/MediaDigestorServer';
 import { requireAuth, type AuthRequest } from '../middleware/auth';
-import { extractClientIp, mutationRateLimiter } from '../middleware/rateLimiter';
+import {
+    aiRateLimiter,
+    extractClientIp,
+    mutationRateLimiter,
+} from '../middleware/rateLimiter';
 import type { ScopedRequest } from '../middleware/sessionScope';
 import {
     buildServerStockpileGlbMesh,
     inspectGlbBinaryMetrics,
     type GlbSurfaceBuildResult,
 } from '../modules/geolapp/glb-surface.builder';
+import {
+    computeStockpileVolumeV2,
+    evaluateStockpileSlopePhysics,
+    type SlopeConfinementMode,
+} from '../modules/geolapp/stockpile-geometry.engine';
+import {
+    generateAndStoreStaticSatelliteMap,
+    isValidStaticMapCoordinatePair,
+} from '../modules/geolapp/stockpile-static-map.service';
 import { safeFetchExternal } from '../utils/ssrfGuard';
 
 const router = Router();
@@ -33,6 +49,7 @@ const CopperDomainSchema = z.enum([
 ]);
 
 const StockpileStatusSchema = z.enum(['ACTIVE', 'ARCHIVED', 'CONCILIATED', 'CLOSED']);
+const StockpileClosureReasonSchema = z.enum(['SHIPPED', 'ZERO_VOLUME', 'MANUAL_CLOSE']);
 
 const CopperGovernanceAlertSchema = z.object({
     code: z.enum([
@@ -70,9 +87,12 @@ const RosinRammlerHitlSchema = z
 
 const HitlPatchSchema = z.object({
     name: z.string().trim().min(1).max(160).optional(),
+    description: z.string().trim().max(2500).optional(),
     clase: z.enum(['mineral', 'esteril', 'baja_ley']).optional(),
     status: StockpileStatusSchema.optional(),
     location_ref: z.string().trim().max(240).optional(),
+    project_id: z.string().trim().max(128).nullable().optional(),
+    project_name: z.string().trim().max(240).nullable().optional(),
     geo_point: z
         .object({
             latitude: z.number().finite().min(-90).max(90),
@@ -81,6 +101,18 @@ const HitlPatchSchema = z.object({
             accuracy: z.number().finite().nonnegative().optional(),
         })
         .optional(),
+    static_map_url: z
+        .string()
+        .max(2048)
+        .refine((val) => !val.startsWith('data:'), 'Prohibido Base64 en static_map_url')
+        .optional(),
+    static_map_sha256: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/)
+        .optional(),
+    static_map_original_bytes: z.number().finite().nonnegative().optional(),
+    static_map_optimized_bytes: z.number().finite().nonnegative().optional(),
+    static_map_savings_pct: z.number().finite().min(0).max(100).optional(),
     initial_photo_url: z
         .string()
         .max(2048)
@@ -100,6 +132,14 @@ const HitlPatchSchema = z.object({
     last_weight_t: z.number().finite().nonnegative().optional(),
     last_measured_at: z.number().finite().nonnegative().optional(),
     last_geometry_type: z.string().trim().max(80).optional(),
+    last_delta_volumen_m3: z.number().finite().nullable().optional(),
+    last_delta_volumen_pct: z.number().finite().nullable().optional(),
+    closed_at: z.number().finite().nonnegative().nullable().optional(),
+    closed_by: z.string().trim().max(160).nullable().optional(),
+    closure_reason: StockpileClosureReasonSchema.nullable().optional(),
+    dispatch_reference: z.string().trim().max(240).nullable().optional(),
+    shipped_weight_t: z.number().finite().nonnegative().nullable().optional(),
+    pre_closure_volume_m3: z.number().finite().nonnegative().nullable().optional(),
     volumen: z.number().finite().nonnegative().optional(),
     volume_m3: z.number().finite().nonnegative().optional(),
     weight_t: z.number().finite().nonnegative().optional(),
@@ -419,6 +459,35 @@ router.post(
                 return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
             }
 
+            const effectiveCopperDomain = String(
+                sanitizedPatch.copper_domain ?? existingData.copper_domain ?? ''
+            ).toUpperCase();
+            const effectiveMoisture =
+                typeof sanitizedPatch.moisture_pct === 'number'
+                    ? sanitizedPatch.moisture_pct
+                    : typeof existingData.moisture_pct === 'number'
+                      ? existingData.moisture_pct
+                      : null;
+            const effectiveTml =
+                typeof sanitizedPatch.tml_pct === 'number'
+                    ? sanitizedPatch.tml_pct
+                    : typeof existingData.tml_pct === 'number'
+                      ? existingData.tml_pct
+                      : null;
+
+            if (
+                sanitizedPatch.status === 'CLOSED' &&
+                sanitizedPatch.closure_reason === 'SHIPPED' &&
+                effectiveCopperDomain === 'CONCENTRADO_CU' &&
+                effectiveMoisture !== null &&
+                effectiveTml !== null &&
+                effectiveMoisture >= effectiveTml
+            ) {
+                return res.status(422).json({
+                    error: 'IMSBC_TML_BLOCK: Humedad >= TML impide cerrar por embarque concentrado de cobre.',
+                });
+            }
+
             const now = Date.now();
             const updatePayload: Record<string, unknown> = {
                 ...sanitizedPatch,
@@ -437,11 +506,18 @@ router.post(
                 accountId: docTenantId,
             };
 
+            const auditAction =
+                existingData.status !== 'CLOSED' && sanitizedPatch.status === 'CLOSED'
+                    ? 'STOCKPILE_CYCLE_CLOSED'
+                    : existingData.status === 'CLOSED' && sanitizedPatch.status === 'ACTIVE'
+                      ? 'STOCKPILE_CYCLE_REOPENED'
+                      : 'GEOLAPP_HITL_UPDATE';
+
             await AuditLedger.record({
                 tenantId: docTenantId,
                 actorUid: authz.uid,
                 actorEmail: authz.emailLower || authz.uid,
-                action: 'GEOLAPP_HITL_UPDATE',
+                action: auditAction,
                 module: 'stockpile',
                 targetEntity: stockpileId,
                 details: {
@@ -449,6 +525,12 @@ router.post(
                     confirmationKeyword: parsedBody.data.confirmationKeyword,
                     patchedFields: Object.keys(sanitizedPatch),
                     diffSummary: parsedBody.data.diffSummary || [],
+                    ...(sanitizedPatch.closure_reason
+                        ? { closureReason: sanitizedPatch.closure_reason }
+                        : {}),
+                    ...(sanitizedPatch.dispatch_reference
+                        ? { dispatchReference: sanitizedPatch.dispatch_reference }
+                        : {}),
                 },
                 ipAddress: extractClientIp(req),
             });
@@ -821,530 +903,1020 @@ export async function postGeolappReconstruct3d(req: AuthRequest, res: Response) 
     }
 }
 
-// ─── FASE 4: DOMINIOS GEOCIENTÍFICOS Y TOPOGRÁFICOS GEOLAPP® ───
-
-const NonStockpileDomainModeSchema = z.enum([
-    'GEOMENSURA_GEO',
-    'EXPLORACION_SONDAJES',
-    'ESTRUCTURAL_HIDRO',
-]);
-
-const DomainRecordStatusSchema = z.enum(['ACTIVE', 'VERIFIED', 'ARCHIVED']);
-
-const DATA_URI_BASE64_REGEX = /^\s*data:/i;
-const EMBEDDED_BASE64_DATA_URI_REGEX = /data:[a-z0-9.+\/-]*;base64,/i;
-
-function containsDataBase64Url(value: unknown, depth = 0): boolean {
-    if (depth > 16 || value === null || value === undefined) return false;
-    if (typeof value === 'string') {
-        return (
-            DATA_URI_BASE64_REGEX.test(value) ||
-            EMBEDDED_BASE64_DATA_URI_REGEX.test(value)
-        );
-    }
-    if (Array.isArray(value)) {
-        for (const item of value) {
-            if (containsDataBase64Url(item, depth + 1)) return true;
-        }
-        return false;
-    }
-    if (typeof value === 'object') {
-        for (const val of Object.values(value as Record<string, unknown>)) {
-            if (containsDataBase64Url(val, depth + 1)) return true;
-        }
-    }
-    return false;
-}
-
-function stripUndefinedDeep<T>(value: T): T {
-    if (Array.isArray(value)) {
-        return value.map((item) => stripUndefinedDeep(item)) as unknown as T;
-    }
-    if (value && typeof value === 'object') {
-        const cleaned: Record<string, unknown> = {};
-        for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-            if (v !== undefined) {
-                cleaned[k] = stripUndefinedDeep(v);
-            }
-        }
-        return cleaned as T;
-    }
-    return value;
-}
-
-const GeolappDomainUtmFixSchema = z.object({
-    zone: z.number().int().min(1).max(60),
-    band: z.string().trim().min(1).max(8),
-    hemisphere: z.enum(['N', 'S']),
-    easting: z.number().finite(),
-    northing: z.number().finite(),
-    altitudeM: z.number().finite().nullable(),
-    accuracyM: z.number().finite().nonnegative().nullable().optional(),
-    fixQuality: z.string().trim().max(64).nullable().optional(),
-});
-
-const GeomensuraPolygonVertexSchema = z.object({
-    code: z.string().trim().min(1).max(64),
-    easting: z.number().finite(),
-    northing: z.number().finite(),
-    elevationM: z.number().finite().optional(),
-});
-
-const GeomensuraSurveyPayloadSchema = z.object({
-    stationCode: z.string().trim().min(1).max(64),
-    stationEasting: z.number().finite(),
-    stationNorthing: z.number().finite(),
-    stationElevationM: z.number().finite(),
-    utmZone: z.number().int().min(1).max(60),
-    hemisphere: z.enum(['N', 'S']),
-    targetCode: z.string().trim().max(64).optional(),
-    targetEasting: z.number().finite().optional(),
-    targetNorthing: z.number().finite().optional(),
-    targetElevationM: z.number().finite().optional(),
-    deltaE: z.number().finite().optional(),
-    deltaN: z.number().finite().optional(),
-    deltaZ: z.number().finite().optional(),
-    horizontalDistanceM: z.number().finite().nonnegative().optional(),
-    slopeDistanceM: z.number().finite().nonnegative().optional(),
-    azimuthDeg: z.number().finite().min(0).max(360).optional(),
-    slopePct: z.number().finite().optional(),
-    polygonVertices: z.array(GeomensuraPolygonVertexSchema).max(2000).optional(),
-    polygonAreaM2: z.number().finite().nonnegative().nullable().optional(),
-    polygonPerimeterM: z.number().finite().nonnegative().nullable().optional(),
-    rtkFixQuality: z.string().trim().max(64).nullable().optional(),
-    hdop: z.number().finite().nonnegative().nullable().optional(),
-});
-
-const DrillholeRqdQualitySchema = z.enum([
-    'MUY_MALA',
-    'MALA',
-    'REGULAR',
-    'BUENA',
-    'EXCELENTE',
-]);
-
-const ExploracionIntervalItemSchema = z
-    .object({
-        id: z.string().trim().min(1).max(128),
-        fromM: z.number().finite().nonnegative(),
-        toM: z.number().finite().positive(),
-        recoveredM: z.number().finite().nonnegative(),
-        sumPiecesGe10cmM: z.number().finite().nonnegative(),
-        recoveryPct: z.number().finite().min(0).max(100),
-        rqdPct: z.number().finite().min(0).max(100),
-        rqdQuality: DrillholeRqdQualitySchema,
-        lithology: z.string().trim().max(160),
-        alteration: z.string().trim().max(160),
-        copperDomain: CopperDomainSchema,
-        cuTotalPct: z.number().finite().min(0).max(100).nullable(),
-        cuSolublePct: z.number().finite().min(0).max(100).nullable(),
-        coreBoxPhotoUrl: z.string().trim().max(2048).nullable().optional(),
-        coreBoxSha256: z.string().trim().max(128).nullable().optional(),
-        coreBoxOriginalBytes: z.number().finite().nonnegative().nullable().optional(),
-        coreBoxOptimizedBytes: z.number().finite().nonnegative().nullable().optional(),
-        coreBoxSavingsPct: z.number().finite().nullable().optional(),
-    })
-    .refine((val) => val.toM > val.fromM, {
-        message: 'En cada intervalo de sondaje, toM debe ser mayor que fromM.',
-    });
-
-const ExploracionSondajePayloadSchema = z.object({
-    holeId: z.string().trim().min(1).max(64),
-    method: z.enum(['DDH', 'RC']),
-    collarEasting: z.number().finite(),
-    collarNorthing: z.number().finite(),
-    collarElevationM: z.number().finite(),
-    utmZone: z.number().int().min(1).max(60),
-    hemisphere: z.enum(['N', 'S']),
-    azimuthDeg: z.number().finite().min(0).max(360),
-    dipDeg: z.number().finite().min(-90).max(90),
-    totalDepthM: z.number().finite().nonnegative(),
-    intervals: z.array(ExploracionIntervalItemSchema).max(2000),
-    weightedCuTotalPct: z.number().finite().min(0).max(100).nullable(),
-    weightedCuSolublePct: z.number().finite().min(0).max(100).nullable(),
-    meanRqdPct: z.number().finite().min(0).max(100).nullable(),
-    meanRecoveryPct: z.number().finite().min(0).max(100).nullable().optional(),
-    qaqcSampleType: z.enum(['NONE', 'STANDARD', 'BLANK', 'DUPLICATE']).optional(),
-    qaqcOriginalPct: z.number().finite().min(0).max(100).nullable().optional(),
-    qaqcCheckPct: z.number().finite().min(0).max(100).nullable().optional(),
-    qaqcRpdPct: z.number().finite().nonnegative().nullable().optional(),
-    qaqcPassed: z.boolean().nullable().optional(),
-});
-
-const EstructuralPlaneItemSchema = z.object({
-    id: z.string().trim().min(1).max(128),
-    structureType: z.string().trim().min(1).max(64),
-    dipDeg: z.number().finite().min(0).max(90),
-    dipDirectionDeg: z.number().finite().min(0).max(360),
-    strikeDeg: z.number().finite().min(0).max(360),
-    jrcBarton: z.number().finite().min(0).max(20).nullable().optional(),
-    apertureMm: z.number().finite().nonnegative().nullable().optional(),
-    infill: z.string().trim().max(160).optional(),
-});
-
-const HydrogeologyReadingSchema = z.object({
-    piezometerId: z.string().trim().min(1).max(64),
-    staticWaterLevelM: z.number().finite().nullable(),
-    wellDepthM: z.number().finite().nonnegative().nullable(),
-    ph: z.number().finite().min(0).max(14).nullable(),
-    conductivityUsCm: z.number().finite().nonnegative().nullable(),
-    temperatureC: z.number().finite().nullable(),
-});
-
-const EstructuralHidroPayloadSchema = z.object({
-    stationCode: z.string().trim().min(1).max(64),
-    easting: z.number().finite().nullable().optional(),
-    northing: z.number().finite().nullable().optional(),
-    elevationM: z.number().finite().nullable().optional(),
-    utmZone: z.number().int().min(1).max(60).nullable().optional(),
-    hemisphere: z.enum(['N', 'S']).nullable().optional(),
-    planes: z.array(EstructuralPlaneItemSchema).max(2000),
-    hydrogeology: HydrogeologyReadingSchema.nullable().optional(),
-});
-
-const DomainRecordCommonFields = {
-    id: z.string().trim().regex(STOCKPILE_ID_REGEX).optional(),
-    tenantId: z.string().trim().regex(TENANT_ID_REGEX),
-    accountId: z.string().trim().regex(TENANT_ID_REGEX).optional(),
-    code: z.string().trim().min(1).max(64),
-    title: z.string().trim().min(1).max(180),
-    status: DomainRecordStatusSchema.optional().default('ACTIVE'),
-    utmFix: GeolappDomainUtmFixSchema.optional(),
-    notes: z.string().trim().max(2500).optional(),
-    createdAt: z.number().finite().nonnegative().optional(),
-    updatedAt: z.number().finite().nonnegative().optional(),
-    createdBy: z.string().trim().min(1).max(160).optional(),
-    updatedBy: z.string().trim().min(1).max(160).optional(),
-    synced: z.boolean().optional(),
-};
-
-const GeolappDomainRecordSchema = z
-    .discriminatedUnion('domainMode', [
-        z.object({
-            ...DomainRecordCommonFields,
-            domainMode: z.literal('GEOMENSURA_GEO'),
-            payload: GeomensuraSurveyPayloadSchema,
-        }),
-        z.object({
-            ...DomainRecordCommonFields,
-            domainMode: z.literal('EXPLORACION_SONDAJES'),
-            payload: ExploracionSondajePayloadSchema,
-        }),
-        z.object({
-            ...DomainRecordCommonFields,
-            domainMode: z.literal('ESTRUCTURAL_HIDRO'),
-            payload: EstructuralHidroPayloadSchema,
-        }),
-    ])
-    .refine((val) => !containsDataBase64Url(val), {
-        message: 'BASE64_PROHIBITED: Prohibido almacenar URIs data: Base64 en geolapp_records.',
-    });
-
-const DomainRecordHitlPatchSchema = z.object({
-    code: z.string().trim().min(1).max(64).optional(),
-    title: z.string().trim().min(1).max(180).optional(),
-    status: DomainRecordStatusSchema.optional(),
-    utmFix: GeolappDomainUtmFixSchema.optional(),
-    notes: z.string().trim().max(2500).optional(),
-    payload: z.record(z.unknown()).optional(),
-});
-
-const DomainRecordHitlBodySchema = z.object({
-    confirmationKeyword: z.literal('ACTUALIZAR'),
-    patch: DomainRecordHitlPatchSchema,
-    diffSummary: z.array(HitlDiffItemSchema).max(50).optional(),
-});
-
-function validatePayloadForDomainMode(
-    domainMode: unknown,
-    payload: unknown
-): z.SafeParseReturnType<unknown, unknown> {
-    if (domainMode === 'GEOMENSURA_GEO') {
-        return GeomensuraSurveyPayloadSchema.safeParse(payload);
-    }
-    if (domainMode === 'EXPLORACION_SONDAJES') {
-        return ExploracionSondajePayloadSchema.safeParse(payload);
-    }
-    if (domainMode === 'ESTRUCTURAL_HIDRO') {
-        return EstructuralHidroPayloadSchema.safeParse(payload);
-    }
-    return {
-        success: false,
-        error: new z.ZodError([
-            {
-                code: z.ZodIssueCode.custom,
-                path: ['domainMode'],
-                message: 'domainMode no soportado para registro geocientifico.',
-            },
-        ]),
-    };
-}
-
-/**
- * GET /api/geolapp/domain-records
- * Lista registros geocientíficos multi-tenant (Geomensura, Sondajes, Estructural/Hidro).
- */
-router.get('/domain-records', requireAuth, async (req: AuthRequest, res: Response) => {
-    try {
-        const tenantId = String(req.query.tenantId || '').trim();
-        const authz = await authorizeStockpileTenantMutation(req, tenantId);
-        if (!authz.authorized) {
-            return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
-        }
-
-        const rawDomainMode = req.query.domainMode
-            ? String(req.query.domainMode).trim()
-            : undefined;
-        if (rawDomainMode) {
-            const parsedMode = NonStockpileDomainModeSchema.safeParse(rawDomainMode);
-            if (!parsedMode.success) {
-                return res.status(400).json({
-                    error: 'Parametro domainMode invalido.',
-                    details: parsedMode.error.flatten(),
-                });
-            }
-        }
-
-        const snap = await db
-            .collection('geolapp_records')
-            .where('tenantId', '==', tenantId)
-            .get();
-
-        const items = snap.docs
-            .map((doc) => ({
-                ...(doc.data() || {}),
-                id: doc.id,
-            }))
-            .filter((item: Record<string, unknown>) => {
-                if (String(item.tenantId || item.accountId || '').trim() !== tenantId) {
-                    return false;
-                }
-                if (rawDomainMode && item.domainMode !== rawDomainMode) {
-                    return false;
-                }
-                return true;
-            })
-            .sort(
-                (a: Record<string, unknown>, b: Record<string, unknown>) =>
-                    Number(b.updatedAt || 0) - Number(a.updatedAt || 0)
-            );
-
-        return res.status(200).json({
-            success: true,
-            items,
-        });
-    } catch (error) {
-        console.error('[GEOLAPP-CONTROLLER] Error listando domain-records:', error);
-        return res.status(500).json({ error: 'Error interno consultando domain-records.' });
-    }
+const StaticMapRequestBodySchema = z.object({
+    latitude: z.number().finite().min(-85).max(85).optional(),
+    longitude: z.number().finite().min(-180).max(180).optional(),
+    zoom: z.number().int().min(12).max(20).optional(),
 });
 
 /**
- * POST /api/geolapp/domain-records
- * Crea o actualiza registro de dominio geocientífico con validación Zod estricta,
- * rechazo explícito de Base64 y trazabilidad en AuditLedger.
+ * POST /api/geolapp/stockpiles/:id/static-map
+ * Descarga server-side una imagen satelital estática (sin interacción cliente) leyendo
+ * el secreto en Cloud Secret Manager y la consolida una sola vez en CAS (SHA-256).
  */
 router.post(
-    '/domain-records',
+    '/stockpiles/:id/static-map',
     requireAuth,
     mutationRateLimiter,
     async (req: AuthRequest, res: Response) => {
         try {
-            if (containsDataBase64Url(req.body)) {
-                return res.status(400).json({
-                    error: 'BASE64_PROHIBITED: Prohibido enviar o almacenar data: Base64 en geolapp_records.',
-                });
+            const stockpileId = String(req.params.id || '').trim();
+            if (!stockpileId || !STOCKPILE_ID_REGEX.test(stockpileId)) {
+                return res.status(400).json({ error: 'Identificador de acopio invalido.' });
             }
 
-            const parsed = GeolappDomainRecordSchema.safeParse(req.body);
-            if (!parsed.success) {
-                return res.status(400).json({
-                    error: 'Payload de registro geocientifico invalido.',
-                    details: parsed.error.flatten(),
-                });
-            }
-
-            const data = parsed.data;
-            const authz = await authorizeStockpileTenantMutation(req, data.tenantId);
-            if (!authz.authorized) {
-                return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
-            }
-
-            const now = Date.now();
-            const recordId = data.id || `geo-${now}-${randomUUID().slice(0, 8)}`;
-            const record = stripUndefinedDeep({
-                ...data,
-                id: recordId,
-                tenantId: data.tenantId,
-                accountId: data.tenantId,
-                status: data.status || 'ACTIVE',
-                createdAt: data.createdAt || now,
-                updatedAt: now,
-                createdBy: data.createdBy || authz.uid,
-                synced: true,
-            });
-
-            await db.collection('geolapp_records').doc(recordId).set(record);
-
-            await AuditLedger.record({
-                tenantId: data.tenantId,
-                actorUid: authz.uid,
-                actorEmail: authz.emailLower || authz.uid,
-                action: 'GEOLAPP_DOMAIN_RECORD_CREATED',
-                module: 'stockpile',
-                targetEntity: recordId,
-                details: {
-                    domainMode: data.domainMode,
-                    code: data.code,
-                    title: data.title,
-                },
-                ipAddress: extractClientIp(req),
-            });
-
-            return res.status(201).json({
-                success: true,
-                record,
-            });
-        } catch (error) {
-            console.error('[GEOLAPP-CONTROLLER] Error creando domain-record:', error);
-            return res.status(500).json({ error: 'Error interno guardando domain-record.' });
-        }
-    }
-);
-
-/**
- * PATCH /api/geolapp/domain-records/:id/hitl-update
- * Mutación oficial HITL sobre registro geocientífico con confirmación "ACTUALIZAR",
- * inmutabilidad de id/tenantId/accountId/domainMode, rechazo de Base64 y AuditLedger.
- */
-router.patch(
-    '/domain-records/:id/hitl-update',
-    requireAuth,
-    mutationRateLimiter,
-    async (req: AuthRequest, res: Response) => {
-        try {
-            const recordId = String(req.params.id || '').trim();
-            if (!recordId || !STOCKPILE_ID_REGEX.test(recordId)) {
-                return res.status(400).json({ error: 'Identificador de registro geocientifico invalido.' });
-            }
-
-            if (containsDataBase64Url(req.body)) {
-                return res.status(400).json({
-                    error: 'BASE64_PROHIBITED: Prohibido enviar o almacenar data: Base64 en actualizacion HITL.',
-                });
-            }
-
-            const parsedBody = DomainRecordHitlBodySchema.safeParse(req.body);
+            const parsedBody = StaticMapRequestBodySchema.safeParse(req.body || {});
             if (!parsedBody.success) {
                 return res.status(400).json({
-                    error: 'Payload HITL invalido: requiere confirmationKeyword="ACTUALIZAR" y patch valido.',
+                    error: 'Parametros geograficos invalidos para mapa satelital estatico.',
                     details: parsedBody.error.flatten(),
                 });
             }
 
-            const docRef = db.collection('geolapp_records').doc(recordId);
+            const docRef = db.collection('stockpiles').doc(stockpileId);
             const docSnap = await docRef.get();
             if (!docSnap.exists) {
-                return res.status(404).json({ error: 'Registro geocientifico no encontrado.' });
+                return res.status(404).json({ error: 'Acopio no encontrado.' });
             }
 
             const existingData = (docSnap.data() || {}) as Record<string, any>;
+            const docTenantId = String(
+                existingData.tenantId || existingData.accountId || ''
+            ).trim();
+            const authz = await authorizeStockpileTenantMutation(req, docTenantId);
+            if (!authz.authorized) {
+                return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
+            }
+
+            const latitude =
+                typeof parsedBody.data.latitude === 'number'
+                    ? parsedBody.data.latitude
+                    : Number(existingData.geo_point?.latitude ?? existingData.location?.lat);
+            const longitude =
+                typeof parsedBody.data.longitude === 'number'
+                    ? parsedBody.data.longitude
+                    : Number(existingData.geo_point?.longitude ?? existingData.location?.lng);
+
+            if (!isValidStaticMapCoordinatePair(latitude, longitude)) {
+                return res.status(400).json({
+                    error: 'INVALID_COORDINATES: Coordenadas GNSS validas requeridas (distintas de 0,0).',
+                });
+            }
+
+            if (
+                typeof existingData.static_map_url === 'string' &&
+                existingData.static_map_url.trim().length > 0 &&
+                !existingData.static_map_url.startsWith('data:')
+            ) {
+                return res.status(200).json({
+                    ok: true,
+                    available: true,
+                    staticMapUrl: existingData.static_map_url,
+                    sha256: existingData.static_map_sha256 || undefined,
+                    originalBytes: existingData.static_map_original_bytes ?? undefined,
+                    optimizedBytes: existingData.static_map_optimized_bytes ?? undefined,
+                    savingsPct: existingData.static_map_savings_pct ?? undefined,
+                });
+            }
+
+            const result = await generateAndStoreStaticSatelliteMap({
+                stockpileId,
+                tenantId: docTenantId,
+                actorUid: authz.uid,
+                latitude,
+                longitude,
+                zoom: parsedBody.data.zoom,
+            });
+
+            if (result.available && result.staticMapUrl) {
+                await docRef.set(
+                    {
+                        static_map_url: result.staticMapUrl,
+                        ...(result.sha256 ? { static_map_sha256: result.sha256 } : {}),
+                        ...(result.originalBytes !== undefined
+                            ? { static_map_original_bytes: result.originalBytes }
+                            : {}),
+                        ...(result.optimizedBytes !== undefined
+                            ? { static_map_optimized_bytes: result.optimizedBytes }
+                            : {}),
+                        ...(result.savingsPct !== undefined
+                            ? { static_map_savings_pct: result.savingsPct }
+                            : {}),
+                        updatedAt: Date.now(),
+                    },
+                    { merge: true }
+                );
+            }
+
+            return res.status(200).json(result);
+        } catch (error) {
+            console.error('[GEOLAPP-CONTROLLER] Error generando static-map:', error);
+            return res.status(500).json({ error: 'Error interno generando mapa satelital estatico.' });
+        }
+    }
+);
+
+const AiEnrichBodySchema = z
+    .object({
+        imageBase64: z.string().min(8).max(4_000_000).optional(),
+        imageMimeType: z.enum(['image/webp', 'image/jpeg', 'image/png']).optional(),
+        labDocumentBase64: z.string().min(8).max(6_000_000).optional(),
+        labDocumentMimeType: z
+            .enum(['application/pdf', 'image/webp', 'image/jpeg', 'image/png'])
+            .optional(),
+        voiceNoteText: z.string().trim().max(2000).optional(),
+        locale: z.enum(['es', 'en', 'pt']).optional(),
+    })
+    .superRefine((val, ctx) => {
+        if (!val.imageBase64 && !val.labDocumentBase64 && !val.voiceNoteText) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'Incluya fotografía, documento de laboratorio o nota de terreno para enriquecer con IA.',
+            });
+        }
+    });
+
+const AiEnrichExtractedSchema = z.object({
+    description: z.string().trim().max(600).nullable().optional(),
+    location_ref: z.string().trim().max(240).nullable().optional(),
+    density_factor: z.number().finite().positive().max(15).nullable().optional(),
+    moisture_pct: z.number().finite().min(0).max(99.9).nullable().optional(),
+    cu_total_pct: z.number().finite().min(0).max(100).nullable().optional(),
+    cu_soluble_pct: z.number().finite().min(0).max(100).nullable().optional(),
+    tml_pct: z.number().finite().min(0).max(99.9).nullable().optional(),
+    residence_days: z.number().finite().min(0).max(3650).nullable().optional(),
+    peso_romana: z.number().finite().min(0).max(10_000_000).nullable().optional(),
+    reasoning: z.string().trim().max(600).nullable().optional(),
+});
+
+function parseJsonObjectFromAiText(rawText: string): Record<string, unknown> | null {
+    const cleaned = String(rawText || '')
+        .replace(/```json/gi, '')
+        .replace(/```/g, '')
+        .trim();
+    if (!cleaned) return null;
+    try {
+        const parsed = JSON.parse(cleaned);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? (parsed as Record<string, unknown>)
+            : null;
+    } catch {
+        const start = cleaned.indexOf('{');
+        const end = cleaned.lastIndexOf('}');
+        if (start >= 0 && end > start) {
+            try {
+                const sliced = JSON.parse(cleaned.slice(start, end + 1));
+                return sliced && typeof sliced === 'object' && !Array.isArray(sliced)
+                    ? (sliced as Record<string, unknown>)
+                    : null;
+            } catch {
+                return null;
+            }
+        }
+        return null;
+    }
+}
+
+/**
+ * POST /api/geolapp/stockpiles/:id/ai-enrich
+ * Enriquecimiento progresivo post-registro (Fase 2 GEOLAPP®):
+ * Propone metadatos geo-metalúrgicos desde fotografía, nota de voz o certificado de laboratorio,
+ * combinando ResilientAIClient.generate + ResilientAIClient.decide (HITL sin escritura automática).
+ */
+router.post(
+    '/stockpiles/:id/ai-enrich',
+    requireAuth,
+    aiRateLimiter,
+    async (req: AuthRequest, res: Response) => {
+        const startTime = Date.now();
+        try {
+            const stockpileId = String(req.params.id || '').trim();
+            if (!stockpileId || !STOCKPILE_ID_REGEX.test(stockpileId)) {
+                return res.status(400).json({ error: 'Identificador de acopio invalido.' });
+            }
+
+            const parsedBody = AiEnrichBodySchema.safeParse(req.body);
+            if (!parsedBody.success) {
+                return res.status(400).json({
+                    error: 'Payload de enriquecimiento IA invalido.',
+                    details: parsedBody.error.flatten(),
+                });
+            }
+
+            const docRef = db.collection('stockpiles').doc(stockpileId);
+            const docSnap = await docRef.get();
+            if (!docSnap.exists) {
+                return res.status(404).json({ error: 'Acopio no encontrado.' });
+            }
+
+            const existingData = docSnap.data() || {};
             const docTenantId = String(existingData.tenantId || existingData.accountId || '').trim();
             const authz = await authorizeStockpileTenantMutation(req, docTenantId);
             if (!authz.authorized) {
                 return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
             }
 
-            const rawPatchObj = (req.body?.patch || {}) as Record<string, unknown>;
-            if (
-                (rawPatchObj.id !== undefined && String(rawPatchObj.id).trim() !== recordId) ||
-                (rawPatchObj.tenantId !== undefined &&
-                    String(rawPatchObj.tenantId).trim() !== docTenantId) ||
-                (rawPatchObj.accountId !== undefined &&
-                    String(rawPatchObj.accountId).trim() !== docTenantId) ||
-                (rawPatchObj.domainMode !== undefined &&
-                    rawPatchObj.domainMode !== existingData.domainMode)
-            ) {
-                return res.status(400).json({
-                    error: 'IMMUTABLE_FIELD_ERROR: No se permite modificar id, tenantId, accountId ni domainMode.',
+            const {
+                imageBase64,
+                imageMimeType,
+                labDocumentBase64,
+                labDocumentMimeType,
+                voiceNoteText,
+                locale = 'es',
+            } = parsedBody.data;
+
+            const mediaParts: Array<{ mimeType: string; dataBase64: string }> = [];
+            if (imageBase64) {
+                mediaParts.push({
+                    mimeType: imageMimeType || 'image/webp',
+                    dataBase64: imageBase64,
+                });
+            }
+            if (labDocumentBase64) {
+                mediaParts.push({
+                    mimeType: labDocumentMimeType || 'application/pdf',
+                    dataBase64: labDocumentBase64,
                 });
             }
 
-            const sanitizedPatch: Record<string, unknown> = {};
-            const parsedPatch = parsedBody.data.patch;
-            if (parsedPatch.code !== undefined) sanitizedPatch.code = parsedPatch.code;
-            if (parsedPatch.title !== undefined) sanitizedPatch.title = parsedPatch.title;
-            if (parsedPatch.status !== undefined) sanitizedPatch.status = parsedPatch.status;
-            if (parsedPatch.utmFix !== undefined) sanitizedPatch.utmFix = parsedPatch.utmFix;
-            if (parsedPatch.notes !== undefined) sanitizedPatch.notes = parsedPatch.notes;
+            const contextLines = [
+                `Stockpile ID/Nombre actual: ${String(existingData.name || stockpileId)}`,
+                typeof existingData.last_volume_m3 === 'number'
+                    ? `Volumen cubicado: ${existingData.last_volume_m3} m3`
+                    : '',
+                voiceNoteText ? `Nota de operador en terreno: ${voiceNoteText}` : '',
+            ]
+                .filter(Boolean)
+                .join('\n');
 
-            if (parsedPatch.payload !== undefined) {
-                const mergedPayloadCandidate = stripUndefinedDeep({
-                    ...(existingData.payload && typeof existingData.payload === 'object'
-                        ? existingData.payload
-                        : {}),
-                    ...parsedPatch.payload,
+            const extractionPrompt = [
+                `Analiza estrictamente la evidencia adjunta (imagen de acopio, documento de laboratorio y/o nota de terreno) para el acopio minero indicado.`,
+                `Idioma de salida para description/location_ref/reasoning: ${locale}.`,
+                `REGLA CERO ALUCINACIONES: Devuelve null en cualquier campo numérico o de texto que NO esté explícita y verificablemente respaldado por la evidencia adjunta. Jamás inventes leyes CuT, CuS, humedad, TML ni pesos.`,
+                contextLines,
+                `Responde ÚNICAMENTE un objeto JSON válido con estas claves exactas: {"description": string|null, "location_ref": string|null, "density_factor": number|null, "moisture_pct": number|null, "cu_total_pct": number|null, "cu_soluble_pct": number|null, "tml_pct": number|null, "residence_days": number|null, "peso_romana": number|null, "reasoning": string|null}.`,
+            ].join('\n');
+
+            const [genRes, decisionRes] = await Promise.all([
+                ResilientAIClient.generate({
+                    prompt: extractionPrompt,
+                    module: 'stockpile',
+                    tenantId: docTenantId,
+                    thinkingLevel: 'medium',
+                    requireHITL: true,
+                    responseMimeType: 'application/json',
+                    media: mediaParts.length > 0 ? mediaParts : undefined,
+                }),
+                ResilientAIClient.decide({
+                    module: 'stockpile',
+                    tenantId: docTenantId,
+                    dataClassification: 'TENANT_PRIVATE',
+                    inputText: contextLines,
+                    media: mediaParts.length > 0 ? mediaParts : undefined,
+                    questions: {
+                        copper_domain: {
+                            type: 'choice',
+                            instructions:
+                                'Clasifica el dominio mineral de cobre más probable según coloración visual, textura o certificado de laboratorio.',
+                            criteria: {
+                                OXIDO_CU: 'Tonalidades verdosas/azuladas o mineral oxidado de cobre',
+                                MIXTO_CU: 'Transición mixta óxido-sulfuro de cobre',
+                                SULFURO_SECUNDARIO_CU: 'Calcocita/covelina o sulfuro secundario oscuro/azulado',
+                                SULFURO_PRIMARIO_CU: 'Calcopirita/pirita o mena sulfurada primaria grisácea metálica',
+                                CONCENTRADO_CU: 'Concentrado fino de flotación de alto brillo o humedad controlada',
+                                BAJA_LEY_CU: 'Mineral marginal de baja ley enviado a botadero lixiviable',
+                                ESTERIL_RIPIOS: 'Roca estéril o ripio lixiviado sin mineralización de cobre relevante',
+                            },
+                        },
+                        tipo_granulometria: {
+                            type: 'choice',
+                            instructions:
+                                'Clasifica la granulometría visual dominante del acopio.',
+                            criteria: {
+                                COLPAS: 'Bloques y fragmentos gruesos predominantes (> 150 mm)',
+                                GRANSA: 'Material chancado intermedio uniforme',
+                                MIXTO: 'Mezcla heterogénea de colpas, gransa y finos',
+                                FINOS: 'Material fino arenoso o pulpa/concentrado seco (< 12 mm)',
+                            },
+                        },
+                    },
+                }).catch(() => null),
+            ]);
+
+            const parsedRaw = parseJsonObjectFromAiText(genRes.text);
+            const extracted = AiEnrichExtractedSchema.safeParse(parsedRaw || {});
+
+            type AiProposalItem = {
+                field: string;
+                current: string;
+                suggested: string;
+                rawValue: string | number;
+                confidence: number;
+                source: 'GEMINI_VISION' | 'GEMINI_DECISIONS' | 'GEMINI_LAB_DOC';
+            };
+            const proposals: AiProposalItem[] = [];
+
+            const pushProposal = (
+                field: string,
+                rawValue: string | number | null | undefined,
+                formattedSuggested: string,
+                confidence: number,
+                source: AiProposalItem['source']
+            ) => {
+                if (rawValue === null || rawValue === undefined) return;
+                if (typeof rawValue === 'string' && rawValue.trim().length === 0) return;
+                const currentRaw = existingData[field];
+                const currentText =
+                    currentRaw !== undefined && currentRaw !== null && String(currentRaw).trim() !== ''
+                        ? String(currentRaw)
+                        : '[Pendiente de registro]';
+                if (String(currentRaw ?? '') === String(rawValue)) return;
+                proposals.push({
+                    field,
+                    current: currentText,
+                    suggested: formattedSuggested,
+                    rawValue,
+                    confidence: Math.round(confidence * 100) / 100,
+                    source,
                 });
-                const payloadCheck = validatePayloadForDomainMode(
-                    existingData.domainMode,
-                    mergedPayloadCandidate
-                );
-                if (!payloadCheck.success) {
-                    return res.status(400).json({
-                        error: 'Payload geocientifico invalido para el dominio del registro.',
-                        details: payloadCheck.error.flatten(),
-                    });
+            };
+
+            const docSource: AiProposalItem['source'] = labDocumentBase64
+                ? 'GEMINI_LAB_DOC'
+                : 'GEMINI_VISION';
+
+            if (decisionRes?.answers?.copper_domain?.type === 'choice') {
+                const cd = decisionRes.answers.copper_domain;
+                if (cd.choice && cd.confidence >= 0.45) {
+                    pushProposal('copper_domain', cd.choice, cd.choice, cd.confidence, 'GEMINI_DECISIONS');
                 }
-                sanitizedPatch.payload = payloadCheck.data;
             }
 
-            if (Object.keys(sanitizedPatch).length === 0) {
-                return res.status(400).json({
-                    error: 'El bloque patch debe incluir al menos un campo tecnico valido.',
-                });
+            if (decisionRes?.answers?.tipo_granulometria?.type === 'choice') {
+                const tg = decisionRes.answers.tipo_granulometria;
+                if (tg.choice && tg.confidence >= 0.45) {
+                    pushProposal(
+                        'tipo_granulometria',
+                        tg.choice,
+                        tg.choice,
+                        tg.confidence,
+                        'GEMINI_DECISIONS'
+                    );
+                }
             }
 
-            const now = Date.now();
-            const updatePayload = stripUndefinedDeep({
-                ...sanitizedPatch,
-                updatedAt: now,
-                updatedBy: authz.uid,
-            });
-
-            await docRef.set(updatePayload, { merge: true });
-
-            const updatedRecord = stripUndefinedDeep({
-                ...existingData,
-                ...updatePayload,
-                id: recordId,
-                tenantId: docTenantId,
-                accountId: docTenantId,
-                domainMode: existingData.domainMode,
-                synced: true,
-            });
+            if (extracted.success) {
+                const e = extracted.data;
+                if (e.location_ref) {
+                    pushProposal('location_ref', e.location_ref, e.location_ref, 0.8, docSource);
+                }
+                if (e.description) {
+                    pushProposal('description', e.description, e.description, 0.8, docSource);
+                }
+                if (typeof e.density_factor === 'number') {
+                    pushProposal(
+                        'density_factor',
+                        e.density_factor,
+                        `${e.density_factor} t/m3`,
+                        0.72,
+                        docSource
+                    );
+                }
+                if (typeof e.moisture_pct === 'number') {
+                    pushProposal(
+                        'moisture_pct',
+                        e.moisture_pct,
+                        `${e.moisture_pct} %`,
+                        0.9,
+                        docSource
+                    );
+                }
+                if (typeof e.cu_total_pct === 'number') {
+                    pushProposal(
+                        'cu_total_pct',
+                        e.cu_total_pct,
+                        `${e.cu_total_pct} %`,
+                        0.9,
+                        docSource
+                    );
+                }
+                if (typeof e.cu_soluble_pct === 'number') {
+                    pushProposal(
+                        'cu_soluble_pct',
+                        e.cu_soluble_pct,
+                        `${e.cu_soluble_pct} %`,
+                        0.9,
+                        docSource
+                    );
+                }
+                if (typeof e.tml_pct === 'number') {
+                    pushProposal('tml_pct', e.tml_pct, `${e.tml_pct} %`, 0.9, docSource);
+                }
+                if (typeof e.residence_days === 'number') {
+                    pushProposal(
+                        'residence_days',
+                        e.residence_days,
+                        `${e.residence_days} d`,
+                        0.85,
+                        docSource
+                    );
+                }
+                if (typeof e.peso_romana === 'number') {
+                    pushProposal('peso_romana', e.peso_romana, `${e.peso_romana} t`, 0.9, docSource);
+                }
+            }
 
             await AuditLedger.record({
                 tenantId: docTenantId,
                 actorUid: authz.uid,
                 actorEmail: authz.emailLower || authz.uid,
-                action: 'GEOLAPP_DOMAIN_RECORD_HITL_UPDATED',
+                action: 'AI_INFERENCE_HITL_REQUEST',
                 module: 'stockpile',
-                targetEntity: recordId,
+                targetEntity: stockpileId,
                 details: {
-                    domainMode: existingData.domainMode,
-                    patchedFields: Object.keys(sanitizedPatch),
-                    diffSummary: parsedBody.data.diffSummary || [],
+                    proposalCount: proposals.length,
+                    proposedFields: proposals.map((p) => p.field),
+                    hasImage: Boolean(imageBase64),
+                    hasLabDoc: Boolean(labDocumentBase64),
+                    hasVoiceNote: Boolean(voiceNoteText),
+                    modelUsed: genRes.model,
+                    decisionsEngine: decisionRes?.engineUsed || 'NONE',
                 },
                 ipAddress: extractClientIp(req),
             });
 
             return res.status(200).json({
-                success: true,
-                record: updatedRecord,
+                verified: true,
+                proposals,
+                reasoning:
+                    (extracted.success ? extracted.data.reasoning : null) ||
+                    'Propuestas generadas bajo supervisión HITL sin modificar ficha oficial.',
+                modelUsed: genRes.model,
+                engineUsed: decisionRes?.engineUsed || 'SWARM_GENERATE',
+                latencyMs: Date.now() - startTime,
             });
-        } catch (error) {
-            console.error('[GEOLAPP-CONTROLLER] Error en hitl-update domain-record:', error);
-            return res.status(500).json({ error: 'Error interno actualizando domain-record HITL.' });
+        } catch (error: any) {
+            if (error instanceof AISwarmUnavailableError) {
+                return res.status(503).json({ error: error.message });
+            }
+            console.error('[GEOLAPP-CONTROLLER] Error en ai-enrich:', error);
+            return res.status(500).json({ error: 'Error interno ejecutando enriquecimiento IA.' });
+        }
+    }
+);
+
+const DigitalScaleAnchorEnum = z.enum([
+    'CONO_070',
+    'MIRA_100',
+    'CASCO_030',
+    'BALDE_280',
+    'MANUAL_BASE_M',
+    'NONE',
+]);
+
+const DEFAULT_ANCHOR_METERS: Record<string, number> = {
+    CONO_070: 0.7,
+    MIRA_100: 1.0,
+    CASCO_030: 0.3,
+    BALDE_280: 2.8,
+};
+
+const DigitalAnalyzeBodySchema = z
+    .object({
+        tenantId: z.string().trim().max(128).optional(),
+        measurementId: z.string().trim().max(128).optional(),
+        imageBase64: z.string().min(8).max(4_000_000).optional(),
+        imageMimeType: z.enum(['image/webp', 'image/jpeg', 'image/png']).optional(),
+        extraImagesBase64: z.array(z.string().min(8).max(4_000_000)).max(3).optional(),
+        photoUrl: z.string().trim().max(2048).optional(),
+        scaleAnchorType: DigitalScaleAnchorEnum.optional().default('NONE'),
+        scaleAnchorMeters: z.number().finite().positive().max(25).optional(),
+        referenceBaseMeters: z.number().finite().positive().max(500).optional(),
+        imuPitchDeg: z.number().finite().min(-90).max(90).optional(),
+        imuRollDeg: z.number().finite().min(-180).max(180).optional(),
+        locale: z.enum(['es', 'en', 'pt']).optional().default('es'),
+    })
+    .superRefine((val, ctx) => {
+        if (!val.imageBase64 && !val.photoUrl) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'Incluya imageBase64 o photoUrl para análisis fotográfico digital IA.',
+            });
+        }
+    });
+
+const DigitalAiExtractedSchema = z.object({
+    anchor_detected: z.boolean().optional().default(false),
+    slope_angle_left_deg: z.number().finite().min(5).max(89).nullable().optional(),
+    slope_angle_right_deg: z.number().finite().min(5).max(89).nullable().optional(),
+    slope_angle_avg_deg: z.number().finite().min(5).max(89).nullable().optional(),
+    suggested_density_t_m3: z.number().finite().min(0.5).max(8).nullable().optional(),
+    estimated_dimensions_m: z
+        .object({
+            a: z.number().finite().positive().max(1000),
+            b: z.number().finite().positive().max(1000),
+            h: z.number().finite().positive().max(300),
+            ap: z.number().finite().nonnegative().max(1000).optional(),
+            bp: z.number().finite().nonnegative().max(1000).optional(),
+        })
+        .nullable()
+        .optional(),
+    confidence: z.number().finite().min(0).max(1).optional().default(0.75),
+    reasoning: z.string().trim().max(600).nullable().optional(),
+});
+
+async function runDigitalStockpileAnalyze(params: {
+    tenantId: string;
+    body: z.infer<typeof DigitalAnalyzeBodySchema>;
+}) {
+    const { body, tenantId } = params;
+    const mediaParts: Array<{ mimeType: string; dataBase64: string }> = [];
+
+    if (body.imageBase64) {
+        mediaParts.push({
+            mimeType: body.imageMimeType || 'image/webp',
+            dataBase64: body.imageBase64,
+        });
+    } else if (body.photoUrl && /^https:\/\/(storage\.googleapis\.com|firebasestorage\.googleapis\.com)\//i.test(body.photoUrl)) {
+        try {
+            const imgRes = await safeFetchExternal(body.photoUrl, {
+                method: 'GET',
+                maxBytes: 4 * 1024 * 1024,
+            });
+            if (imgRes.ok) {
+                const arr = Buffer.from(await imgRes.arrayBuffer());
+                mediaParts.push({
+                    mimeType: imgRes.headers.get('content-type') || 'image/webp',
+                    dataBase64: arr.toString('base64'),
+                });
+            }
+        } catch {
+            // Continuar con manejo controlado si no fue descargable
+        }
+    }
+
+    if (Array.isArray(body.extraImagesBase64)) {
+        for (const extra of body.extraImagesBase64.slice(0, 3)) {
+            mediaParts.push({ mimeType: 'image/webp', dataBase64: extra });
+        }
+    }
+
+    if (mediaParts.length === 0) {
+        throw new Error('No se dispuso de imagen decodificable para análisis visual IA.');
+    }
+
+    const anchorMeters =
+        body.scaleAnchorMeters ?? DEFAULT_ANCHOR_METERS[body.scaleAnchorType] ?? undefined;
+    const hasExplicitReferenceBase =
+        typeof body.referenceBaseMeters === 'number' && Number.isFinite(body.referenceBaseMeters) && body.referenceBaseMeters > 0;
+
+    const contextLines = [
+        `Ancla de escala declarada: ${body.scaleAnchorType}${anchorMeters ? ` (${anchorMeters} m)` : ''}`,
+        hasExplicitReferenceBase
+            ? `Cota base de referencia medida por operador: ${body.referenceBaseMeters} m`
+            : 'Sin cota manual ingresada; usar ancla visual solo si es claramente visible.',
+        typeof body.imuPitchDeg === 'number'
+            ? `Inclinacion IMU dispositivo (pitch): ${body.imuPitchDeg} grados (compensar perspectiva)`
+            : '',
+        typeof body.imuRollDeg === 'number'
+            ? `Alabeo IMU dispositivo (roll): ${body.imuRollDeg} grados`
+            : '',
+    ]
+        .filter(Boolean)
+        .join('\n');
+
+    const extractionPrompt = [
+        `Eres ingeniero geotécnico/geomensor de MINREPORT GEOLAPP®. Analiza las fotografías del acopio de mineral o árido.`,
+        `Idioma de reasoning: ${body.locale}.`,
+        `1. Determina los ángulos aparentes de talud izquierdo, derecho y promedio compensando la inclinación IMU si existe.`,
+        `2. Verifica si el objeto ancla declarado (${body.scaleAnchorType}${anchorMeters ? ` = ${anchorMeters} m` : ''}) es claramente visible junto al acopio.`,
+        `3. REGLA CERO ALUCINACIONES: Si anchor_detected es false Y no se proveyó cota base de referencia (${hasExplicitReferenceBase ? body.referenceBaseMeters : 'ninguna'}), DEBES devolver estimated_dimensions_m: null. Jamás inventes metros sin referencia métrica real.`,
+        `4. Estima suggested_density_t_m3 solo acorde al tipo visual de mineral/árido (1.40 - 2.60 t/m3), o null si es indistinguible.`,
+        contextLines,
+        `Responde ÚNICAMENTE JSON válido exacto: {"anchor_detected": boolean, "slope_angle_left_deg": number|null, "slope_angle_right_deg": number|null, "slope_angle_avg_deg": number|null, "suggested_density_t_m3": number|null, "estimated_dimensions_m": {"a": number, "b": number, "h": number, "ap": number, "bp": number}|null, "confidence": number, "reasoning": string|null}.`,
+    ].join('\n');
+
+    const [genRes, decisionRes] = await Promise.all([
+        ResilientAIClient.generate({
+            prompt: extractionPrompt,
+            module: 'stockpile',
+            tenantId,
+            thinkingLevel: 'medium',
+            requireHITL: false,
+            responseMimeType: 'application/json',
+            media: mediaParts,
+        }),
+        ResilientAIClient.decide({
+            module: 'stockpile',
+            tenantId,
+            dataClassification: 'TENANT_PRIVATE',
+            inputText: contextLines,
+            media: mediaParts,
+            questions: {
+                geometry_type: {
+                    type: 'choice',
+                    instructions: 'Identifica la forma geométrica dominante del acopio fotografiado.',
+                    criteria: {
+                        CONO_ELIPTICO: 'Pila cónica con vértice agudo y huella circular o elíptica libre',
+                        CONO_ELIPTICO_TRUNCADO: 'Pila cónica o botadero con plataforma superior plana horizontal',
+                        PILA_LONGITUDINAL_WINDROW: 'Cordón o camellón alargado lineal con cabeceras redondeadas',
+                        ACOPIO_CONTRA_MURO: 'Acopio descargado contra muro de contención o pared trasera/bunker',
+                    },
+                },
+                wall_confinement: {
+                    type: 'choice',
+                    instructions: 'Si apoya contra muro, indica si es abierto en los extremos (1 muro) o bunker cerrado (3 muros).',
+                    criteria: {
+                        NONE: 'Acopio exento sin muros de contención',
+                        SINGLE_WALL: 'Apoyado contra 1 muro trasero con extremos laterales libres',
+                        BUNKER_3_WALLS: 'Confinado lateralmente dentro de bunker/cajón de 3 muros',
+                    },
+                },
+                copper_domain: {
+                    type: 'choice',
+                    instructions: 'Clasifica el material / dominio mineral visual más probable.',
+                    criteria: {
+                        OXIDO_CU: 'Tonalidades verdosas/azuladas o mineral oxidado de cobre',
+                        MIXTO_CU: 'Transición mixta óxido-sulfuro de cobre',
+                        SULFURO_SECUNDARIO_CU: 'Calcocita/covelina o sulfuro secundario oscuro/azulado',
+                        SULFURO_PRIMARIO_CU: 'Calcopirita/pirita o mena sulfurada primaria grisácea metálica',
+                        CONCENTRADO_CU: 'Concentrado fino de flotación oscuro/brillante',
+                        BAJA_LEY_CU: 'Mineral marginal o ripio mineralizado de baja ley',
+                        ESTERIL_RIPIOS: 'Roca estéril, lastre o árido sin mineralización relevante',
+                    },
+                },
+                tipo_granulometria: {
+                    type: 'choice',
+                    instructions: 'Clasifica la granulometría visual dominante del material.',
+                    criteria: {
+                        COLPAS: 'Bloques y fragmentos gruesos predominantes (> 150 mm)',
+                        GRANSA: 'Material chancado intermedio uniforme',
+                        MIXTO: 'Mezcla heterogénea de colpas, gransa y finos',
+                        FINOS: 'Material fino arenoso o concentrado (< 12 mm)',
+                    },
+                },
+            },
+        }).catch(() => null),
+    ]);
+
+    const parsedRaw = parseJsonObjectFromAiText(genRes.text);
+    const extractedRes = DigitalAiExtractedSchema.safeParse(parsedRaw || {});
+    const extracted = extractedRes.success
+        ? extractedRes.data
+        : {
+              anchor_detected: false,
+              slope_angle_left_deg: null,
+              slope_angle_right_deg: null,
+              slope_angle_avg_deg: null,
+              suggested_density_t_m3: null,
+              estimated_dimensions_m: null,
+              confidence: 0.5,
+              reasoning: 'Respuesta parcial del analizador visual.',
+          };
+
+    const rawGeomChoice =
+        decisionRes?.answers?.geometry_type?.type === 'choice'
+            ? decisionRes.answers.geometry_type.choice
+            : 'CONO_ELIPTICO';
+    const geometryType = (
+        ['CONO_ELIPTICO', 'CONO_ELIPTICO_TRUNCADO', 'PILA_LONGITUDINAL_WINDROW', 'ACOPIO_CONTRA_MURO'].includes(
+            rawGeomChoice
+        )
+            ? rawGeomChoice
+            : 'CONO_ELIPTICO'
+    ) as
+        | 'CONO_ELIPTICO'
+        | 'CONO_ELIPTICO_TRUNCADO'
+        | 'PILA_LONGITUDINAL_WINDROW'
+        | 'ACOPIO_CONTRA_MURO';
+
+    const rawWallChoice =
+        decisionRes?.answers?.wall_confinement?.type === 'choice'
+            ? decisionRes.answers.wall_confinement.choice
+            : 'NONE';
+    const wallConfinement = (
+        ['NONE', 'SINGLE_WALL', 'BUNKER_3_WALLS'].includes(rawWallChoice)
+            ? rawWallChoice
+            : geometryType === 'ACOPIO_CONTRA_MURO'
+              ? 'SINGLE_WALL'
+              : 'NONE'
+    ) as 'NONE' | 'SINGLE_WALL' | 'BUNKER_3_WALLS';
+
+    const copperDomain =
+        decisionRes?.answers?.copper_domain?.type === 'choice' &&
+        decisionRes.answers.copper_domain.confidence >= 0.45
+            ? decisionRes.answers.copper_domain.choice
+            : null;
+    const granulometry =
+        decisionRes?.answers?.tipo_granulometria?.type === 'choice' &&
+        decisionRes.answers.tipo_granulometria.confidence >= 0.45
+            ? decisionRes.answers.tipo_granulometria.choice
+            : null;
+
+    const anchorDetected = Boolean(extracted.anchor_detected && body.scaleAnchorType !== 'NONE');
+    const scaleVerified = Boolean(
+        (anchorDetected || hasExplicitReferenceBase) &&
+            extracted.estimated_dimensions_m &&
+            extracted.estimated_dimensions_m.a > 0 &&
+            extracted.estimated_dimensions_m.b > 0 &&
+            extracted.estimated_dimensions_m.h > 0
+    );
+
+    const dimensionsM = scaleVerified && extracted.estimated_dimensions_m
+        ? {
+              a: Math.round(extracted.estimated_dimensions_m.a * 100) / 100,
+              b: Math.round(extracted.estimated_dimensions_m.b * 100) / 100,
+              h: Math.round(extracted.estimated_dimensions_m.h * 100) / 100,
+              ...(typeof extracted.estimated_dimensions_m.ap === 'number'
+                  ? { ap: Math.round(extracted.estimated_dimensions_m.ap * 100) / 100 }
+                  : {}),
+              ...(typeof extracted.estimated_dimensions_m.bp === 'number'
+                  ? { bp: Math.round(extracted.estimated_dimensions_m.bp * 100) / 100 }
+                  : {}),
+          }
+        : null;
+
+    const avgSlope =
+        typeof extracted.slope_angle_avg_deg === 'number'
+            ? Math.round(extracted.slope_angle_avg_deg * 10) / 10
+            : typeof extracted.slope_angle_left_deg === 'number' &&
+                typeof extracted.slope_angle_right_deg === 'number'
+              ? Math.round(
+                    ((extracted.slope_angle_left_deg + extracted.slope_angle_right_deg) / 2) * 10
+                ) / 10
+              : null;
+
+    let volumeM3 = 0;
+    let slopeWarning: string | null = null;
+    if (dimensionsM) {
+        const confinementForCalc: SlopeConfinementMode =
+            wallConfinement === 'BUNKER_3_WALLS' ? 'BUNKER_3_WALLS' : 'SINGLE_WALL';
+        volumeM3 = computeStockpileVolumeV2({
+            geometryType,
+            dimensions: dimensionsM,
+            confinement: confinementForCalc,
+            slopeAngleDeg: avgSlope ?? 40,
+        });
+        const physics = evaluateStockpileSlopePhysics({
+            geometryType,
+            dimensions: dimensionsM,
+        });
+        slopeWarning = physics.warning;
+    } else if (typeof avgSlope === 'number' && avgSlope > 48) {
+        slopeWarning = `Ángulo detectado ${avgSlope}° supera talud natural típico (37°–45°).`;
+    }
+
+    const densityVal =
+        typeof extracted.suggested_density_t_m3 === 'number'
+            ? Math.round(extracted.suggested_density_t_m3 * 100) / 100
+            : null;
+    const weightT =
+        volumeM3 > 0 && densityVal ? Math.round(volumeM3 * densityVal * 100) / 100 : 0;
+
+    return {
+        verified: true,
+        scaleVerified,
+        pendingScaleCalibration: !scaleVerified,
+        geometryType,
+        wallConfinement,
+        copperDomain,
+        granulometry,
+        suggestedDensityTm3: densityVal,
+        slopeAngleLeftDeg: extracted.slope_angle_left_deg ?? null,
+        slopeAngleRightDeg: extracted.slope_angle_right_deg ?? null,
+        slopeAngleAvgDeg: avgSlope,
+        slopeWarning,
+        anchorDetected,
+        dimensionsM,
+        volumeM3,
+        weightT,
+        confidence: extracted.confidence ?? 0.75,
+        reasoning:
+            extracted.reasoning ||
+            (scaleVerified
+                ? 'Cubicación digital verificada con referencia métrica y talud IA.'
+                : 'Material y talud detectados. Falta referencia física de escala en encuadre o 1 cota base.'),
+        modelUsed: genRes.model,
+    };
+}
+
+/**
+ * POST /api/geolapp/digital-analyze
+ * Análisis digital inmediato en captura móvil (Opción B: Material + Geometría + Taludes + Escala -> m³ v2).
+ */
+router.post(
+    '/digital-analyze',
+    requireAuth,
+    aiRateLimiter,
+    async (req: AuthRequest, res: Response) => {
+        try {
+            const parsedBody = DigitalAnalyzeBodySchema.safeParse(req.body || {});
+            if (!parsedBody.success) {
+                return res.status(400).json({
+                    error: 'Payload de análisis digital inválido.',
+                    details: parsedBody.error.flatten(),
+                });
+            }
+
+            const caller = req.user || {};
+            const isDevCaller =
+                caller.isMasterDev === true ||
+                String(caller.role || '').toUpperCase() === 'DEV_ROOT' ||
+                String(caller.email || '').toLowerCase() === 'dev@minreport.com';
+            const headerTenant = String(
+                parsedBody.data.tenantId ||
+                    req.headers['x-active-account-id'] ||
+                    req.headers['x-tenant-id'] ||
+                    (isDevCaller ? 'dev-master-sandbox' : '')
+            ).trim();
+
+            const authz = await authorizeStockpileTenantMutation(req, headerTenant);
+            if (!authz.authorized) {
+                return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
+            }
+
+            const result = await runDigitalStockpileAnalyzeWrapper(headerTenant, parsedBody.data);
+
+            await AuditLedger.record({
+                tenantId: headerTenant,
+                actorUid: authz.uid,
+                actorEmail: authz.emailLower || authz.uid,
+                action: 'DIGITAL_STOCKPILE_PREVIEW_ANALYZE',
+                module: 'stockpile',
+                targetEntity: parsedBody.data.scaleAnchorType,
+                details: {
+                    scaleVerified: result.scaleVerified,
+                    geometryType: result.geometryType,
+                    volumeM3: result.volumeM3,
+                    slopeAngleAvgDeg: result.slopeAngleAvgDeg,
+                    modelUsed: result.modelUsed,
+                },
+                ipAddress: extractClientIp(req),
+            }).catch(() => {});
+
+            return res.status(200).json(result);
+        } catch (error: any) {
+            if (error instanceof AISwarmUnavailableError) {
+                return res.status(503).json({ error: error.message });
+            }
+            console.error('[GEOLAPP-CONTROLLER] Error en digital-analyze:', error);
+            return res.status(500).json({ error: 'Error ejecutando análisis digital IA.' });
+        }
+    }
+);
+
+async function runDigitalStockpileAnalyzeWrapper(
+    tenantId: string,
+    body: z.infer<typeof DigitalAnalyzeBodySchema>
+) {
+    return runDigitalStockpileAnalyze({ tenantId, body });
+}
+
+/**
+ * POST /api/geolapp/stockpiles/:id/digital-analyze
+ * Procesa diferidamente o reanaliza un acopio capturado offline y consolida resultado en Firestore.
+ */
+router.post(
+    '/stockpiles/:id/digital-analyze',
+    requireAuth,
+    aiRateLimiter,
+    async (req: AuthRequest, res: Response) => {
+        try {
+            const stockpileId = String(req.params.id || '').trim();
+            if (!stockpileId || !STOCKPILE_ID_REGEX.test(stockpileId)) {
+                return res.status(400).json({ error: 'Identificador de acopio inválido.' });
+            }
+
+            const parsedBody = DigitalAnalyzeBodySchema.safeParse(req.body || {});
+            if (!parsedBody.success) {
+                return res.status(400).json({
+                    error: 'Payload de análisis digital inválido.',
+                    details: parsedBody.error.flatten(),
+                });
+            }
+
+            const docRef = db.collection('stockpiles').doc(stockpileId);
+            const docSnap = await docRef.get();
+            if (!docSnap.exists) {
+                return res.status(404).json({ error: 'Acopio no encontrado.' });
+            }
+
+            const existingData = (docSnap.data() || {}) as Record<string, any>;
+            const docTenantId = String(
+                existingData.tenantId || existingData.accountId || ''
+            ).trim();
+            const authz = await authorizeStockpileTenantMutation(req, docTenantId);
+            if (!authz.authorized) {
+                return res.status(authz.status).json({ error: authz.error || 'TENANT_ACCESS_DENIED' });
+            }
+
+            const effectiveBody = {
+                ...parsedBody.data,
+                photoUrl:
+                    parsedBody.data.photoUrl ||
+                    (typeof existingData.last_photo_url === 'string'
+                        ? existingData.last_photo_url
+                        : existingData.initial_photo_url),
+            };
+
+            const result = await runDigitalStockpileAnalyze({
+                tenantId: docTenantId,
+                body: effectiveBody,
+            });
+
+            const now = Date.now();
+            const assetPatch: Record<string, unknown> = {
+                analysis_status: result.scaleVerified ? 'AI_VERIFIED' : 'PENDING_SCALE',
+                detected_slope_angle_deg: result.slopeAngleAvgDeg,
+                slope_warning: result.slopeWarning,
+                last_geometry_type: result.geometryType,
+                geometria: result.geometryType,
+                wall_confinement: result.wallConfinement,
+                ...(result.copperDomain && !existingData.copper_domain
+                    ? { copper_domain: result.copperDomain }
+                    : {}),
+                ...(result.granulometry && !existingData.tipo_granulometria
+                    ? { tipo_granulometria: result.granulometry }
+                    : {}),
+                ...(result.suggestedDensityTm3 && !existingData.density_factor
+                    ? { density_factor: result.suggestedDensityTm3 }
+                    : {}),
+                ...(result.scaleVerified && result.volumeM3 > 0
+                    ? {
+                          last_volume_m3: result.volumeM3,
+                          volumen: result.volumeM3,
+                          volume_m3: result.volumeM3,
+                          last_weight_t: result.weightT,
+                          weight_t: result.weightT,
+                          peso_final_toneladas: result.weightT,
+                      }
+                    : {}),
+                updatedAt: now,
+            };
+
+            await docRef.set(assetPatch, { merge: true });
+
+            if (effectiveBody.measurementId) {
+                const measRef = docRef.collection('measurements').doc(effectiveBody.measurementId);
+                const measSnap = await measRef.get().catch(() => null);
+                if (measSnap?.exists) {
+                    await measRef.set(
+                        {
+                            analysis_status: result.scaleVerified ? 'AI_VERIFIED' : 'PENDING_SCALE',
+                            detected_slope_angle_deg: result.slopeAngleAvgDeg,
+                            slope_left_deg: result.slopeAngleLeftDeg,
+                            slope_right_deg: result.slopeAngleRightDeg,
+                            slope_warning: result.slopeWarning,
+                            wall_confinement: result.wallConfinement,
+                            ...(result.dimensionsM
+                                ? {
+                                      geometry: {
+                                          type: result.geometryType,
+                                          dimensions: result.dimensionsM,
+                                      },
+                                  }
+                                : {}),
+                            ...(result.scaleVerified && result.volumeM3 > 0
+                                ? {
+                                      volumen_m3: result.volumeM3,
+                                      peso_t: result.weightT,
+                                      ...(result.suggestedDensityTm3
+                                          ? { density_factor: result.suggestedDensityTm3 }
+                                          : {}),
+                                  }
+                                : {}),
+                            updatedAt: now,
+                        },
+                        { merge: true }
+                    );
+                }
+            }
+
+            await AuditLedger.record({
+                tenantId: docTenantId,
+                actorUid: authz.uid,
+                actorEmail: authz.emailLower || authz.uid,
+                action: 'DIGITAL_STOCKPILE_AI_ANALYZE',
+                module: 'stockpile',
+                targetEntity: stockpileId,
+                details: {
+                    measurementId: effectiveBody.measurementId || null,
+                    scaleVerified: result.scaleVerified,
+                    geometryType: result.geometryType,
+                    volumeM3: result.volumeM3,
+                    slopeAngleAvgDeg: result.slopeAngleAvgDeg,
+                    modelUsed: result.modelUsed,
+                },
+                ipAddress: extractClientIp(req),
+            }).catch(() => {});
+
+            return res.status(200).json(result);
+        } catch (error: any) {
+            if (error instanceof AISwarmUnavailableError) {
+                return res.status(503).json({ error: error.message });
+            }
+            console.error('[GEOLAPP-CONTROLLER] Error en stockpiles/:id/digital-analyze:', error);
+            return res.status(500).json({ error: 'Error ejecutando análisis digital en acopio.' });
         }
     }
 );

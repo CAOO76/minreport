@@ -164,15 +164,6 @@ function resolveModuleFallbackLabel(
         if (domainMode === 'SUPPLIERS') return t('core_shell.loading_opermaq_suppliers', 'CARGANDO MÓDULO OPERMAQ · PROVEEDORES');
         return t('core_shell.loading_opermaq', 'CARGANDO MÓDULO OPERMAQ');
     }
-    if (domainMode === 'GEOMENSURA_GEO') {
-        return t('core_shell.loading_geolapp_geomensura', 'CARGANDO GEOLAPP® · GEOMENSURA Y GEORREFERENCIACIÓN');
-    }
-    if (domainMode === 'EXPLORACION_SONDAJES') {
-        return t('core_shell.loading_geolapp_exploracion', 'CARGANDO GEOLAPP® · EXPLORACIÓN Y SONDAJES');
-    }
-    if (domainMode === 'ESTRUCTURAL_HIDRO') {
-        return t('core_shell.loading_geolapp_estructural', 'CARGANDO GEOLAPP® · ESTRUCTURAL E HIDROGEOLOGÍA');
-    }
     return t('core_shell.loading_geolapp_stockpile', 'CARGANDO GEOLAPP® · CONTROL DE STOCKPILES');
 }
 

@@ -17,12 +17,45 @@ export type CopperDomain = CopperMineralDomain;
 
 export type StockpileStatus = 'ACTIVE' | 'ARCHIVED' | 'CONCILIATED' | 'CLOSED';
 
+export type GeolappDomainMode = 'STOCKPILE';
+
+export type StockpileClosureReason = 'SHIPPED' | 'ZERO_VOLUME' | 'MANUAL_CLOSE';
+
 export type GeolappGeometryType =
     | 'CONO_ELIPTICO'
     | 'CONO_ELIPTICO_TRUNCADO'
     | 'CONO_TRUNCADO_PERIMETRO'
     | 'PILA_LONGITUDINAL_WINDROW'
     | 'ACOPIO_CONTRA_MURO';
+
+export type GeolappDigitalScaleAnchorType =
+    | 'CONO_070'
+    | 'MIRA_100'
+    | 'CASCO_030'
+    | 'BALDE_280'
+    | 'MANUAL_BASE_M'
+    | 'NONE';
+
+export type GeolappAnalysisStatus =
+    | 'AI_VERIFIED'
+    | 'PENDING_AI_SYNC'
+    | 'PENDING_SCALE'
+    | 'MANUAL';
+
+export interface MiningSiteProfile {
+    id: string;
+    tenantId: string;
+    accountId: string;
+    name: string;
+    code?: string;
+    status: 'ACTIVE' | 'ARCHIVED';
+    source: 'DEV_MANUAL_REGISTRY' | 'MINREPORT_PROJECTS_MODULE';
+    createdAt: number;
+    createdBy: string;
+    updatedAt?: number;
+}
+
+export type GeolappGnssStatus = 'FIX_OK' | 'UNDERGROUND_NO_FIX';
 
 export type CopperGovernanceAlertCode =
     | 'SULFIDE_AGING_WARNING'
@@ -102,11 +135,16 @@ export interface StockpileAsset {
     tenantId?: string;
     accountId?: string;
     name: string;
+    description?: string;
     clase: 'mineral' | 'esteril' | 'baja_ley';
     status?: StockpileStatus;
     createdAt: number;
     createdBy: string;
     updatedAt?: number;
+
+    // Agrupación por Proyecto (Preparado para Desarrollo Futuro)
+    project_id?: string | null;
+    project_name?: string | null;
 
     // Georeferencia Inicial (Opcional — Cero coordenadas falsas 0,0 cuando no hay GPS)
     geo_point?: {
@@ -116,6 +154,13 @@ export interface StockpileAsset {
         accuracy?: number;
     };
     location_ref?: string;
+
+    // Mapa Satelital Estático Soberano (CAS SHA-256, sin interacción en cliente)
+    static_map_url?: string;
+    static_map_sha256?: string;
+    static_map_original_bytes?: number;
+    static_map_optimized_bytes?: number;
+    static_map_savings_pct?: number;
 
     // Recursos
     initial_photo_url?: string;
@@ -127,6 +172,16 @@ export interface StockpileAsset {
     last_photo_url?: string;
     last_measured_at?: number;
     last_geometry_type?: GeolappGeometryType | string;
+    last_delta_volumen_m3?: number | null;
+    last_delta_volumen_pct?: number | null;
+
+    // Cierre de Ciclo (Embarque / Volumen Cero)
+    closed_at?: number | null;
+    closed_by?: string | null;
+    closure_reason?: StockpileClosureReason | null;
+    dispatch_reference?: string | null;
+    shipped_weight_t?: number | null;
+    pre_closure_volume_m3?: number | null;
 
     // Compatibilidad con DesktopAnalytics & Reportes
     volumen?: number;
@@ -180,6 +235,16 @@ export interface StockpileAsset {
     p80_mm?: number;
     rosin_rammler?: RosinRammlerProfile;
     boulder_detections?: BoulderDetectionBox2D[];
+
+    // Estado Digital Offline-First & Talud IA
+    analysis_status?: GeolappAnalysisStatus;
+    scale_anchor_type?: GeolappDigitalScaleAnchorType;
+    detected_slope_angle_deg?: number;
+    slope_warning?: string | null;
+    wall_confinement?: 'NONE' | 'SINGLE_WALL' | 'BUNKER_3_WALLS';
+    gnss_status?: GeolappGnssStatus;
+    underground_sector?: string;
+    captured_at?: number;
 }
 
 export interface StockpileMeasurement {
@@ -194,8 +259,10 @@ export interface StockpileMeasurement {
     peso_t: number;
     density_factor?: number;
 
-    // Evidencia
+    // Evidencia y Trazabilidad Previa
     photo_url: string;
+    previous_measurement_id?: string | null;
+    previous_photo_url?: string | null;
     method: 'digital' | 'manual';
 
     // Georeferencia (Metadata de trazabilidad)
@@ -242,7 +309,13 @@ export interface StockpileMeasurement {
 
     // Deltas vs Medición Anterior
     delta_volumen?: number;
+    delta_volumen_pct?: number | null;
     delta_peso?: number;
+
+    // Cierre de Ciclo (Agotamiento 0 m³ / Embarque)
+    is_closure_measurement?: boolean;
+    closure_reason?: StockpileClosureReason;
+    dispatch_reference?: string;
 
     // Parámetros Geo-Metalúrgicos Cobre (Cu) + Trazabilidad CAS
     copper_domain?: CopperMineralDomain;
@@ -272,179 +345,18 @@ export interface StockpileMeasurement {
     rosin_rammler?: RosinRammlerProfile;
     boulder_detections?: BoulderDetectionBox2D[];
 
-    // Estado Lógico
+    // Estado Lógico y Captura Digital Offline-First
     ignored?: boolean;
+    analysis_status?: GeolappAnalysisStatus;
+    scale_anchor_type?: GeolappDigitalScaleAnchorType;
+    scale_anchor_meters?: number;
+    reference_base_meters?: number;
+    detected_slope_angle_deg?: number;
+    slope_left_deg?: number;
+    slope_right_deg?: number;
+    slope_warning?: string | null;
+    wall_confinement?: 'NONE' | 'SINGLE_WALL' | 'BUNKER_3_WALLS';
+    gnss_status?: GeolappGnssStatus;
+    underground_sector?: string;
+    captured_at?: number;
 }
-
-// ─── FASE 4: DOMINIOS GEOCIENTÍFICOS Y TOPOGRÁFICOS GEOLAPP® ───
-
-export type GeolappDomainMode =
-    | 'STOCKPILE'
-    | 'GEOMENSURA_GEO'
-    | 'EXPLORACION_SONDAJES'
-    | 'ESTRUCTURAL_HIDRO';
-
-export type GeolappNonStockpileDomainMode = Exclude<GeolappDomainMode, 'STOCKPILE'>;
-
-export type GeolappDomainRecordStatus = 'ACTIVE' | 'VERIFIED' | 'ARCHIVED';
-
-export interface GeomensuraPolygonVertex {
-    code: string;
-    easting: number;
-    northing: number;
-    elevationM?: number;
-}
-
-export interface GeomensuraSurveyPayload {
-    stationCode: string;
-    stationEasting: number;
-    stationNorthing: number;
-    stationElevationM: number;
-    utmZone: number;
-    hemisphere: 'N' | 'S';
-    targetCode?: string;
-    targetEasting?: number;
-    targetNorthing?: number;
-    targetElevationM?: number;
-    deltaE?: number;
-    deltaN?: number;
-    deltaZ?: number;
-    horizontalDistanceM?: number;
-    slopeDistanceM?: number;
-    azimuthDeg?: number;
-    slopePct?: number;
-    polygonVertices?: GeomensuraPolygonVertex[];
-    polygonAreaM2?: number | null;
-    polygonPerimeterM?: number | null;
-    rtkFixQuality?: string | null;
-    hdop?: number | null;
-}
-
-export type DrillholeRqdQuality = 'MUY_MALA' | 'MALA' | 'REGULAR' | 'BUENA' | 'EXCELENTE';
-
-export interface ExploracionIntervalItem {
-    id: string;
-    fromM: number;
-    toM: number;
-    recoveredM: number;
-    sumPiecesGe10cmM: number;
-    recoveryPct: number;
-    rqdPct: number;
-    rqdQuality: DrillholeRqdQuality;
-    lithology: string;
-    alteration: string;
-    copperDomain: CopperDomain;
-    cuTotalPct: number | null;
-    cuSolublePct: number | null;
-    coreBoxPhotoUrl?: string | null;
-    coreBoxSha256?: string | null;
-    coreBoxOriginalBytes?: number | null;
-    coreBoxOptimizedBytes?: number | null;
-    coreBoxSavingsPct?: number | null;
-}
-
-export interface ExploracionSondajePayload {
-    holeId: string;
-    method: 'DDH' | 'RC';
-    collarEasting: number;
-    collarNorthing: number;
-    collarElevationM: number;
-    utmZone: number;
-    hemisphere: 'N' | 'S';
-    azimuthDeg: number;
-    dipDeg: number;
-    totalDepthM: number;
-    intervals: ExploracionIntervalItem[];
-    weightedCuTotalPct: number | null;
-    weightedCuSolublePct: number | null;
-    meanRqdPct: number | null;
-    meanRecoveryPct?: number | null;
-    qaqcSampleType?: 'NONE' | 'STANDARD' | 'BLANK' | 'DUPLICATE';
-    qaqcOriginalPct?: number | null;
-    qaqcCheckPct?: number | null;
-    qaqcRpdPct?: number | null;
-    qaqcPassed?: boolean | null;
-}
-
-export interface EstructuralPlaneItem {
-    id: string;
-    structureType: 'FALLA' | 'DIACLASA' | 'ESTRATIFICACION' | 'VETILLA_CU' | 'CONTACTO' | string;
-    dipDeg: number;
-    dipDirectionDeg: number;
-    strikeDeg: number;
-    jrcBarton?: number | null;
-    apertureMm?: number | null;
-    infill?: string;
-}
-
-export interface HydrogeologyReading {
-    piezometerId: string;
-    staticWaterLevelM: number | null;
-    wellDepthM: number | null;
-    ph: number | null;
-    conductivityUsCm: number | null;
-    temperatureC: number | null;
-}
-
-export interface EstructuralHidroPayload {
-    stationCode: string;
-    easting?: number | null;
-    northing?: number | null;
-    elevationM?: number | null;
-    utmZone?: number | null;
-    hemisphere?: 'N' | 'S' | null;
-    planes: EstructuralPlaneItem[];
-    hydrogeology?: HydrogeologyReading | null;
-}
-
-export type GeolappDomainPayload =
-    | GeomensuraSurveyPayload
-    | ExploracionSondajePayload
-    | EstructuralHidroPayload;
-
-export interface GeolappDomainUtmFix {
-    zone: number;
-    band: string;
-    hemisphere: 'N' | 'S';
-    easting: number;
-    northing: number;
-    altitudeM: number | null;
-    accuracyM?: number | null;
-    fixQuality?: string | null;
-}
-
-interface GeolappDomainRecordCommon {
-    id: string;
-    tenantId: string;
-    accountId: string;
-    code: string;
-    title: string;
-    status: GeolappDomainRecordStatus;
-    utmFix?: GeolappDomainUtmFix;
-    notes?: string;
-    createdAt: number;
-    updatedAt: number;
-    createdBy: string;
-    updatedBy?: string;
-    synced?: boolean;
-}
-
-export interface GeomensuraDomainRecord extends GeolappDomainRecordCommon {
-    domainMode: 'GEOMENSURA_GEO';
-    payload: GeomensuraSurveyPayload;
-}
-
-export interface ExploracionSondajeDomainRecord extends GeolappDomainRecordCommon {
-    domainMode: 'EXPLORACION_SONDAJES';
-    payload: ExploracionSondajePayload;
-}
-
-export interface EstructuralHidroDomainRecord extends GeolappDomainRecordCommon {
-    domainMode: 'ESTRUCTURAL_HIDRO';
-    payload: EstructuralHidroPayload;
-}
-
-export type GeolappDomainRecord =
-    | GeomensuraDomainRecord
-    | ExploracionSondajeDomainRecord
-    | EstructuralHidroDomainRecord;

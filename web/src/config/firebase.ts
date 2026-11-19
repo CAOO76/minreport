@@ -1,5 +1,14 @@
+import { Capacitor } from "@capacitor/core";
 import { initializeApp } from "firebase/app";
-import { getAuth, connectAuthEmulator } from "firebase/auth";
+import {
+    getAuth,
+    initializeAuth,
+    indexedDBLocalPersistence,
+    browserLocalPersistence,
+    connectAuthEmulator,
+    type Auth,
+} from "firebase/auth";
+import { isNativeDebugApp, isAndroidEmulatorRuntime } from "../core/runtime/appFlavor";
 import {
     initializeFirestore,
     connectFirestoreEmulator,
@@ -30,10 +39,52 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
+const isNativePlatform = Capacitor.isNativePlatform();
 
-const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-const useEmulators = isLocal && import.meta.env.VITE_USE_FIREBASE_EMULATOR !== 'false';
+let auth: Auth;
+if (isNativePlatform) {
+    try {
+        auth = initializeAuth(app, {
+            persistence: [indexedDBLocalPersistence, browserLocalPersistence],
+        });
+    } catch {
+        auth = getAuth(app);
+    }
+} else {
+    auth = getAuth(app);
+}
+const isNativeDebug = isNativeDebugApp();
+const isNativeReleaseHttps =
+    isNativePlatform &&
+    !isNativeDebug &&
+    typeof window !== 'undefined' &&
+    window.location.protocol === 'https:' &&
+    !window.location.port;
+const isLocalHost =
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+const forceEmulator = import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'true';
+const disableEmulator = import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'false';
+const useEmulators =
+    forceEmulator ||
+    (!disableEmulator && !isNativeReleaseHttps && (isNativeDebug || isLocalHost));
+
+function resolveEmulatorHost(): string {
+    if (isNativePlatform && Capacitor.getPlatform() === 'android') {
+        if (isAndroidEmulatorRuntime()) {
+            return '10.0.2.2';
+        }
+        const devHostIp = import.meta.env.VITE_DEV_HOST_IP?.trim();
+        if (devHostIp) {
+            return devHostIp;
+        }
+        return 'localhost';
+    }
+    if (typeof window !== 'undefined' && window.location.hostname) {
+        return window.location.hostname;
+    }
+    return 'localhost';
+}
 
 const db = initializeFirestore(app, {
     localCache: useEmulators ? undefined : persistentLocalCache({
@@ -47,7 +98,7 @@ const storage = getStorage(app);
 if (useEmulators) {
     console.warn("[FRONTEND] Emuladores Firebase locales activos (HTTP/Long-Polling).");
     try {
-        const host = window.location.hostname;
+        const host = resolveEmulatorHost();
         const AUTH_URL = `http://${host}:9190`;
         connectAuthEmulator(auth, AUTH_URL, { disableWarnings: true });
         connectFirestoreEmulator(db, host, 8085);
@@ -61,7 +112,7 @@ if (useEmulators) {
 }
 
 // Exposicion interna restringida exclusivamente a desarrollo / entorno local
-if (typeof window !== 'undefined' && (import.meta.env.DEV || isLocal)) {
+if (typeof window !== 'undefined' && (import.meta.env.DEV || isLocalHost || isNativeDebug)) {
     (window as any)._firebase_app = app;
     (window as any)._firebase_auth = auth;
     (window as any)._firebase_db = db;
@@ -69,7 +120,7 @@ if (typeof window !== 'undefined' && (import.meta.env.DEV || isLocal)) {
     (window as any)._firebase_initialized = true;
 }
 
-if (isLocal && import.meta.env.DEV) {
+if (isLocalHost && import.meta.env.DEV) {
     (window as any).auth = auth;
     (window as any).db = db;
     (window as any).firestore = {

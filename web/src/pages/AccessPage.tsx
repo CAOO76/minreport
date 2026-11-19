@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
     signInWithEmailAndPassword,
@@ -14,7 +14,7 @@ import { getApiUrl } from '../utils/network';
 import BrandLogo from '../components/BrandLogo';
 import { ThemeSwitch } from '../components/ThemeSwitch';
 import { LanguageSwitch } from '../components/LanguageSwitch';
-import { ErgonomicScaleSwitch } from '../components/common/ErgonomicScaleSwitch';
+import M3CircularProgress from '../components/common/M3CircularProgress';
 import CopyButton from '../components/common/CopyButton';
 import { isPasskeySupported, authenticateWithPasskey } from '../services/passkeyService';
 
@@ -471,88 +471,21 @@ export const AccessPage: React.FC = () => {
     const progressPercent = mode === 'LOGIN' ? (loginStep === 1 ? 33 : loginStep === 2 ? 67 : 100) : mode === 'APPLY' ? 50 : 100;
 
     return (
-        <div className="min-h-screen bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col md:flex-row antialiased font-sans select-none">
-            {/* Área Mayor Proporción Áurea (61.8%) — Marco Arquitectónico e Informativo */}
-            <section className="hidden md:flex md:w-[61.8%] flex-col justify-between p-fib-55 border-r border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D]">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-fib-13">
-                        <BrandLogo variant="isotype" className="h-8 w-8 object-contain" />
-                        <BrandLogo variant="logotype" className="h-5 w-auto object-contain" />
-                    </div>
-                    <div className="flex items-center gap-fib-8">
-                        <ErgonomicScaleSwitch compact />
-                        <LanguageSwitch />
-                        <ThemeSwitch />
-                    </div>
+        <div className="min-h-screen bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col antialiased font-sans select-none">
+            {/* Barra Superior Única Minimalista */}
+            <header className="h-14 px-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-fib-8">
+                    <BrandLogo variant="isotype" className="h-6 w-6 object-contain pointer-events-none" />
+                    <BrandLogo variant="logotype" className="h-4 w-auto object-contain pointer-events-none" />
                 </div>
-
-                <div className="space-y-fib-34 max-w-2xl">
-                    <div className="space-y-fib-13">
-                        <p className="text-microcopy font-mono uppercase text-[#C68346]">
-                            {t('core_access.hero_kicker')}
-                        </p>
-                        <h1 className="text-hero-display uppercase text-[#0F172A] dark:text-[#F3F4F6]">
-                            {t('core_access.hero_title')}
-                        </h1>
-                        <p className="text-body-main text-[#475569] dark:text-[#8A93A6] max-w-xl">
-                            {t('core_access.hero_subtitle')}
-                        </p>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-fib-21 border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-21">
-                        <div className="space-y-fib-8">
-                            <span className="text-microcopy font-mono uppercase text-[#C68346] block">
-                                {t('core_access.step1_title')}
-                            </span>
-                            <p className="text-data-dense text-[#475569] dark:text-[#8A93A6]">
-                                {t('core_access.step1_desc')}
-                            </p>
-                        </div>
-                        <div className="space-y-fib-8">
-                            <span className="text-microcopy font-mono uppercase text-[#C68346] block">
-                                {t('core_access.step2_title')}
-                            </span>
-                            <p className="text-data-dense text-[#475569] dark:text-[#8A93A6]">
-                                {t('core_access.step2_desc')}
-                            </p>
-                        </div>
-                        <div className="space-y-fib-8">
-                            <span className="text-microcopy font-mono uppercase text-[#00AEEF] block">
-                                {t('core_access.step3_title')}
-                            </span>
-                            <p className="text-data-dense text-[#475569] dark:text-[#8A93A6]">
-                                {t('core_access.step3_desc')}
-                            </p>
-                        </div>
-                    </div>
+                <div className="flex items-center gap-fib-13">
+                    <LanguageSwitch />
+                    <ThemeSwitch />
                 </div>
+            </header>
 
-                <div className="flex items-center justify-between text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-21">
-                    <span>{t('core_access.footer_compliance')}</span>
-                    <Link
-                        to="/dev"
-                        className="text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] transition-colors"
-                    >
-                        {t('core_access.footer_dev_gateway')}
-                    </Link>
-                </div>
-            </section>
-
-            {/* Área Menor Proporción Áurea (38.2%) — Terminal Operativa de Acceso */}
-            <section className="w-full md:w-[38.2%] flex flex-col justify-between p-fib-21 md:p-fib-34 lg:p-fib-55 bg-[#FFFFFF] dark:bg-[#000000]">
-                {/* Header Mobile */}
-                <div className="flex items-center justify-between md:hidden pb-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C]">
-                    <div className="flex items-center gap-fib-8">
-                        <BrandLogo variant="isotype" className="h-6 w-6 object-contain" />
-                        <BrandLogo variant="logotype" className="h-4 w-auto object-contain" />
-                    </div>
-                    <div className="flex items-center gap-fib-8">
-                        <ErgonomicScaleSwitch compact />
-                        <LanguageSwitch />
-                        <ThemeSwitch />
-                    </div>
-                </div>
-
+            {/* Terminal Central de Acceso */}
+            <main className="flex-1 flex flex-col justify-center p-fib-21 md:p-fib-34 bg-[#FFFFFF] dark:bg-[#000000]">
                 <div className="my-auto py-fib-21 space-y-fib-21 w-full max-w-md mx-auto">
                     {/* Selector superior sobrio: Ingresar vs Postular */}
                     <div className="flex border-b border-[#E2E8F0] dark:border-[#12151C]">
@@ -590,26 +523,11 @@ export const AccessPage: React.FC = () => {
                     </div>
 
                     {/* Indicador lineal M3 (4px con track gap y stop indicator) */}
-                    <div className="space-y-fib-8">
-                        {mode === 'LOGIN' && (
-                            <div className="flex items-center justify-between text-microcopy font-mono uppercase">
-                                <span className={loginStep >= 1 ? 'text-[#C68346]' : 'text-[#94A3B8] dark:text-[#5A6072]'}>
-                                    {t('core_access.step_pill_1')}
-                                </span>
-                                <span className={loginStep >= 2 ? 'text-[#C68346]' : 'text-[#94A3B8] dark:text-[#5A6072]'}>
-                                    {t('core_access.step_pill_2')}
-                                </span>
-                                <span className={loginStep === 3 ? 'text-[#00AEEF]' : 'text-[#94A3B8] dark:text-[#5A6072]'}>
-                                    {t('core_access.step_pill_3')}
-                                </span>
-                            </div>
-                        )}
-                        <M3LinearBar
-                            percent={progressPercent}
-                            complete={loginStep === 3 || mode === 'APPLY_SUCCESS'}
-                            ariaLabel={t('core_access.progress_aria')}
-                        />
-                    </div>
+                    <M3LinearBar
+                        percent={progressPercent}
+                        complete={loginStep === 3 || mode === 'APPLY_SUCCESS'}
+                        ariaLabel={t('core_access.progress_aria')}
+                    />
 
                     {/* Alertas */}
                     {errorMsg && (
@@ -638,19 +556,14 @@ export const AccessPage: React.FC = () => {
                                                 type="button"
                                                 onClick={handlePasskeyAccess}
                                                 disabled={busy}
-                                                className="w-full min-h-[56px] py-fib-13 px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white text-data-dense font-mono font-bold uppercase tracking-wider flex items-center justify-center gap-fib-13 border-0 cursor-pointer disabled:opacity-50 rounded-none shadow-none transition-colors"
+                                                title={t('core_access.btn_passkey')}
+                                                aria-label={t('core_access.btn_passkey')}
+                                                className="w-full min-h-[52px] py-fib-13 px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white flex items-center justify-center border-0 cursor-pointer disabled:opacity-50 rounded-none shadow-none transition-colors"
                                             >
                                                 <span className="material-symbols-outlined text-[24px]">fingerprint</span>
-                                                <span>{t('core_access.btn_passkey')}</span>
                                             </button>
 
-                                            <div className="flex items-center gap-fib-8 py-1">
-                                                <span className="flex-1 h-px bg-[#E2E8F0] dark:bg-[#12151C]" />
-                                                <span className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#9CA3AF]">
-                                                    {t('core_access.or_use_email')}
-                                                </span>
-                                                <span className="flex-1 h-px bg-[#E2E8F0] dark:bg-[#12151C]" />
-                                            </div>
+                                            <div className="h-px bg-[#E2E8F0] dark:bg-[#12151C]" />
                                         </div>
                                     )}
 
@@ -658,7 +571,7 @@ export const AccessPage: React.FC = () => {
                                         <div className="space-y-fib-8">
                                             <label
                                                 htmlFor="access_email_input"
-                                                className="block text-data-dense font-mono font-semibold uppercase text-[#475569] dark:text-[#9CA3AF]"
+                                                className="sr-only"
                                             >
                                                 {t('core_access.email_label')}
                                             </label>
@@ -667,6 +580,7 @@ export const AccessPage: React.FC = () => {
                                                 name="access_email_input"
                                                 type="email"
                                                 required
+                                                aria-label={t('core_access.email_label')}
                                                 value={email}
                                                 onChange={(e) => {
                                                     setEmail(e.target.value);
@@ -710,14 +624,19 @@ export const AccessPage: React.FC = () => {
                                         <button
                                             type="submit"
                                             disabled={busy}
-                                            className={`w-full min-h-[52px] py-fib-13 px-fib-21 font-mono font-bold uppercase tracking-wider flex items-center justify-center gap-fib-8 cursor-pointer disabled:opacity-50 rounded-none shadow-none text-data-dense transition-colors ${
+                                            title={busy ? t('core_access.btn_verifying') : t('core_access.btn_continue_step2')}
+                                            aria-label={busy ? t('core_access.btn_verifying') : t('core_access.btn_continue_step2')}
+                                            className={`w-full min-h-[52px] py-fib-13 px-fib-21 font-mono font-bold flex items-center justify-center cursor-pointer disabled:opacity-50 rounded-none shadow-none transition-colors ${
                                                 passkeyAvailable
                                                     ? 'bg-[#FFFFFF] dark:bg-[#000000] border border-[#C68346] text-[#C68346] hover:bg-[#C68346] hover:text-white'
                                                     : 'bg-[#C68346] hover:bg-[#B0743E] text-white border-0'
                                             }`}
                                         >
-                                            <span>{busy ? t('core_access.btn_verifying') : t('core_access.btn_continue_step2')}</span>
-                                            <span className="material-symbols-outlined text-[20px]">arrow_forward</span>
+                                            {busy ? (
+                                                <M3CircularProgress size={18} strokeWidth={3} ariaLabel={t('core_access.btn_verifying')} />
+                                            ) : (
+                                                <span className="material-symbols-outlined text-[20px]">arrow_forward</span>
+                                            )}
                                         </button>
                                     </form>
                                 </div>
@@ -740,7 +659,7 @@ export const AccessPage: React.FC = () => {
                                             }}
                                             title={t('core_access.edit_email_title')}
                                             aria-label={t('core_access.edit_email_title')}
-                                            className="min-w-[48px] min-h-[48px] flex items-center justify-center p-2 bg-transparent border-0 outline-none text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                                            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                                         >
                                             <span className="material-symbols-outlined text-[20px]">edit</span>
                                         </button>
@@ -749,7 +668,7 @@ export const AccessPage: React.FC = () => {
                                     <div className="space-y-fib-8">
                                         <label
                                             htmlFor="access_password_input"
-                                            className="block text-data-dense font-mono font-semibold uppercase text-[#475569] dark:text-[#9CA3AF]"
+                                            className="sr-only"
                                         >
                                             {t('core_access.password_label')}
                                         </label>
@@ -759,6 +678,7 @@ export const AccessPage: React.FC = () => {
                                                 name="access_password_input"
                                                 type={showPassword ? 'text' : 'password'}
                                                 required
+                                                aria-label={t('core_access.password_label')}
                                                 value={password}
                                                 onChange={(e) => setPassword(e.target.value)}
                                                 placeholder="••••••••••••"
@@ -771,7 +691,7 @@ export const AccessPage: React.FC = () => {
                                                 onClick={() => setShowPassword((prev) => !prev)}
                                                 title={showPassword ? t('core_access.hide_password') : t('core_access.show_password')}
                                                 aria-label={showPassword ? t('core_access.hide_password') : t('core_access.show_password')}
-                                                className="min-w-[48px] min-h-[48px] flex items-center justify-center absolute right-0 top-1/2 -translate-y-1/2 p-2 bg-transparent border-0 outline-none text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                                                className="flex items-center justify-center absolute right-2 top-1/2 -translate-y-1/2 p-1 bg-transparent border-0 outline-none text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                                             >
                                                 <span className="material-symbols-outlined text-[20px]">
                                                     {showPassword ? 'visibility_off' : 'visibility'}
@@ -783,10 +703,15 @@ export const AccessPage: React.FC = () => {
                                     <button
                                         type="submit"
                                         disabled={busy}
-                                        className="w-full min-h-[52px] py-fib-13 px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white text-data-dense font-mono font-bold uppercase tracking-wider flex items-center justify-center gap-fib-8 border-0 cursor-pointer disabled:opacity-50 rounded-none shadow-none"
+                                        title={busy ? t('core_access.btn_validating_cred') : t('core_access.btn_validate_send_otp')}
+                                        aria-label={busy ? t('core_access.btn_validating_cred') : t('core_access.btn_validate_send_otp')}
+                                        className="w-full min-h-[52px] py-fib-13 px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white flex items-center justify-center border-0 cursor-pointer disabled:opacity-50 rounded-none shadow-none"
                                     >
-                                        <span>{busy ? t('core_access.btn_validating_cred') : t('core_access.btn_validate_send_otp')}</span>
-                                        <span className="material-symbols-outlined text-[18px]">mark_email_read</span>
+                                        {busy ? (
+                                            <M3CircularProgress size={18} strokeWidth={3} ariaLabel={t('core_access.btn_validating_cred')} />
+                                        ) : (
+                                            <span className="material-symbols-outlined text-[20px]">mark_email_read</span>
+                                        )}
                                     </button>
 
                                     <div className="flex items-center justify-between pt-fib-8">
@@ -794,17 +719,21 @@ export const AccessPage: React.FC = () => {
                                             type="button"
                                             onClick={handlePasswordResetRequest}
                                             disabled={busy}
-                                            className="min-h-[48px] text-data-dense font-mono uppercase text-[#475569] dark:text-[#9CA3AF] hover:text-[#C68346] bg-transparent border-0 cursor-pointer px-2"
+                                            title={t('core_access.btn_reset_password')}
+                                            aria-label={t('core_access.btn_reset_password')}
+                                            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-[#C68346] transition-colors cursor-pointer"
                                         >
-                                            {t('core_access.btn_reset_password')}
+                                            <span className="material-symbols-outlined text-[20px]">lock_reset</span>
                                         </button>
                                         <button
                                             type="button"
                                             onClick={handleResetToStep1}
                                             disabled={busy}
-                                            className="min-h-[48px] text-data-dense font-mono uppercase text-[#475569] dark:text-[#9CA3AF] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] bg-transparent border-0 cursor-pointer px-2"
+                                            title={t('core_access.btn_back')}
+                                            aria-label={t('core_access.btn_back')}
+                                            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
                                         >
-                                            {t('core_access.btn_back')}
+                                            <span className="material-symbols-outlined text-[20px]">arrow_back</span>
                                         </button>
                                     </div>
                                 </form>
@@ -813,11 +742,9 @@ export const AccessPage: React.FC = () => {
                             {/* PASO 3: CLAVE DINÁMICA POR EMAIL */}
                             {loginStep === 3 && (
                                 <form onSubmit={handleStep3VerifyOtp} className="space-y-fib-21" autoComplete="off" spellCheck={false}>
-                                    <div className="p-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] space-y-1">
-                                        <span className="text-microcopy font-mono uppercase text-[#00AEEF] block">
-                                            {t('core_access.otp_active_email')}
-                                        </span>
-                                        <span className="text-data-dense font-mono text-[#0F172A] dark:text-[#F3F4F6] select-text">
+                                    <div className="p-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] flex items-center gap-fib-8">
+                                        <span className="material-symbols-outlined text-[18px] text-[#00AEEF] shrink-0">mark_email_read</span>
+                                        <span className="text-data-dense font-mono text-[#0F172A] dark:text-[#F3F4F6] truncate select-text">
                                             {maskedEmail || user?.email || email}
                                         </span>
                                     </div>
@@ -825,7 +752,7 @@ export const AccessPage: React.FC = () => {
                                     <div className="space-y-fib-8">
                                         <label
                                             htmlFor="access_otp_input"
-                                            className="block text-data-dense font-mono font-semibold uppercase text-[#475569] dark:text-[#9CA3AF]"
+                                            className="sr-only"
                                         >
                                             {t('core_access.otp_label')}
                                         </label>
@@ -836,6 +763,7 @@ export const AccessPage: React.FC = () => {
                                             inputMode="numeric"
                                             maxLength={6}
                                             required
+                                            aria-label={t('core_access.otp_label')}
                                             value={otpCode}
                                             onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                                             onPaste={(e) => {
@@ -855,10 +783,15 @@ export const AccessPage: React.FC = () => {
                                     <button
                                         type="submit"
                                         disabled={busy || otpCode.length !== 6}
-                                        className="w-full min-h-[52px] py-fib-13 px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white text-data-dense font-mono font-bold uppercase tracking-wider flex items-center justify-center gap-fib-8 border-0 cursor-pointer disabled:opacity-50 rounded-none shadow-none"
+                                        title={busy ? t('core_access.btn_verifying_code') : t('core_access.btn_verify_enter')}
+                                        aria-label={busy ? t('core_access.btn_verifying_code') : t('core_access.btn_verify_enter')}
+                                        className="w-full min-h-[52px] py-fib-13 px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white flex items-center justify-center border-0 cursor-pointer disabled:opacity-50 rounded-none shadow-none"
                                     >
-                                        <span>{busy ? t('core_access.btn_verifying_code') : t('core_access.btn_verify_enter')}</span>
-                                        <span className="material-symbols-outlined text-[16px]">verified_user</span>
+                                        {busy ? (
+                                            <M3CircularProgress size={18} strokeWidth={3} ariaLabel={t('core_access.btn_verifying_code')} />
+                                        ) : (
+                                            <span className="material-symbols-outlined text-[20px]">verified_user</span>
+                                        )}
                                     </button>
 
                                     <div className="flex items-center justify-between pt-fib-8 border-t border-[#E2E8F0] dark:border-[#12151C]">
@@ -866,19 +799,22 @@ export const AccessPage: React.FC = () => {
                                             type="button"
                                             onClick={handleResendOtp}
                                             disabled={busy || resendCooldownSec > 0}
-                                            className="text-microcopy font-mono uppercase tabular-nums text-[#00AEEF] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:text-[#94A3B8] bg-transparent border-0 cursor-pointer p-0"
+                                            title={t('core_access.btn_resend_code')}
+                                            aria-label={t('core_access.btn_resend_code')}
+                                            className="text-microcopy font-mono tabular-nums text-[#00AEEF] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] disabled:text-[#94A3B8] bg-transparent border-0 cursor-pointer p-1 flex items-center gap-1"
                                         >
-                                            {resendCooldownSec > 0
-                                                ? t('core_access.btn_resend_countdown', { sec: resendCooldownSec })
-                                                : t('core_access.btn_resend_code')}
+                                            <span className="material-symbols-outlined text-[18px]">refresh</span>
+                                            {resendCooldownSec > 0 && <span>{resendCooldownSec}s</span>}
                                         </button>
                                         <button
                                             type="button"
                                             onClick={handleResetToStep1}
                                             disabled={busy}
-                                            className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] hover:text-red-500 bg-transparent border-0 cursor-pointer p-0"
+                                            title={t('core_access.btn_cancel_session')}
+                                            aria-label={t('core_access.btn_cancel_session')}
+                                            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
                                         >
-                                            {t('core_access.btn_cancel_session')}
+                                            <span className="material-symbols-outlined text-[18px]">close</span>
                                         </button>
                                     </div>
                                 </form>
@@ -1272,11 +1208,7 @@ export const AccessPage: React.FC = () => {
                         </div>
                     )}
                 </div>
-
-                <div className="text-center text-microcopy font-mono text-[#94A3B8] dark:text-[#5A6072] pt-fib-13 border-t border-[#E2E8F0] dark:border-[#12151C]">
-                    {t('core_access.footer_e2e')}
-                </div>
-            </section>
+            </main>
         </div>
     );
 };

@@ -1,16 +1,12 @@
 /**
- * Suite Determinista Fase 4 GEOLAPP® (MINREPORT)
+ * Suite Determinista Fase 4 + STOCKPILE CONTROL Next-Gen GEOLAPP® (MINREPORT)
  * Verifica:
  * 1. Adaptadores de superficie & GNSS RTK NMEA (`UavPointCloudAdapter`, `MobileLidarAdapter`, `GnssRtkNmeaAdapter`),
  *    generación glTF 2.0 `.glb` desde nube de puntos (`buildPointCloudHeightfieldGlbMesh`) y digestión CAS `MESH_3D_GLB`.
- * 2. Cálculos geocientíficos deterministas (`computeUtmStakeout`, `computeUtmPolygonMensura`,
- *    `computeIntervalRqdAndRecovery`, `computeDrillholeComposites`, `evaluateQaQcRpd`,
- *    `imuToStructuralAttitude`, `computeStrikeRightHandRule`, `projectEqualAreaPole`,
- *    `buildEqualAreaGreatCircleSvgPath`).
- * 3. Contratos backend Fase 4: `/api/geolapp/domain-records` (GET/POST/PATCH HITL "ACTUALIZAR", anti-Base64,
- *    aislamiento multi-tenant), `/api/m2m/geolapp/domain-records` (x402 HTTP 402/400/403/200 + scrubbing PII Chile)
- *    y `firestore.rules` (`match /geolapp_records/{recordId}`).
- * 4. Guardrails `GEMINI.md §4`, paridad i18n (`es`/`en`/`pt`), aislamiento de portales y cero dependencias iOS.
+ * 2. Cadena determinista de historial Next-Gen (`computeStockpileMeasurementChain`) y Certificado Vectorial PDF (`generateGeolappVectorPdf`).
+ * 3. Contratos backend Next-Gen (`/api/geolapp/stockpiles/:id/hitl-update` incluyendo cierre `SHIPPED`, reapertura y bloqueo IMSBC 422),
+ *    servicio server-side `generateAndStoreStaticSatelliteMap`, M2M x402 `/api/m2m/geolapp/stockpiles`, poda de rutas heredadas y `firestore.rules`.
+ * 4. Anti-regresión de poda, guardrails `GEMINI.md §4`, paridad i18n (`es`/`en`/`pt`), aislamiento de portales y cero dependencias iOS.
  */
 
 import assert from 'node:assert/strict';
@@ -91,6 +87,15 @@ function loadWebModule(tsFilePath: string): any {
 
     const localDir = path.dirname(normalizedPath);
     const customRequire = (request: string): any => {
+        if (request === '@capacitor/core') {
+            return { Capacitor: { isNativePlatform: () => false } };
+        }
+        if (request === '@capacitor/filesystem') {
+            return { Filesystem: {}, Directory: {} };
+        }
+        if (request === '@capacitor/share') {
+            return { Share: {} };
+        }
         if (request.startsWith('.')) {
             const targetNorm = path.normalize(path.resolve(localDir, request));
             if (targetNorm.endsWith('config/firebase')) {
@@ -98,6 +103,11 @@ function loadWebModule(tsFilePath: string): any {
             }
             if (targetNorm.endsWith('offline/OfflineStorage')) {
                 return { offlineStorage: {} };
+            }
+            if (targetNorm.endsWith('services/StorageService')) {
+                return {
+                    resolveStockpileImageUrl: async (u?: string) => u || null,
+                };
             }
             const resolved = resolveTsFile(targetNorm);
             if (resolved) {
@@ -369,6 +379,20 @@ function createInMemoryFirestoreAndAuth(): {
         },
     };
 
+    const storedBlobs = new Map<string, Buffer>();
+    const storageStub = {
+        bucket: () => ({
+            file: (filePath: string) => ({
+                async save(buf: Buffer) {
+                    storedBlobs.set(filePath, Buffer.isBuffer(buf) ? buf : Buffer.from(buf));
+                },
+                async exists() {
+                    return [storedBlobs.has(filePath)];
+                },
+            }),
+        }),
+    };
+
     const firebaseAdminStub = {
         apps: [{}],
         firestore: Object.assign(() => db, {
@@ -382,7 +406,7 @@ function createInMemoryFirestoreAndAuth(): {
             },
         }),
         auth: () => auth,
-        storage: () => ({ bucket: () => ({}) }),
+        storage: () => storageStub,
         messaging: () => ({}),
     };
 
@@ -391,7 +415,7 @@ function createInMemoryFirestoreAndAuth(): {
         db,
         auth,
         firestore: firebaseAdminStub.firestore,
-        storage: firebaseAdminStub.storage(),
+        storage: storageStub,
         messaging: firebaseAdminStub.messaging(),
         default: firebaseAdminStub,
     };
@@ -484,7 +508,14 @@ async function dispatchExpressInMemory(
 
         res.on('error', reject);
         (app as any)(req, res, (err: any) => {
-            if (err) reject(err);
+            if (err) {
+                reject(err);
+                return;
+            }
+            if (!res.writableEnded) {
+                res.statusCode = 404;
+                res.end();
+            }
         });
 
         if (rawPayload) {
@@ -675,101 +706,146 @@ async function run() {
     console.log('PASS [1/4] Adaptadores UAV/LiDAR, GNSS RTK NMEA GGA/RMC, GLB Heightfield y CAS MESH_3D_GLB');
 
     // ------------------------------------------------------------------------
-    // CASO 2: Matemática Geocientífica Determinista (Replanteo, Mensura, RQD,
-    //         Compósitos, QA/QC RPD, Actitud IMU, Strike RHR, Red de Schmidt)
+    // CASO 2: Cadena Determinista de Historial Next-Gen y PDF Vectorial
     // ------------------------------------------------------------------------
-    const {
-        computeUtmStakeout,
-        computeUtmPolygonMensura,
-        computeIntervalRqdAndRecovery,
-        computeDrillholeComposites,
-        evaluateQaQcRpd,
-        computeStrikeRightHandRule,
-        imuToStructuralAttitude,
-        projectEqualAreaPole,
-        buildEqualAreaGreatCircleSvgPath,
-    } = loadWebModule(path.join(WEB_SRC, 'modules/geolapp/core/utils/geoscienceCalculations.ts'));
-
-    const stakeout = computeUtmStakeout(
-        { easting: 500000, northing: 7300000, elevationM: 3100 },
-        { easting: 500030, northing: 7300040, elevationM: 3105 }
+    const { computeStockpileMeasurementChain } = loadWebModule(
+        path.join(WEB_SRC, 'modules/geolapp/core/services/calculation-engine.ts')
     );
-    assert.equal(stakeout.deltaE, 30);
-    assert.equal(stakeout.deltaN, 40);
-    assert.equal(stakeout.deltaZ, 5);
-    assert.equal(stakeout.horizontalDistanceM, 50);
-    assert.ok(Math.abs(stakeout.slopeDistanceM - Math.hypot(50, 5)) < 1e-6);
-    assert.ok(Math.abs(stakeout.azimuthDeg - (Math.atan2(30, 40) * 180) / Math.PI) < 0.01);
-    assert.ok(Math.abs(stakeout.slopePct - 10) < 1e-6);
-
-    const mensura = computeUtmPolygonMensura([
-        { easting: 500000, northing: 7300000 },
-        { easting: 500100, northing: 7300000 },
-        { easting: 500100, northing: 7300050 },
-        { easting: 500000, northing: 7300050 },
-    ]);
-    assert.ok(mensura !== null);
-    assert.ok(Math.abs(mensura.areaM2 - 5000) < 1e-6);
-    assert.ok(Math.abs(mensura.areaHa - 0.5) < 1e-9);
-    assert.ok(Math.abs(mensura.perimeterM - 300) < 1e-6);
-    assert.ok(Math.abs(mensura.centroid.easting - 500050) < 1e-6);
-    assert.ok(Math.abs(mensura.centroid.northing - 7300025) < 1e-6);
-    assert.equal(computeUtmPolygonMensura([{ easting: 0, northing: 0 }, { easting: 10, northing: 0 }]), null);
-
-    const rqdGood = computeIntervalRqdAndRecovery(0, 2, 1.8, 1.5);
-    assert.ok(rqdGood !== null);
-    assert.equal(rqdGood.runLengthM, 2);
-    assert.equal(rqdGood.recoveryPct, 90);
-    assert.equal(rqdGood.rqdPct, 75);
-    assert.equal(rqdGood.rqdQuality, 'BUENA');
-    assert.equal(computeIntervalRqdAndRecovery(5, 3, 1, 1), null);
-
-    const comp = computeDrillholeComposites([
-        { fromM: 0, toM: 2, cuTotalPct: 1.0, cuSolublePct: 0.4, rqdPct: 80, recoveryPct: 95 },
-        { fromM: 2, toM: 6, cuTotalPct: 0.4, cuSolublePct: 0.1, rqdPct: 50, recoveryPct: 80 },
-    ]);
-    assert.equal(comp.totalLoggedLengthM, 6);
-    assert.ok(Math.abs((comp.weightedCuTotalPct ?? 0) - 0.6) < 1e-6);
-    assert.ok(Math.abs((comp.weightedCuSolublePct ?? 0) - 0.2) < 1e-6);
-    assert.ok(Math.abs((comp.meanRqdPct ?? 0) - 60) < 1e-6);
-    assert.ok(Math.abs((comp.meanRecoveryPct ?? 0) - 85) < 1e-6);
-
-    const qaqcPass = evaluateQaQcRpd(1.0, 1.04, 10);
-    assert.equal(qaqcPass.passed, true);
-    assert.ok(qaqcPass.rpdPct < 5);
-
-    const qaqcFail = evaluateQaQcRpd(1.0, 1.4, 10);
-    assert.equal(qaqcFail.passed, false);
-    assert.ok(qaqcFail.rpdPct > 10);
-
-    assert.equal(computeStrikeRightHandRule(90), 0);
-    assert.equal(computeStrikeRightHandRule(180), 90);
-    assert.equal(computeStrikeRightHandRule(0), 270);
-    assert.equal(computeStrikeRightHandRule(270), 180);
-
-    const attitude = imuToStructuralAttitude(30, 0, 120);
-    assert.ok(attitude.dipDeg >= 0 && attitude.dipDeg <= 90);
-    assert.ok(attitude.dipDirectionDeg >= 0 && attitude.dipDirectionDeg < 360);
-    assert.ok(
-        Math.abs(attitude.strikeDeg - computeStrikeRightHandRule(attitude.dipDirectionDeg)) < 0.01
+    const { generateGeolappVectorPdf } = loadWebModule(
+        path.join(WEB_SRC, 'modules/geolapp/core/utils/vectorPdfGenerator.ts')
     );
 
-    const pole = projectEqualAreaPole(45, 90, 100);
-    assert.ok(Number.isFinite(pole.x) && Number.isFinite(pole.y));
-    assert.ok(pole.r >= 0 && pole.r <= 100);
-    assert.ok(Math.hypot(pole.x, pole.y) <= 100.01);
+    const t0 = Date.UTC(2026, 10, 1, 10, 0, 0);
+    const t1 = Date.UTC(2026, 10, 5, 14, 0, 0);
+    const t2 = Date.UTC(2026, 10, 10, 18, 0, 0);
 
-    const gcInclined = buildEqualAreaGreatCircleSvgPath(45, 90, 150, 150, 100);
-    assert.ok(gcInclined.startsWith('M ') && gcInclined.includes(' L '));
-    const gcVertical = buildEqualAreaGreatCircleSvgPath(90, 90, 150, 150, 100);
-    assert.ok(gcVertical.startsWith('M ') && gcVertical.includes(' L '));
+    const chainRes = computeStockpileMeasurementChain(
+        [
+            {
+                id: 'm-1',
+                assetId: 'stk-chain-01',
+                timestamp: t0,
+                volumen_m3: 100,
+                peso_t: 220,
+                photo_url: '/api/media/blob/tenant/tenant-a/photo-1.webp',
+                method: 'manual',
+            },
+            {
+                id: 'm-2',
+                assetId: 'stk-chain-01',
+                timestamp: t1,
+                volumen_m3: 150,
+                peso_t: 330,
+                photo_url: '/api/media/blob/tenant/tenant-a/photo-2.webp',
+                method: 'manual',
+            },
+            {
+                id: 'm-3',
+                assetId: 'stk-chain-01',
+                timestamp: t2,
+                volumen_m3: 0,
+                peso_t: 0,
+                photo_url: '/api/media/blob/tenant/tenant-a/photo-3.webp',
+                method: 'manual',
+                is_closure_measurement: true,
+                closure_reason: 'ZERO_VOLUME',
+            },
+        ],
+        '/api/media/blob/tenant/tenant-a/photo-init.webp'
+    );
+
+    assert.equal(chainRes.enrichedMeasurements.length, 3);
+    assert.equal(chainRes.enrichedMeasurements[0].id, 'm-3', 'Debe ordenar descendente por timestamp');
+    assert.equal(chainRes.enrichedMeasurements[0].delta_volumen, -150);
+    assert.equal(chainRes.enrichedMeasurements[0].delta_volumen_pct, -100);
+    assert.equal(
+        chainRes.enrichedMeasurements[0].previous_photo_url,
+        '/api/media/blob/tenant/tenant-a/photo-2.webp'
+    );
+    assert.equal(chainRes.enrichedMeasurements[1].delta_volumen, 50);
+    assert.equal(chainRes.enrichedMeasurements[1].delta_volumen_pct, 50);
+    assert.equal(
+        chainRes.enrichedMeasurements[2].previous_photo_url,
+        '/api/media/blob/tenant/tenant-a/photo-init.webp',
+        'La primera medición hereda initial_photo_url del acopio como foto previa'
+    );
+    assert.equal(chainRes.enrichedMeasurements[2].delta_volumen, 0);
+    assert.equal(chainRes.enrichedMeasurements[2].delta_volumen_pct, null);
+    assert.equal(chainRes.summary.lastVolumeM3, 0);
+    assert.equal(chainRes.summary.lastDeltaVolumenM3, -150);
+
+    // Recálculo determinista al ignorar medición intermedia m-2
+    const recalcIgnored = computeStockpileMeasurementChain(
+        chainRes.enrichedMeasurements.map((item: any) =>
+            item.id === 'm-2' ? { ...item, ignored: true } : item
+        ),
+        '/api/media/blob/tenant/tenant-a/photo-init.webp'
+    );
+    const recalcM3 = recalcIgnored.enrichedMeasurements.find((item: any) => item.id === 'm-3');
+    assert.equal(recalcM3.delta_volumen, -100);
+    assert.equal(recalcM3.delta_volumen_pct, -100);
+    assert.equal(recalcM3.previous_photo_url, '/api/media/blob/tenant/tenant-a/photo-1.webp');
+
+    // PDF Vectorial Next-Gen con PNG embebidos (cover + mapa estático), descripción, cierre y DELTA V
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const sharp = require('sharp');
+    const tinyPngBuf: Buffer = await sharp({
+        create: {
+            width: 8,
+            height: 8,
+            channels: 3,
+            background: { r: 198, g: 131, b: 70 },
+        },
+    })
+        .png()
+        .toBuffer();
+
+    const { PDFDocument } = require('pdf-lib');
+    const pdfOut = await generateGeolappVectorPdf(
+        {
+            id: 'stk-pdf-01',
+            name: 'PILA_OXIDO_NORTE_01',
+            description: 'Acopio de mineral oxidado lixiviable sector frente norte.',
+            clase: 'mineral',
+            copper_domain: 'OXIDO_CU',
+            location_ref: 'CANCHA_OXIDOS_N2',
+            status: 'CLOSED',
+            closure_reason: 'SHIPPED',
+            closed_at: t2,
+            dispatch_reference: 'BL-NORTE-2026',
+            shipped_weight_t: 410,
+            pre_closure_volume_m3: 205,
+            geo_point: {
+                latitude: -24.27,
+                longitude: -69.07,
+                altitude: 3120,
+                accuracy: 2.5,
+            },
+            createdAt: t0,
+            createdBy: 'uid-tenant-a',
+            last_volume_m3: 0,
+            last_weight_t: 0,
+            last_delta_volumen_m3: -150,
+            last_delta_volumen_pct: -100,
+        },
+        chainRes.enrichedMeasurements,
+        {
+            locale: 'es',
+            coverPhotoBytes: new Uint8Array(tinyPngBuf),
+            staticMapBytes: new Uint8Array(tinyPngBuf),
+        }
+    );
+    assert.equal(Buffer.from(pdfOut.bytes.slice(0, 5)).toString('ascii'), '%PDF-');
+    assert.ok(pdfOut.bytes.byteLength > 2000);
+    const parsedPdfDoc = await PDFDocument.load(pdfOut.bytes);
+    assert.ok(parsedPdfDoc.getPageCount() >= 1);
 
     passedCases++;
-    console.log('PASS [2/4] Cálculos deterministas Geomensura, Exploración DDH/RC QA/QC y Estructural/Schmidt');
+    console.log('PASS [2/4] Cadena determinista Next-Gen (ΔV + recálculo ignore) y Certificado PDF vectorial');
 
     // ------------------------------------------------------------------------
-    // CASO 3: Contratos Zod, Express Controllers (/api/geolapp & /api/m2m/geolapp)
-    //         y firestore.rules Fase 4 (100% sandbox-safe en memoria)
+    // CASO 3: Backend Next-Gen (HITL Ciclo de Vida + IMSBC 422 + Mapa Estático CAS
+    //         + M2M x402 PII Scrub + Poda rutas huérfanas + firestore.rules)
     // ------------------------------------------------------------------------
     const { firebaseMock, seedDoc, store } = createInMemoryFirestoreAndAuth();
     const firebaseConfigPath = require.resolve('../../config/firebase');
@@ -797,322 +873,284 @@ async function run() {
     const geolappControllerMod = await import('../../api/geolapp.controller');
     const geolappRouter = geolappControllerMod.default;
     const { registerM2mGeolappAdapterRoutes } = await import('../../api/m2m-geolapp.adapter');
+    const { generateAndStoreStaticSatelliteMap } = await import(
+        '../../modules/geolapp/stockpile-static-map.service'
+    );
 
     const app = express();
     app.use(express.json({ limit: '2mb' }));
     app.use('/api/geolapp', geolappRouter);
     registerM2mGeolappAdapterRoutes(app);
 
+    const legacyApiPath = ['/api/geolapp/domain', 'records'].join('-');
+    const legacyM2mPath = ['/api/m2m/geolapp/domain', 'records'].join('-');
+
+    const prunedGetRes = await dispatchExpressInMemory(app, {
+        method: 'GET',
+        path: legacyApiPath,
+        headers: { Authorization: 'Bearer tok-tenant-a' },
+    });
+    assert.equal(prunedGetRes.status, 404, 'Ruta heredada podada GET debe retornar 404');
+
+    const prunedPostRes = await dispatchExpressInMemory(app, {
+        method: 'POST',
+        path: legacyApiPath,
+        headers: { Authorization: 'Bearer tok-tenant-a' },
+        body: { id: 'x' },
+    });
+    assert.equal(prunedPostRes.status, 404, 'Ruta heredada podada POST debe retornar 404');
+
+    const prunedM2mRes = await dispatchExpressInMemory(app, {
+        method: 'GET',
+        path: legacyM2mPath,
+    });
+    assert.equal(prunedM2mRes.status, 404, 'Ruta heredada M2M podada debe retornar 404');
+
     const nowTs = Date.now();
-    const geomRecord = {
-        id: 'geom-f4-001',
+    seedDoc('stockpiles', 'stk-imsbc-01', {
+        id: 'stk-imsbc-01',
         tenantId: 'tenant-a',
         accountId: 'tenant-a',
-        domainMode: 'GEOMENSURA_GEO',
-        code: 'REPL-R01',
-        title: 'Replanteo Rampa Norte Contacto +56 9 8765 4321',
+        name: 'CONCENTRADO_IMSBC_01',
+        clase: 'mineral',
+        copper_domain: 'CONCENTRADO_CU',
+        moisture_pct: 11.5,
+        tml_pct: 10.0,
         status: 'ACTIVE',
-        notes: 'Operador RUT 12.345.678-9 verificado en banco 3100',
-        utmFix: {
-            zone: 19,
-            band: 'K',
-            hemisphere: 'S',
-            easting: 500000,
-            northing: 7300000,
-            altitudeM: 3100,
-            fixQuality: 'RTK_FIXED',
-        },
+        last_volume_m3: 80,
+        last_weight_t: 220,
         createdAt: nowTs,
         updatedAt: nowTs,
         createdBy: 'uid-tenant-a',
-        payload: {
-            stationCode: 'E-01',
-            stationEasting: 500000,
-            stationNorthing: 7300000,
-            stationElevationM: 3100,
-            utmZone: 19,
-            hemisphere: 'S',
-            targetCode: 'P-01',
-            targetEasting: 500030,
-            targetNorthing: 7300040,
-            targetElevationM: 3105,
-            deltaE: 30,
-            deltaN: 40,
-            deltaZ: 5,
-            horizontalDistanceM: 50,
-            slopeDistanceM: 50.25,
-            azimuthDeg: 36.87,
-            slopePct: 10,
-            polygonVertices: [
-                { code: 'V1', easting: 500000, northing: 7300000, elevationM: 3100 },
-                { code: 'V2', easting: 500100, northing: 7300000, elevationM: 3100 },
-                { code: 'V3', easting: 500100, northing: 7300050, elevationM: 3100 },
-            ],
-            polygonAreaM2: 2500,
-            polygonPerimeterM: 211.8,
-        },
-    };
+    });
 
-    const explorRecord = {
-        id: 'expl-f4-001',
-        tenantId: 'tenant-a',
-        accountId: 'tenant-a',
-        domainMode: 'EXPLORACION_SONDAJES',
-        code: 'DDH-F4-01',
-        title: 'Sondaje Diamantino Fase 4',
-        status: 'ACTIVE',
-        createdAt: nowTs,
-        updatedAt: nowTs,
-        createdBy: 'uid-tenant-a',
-        payload: {
-            holeId: 'DDH-F4-01',
-            method: 'DDH',
-            collarEasting: 500200,
-            collarNorthing: 7300200,
-            collarElevationM: 3150,
-            utmZone: 19,
-            hemisphere: 'S',
-            azimuthDeg: 120,
-            dipDeg: -60,
-            totalDepthM: 120,
-            intervals: [
-                {
-                    id: 'iv-1',
-                    fromM: 0,
-                    toM: 2,
-                    recoveredM: 1.8,
-                    sumPiecesGe10cmM: 1.5,
-                    recoveryPct: 90,
-                    rqdPct: 75,
-                    rqdQuality: 'BUENA',
-                    lithology: 'PORFIDO_DACITICO',
-                    alteration: 'POTASICA',
-                    copperDomain: 'SULFURO_PRIMARIO_CU',
-                    cuTotalPct: 0.92,
-                    cuSolublePct: 0.14,
-                    coreBoxPhotoUrl: 'https://storage.googleapis.com/cas-southamerica-west1/box-01.webp',
-                },
-            ],
-            weightedCuTotalPct: 0.92,
-            weightedCuSolublePct: 0.14,
-            meanRqdPct: 75,
-            meanRecoveryPct: 90,
-        },
-    };
-
-    const estrRecord = {
-        id: 'estr-f4-001',
-        tenantId: 'tenant-a',
-        accountId: 'tenant-a',
-        domainMode: 'ESTRUCTURAL_HIDRO',
-        code: 'EST-07',
-        title: 'Estación Estructural Talud Oeste',
-        status: 'ACTIVE',
-        createdAt: nowTs,
-        updatedAt: nowTs,
-        createdBy: 'uid-tenant-a',
-        payload: {
-            stationCode: 'EST-07',
-            easting: 500300,
-            northing: 7300100,
-            elevationM: 3080,
-            utmZone: 19,
-            hemisphere: 'S',
-            planes: [
-                {
-                    id: 'pl-1',
-                    structureType: 'FALLA',
-                    dipDeg: 48,
-                    dipDirectionDeg: 135,
-                    strikeDeg: 45,
-                    jrcBarton: 10,
-                    apertureMm: 1.5,
-                    infill: 'ARCILLA',
-                },
-            ],
-            hydrogeology: {
-                piezometerId: 'PZ-07',
-                staticWaterLevelM: 44.2,
-                wellDepthM: 120,
-                ph: 6.9,
-                conductivityUsCm: 1380,
-                temperatureC: 13.8,
+    const imsbcBlockRes = await dispatchExpressInMemory(app, {
+        method: 'POST',
+        path: '/api/geolapp/stockpiles/stk-imsbc-01/hitl-update',
+        headers: { Authorization: 'Bearer tok-tenant-a' },
+        body: {
+            confirmationKeyword: 'ACTUALIZAR',
+            patch: {
+                status: 'CLOSED',
+                closure_reason: 'SHIPPED',
+                dispatch_reference: 'BL-001',
             },
         },
-    };
-
-    for (const rec of [geomRecord, explorRecord, estrRecord]) {
-        const postRes = await dispatchExpressInMemory(app, {
-            method: 'POST',
-            path: '/api/geolapp/domain-records',
-            headers: { Authorization: 'Bearer tok-tenant-a' },
-            body: rec,
-        });
-        assert.ok(
-            postRes.status === 200 || postRes.status === 201,
-            `POST ${rec.domainMode} falló (${postRes.status}): ${postRes.rawText}`
-        );
-        assert.equal(postRes.body?.success, true);
-        assert.equal(postRes.body?.record?.id, rec.id);
-    }
-
-    // Rechazar Base64 data: URL en payload de Exploración
-    const badBase64Record = JSON.parse(JSON.stringify(explorRecord));
-    badBase64Record.id = 'expl-bad-b64';
-    badBase64Record.payload.intervals[0].coreBoxPhotoUrl = 'data:image/png;base64,iVBORw0KGgo=';
-    const base64RejectRes = await dispatchExpressInMemory(app, {
-        method: 'POST',
-        path: '/api/geolapp/domain-records',
-        headers: { Authorization: 'Bearer tok-tenant-a' },
-        body: badBase64Record,
     });
-    assert.equal(base64RejectRes.status, 400, 'Debe rechazar data:...;base64, en coreBoxPhotoUrl');
-
-    // Aislamiento multi-tenant en POST /domain-records
-    const crossTenantPost = await dispatchExpressInMemory(app, {
-        method: 'POST',
-        path: '/api/geolapp/domain-records',
-        headers: { Authorization: 'Bearer tok-tenant-b' },
-        body: geomRecord,
-    });
-    assert.equal(crossTenantPost.status, 403, 'Tenant B no puede escribir registros en Tenant A');
-
-    // GET /domain-records filtrado
-    const getDomainRes = await dispatchExpressInMemory(app, {
-        method: 'GET',
-        path: '/api/geolapp/domain-records?tenantId=tenant-a&domainMode=GEOMENSURA_GEO',
-        headers: { Authorization: 'Bearer tok-tenant-a' },
-    });
-    assert.equal(getDomainRes.status, 200);
-    assert.equal(getDomainRes.body?.success, true);
-    assert.ok(Array.isArray(getDomainRes.body?.items) && getDomainRes.body.items.length === 1);
-    assert.equal(getDomainRes.body.items[0].id, 'geom-f4-001');
-
-    // PATCH HITL sin palabra clave "ACTUALIZAR" -> 400
-    const badHitlKeywordRes = await dispatchExpressInMemory(app, {
-        method: 'PATCH',
-        path: '/api/geolapp/domain-records/geom-f4-001/hitl-update',
-        headers: { Authorization: 'Bearer tok-tenant-a' },
-        body: {
-            confirmationKeyword: 'CONFIRMAR',
-            patch: { status: 'VERIFIED' },
-        },
-    });
-    assert.equal(badHitlKeywordRes.status, 400, 'HITL debe exigir confirmationKeyword="ACTUALIZAR"');
-
-    // PATCH HITL intentando alterar campo inmutable tenantId -> 400
-    const immutablePatchRes = await dispatchExpressInMemory(app, {
-        method: 'PATCH',
-        path: '/api/geolapp/domain-records/geom-f4-001/hitl-update',
-        headers: { Authorization: 'Bearer tok-tenant-a' },
-        body: {
-            confirmationKeyword: 'ACTUALIZAR',
-            patch: { tenantId: 'tenant-b', status: 'VERIFIED' },
-        },
-    });
-    assert.equal(immutablePatchRes.status, 400, 'HITL debe bloquear modificación de tenantId');
-
-    // PATCH HITL válido con "ACTUALIZAR" + AuditLedger
-    const validHitlRes = await dispatchExpressInMemory(app, {
-        method: 'PATCH',
-        path: '/api/geolapp/domain-records/geom-f4-001/hitl-update',
-        headers: { Authorization: 'Bearer tok-tenant-a' },
-        body: {
-            confirmationKeyword: 'ACTUALIZAR',
-            patch: { status: 'VERIFIED', notes: 'Revisado HITL Fase 4 sin PII' },
-            diffSummary: [{ field: 'status', current: 'ACTIVE', suggested: 'VERIFIED' }],
-        },
-    });
-    assert.equal(validHitlRes.status, 200, `HITL válido falló: ${validHitlRes.rawText}`);
-    assert.equal(validHitlRes.body?.record?.status, 'VERIFIED');
-    const ledgerDocs = Array.from(store.collections.get('audit_ledger')?.values() || []);
-    assert.ok(
-        ledgerDocs.some((d) => d.action === 'GEOLAPP_DOMAIN_RECORD_HITL_UPDATED' && d.targetEntity === 'geom-f4-001'),
-        'AuditLedger debe registrar GEOLAPP_DOMAIN_RECORD_HITL_UPDATED'
+    assert.equal(
+        imsbcBlockRes.status,
+        422,
+        `Embarque Concentrado Cu con humedad >= TML debe bloquearse con HTTP 422 (${imsbcBlockRes.rawText})`
     );
 
-    // M2M x402 /api/m2m/geolapp/domain-records: Anónimo -> HTTP 402
+    seedDoc('stockpiles', 'stk-nextgen-01', {
+        id: 'stk-nextgen-01',
+        tenantId: 'tenant-a',
+        accountId: 'tenant-a',
+        name: 'PILA_SUR_CU',
+        description: 'Contacto faena +56 9 8765 4321 Operador RUT 12.345.678-9 frente sur',
+        clase: 'mineral',
+        copper_domain: 'OXIDO_CU',
+        location_ref: 'SECTOR_SUR_B2',
+        status: 'ACTIVE',
+        last_volume_m3: 240,
+        last_weight_t: 528,
+        last_delta_volumen_m3: -60,
+        last_delta_volumen_pct: -20,
+        geo_point: { latitude: -24.27, longitude: -69.07, altitude: 3120, accuracy: 2.0 },
+        createdAt: nowTs,
+        updatedAt: nowTs,
+        createdBy: 'uid-tenant-a',
+    });
+
+    seedDoc('stockpiles', 'stk-tenant-b', {
+        id: 'stk-tenant-b',
+        tenantId: 'tenant-b',
+        accountId: 'tenant-b',
+        name: 'PILA_PRIVADA_TENANT_B',
+        status: 'ACTIVE',
+        last_volume_m3: 500,
+        last_weight_t: 1100,
+        createdAt: nowTs,
+        updatedAt: nowTs,
+        createdBy: 'uid-tenant-b',
+    });
+
+    const closeHitlRes = await dispatchExpressInMemory(app, {
+        method: 'POST',
+        path: '/api/geolapp/stockpiles/stk-nextgen-01/hitl-update',
+        headers: { Authorization: 'Bearer tok-tenant-a' },
+        body: {
+            confirmationKeyword: 'ACTUALIZAR',
+            patch: {
+                status: 'CLOSED',
+                closure_reason: 'SHIPPED',
+                dispatch_reference: 'GUIA-900',
+                shipped_weight_t: 420,
+                pre_closure_volume_m3: 240,
+                closed_at: nowTs,
+            },
+            diffSummary: [{ field: 'status', current: 'ACTIVE', suggested: 'CLOSED' }],
+        },
+    });
+    assert.equal(closeHitlRes.status, 200, `Cierre por embarque HITL falló: ${closeHitlRes.rawText}`);
+    assert.equal(closeHitlRes.body?.asset?.status, 'CLOSED');
+    assert.equal(closeHitlRes.body?.asset?.dispatch_reference, 'GUIA-900');
+
+    const reopenHitlRes = await dispatchExpressInMemory(app, {
+        method: 'POST',
+        path: '/api/geolapp/stockpiles/stk-nextgen-01/hitl-update',
+        headers: { Authorization: 'Bearer tok-tenant-a' },
+        body: {
+            confirmationKeyword: 'ACTUALIZAR',
+            patch: {
+                status: 'ACTIVE',
+                closure_reason: null,
+            },
+        },
+    });
+    assert.equal(reopenHitlRes.status, 200, `Reapertura HITL falló: ${reopenHitlRes.rawText}`);
+    assert.equal(reopenHitlRes.body?.asset?.status, 'ACTIVE');
+
+    const ledgerDocs = Array.from(store.collections.get('audit_ledger')?.values() || []);
+    assert.ok(
+        ledgerDocs.some((d) => d.action === 'STOCKPILE_CYCLE_CLOSED' && d.targetEntity === 'stk-nextgen-01'),
+        'AuditLedger debe registrar STOCKPILE_CYCLE_CLOSED'
+    );
+    assert.ok(
+        ledgerDocs.some((d) => d.action === 'STOCKPILE_CYCLE_REOPENED' && d.targetEntity === 'stk-nextgen-01'),
+        'AuditLedger debe registrar STOCKPILE_CYCLE_REOPENED'
+    );
+
+    // Servicio soberano de Mapa Satelital Estático CAS (mock deps)
+    const zeroCoordsMapRes = await generateAndStoreStaticSatelliteMap({
+        stockpileId: 'stk-nextgen-01',
+        tenantId: 'tenant-a',
+        actorUid: 'uid-tenant-a',
+        latitude: 0,
+        longitude: 0,
+    });
+    assert.equal(zeroCoordsMapRes.ok, false);
+    assert.equal(zeroCoordsMapRes.reason, 'INVALID_COORDINATES');
+
+    const missingSecretMapRes = await generateAndStoreStaticSatelliteMap(
+        {
+            stockpileId: 'stk-nextgen-01',
+            tenantId: 'tenant-a',
+            actorUid: 'uid-tenant-a',
+            latitude: -24.27,
+            longitude: -69.07,
+        },
+        { resolveSecret: async () => null }
+    );
+    assert.equal(missingSecretMapRes.ok, true);
+    assert.equal(missingSecretMapRes.available, false);
+    assert.equal(missingSecretMapRes.reason, 'SECRET_UNCONFIGURED');
+
+    const okStaticMapRes = await generateAndStoreStaticSatelliteMap(
+        {
+            stockpileId: 'stk-nextgen-01',
+            tenantId: 'tenant-a',
+            actorUid: 'uid-tenant-a',
+            latitude: -24.27,
+            longitude: -69.07,
+        },
+        {
+            apiKey: 'mock-static-maps-secret',
+            fetcher: async () => ({
+                ok: true,
+                status: 200,
+                contentType: 'image/png',
+                buffer: tinyPngBuf,
+            }),
+        }
+    );
+    assert.equal(okStaticMapRes.ok, true);
+    assert.equal(okStaticMapRes.available, true);
+    assert.ok(okStaticMapRes.staticMapUrl?.startsWith('/api/media/blob/tenant/tenant-a/'));
+    assert.equal(okStaticMapRes.sha256?.length, 64);
+
+    // Persistir static_map_url en el documento mock para verificar exposición M2M
+    const currentStk = store.collections.get('stockpiles')!.get('stk-nextgen-01')!;
+    currentStk.static_map_url = okStaticMapRes.staticMapUrl;
+
+    // M2M x402 /api/m2m/geolapp/stockpiles: Anónimo -> HTTP 402
     const m2mAnonRes = await dispatchExpressInMemory(app, {
         method: 'GET',
-        path: '/api/m2m/geolapp/domain-records',
+        path: '/api/m2m/geolapp/stockpiles',
     });
     assert.equal(m2mAnonRes.status, 402);
     assert.ok(m2mAnonRes.headers['www-authenticate']?.includes('x402'));
     assert.ok(Boolean(m2mAnonRes.headers['payment-required']));
 
-    // M2M limit inválido -> HTTP 400
-    const m2mBadLimit = await dispatchExpressInMemory(app, {
-        method: 'GET',
-        path: '/api/m2m/geolapp/domain-records?limit=999',
-        headers: {
-            Authorization: 'Bearer tok-tenant-a',
-            'x-tenant-id': 'tenant-a',
-        },
-    });
-    assert.equal(m2mBadLimit.status, 400);
-
-    // M2M cross-tenant query vs context -> HTTP 403
-    const m2mCrossTenantQuery = await dispatchExpressInMemory(app, {
-        method: 'GET',
-        path: '/api/m2m/geolapp/domain-records?tenantId=tenant-b',
-        headers: {
-            Authorization: 'Bearer tok-admin-1',
-            'x-tenant-id': 'tenant-a',
-        },
-    });
-    assert.equal(m2mCrossTenantQuery.status, 403);
-
-    // Sembrar registro con PII chilena y validar scrubbing Ley N° 21.719 en M2M
-    seedDoc('geolapp_records', 'geom-pii-test', {
-        ...geomRecord,
-        id: 'geom-pii-test',
-        title: 'Contacto faena +56 9 8765 4321',
-        notes: 'Operador RUT 12.345.678-9 verificado',
-    });
-    seedDoc('geolapp_records', 'geom-tenant-b', {
-        ...geomRecord,
-        id: 'geom-tenant-b',
-        tenantId: 'tenant-b',
-        accountId: 'tenant-b',
-        title: 'Registro Confidencial Tenant B',
-    });
-
+    // M2M autenticado -> HTTP 200 con scrubbing PII Chile y aislamiento multi-tenant
     const m2mValidRes = await dispatchExpressInMemory(app, {
         method: 'GET',
-        path: '/api/m2m/geolapp/domain-records?limit=20&domainMode=GEOMENSURA_GEO',
+        path: '/api/m2m/geolapp/stockpiles?limit=20',
         headers: {
             Authorization: 'Bearer tok-tenant-a',
             'x-tenant-id': 'tenant-a',
         },
     });
-    assert.equal(m2mValidRes.status, 200, `M2M GET válido falló: ${m2mValidRes.rawText}`);
+    assert.equal(m2mValidRes.status, 200, `M2M /stockpiles GET falló: ${m2mValidRes.rawText}`);
     const m2mJson = JSON.stringify(m2mValidRes.body);
     assert.ok(!m2mJson.includes('12.345.678-9'), 'M2M debe purgar RUT chileno (Ley 21.719)');
     assert.ok(!m2mJson.includes('8765 4321'), 'M2M debe purgar teléfono +56 (Ley 21.719)');
-    assert.ok(!m2mJson.includes('geom-tenant-b'), 'M2M debe aislar registros de otro tenant');
-
-    // Validación firestore.rules Fase 4
-    const firestoreRules = fs.readFileSync(path.join(ROOT_DIR, 'firestore.rules'), 'utf8');
-    const geolappRulesIdx = firestoreRules.indexOf('match /geolapp_records/{recordId}');
-    assert.ok(geolappRulesIdx >= 0, 'firestore.rules debe declarar match /geolapp_records/{recordId}');
-    const nextMatchIdx = firestoreRules.indexOf('\n    match /', geolappRulesIdx + 10);
-    const geolappRecordsBlock = firestoreRules.slice(
-        geolappRulesIdx,
-        nextMatchIdx > geolappRulesIdx ? nextMatchIdx : geolappRulesIdx + 3000
+    assert.ok(!m2mJson.includes('stk-tenant-b'), 'M2M debe aislar stockpiles de otro tenant');
+    const nextgenFeedItem = (m2mValidRes.body?.data?.stockpiles || []).find(
+        (it: any) => it.id === 'stk-nextgen-01'
     );
-    assert.ok(geolappRecordsBlock.includes('isAuthenticated()'));
-    assert.ok(geolappRecordsBlock.includes('isBoundedPayload(request.resource.data)'));
-    assert.ok(geolappRecordsBlock.includes('isAccountMember('));
-    assert.ok(geolappRecordsBlock.includes('isSystemPrivileged()'));
-    assert.ok(geolappRecordsBlock.includes('docTenantId(request.resource.data) == docTenantId(resource.data)'));
-    assert.ok(geolappRecordsBlock.includes('isTenantAdminOrOwner('));
+    assert.ok(Boolean(nextgenFeedItem));
+    assert.equal(nextgenFeedItem.lastDeltaVolumeM3, -60);
+    assert.equal(nextgenFeedItem.lastDeltaVolumePct, -20);
+    assert.equal(nextgenFeedItem.staticMapUrl, okStaticMapRes.staticMapUrl);
+
+    // Validación firestore.rules: cero colección eliminada, reglas Stockpile Next-Gen activas
+    const firestoreRules = fs.readFileSync(path.join(ROOT_DIR, 'firestore.rules'), 'utf8');
+    const forbiddenCollectionToken = ['geolapp', 'records'].join('_');
+    assert.equal(
+        firestoreRules.includes(forbiddenCollectionToken),
+        false,
+        'firestore.rules no debe conservar la colección eliminada'
+    );
+    assert.ok(firestoreRules.includes('match /stockpiles/{stkId}'));
+    assert.ok(firestoreRules.includes('isValidStockpilePayload'));
+    assert.ok(firestoreRules.includes('isValidStockpileMeasurementPayload'));
 
     passedCases++;
-    console.log('PASS [3/4] Zod/Express /domain-records + HITL "ACTUALIZAR", M2M x402 PII scrub y firestore.rules');
+    console.log('PASS [3/4] Backend Next-Gen HITL ciclo/IMSBC 422, Mapa Estático CAS, M2M x402 y firestore.rules');
 
     // ------------------------------------------------------------------------
-    // CASO 4: Guardrails GEMINI.md §4, Paridad i18n, Portales y Cero iOS
+    // CASO 4: Anti-Regresión de Poda, Guardrails GEMINI.md §4, Paridad i18n y Cero iOS
     // ------------------------------------------------------------------------
+    const forbiddenModeGeom = ['GEOMENSURA', 'GEO'].join('_');
+    const forbiddenModeExpl = ['EXPLORACION', 'SONDAJES'].join('_');
+    const forbiddenModeEstr = ['ESTRUCTURAL', 'HIDRO'].join('_');
+    const forbiddenColl = ['geolapp', 'records'].join('_');
+    const forbiddenRoute = ['/domain', 'records'].join('-');
+    const forbiddenMapsApiHost = ['maps.googleapis', 'com'].join('.');
+    const forbiddenTokens = [
+        forbiddenModeGeom,
+        forbiddenModeExpl,
+        forbiddenModeEstr,
+        forbiddenColl,
+        forbiddenRoute,
+    ];
+
+    const removedFiles = [
+        'modules/geolapp/components/GeomensuraWorkspace.tsx',
+        'modules/geolapp/components/ExploracionWorkspace.tsx',
+        'modules/geolapp/components/EstructuralHidroWorkspace.tsx',
+        'modules/geolapp/core/utils/geoscienceCalculations.ts',
+    ];
+    for (const relRemoved of removedFiles) {
+        assert.equal(
+            fs.existsSync(path.join(WEB_SRC, relRemoved)),
+            false,
+            `Archivo eliminado no debe reaparecer: ${relRemoved}`
+        );
+    }
+
     const { coreShellLocales } = loadWebModule(path.join(WEB_SRC, 'locales/coreShellLocales.ts'));
     const { coreDevPilotLocales } = loadWebModule(path.join(WEB_SRC, 'locales/coreDevPilotLocales.ts'));
     const flattenLocaleKeys = (obj: Record<string, any>, prefix = ''): Record<string, string> => {
@@ -1133,40 +1171,58 @@ async function run() {
     const shellPt = flattenLocaleKeys(coreShellLocales.pt);
     assert.deepEqual(Object.keys(shellEn).sort(), Object.keys(shellEs).sort(), 'coreShellLocales es/en parity');
     assert.deepEqual(Object.keys(shellPt).sort(), Object.keys(shellEs).sort(), 'coreShellLocales es/pt parity');
-    for (const suffix of [
-        'geolapp_geomensura',
-        'geolapp_exploracion',
-        'geolapp_estructural',
-        'loading_geolapp_geomensura',
-        'loading_geolapp_exploracion',
-        'loading_geolapp_estructural',
-    ]) {
-        assert.ok(
-            Object.keys(shellEs).some((k) => k.endsWith(`.${suffix}`)),
-            `coreShellLocales falta clave *.${suffix}`
-        );
-    }
 
     const dpEs = flattenLocaleKeys(coreDevPilotLocales.es);
     const dpEn = flattenLocaleKeys(coreDevPilotLocales.en);
     const dpPt = flattenLocaleKeys(coreDevPilotLocales.pt);
     assert.deepEqual(Object.keys(dpEn).sort(), Object.keys(dpEs).sort(), 'coreDevPilotLocales es/en parity');
     assert.deepEqual(Object.keys(dpPt).sort(), Object.keys(dpEs).sort(), 'coreDevPilotLocales es/pt parity');
-    for (const suffix of ['geolapp_geomensura', 'geolapp_exploracion', 'geolapp_estructural']) {
-        assert.ok(
-            Object.keys(dpEs).some((k) => k.endsWith(`.${suffix}`)),
-            `coreDevPilotLocales falta clave *.${suffix}`
-        );
+
+    const geolappLocaleEs = JSON.parse(
+        fs.readFileSync(path.join(WEB_SRC, 'modules/geolapp/i18n/locales/es.json'), 'utf8')
+    );
+    const geolappLocaleEn = JSON.parse(
+        fs.readFileSync(path.join(WEB_SRC, 'modules/geolapp/i18n/locales/en.json'), 'utf8')
+    );
+    const geolappLocalePt = JSON.parse(
+        fs.readFileSync(path.join(WEB_SRC, 'modules/geolapp/i18n/locales/pt.json'), 'utf8')
+    );
+    const glEsKeys = Object.keys(flattenLocaleKeys(geolappLocaleEs)).sort();
+    const glEnKeys = Object.keys(flattenLocaleKeys(geolappLocaleEn)).sort();
+    const glPtKeys = Object.keys(flattenLocaleKeys(geolappLocalePt)).sort();
+    assert.deepEqual(glEnKeys, glEsKeys, 'geolapp locales es/en parity');
+    assert.deepEqual(glPtKeys, glEsKeys, 'geolapp locales es/pt parity');
+    for (const reqNs of ['lifecycle', 'hero', 'history', 'projects', 'desktop']) {
+        assert.ok(glEsKeys.some((k) => k.startsWith(`${reqNs}.`)), `Falta namespace ${reqNs} en locales`);
     }
+
+    const coreBackendModReg = loadWebModule(path.join(ROOT_DIR, 'src/core/modules/module-registry.ts'));
+    assert.deepEqual(coreBackendModReg.CORE_MODULE_REGISTRY.stockpile.domainModes, ['STOCKPILE']);
+    const coreWebModReg = loadWebModule(path.join(WEB_SRC, 'core/modules/module-registry.ts'));
+    assert.deepEqual(
+        coreWebModReg.CORE_MODULE_MAP.stockpile.clientNavItems.map((i: any) => i.domainMode),
+        ['STOCKPILE']
+    );
 
     const pilotWsSrc = fs.readFileSync(path.join(WEB_SRC, 'pages/pilot/TestPilotWorkspace.tsx'), 'utf8');
     assert.equal(pilotWsSrc.includes('p3_reserved_notice'), false, 'PROHIBIDO p3_reserved_notice en TestPilotWorkspace');
     assert.equal(pilotWsSrc.includes('domainMode="CATALOG"'), false, 'PROHIBIDO domainMode="CATALOG" en TestPilotWorkspace');
-    assert.ok(pilotWsSrc.includes('GEOLAPP_GEOMENSURA') && pilotWsSrc.includes('GEOLAPP_ESTRUCTURAL'));
 
     const devVaultSrc = fs.readFileSync(path.join(WEB_SRC, 'pages/dev/DevVaultGateway.tsx'), 'utf8');
     assert.equal(devVaultSrc.includes('pilot_feedback'), false, 'PROHIBIDO pilot_feedback en DevVaultGateway');
-    assert.ok(devVaultSrc.includes('geolappDomainMode'));
+
+    for (const checkRel of [
+        'pages/pilot/TestPilotWorkspace.tsx',
+        'pages/dev/DevVaultGateway.tsx',
+        'modules/geolapp/GeolappApp.tsx',
+        'modules/geolapp/components/StockpileStaticMapCard.tsx',
+    ]) {
+        const src = fs.readFileSync(path.join(WEB_SRC, checkRel), 'utf8');
+        for (const tok of forbiddenTokens) {
+            assert.equal(src.includes(tok), false, `${checkRel}: no debe contener token podado`);
+        }
+        assert.equal(src.includes(forbiddenMapsApiHost), false, `${checkRel}: prohíbe URL directa externa`);
+    }
 
 function extractOpeningTags(source: string, tagNames: string[]): string[] {
     const tags: string[] = [];
@@ -1202,10 +1258,31 @@ function extractOpeningTags(source: string, tagNames: string[]): string[] {
     const fase4UiFiles = [
         'modules/geolapp/GeolappApp.tsx',
         'modules/geolapp/GeolappModule.tsx',
-        'modules/geolapp/components/GeomensuraWorkspace.tsx',
-        'modules/geolapp/components/ExploracionWorkspace.tsx',
-        'modules/geolapp/components/EstructuralHidroWorkspace.tsx',
+        'modules/geolapp/layouts/MainLayout.tsx',
+        'modules/geolapp/components/MobileFaenaList.tsx',
+        'modules/geolapp/components/MobileHome.tsx',
+        'modules/geolapp/components/MobileFaenaMonitoring.tsx',
+        'modules/geolapp/components/StockpileDossierView.tsx',
+        'modules/geolapp/components/QuickStockpileCapture.tsx',
+        'modules/geolapp/components/MobileScanner.tsx',
+        'modules/geolapp/components/StockpileRegistration.tsx',
+        'modules/geolapp/components/ManualCapture.tsx',
+        'modules/geolapp/components/StockList.tsx',
+        'modules/geolapp/components/StockpileSummary.tsx',
+        'modules/geolapp/components/StockpileDashboard.tsx',
+        'modules/geolapp/components/MeasurementDetail.tsx',
+        'modules/geolapp/components/DesktopAnalytics.tsx',
+        'modules/geolapp/components/desktop/DesktopShell.tsx',
+        'modules/geolapp/components/desktop/DesktopFaenaDirectory.tsx',
+        'modules/geolapp/components/desktop/DesktopFaenaStockpiles.tsx',
+        'modules/geolapp/components/desktop/DesktopStageWorkspace.tsx',
+        'modules/geolapp/components/desktop/DesktopDossierPanel.tsx',
+        'modules/geolapp/components/desktop/DesktopFaenaMonitoring.tsx',
+        'modules/geolapp/components/desktop/DesktopQuickCaptureModal.tsx',
+        'modules/geolapp/components/StockpileStaticMapCard.tsx',
         'modules/geolapp/components/ExternalSensorsPanel.tsx',
+        'components/mobile/MobileAppTopBar.tsx',
+        'pages/mobile/DevFieldTestLaunchpad.tsx',
         'pages/mobile/DevFieldTestModuleShell.tsx',
     ];
     for (const relPath of fase4UiFiles) {
@@ -1216,6 +1293,7 @@ function extractOpeningTags(source: string, tagNames: string[]): string[] {
         assert.equal(/progress_activity/i.test(content), false, `${relPath}: PROHIBIDO progress_activity`);
         assert.equal(/animate-spin/.test(content), false, `${relPath}: PROHIBIDO animate-spin`);
         assert.equal(/\brounded-(?:sm|md|lg|xl|2xl|3xl|full)\b/.test(content), false, `${relPath}: debe respetar rounded-none`);
+        assert.equal(/text-\[(?:[0-9]|1[0-2])px\]/.test(content), false, `${relPath}: PROHIBIDO texto <= 12px`);
 
         const formTags = extractOpeningTags(content, ['form']);
         for (const tag of formTags) {
@@ -1245,12 +1323,260 @@ function extractOpeningTags(source: string, tagNames: string[]): string[] {
     const allScripts = JSON.stringify({ ...(rootPkg.scripts || {}), ...(webPkg.scripts || {}) });
     assert.equal(/\bcap\s+(?:add|open|sync|run)\s+ios\b/i.test(allScripts), false, 'PROHIBIDO scripts Capacitor iOS');
 
+    // Motor de estadísticas por faena (Monitoring) + poda de "Nuevo Acopio" en escritorio
+    const {
+        computeFaenaMetrics,
+        computeAllFaenasBreakdown,
+    } = loadWebModule(path.join(WEB_SRC, 'modules/geolapp/core/services/stockpile-faena-metrics.ts'));
+
+    const d1 = Date.UTC(2026, 10, 10, 10, 0, 0);
+    const d2 = Date.UTC(2026, 10, 12, 10, 0, 0);
+    const testAssets = [
+        {
+            id: 'a-faena1-1',
+            name: 'STK-F1-01',
+            clase: 'mineral',
+            status: 'ACTIVE',
+            project_id: 'faena_escondida',
+            project_name: 'FAENA NORTE',
+            last_volume_m3: 250,
+            last_weight_t: 550,
+            copper_domain: 'OXIDO_CU',
+            createdAt: d1,
+            createdBy: 'dev',
+        },
+        {
+            id: 'a-faena2-1',
+            name: 'STK-F2-01',
+            clase: 'mineral',
+            status: 'CLOSED',
+            closure_reason: 'SHIPPED',
+            shipped_weight_t: 310,
+            project_id: 'faena_sur',
+            project_name: 'FAENA SUR',
+            last_volume_m3: 0,
+            last_weight_t: 0,
+            createdAt: d1,
+            createdBy: 'dev',
+        },
+    ];
+    const testMeasurements = [
+        {
+            id: 'm-f1-1',
+            assetId: 'a-faena1-1',
+            timestamp: d1,
+            volumen_m3: 200,
+            peso_t: 440,
+            photo_url: '/api/media/cas/x.webp',
+            method: 'digital',
+        },
+        {
+            id: 'm-f1-2',
+            assetId: 'a-faena1-1',
+            timestamp: d2,
+            volumen_m3: 250,
+            peso_t: 550,
+            photo_url: '/api/media/cas/y.webp',
+            method: 'digital',
+        },
+    ];
+    const faena1Metrics = computeFaenaMetrics(testAssets, testMeasurements, 'faena_escondida', [
+        {
+            id: 'faena_escondida',
+            tenantId: 't1',
+            accountId: 't1',
+            name: 'FAENA NORTE',
+            status: 'ACTIVE',
+            source: 'DEV_MANUAL_REGISTRY',
+            createdAt: d1,
+            createdBy: 'dev',
+        },
+    ]);
+    assert.equal(faena1Metrics.activeCount, 1);
+    assert.equal(faena1Metrics.activeVolumeM3, 250);
+    assert.equal(faena1Metrics.activeWetWeightT, 550);
+    assert.equal(faena1Metrics.activeDryWeightT, null, 'TMS ausente no debe inventarse');
+    assert.equal(faena1Metrics.activeFineCuT, null, 'Cu fino ausente no debe inventarse');
+    assert.equal(faena1Metrics.timeline.length, 2);
+    assert.equal(faena1Metrics.netDeltaVolumeM3, 50);
+
+    const allFaenasSummary = computeAllFaenasBreakdown(testAssets, testMeasurements);
+    assert.equal(allFaenasSummary.length, 2);
+
+    const desktopRailPath = path.join(
+        WEB_SRC,
+        'modules/geolapp/components/desktop/DesktopInventoryRail.tsx'
+    );
+    assert.equal(
+        fs.existsSync(desktopRailPath),
+        false,
+        'DesktopInventoryRail.tsx debe permanecer eliminado'
+    );
+
+    const desktopShellSrc = fs.readFileSync(
+        path.join(WEB_SRC, 'modules/geolapp/components/desktop/DesktopShell.tsx'),
+        'utf8'
+    );
+    assert.equal(
+        desktopShellSrc.includes("t('analytics.new_asset_button'"),
+        false,
+        'DesktopShell no debe incluir botón NUEVO ACOPIO'
+    );
+    assert.equal(
+        /<select\b/i.test(desktopShellSrc),
+        false,
+        'DesktopShell no debe incluir selectores <select> de navegación'
+    );
+    assert.equal(
+        desktopShellSrc.includes('>menu<'),
+        false,
+        'DesktopShell no debe incluir botón hamburguesa'
+    );
+    assert.ok(
+        desktopShellSrc.includes("useState<DesktopNavLevel>('FAENAS')"),
+        'DesktopShell debe iniciar en Nivel 1 FAENAS'
+    );
+    assert.ok(desktopShellSrc.includes('DesktopFaenaDirectory'), 'DesktopShell debe usar DesktopFaenaDirectory');
+    assert.ok(desktopShellSrc.includes('DesktopFaenaStockpiles'), 'DesktopShell debe usar DesktopFaenaStockpiles');
+    assert.ok(desktopShellSrc.includes('chevron_left') && desktopShellSrc.includes('chevron_right'), 'DesktopShell debe incluir flechas discreta prev/next en Nivel 3');
+    assert.ok(desktopShellSrc.includes('landscape') && desktopShellSrc.includes('monitoring'), 'DesktopShell debe incluir par de modos landscape/monitoring');
+
+    const desktopStockpilesSrc = fs.readFileSync(
+        path.join(WEB_SRC, 'modules/geolapp/components/desktop/DesktopFaenaStockpiles.tsx'),
+        'utf8'
+    );
+    assert.equal(
+        desktopStockpilesSrc.includes("t('analytics.new_asset_button'"),
+        false,
+        'DesktopFaenaStockpiles no debe incluir botón NUEVO ACOPIO'
+    );
+    assert.equal(
+        /<select\b/i.test(desktopStockpilesSrc),
+        false,
+        'DesktopFaenaStockpiles no debe incluir <select>'
+    );
+
+    const desktopStageSrc = fs.readFileSync(
+        path.join(WEB_SRC, 'modules/geolapp/components/desktop/DesktopStageWorkspace.tsx'),
+        'utf8'
+    );
+    assert.ok(
+        desktopStageSrc.includes('desktop.campaign_comparison') &&
+            desktopStageSrc.includes('desktop.open_in_3d'),
+        'DesktopStageWorkspace debe incluir visor Comparativa de Campaña con enlace al Gemelo 3D'
+    );
+
+    const desktopQuickModalSrc = fs.readFileSync(
+        path.join(WEB_SRC, 'modules/geolapp/components/desktop/DesktopQuickCaptureModal.tsx'),
+        'utf8'
+    );
+    assert.ok(
+        desktopQuickModalSrc.includes('!open || !existingAsset'),
+        'DesktopQuickCaptureModal debe bloquear apertura sin acopio existente'
+    );
+
+    const devLaunchpadSrc = fs.readFileSync(
+        path.join(WEB_SRC, 'pages/mobile/DevFieldTestLaunchpad.tsx'),
+        'utf8'
+    );
+    assert.equal(
+        devLaunchpadSrc.includes('bg-[#F8FAFC]') || devLaunchpadSrc.includes('bg-[#07090D]'),
+        false,
+        'DevFieldTestLaunchpad no debe usar fondos de tarjeta'
+    );
+    assert.equal(
+        devLaunchpadSrc.includes('min-h-[144px]'),
+        false,
+        'DevFieldTestLaunchpad no debe renderizar tarjetas en Home móvil'
+    );
+    assert.ok(
+        devLaunchpadSrc.includes('aria-label={mod.name}'),
+        'DevFieldTestLaunchpad debe usar botones solo-icono accesibles'
+    );
+
+    const geolappAppSrc = fs.readFileSync(
+        path.join(WEB_SRC, 'modules/geolapp/GeolappApp.tsx'),
+        'utf8'
+    );
+    assert.ok(
+        geolappAppSrc.includes("return 'faenas'"),
+        'GeolappApp móvil debe iniciar en listado de faenas'
+    );
+    assert.ok(
+        /canRegisterDevFaena\s*=\s*Boolean\(\s*isDesktopLayout/.test(geolappAppSrc),
+        'Alta manual DEV de faenas debe restringirse exclusivamente a escritorio'
+    );
+
+    const mobileFaenaListSrc = fs.readFileSync(
+        path.join(WEB_SRC, 'modules/geolapp/components/MobileFaenaList.tsx'),
+        'utf8'
+    );
+    assert.ok(mobileFaenaListSrc.includes('computeAllFaenasBreakdown'));
+    assert.equal(mobileFaenaListSrc.includes('<form'), false, 'MobileFaenaList no debe incluir alta de faenas');
+
+    const mobileHomeSrc = fs.readFileSync(
+        path.join(WEB_SRC, 'modules/geolapp/components/MobileHome.tsx'),
+        'utf8'
+    );
+    assert.equal(mobileHomeSrc.includes('domain_add'), false, 'MobileHome no debe incluir domain_add');
+    assert.ok(mobileHomeSrc.includes('onStartNewStockpile'), 'MobileHome debe incluir botón + de nuevo acopio en faena');
+
+    const quickCaptureSrc = fs.readFileSync(
+        path.join(WEB_SRC, 'modules/geolapp/components/QuickStockpileCapture.tsx'),
+        'utf8'
+    );
+    assert.equal(
+        quickCaptureSrc.includes('register_continue_btn'),
+        false,
+        'QuickStockpileCapture móvil no debe permitir crear faenas'
+    );
+
+    const mainLayoutSrc = fs.readFileSync(
+        path.join(WEB_SRC, 'modules/geolapp/layouts/MainLayout.tsx'),
+        'utf8'
+    );
+    assert.ok(mainLayoutSrc.includes('showCenterCamera'), 'MainLayout debe calcular showCenterCamera contextual');
+    assert.ok(
+        mainLayoutSrc.includes("key: 'new_measurement'"),
+        'MainLayout debe centrar add_a_photo solo al estar dentro de un acopio'
+    );
+
+    const dossierSrc = fs.readFileSync(
+        path.join(WEB_SRC, 'modules/geolapp/components/StockpileDossierView.tsx'),
+        'utf8'
+    );
+    assert.equal(
+        dossierSrc.includes('new_digital_capture'),
+        false,
+        'StockpileDossierView móvil no debe duplicar footer de captura sobre barra inferior'
+    );
+
     passedCases++;
-    console.log('PASS [4/4] Guardrails GEMINI.md §4, paridad i18n, aislamiento portales y cero dependencias iOS');
+    assert.equal(
+        passedCases,
+        4,
+        `Se esperaban 4 casos ejecutados, pero solo pasaron ${passedCases}`
+    );
+    console.log('PASS [4/4] Anti-regresión, guardrails GEMINI.md §4, paridad i18n y cero dependencias iOS');
     console.log(`\nALL_PASSED ${passedCases}/4 geolapp-fase4-adapters-domains tests`);
 }
 
-run().catch((err) => {
-    console.error('FAIL geolapp-fase4-adapters-domains.test.ts:', err);
-    process.exit(1);
+let suiteCompleted = false;
+
+process.on('beforeExit', (code) => {
+    if (!suiteCompleted && code === 0) {
+        console.error(
+            'FAIL geolapp-fase4-adapters-domains.test.ts: Event loop drained before ALL_PASSED 4/4'
+        );
+        process.exit(1);
+    }
 });
+
+run()
+    .then(() => {
+        suiteCompleted = true;
+    })
+    .catch((err) => {
+        console.error('FAIL geolapp-fase4-adapters-domains.test.ts:', err);
+        process.exit(1);
+    });

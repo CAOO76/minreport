@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { auth } from '../config/firebase';
 import { env } from '../config/env';
+import { logThrottledAuthFailure } from './auth';
 
 export interface AuthRequest extends Request {
     user?: any;
@@ -46,7 +47,7 @@ export const requireSuperAdmin = async (req: AuthRequest, res: Response, next: N
         req.user = decodedToken;
         return next();
     } catch (error) {
-        console.error('[SECURITY] Token verification failed:', error);
+        logThrottledAuthFailure('SECURITY-ADMIN', req, error);
         return res.status(401).json({ error: 'Unauthorized: Invalid token' });
     }
 };

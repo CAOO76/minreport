@@ -4,9 +4,6 @@ import { useTranslation } from 'react-i18next';
 import { signOut } from 'firebase/auth';
 import { auth } from '../../config/firebase';
 import { useAuth } from '../../context/AuthContext';
-import { ThemeSwitch } from '../../components/ThemeSwitch';
-import { LanguageSwitch } from '../../components/LanguageSwitch';
-import { ErgonomicScaleSwitch } from '../../components/common/ErgonomicScaleSwitch';
 import SecureImage from '../../components/common/SecureImage';
 import CopyButton from '../../components/common/CopyButton';
 
@@ -35,21 +32,19 @@ const MobileProfile: React.FC = () => {
     };
 
     return (
-        <div className="space-y-fib-21 px-fib-8 pt-fib-13 font-sans select-none">
-            <div className="flex flex-col items-center text-center relative pt-2 pb-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C]">
-                <div className="w-full flex items-center justify-end gap-fib-8 mb-fib-13">
-                    <ErgonomicScaleSwitch compact />
-                    <LanguageSwitch />
-                    <ThemeSwitch />
-                </div>
-
-                <div className="w-20 h-20 rounded-none bg-[#F8FAFC] dark:bg-[#07090D] flex items-center justify-center mb-fib-13 border border-[#E2E8F0] dark:border-[#12151C] shadow-none overflow-hidden">
-                    {user?.photoURL ? (
-                        <SecureImage src={user.photoURL} alt={t('core_mobile.profile_avatar_alt')} className="w-full h-full object-cover" />
-                    ) : (
-                        <span className="material-symbols-outlined text-[36px] text-[#C68346]">person</span>
-                    )}
-                </div>
+        <div className="bg-[#FFFFFF] dark:bg-[#000000] px-fib-21 pt-fib-21 pb-fib-55 font-atkinson select-none rounded-none shadow-none">
+            <div className="flex flex-col items-center text-center pt-fib-8 pb-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C]">
+                {user?.photoURL ? (
+                    <SecureImage
+                        src={user.photoURL}
+                        alt={t('core_mobile.profile_avatar_alt')}
+                        className="w-16 h-16 object-cover mb-fib-13 pointer-events-none"
+                    />
+                ) : (
+                    <span className="material-symbols-outlined text-[40px] text-[#C68346] mb-fib-8">
+                        person
+                    </span>
+                )}
 
                 <h1 className="text-h2-section uppercase text-[#0F172A] dark:text-[#F3F4F6]">
                     {user?.displayName || missingText}
@@ -63,41 +58,48 @@ const MobileProfile: React.FC = () => {
                 </div>
             </div>
 
-            <div className="space-y-fib-13">
-                <div className="bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 rounded-none shadow-none border border-[#E2E8F0] dark:border-[#12151C] flex items-center gap-fib-13">
-                    <span className="material-symbols-outlined text-[#475569] dark:text-[#8A93A6] text-[20px]">mail</span>
-                    <div className="min-w-0 flex-1">
-                        <p className="text-microcopy text-[#475569] dark:text-[#8A93A6] uppercase font-mono">{t('form.email')}</p>
+            <dl className="divide-y divide-[#E2E8F0] dark:divide-[#12151C] border-b border-[#E2E8F0] dark:border-[#12151C]">
+                <div className="py-fib-13 flex items-center justify-between gap-fib-13">
+                    <dt className="text-microcopy text-[#475569] dark:text-[#8A93A6] uppercase font-mono shrink-0">
+                        {t('form.email')}
+                    </dt>
+                    <dd className="min-w-0 flex items-center justify-end gap-fib-8">
                         {user?.email ? (
-                            <div className="inline-flex items-center gap-1 mt-0.5 select-text">
-                                <p className="text-xs font-mono text-[#0F172A] dark:text-[#F3F4F6] truncate">{user.email}</p>
+                            <div className="inline-flex items-center gap-1 min-w-0 select-text">
+                                <span className="text-data-dense font-mono text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                                    {user.email}
+                                </span>
                                 <CopyButton value={user.email} title={t('core_mobile.copy_email')} />
                             </div>
                         ) : (
-                            <p className="text-xs font-mono text-[#94A3B8] dark:text-[#5A6072] mt-0.5">{missingText}</p>
+                            <span className="text-data-dense font-mono text-[#94A3B8] dark:text-[#5A6072]">
+                                {missingText}
+                            </span>
                         )}
-                    </div>
+                    </dd>
                 </div>
 
-                <div className="bg-[#F8FAFC] dark:bg-[#07090D] p-fib-21 rounded-none shadow-none border border-[#E2E8F0] dark:border-[#12151C] flex items-center gap-fib-13">
-                    <span className="material-symbols-outlined text-[#475569] dark:text-[#8A93A6] text-[20px]">corporate_fare</span>
-                    <div className="min-w-0 flex-1">
-                        <p className="text-microcopy text-[#475569] dark:text-[#8A93A6] uppercase font-mono">{t('core_mobile.organization_label')}</p>
-                        <p className="text-xs font-mono text-[#0F172A] dark:text-[#F3F4F6] truncate mt-0.5">
+                <div className="py-fib-13 flex items-center justify-between gap-fib-13">
+                    <dt className="text-microcopy text-[#475569] dark:text-[#8A93A6] uppercase font-mono shrink-0">
+                        {t('core_mobile.organization_label')}
+                    </dt>
+                    <dd className="min-w-0 text-right">
+                        <span className="text-data-dense font-mono text-[#0F172A] dark:text-[#F3F4F6] truncate block">
                             {currentAccount?.name || missingText}
-                        </p>
-                    </div>
+                        </span>
+                    </dd>
                 </div>
-            </div>
+            </dl>
 
-            <div className="pt-fib-13 pb-fib-34">
+            <div className="pt-fib-21 flex justify-center">
                 <button
                     type="button"
                     onClick={handleLogout}
-                    className="w-full py-3 rounded-none border border-red-500/30 text-red-600 dark:text-red-400 font-mono font-bold text-xs uppercase tracking-wider hover:bg-red-500/10 transition-colors flex items-center justify-center gap-fib-8 cursor-pointer bg-transparent"
+                    title={t('auth.logout')}
+                    aria-label={t('auth.logout')}
+                    className="min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none p-2 text-[#475569] dark:text-[#8A93A6] hover:text-red-500 transition-colors cursor-pointer flex items-center justify-center rounded-none"
                 >
-                    <span className="material-symbols-outlined text-[16px]">logout</span>
-                    <span>{t('auth.logout')}</span>
+                    <span className="material-symbols-outlined text-[24px]">logout</span>
                 </button>
             </div>
         </div>

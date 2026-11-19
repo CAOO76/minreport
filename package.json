@@ -15,7 +15,7 @@
     "serve:emulators:full": "unset _JAVA_OPTIONS && unset GOOGLE_APPLICATION_CREDENTIALS && [ -d \"/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home\" ] && export JAVA_HOME=\"/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home\" && export PATH=\"$JAVA_HOME/bin:$PATH\"; npx firebase-tools emulators:start --only auth,firestore,functions,hosting,storage --import=./data --export-on-exit=./data",
     "export:emulators": "npx firebase-tools emulators:export --force ./data",
     "backup:data": "npm run export:emulators",
-    "dev:all": "npx concurrently --kill-others --names \"EMU,API,WEB\" --prefix-colors \"yellow,blue,green\" \"npm run serve:emulators\" \"npm run dev:server\" \"npm run dev --prefix web\"",
+    "dev:all": "npx concurrently --kill-others --pad-prefix --names \"EMU,API,WEB\" --prefix-colors \"yellow,blue,green\" \"npm run serve:emulators\" \"npm run dev:server\" \"npm run dev --prefix web\"",
     "dev:ecosystem": "npm run dev:all",
     "dev:full": "bash scripts/dev-full.sh",
     "test:e2e": "playwright test",

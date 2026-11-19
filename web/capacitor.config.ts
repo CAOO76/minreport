@@ -9,7 +9,7 @@ const liveServerUrl = process.env.CAP_SERVER_URL?.trim();
  */
 const config: CapacitorConfig = {
     appId: 'com.minreport.app',
-    appName: 'MINREPORT · GEOLAPP',
+    appName: 'MINREPORT',
     webDir: 'dist',
     server: liveServerUrl
         ? {

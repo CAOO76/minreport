@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Capacitor } from '@capacitor/core';
 import {
     BoulderDetectionBox2D,
     RosinRammlerProfile,
@@ -16,7 +17,7 @@ import { useResolvedStockpileImage } from '../core/services/StorageService';
 import { downloadGeolappVectorPdf } from '../core/utils/vectorPdfGenerator';
 import { isValidBox2D } from '../core/utils/rosinRammler';
 import { buildCanonicalGeoFix } from '../../../core/geo/wgs84UtmProjection';
-import { SovereignGeoMapLazy } from '../../../components/geo/SovereignGeoMapLazy';
+import { StockpileStaticMapCard } from './StockpileStaticMapCard';
 import { StockpileTwin3DLazy } from './StockpileTwin3DLazy';
 import {
     ReportBlockEditable,
@@ -33,6 +34,7 @@ import { SecureImage } from '../../../components/common/SecureImage';
 interface MeasurementDetailProps {
     measurement: StockpileMeasurement;
     asset: StockpileAsset | null;
+    isMobileField?: boolean;
     onBack: () => void;
     onToggleIgnore?: () => void;
 }
@@ -50,10 +52,35 @@ const parseNullableNumber = (raw: string): number | null => {
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 };
 
-const PerimeterPhotoThumb: React.FC<{ url: string; index: number }> = ({ url, index }) => {
+const formatSignedDeltaValue = (
+    delta?: number | null,
+    unit = 'm³',
+    pct?: number | null
+): string | null => {
+    if (typeof delta !== 'number' || !Number.isFinite(delta)) return null;
+    const sign = delta > 0 ? '+' : '';
+    const base = `${sign}${delta.toFixed(2)} ${unit}`;
+    if (typeof pct === 'number' && Number.isFinite(pct)) {
+        const pctSign = pct > 0 ? '+' : '';
+        return `${base} (${pctSign}${pct.toFixed(1)}%)`;
+    }
+    return base;
+};
+
+const PerimeterPhotoThumb: React.FC<{ url: string; index: number; flat?: boolean }> = ({
+    url,
+    index,
+    flat = false,
+}) => {
     const resolved = useResolvedStockpileImage(url);
     return (
-        <div className="w-24 h-20 shrink-0 bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-center overflow-hidden rounded-none">
+        <div
+            className={`w-24 h-20 shrink-0 flex items-center justify-center overflow-hidden rounded-none ${
+                flat
+                    ? 'bg-transparent border-0'
+                    : 'bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C]'
+            }`}
+        >
             {resolved ? (
                 <SecureImage
                     src={resolved}
@@ -72,11 +99,21 @@ const PerimeterPhotoThumb: React.FC<{ url: string; index: number }> = ({ url, in
 export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
     measurement,
     asset,
+    isMobileField,
     onBack,
     onToggleIgnore,
 }) => {
     const { t } = useTranslation();
+    const isMobile = isMobileField ?? Capacitor.isNativePlatform();
     const resolvedPhoto = useResolvedStockpileImage(measurement.photo_url);
+    const resolvedPreviousPhoto = useResolvedStockpileImage(measurement.previous_photo_url);
+
+    const deltaVolumeDisplay = formatSignedDeltaValue(
+        measurement.delta_volumen,
+        'm³',
+        measurement.delta_volumen_pct
+    );
+    const deltaWeightDisplay = formatSignedDeltaValue(measurement.delta_peso, 't');
 
     const [isExportingPdf, setIsExportingPdf] = useState(false);
     const [isEditingCopper, setIsEditingCopper] = useState(false);
@@ -212,9 +249,8 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
     const savingsCas = measurement.cas_savings_pct ?? asset?.cas_savings_pct;
     const casTraceText =
         origCas && optCas
-            ? `ORIG ${origCas} -> CAS ${optCas}${
-                  typeof savingsCas === 'number' ? ` (-${savingsCas.toFixed(0)}%)` : ''
-              }`
+            ? `ORIG ${origCas} -> CAS ${optCas}${typeof savingsCas === 'number' ? ` (-${savingsCas.toFixed(0)}%)` : ''
+            }`
             : null;
 
     const perimeterUrls = useMemo(
@@ -480,20 +516,19 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                 text:
                     result.source === 'LOCAL_DETERMINISTIC_TIN_GLB'
                         ? t(
-                              'twin3d.reconstruction_offline',
-                              'Malla .glb generada localmente (TIN Determinista Offline-First).'
-                          )
+                            'twin3d.reconstruction_offline',
+                            'Malla .glb generada localmente (TIN Determinista Offline-First).'
+                        )
                         : t(
-                              'twin3d.reconstruction_ready',
-                              'Malla 3D .glb verificada y consolidada en CAS.'
-                          ),
+                            'twin3d.reconstruction_ready',
+                            'Malla 3D .glb verificada y consolidada en CAS.'
+                        ),
             });
         } catch (err) {
             setStatusBanner({
                 type: 'error',
-                text: `${t('twin3d.reconstruction_error', 'Error al reconstruir gemelo 3D .glb')}${
-                    err instanceof Error && err.message ? `: ${err.message}` : ''
-                }`,
+                text: `${t('twin3d.reconstruction_error', 'Error al reconstruir gemelo 3D .glb')}${err instanceof Error && err.message ? `: ${err.message}` : ''
+                    }`,
             });
         } finally {
             setIsReconstructing3D(false);
@@ -573,8 +608,13 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
 
     return (
         <main className="h-full w-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-atkinson overflow-hidden rounded-none shadow-none">
-            {/* Header */}
-            <header className="shrink-0 px-fib-21 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] flex items-center justify-between gap-fib-13 no-print">
+            <header
+                className={`shrink-0 px-fib-13 h-14 border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between gap-fib-8 no-print ${
+                    isMobile
+                        ? 'bg-[#FFFFFF] dark:bg-[#000000]'
+                        : 'px-fib-21 bg-[#F8FAFC] dark:bg-[#07090D]'
+                }`}
+            >
                 <div className="flex items-center gap-fib-13 min-w-0">
                     <button
                         type="button"
@@ -620,11 +660,10 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                                     : t('analytics.ignored_label', 'IGNORADO')
                             }
                             aria-label={t('analytics.ignored_label', 'IGNORADO')}
-                            className={`bg-transparent border-0 outline-none p-2 cursor-pointer rounded-none ${
-                                measurement.ignored
-                                    ? 'text-red-600 dark:text-red-400'
-                                    : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346]'
-                            }`}
+                            className={`bg-transparent border-0 outline-none p-2 cursor-pointer rounded-none ${measurement.ignored
+                                ? 'text-red-600 dark:text-red-400'
+                                : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346]'
+                                }`}
                         >
                             <span className="material-symbols-outlined text-[24px]">
                                 {measurement.ignored ? 'visibility_off' : 'visibility'}
@@ -648,13 +687,12 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                     {statusBanner && (
                         <div
                             role="status"
-                            className={`p-fib-13 border rounded-none shadow-none flex items-center justify-between gap-fib-13 text-data-dense font-mono ${
-                                statusBanner.type === 'error'
-                                    ? 'border-red-600/50 bg-red-600/10 text-red-700 dark:text-red-400'
-                                    : statusBanner.type === 'success'
-                                      ? 'border-[#00AEEF]/50 bg-[#00AEEF]/10 text-[#0F172A] dark:text-[#F3F4F6]'
-                                      : 'border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-[#475569] dark:text-[#8A93A6]'
-                            }`}
+                            className={`p-fib-13 border rounded-none shadow-none flex items-center justify-between gap-fib-13 text-data-dense font-mono ${statusBanner.type === 'error'
+                                ? 'border-red-600/50 bg-red-600/10 text-red-700 dark:text-red-400'
+                                : statusBanner.type === 'success'
+                                    ? 'border-[#00AEEF]/50 bg-[#00AEEF]/10 text-[#0F172A] dark:text-[#F3F4F6]'
+                                    : 'border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-[#475569] dark:text-[#8A93A6]'
+                                }`}
                         >
                             <span>{statusBanner.text}</span>
                             <button
@@ -668,9 +706,20 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                         </div>
                     )}
 
-                    {/* Primary Photo & Perimeter Evidence */}
-                    <section className="p-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none flex flex-col gap-fib-13">
-                        <div className="relative w-full h-64 sm:h-80 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-center overflow-hidden rounded-none">
+                    <section
+                        className={
+                            isMobile
+                                ? 'py-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none flex flex-col gap-fib-13'
+                                : 'p-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none flex flex-col gap-fib-13'
+                        }
+                    >
+                        <div
+                            className={`relative w-full h-64 sm:h-80 flex items-center justify-center overflow-hidden rounded-none ${
+                                isMobile
+                                    ? 'bg-transparent border-0'
+                                    : 'bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C]'
+                            }`}
+                        >
                             {resolvedPhoto ? (
                                 <>
                                     <SecureImage
@@ -733,7 +782,12 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                         {perimeterUrls.length > 0 && (
                             <div className="flex items-center gap-fib-8 overflow-x-auto hide-scrollbar pt-fib-8">
                                 {perimeterUrls.map((url, idx) => (
-                                    <PerimeterPhotoThumb key={`${url}_${idx}`} url={url} index={idx} />
+                                    <PerimeterPhotoThumb
+                                        key={`${url}_${idx}`}
+                                        url={url}
+                                        index={idx}
+                                        flat={isMobile}
+                                    />
                                 ))}
                             </div>
                         )}
@@ -746,8 +800,103 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                         />
                     </section>
 
-                    {/* Gemelo Digital 3D (.glb) */}
-                    {(() => {
+                    {/* Comparación Visual de Campaña ([ANTERIOR] -> [ACTUAL]) & Variación ΔV */}
+                    <section
+                        className={
+                            isMobile
+                                ? 'py-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none flex flex-col gap-fib-13'
+                                : 'p-fib-21 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none flex flex-col gap-fib-13'
+                        }
+                    >
+                        <div className="flex flex-wrap items-center justify-between gap-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] pb-fib-8">
+                            <h3 className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
+                                {t(
+                                    'history.visual_comparison_title',
+                                    'COMPARACIÓN VISUAL DE CAMPAÑA ([ANTERIOR] ➔ [ACTUAL])'
+                                )}
+                            </h3>
+                            <span
+                                className={`text-data-dense font-mono font-bold tabular-nums ${typeof measurement.delta_volumen === 'number' &&
+                                    measurement.delta_volumen < 0
+                                    ? 'text-[#C68346]'
+                                    : typeof measurement.delta_volumen === 'number' &&
+                                        measurement.delta_volumen > 0
+                                        ? 'text-[#00AEEF]'
+                                        : 'text-[#475569] dark:text-[#8A93A6]'
+                                    }`}
+                            >
+                                {deltaVolumeDisplay || UNDECLARED_TECH_VALUE}
+                            </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-fib-13">
+                            <div className="flex flex-col gap-fib-8">
+                                <div className="flex items-center justify-between text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
+                                    <span>{t('history.previous_photo_label', 'FOTO ANTERIOR')}</span>
+                                    <span>
+                                        {measurement.previous_measurement_id ||
+                                            UNDECLARED_TECH_VALUE}
+                                    </span>
+                                </div>
+                                <div
+                                    className={`w-full h-48 flex items-center justify-center overflow-hidden rounded-none ${
+                                        isMobile
+                                            ? 'bg-transparent border-0'
+                                            : 'bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C]'
+                                    }`}
+                                >
+                                    {resolvedPreviousPhoto ? (
+                                        <SecureImage
+                                            src={resolvedPreviousPhoto}
+                                            alt={t('history.previous_photo_alt', 'Foto anterior')}
+                                            className="w-full h-full object-cover"
+                                        />
+                                    ) : (
+                                        <div className="flex flex-col items-center gap-fib-8 px-fib-13 text-center">
+                                            <span className="material-symbols-outlined text-[24px] text-[#94A3B8] dark:text-[#5A6072]">
+                                                first_page
+                                            </span>
+                                            <span className="text-microcopy font-mono text-[#5A6072] dark:text-[#94A3B8]">
+                                                {t(
+                                                    'history.no_previous_base',
+                                                    '[Sin captura previa — Medición Base]'
+                                                )}
+                                            </span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col gap-fib-8">
+                                <div className="flex items-center justify-between text-microcopy font-mono uppercase text-[#C68346]">
+                                    <span>{t('history.current_photo_label', 'FOTO ACTUAL')}</span>
+                                    <span>{new Date(measurement.timestamp).toLocaleDateString()}</span>
+                                </div>
+                                <div
+                                    className={`w-full h-48 flex items-center justify-center overflow-hidden rounded-none ${
+                                        isMobile
+                                            ? 'bg-transparent border-0 border-b-2 border-[#C68346]'
+                                            : 'bg-[#F8FAFC] dark:bg-[#000000] border border-[#C68346]'
+                                    }`}
+                                >
+                                    {resolvedPhoto ? (
+                                        <SecureImage
+                                            src={resolvedPhoto}
+                                            alt={t('history.current_photo_alt', 'Foto actual')}
+                                            className="w-full h-full object-cover"
+                                        />
+                                    ) : (
+                                        <span className="material-symbols-outlined text-[28px] text-[#94A3B8] dark:text-[#5A6072]">
+                                            image_not_supported
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* Gemelo Digital 3D (.glb) (Solo Escritorio) */}
+                    {!isMobile && (() => {
                         const effMeshUrl = localMeshResult?.meshUrl ?? measurement.mesh_url ?? null;
                         const effMeshSha256 =
                             localMeshResult?.sha256 ?? measurement.mesh_sha256;
@@ -757,28 +906,28 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                             localMeshResult?.tinVolumeM3 ?? measurement.tin_volume_m3 ?? null;
                         const effMeshCas =
                             localMeshResult ||
-                            measurement.mesh_original_bytes !== undefined ||
-                            measurement.mesh_optimized_bytes !== undefined ||
-                            effMeshSha256
+                                measurement.mesh_original_bytes !== undefined ||
+                                measurement.mesh_optimized_bytes !== undefined ||
+                                effMeshSha256
                                 ? {
-                                      originalBytes:
-                                          localMeshResult?.originalBytes ??
-                                          measurement.mesh_original_bytes,
-                                      optimizedBytes:
-                                          localMeshResult?.optimizedBytes ??
-                                          measurement.mesh_optimized_bytes,
-                                      savingsPct:
-                                          localMeshResult?.savingsPct ??
-                                          measurement.mesh_savings_pct,
-                                      sha256: effMeshSha256,
-                                  }
+                                    originalBytes:
+                                        localMeshResult?.originalBytes ??
+                                        measurement.mesh_original_bytes,
+                                    optimizedBytes:
+                                        localMeshResult?.optimizedBytes ??
+                                        measurement.mesh_optimized_bytes,
+                                    savingsPct:
+                                        localMeshResult?.savingsPct ??
+                                        measurement.mesh_savings_pct,
+                                    sha256: effMeshSha256,
+                                }
                                 : undefined;
                         const hasDeclaredGeometry = Boolean(
                             measurement.geometry?.type &&
-                                measurement.geometry?.dimensions &&
-                                Object.values(measurement.geometry.dimensions).some(
-                                    (v) => typeof v === 'number' && Number.isFinite(v) && v > 0
-                                )
+                            measurement.geometry?.dimensions &&
+                            Object.values(measurement.geometry.dimensions).some(
+                                (v) => typeof v === 'number' && Number.isFinite(v) && v > 0
+                            )
                         );
 
                         return (
@@ -824,13 +973,13 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                                     fallbackGeometry={
                                         hasDeclaredGeometry && measurement.geometry
                                             ? {
-                                                  type: measurement.geometry.type,
-                                                  dimensions: measurement.geometry
-                                                      .dimensions as Record<
-                                                      string,
-                                                      number | undefined
-                                                  >,
-                                              }
+                                                type: measurement.geometry.type,
+                                                dimensions: measurement.geometry
+                                                    .dimensions as Record<
+                                                        string,
+                                                        number | undefined
+                                                    >,
+                                            }
                                             : null
                                     }
                                     copperDomain={effDomain}
@@ -843,9 +992,20 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                         );
                     })()}
 
-                    {/* Primary KPIs */}
-                    <section className="grid grid-cols-2 md:grid-cols-4 gap-fib-13">
-                        <div className="p-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none">
+                    <section
+                        className={
+                            isMobile
+                                ? 'grid grid-cols-2 border-b border-[#E2E8F0] dark:border-[#12151C] divide-x divide-[#E2E8F0] dark:divide-[#12151C]'
+                                : 'grid grid-cols-2 md:grid-cols-5 gap-fib-13'
+                        }
+                    >
+                        <div
+                            className={
+                                isMobile
+                                    ? 'py-fib-13 pr-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] bg-transparent rounded-none'
+                                    : 'p-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none'
+                            }
+                        >
                             <span className="block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
                                 {t('manual_capture.estimated_volume', 'VOLUMEN')}
                             </span>
@@ -853,7 +1013,36 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                                 {measurement.volumen_m3.toFixed(2)} m³
                             </span>
                         </div>
-                        <div className="p-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none">
+                        <div
+                            className={
+                                isMobile
+                                    ? 'py-fib-13 pl-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] bg-transparent rounded-none'
+                                    : 'p-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none'
+                            }
+                        >
+                            <span className="block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
+                                {t('history.delta_volume', 'Δ VOLUMEN')}
+                            </span>
+                            <span
+                                className={`text-h2-section font-mono font-bold tabular-nums ${typeof measurement.delta_volumen === 'number' &&
+                                    measurement.delta_volumen < 0
+                                    ? 'text-[#C68346]'
+                                    : typeof measurement.delta_volumen === 'number' &&
+                                        measurement.delta_volumen > 0
+                                        ? 'text-[#00AEEF]'
+                                        : 'text-[#475569] dark:text-[#8A93A6]'
+                                    }`}
+                            >
+                                {deltaVolumeDisplay || UNDECLARED_TECH_VALUE}
+                            </span>
+                        </div>
+                        <div
+                            className={
+                                isMobile
+                                    ? 'py-fib-13 pr-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] bg-transparent rounded-none'
+                                    : 'p-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none'
+                            }
+                        >
                             <span className="block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
                                 {t('copper_governance.thm', 'THM [t]')}
                             </span>
@@ -861,7 +1050,13 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                                 {thm.toFixed(2)} t
                             </span>
                         </div>
-                        <div className="p-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none">
+                        <div
+                            className={
+                                isMobile
+                                    ? 'py-fib-13 pl-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] bg-transparent rounded-none'
+                                    : 'p-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none'
+                            }
+                        >
                             <span className="block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
                                 {t('copper_governance.tms', 'TMS [t]')}
                             </span>
@@ -869,7 +1064,13 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                                 {tms !== null ? `${tms.toFixed(2)} t` : '—'}
                             </span>
                         </div>
-                        <div className="p-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none">
+                        <div
+                            className={
+                                isMobile
+                                    ? 'col-span-2 py-fib-13 bg-transparent border-0 rounded-none'
+                                    : 'p-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none'
+                            }
+                        >
                             <span className="block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6]">
                                 {t('copper_governance.fine_cu', 'Cu FINO [t]')}
                             </span>
@@ -879,8 +1080,13 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                         </div>
                     </section>
 
-                    {/* Geometry & IMU Clinometer Block (Read-Only) */}
-                    <section className="p-fib-21 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none">
+                    <section
+                        className={
+                            isMobile
+                                ? 'py-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none'
+                                : 'p-fib-21 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none'
+                        }
+                    >
                         <h3 className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6] mb-fib-13">
                             {t('geometries.subtitle', 'MODELO VOLUMÉTRICO')} · {t('clinometer.title', 'CLINÓMETRO IMU')}
                         </h3>
@@ -889,9 +1095,9 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                             value={
                                 measurement.geometry?.type
                                     ? t(
-                                          `geometries.${measurement.geometry.type}`,
-                                          String(measurement.geometry.type)
-                                      )
+                                        `geometries.${measurement.geometry.type}`,
+                                        String(measurement.geometry.type)
+                                    )
                                     : null
                             }
                             mono
@@ -927,6 +1133,16 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                             mono
                         />
                         <ReportFieldRow
+                            label={t('history.delta_volume', 'Δ VOLUMEN')}
+                            value={deltaVolumeDisplay}
+                            mono
+                        />
+                        <ReportFieldRow
+                            label={t('history.delta_weight', 'Δ PESO [t]')}
+                            value={deltaWeightDisplay}
+                            mono
+                        />
+                        <ReportFieldRow
                             label={t('clinometer.calculated_height', 'ALTURA CALCULADA IMU (m)')}
                             value={
                                 typeof measurement.imu_height_m === 'number'
@@ -935,10 +1151,35 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                             }
                             mono
                         />
+                        {measurement.analysis_status && (
+                            <ReportFieldRow
+                                label={t('digital_v2.status_label', 'ESTADO DIGITAL')}
+                                value={measurement.analysis_status}
+                                mono
+                            />
+                        )}
+                        {typeof measurement.detected_slope_angle_deg === 'number' && (
+                            <ReportFieldRow
+                                label={t('digital_v2.slope_label', 'TALUD DETECTADO')}
+                                value={`α ${measurement.detected_slope_angle_deg.toFixed(1)}°`}
+                                mono
+                            />
+                        )}
+                        {measurement.slope_warning && (
+                            <ReportFieldRow
+                                label={t('digital_v2.slope_alert_label', 'ALERTA DE TALUD')}
+                                value={measurement.slope_warning}
+                            />
+                        )}
                     </section>
 
-                    {/* Sovereign Geolocation UTM Block */}
-                    <section className="p-fib-21 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none flex flex-col gap-fib-13">
+                    <section
+                        className={
+                            isMobile
+                                ? 'py-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none flex flex-col gap-fib-13'
+                                : 'p-fib-21 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none flex flex-col gap-fib-13'
+                        }
+                    >
                         <h3 className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
                             {t('analytics.geospatial_utm_title', 'GEOLOCALIZACIÓN SOBERANA UTM')}
                         </h3>
@@ -962,26 +1203,26 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                             label="EPSG / PRECISION"
                             value={
                                 canonicalFix
-                                    ? `${canonicalFix.utm.epsg}${
-                                          canonicalFix.accuracyM != null
-                                              ? ` (±${canonicalFix.accuracyM.toFixed(1)} m)`
-                                              : ''
-                                      }`
+                                    ? `${canonicalFix.utm.epsg}${canonicalFix.accuracyM != null
+                                        ? ` (±${canonicalFix.accuracyM.toFixed(1)} m)`
+                                        : ''
+                                    }`
                                     : null
                             }
                             mono
                         />
-                        {canonicalFix && (
-                            <SovereignGeoMapLazy
-                                fix={canonicalFix}
-                                interactive={false}
-                                label={asset?.name || measurement.assetId}
-                                heightPx={200}
-                            />
-                        )}
+                        <StockpileStaticMapCard
+                            asset={asset}
+                            fix={canonicalFix}
+                            heightPx={220}
+                            label={asset?.name || measurement.assetId}
+                            flat={isMobile}
+                        />
                     </section>
 
-                    {/* Copper Metallurgy & HITL Block */}
+                    {/* Copper Metallurgy & HITL Block + Rosin-Rammler (Solo Escritorio) */}
+                    {!isMobile && (
+                        <>
                     <ReportBlockEditable
                         title={t('copper_governance.title', 'GOBERNANZA METALÚRGICA COBRE (Cu)')}
                         code={effDomain || undefined}
@@ -1154,11 +1395,10 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                                     label={t('copper_governance.scale_weight', 'PESO ROMANA [t]')}
                                     value={
                                         effRomana != null && effRomana > 0
-                                            ? `${effRomana.toFixed(2)} t${
-                                                  romanaComparison
-                                                      ? ` (Δ ${romanaComparison.differencePercent.toFixed(2)}%)`
-                                                      : ''
-                                              }`
+                                            ? `${effRomana.toFixed(2)} t${romanaComparison
+                                                ? ` (Δ ${romanaComparison.differencePercent.toFixed(2)}%)`
+                                                : ''
+                                            }`
                                             : null
                                     }
                                     mono
@@ -1316,15 +1556,15 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                                             effRosin != null
                                                 ? String(effRosin.oversize_count)
                                                 : effBoulders.length > 0
-                                                  ? String(
+                                                    ? String(
                                                         effBoulders.filter(
                                                             (b) =>
                                                                 typeof b.estimated_mm ===
-                                                                    'number' &&
+                                                                'number' &&
                                                                 b.estimated_mm >= 250
                                                         ).length
                                                     )
-                                                  : null
+                                                    : null
                                         }
                                         mono
                                     />
@@ -1333,15 +1573,15 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                                         value={
                                             effRosin?.source === 'MANUAL_PERCENTILES'
                                                 ? t(
-                                                      'rosin_rammler.source_manual_percentiles',
-                                                      'Percentiles manuales HITL'
-                                                  )
+                                                    'rosin_rammler.source_manual_percentiles',
+                                                    'Percentiles manuales HITL'
+                                                )
                                                 : effRosin?.source === 'VISION_BOX2D_SCALED'
-                                                  ? t(
+                                                    ? t(
                                                         'rosin_rammler.source_vision_box2d',
                                                         'Visión IA (box_2d)'
                                                     )
-                                                  : effRosin?.source ?? null
+                                                    : effRosin?.source ?? null
                                         }
                                         mono
                                     />
@@ -1402,6 +1642,8 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                             </div>
                         )}
                     </ReportBlockEditable>
+                        </>
+                    )}
                 </div>
             </div>
 

@@ -12,6 +12,7 @@ import type {
     EnergySourceCategory,
     EphemeralIdentificationImageInput,
     EquipmentAxisValueKind,
+    EquipmentSupplyLineItem,
     FleetIdentifierType,
     FleetOwnershipCondition,
     FunctionalDomainTrait,
@@ -19,6 +20,7 @@ import type {
     OperatorInterfaceTrait,
     OpticalIdentificationSummary,
     PmCadenceBasisTrait,
+    SupplyItemFamily,
     TransmissionCategory,
 } from '../../../contracts/opermaq.contracts';
 import {
@@ -35,6 +37,7 @@ import {
     EnergySourceCategorySchema,
     EphemeralIdentificationImageInputSchema,
     EquipmentAxisValueKindSchema,
+    EquipmentSupplyLineItemSchema,
     EquipmentTypeAxisSchema,
     FleetIdentifierTypeSchema,
     FleetOwnershipConditionSchema,
@@ -48,6 +51,7 @@ import {
     PmCadenceBasisTraitSchema,
     ResolveAssetBodySchema,
     ReviewContributionBodySchema,
+    SupplyItemFamilySchema,
     TransmissionCategorySchema,
 } from '../../../contracts/opermaq.contracts';
 import type {
@@ -69,6 +73,7 @@ export type {
     EnergySourceCategory,
     EphemeralIdentificationImageInput,
     EquipmentAxisValueKind,
+    EquipmentSupplyLineItem,
     EquipmentTypeAxisSchemaItem,
     FleetIdentifierType,
     FleetOwnershipCondition,
@@ -78,6 +83,7 @@ export type {
     OperatorInterfaceTrait,
     OpticalIdentificationSummary,
     PmCadenceBasisTrait,
+    SupplyItemFamily,
     TransmissionCategory,
 };
 
@@ -95,6 +101,7 @@ export {
     EnergySourceCategorySchema,
     EphemeralIdentificationImageInputSchema,
     EquipmentAxisValueKindSchema,
+    EquipmentSupplyLineItemSchema,
     EquipmentTypeAxisSchema,
     FleetIdentifierTypeSchema,
     FleetOwnershipConditionSchema,
@@ -108,6 +115,7 @@ export {
     PmCadenceBasisTraitSchema,
     ResolveAssetBodySchema,
     ReviewContributionBodySchema,
+    SupplyItemFamilySchema,
     TransmissionCategorySchema,
 };
 

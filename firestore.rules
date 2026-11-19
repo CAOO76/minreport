@@ -27,9 +27,11 @@ rules_version = '2';
 //   - /pilot_feedback/{feedbackId}: Observaciones TEST-PILOT — Lectura DEV_ROOT o autorUid, Create status=='OPEN' con authorUid propio, Update/Delete exclusivo DEV_ROOT
 //   - /hitl_candidates/{candidateId}: Candidatos HITL — Update/Delete exclusivo DEV_ROOT (Mitigación F1)
 //   - Colecciones Multi-Tenant Operativas (tenant_assets, tenant_catalogs, inspections, fleet_inspections, machinery_fleet,
-//     equipment_inspections, stockpiles, geolapp_records [dominios GEOMENSURA_GEO, EXPLORACION_SONDAJES, ESTRUCTURAL_HIDRO],
-//     job_profiles, project_profiles, report_templates, generated_reports, edu_sandbox_fleet):
+//     equipment_inspections, stockpiles, job_profiles, project_profiles, report_templates, generated_reports,
+//     edu_sandbox_fleet):
 //     Requieren tenantId/tenant_id/accountId string no vacío con pertenencia verificada, inmutabilidad cross-tenant en update y delete exclusivo isTenantAdminOrOwner.
+//   - /stockpiles/{stkId}: Acopios STOCKPILE CONTROL Next-Gen — Aislamiento multi-tenant estricto + descripción, mapa estático CAS (static_map_url/sha256/bytes), deltas de volumen, proyecto (project_id/project_name), cierre de ciclo (closed_at/by, closure_reason ['SHIPPED'|'ZERO_VOLUME'|'MANUAL_CLOSE'], dispatch_reference, shipped_weight_t, pre_closure_volume_m3) y bloqueo data: Base64 en URLs.
+//   - /stockpiles/{stkId}/measurements/{measId}: Mediciones STOCKPILE CONTROL Next-Gen — volumen_m3 >= 0, peso_t >= 0, cadena previa (previous_measurement_id/photo_url), deltas, metadatos de cierre y bloqueo data: Base64 en photo_url/previous_photo_url.
 //   - /financial_events/{eventId}: Append-Only estricto (create exclusivo Admin/Owner de cuenta, update/delete == false).
 //   - /audit_ledger/{logId}: Cadena SHA-256 Server-Only (create/update/delete == false; lectura Admin o auditor titular sin cruce multi-tenant).
 //   - Ledgers Operativos Inmutables (event_ledger, financial_ledger): Append-Only (update/delete == false).
@@ -482,6 +484,129 @@ service cloud.firestore {
         (!('defaultCentroCosto' in data) || data.defaultCentroCosto == null || (data.defaultCentroCosto is string && data.defaultCentroCosto.size() <= 80)) &&
         (!('notes' in data) || data.notes == null || (data.notes is string && data.notes.size() <= 800)) &&
         (!('updatedByUid' in data) || data.updatedByUid == null || (data.updatedByUid is string && data.updatedByUid.size() <= 128));
+    }
+
+    // Helpers reutilizables para campos opcionales y anti-Base64 (STOCKPILE CONTROL Next-Gen)
+    function isValidOptionalStringLimit(data, field, maxLen) {
+      return !(field in data) ||
+        data[field] == null ||
+        (data[field] is string && data[field].size() <= maxLen);
+    }
+
+    function isValidOptionalNumber(data, field) {
+      return !(field in data) ||
+        data[field] == null ||
+        data[field] is number;
+    }
+
+    function isValidOptionalNonNegNumber(data, field) {
+      return !(field in data) ||
+        data[field] == null ||
+        (data[field] is number && data[field] >= 0);
+    }
+
+    function isValidOptionalBool(data, field) {
+      return !(field in data) ||
+        data[field] == null ||
+        data[field] is bool;
+    }
+
+    function isValidOptionalNoDataUrl(data, field, maxLen) {
+      return !(field in data) ||
+        data[field] == null ||
+        (
+          data[field] is string &&
+          data[field].size() <= maxLen &&
+          (
+            data[field] == '' ||
+            (
+              !data[field].matches('(?is)^\\s*data:.*') &&
+              !data[field].matches('(?is).*data:[a-z0-9.+/-]*;base64,.*')
+            )
+          )
+        );
+    }
+
+    function isValidOptionalClosureReason(data) {
+      return !('closure_reason' in data) ||
+        data.closure_reason == null ||
+        (data.closure_reason is string && data.closure_reason in ['SHIPPED', 'ZERO_VOLUME', 'MANUAL_CLOSE']);
+    }
+
+    // Validador de dominio para acopios en /stockpiles/{stkId} (STOCKPILE CONTROL Next-Gen — Create & Update)
+    function isValidStockpilePayload(data) {
+      return isBoundedPayload(data) &&
+        isValidOptionalStringLimit(data, 'id', 128) &&
+        isValidOptionalStringLimit(data, 'name', 240) &&
+        isValidOptionalStringLimit(data, 'tag', 240) &&
+        isValidOptionalStringLimit(data, 'description', 2500) &&
+        (!('clase' in data) || data.clase == null || (data.clase is string && data.clase in ['mineral', 'esteril', 'baja_ley'])) &&
+        isValidOptionalStringLimit(data, 'material', 64) &&
+        (!('status' in data) || data.status == null || (data.status is string && data.status in ['ACTIVE', 'ARCHIVED', 'CONCILIATED', 'CLOSED'])) &&
+        isValidOptionalStringLimit(data, 'createdBy', 160) &&
+        isValidOptionalStringLimit(data, 'location_ref', 300) &&
+        isValidOptionalStringLimit(data, 'project_id', 128) &&
+        isValidOptionalStringLimit(data, 'project_name', 240) &&
+        isValidOptionalNoDataUrl(data, 'initial_photo_url', 2048) &&
+        isValidOptionalNoDataUrl(data, 'last_photo_url', 2048) &&
+        isValidOptionalNoDataUrl(data, 'thumbnail_url', 2048) &&
+        isValidOptionalNoDataUrl(data, 'static_map_url', 2048) &&
+        isValidOptionalStringLimit(data, 'static_map_sha256', 128) &&
+        isValidOptionalNonNegNumber(data, 'static_map_original_bytes') &&
+        isValidOptionalNonNegNumber(data, 'static_map_optimized_bytes') &&
+        isValidOptionalNonNegNumber(data, 'static_map_savings_pct') &&
+        isValidOptionalNonNegNumber(data, 'last_volume_m3') &&
+        isValidOptionalNonNegNumber(data, 'last_weight_t') &&
+        isValidOptionalNonNegNumber(data, 'volume_m3') &&
+        isValidOptionalNonNegNumber(data, 'volumen') &&
+        isValidOptionalNonNegNumber(data, 'volumeM3') &&
+        isValidOptionalNonNegNumber(data, 'weight_t') &&
+        isValidOptionalNonNegNumber(data, 'peso_final_toneladas') &&
+        isValidOptionalNonNegNumber(data, 'tonnage') &&
+        isValidOptionalNumber(data, 'last_delta_volumen_m3') &&
+        isValidOptionalNumber(data, 'last_delta_volumen_pct') &&
+        isValidOptionalStringLimit(data, 'last_geometry_type', 80) &&
+        isValidOptionalNonNegNumber(data, 'closed_at') &&
+        isValidOptionalStringLimit(data, 'closed_by', 160) &&
+        isValidOptionalClosureReason(data) &&
+        isValidOptionalStringLimit(data, 'dispatch_reference', 240) &&
+        isValidOptionalNonNegNumber(data, 'shipped_weight_t') &&
+        isValidOptionalNonNegNumber(data, 'pre_closure_volume_m3') &&
+        isValidOptionalNoDataUrl(data, 'mesh_url', 2048) &&
+        isValidOptionalStringLimit(data, 'mesh_sha256', 128) &&
+        isValidOptionalNonNegNumber(data, 'cas_original_bytes') &&
+        isValidOptionalNonNegNumber(data, 'cas_optimized_bytes') &&
+        isValidOptionalNonNegNumber(data, 'cas_savings_pct') &&
+        (!('perimeter_photo_urls' in data) || data.perimeter_photo_urls == null || (data.perimeter_photo_urls is list && data.perimeter_photo_urls.size() <= 32));
+    }
+
+    // Validador de dominio para mediciones en /stockpiles/{stkId}/measurements/{measId} (STOCKPILE CONTROL Next-Gen — Create & Update)
+    function isValidStockpileMeasurementPayload(data) {
+      return isBoundedPayload(data) &&
+        isValidOptionalStringLimit(data, 'id', 128) &&
+        isValidOptionalStringLimit(data, 'assetId', 128) &&
+        isValidOptionalStringLimit(data, 'user_id', 160) &&
+        (!('method' in data) || data.method == null || (data.method is string && data.method in ['digital', 'manual'])) &&
+        (!('timestamp' in data) || data.timestamp == null || data.timestamp is timestamp || (data.timestamp is number && data.timestamp >= 0)) &&
+        (!('volumen_m3' in data) || (data.volumen_m3 is number && data.volumen_m3 >= 0)) &&
+        (!('peso_t' in data) || (data.peso_t is number && data.peso_t >= 0)) &&
+        isValidOptionalNonNegNumber(data, 'density_factor') &&
+        isValidOptionalNoDataUrl(data, 'photo_url', 2048) &&
+        isValidOptionalStringLimit(data, 'previous_measurement_id', 128) &&
+        isValidOptionalNoDataUrl(data, 'previous_photo_url', 2048) &&
+        isValidOptionalNumber(data, 'delta_volumen') &&
+        isValidOptionalNumber(data, 'delta_volumen_pct') &&
+        isValidOptionalNumber(data, 'delta_peso') &&
+        isValidOptionalBool(data, 'is_closure_measurement') &&
+        isValidOptionalClosureReason(data) &&
+        isValidOptionalStringLimit(data, 'dispatch_reference', 240) &&
+        isValidOptionalNoDataUrl(data, 'mesh_url', 2048) &&
+        isValidOptionalStringLimit(data, 'mesh_sha256', 128) &&
+        isValidOptionalNonNegNumber(data, 'cas_original_bytes') &&
+        isValidOptionalNonNegNumber(data, 'cas_optimized_bytes') &&
+        isValidOptionalNonNegNumber(data, 'cas_savings_pct') &&
+        isValidOptionalBool(data, 'ignored') &&
+        (!('perimeter_photo_urls' in data) || data.perimeter_photo_urls == null || (data.perimeter_photo_urls is list && data.perimeter_photo_urls.size() <= 32));
     }
 
     // ===============================================================
@@ -1132,13 +1257,13 @@ service cloud.firestore {
     match /stockpiles/{stkId} {
       allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
       allow create: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
+        isValidStockpilePayload(request.resource.data) &&
         (
           isSystemPrivileged() ||
           (docTenantId(request.resource.data) is string && isAccountMember(docTenantId(request.resource.data)))
         );
       allow update: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
+        isValidStockpilePayload(request.resource.data) &&
         (
           isSystemPrivileged() ||
           (
@@ -1152,7 +1277,7 @@ service cloud.firestore {
         (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
       );
 
-      // Subcolección de mediciones GEOLAPP aislada por tenant propio y del acopio padre
+      // Subcolección de mediciones STOCKPILE CONTROL Next-Gen aislada por tenant propio y del acopio padre
       match /measurements/{measId} {
         allow read: if isAuthenticated() && (
           isSystemPrivileged() ||
@@ -1163,7 +1288,7 @@ service cloud.firestore {
           )
         );
         allow create: if isAuthenticated() &&
-          isBoundedPayload(request.resource.data) &&
+          isValidStockpileMeasurementPayload(request.resource.data) &&
           (
             isSystemPrivileged() ||
             (
@@ -1176,7 +1301,7 @@ service cloud.firestore {
             )
           );
         allow update: if isAuthenticated() &&
-          isBoundedPayload(request.resource.data) &&
+          isValidStockpileMeasurementPayload(request.resource.data) &&
           (
             isSystemPrivileged() ||
             (
@@ -1190,31 +1315,6 @@ service cloud.firestore {
           (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
         );
       }
-    }
-
-    // Registros geológicos multi-tenant GEOLAPP® (GEOMENSURA_GEO, EXPLORACION_SONDAJES, ESTRUCTURAL_HIDRO)
-    match /geolapp_records/{recordId} {
-      allow read: if isAuthenticated() && (isSystemPrivileged() || canReadTenantDoc(resource.data));
-      allow create: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (docTenantId(request.resource.data) is string && isAccountMember(docTenantId(request.resource.data)))
-        );
-      allow update: if isAuthenticated() &&
-        isBoundedPayload(request.resource.data) &&
-        (
-          isSystemPrivileged() ||
-          (
-            docTenantId(resource.data) is string &&
-            isAccountMember(docTenantId(resource.data)) &&
-            docTenantId(request.resource.data) == docTenantId(resource.data)
-          )
-        );
-      allow delete: if isAuthenticated() && (
-        isAdmin() ||
-        (docTenantId(resource.data) is string && isTenantAdminOrOwner(docTenantId(resource.data)))
-      );
     }
 
     // Eventos financieros multi-tenant (Append-Only estricto; alta exclusiva Admin/Owner de cuenta, cero edición/borrado)

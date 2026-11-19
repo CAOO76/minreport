@@ -4,6 +4,7 @@ import {
     StandardFonts,
     rgb,
     type PDFFont,
+    type PDFImage,
     type PDFPage,
     type RGB,
 } from 'pdf-lib';
@@ -12,16 +13,15 @@ import { Share } from '@capacitor/share';
 import { Capacitor } from '@capacitor/core';
 import { buildCanonicalGeoFix } from '../../../../core/geo/wgs84UtmProjection';
 import type { CanonicalGeoFix, GeoCaptureSource } from '../../../../contracts/geo.contracts';
-import { calculationEngine } from '../services/calculation-engine';
-import { projectEqualAreaPole } from './geoscienceCalculations';
+import {
+    calculationEngine,
+    computeStockpileMeasurementChain,
+} from '../services/calculation-engine';
+import { resolveStockpileImageUrl } from '../services/StorageService';
 import type {
     BoulderDetectionBox2D,
     CopperGovernanceAlert,
     CopperMineralDomain,
-    EstructuralHidroPayload,
-    ExploracionSondajePayload,
-    GeolappDomainRecord,
-    GeomensuraSurveyPayload,
     StockpileAsset,
     StockpileMeasurement,
 } from '../types/GeolappTypes';
@@ -38,6 +38,8 @@ export interface GeolappVectorPdfOptions {
     governanceAlerts?: GeolappPdfGovernanceAlert[];
     filename?: string;
     share?: boolean;
+    coverPhotoBytes?: Uint8Array;
+    staticMapBytes?: Uint8Array;
 }
 
 export interface GeolappVectorPdfResult {
@@ -55,6 +57,19 @@ interface PdfCopy {
     sovereignRegion: string;
     assetId: string;
     assetName: string;
+    descriptionLabel: string;
+    projectLabel: string;
+    projectPending: string;
+    cycleStatusLabel: string;
+    cycleActiveLabel: string;
+    cycleClosedShipped: string;
+    cycleClosedZero: string;
+    cycleClosedManual: string;
+    dispatchRefLabel: string;
+    shippedWeightLabel: string;
+    visualBlockHeader: string;
+    coverPhotoBoxLabel: string;
+    staticMapBoxLabel: string;
     materialClass: string;
     locationRef: string;
     emittedAt: string;
@@ -127,6 +142,7 @@ interface PdfCopy {
     colMethod: string;
     colModel: string;
     colVol: string;
+    colDeltaV: string;
     colDens: string;
     colThm: string;
     colTms: string;
@@ -146,6 +162,19 @@ const PDF_COPY: Record<PdfLocale, PdfCopy> = {
         sovereignRegion: 'southamerica-west1',
         assetId: 'CÓDIGO ACOPIO',
         assetName: 'DENOMINACIÓN',
+        descriptionLabel: 'DESCRIPCIÓN TÉCNICA',
+        projectLabel: 'PROYECTO',
+        projectPending: '[Desarrollo pendiente]',
+        cycleStatusLabel: 'ESTADO DEL CICLO',
+        cycleActiveLabel: 'ACTIVO EN CANCHA',
+        cycleClosedShipped: 'CERRADO - EMBARCADO',
+        cycleClosedZero: 'CERRADO - VOLUMEN 0 m3',
+        cycleClosedManual: 'CERRADO',
+        dispatchRefLabel: 'REF. EMBARQUE / LOTE',
+        shippedWeightLabel: 'TONELAJE EMBARCADO [t]',
+        visualBlockHeader: '00 · PORTADA FOTOGRÁFICA Y MAPA GEORREFERENCIADO (SIN INTERACCIÓN)',
+        coverPhotoBoxLabel: 'ÚLTIMA CAPTURA VIGENTE (CAS)',
+        staticMapBoxLabel: 'MAPA SATELITAL ESTÁTICO (SIN INTERACCIÓN)',
         materialClass: 'CLASE OPERATIVA',
         locationRef: 'UBICACIÓN / NIVEL',
         emittedAt: 'EMISIÓN ISO',
@@ -218,6 +247,7 @@ const PDF_COPY: Record<PdfLocale, PdfCopy> = {
         colMethod: 'MET',
         colModel: 'MODELO',
         colVol: 'VOL [m3]',
+        colDeltaV: 'DELTA V',
         colDens: 'DENS',
         colThm: 'THM [t]',
         colTms: 'TMS [t]',
@@ -235,6 +265,19 @@ const PDF_COPY: Record<PdfLocale, PdfCopy> = {
         sovereignRegion: 'southamerica-west1',
         assetId: 'STOCKPILE CODE',
         assetName: 'STOCKPILE NAME',
+        descriptionLabel: 'TECHNICAL DESCRIPTION',
+        projectLabel: 'PROJECT',
+        projectPending: '[Pending development]',
+        cycleStatusLabel: 'CYCLE STATUS',
+        cycleActiveLabel: 'ACTIVE ON PAD',
+        cycleClosedShipped: 'CLOSED - SHIPPED',
+        cycleClosedZero: 'CLOSED - ZERO VOLUME',
+        cycleClosedManual: 'CLOSED',
+        dispatchRefLabel: 'SHIPMENT / LOT REF.',
+        shippedWeightLabel: 'SHIPPED WEIGHT [t]',
+        visualBlockHeader: '00 · COVER PHOTO AND STATIC GEOREFERENCE MAP (NON-INTERACTIVE)',
+        coverPhotoBoxLabel: 'LATEST ACTIVE PHOTO (CAS)',
+        staticMapBoxLabel: 'STATIC SATELLITE MAP (NON-INTERACTIVE)',
         materialClass: 'OPERATIONAL CLASS',
         locationRef: 'LOCATION / BENCH',
         emittedAt: 'ISO TIMESTAMP',
@@ -307,6 +350,7 @@ const PDF_COPY: Record<PdfLocale, PdfCopy> = {
         colMethod: 'MET',
         colModel: 'MODEL',
         colVol: 'VOL [m3]',
+        colDeltaV: 'DELTA V',
         colDens: 'DENS',
         colThm: 'WMT [t]',
         colTms: 'DMT [t]',
@@ -324,6 +368,19 @@ const PDF_COPY: Record<PdfLocale, PdfCopy> = {
         sovereignRegion: 'southamerica-west1',
         assetId: 'CÓDIGO DA PILHA',
         assetName: 'DENOMINAÇÃO',
+        descriptionLabel: 'DESCRIÇÃO TÉCNICA',
+        projectLabel: 'PROJETO',
+        projectPending: '[Desenvolvimento pendente]',
+        cycleStatusLabel: 'ESTADO DO CICLO',
+        cycleActiveLabel: 'ATIVO EM PÁTIO',
+        cycleClosedShipped: 'FECHADO - EMBARCADO',
+        cycleClosedZero: 'FECHADO - VOLUME 0 m3',
+        cycleClosedManual: 'FECHADO',
+        dispatchRefLabel: 'REF. EMBARQUE / LOTE',
+        shippedWeightLabel: 'TONELAGEM EMBARCADA [t]',
+        visualBlockHeader: '00 · CAPA FOTOGRÁFICA E MAPA GEORREFERENCIADO (SEM INTERAÇÃO)',
+        coverPhotoBoxLabel: 'ÚLTIMA CAPTURA VIGENTE (CAS)',
+        staticMapBoxLabel: 'MAPA SATELITAL ESTÁTICO (SEM INTERAÇÃO)',
         materialClass: 'CLASSE OPERACIONAL',
         locationRef: 'LOCALIZAÇÃO / NÍVEL',
         emittedAt: 'EMISSÃO ISO',
@@ -396,6 +453,7 @@ const PDF_COPY: Record<PdfLocale, PdfCopy> = {
         colMethod: 'MET',
         colModel: 'MODELO',
         colVol: 'VOL [m3]',
+        colDeltaV: 'DELTA V',
         colDens: 'DENS',
         colThm: 'THM [t]',
         colTms: 'TMS [t]',
@@ -971,6 +1029,213 @@ class VectorPdfCursor {
     }
 }
 
+async function convertRasterBlobToPngBytes(blob: Blob): Promise<Uint8Array | null> {
+    if (
+        typeof document === 'undefined' ||
+        typeof createImageBitmap !== 'function'
+    ) {
+        return null;
+    }
+    try {
+        const bitmap = await createImageBitmap(blob);
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = bitmap.width;
+            canvas.height = bitmap.height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return null;
+            ctx.drawImage(bitmap, 0, 0);
+            const pngBlob = await new Promise<Blob | null>((resolve) =>
+                canvas.toBlob((out) => resolve(out), 'image/png')
+            );
+            if (!pngBlob) return null;
+            return new Uint8Array(await pngBlob.arrayBuffer());
+        } finally {
+            bitmap.close();
+        }
+    } catch {
+        return null;
+    }
+}
+
+async function embedBinaryIntoPdf(
+    pdfDoc: PDFDocument,
+    rawBytes: Uint8Array
+): Promise<PDFImage | null> {
+    if (!rawBytes || rawBytes.byteLength < 8) return null;
+    const isPng =
+        rawBytes[0] === 0x89 &&
+        rawBytes[1] === 0x50 &&
+        rawBytes[2] === 0x4e &&
+        rawBytes[3] === 0x47;
+    if (isPng) {
+        try {
+            return await pdfDoc.embedPng(rawBytes);
+        } catch {
+            return null;
+        }
+    }
+    const isJpg = rawBytes[0] === 0xff && rawBytes[1] === 0xd8;
+    if (isJpg) {
+        try {
+            return await pdfDoc.embedJpg(rawBytes);
+        } catch {
+            return null;
+        }
+    }
+    const isWebp =
+        rawBytes[0] === 0x52 &&
+        rawBytes[1] === 0x49 &&
+        rawBytes[2] === 0x46 &&
+        rawBytes[3] === 0x46;
+    if (isWebp && typeof Blob !== 'undefined') {
+        const bufCopy = new Uint8Array(rawBytes.byteLength);
+        bufCopy.set(rawBytes);
+        const pngBytes = await convertRasterBlobToPngBytes(
+            new Blob([bufCopy.buffer], { type: 'image/webp' })
+        );
+        if (pngBytes) {
+            try {
+                return await pdfDoc.embedPng(pngBytes);
+            } catch {
+                return null;
+            }
+        }
+    }
+    return null;
+}
+
+async function tryEmbedImageFromSource(
+    pdfDoc: PDFDocument,
+    rawBytes?: Uint8Array | null,
+    url?: string | null
+): Promise<PDFImage | null> {
+    if (rawBytes && rawBytes.byteLength > 0) {
+        const direct = await embedBinaryIntoPdf(pdfDoc, rawBytes);
+        if (direct) return direct;
+    }
+    if (!url || typeof url !== 'string' || url.startsWith('data:')) {
+        return null;
+    }
+    let revokeFn: (() => void) | undefined;
+    try {
+        const resolved = await resolveStockpileImageUrl(url);
+        revokeFn = resolved.revoke;
+        const targetUrl = resolved.resolvedUrl;
+        if (!targetUrl || typeof fetch !== 'function') return null;
+        if (targetUrl.startsWith('/') && typeof window === 'undefined') {
+            return null;
+        }
+
+        const headers: Record<string, string> = {};
+        if (targetUrl.startsWith('/api/') && typeof window !== 'undefined') {
+            try {
+                const { auth } = await import('../../../../config/firebase');
+                const token =
+                    (await auth?.currentUser?.getIdToken().catch(() => null)) ||
+                    window.localStorage.getItem('dev_auth_token') ||
+                    window.localStorage.getItem('dev_vault_token');
+                if (token) {
+                    headers.Authorization = `Bearer ${token}`;
+                }
+                const accountId = window.localStorage
+                    .getItem('minreport_active_account_id')
+                    ?.trim();
+                if (accountId) {
+                    headers['X-Active-Account-Id'] = accountId;
+                }
+            } catch {
+                // Sin token en cliente
+            }
+        }
+
+        const resp = await fetch(targetUrl, { method: 'GET', headers });
+        if (!resp.ok) return null;
+        const buf = new Uint8Array(await resp.arrayBuffer());
+        return await embedBinaryIntoPdf(pdfDoc, buf);
+    } catch {
+        return null;
+    } finally {
+        revokeFn?.();
+    }
+}
+
+function drawVectorUtmCrosshairFallback(
+    page: PDFPage,
+    fonts: FontSet,
+    boxX: number,
+    boxY: number,
+    boxW: number,
+    boxH: number,
+    geoFix: CanonicalGeoFix | null,
+    undeclaredText: string
+): void {
+    const padX = boxX + 8;
+    const padY = boxY + 8;
+    const innerW = boxW - 16;
+    const innerH = boxH - 18;
+    const step = 18;
+    for (let gx = padX + step; gx < padX + innerW; gx += step) {
+        page.drawLine({
+            start: { x: gx, y: padY },
+            end: { x: gx, y: padY + innerH },
+            thickness: 0.35,
+            color: COLOR_BORDER,
+        });
+    }
+    for (let gy = padY + step; gy < padY + innerH; gy += step) {
+        page.drawLine({
+            start: { x: padX, y: gy },
+            end: { x: padX + innerW, y: gy },
+            thickness: 0.35,
+            color: COLOR_BORDER,
+        });
+    }
+    const cx = boxX + boxW / 2;
+    const cy = boxY + boxH / 2 + 2;
+    if (geoFix) {
+        page.drawCircle({
+            x: cx,
+            y: cy,
+            size: 10,
+            borderColor: COLOR_COPPER,
+            borderWidth: 1.2,
+        });
+        page.drawCircle({
+            x: cx,
+            y: cy,
+            size: 3,
+            color: COLOR_COPPER,
+        });
+        drawSafeText(page, truncateToWidth(geoFix.utm.formatted, fonts.monoBold, 6.8, boxW - 14), {
+            font: fonts.monoBold,
+            size: 6.8,
+            x: boxX + 7,
+            y: boxY + 14,
+            color: COLOR_INK,
+        });
+        drawSafeText(
+            page,
+            `${geoFix.lat.toFixed(6)}, ${geoFix.lng.toFixed(6)}`,
+            {
+                font: fonts.mono,
+                size: 6.4,
+                x: boxX + 7,
+                y: boxY + 5,
+                color: COLOR_MUTED,
+            }
+        );
+    } else {
+        drawSafeText(page, truncateToWidth(undeclaredText, fonts.mono, 6.8, boxW - 16), {
+            font: fonts.mono,
+            size: 6.8,
+            x: boxX + 8,
+            y: cy - 3,
+            color: COLOR_MUTED,
+        });
+    }
+}
+
 /**
  * Genera el Certificado Técnico Vectorial A4 de GEOLAPP® en memoria mediante `pdf-lib`
  * (sin captura raster de DOM). Compatible con Node y Browser/Capacitor.
@@ -984,9 +1249,11 @@ export async function generateGeolappVectorPdf(
     const copy = PDF_COPY[locale];
     const emittedIso = new Date().toISOString();
 
-    const sortedMeasurements = [...(measurements || [])].sort(
-        (a, b) => (b.timestamp || 0) - (a.timestamp || 0)
+    const chain = computeStockpileMeasurementChain(
+        measurements || [],
+        asset.initial_photo_url
     );
+    const sortedMeasurements = chain.enrichedMeasurements;
     const activeMeas =
         sortedMeasurements.find((m) => !m.ignored) || sortedMeasurements[0] || null;
 
@@ -1083,11 +1350,26 @@ export async function generateGeolappVectorPdf(
 
     cursor.y -= headerH + 10;
 
+    const cycleStatusText =
+        asset.status === 'CLOSED'
+            ? asset.closure_reason === 'SHIPPED'
+                ? copy.cycleClosedShipped
+                : asset.closure_reason === 'ZERO_VOLUME'
+                  ? copy.cycleClosedZero
+                  : copy.cycleClosedManual
+            : copy.cycleActiveLabel;
+
     cursor.drawKeyValueGrid(
         [
             {
                 label: copy.assetName,
                 value: sanitizePdfText(asset.name, copy.undeclared),
+            },
+            {
+                label: copy.cycleStatusLabel,
+                value: cycleStatusText,
+                mono: true,
+                accent: asset.status === 'CLOSED' ? 'copper' : 'cyan',
             },
             {
                 label: copy.materialClass,
@@ -1099,6 +1381,13 @@ export async function generateGeolappVectorPdf(
                 value: sanitizePdfText(asset.location_ref, copy.undeclared),
             },
             {
+                label: copy.projectLabel,
+                value: asset.project_name
+                    ? sanitizePdfText(asset.project_name, copy.projectPending)
+                    : copy.projectPending,
+                mono: true,
+            },
+            {
                 label: copy.authorLabel,
                 value: sanitizePdfText(options?.authorEmail || asset.createdBy, copy.undeclared),
                 mono: true,
@@ -1107,8 +1396,153 @@ export async function generateGeolappVectorPdf(
         2
     );
 
-    // ── BLOQUE 01: GEOESPACIAL ────────────────────────────────────────────────
+    cursor.drawKeyValueGrid(
+        [
+            {
+                label: copy.descriptionLabel,
+                value: sanitizePdfText(asset.description, copy.undeclared),
+            },
+            ...(asset.status === 'CLOSED'
+                ? [
+                      {
+                          label: copy.dispatchRefLabel,
+                          value: sanitizePdfText(asset.dispatch_reference, copy.undeclared),
+                          mono: true,
+                      },
+                  ]
+                : []),
+            ...(asset.status === 'CLOSED' && isFiniteNum(asset.shipped_weight_t)
+                ? [
+                      {
+                          label: copy.shippedWeightLabel,
+                          value: `${asset.shipped_weight_t.toFixed(2)} t`,
+                          mono: true,
+                      },
+                  ]
+                : []),
+        ],
+        1
+    );
+
+    // ── BLOQUE 00: PORTADA FOTOGRÁFICA Y MAPA ESTÁTICO (SIN INTERACCIÓN) ─────
     const geoFix = buildSafeGeoFix(asset, activeMeas);
+    const coverPhotoUrl =
+        chain.summary.lastPhotoUrl || asset.last_photo_url || asset.initial_photo_url || null;
+    const embeddedCover = await tryEmbedImageFromSource(
+        pdfDoc,
+        options?.coverPhotoBytes,
+        coverPhotoUrl
+    );
+    const embeddedStaticMap = await tryEmbedImageFromSource(
+        pdfDoc,
+        options?.staticMapBytes,
+        asset.static_map_url || null
+    );
+
+    cursor.drawSectionTitle(copy.visualBlockHeader);
+    const visualH = 112;
+    cursor.ensureSpace(visualH + 8);
+    const visualPage = cursor.currentPage;
+    const leftBoxW = Math.round(CONTENT_W * 0.618) - 4;
+    const rightBoxX = MARGIN_X + leftBoxW + 8;
+    const rightBoxW = CONTENT_W - leftBoxW - 8;
+    const boxY = cursor.y - visualH;
+
+    // Caja izquierda (61.8%): Última Foto Vigente CAS
+    visualPage.drawRectangle({
+        x: MARGIN_X,
+        y: boxY,
+        width: leftBoxW,
+        height: visualH,
+        color: COLOR_SURFACE,
+        borderColor: COLOR_BORDER,
+        borderWidth: 0.75,
+    });
+    drawSafeText(visualPage, copy.coverPhotoBoxLabel, {
+        font: fonts.monoBold,
+        size: 6.5,
+        x: MARGIN_X + 6,
+        y: cursor.y - 10,
+        color: COLOR_COPPER,
+    });
+    if (embeddedCover) {
+        const innerW = leftBoxW - 12;
+        const innerH = visualH - 20;
+        const scale = Math.min(innerW / embeddedCover.width, innerH / embeddedCover.height);
+        const drawW = embeddedCover.width * scale;
+        const drawH = embeddedCover.height * scale;
+        visualPage.drawImage(embeddedCover, {
+            x: MARGIN_X + 6 + (innerW - drawW) / 2,
+            y: boxY + 5 + (innerH - drawH) / 2,
+            width: drawW,
+            height: drawH,
+        });
+    } else {
+        drawSafeText(
+            visualPage,
+            truncateToWidth(
+                coverPhotoUrl ? `${copy.evidenceRefLabel}: ${coverPhotoUrl}` : copy.undeclared,
+                fonts.mono,
+                6.8,
+                leftBoxW - 16
+            ),
+            {
+                font: fonts.mono,
+                size: 6.8,
+                x: MARGIN_X + 8,
+                y: boxY + visualH / 2 - 3,
+                color: COLOR_MUTED,
+            }
+        );
+    }
+
+    // Caja derecha (38.2%): Mapa Satelital Estático Sin Interacción
+    visualPage.drawRectangle({
+        x: rightBoxX,
+        y: boxY,
+        width: rightBoxW,
+        height: visualH,
+        color: COLOR_SURFACE,
+        borderColor: COLOR_BORDER,
+        borderWidth: 0.75,
+    });
+    drawSafeText(visualPage, copy.staticMapBoxLabel, {
+        font: fonts.monoBold,
+        size: 6.5,
+        x: rightBoxX + 6,
+        y: cursor.y - 10,
+        color: COLOR_CYAN,
+    });
+    if (embeddedStaticMap) {
+        const innerW = rightBoxW - 12;
+        const innerH = visualH - 20;
+        const scale = Math.min(
+            innerW / embeddedStaticMap.width,
+            innerH / embeddedStaticMap.height
+        );
+        const drawW = embeddedStaticMap.width * scale;
+        const drawH = embeddedStaticMap.height * scale;
+        visualPage.drawImage(embeddedStaticMap, {
+            x: rightBoxX + 6 + (innerW - drawW) / 2,
+            y: boxY + 5 + (innerH - drawH) / 2,
+            width: drawW,
+            height: drawH,
+        });
+    } else {
+        drawVectorUtmCrosshairFallback(
+            visualPage,
+            fonts,
+            rightBoxX,
+            boxY,
+            rightBoxW,
+            visualH - 12,
+            geoFix,
+            copy.undeclared
+        );
+    }
+    cursor.y = boxY - 10;
+
+    // ── BLOQUE 01: GEOESPACIAL ────────────────────────────────────────────────
     cursor.drawSectionTitle(copy.geospatialHeader);
     cursor.drawKeyValueGrid(
         [
@@ -1171,7 +1605,7 @@ export async function generateGeolappVectorPdf(
     const wallAngle = firstFinite(activeMeas?.wall_angle_deg, readDim(dims, ['wallAngleDeg', 'wall_angle_deg']));
     const geomHeight = readDim(dims, ['h', 'heightM', 'heightAtWallM']);
 
-    const volumeM3 = firstFinitePositive(
+    const volumeM3 = firstFinite(
         activeMeas?.volumen_m3,
         asset.last_volume_m3,
         asset.volume_m3,
@@ -1758,16 +2192,17 @@ export async function generateGeolappVectorPdf(
         cursor.y -= 28;
     } else {
         const cols = [
-            { title: copy.colDate, w: 54 },
-            { title: copy.colMethod, w: 28 },
-            { title: copy.colModel, w: 80 },
-            { title: copy.colVol, w: 48 },
-            { title: copy.colDens, w: 34 },
-            { title: copy.colThm, w: 46 },
-            { title: copy.colTms, w: 46 },
-            { title: copy.colGrade, w: 54 },
-            { title: copy.colFine, w: 46 },
-            { title: copy.colCas, w: CONTENT_W - (54 + 28 + 80 + 48 + 34 + 46 + 46 + 54 + 46) },
+            { title: copy.colDate, w: 48 },
+            { title: copy.colMethod, w: 24 },
+            { title: copy.colModel, w: 66 },
+            { title: copy.colVol, w: 42 },
+            { title: copy.colDeltaV, w: 58 },
+            { title: copy.colDens, w: 30 },
+            { title: copy.colThm, w: 42 },
+            { title: copy.colTms, w: 42 },
+            { title: copy.colGrade, w: 46 },
+            { title: copy.colFine, w: 42 },
+            { title: copy.colCas, w: CONTENT_W - (48 + 24 + 66 + 42 + 58 + 30 + 42 + 42 + 46 + 42) },
         ];
 
         const drawTableHeader = () => {
@@ -1786,8 +2221,8 @@ export async function generateGeolappVectorPdf(
             for (const col of cols) {
                 drawSafeText(p, col.title, {
                     font: fonts.monoBold,
-                    size: 6.2,
-                    x: cx + 3,
+                    size: 6,
+                    x: cx + 2.5,
                     y: cursor.y - 11,
                     color: COLOR_INK,
                 });
@@ -1824,12 +2259,28 @@ export async function generateGeolappVectorPdf(
             const mCas = formatCasTrace(m.cas_original_bytes, m.cas_optimized_bytes, m.cas_savings_pct);
             const mCut = isFiniteNum(m.cu_total_pct) ? m.cu_total_pct.toFixed(2) : '--';
             const mCus = isFiniteNum(m.cu_soluble_pct) ? m.cu_soluble_pct.toFixed(2) : '--';
+            let deltaStr = 'BASE';
+            if (m.ignored) {
+                deltaStr = 'IGN';
+            } else if (m.previous_measurement_id) {
+                const dv = isFiniteNum(m.delta_volumen) ? m.delta_volumen : 0;
+                const dvSign = dv > 0 ? '+' : '';
+                const pctPart = isFiniteNum(m.delta_volumen_pct)
+                    ? ` (${dv > 0 ? '+' : ''}${m.delta_volumen_pct.toFixed(1)}%)`
+                    : '';
+                deltaStr = `${dvSign}${dv.toFixed(1)}${pctPart}`;
+            }
 
             const rowValues = [
                 formatDateIsoShort(m.timestamp),
-                m.ignored ? 'IGN' : (m.method || '-').slice(0, 3).toUpperCase(),
+                m.ignored
+                    ? 'IGN'
+                    : m.is_closure_measurement
+                      ? 'CIE'
+                      : (m.method || '-').slice(0, 3).toUpperCase(),
                 m.geometry?.type || '-',
                 isFiniteNum(m.volumen_m3) ? m.volumen_m3.toFixed(1) : '--',
+                deltaStr,
                 mDens !== null ? mDens.toFixed(2) : '--',
                 isFiniteNum(m.wet_weight_thm) ? m.wet_weight_thm.toFixed(1) : '--',
                 isFiniteNum(m.dry_weight_tms) ? m.dry_weight_tms.toFixed(1) : '--',
@@ -1840,11 +2291,11 @@ export async function generateGeolappVectorPdf(
 
             let cx = MARGIN_X;
             rowValues.forEach((val, idx) => {
-                const cellText = truncateToWidth(val, fonts.mono, 6.2, cols[idx].w - 5);
+                const cellText = truncateToWidth(val, fonts.mono, 5.9, cols[idx].w - 4);
                 drawSafeText(p, cellText, {
                     font: fonts.mono,
-                    size: 6.2,
-                    x: cx + 3,
+                    size: 5.9,
+                    x: cx + 2.5,
                     y: cursor.y - 11,
                     color: m.ignored ? COLOR_MUTED : COLOR_INK,
                 });
@@ -1934,815 +2385,3 @@ export async function downloadGeolappVectorPdf(
 
 export const generateStockpilePdf = generateGeolappVectorPdf;
 export const downloadPDF = downloadGeolappVectorPdf;
-
-// ─── FASE 4: DOSSIER VECTORIAL PARA DOMINIOS GEOCIENTÍFICOS ───
-
-export interface GeolappDomainPdfOptions {
-    locale?: string;
-    authorEmail?: string;
-    companyName?: string;
-    faenaName?: string;
-    isEduSandbox?: boolean;
-    filename?: string;
-    uploadToCas?: boolean;
-    tenantId?: string;
-}
-
-export interface GeolappDomainPdfResult extends GeolappVectorPdfResult {
-    casDescriptor?: {
-        sha256: string;
-        downloadUrl: string;
-        originalBytes: number;
-        optimizedBytes: number;
-        savingsPct: number;
-    } | null;
-}
-
-interface DomainDossierCopy {
-    eduSeal: string;
-    domainSectionGeoref: string;
-    domainSectionGeomensura: string;
-    domainSectionPolygon: string;
-    domainSectionExploracion: string;
-    domainSectionIntervals: string;
-    domainSectionEstructural: string;
-    domainSectionHydro: string;
-    domainSectionNotesAudit: string;
-    domainTitleMap: Record<GeolappDomainRecord['domainMode'], string>;
-    codeLabel: string;
-    titleLabel: string;
-    statusLabel: string;
-    siteCompanyLabel: string;
-    notesLabel: string;
-    auditLabel: string;
-}
-
-const DOMAIN_DOSSIER_COPY: Record<PdfLocale, DomainDossierCopy> = {
-    es: {
-        eduSeal: 'USO ACADEMICO NO COMERCIAL - SANDBOX EDUCATIVO MINREPORT',
-        domainSectionGeoref: '01. IDENTIFICACION Y GEORREFERENCIA SIRGAS-CHILE / UTM',
-        domainSectionGeomensura: '02. GEOMENSURA TOPOGRAFICA Y VECTOR DE REPLANTEO',
-        domainSectionPolygon: '03. POLIGONAL DE MENSURA Y VERTICES UTM',
-        domainSectionExploracion: '02. PARAMETROS DE COLLAR, COMPOSITOS Y QA/QC',
-        domainSectionIntervals: '03. LOGUEO DE TESTIGOS, TCR / RQD Y LEYES',
-        domainSectionEstructural: '02. ACTITUDES ESTRUCTURALES Y RED SCHMIDT (HEMISFERIO INFERIOR)',
-        domainSectionHydro: '03. TELEMETRIA HIDROGEOLOGICA Y PIEZOMETRIA',
-        domainSectionNotesAudit: '04. OBSERVACIONES TECNICAS Y TRAZABILIDAD DE AUDITORIA',
-        domainTitleMap: {
-            GEOMENSURA_GEO: 'DOSSIER DE GEOMENSURA TOPOGRAFICA UTM',
-            EXPLORACION_SONDAJES: 'DOSSIER DE EXPLORACION Y LOGUEO DE SONDAJES',
-            ESTRUCTURAL_HIDRO: 'DOSSIER ESTRUCTURAL E HIDROGEOLOGICO DE MACIZO',
-        },
-        codeLabel: 'CODIGO REGISTRO',
-        titleLabel: 'TITULO TECNICO',
-        statusLabel: 'ESTADO',
-        siteCompanyLabel: 'ORGANIZACION / FAENA',
-        notesLabel: 'NOTAS DE CAMPO',
-        auditLabel: 'AUDITORIA REGISTRO',
-    },
-    en: {
-        eduSeal: 'ACADEMIC NON-COMMERCIAL USE - MINREPORT EDUCATIONAL SANDBOX',
-        domainSectionGeoref: '01. IDENTIFICATION AND SIRGAS-CHILE / UTM GEOREFERENCE',
-        domainSectionGeomensura: '02. TOPOGRAPHIC SURVEY AND STAKEOUT VECTOR',
-        domainSectionPolygon: '03. SURVEY POLYGON AND UTM VERTICES',
-        domainSectionExploracion: '02. DRILLHOLE COLLAR, COMPOSITES AND QA/QC',
-        domainSectionIntervals: '03. CORE LOGGING, TCR / RQD AND GRADES',
-        domainSectionEstructural: '02. STRUCTURAL ATTITUDES AND SCHMIDT NET (LOWER HEMISPHERE)',
-        domainSectionHydro: '03. HYDROGEOLOGY AND PIEZOMETER TELEMETRY',
-        domainSectionNotesAudit: '04. TECHNICAL NOTES AND AUDIT TRACEABILITY',
-        domainTitleMap: {
-            GEOMENSURA_GEO: 'UTM TOPOGRAPHIC GEOMENSURA DOSSIER',
-            EXPLORACION_SONDAJES: 'EXPLORATION AND DRILLHOLE LOGGING DOSSIER',
-            ESTRUCTURAL_HIDRO: 'ROCK MASS STRUCTURAL AND HYDROGEOLOGY DOSSIER',
-        },
-        codeLabel: 'RECORD CODE',
-        titleLabel: 'TECHNICAL TITLE',
-        statusLabel: 'STATUS',
-        siteCompanyLabel: 'ORGANIZATION / SITE',
-        notesLabel: 'FIELD NOTES',
-        auditLabel: 'RECORD AUDIT',
-    },
-    pt: {
-        eduSeal: 'USO ACADEMICO NAO COMERCIAL - SANDBOX EDUCACIONAL MINREPORT',
-        domainSectionGeoref: '01. IDENTIFICACAO E GEORREFERENCIAMENTO SIRGAS-CHILE / UTM',
-        domainSectionGeomensura: '02. GEOMENSURA TOPOGRAFICA E VETOR DE LOCACAO',
-        domainSectionPolygon: '03. POLIGONAL DE MEDICAO E VERTICES UTM',
-        domainSectionExploracion: '02. COLAR DO FURO, COMPOSTOS E QA/QC',
-        domainSectionIntervals: '03. DESCRICAO DE TESTEMUNHOS, TCR / RQD E TEORES',
-        domainSectionEstructural: '02. ATITUDES ESTRUTURAIS E REDE SCHMIDT (HEMISFERIO INFERIOR)',
-        domainSectionHydro: '03. TELEMETRIA HIDROGEOLOGICA E PIEZOMETRIA',
-        domainSectionNotesAudit: '04. OBSERVACOES TECNICAS E RASTREABILIDADE DE AUDITORIA',
-        domainTitleMap: {
-            GEOMENSURA_GEO: 'DOSSIE DE GEOMENSURA TOPOGRAFICA UTM',
-            EXPLORACION_SONDAJES: 'DOSSIE DE EXPLORACAO E LOGAGEM DE SONDAGENS',
-            ESTRUCTURAL_HIDRO: 'DOSSIE ESTRUTURAL E HIDROGEOLOGICO DE MACICO',
-        },
-        codeLabel: 'CODIGO REGISTRO',
-        titleLabel: 'TITULO TECNICO',
-        statusLabel: 'ESTADO',
-        siteCompanyLabel: 'ORGANIZACAO / UNIDADE',
-        notesLabel: 'NOTAS DE CAMPO',
-        auditLabel: 'AUDITORIA REGISTRO',
-    },
-};
-
-function buildDomainPdfFilename(record: GeolappDomainRecord, explicit?: string): string {
-    if (explicit && explicit.trim()) {
-        const clean = sanitizePdfText(explicit.trim()).replace(/[^a-zA-Z0-9._-]/g, '_');
-        return clean.toLowerCase().endsWith('.pdf') ? clean : `${clean}.pdf`;
-    }
-    const cleanCode =
-        sanitizePdfText(record.code || record.id || 'RECORD')
-            .replace(/[^a-zA-Z0-9_-]+/g, '_')
-            .replace(/^_+|_+$/g, '')
-            .slice(0, 40) || 'RECORD';
-    const dateStamp = new Date().toISOString().slice(0, 10);
-    return `GEOLAPP_${record.domainMode}_${cleanCode}_${dateStamp}.pdf`;
-}
-
-function drawVectorTableHeader(
-    cursor: VectorPdfCursor,
-    fonts: FontSet,
-    cols: Array<{ title: string; w: number }>
-): void {
-    cursor.ensureSpace(22);
-    const p = cursor.currentPage;
-    p.drawRectangle({
-        x: MARGIN_X,
-        y: cursor.y - 16,
-        width: CONTENT_W,
-        height: 16,
-        color: COLOR_SURFACE,
-        borderColor: COLOR_INK,
-        borderWidth: 0.7,
-    });
-    let cx = MARGIN_X;
-    for (const col of cols) {
-        drawSafeText(p, col.title, {
-            font: fonts.monoBold,
-            size: 6.3,
-            x: cx + 3,
-            y: cursor.y - 11,
-            color: COLOR_INK,
-        });
-        cx += col.w;
-    }
-    cursor.y -= 16;
-}
-
-function drawVectorTableRow(
-    cursor: VectorPdfCursor,
-    fonts: FontSet,
-    cols: Array<{ title: string; w: number }>,
-    values: string[],
-    shaded = false
-): void {
-    const rowH = 16;
-    if (cursor.y - rowH < BOTTOM_Y) {
-        cursor.addPage(true);
-        drawVectorTableHeader(cursor, fonts, cols);
-    }
-    const p = cursor.currentPage;
-    p.drawRectangle({
-        x: MARGIN_X,
-        y: cursor.y - rowH,
-        width: CONTENT_W,
-        height: rowH,
-        color: shaded ? COLOR_SURFACE : COLOR_WHITE,
-        borderColor: COLOR_BORDER,
-        borderWidth: 0.5,
-    });
-    let cx = MARGIN_X;
-    values.forEach((val, idx) => {
-        const safeCell = truncateToWidth(
-            sanitizePdfText(val, '--'),
-            fonts.mono,
-            6.2,
-            cols[idx].w - 5
-        );
-        drawSafeText(p, safeCell, {
-            font: fonts.mono,
-            size: 6.2,
-            x: cx + 3,
-            y: cursor.y - 11,
-            color: COLOR_INK,
-        });
-        cx += cols[idx].w;
-    });
-    cursor.y -= rowH;
-}
-
-function drawStructuralStereonetBlock(
-    cursor: VectorPdfCursor,
-    fonts: FontSet,
-    planes: EstructuralHidroPayload['planes']
-): void {
-    const boxH = 148;
-    cursor.ensureSpace(boxH + 8);
-    const p = cursor.currentPage;
-    p.drawRectangle({
-        x: MARGIN_X,
-        y: cursor.y - boxH,
-        width: CONTENT_W,
-        height: boxH,
-        color: COLOR_WHITE,
-        borderColor: COLOR_BORDER,
-        borderWidth: 0.75,
-    });
-
-    const netR = 54;
-    const netCx = MARGIN_X + 86;
-    const netCy = cursor.y - boxH / 2;
-
-    p.drawCircle({
-        x: netCx,
-        y: netCy,
-        size: netR,
-        borderColor: COLOR_INK,
-        borderWidth: 1,
-        color: COLOR_SURFACE,
-    });
-    p.drawCircle({
-        x: netCx,
-        y: netCy,
-        size: netR * 0.5,
-        borderColor: COLOR_BORDER,
-        borderWidth: 0.5,
-    });
-    p.drawLine({
-        start: { x: netCx - netR, y: netCy },
-        end: { x: netCx + netR, y: netCy },
-        color: COLOR_BORDER,
-        thickness: 0.6,
-    });
-    p.drawLine({
-        start: { x: netCx, y: netCy - netR },
-        end: { x: netCx, y: netCy + netR },
-        color: COLOR_BORDER,
-        thickness: 0.6,
-    });
-
-    drawSafeText(p, 'N', {
-        font: fonts.monoBold,
-        size: 7.5,
-        x: netCx - 2.5,
-        y: netCy + netR + 4,
-        color: COLOR_INK,
-    });
-    drawSafeText(p, 'S', {
-        font: fonts.monoBold,
-        size: 7.5,
-        x: netCx - 2.5,
-        y: netCy - netR - 10,
-        color: COLOR_INK,
-    });
-    drawSafeText(p, 'E', {
-        font: fonts.monoBold,
-        size: 7.5,
-        x: netCx + netR + 4,
-        y: netCy - 2.5,
-        color: COLOR_INK,
-    });
-    drawSafeText(p, 'W', {
-        font: fonts.monoBold,
-        size: 7.5,
-        x: netCx - netR - 11,
-        y: netCy - 2.5,
-        color: COLOR_INK,
-    });
-
-    planes.forEach((plane) => {
-        const pt = projectEqualAreaPole(plane.dipDeg, plane.dipDirectionDeg, netR);
-        // En PDF, Y crece hacia arriba mientras que SVG Y crece hacia abajo: y_pdf = netCy - pt.y
-        p.drawCircle({
-            x: netCx + pt.x,
-            y: netCy - pt.y,
-            size: 2.6,
-            color: COLOR_COPPER,
-            borderColor: COLOR_INK,
-            borderWidth: 0.5,
-        });
-    });
-
-    const summaryX = MARGIN_X + 178;
-    drawSafeText(p, 'SCHMIDT EQUAL-AREA POLE PROJECTION', {
-        font: fonts.monoBold,
-        size: 8.5,
-        x: summaryX,
-        y: cursor.y - 26,
-        color: COLOR_INK,
-    });
-    drawSafeText(p, `MEASURED PLANES: ${planes.length}  |  CONVENTION: DIP / DIP-DIR (RHR)`, {
-        font: fonts.mono,
-        size: 7.5,
-        x: summaryX,
-        y: cursor.y - 42,
-        color: COLOR_MUTED,
-    });
-    drawSafeText(p, 'COPPER MARKERS: NORMAL POLES IN LOWER HEMISPHERE', {
-        font: fonts.mono,
-        size: 7.2,
-        x: summaryX,
-        y: cursor.y - 56,
-        color: COLOR_COPPER,
-    });
-
-    cursor.y -= boxH + 6;
-}
-
-/**
- * Genera el Dossier Técnico Vectorial A4 (`pdf-lib`) para registros geocientíficos Fase 4
- * (`GEOMENSURA_GEO`, `EXPLORACION_SONDAJES`, `ESTRUCTURAL_HIDRO`).
- */
-export async function generateGeolappDomainDossierPdf(
-    record: GeolappDomainRecord,
-    options?: GeolappDomainPdfOptions
-): Promise<GeolappDomainPdfResult> {
-    const locale = resolveLocale(options?.locale);
-    const baseCopy = PDF_COPY[locale];
-    const domainCopy = DOMAIN_DOSSIER_COPY[locale];
-    const domainTitle = domainCopy.domainTitleMap[record.domainMode];
-    const dossierCopy: PdfCopy = {
-        ...baseCopy,
-        certificateTitle: domainTitle,
-        assetId: domainCopy.codeLabel,
-    };
-
-    const emittedIso = new Date().toISOString();
-    const pdfDoc = await PDFDocument.create();
-    pdfDoc.setTitle(sanitizePdfText(`${baseCopy.brandTitle} - ${record.code} - ${record.title}`));
-    pdfDoc.setAuthor(sanitizePdfText(options?.authorEmail || record.createdBy || 'MINREPORT'));
-    pdfDoc.setSubject(sanitizePdfText(domainTitle));
-    pdfDoc.setProducer('MINREPORT GEOLAPP Vector PDF Engine (pdf-lib)');
-    pdfDoc.setCreator('MINREPORT southamerica-west1');
-
-    const fonts: FontSet = {
-        regular: await pdfDoc.embedFont(StandardFonts.Helvetica),
-        bold: await pdfDoc.embedFont(StandardFonts.HelveticaBold),
-        mono: await pdfDoc.embedFont(StandardFonts.Courier),
-        monoBold: await pdfDoc.embedFont(StandardFonts.CourierBold),
-    };
-
-    const recordCode = sanitizePdfText(record.code || record.id, baseCopy.undeclared);
-    const cursor = new VectorPdfCursor(pdfDoc, fonts, dossierCopy, recordCode, emittedIso);
-
-    // ── ENCABEZADO CO-BRANDEADO ───────────────────────────────────────────────
-    const headerH = options?.isEduSandbox ? 88 : 74;
-    const p0 = cursor.currentPage;
-    p0.drawRectangle({
-        x: MARGIN_X,
-        y: cursor.y - headerH,
-        width: CONTENT_W,
-        height: headerH,
-        color: COLOR_SURFACE,
-        borderColor: COLOR_INK,
-        borderWidth: 1,
-    });
-    p0.drawRectangle({
-        x: MARGIN_X,
-        y: cursor.y - 5,
-        width: CONTENT_W,
-        height: 5,
-        color: COLOR_COPPER,
-    });
-
-    const coBrandRight = [options?.companyName, options?.faenaName]
-        .filter((v): v is string => Boolean(v && v.trim()))
-        .map((v) => sanitizePdfText(v))
-        .join(' / ');
-    const brandHeader = coBrandRight
-        ? `${baseCopy.brandTitle}  //  ${coBrandRight}`
-        : baseCopy.brandTitle;
-
-    drawSafeText(p0, truncateToWidth(brandHeader, fonts.monoBold, 10.5, CONTENT_W - 150), {
-        font: fonts.monoBold,
-        size: 10.5,
-        x: MARGIN_X + 10,
-        y: cursor.y - 22,
-        color: COLOR_COPPER,
-    });
-    drawSafeText(p0, domainTitle, {
-        font: fonts.bold,
-        size: 12.5,
-        x: MARGIN_X + 10,
-        y: cursor.y - 38,
-        color: COLOR_INK,
-    });
-    drawSafeText(
-        p0,
-        `${domainCopy.codeLabel}: ${recordCode}  |  ${baseCopy.emittedAt}: ${emittedIso}`,
-        {
-            font: fonts.mono,
-            size: 7.4,
-            x: MARGIN_X + 10,
-            y: cursor.y - 53,
-            color: COLOR_MUTED,
-        }
-    );
-    drawSafeText(
-        p0,
-        `REGION: ${baseCopy.sovereignRegion}  |  TENANT: ${sanitizePdfText(record.tenantId || record.accountId, baseCopy.undeclared)}`,
-        {
-            font: fonts.mono,
-            size: 7.4,
-            x: MARGIN_X + 10,
-            y: cursor.y - 64,
-            color: COLOR_MUTED,
-        }
-    );
-
-    if (options?.isEduSandbox) {
-        p0.drawRectangle({
-            x: MARGIN_X + 10,
-            y: cursor.y - 83,
-            width: CONTENT_W - 20,
-            height: 14,
-            color: COLOR_INK,
-        });
-        drawSafeText(p0, domainCopy.eduSeal, {
-            font: fonts.monoBold,
-            size: 7,
-            x: MARGIN_X + 15,
-            y: cursor.y - 79,
-            color: COLOR_WHITE,
-        });
-    }
-
-    const regionW = measureSafeWidth(fonts.monoBold, baseCopy.sovereignRegion, 8);
-    p0.drawRectangle({
-        x: PAGE_W - MARGIN_X - regionW - 22,
-        y: cursor.y - 26,
-        width: regionW + 14,
-        height: 16,
-        color: COLOR_INK,
-    });
-    drawSafeText(p0, baseCopy.sovereignRegion, {
-        font: fonts.monoBold,
-        size: 8,
-        x: PAGE_W - MARGIN_X - regionW - 15,
-        y: cursor.y - 21,
-        color: COLOR_WHITE,
-    });
-
-    cursor.y -= headerH + 10;
-
-    // ── BLOQUE 01: IDENTIFICACIÓN Y GEORREFERENCIA ────────────────────────────
-    cursor.drawSectionTitle(domainCopy.domainSectionGeoref);
-    const utmZoneLabel = record.utmFix
-        ? `${String(record.utmFix.zone).padStart(2, '0')}${record.utmFix.band} (${record.utmFix.hemisphere})`
-        : record.domainMode === 'GEOMENSURA_GEO'
-          ? `${String(record.payload.utmZone).padStart(2, '0')}${record.payload.hemisphere}`
-          : record.domainMode === 'EXPLORACION_SONDAJES'
-            ? `${String(record.payload.utmZone).padStart(2, '0')}${record.payload.hemisphere}`
-            : isFiniteNum(record.payload.utmZone) && record.payload.hemisphere
-              ? `${String(record.payload.utmZone).padStart(2, '0')}${record.payload.hemisphere}`
-              : baseCopy.undeclared;
-
-    const eastingVal = record.utmFix
-        ? record.utmFix.easting
-        : record.domainMode === 'GEOMENSURA_GEO'
-          ? record.payload.stationEasting
-          : record.domainMode === 'EXPLORACION_SONDAJES'
-            ? record.payload.collarEasting
-            : record.payload.easting;
-    const northingVal = record.utmFix
-        ? record.utmFix.northing
-        : record.domainMode === 'GEOMENSURA_GEO'
-          ? record.payload.stationNorthing
-          : record.domainMode === 'EXPLORACION_SONDAJES'
-            ? record.payload.collarNorthing
-            : record.payload.northing;
-    const altVal = record.utmFix
-        ? record.utmFix.altitudeM
-        : record.domainMode === 'GEOMENSURA_GEO'
-          ? record.payload.stationElevationM
-          : record.domainMode === 'EXPLORACION_SONDAJES'
-            ? record.payload.collarElevationM
-            : record.payload.elevationM;
-
-    cursor.drawKeyValueGrid(
-        [
-            {
-                label: domainCopy.titleLabel,
-                value: sanitizePdfText(record.title, baseCopy.undeclared),
-            },
-            {
-                label: domainCopy.statusLabel,
-                value: sanitizePdfText(record.status, baseCopy.undeclared),
-                mono: true,
-            },
-            {
-                label: domainCopy.siteCompanyLabel,
-                value: coBrandRight || baseCopy.undeclared,
-            },
-            {
-                label: baseCopy.utmZoneBand,
-                value: utmZoneLabel,
-                mono: true,
-            },
-            {
-                label: baseCopy.easting,
-                value: isFiniteNum(eastingVal) ? `${eastingVal.toFixed(3)} m E` : baseCopy.undeclared,
-                mono: true,
-            },
-            {
-                label: baseCopy.northing,
-                value: isFiniteNum(northingVal) ? `${northingVal.toFixed(3)} m N` : baseCopy.undeclared,
-                mono: true,
-            },
-            {
-                label: baseCopy.altitude,
-                value: isFiniteNum(altVal) ? `${altVal.toFixed(2)} m s.n.m.` : baseCopy.undeclared,
-                mono: true,
-            },
-            {
-                label: baseCopy.accuracy,
-                value:
-                    record.utmFix && isFiniteNum(record.utmFix.accuracyM)
-                        ? `+/- ${record.utmFix.accuracyM.toFixed(2)} m (${sanitizePdfText(record.utmFix.fixQuality, 'GNSS')})`
-                        : baseCopy.undeclared,
-                mono: true,
-            },
-        ],
-        2
-    );
-
-    // ── BLOQUE 02 / 03: ESPECÍFICO POR DOMINIO ────────────────────────────────
-    if (record.domainMode === 'GEOMENSURA_GEO') {
-        const p: GeomensuraSurveyPayload = record.payload;
-        cursor.drawSectionTitle(domainCopy.domainSectionGeomensura);
-        cursor.drawKeyValueGrid(
-            [
-                { label: 'STATION CODE', value: sanitizePdfText(p.stationCode, baseCopy.undeclared), mono: true },
-                { label: 'TARGET CODE', value: sanitizePdfText(p.targetCode, baseCopy.undeclared), mono: true },
-                {
-                    label: 'DELTA E / DELTA N / DELTA Z',
-                    value:
-                        isFiniteNum(p.deltaE) && isFiniteNum(p.deltaN) && isFiniteNum(p.deltaZ)
-                            ? `${p.deltaE.toFixed(3)} / ${p.deltaN.toFixed(3)} / ${p.deltaZ.toFixed(3)} m`
-                            : baseCopy.undeclared,
-                    mono: true,
-                },
-                {
-                    label: 'DISTANCIA HORIZ / INCLINADA',
-                    value:
-                        isFiniteNum(p.horizontalDistanceM) && isFiniteNum(p.slopeDistanceM)
-                            ? `${p.horizontalDistanceM.toFixed(3)} m  /  ${p.slopeDistanceM.toFixed(3)} m`
-                            : baseCopy.undeclared,
-                    mono: true,
-                },
-                {
-                    label: 'AZIMUT / PENDIENTE',
-                    value:
-                        isFiniteNum(p.azimuthDeg) && isFiniteNum(p.slopePct)
-                            ? `${p.azimuthDeg.toFixed(2)} deg  /  ${p.slopePct.toFixed(2)} %`
-                            : baseCopy.undeclared,
-                    mono: true,
-                },
-                {
-                    label: 'RTK / HDOP',
-                    value: `${sanitizePdfText(p.rtkFixQuality, baseCopy.undeclared)} / ${isFiniteNum(p.hdop) ? p.hdop.toFixed(2) : '--'}`,
-                    mono: true,
-                },
-                {
-                    label: 'AREA MENSURA',
-                    value: isFiniteNum(p.polygonAreaM2)
-                        ? `${p.polygonAreaM2.toFixed(2)} m2 (${(p.polygonAreaM2 / 10000).toFixed(4)} ha)`
-                        : baseCopy.undeclared,
-                    mono: true,
-                },
-                {
-                    label: 'PERIMETRO MENSURA',
-                    value: isFiniteNum(p.polygonPerimeterM)
-                        ? `${p.polygonPerimeterM.toFixed(2)} m`
-                        : baseCopy.undeclared,
-                    mono: true,
-                },
-            ],
-            2
-        );
-
-        if (Array.isArray(p.polygonVertices) && p.polygonVertices.length > 0) {
-            cursor.drawSectionTitle(domainCopy.domainSectionPolygon);
-            const cols = [
-                { title: '#', w: 34 },
-                { title: 'VERTICE', w: 96 },
-                { title: 'ESTE (m)', w: 130 },
-                { title: 'NORTE (m)', w: 140 },
-                { title: 'COTA (m)', w: CONTENT_W - 400 },
-            ];
-            drawVectorTableHeader(cursor, fonts, cols);
-            p.polygonVertices.forEach((v, idx) => {
-                drawVectorTableRow(
-                    cursor,
-                    fonts,
-                    cols,
-                    [
-                        String(idx + 1),
-                        v.code,
-                        v.easting.toFixed(3),
-                        v.northing.toFixed(3),
-                        isFiniteNum(v.elevationM) ? v.elevationM.toFixed(3) : '--',
-                    ],
-                    idx % 2 === 1
-                );
-            });
-        }
-    } else if (record.domainMode === 'EXPLORACION_SONDAJES') {
-        const p: ExploracionSondajePayload = record.payload;
-        cursor.drawSectionTitle(domainCopy.domainSectionExploracion);
-        cursor.drawKeyValueGrid(
-            [
-                { label: 'HOLE ID / METODO', value: `${sanitizePdfText(p.holeId, baseCopy.undeclared)} (${p.method})`, mono: true },
-                {
-                    label: 'AZIMUT / INCLINACION / PROF.',
-                    value: `${p.azimuthDeg.toFixed(1)} deg / ${p.dipDeg.toFixed(1)} deg / ${p.totalDepthM.toFixed(2)} m`,
-                    mono: true,
-                },
-                {
-                    label: 'COMPOSITO Cu TOTAL / SOLUBLE',
-                    value: `${isFiniteNum(p.weightedCuTotalPct) ? `${p.weightedCuTotalPct.toFixed(3)} %` : baseCopy.undeclared} / ${isFiniteNum(p.weightedCuSolublePct) ? `${p.weightedCuSolublePct.toFixed(3)} %` : baseCopy.undeclared}`,
-                    mono: true,
-                },
-                {
-                    label: 'RQD PROMEDIO / TCR',
-                    value: `${isFiniteNum(p.meanRqdPct) ? `${p.meanRqdPct.toFixed(1)} %` : baseCopy.undeclared} / ${isFiniteNum(p.meanRecoveryPct) ? `${p.meanRecoveryPct.toFixed(1)} %` : '--'}`,
-                    mono: true,
-                },
-                {
-                    label: 'CONTROL QA/QC',
-                    value:
-                        p.qaqcSampleType && p.qaqcSampleType !== 'NONE'
-                            ? `${p.qaqcSampleType} | RPD: ${isFiniteNum(p.qaqcRpdPct) ? `${p.qaqcRpdPct.toFixed(2)}%` : '--'} | ${p.qaqcPassed === true ? 'PASS' : p.qaqcPassed === false ? 'FAIL' : '--'}`
-                            : baseCopy.undeclared,
-                    mono: true,
-                },
-                {
-                    label: 'INTERVALOS LOGUEADOS',
-                    value: String(Array.isArray(p.intervals) ? p.intervals.length : 0),
-                    mono: true,
-                },
-            ],
-            2
-        );
-
-        if (Array.isArray(p.intervals) && p.intervals.length > 0) {
-            cursor.drawSectionTitle(domainCopy.domainSectionIntervals);
-            const cols = [
-                { title: 'TRAMO (m)', w: 70 },
-                { title: 'TCR %', w: 42 },
-                { title: 'RQD / DEERE', w: 86 },
-                { title: 'LITOLOGIA / ALT', w: 120 },
-                { title: 'DOM / CuT / CuS', w: 112 },
-                { title: 'CAJA TESTIGO CAS', w: CONTENT_W - 430 },
-            ];
-            drawVectorTableHeader(cursor, fonts, cols);
-            p.intervals.forEach((iv, idx) => {
-                const casSummary = formatCasTrace(
-                    iv.coreBoxOriginalBytes,
-                    iv.coreBoxOptimizedBytes,
-                    iv.coreBoxSavingsPct
-                );
-                const cuT = isFiniteNum(iv.cuTotalPct) ? iv.cuTotalPct.toFixed(2) : '--';
-                const cuS = isFiniteNum(iv.cuSolublePct) ? iv.cuSolublePct.toFixed(2) : '--';
-                drawVectorTableRow(
-                    cursor,
-                    fonts,
-                    cols,
-                    [
-                        `${iv.fromM.toFixed(1)}-${iv.toM.toFixed(1)}`,
-                        iv.recoveryPct.toFixed(1),
-                        `${iv.rqdPct.toFixed(1)} ${iv.rqdQuality}`,
-                        `${iv.lithology || '-'} / ${iv.alteration || '-'}`,
-                        `${iv.copperDomain} ${cuT}/${cuS}`,
-                        casSummary || (iv.coreBoxSha256 ? iv.coreBoxSha256.slice(0, 12) : '--'),
-                    ],
-                    idx % 2 === 1
-                );
-            });
-        }
-    } else if (record.domainMode === 'ESTRUCTURAL_HIDRO') {
-        const p: EstructuralHidroPayload = record.payload;
-        cursor.drawSectionTitle(domainCopy.domainSectionEstructural);
-        drawStructuralStereonetBlock(cursor, fonts, p.planes || []);
-
-        if (Array.isArray(p.planes) && p.planes.length > 0) {
-            const cols = [
-                { title: 'TIPO ESTRUCTURA', w: 108 },
-                { title: 'DIP (deg)', w: 58 },
-                { title: 'DIP DIR', w: 58 },
-                { title: 'RUMBO RHR', w: 66 },
-                { title: 'JRC', w: 44 },
-                { title: 'APER (mm)', w: 60 },
-                { title: 'RELLENO MINERAL', w: CONTENT_W - 394 },
-            ];
-            drawVectorTableHeader(cursor, fonts, cols);
-            p.planes.forEach((pl, idx) => {
-                drawVectorTableRow(
-                    cursor,
-                    fonts,
-                    cols,
-                    [
-                        pl.structureType,
-                        pl.dipDeg.toFixed(1),
-                        pl.dipDirectionDeg.toFixed(1),
-                        pl.strikeDeg.toFixed(1),
-                        isFiniteNum(pl.jrcBarton) ? pl.jrcBarton.toFixed(1) : '--',
-                        isFiniteNum(pl.apertureMm) ? pl.apertureMm.toFixed(2) : '--',
-                        pl.infill || '--',
-                    ],
-                    idx % 2 === 1
-                );
-            });
-        }
-
-        cursor.drawSectionTitle(domainCopy.domainSectionHydro);
-        const h = p.hydrogeology;
-        cursor.drawKeyValueGrid(
-            [
-                {
-                    label: 'PIEZOMETRO ID',
-                    value: h ? sanitizePdfText(h.piezometerId, baseCopy.undeclared) : baseCopy.undeclared,
-                    mono: true,
-                },
-                {
-                    label: 'NIVEL FREATICO ESTATICO',
-                    value: h && isFiniteNum(h.staticWaterLevelM) ? `${h.staticWaterLevelM.toFixed(2)} m` : baseCopy.undeclared,
-                    mono: true,
-                },
-                {
-                    label: 'PROFUNDIDAD POZO',
-                    value: h && isFiniteNum(h.wellDepthM) ? `${h.wellDepthM.toFixed(2)} m` : baseCopy.undeclared,
-                    mono: true,
-                },
-                {
-                    label: 'pH / CONDUCTIVIDAD / TEMP',
-                    value: h
-                        ? `${isFiniteNum(h.ph) ? h.ph.toFixed(2) : '--'} / ${isFiniteNum(h.conductivityUsCm) ? `${h.conductivityUsCm.toFixed(0)} uS/cm` : '--'} / ${isFiniteNum(h.temperatureC) ? `${h.temperatureC.toFixed(1)} C` : '--'}`
-                        : baseCopy.undeclared,
-                    mono: true,
-                },
-            ],
-            2
-        );
-    }
-
-    // ── BLOQUE 04: NOTAS Y AUDITORÍA ──────────────────────────────────────────
-    cursor.drawSectionTitle(domainCopy.domainSectionNotesAudit);
-    cursor.drawKeyValueGrid(
-        [
-            {
-                label: domainCopy.notesLabel,
-                value: sanitizePdfText(record.notes, baseCopy.undeclared),
-            },
-            {
-                label: domainCopy.auditLabel,
-                value: `CREATED: ${formatDateIsoShort(record.createdAt)} (${sanitizePdfText(record.createdBy, '--')}) | UPDATED: ${formatDateIsoShort(record.updatedAt)}${record.updatedBy ? ` (${sanitizePdfText(record.updatedBy)})` : ''}`,
-                mono: true,
-            },
-        ],
-        1
-    );
-
-    cursor.stampFooters();
-
-    const bytes = new Uint8Array(await pdfDoc.save());
-    const filename = buildDomainPdfFilename(record, options?.filename);
-    const blob =
-        typeof Blob !== 'undefined'
-            ? new Blob([bytes], { type: 'application/pdf' })
-            : (undefined as unknown as Blob);
-
-    let casDescriptor: GeolappDomainPdfResult['casDescriptor'] = null;
-    if (options?.uploadToCas && typeof Blob !== 'undefined' && blob) {
-        const { mediaDigestorClient } = await import('../../../../core/media/MediaDigestorClient');
-        const { descriptor } = await mediaDigestorClient.digestAndUploadCas(blob, {
-            profile: 'PDF_HYBRID_OEM',
-            scope: 'TENANT_PRIVATE',
-            tenantId: options.tenantId || record.tenantId,
-            filename,
-        });
-        const savingsPct =
-            descriptor.originalBytes > 0
-                ? Math.round(
-                      ((descriptor.originalBytes - descriptor.optimizedBytes) /
-                          descriptor.originalBytes) *
-                          1000
-                  ) / 10
-                : 0;
-        casDescriptor = {
-            sha256: descriptor.sha256,
-            downloadUrl: descriptor.downloadUrl,
-            originalBytes: descriptor.originalBytes,
-            optimizedBytes: descriptor.optimizedBytes,
-            savingsPct,
-        };
-    }
-
-    return {
-        bytes,
-        blob,
-        filename,
-        casDescriptor,
-    };
-}

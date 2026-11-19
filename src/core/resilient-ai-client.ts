@@ -12,8 +12,34 @@ import { MediaDigestorServer } from './media/MediaDigestorServer';
 import { ConfidentialityAirlockService } from './privacy/ConfidentialityAirlockService';
 import { computeThirtyDayTtlTimestamp } from './retention-policy';
 import { TenantMetricsService } from '../services/tenant-metrics.service';
+import {
+    AIDecisionRequestSchema,
+    DecisionQuestionSchema,
+    type AIDecisionAnswer,
+    type AIDecisionMediaPart,
+    type AIDecisionRequest,
+    type AIDecisionResponse,
+    type AIDecisionUsage,
+    type ChoiceDecisionAnswer,
+    type DecisionQuestion,
+    type NoulDecisionAnswer,
+    type ScoreDecisionAnswer,
+} from '../contracts/ai-decisions.contracts';
 
-export { Type };
+export {
+    Type,
+    AIDecisionRequestSchema,
+    DecisionQuestionSchema,
+    type AIDecisionAnswer,
+    type AIDecisionMediaPart,
+    type AIDecisionRequest,
+    type AIDecisionResponse,
+    type AIDecisionUsage,
+    type ChoiceDecisionAnswer,
+    type DecisionQuestion,
+    type NoulDecisionAnswer,
+    type ScoreDecisionAnswer,
+};
 
 /**
  * ENJAMBRE GEMINI AI v2.0 — CLIENTE RESILIENTE CENTRALIZADO (Capa 4 MINREPORT)
@@ -142,9 +168,31 @@ export class UngroundedEvidenceError extends Error {
     }
 }
 
+export class DecisionSafetyBlockedError extends Error {
+    public readonly statusCode: number = 400;
+    public readonly code: string;
+
+    constructor(message: string, code: string = 'safety') {
+        super(message);
+        this.name = 'DecisionSafetyBlockedError';
+        this.code = code;
+    }
+}
+
 export interface SwarmTierTelemetry {
     model: string;
     calls: number;
+    errors: number;
+    avgLatencyMs: number | null;
+    lastLatencyMs: number | null;
+    lastUsedAt: string | null;
+}
+
+export interface DecisionGateTelemetry {
+    model: string;
+    calls: number;
+    cacheHits: number;
+    fallbackCalls: number;
     errors: number;
     avgLatencyMs: number | null;
     lastLatencyMs: number | null;
@@ -161,6 +209,7 @@ export interface SwarmTelemetrySnapshot {
     region: string;
     updatedAt: string;
     tiers: Record<SwarmTier, SwarmTierTelemetry>;
+    decisionsGate: DecisionGateTelemetry;
 }
 
 function normalizeSwarmModelSlug(rawSlug: string | undefined, fallback: string): string {
@@ -186,6 +235,9 @@ export const SWARM_MODELS: Record<SwarmTier, string> = {
         'gemini-3.1-flash-lite-preview'
     ),
 };
+
+export const DECISION_MODEL =
+    (process.env.GEMINI_DECISION_MODEL || 'gemini-decision-1').trim() || 'gemini-decision-1';
 
 const SWARM_TIER_FALLBACK_CANDIDATES: Record<SwarmTier, string[]> = {
     PRIMARY: ['gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-flash'],
@@ -225,6 +277,25 @@ const memoryInferenceCache = new Map<string, CachedInferenceL1Entry>();
 const MAX_MEMORY_INFERENCE_ENTRIES = 400;
 const MEMORY_INFERENCE_TTL_MS = 30 * 60 * 1000;
 
+interface CachedDecisionL1Entry {
+    answers: Record<string, AIDecisionAnswer>;
+    model: string;
+    engineUsed: AIDecisionResponse['engineUsed'];
+    usage: AIDecisionUsage;
+    expiresAt: number;
+}
+
+const memoryDecisionCache = new Map<string, CachedDecisionL1Entry>();
+const MAX_MEMORY_DECISION_ENTRIES = 500;
+
+const SAFETY_BLOCK_ERROR_CODES = new Set([
+    'safety',
+    'prohibited_content',
+    'blocklist',
+    'image_safety',
+    'content_blocked',
+]);
+
 interface InternalTierStats {
     calls: number;
     errors: number;
@@ -251,6 +322,24 @@ const runtimeTelemetry: {
     },
 };
 
+const runtimeDecisionStats: {
+    calls: number;
+    cacheHits: number;
+    fallbackCalls: number;
+    errors: number;
+    totalLatencyMs: number;
+    lastLatencyMs: number | null;
+    lastUsedAt: string | null;
+} = {
+    calls: 0,
+    cacheHits: 0,
+    fallbackCalls: 0,
+    errors: 0,
+    totalLatencyMs: 0,
+    lastLatencyMs: null,
+    lastUsedAt: null,
+};
+
 const TELEMETRY_FLUSH_INTERVAL_MS = 60_000;
 const TELEMETRY_FLUSH_BATCH_SIZE = 20;
 let pendingTelemetryOps = 0;
@@ -263,8 +352,13 @@ const PILOT_RULES_TTL_MS = 60_000;
 
 export class ResilientAIClient {
     private static readonly MAX_RETRIES_PER_TIER = 2;
+    private static readonly MAX_DECISION_RETRIES = 1;
     private static readonly CACHE_COLLECTION = 'ai_inference_cache';
     private static readonly TELEMETRY_COLLECTION = 'ai_telemetry';
+
+    public static clearDecisionCacheForTesting(): void {
+        memoryDecisionCache.clear();
+    }
 
     public static async getTelemetrySnapshot(): Promise<SwarmTelemetrySnapshot> {
         let persistedTotalCalls = 0;
@@ -311,6 +405,19 @@ export class ResilientAIClient {
                 SECONDARY: formatTier('SECONDARY'),
                 ANCHOR_HA: formatTier('ANCHOR_HA'),
             },
+            decisionsGate: {
+                model: DECISION_MODEL,
+                calls: runtimeDecisionStats.calls,
+                cacheHits: runtimeDecisionStats.cacheHits,
+                fallbackCalls: runtimeDecisionStats.fallbackCalls,
+                errors: runtimeDecisionStats.errors,
+                avgLatencyMs:
+                    runtimeDecisionStats.calls > 0
+                        ? Math.round(runtimeDecisionStats.totalLatencyMs / runtimeDecisionStats.calls)
+                        : null,
+                lastLatencyMs: runtimeDecisionStats.lastLatencyMs,
+                lastUsedAt: runtimeDecisionStats.lastUsedAt,
+            },
         };
     }
 
@@ -331,12 +438,33 @@ export class ResilientAIClient {
                     cacheHits: runtimeTelemetry.cacheHits,
                     l1MemoryCacheHits: runtimeTelemetry.l1MemoryCacheHits,
                     totalErrors: runtimeTelemetry.totalErrors,
+                    decisionsCalls: runtimeDecisionStats.calls,
+                    decisionsCacheHits: runtimeDecisionStats.cacheHits,
+                    decisionsFallbackCalls: runtimeDecisionStats.fallbackCalls,
                     region: process.env.VERTEX_AI_LOCATION || process.env.GCP_LOCATION || 'southamerica-west1',
                     updatedAt: new Date().toISOString(),
                 },
                 { merge: true }
             )
             .catch(() => { });
+    }
+
+    private static scheduleTelemetryFlush(): void {
+        // Batching de escrituras en Firestore (-95% escrituras en ai_telemetry/swarm_aggregate):
+        // solo persiste cada 20 operaciones o tras 60 segundos desde el último flush.
+        pendingTelemetryOps += 1;
+        const elapsedSinceLastFlush = Date.now() - lastTelemetryFlushAt;
+        if (pendingTelemetryOps >= TELEMETRY_FLUSH_BATCH_SIZE || elapsedSinceLastFlush >= TELEMETRY_FLUSH_INTERVAL_MS) {
+            this.flushTelemetryToFirestore();
+        } else if (!telemetryFlushTimer) {
+            telemetryFlushTimer = setTimeout(() => {
+                telemetryFlushTimer = null;
+                this.flushTelemetryToFirestore();
+            }, 15_000);
+            if (typeof telemetryFlushTimer.unref === 'function') {
+                telemetryFlushTimer.unref();
+            }
+        }
     }
 
     private static recordTelemetryEvent(params: {
@@ -368,21 +496,40 @@ export class ResilientAIClient {
             runtimeTelemetry.tiers[params.tier].errors += 1;
         }
 
-        // Batching de escrituras en Firestore (-95% escrituras en ai_telemetry/swarm_aggregate):
-        // solo persiste cada 20 operaciones o tras 60 segundos desde el último flush.
-        pendingTelemetryOps += 1;
-        const elapsedSinceLastFlush = Date.now() - lastTelemetryFlushAt;
-        if (pendingTelemetryOps >= TELEMETRY_FLUSH_BATCH_SIZE || elapsedSinceLastFlush >= TELEMETRY_FLUSH_INTERVAL_MS) {
-            this.flushTelemetryToFirestore();
-        } else if (!telemetryFlushTimer) {
-            telemetryFlushTimer = setTimeout(() => {
-                telemetryFlushTimer = null;
-                this.flushTelemetryToFirestore();
-            }, 15_000);
-            if (typeof telemetryFlushTimer.unref === 'function') {
-                telemetryFlushTimer.unref();
+        this.scheduleTelemetryFlush();
+    }
+
+    private static recordDecisionTelemetry(params: {
+        latencyMs: number;
+        cached: boolean;
+        l1MemoryHit?: boolean;
+        fallbackUsed?: boolean;
+        success: boolean;
+    }): void {
+        const nowIso = new Date().toISOString();
+        if (params.cached) {
+            runtimeDecisionStats.cacheHits += 1;
+            runtimeTelemetry.cacheHits += 1;
+            if (params.l1MemoryHit) {
+                runtimeTelemetry.l1MemoryCacheHits += 1;
             }
+            runtimeTelemetry.totalCalls += 1;
+        } else if (params.success) {
+            runtimeDecisionStats.calls += 1;
+            runtimeDecisionStats.totalLatencyMs += params.latencyMs;
+            runtimeDecisionStats.lastLatencyMs = params.latencyMs;
+            runtimeDecisionStats.lastUsedAt = nowIso;
+            if (params.fallbackUsed) {
+                runtimeDecisionStats.fallbackCalls += 1;
+            } else {
+                runtimeTelemetry.totalCalls += 1;
+            }
+        } else {
+            runtimeDecisionStats.errors += 1;
+            runtimeTelemetry.totalErrors += 1;
         }
+
+        this.scheduleTelemetryFlush();
     }
 
     /**
@@ -1596,6 +1743,736 @@ export class ResilientAIClient {
         } catch {
             // Context caching es una optimización transparente; nunca bloquea el flujo principal
             return null;
+        }
+    }
+
+    private static setMemoryDecisionCache(cacheKey: string, entry: CachedDecisionL1Entry): void {
+        if (memoryDecisionCache.size >= MAX_MEMORY_DECISION_ENTRIES) {
+            const oldestKey = memoryDecisionCache.keys().next().value;
+            if (oldestKey) memoryDecisionCache.delete(oldestKey);
+        }
+        memoryDecisionCache.set(cacheKey, entry);
+    }
+
+    private static sanitizeDecisionQuestions(
+        questions: Record<string, DecisionQuestion>,
+        countryCode?: string
+    ): Record<string, DecisionQuestion> {
+        const sanitized: Record<string, DecisionQuestion> = {};
+        for (const [qKey, q] of Object.entries(questions)) {
+            const cleanInstructions = this.sanitizePromptForLey21719(q.instructions, countryCode);
+            if (q.type === 'noul') {
+                sanitized[qKey] = {
+                    type: 'noul',
+                    instructions: cleanInstructions,
+                    ...(q.criteria
+                        ? {
+                              criteria: {
+                                  true_description: this.sanitizePromptForLey21719(
+                                      q.criteria.true_description,
+                                      countryCode
+                                  ),
+                                  false_description: this.sanitizePromptForLey21719(
+                                      q.criteria.false_description,
+                                      countryCode
+                                  ),
+                              },
+                          }
+                        : {}),
+                };
+            } else if (q.type === 'choice') {
+                const cleanCriteria: Record<string, string> = {};
+                for (const [optKey, desc] of Object.entries(q.criteria)) {
+                    cleanCriteria[optKey] = desc ? this.sanitizePromptForLey21719(desc, countryCode) : '';
+                }
+                sanitized[qKey] = {
+                    type: 'choice',
+                    instructions: cleanInstructions,
+                    criteria: cleanCriteria,
+                };
+            } else {
+                sanitized[qKey] = {
+                    type: 'score',
+                    instructions: cleanInstructions,
+                    criteria: q.criteria.map((lvl) => this.sanitizePromptForLey21719(lvl, countryCode)),
+                };
+            }
+        }
+        return sanitized;
+    }
+
+    private static computeDecisionCacheKey(params: {
+        req: AIDecisionRequest;
+        sanitizedInputText: string;
+        sanitizedQuestions: Record<string, DecisionQuestion>;
+    }): string {
+        const { req, sanitizedInputText, sanitizedQuestions } = params;
+        const effectiveScope =
+            req.dataClassification === 'GLOBAL_OEM' ? 'GLOBAL_OEM' : req.tenantId || 'GLOBAL';
+        const mediaDigests = (req.media || []).map((m) => ({
+            mime: m.mimeType.split(';')[0].trim().toLowerCase(),
+            res: m.resolution || '',
+            digest: createHash('sha256')
+                .update(m.dataBase64 || m.uri || '')
+                .digest('hex'),
+        }));
+        const canonicalPayload = JSON.stringify({
+            v: '1.0-decisions',
+            scope: effectiveScope,
+            module: req.module,
+            model: DECISION_MODEL,
+            text: sanitizedInputText,
+            mediaDigests,
+            questions: sanitizedQuestions,
+        });
+        return `dec_${createHash('sha256').update(canonicalPayload).digest('hex')}`;
+    }
+
+    private static buildDecisionsApiPayload(params: {
+        sanitizedInputText: string;
+        media?: AIDecisionMediaPart[];
+        sanitizedQuestions: Record<string, DecisionQuestion>;
+    }): Record<string, any> {
+        const inputBlocks: Record<string, any>[] = [];
+
+        for (const m of params.media || []) {
+            const baseMime = m.mimeType.split(';')[0].trim().toLowerCase();
+            const sourcePart = m.dataBase64 ? { data: m.dataBase64 } : { uri: m.uri };
+
+            if (baseMime === 'application/pdf') {
+                inputBlocks.push({
+                    type: 'document',
+                    ...sourcePart,
+                    mime_type: 'application/pdf',
+                });
+            } else if (baseMime.startsWith('image/')) {
+                inputBlocks.push({
+                    type: 'image',
+                    ...sourcePart,
+                    mime_type: baseMime,
+                    ...(m.resolution ? { resolution: m.resolution } : {}),
+                });
+            } else if (baseMime.startsWith('audio/')) {
+                inputBlocks.push({
+                    type: 'audio',
+                    ...sourcePart,
+                    mime_type: baseMime,
+                });
+            } else if (baseMime.startsWith('video/')) {
+                inputBlocks.push({
+                    type: 'video',
+                    ...sourcePart,
+                    mime_type: baseMime,
+                    ...(m.resolution
+                        ? { resolution: m.resolution === 'ultra_high' ? 'high' : m.resolution }
+                        : {}),
+                });
+            }
+        }
+
+        if (params.sanitizedInputText.length > 0) {
+            inputBlocks.push({
+                type: 'text',
+                text: params.sanitizedInputText,
+            });
+        }
+
+        return {
+            model: DECISION_MODEL,
+            input: inputBlocks,
+            questions: params.sanitizedQuestions,
+        };
+    }
+
+    private static normalizeDecisionAnswers(
+        rawAnswers: unknown,
+        questions: Record<string, DecisionQuestion>
+    ): Record<string, AIDecisionAnswer> {
+        if (!rawAnswers || typeof rawAnswers !== 'object') {
+            throw new Error('Respuesta sin objeto `answers` desde Gemini Decisions API.');
+        }
+
+        const record = rawAnswers as Record<string, any>;
+        const out: Record<string, AIDecisionAnswer> = {};
+        const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
+        for (const [qKey, q] of Object.entries(questions)) {
+            const raw = record[qKey];
+            if (!raw || typeof raw !== 'object') {
+                throw new Error(`Falta respuesta para la pregunta "${qKey}" en Decisions API.`);
+            }
+
+            if (q.type === 'noul') {
+                const pYes = Number(raw.noul);
+                if (!Number.isFinite(pYes)) {
+                    throw new Error(`Probabilidad \`noul\` inválida para "${qKey}".`);
+                }
+                const noul = clamp(pYes, 0.01, 0.99);
+                const rawConf = Number(raw.confidence);
+                const confidence = Number.isFinite(rawConf)
+                    ? clamp(rawConf, 0, 1)
+                    : Math.max(noul, 1 - noul);
+                out[qKey] = { type: 'noul', noul, confidence };
+            } else if (q.type === 'choice') {
+                const optionKeys = Object.keys(q.criteria).sort();
+                const rawProbs = raw.probabilities && typeof raw.probabilities === 'object' ? raw.probabilities : {};
+                const probabilities: Record<string, number> = {};
+                let probSum = 0;
+                for (const optKey of optionKeys) {
+                    const val = Number(rawProbs[optKey]);
+                    const cleanVal = Number.isFinite(val) && val >= 0 ? val : 0;
+                    probabilities[optKey] = cleanVal;
+                    probSum += cleanVal;
+                }
+                if (probSum > 0) {
+                    for (const optKey of optionKeys) {
+                        probabilities[optKey] = Number((probabilities[optKey] / probSum).toFixed(6));
+                    }
+                }
+
+                let chosen =
+                    typeof raw.choice === 'string' &&
+                    Object.prototype.hasOwnProperty.call(q.criteria, raw.choice)
+                        ? raw.choice
+                        : '';
+                if (!chosen) {
+                    chosen = optionKeys.reduce(
+                        (best, k) => ((probabilities[k] ?? 0) > (probabilities[best] ?? 0) ? k : best),
+                        optionKeys[0]
+                    );
+                }
+                if (probSum === 0) {
+                    probabilities[chosen] = 1;
+                }
+                const rawConf = Number(raw.confidence);
+                const confidence = Number.isFinite(rawConf)
+                    ? clamp(rawConf, 0, 1)
+                    : clamp(probabilities[chosen] ?? 0, 0, 1);
+
+                out[qKey] = { type: 'choice', choice: chosen, probabilities, confidence };
+            } else {
+                const maxIdx = q.criteria.length - 1;
+                const rawScore = Number(raw.score);
+                if (!Number.isFinite(rawScore)) {
+                    throw new Error(`Puntaje \`score\` inválido para "${qKey}".`);
+                }
+                const score = clamp(rawScore, 0, maxIdx);
+                const legend: Record<string, string> = {};
+                const probabilities: Record<string, number> = {};
+                const rawProbs = raw.probabilities && typeof raw.probabilities === 'object' ? raw.probabilities : {};
+
+                let probSum = 0;
+                for (let i = 0; i <= maxIdx; i++) {
+                    const key = String(i);
+                    legend[key] = q.criteria[i];
+                    const val = Number(rawProbs[key]);
+                    const cleanVal = Number.isFinite(val) && val >= 0 ? val : 0;
+                    probabilities[key] = cleanVal;
+                    probSum += cleanVal;
+                }
+                if (probSum > 0) {
+                    for (let i = 0; i <= maxIdx; i++) {
+                        const key = String(i);
+                        probabilities[key] = Number((probabilities[key] / probSum).toFixed(6));
+                    }
+                } else {
+                    probabilities[String(Math.round(score))] = 1;
+                }
+                const rawConf = Number(raw.confidence);
+                const confidence = Number.isFinite(rawConf)
+                    ? clamp(rawConf, 0, 1)
+                    : clamp(Math.max(...Object.values(probabilities), 0), 0, 1);
+
+                out[qKey] = { type: 'score', score, legend, probabilities, confidence };
+            }
+        }
+
+        return out;
+    }
+
+    /**
+     * Transporte REST aislado para `POST /v1beta/decisions` (permite intercepción determinista en pruebas).
+     */
+    public static async invokeDecisionsRestTransport(params: {
+        endpointUrl: string;
+        apiKey: string;
+        payload: Record<string, any>;
+        timeoutMs: number;
+    }): Promise<{ status: number; body: any }> {
+        const res = await fetch(params.endpointUrl, {
+            method: 'POST',
+            headers: {
+                'x-goog-api-key': params.apiKey,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(params.payload),
+            signal: AbortSignal.timeout(params.timeoutMs),
+        });
+        const body = await res.json().catch(() => ({}));
+        return { status: res.status, body };
+    }
+
+    private static async executeDecisionFallbackOnSwarm(params: {
+        req: AIDecisionRequest;
+        sanitizedInputText: string;
+        sanitizedQuestions: Record<string, DecisionQuestion>;
+    }): Promise<{
+        answers: Record<string, AIDecisionAnswer>;
+        model: string;
+        usage: AIDecisionUsage;
+    }> {
+        const { req, sanitizedInputText, sanitizedQuestions } = params;
+        const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
+        const schemaProperties: Record<string, any> = {};
+        const requiredKeys: string[] = [];
+        const questionPrompts: string[] = [];
+
+        for (const [qKey, q] of Object.entries(sanitizedQuestions)) {
+            requiredKeys.push(qKey);
+            if (q.type === 'noul') {
+                schemaProperties[qKey] = {
+                    type: Type.OBJECT,
+                    properties: {
+                        noul: { type: Type.NUMBER },
+                    },
+                    required: ['noul'],
+                };
+                const critHint = q.criteria
+                    ? ` [SI: ${q.criteria.true_description} | NO: ${q.criteria.false_description}]`
+                    : '';
+                questionPrompts.push(
+                    `- "${qKey}" (tipo noul): ${q.instructions}${critHint}. Devuelve \`noul\` como probabilidad calibrada entre 0.01 y 0.99.`
+                );
+            } else if (q.type === 'choice') {
+                const optionKeys = Object.keys(q.criteria).sort();
+                schemaProperties[qKey] = {
+                    type: Type.OBJECT,
+                    properties: {
+                        choice: { type: Type.STRING, enum: optionKeys },
+                        confidence: { type: Type.NUMBER },
+                    },
+                    required: ['choice', 'confidence'],
+                };
+                const optsText = optionKeys
+                    .map((k) => `${k}${q.criteria[k] ? `: ${q.criteria[k]}` : ''}`)
+                    .join(' | ');
+                questionPrompts.push(
+                    `- "${qKey}" (tipo choice): ${q.instructions}. Opciones válidas: [${optsText}]. Devuelve \`choice\` y \`confidence\` (0..1).`
+                );
+            } else {
+                const maxIdx = q.criteria.length - 1;
+                schemaProperties[qKey] = {
+                    type: Type.OBJECT,
+                    properties: {
+                        level_index: { type: Type.INTEGER },
+                        confidence: { type: Type.NUMBER },
+                    },
+                    required: ['level_index', 'confidence'],
+                };
+                const levelsText = q.criteria.map((desc, idx) => `${idx}=${desc}`).join(' | ');
+                questionPrompts.push(
+                    `- "${qKey}" (tipo score 0..${maxIdx}): ${q.instructions}. Niveles: [${levelsText}]. Devuelve \`level_index\` entero (0..${maxIdx}) y \`confidence\` (0..1).`
+                );
+            }
+        }
+
+        const inlineMedia: InlineMediaPart[] = [];
+        const fileParts: FileUriPart[] = [];
+        for (const m of req.media || []) {
+            const cleanMime = m.mimeType.split(';')[0].trim().toLowerCase();
+            if (m.dataBase64) {
+                inlineMedia.push({ mimeType: cleanMime, dataBase64: m.dataBase64 });
+            } else if (m.uri) {
+                fileParts.push({ fileUri: m.uri, mimeType: cleanMime });
+            }
+        }
+
+        const prompt = [
+            'Evalúa de manera estricta, determinista e independiente cada pregunta cerrada sobre el contenido adjunto y devuelve ÚNICAMENTE el JSON exacto según el esquema.',
+            sanitizedInputText ? `\nENTRADA COMPARTIDA:\n"""\n${sanitizedInputText}\n"""` : '',
+            `\nPREGUNTAS A EVALUAR:\n${questionPrompts.join('\n')}`,
+        ]
+            .filter(Boolean)
+            .join('\n');
+
+        const genRes = await this.generate({
+            module: req.module,
+            tenantId: req.tenantId,
+            isEduSandbox: req.isEduSandbox,
+            countryCode: req.countryCode,
+            preferredTier: 'ANCHOR_HA',
+            thinkingLevel: 'none',
+            temperature: 0,
+            bypassCache: true,
+            prompt,
+            media: inlineMedia.length > 0 ? inlineMedia : undefined,
+            fileParts: fileParts.length > 0 ? fileParts : undefined,
+            responseMimeType: 'application/json',
+            responseSchema: {
+                type: Type.OBJECT,
+                properties: schemaProperties,
+                required: requiredKeys,
+            },
+        });
+
+        const parsed = JSON.parse(this.extractJsonString(genRes.text)) as Record<string, any>;
+        const answers: Record<string, AIDecisionAnswer> = {};
+
+        for (const [qKey, q] of Object.entries(sanitizedQuestions)) {
+            const rawItem = parsed?.[qKey] || {};
+            if (q.type === 'noul') {
+                const rawVal = Number(rawItem?.noul);
+                const noul = Number.isFinite(rawVal) ? clamp(rawVal, 0.01, 0.99) : 0.5;
+                answers[qKey] = {
+                    type: 'noul',
+                    noul,
+                    confidence: Math.max(noul, 1 - noul),
+                };
+            } else if (q.type === 'choice') {
+                const optionKeys = Object.keys(q.criteria).sort();
+                const rawChoice = String(rawItem?.choice || '');
+                const choice = Object.prototype.hasOwnProperty.call(q.criteria, rawChoice)
+                    ? rawChoice
+                    : optionKeys[0];
+                const rawConf = Number(rawItem?.confidence);
+                const confidence = Number.isFinite(rawConf) ? clamp(rawConf, 0.01, 0.99) : 0.75;
+                const probabilities: Record<string, number> = {};
+                const rem = optionKeys.length > 1 ? (1 - confidence) / (optionKeys.length - 1) : 0;
+                for (const k of optionKeys) {
+                    probabilities[k] = Number((k === choice ? confidence : rem).toFixed(6));
+                }
+                answers[qKey] = {
+                    type: 'choice',
+                    choice,
+                    probabilities,
+                    confidence,
+                };
+            } else {
+                const maxIdx = q.criteria.length - 1;
+                const rawIdx = Number(rawItem?.level_index);
+                const levelIdx = Number.isFinite(rawIdx)
+                    ? clamp(Math.round(rawIdx), 0, maxIdx)
+                    : 0;
+                const rawConf = Number(rawItem?.confidence);
+                const confidence = Number.isFinite(rawConf) ? clamp(rawConf, 0.01, 0.99) : 0.75;
+                const legend: Record<string, string> = {};
+                const probabilities: Record<string, number> = {};
+                const rem = maxIdx > 0 ? (1 - confidence) / maxIdx : 0;
+                for (let i = 0; i <= maxIdx; i++) {
+                    const key = String(i);
+                    legend[key] = q.criteria[i];
+                    probabilities[key] = Number((i === levelIdx ? confidence : rem).toFixed(6));
+                }
+                answers[qKey] = {
+                    type: 'score',
+                    score: levelIdx,
+                    legend,
+                    probabilities,
+                    confidence,
+                };
+            }
+        }
+
+        const usageMeta = (genRes.rawCandidate as any)?.usageMetadata;
+        const totalInputTokens = Number(usageMeta?.promptTokenCount || 0) || 0;
+        const totalOutputTokens = Number(usageMeta?.candidatesTokenCount || 0) || 0;
+
+        return {
+            answers,
+            model: genRes.model,
+            usage: {
+                totalInputTokens,
+                totalOutputTokens,
+                totalTokens: totalInputTokens + totalOutputTokens,
+            },
+        };
+    }
+
+    /**
+     * Nivel 0 — Compuerta de Decisiones Calibradas (`gemini-decision-1` sobre `v1beta/decisions`).
+     *
+     * Reglas Soberanas MINREPORT:
+     * 1. Sanitiza determinísticamente PII chilena/multi-país antes de transmitir (`Ley N° 21.719`).
+     * 2. Caché determinista L1 RAM + L2 Firestore (`ai_inference_cache` con prefijo `dec_`).
+     * 3. Compuerta jurisdiccional: en `USE_VERTEX_AI=true` con cargas `TENANT_PRIVATE`, enruta hacia
+     *    `ANCHOR_HA` en Vertex AI `southamerica-west1`; en producción prohíbe Free Tier sin CDPA.
+     * 4. Ante bloqueos `HTTP 400` de seguridad (`safety`, `prohibited_content`, etc.), aborta en modo Fail-Closed.
+     */
+    public static async decide(rawReq: AIDecisionRequest): Promise<AIDecisionResponse> {
+        const startTime = Date.now();
+        const req = AIDecisionRequestSchema.parse(rawReq);
+
+        const sanitizedInputText =
+            typeof req.inputText === 'string' && req.inputText.trim().length > 0
+                ? this.sanitizePromptForLey21719(req.inputText, req.countryCode)
+                : '';
+        const sanitizedQuestions = this.sanitizeDecisionQuestions(req.questions, req.countryCode);
+
+        const canUseCache = !req.bypassCache;
+        const cacheKey = canUseCache
+            ? this.computeDecisionCacheKey({ req, sanitizedInputText, sanitizedQuestions })
+            : '';
+
+        if (canUseCache && cacheKey) {
+            const l1Hit = memoryDecisionCache.get(cacheKey);
+            if (l1Hit && l1Hit.expiresAt > Date.now()) {
+                const hitLatency = Date.now() - startTime;
+                this.recordDecisionTelemetry({
+                    latencyMs: hitLatency,
+                    cached: true,
+                    l1MemoryHit: true,
+                    success: true,
+                });
+                if (req.tenantId) {
+                    TenantMetricsService.recordAiUsage({
+                        accountId: req.tenantId,
+                        isEduSandbox: req.isEduSandbox,
+                        cacheHit: true,
+                        tier: 'ANCHOR_HA',
+                    }).catch(() => {});
+                }
+                return {
+                    answers: l1Hit.answers,
+                    model: l1Hit.model,
+                    engineUsed: l1Hit.engineUsed,
+                    latencyMs: hitLatency,
+                    cached: true,
+                    usage: l1Hit.usage,
+                };
+            }
+
+            try {
+                const cachedSnap = await db.collection(this.CACHE_COLLECTION).doc(cacheKey).get();
+                if (cachedSnap.exists) {
+                    const cachedData = cachedSnap.data() || {};
+                    if (cachedData.answers && typeof cachedData.answers === 'object') {
+                        const normalizedAnswers = this.normalizeDecisionAnswers(
+                            cachedData.answers,
+                            sanitizedQuestions
+                        );
+                        const usage: AIDecisionUsage = {
+                            totalInputTokens: Number(cachedData.usage?.totalInputTokens || 0) || 0,
+                            totalOutputTokens: Number(cachedData.usage?.totalOutputTokens || 0) || 0,
+                            totalTokens: Number(cachedData.usage?.totalTokens || 0) || 0,
+                        };
+                        const modelUsed =
+                            typeof cachedData.model === 'string' && cachedData.model
+                                ? cachedData.model
+                                : DECISION_MODEL;
+                        const engineUsed: AIDecisionResponse['engineUsed'] =
+                            cachedData.engineUsed === 'SWARM_ANCHOR_FALLBACK'
+                                ? 'SWARM_ANCHOR_FALLBACK'
+                                : 'DECISIONS_API_V1BETA';
+
+                        this.setMemoryDecisionCache(cacheKey, {
+                            answers: normalizedAnswers,
+                            model: modelUsed,
+                            engineUsed,
+                            usage,
+                            expiresAt: Date.now() + MEMORY_INFERENCE_TTL_MS,
+                        });
+
+                        const hitLatency = Date.now() - startTime;
+                        this.recordDecisionTelemetry({
+                            latencyMs: hitLatency,
+                            cached: true,
+                            success: true,
+                        });
+                        if (req.tenantId) {
+                            TenantMetricsService.recordAiUsage({
+                                accountId: req.tenantId,
+                                isEduSandbox: req.isEduSandbox,
+                                cacheHit: true,
+                                tier: 'ANCHOR_HA',
+                            }).catch(() => {});
+                        }
+                        return {
+                            answers: normalizedAnswers,
+                            model: modelUsed,
+                            engineUsed,
+                            latencyMs: hitLatency,
+                            cached: true,
+                            usage,
+                        };
+                    }
+                }
+            } catch {
+                // Continuar en vivo si falla lectura L2
+            }
+        }
+
+        const isStrictTenantPrivateUnderVertex =
+            process.env.USE_VERTEX_AI === 'true' &&
+            (req.dataClassification === 'TENANT_PRIVATE' ||
+                (Boolean(req.tenantId) &&
+                    req.dataClassification !== 'GLOBAL_OEM' &&
+                    Boolean(req.media && req.media.length > 0)));
+
+        const apiKey = await resolveGeminiApiKey();
+        const keyProfile = await resolveActiveGeminiKeyProfile();
+        const isProdNonCdpaProfile =
+            process.env.NODE_ENV === 'production' && keyProfile !== 'PROD_SECRET_MANAGER_GCP';
+
+        const persistDecisionCache = (result: {
+            answers: Record<string, AIDecisionAnswer>;
+            model: string;
+            engineUsed: AIDecisionResponse['engineUsed'];
+            usage: AIDecisionUsage;
+        }) => {
+            if (!canUseCache || !cacheKey) return;
+            this.setMemoryDecisionCache(cacheKey, {
+                answers: result.answers,
+                model: result.model,
+                engineUsed: result.engineUsed,
+                usage: result.usage,
+                expiresAt: Date.now() + MEMORY_INFERENCE_TTL_MS,
+            });
+            const cacheTtl = computeThirtyDayTtlTimestamp();
+            db.collection(this.CACHE_COLLECTION)
+                .doc(cacheKey)
+                .set({
+                    cacheKey,
+                    module: req.module,
+                    model: result.model,
+                    engineUsed: result.engineUsed,
+                    answers: result.answers,
+                    usage: result.usage,
+                    expiresAt: cacheTtl,
+                    ttlExpiresAt: cacheTtl,
+                    createdAt: new Date().toISOString(),
+                })
+                .catch(() => {});
+        };
+
+        if (!isStrictTenantPrivateUnderVertex && apiKey && !isProdNonCdpaProfile) {
+            const gatewayBase = (
+                process.env.AI_GATEWAY_BASE_URL || 'https://generativelanguage.googleapis.com'
+            )
+                .trim()
+                .replace(/\/+$/, '');
+            const endpointUrl = `${gatewayBase}/v1beta/decisions`;
+            const payload = this.buildDecisionsApiPayload({
+                sanitizedInputText,
+                media: req.media,
+                sanitizedQuestions,
+            });
+
+            for (let attempt = 0; attempt <= this.MAX_DECISION_RETRIES; attempt++) {
+                try {
+                    const { status, body } = await this.invokeDecisionsRestTransport({
+                        endpointUrl,
+                        apiKey,
+                        payload,
+                        timeoutMs: 20_000,
+                    });
+
+                    const errCode = String(body?.error?.code || body?.error?.status || '')
+                        .trim()
+                        .toLowerCase();
+                    if (status === 400 && SAFETY_BLOCK_ERROR_CODES.has(errCode)) {
+                        this.recordDecisionTelemetry({
+                            latencyMs: Date.now() - startTime,
+                            cached: false,
+                            success: false,
+                        });
+                        throw new DecisionSafetyBlockedError(
+                            String(
+                                body?.error?.message ||
+                                    `Solicitud bloqueada por filtro de seguridad (${errCode}).`
+                            ),
+                            errCode
+                        );
+                    }
+
+                    if (status >= 200 && status < 300 && body?.answers) {
+                        const answers = this.normalizeDecisionAnswers(body.answers, sanitizedQuestions);
+                        const totalInputTokens =
+                            Number(body?.usage?.total_input_tokens ?? body?.usage?.total_tokens ?? 0) ||
+                            0;
+                        const usage: AIDecisionUsage = {
+                            totalInputTokens,
+                            totalOutputTokens: 0,
+                            totalTokens: totalInputTokens,
+                        };
+                        const latencyMs = Date.now() - startTime;
+
+                        this.recordDecisionTelemetry({
+                            latencyMs,
+                            cached: false,
+                            success: true,
+                        });
+                        if (req.tenantId) {
+                            TenantMetricsService.recordAiUsage({
+                                accountId: req.tenantId,
+                                isEduSandbox: req.isEduSandbox,
+                                cacheHit: false,
+                                tier: 'ANCHOR_HA',
+                                tokensInput: totalInputTokens,
+                                tokensOutput: 0,
+                            }).catch(() => {});
+                        }
+
+                        const out: AIDecisionResponse = {
+                            answers,
+                            model: DECISION_MODEL,
+                            engineUsed: 'DECISIONS_API_V1BETA',
+                            latencyMs,
+                            cached: false,
+                            usage,
+                        };
+                        persistDecisionCache(out);
+                        return out;
+                    }
+
+                    if ((status === 429 || status >= 500) && attempt < this.MAX_DECISION_RETRIES) {
+                        await this.sleep(this.computeBackoffMs(attempt));
+                        continue;
+                    }
+                    break;
+                } catch (err: any) {
+                    if (err instanceof DecisionSafetyBlockedError) {
+                        throw err;
+                    }
+                    if (attempt < this.MAX_DECISION_RETRIES) {
+                        await this.sleep(this.computeBackoffMs(attempt));
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Fallback resiliente hacia ANCHOR_HA (Vertex AI southamerica-west1 o Swarm estándar)
+        try {
+            const fallback = await this.executeDecisionFallbackOnSwarm({
+                req,
+                sanitizedInputText,
+                sanitizedQuestions,
+            });
+            const latencyMs = Date.now() - startTime;
+            this.recordDecisionTelemetry({
+                latencyMs,
+                cached: false,
+                fallbackUsed: true,
+                success: true,
+            });
+            const out: AIDecisionResponse = {
+                answers: fallback.answers,
+                model: fallback.model,
+                engineUsed: 'SWARM_ANCHOR_FALLBACK',
+                latencyMs,
+                cached: false,
+                usage: fallback.usage,
+            };
+            persistDecisionCache(out);
+            return out;
+        } catch (err) {
+            this.recordDecisionTelemetry({
+                latencyMs: Date.now() - startTime,
+                cached: false,
+                success: false,
+            });
+            throw err;
         }
     }
 }

@@ -56,17 +56,27 @@ for (const rel of requiredGovernanceFiles) {
     }
 }
 
-// 2. Verificar centralización de GoogleGenAI y prohibición de servicios de consumo externos
+// 2. Verificar centralización de GoogleGenAI / Decisions API y prohibición de servicios de consumo externos
 const allowedGenAiFile = path.normalize(path.join(repoRoot, 'src/core/resilient-ai-client.ts'));
 const blockedExternalServiceRegex = /\b(notebooklm\.google|colab\.research\.google\.com|drive\.google\.com\/drive)\b/i;
 
 for (const file of allCodeFiles) {
     const content = fs.readFileSync(file, 'utf8');
     const rel = path.relative(repoRoot, file);
+    const codeNoComments = content.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
 
-    if (path.normalize(file) !== allowedGenAiFile && /\bnew\s+GoogleGenAI\s*\(/.test(content)) {
+    if (path.normalize(file) !== allowedGenAiFile && /\bnew\s+GoogleGenAI\s*\(/.test(codeNoComments)) {
         violations.push(
             `[BYPASS CLIENTE RESILIENTE] ${rel} instancia 'new GoogleGenAI()' directamente, saltando la esclusa Ley 21.719 de resilient-ai-client.ts.`
+        );
+    }
+
+    if (
+        path.normalize(file) !== allowedGenAiFile &&
+        /(?:\.decisions\.create\s*\(|\/v1beta\/decisions\b)/.test(codeNoComments)
+    ) {
+        violations.push(
+            `[BYPASS DECISIONS API] ${rel} invoca Gemini Decisions API directamente, saltando la esclusa Ley 21.719 de resilient-ai-client.ts.`
         );
     }
 

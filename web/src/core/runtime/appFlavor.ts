@@ -41,3 +41,25 @@ export function isFieldTestApp(): boolean {
 export function getMinReportAppFlavor(): MinReportAppFlavor {
     return isFieldTestApp() ? 'fieldtest' : 'production';
 }
+
+export function isNativeDebugApp(): boolean {
+    if (typeof navigator === 'undefined') {
+        return false;
+    }
+    const ua = navigator.userAgent || '';
+    return /\bMinReportAppId\/[^\s]+\.debug\b/.test(ua);
+}
+
+export function isAndroidEmulatorRuntime(): boolean {
+    if (typeof navigator === 'undefined') {
+        return false;
+    }
+    const ua = navigator.userAgent || '';
+    if (/\bMinReportRuntime\/emulator\b/i.test(ua)) {
+        return true;
+    }
+    if (/\bMinReportRuntime\/device\b/i.test(ua)) {
+        return false;
+    }
+    return /sdk_gphone|emulator|generic_x86|google_sdk|\bsdk\b/i.test(ua);
+}

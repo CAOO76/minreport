@@ -11,6 +11,7 @@ import { computeThirtyDayTtlTimestamp, toEpochMillis } from '../core/retention-p
 import { evaluatePilotExpiration } from '../contracts/session.contracts';
 import { DEV_ROOT_EMAIL, DEV_ROOT_UID, ensureDevRootAccount } from '../services/bootstrap.service';
 import { DevChallengeService } from '../services/dev-challenge.service';
+import { logThrottledAuthFailure } from '../middleware/auth';
 
 export interface DevRequest extends Request {
     devUser?: any;
@@ -50,7 +51,7 @@ export const requireDevRoot = async (req: DevRequest, res: Response, next: NextF
         req.devUser = decodedToken;
         return next();
     } catch (error) {
-        console.error('[DEV-GATEWAY] Error de verificación de token DEV:', error);
+        logThrottledAuthFailure('DEV-GATEWAY', req, error);
         return res.status(401).json({ error: 'Token inválido o expirado' });
     }
 };

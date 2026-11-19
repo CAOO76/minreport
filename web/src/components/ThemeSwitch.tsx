@@ -13,11 +13,11 @@ export const ThemeSwitch = () => {
         <button
             type="button"
             onClick={toggleTheme}
-            className="min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none p-2 text-[#475569] dark:text-[#CBD5E1] hover:text-[#0F172A] dark:hover:text-white transition-colors cursor-pointer flex items-center justify-center rounded-none shadow-none shrink-0"
+            className="bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer flex items-center justify-center rounded-none shadow-none shrink-0"
             aria-label={label}
             title={label}
         >
-            <span className="material-symbols-outlined text-[22px] block">
+            <span className="material-symbols-outlined text-[20px] block">
                 {theme === 'light' ? 'light_mode' : 'dark_mode'}
             </span>
         </button>

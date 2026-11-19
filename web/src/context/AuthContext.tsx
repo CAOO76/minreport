@@ -3,6 +3,7 @@ import { Capacitor } from '@capacitor/core';
 import { User, onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth';
 import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
+import { clearOfflineSessionSnapshot } from '../core/offline/OfflineSessionVault';
 import type { UserProfile, Account } from '../../../src/types/auth';
 
 interface AuthContextType {
@@ -57,14 +58,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [isMfaVerified, setIsMfaVerified] = useState<boolean>(false);
     const [sessionNonce, setSessionNonce] = useState<string>('');
 
-    // 1. Escucha de estado Firebase Auth
+    // 1. Escucha de estado Firebase Auth (con margen amplio para hidratación IndexedDB en Capacitor)
     useEffect(() => {
-        const safetyTimeout = setTimeout(() => {
-            setLoading(false);
-        }, 2500);
+        let userLoadTimeout: ReturnType<typeof setTimeout> | null = null;
+        const safetyTimeout = setTimeout(
+            () => {
+                setLoading(false);
+            },
+            Capacitor.isNativePlatform() ? 5500 : 2500
+        );
 
         const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
             clearTimeout(safetyTimeout);
+            if (userLoadTimeout) {
+                clearTimeout(userLoadTimeout);
+                userLoadTimeout = null;
+            }
             setUser(currentUser);
             if (!currentUser) {
                 setProfile(null);
@@ -75,12 +84,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 setLoading(false);
             } else {
                 setLoading(true);
+                userLoadTimeout = setTimeout(() => {
+                    setLoading(false);
+                }, 3000);
             }
         });
 
         return () => {
             unsubscribe();
             clearTimeout(safetyTimeout);
+            if (userLoadTimeout) {
+                clearTimeout(userLoadTimeout);
+            }
         };
     }, []);
 
@@ -203,10 +218,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return;
         }
 
+        const accountTimeout = setTimeout(() => {
+            setLoading(false);
+        }, 3000);
+
         const accountRef = doc(db, 'accounts', activeAccountId);
         const unsubscribe = onSnapshot(
             accountRef,
             (snapshot) => {
+                clearTimeout(accountTimeout);
                 if (snapshot.exists()) {
                     setCurrentAccount({ id: snapshot.id, ...snapshot.data() } as Account);
                 } else {
@@ -215,11 +235,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 setLoading(false);
             },
             () => {
+                clearTimeout(accountTimeout);
                 setLoading(false);
             }
         );
 
-        return () => unsubscribe();
+        return () => {
+            clearTimeout(accountTimeout);
+            unsubscribe();
+        };
     }, [activeAccountId]);
 
     const markMfaVerified = useCallback(
@@ -259,6 +283,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (user?.uid) {
                 clearStoredMfaToken(user.uid);
             }
+            if (typeof window !== 'undefined') {
+                localStorage.removeItem('dev_auth_token');
+                localStorage.removeItem('dev_vault_token');
+            }
+            await clearOfflineSessionSnapshot();
             setIsMfaVerified(false);
             await firebaseSignOut(auth);
         } catch (error) {

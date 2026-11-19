@@ -49,18 +49,6 @@ const GeolappStockpilesQuerySchema = z.object({
     copperDomain: CopperDomainFilterSchema.optional(),
 });
 
-const NonStockpileDomainModeFilterSchema = z.enum([
-    'GEOMENSURA_GEO',
-    'EXPLORACION_SONDAJES',
-    'ESTRUCTURAL_HIDRO',
-]);
-
-const GeolappDomainRecordsQuerySchema = z.object({
-    limit: LimitQueryFieldSchema,
-    tenantId: z.string().trim().regex(/^[A-Za-z0-9._-]{1,128}$/).optional(),
-    domainMode: NonStockpileDomainModeFilterSchema.optional(),
-});
-
 const DossierParamsSchema = z.object({
     stockpileId: z
         .string()
@@ -177,11 +165,22 @@ function buildGeolappStockpileFeedItem(
     return {
         id: stockpileId,
         name: scrubTextOrNull(d.name),
+        description: scrubTextOrNull(d.description),
+        status: strOrNull(d.status) || 'ACTIVE',
+        closureReason: strOrNull(d.closure_reason),
+        closedAt: d.closed_at ?? null,
+        dispatchReference: scrubTextOrNull(d.dispatch_reference),
+        shippedWeightT: numOrNull(d.shipped_weight_t),
+        preClosureVolumeM3: numOrNull(d.pre_closure_volume_m3),
+        projectId: strOrNull(d.project_id),
+        projectName: scrubTextOrNull(d.project_name),
         materialType: scrubTextOrNull(d.materialType ?? d.clase),
         copperDomain: strOrNull(d.copper_domain ?? latestMeas?.copper_domain),
         volumeM3: numOrNull(
             d.last_volume_m3 ?? d.volume_m3 ?? d.volumen ?? latestMeas?.volumen ?? d.tin_volume_m3
         ),
+        lastDeltaVolumeM3: numOrNull(d.last_delta_volumen_m3 ?? latestMeas?.delta_volumen),
+        lastDeltaVolumePct: numOrNull(d.last_delta_volumen_pct ?? latestMeas?.delta_volumen_pct),
         wetWeightThm: numOrNull(
             d.wet_weight_thm ??
                 latestMeas?.wet_weight_thm ??
@@ -200,6 +199,7 @@ function buildGeolappStockpileFeedItem(
         tinVolumeM3: numOrNull(d.tin_volume_m3 ?? latestMeas?.tin_volume_m3),
         meshSha256,
         meshUrl: strOrNull(d.mesh_url ?? latestMeas?.mesh_url),
+        staticMapUrl: strOrNull(d.static_map_url),
         locationRef: scrubTextOrNull(d.location_ref),
         recordedAt: d.updatedAt ?? d.last_measured_at ?? latestMeas?.timestamp ?? d.createdAt ?? null,
     };
@@ -416,8 +416,23 @@ export function registerM2mGeolappAdapterRoutes(app: Express): void {
                         stockpileId,
                         timestamp: new Date().toISOString(),
                         name: scrubTextOrNull(d.name),
+                        description: scrubTextOrNull(d.description),
                         clase: scrubTextOrNull(d.clase ?? d.materialType),
-                        status: strOrNull(d.status),
+                        status: strOrNull(d.status) || 'ACTIVE',
+                        closureReason: strOrNull(d.closure_reason),
+                        closedAt: d.closed_at ?? null,
+                        dispatchReference: scrubTextOrNull(d.dispatch_reference),
+                        shippedWeightT: numOrNull(d.shipped_weight_t),
+                        preClosureVolumeM3: numOrNull(d.pre_closure_volume_m3),
+                        projectId: strOrNull(d.project_id),
+                        projectName: scrubTextOrNull(d.project_name),
+                        staticMapUrl: strOrNull(d.static_map_url),
+                        lastDeltaVolumeM3: numOrNull(
+                            d.last_delta_volumen_m3 ?? latestMeas?.delta_volumen
+                        ),
+                        lastDeltaVolumePct: numOrNull(
+                            d.last_delta_volumen_pct ?? latestMeas?.delta_volumen_pct
+                        ),
                         locationRef: scrubTextOrNull(d.location_ref),
                         copperBalance: {
                             copperDomain: strOrNull(d.copper_domain ?? latestMeas?.copper_domain),
@@ -494,104 +509,6 @@ export function registerM2mGeolappAdapterRoutes(app: Express): void {
                 );
                 return res.status(500).json({
                     error: 'Error generando dossier tecnico M2M GEOLAPP®.',
-                });
-            }
-        }
-    );
-
-    /**
-     * GET /api/m2m/geolapp/domain-records
-     * Consulta paginada multi-tenant M2M de registros geocientíficos (Geomensura, Sondajes, Estructural/Hidro).
-     */
-    app.get(
-        '/api/m2m/geolapp/domain-records',
-        x402Gatekeeper({
-            priceMicroUSD: 25000,
-            destinationWallet: treasuryWallet,
-            acceptedTokens: ['USDC', 'X402_CREDIT'],
-            resourceId: 'geolapp-domain-records-v1',
-        }),
-        async (req: X402AuthenticatedRequest, res: Response) => {
-            const parsedQuery = GeolappDomainRecordsQuerySchema.safeParse(req.query || {});
-            if (!parsedQuery.success) {
-                return res.status(400).json({
-                    error: 'Parametros de consulta invalidos para registros geocientificos GEOLAPP®.',
-                    details: parsedQuery.error.flatten(),
-                });
-            }
-
-            const scopedTenantId = req.x402Context?.tenantId
-                ? String(req.x402Context.tenantId).trim()
-                : '';
-            const requestedTenantId = parsedQuery.data.tenantId
-                ? String(parsedQuery.data.tenantId).trim()
-                : '';
-
-            if (!scopedTenantId) {
-                return res.status(403).json({
-                    error: 'TENANT_SCOPE_REQUIRED: Se requiere tenantId autenticado para acceder a registros geocientificos privados.',
-                });
-            }
-
-            if (requestedTenantId && requestedTenantId !== scopedTenantId) {
-                return res.status(403).json({
-                    error: 'TENANT_SCOPE_MISMATCH: El tenantId consultado no coincide con la credencial M2M activa.',
-                });
-            }
-
-            try {
-                const { limit, domainMode } = parsedQuery.data;
-                const snap = await db
-                    .collection('geolapp_records')
-                    .where('tenantId', '==', scopedTenantId)
-                    .get();
-
-                const mapped = snap.docs
-                    .map((doc) => {
-                        const d = (doc.data() || {}) as Record<string, any>;
-                        const ownerTenant = String(d.tenantId || d.accountId || '').trim();
-                        if (ownerTenant !== scopedTenantId) return null;
-                        if (domainMode && d.domainMode !== domainMode) return null;
-
-                        return {
-                            id: doc.id,
-                            tenantId: scopedTenantId,
-                            accountId: scopedTenantId,
-                            domainMode: d.domainMode,
-                            code: scrubTextOrNull(d.code),
-                            title: scrubTextOrNull(d.title),
-                            status: d.status || 'ACTIVE',
-                            utmFix: d.utmFix || null,
-                            payload: d.payload || null,
-                            notes: scrubTextOrNull(d.notes),
-                            createdAt: d.createdAt ?? null,
-                            updatedAt: d.updatedAt ?? null,
-                        };
-                    })
-                    .filter((item): item is NonNullable<typeof item> => item !== null)
-                    .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
-                    .slice(0, limit);
-
-                return res.status(200).json({
-                    status: 'success',
-                    protocol: 'x402',
-                    settlementMode: resolveSettlementMode(req),
-                    region: 'southamerica-west1',
-                    data: {
-                        tenantId: scopedTenantId,
-                        timestamp: new Date().toISOString(),
-                        domainModeFilter: domainMode || null,
-                        total: mapped.length,
-                        records: mapped,
-                    },
-                });
-            } catch (err) {
-                console.error(
-                    '[M2M-GEOLAPP-ADAPTER] Error en /api/m2m/geolapp/domain-records:',
-                    err
-                );
-                return res.status(500).json({
-                    error: 'Error consultando registros geocientificos GEOLAPP®.',
                 });
             }
         }

@@ -6,8 +6,11 @@ import { syncQueueEngine, type SyncState } from '../../../core/offline/SyncQueue
 import { M3CircularProgress } from '../../../components/common/M3CircularProgress';
 
 export type ViewState =
+    | 'faenas'
     | 'home'
+    | 'monitoring'
     | 'list'
+    | 'quick-capture'
     | 'capture-select'
     | 'geometry-select'
     | 'capture'
@@ -25,9 +28,21 @@ interface MainLayoutProps {
     isDesktopLayout?: boolean;
     embedded?: boolean;
     domainMode?: 'STOCKPILE';
+    hasSelectedAsset?: boolean;
+    isSelectedAssetClosed?: boolean;
+    onTriggerNewMeasurement?: () => void;
 }
 
-const MOBILE_NAV_VIEWS: ViewState[] = ['home', 'list', 'analytics', 'summary', 'detail'];
+const MOBILE_NAV_VIEWS: ViewState[] = [
+    'faenas',
+    'home',
+    'monitoring',
+    'list',
+    'analytics',
+    'summary',
+    'dashboard',
+    'detail',
+];
 
 export const MainLayout: React.FC<MainLayoutProps> = ({
     children,
@@ -35,6 +50,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     onNavigate,
     isDesktopLayout = false,
     embedded = false,
+    hasSelectedAsset = false,
+    isSelectedAssetClosed = false,
+    onTriggerNewMeasurement,
 }) => {
     const { t } = useTranslation();
     const { isNative } = usePlatform();
@@ -46,41 +64,69 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         return () => unsubscribe();
     }, []);
 
-    const navItems: Array<{ id: ViewState; icon: string; label: string; isActive: boolean }> = [
-        {
-            id: 'home',
-            icon: 'home',
-            label: t('nav.home', 'Inicio'),
-            isActive: currentView === 'home',
-        },
-        {
-            id: 'list',
-            icon: 'list_alt',
-            label: t('nav.stock', 'Stockpiles'),
-            isActive:
-                currentView === 'list' ||
+    const showCenterCamera = Boolean(
+        hasSelectedAsset &&
+            (currentView === 'summary' ||
                 currentView === 'dashboard' ||
-                currentView === 'detail' ||
-                currentView === 'summary',
-        },
-        {
-            id: 'capture-select',
-            icon: 'add_a_photo',
-            label: t('nav.new_capture', 'Nueva Captura'),
-            isActive:
-                currentView === 'capture-select' ||
-                currentView === 'geometry-select' ||
-                currentView === 'capture' ||
-                currentView === 'scanner' ||
-                currentView === 'register',
-        },
-        {
-            id: 'analytics',
-            icon: 'analytics',
-            label: t('nav.analytics', 'Analítica'),
-            isActive: currentView === 'analytics',
-        },
-    ];
+                currentView === 'detail')
+    );
+
+    const navItems: Array<{
+        key: string;
+        icon: string;
+        label: string;
+        isActive: boolean;
+        disabled?: boolean;
+        isCameraAction?: boolean;
+        onClick: () => void;
+    }> = showCenterCamera
+        ? [
+              {
+                  key: 'faenas_or_list',
+                  icon: 'landscape',
+                  label: t('nav.stock', 'Acopios'),
+                  isActive: false,
+                  onClick: () => onNavigate('home'),
+              },
+              {
+                  key: 'new_measurement',
+                  icon: 'add_a_photo',
+                  label: t('nav.new_measurement', 'Nueva Medición'),
+                  isActive: false,
+                  disabled: Boolean(isSelectedAssetClosed),
+                  isCameraAction: true,
+                  onClick: () => onTriggerNewMeasurement?.(),
+              },
+              {
+                  key: 'monitoring',
+                  icon: 'monitoring',
+                  label: t('monitoring.nav_label', 'Estadísticas'),
+                  isActive: false,
+                  onClick: () => onNavigate('monitoring'),
+              },
+          ]
+        : [
+              {
+                  key: 'faenas_or_list',
+                  icon: 'landscape',
+                  label:
+                      currentView === 'faenas'
+                          ? t('nav.faenas', 'Faenas')
+                          : t('nav.stock', 'Acopios'),
+                  isActive:
+                      currentView === 'faenas' ||
+                      currentView === 'home' ||
+                      currentView === 'list',
+                  onClick: () => onNavigate('home'),
+              },
+              {
+                  key: 'monitoring',
+                  icon: 'monitoring',
+                  label: t('monitoring.nav_label', 'Estadísticas'),
+                  isActive: currentView === 'monitoring',
+                  onClick: () => onNavigate('monitoring'),
+              },
+          ];
 
     const showMobileBottomNav =
         (isNative || !isDesktopLayout) && MOBILE_NAV_VIEWS.includes(currentView);
@@ -91,7 +137,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
     return (
         <div className={rootClass}>
-            {/* Real-time Offline / Sync Telemetry Strip (only rendered when offline, syncing, or pending queue items exist) */}
             {(!isOnline || syncState.isSyncing || syncState.pendingCount > 0) && (
                 <div
                     role="status"
@@ -126,31 +171,36 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
                 </div>
             )}
 
-            {/* Main Viewport */}
             <div className="flex-1 min-h-0 w-full flex flex-col overflow-hidden relative">
                 {children}
             </div>
 
-            {/* Mobile Minimalist Icon Navigation Bar */}
             {showMobileBottomNav && (
                 <nav
                     aria-label={t('nav.primary', 'Navegación principal')}
-                    className="shrink-0 w-full bg-[#FFFFFF] dark:bg-[#000000] border-t border-[#E2E8F0] dark:border-[#12151C] px-fib-21 py-fib-8 flex items-center justify-around z-30 no-print"
+                    className="shrink-0 w-full bg-[#FFFFFF] dark:bg-[#000000] border-t border-[#E2E8F0] dark:border-[#12151C] pb-[env(safe-area-inset-bottom)] flex items-center justify-around z-30 no-print"
                 >
                     {navItems.map((item) => (
                         <button
-                            key={item.id}
+                            key={item.key}
                             type="button"
-                            onClick={() => onNavigate(item.id)}
+                            onClick={item.onClick}
+                            disabled={item.disabled}
                             title={item.label}
                             aria-label={item.label}
                             aria-current={item.isActive ? 'page' : undefined}
-                            className={`bg-transparent border-0 outline-none p-2 transition-colors cursor-pointer flex items-center justify-center rounded-none shadow-none ${
-                                item.isActive
+                            className={`relative flex-1 min-w-[48px] min-h-[56px] bg-transparent border-0 outline-none p-2 transition-colors cursor-pointer disabled:opacity-35 disabled:cursor-not-allowed flex items-center justify-center rounded-none shadow-none ${
+                                item.isActive || item.isCameraAction
                                     ? 'text-[#C68346]'
                                     : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6]'
                             }`}
                         >
+                            {item.isActive && (
+                                <span
+                                    aria-hidden="true"
+                                    className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-[2px] bg-[#C68346]"
+                                />
+                            )}
                             <span className="material-symbols-outlined text-[24px] leading-none">
                                 {item.icon}
                             </span>

@@ -16,7 +16,8 @@ else
 fi
 export PATH="$HOME/Library/Android/sdk/platform-tools:$JAVA_HOME/bin:$PATH"
 
-# Garantiza que capacitor.config.ts cargue el bundle local dist/ (https, cleartext: false)
+# Garantiza build de produccion real y que capacitor.config.ts cargue el bundle local dist/ (https, cleartext: false)
+export NODE_ENV=production
 unset CAP_SERVER_URL
 
 echo "[BUILD-APK] Compilando bundle web MINREPORT · GEOLAPP..."

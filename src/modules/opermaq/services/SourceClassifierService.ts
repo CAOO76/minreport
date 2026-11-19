@@ -1,34 +1,18 @@
-import { GroundingSource, ResilientAIClient, Type } from '../../../core/resilient-ai-client';
+import {
+    GroundingSource,
+    ResilientAIClient,
+    type DecisionQuestion,
+} from '../../../core/resilient-ai-client';
 import { ItemizedSource, SourceCategory } from '../types/vault.types';
 import { SOURCE_AUTHORSHIP_PROTOCOL } from './pillarAgents';
 
 /**
- * CLASIFICADOR INTELECTUAL DE AUTORÍA DE FUENTES (Temp 0)
+ * CLASIFICADOR INTELECTUAL DE AUTORÍA DE FUENTES (`Decisions API` / Heurístico)
  *
  * Clasifica cada URL real proveniente de `groundingMetadata.groundingChunks`
  * en OEM / EXTERNO / YOUTUBE según la autoría intelectual del documento
  * y devuelve `ItemizedSource[]` compatible con `KnowledgeVaultDashboard.tsx`.
  */
-
-const SOURCE_CLASSIFICATION_SCHEMA = {
-    type: Type.OBJECT,
-    properties: {
-        classified: {
-            type: Type.ARRAY,
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    url: { type: Type.STRING },
-                    author: { type: Type.STRING },
-                    description: { type: Type.STRING },
-                    type: { type: Type.STRING },
-                },
-                required: ['url', 'author', 'description', 'type'],
-            },
-        },
-    },
-    required: ['classified'],
-};
 
 const CATEGORY_ORDER: Record<SourceCategory, number> = {
     OEM: 0,
@@ -144,40 +128,62 @@ export async function classifySourcesByAuthorship(
     }
 
     try {
-        const prompt = `${SOURCE_AUTHORSHIP_PROTOCOL}
+        const inputText = [
+            SOURCE_AUTHORSHIP_PROTOCOL,
+            `Equipo auditado: "${makeOficial} ${modelOficial}"`,
+            'Fuentes web reales candidatas a clasificar según su autoría intelectual:',
+            ...ambiguousSources.map(
+                (src, idx) => `- [src_${idx}] URL: ${src.uri} | Título: ${src.title || 'Sin título'}`
+            ),
+        ].join('\n');
 
-Equipo auditado: "${makeOficial} ${modelOficial}"
-Clasifica las siguientes fuentes web reales según su AUTORÍA INTELECTUAL en "OEM", "EXTERNO" o "YOUTUBE".
-No inventes URLs ni modifiques las URLs entregadas:
-${JSON.stringify(ambiguousSources, null, 2)}`;
-
-        const { data } = await ResilientAIClient.generateStructured<{ classified: ItemizedSource[] }>({
-            module: 'opermaq',
-            preferredTier: 'ANCHOR_HA',
-            temperature: 0,
-            responseSchema: SOURCE_CLASSIFICATION_SCHEMA,
-            prompt,
+        const questions: Record<string, DecisionQuestion> = {};
+        ambiguousSources.forEach((src, idx) => {
+            questions[`src_${idx}`] = {
+                type: 'choice',
+                instructions: `Clasifica la autoría intelectual de la fuente [src_${idx}] (URL: ${src.uri} | Título: "${src.title || 'Sin título'}") para "${makeOficial} ${modelOficial}".`,
+                criteria: {
+                    EXTERNO:
+                        'Agregador de fichas técnicas, distribuidor independiente, concesionario o portal de terceros distinto del fabricante.',
+                    OEM: `Documentación, ficha técnica, folleto o sitio oficial del fabricante "${makeOficial}" o de su casa matriz.`,
+                    YOUTUBE: 'Video técnico alojado en YouTube (youtube.com o youtu.be).',
+                },
+            };
         });
 
-        const llmByUrl = new Map<string, ItemizedSource>();
-        if (Array.isArray(data.classified)) {
-            const validUrls = new Set(ambiguousSources.map((d) => d.uri));
-            for (const c of data.classified) {
-                if (c?.url && validUrls.has(c.url)) {
-                    const cat: SourceCategory =
-                        c.type === 'OEM' || c.type === 'YOUTUBE' ? c.type : 'EXTERNO';
-                    llmByUrl.set(c.url, {
-                        type: cat,
-                        author: c.author || extractDomainLabel(c.url),
-                        description: c.description || c.author || c.url,
-                        url: c.url,
-                    });
-                }
+        const decisionRes = await ResilientAIClient.decide({
+            module: 'opermaq',
+            dataClassification: 'GLOBAL_OEM',
+            inputText,
+            questions,
+        });
+
+        const decidedByUrl = new Map<string, ItemizedSource>();
+        ambiguousSources.forEach((src, idx) => {
+            const ans = decisionRes.answers[`src_${idx}`];
+            if (ans?.type === 'choice' && ans.confidence >= 0.55) {
+                const cat: SourceCategory =
+                    ans.choice === 'OEM' || ans.choice === 'YOUTUBE' ? ans.choice : 'EXTERNO';
+                decidedByUrl.set(src.uri, {
+                    type: cat,
+                    author:
+                        cat === 'OEM' && makeOficial && makeOficial !== 'GENÉRICO'
+                            ? makeOficial
+                            : extractDomainLabel(src.uri),
+                    description:
+                        src.title ||
+                        (cat === 'OEM'
+                            ? `Documentación técnica OEM (${makeOficial})`
+                            : cat === 'YOUTUBE'
+                              ? 'Video técnico de referencia operacional'
+                              : 'Ficha o referencia técnica externa verificada'),
+                    url: src.uri,
+                });
             }
-        }
+        });
 
         return heuristicEvaluations
-            .map((e) => llmByUrl.get(e.raw.uri) || e.item)
+            .map((e) => decidedByUrl.get(e.raw.uri) || e.item)
             .sort((a, b) => CATEGORY_ORDER[a.type] - CATEGORY_ORDER[b.type]);
     } catch {
         // Fallback heurístico determinista

@@ -1,10 +1,10 @@
 /**
- * Suite Sandbox-Safe — Accesibilidad Universal 18-120 Años MINREPORT (Pilares 1 a 5)
- * - Pilar 1: Escala óptica 100/125/150%, auto-confort 125% TEST_PILOT, piso >= 13px (`0` sub-13px).
+ * Suite Sandbox-Safe — Ergonomía Industrial y Minimalismo Absoluto MINREPORT
+ * - Pilar 1: Tokens tipográficos exactos GEMINI.md §3.2 (escala base 100%, cero controles de zoom arbitrarios, cero text-[<=12px]).
  * - Pilar 2 & 5: PilotWisdomExtractorService (Ley N° 21.719 PII pre/post, zero audio CAS persistence, auth guard),
- *              ReadAloudButton offline, SovereignVoiceInput, MiningAICopilot sin JSON crudo.
- * - Pilar 3: ContextOrientationBar, callouts 0ms, sin ruido meta-software ni paths crudos.
- * - Pilar 4: Passkey primario en AccessPage, /dev OTP TTL 600s + <label> visibles, HITL 'ACTUALIZAR' case-insensitive.
+ *              SovereignVoiceInput en campo, MiningAICopilot sin JSON crudo.
+ * - Pilar 3: Minimalismo Absoluto en navegación lateral y cabeceras (cero ContextOrientationBar, cero callouts flotantes, cero ReadAloudButton).
+ * - Pilar 4: Passkey primario en AccessPage sin exposición pública de /dev, /dev OTP TTL 600s, HITL 'ACTUALIZAR' manual case-insensitive.
  * - Pilar 5 Campo: MobileScanner cero `animate-spin`, guía IMU sonora/háptica, parseSpokenStockpileSpecs (ES/EN/PT).
  */
 import assert from 'node:assert/strict';
@@ -304,16 +304,30 @@ function getPilotRouteHandler(method: 'post' | 'patch' | 'get', routePath: strin
 }
 
 async function testPillar1OpticalScaleAndTypographyFloor(): Promise<void> {
-    const themeInit = fs.readFileSync(path.join(ROOT, 'web/public/theme-init.js'), 'utf8');
-    assert.ok(themeInit.includes("minreport_ergonomic_scale"), 'theme-init.js debe leer escala ergonómica');
-    assert.ok(themeInit.includes("'20px'") && themeInit.includes("'24px'") && themeInit.includes("'16px'"),
-        'theme-init.js debe aplicar 16px/20px/24px sin FOUC');
+    for (const removedRel of [
+        'components/common/ErgonomicScaleSwitch.tsx',
+        'context/ErgonomicScaleContext.tsx',
+        'components/common/ContextOrientationBar.tsx',
+        'components/common/ReadAloudButton.tsx',
+    ]) {
+        assert.equal(
+            fs.existsSync(path.join(WEB_SRC, removedRel)),
+            false,
+            `${removedRel} debe permanecer eliminado bajo Minimalismo Industrial Puro`
+        );
+    }
 
-    const scaleCtx = fs.readFileSync(path.join(WEB_SRC, 'context/ErgonomicScaleContext.tsx'), 'utf8');
-    assert.ok(scaleCtx.includes("setScaleState('125')"), 'ErgonomicScaleContext debe activar confort 125% por defecto para TEST_PILOT');
+    const themeInit = fs.readFileSync(path.join(ROOT, 'web/public/theme-init.js'), 'utf8');
+    assert.equal(themeInit.includes('minreport_ergonomic_scale'), false, 'theme-init.js no debe inyectar escala de zoom');
+    assert.equal(themeInit.includes("'20px'") || themeInit.includes("'24px'"), false,
+        'theme-init.js no debe sobreescribir el root font-size a 20px/24px');
 
     const twConfig = fs.readFileSync(path.join(ROOT, 'web/tailwind.config.js'), 'utf8');
-    assert.ok(twConfig.includes("'microcopy': ['0.8125rem'"), 'Tailwind microcopy debe tener piso mínimo 0.8125rem (13px)');
+    assert.ok(twConfig.includes("'h1-header': ['1.375rem'"), 'Tailwind h1-header debe respetar GEMINI.md §3.2 (1.375rem)');
+    assert.ok(twConfig.includes("'h2-section': ['1.0625rem'"), 'Tailwind h2-section debe respetar GEMINI.md §3.2 (1.0625rem)');
+    assert.ok(twConfig.includes("'body-main': ['0.9375rem'"), 'Tailwind body-main debe respetar GEMINI.md §3.2 (0.9375rem)');
+    assert.ok(twConfig.includes("'data-dense': ['0.8125rem'"), 'Tailwind data-dense debe respetar GEMINI.md §3.2 (0.8125rem)');
+    assert.ok(twConfig.includes("'microcopy': ['0.6875rem'"), 'Tailwind microcopy debe respetar GEMINI.md §3.2 (0.6875rem)');
 
     const files = collectFiles(WEB_SRC, ['.ts', '.tsx', '.css']);
     const violations: string[] = [];
@@ -469,35 +483,50 @@ async function testPillar3OrientationAndPillar4AccessHitl(): Promise<void> {
         EmailService.sendEmail = origSendEmail;
     }
 
-    // 2. Verificar orientación, Passkey primario, labels visibles /dev y tolerancia 'ACTUALIZAR'
+    // 2. Verificar minimalismo absoluto en navegación, Passkey primario en /access sin exponer /dev y HITL manual 'ACTUALIZAR'
     const clientLayout = fs.readFileSync(path.join(WEB_SRC, 'layouts/ClientLayout.tsx'), 'utf8');
-    assert.ok(clientLayout.includes('<ContextOrientationBar'), 'ClientLayout debe montar ContextOrientationBar');
-    assert.ok(clientLayout.includes('SIDEBAR_CALLOUT_CLASS'), 'ClientLayout debe mostrar callouts 0ms en iconos laterales');
+    assert.equal(clientLayout.includes('ContextOrientationBar'), false, 'ClientLayout no debe renderizar ContextOrientationBar');
+    assert.equal(clientLayout.includes('SIDEBAR_CALLOUT_CLASS'), false, 'ClientLayout no debe renderizar callouts de texto en barra lateral');
+    assert.equal(clientLayout.includes('ErgonomicScaleSwitch'), false, 'ClientLayout no debe incluir selector de escala 100/125/150%');
 
     const devGateway = fs.readFileSync(path.join(WEB_SRC, 'pages/dev/DevVaultGateway.tsx'), 'utf8');
-    assert.ok(devGateway.includes('<ContextOrientationBar'), 'DevVaultGateway debe montar ContextOrientationBar');
+    assert.equal(devGateway.includes('ContextOrientationBar'), false, 'DevVaultGateway no debe renderizar ContextOrientationBar');
+    assert.equal(devGateway.includes('DEV_SIDEBAR_CALLOUT_CLASS'), false, 'DevVaultGateway no debe renderizar callouts de texto en barra lateral');
+    assert.equal(devGateway.includes('idle_click_hint'), false, 'DevVaultGateway IDLE debe mantener Silencio Absoluto sin texto instructivo');
+    assert.equal(devGateway.includes('ErgonomicScaleSwitch'), false, 'DevVaultGateway no debe incluir selector de escala');
     assert.ok(devGateway.includes('formatCountdownMmSs'), 'DevVaultGateway debe renderizar contador MM:SS legible');
     assert.ok(devGateway.includes('htmlFor="dev-login-email"') && devGateway.includes('htmlFor="dev-login-password"'),
-        'DevVaultGateway debe mostrar <label> explícitos en autenticación');
+        'DevVaultGateway debe mantener asociación accesible htmlFor con sr-only en autenticación');
     assert.ok(devGateway.includes("'PILOT_METRICS'") && !devGateway.includes('pilot_feedback'),
         'DevVaultGateway debe exponer únicamente monitoreo pasivo PILOT_METRICS sin bandeja pilot_feedback');
 
     const accessPage = fs.readFileSync(path.join(WEB_SRC, 'pages/AccessPage.tsx'), 'utf8');
     const passkeyPos = accessPage.indexOf("t('core_access.btn_passkey')");
     const emailInputPos = accessPage.indexOf('id="access_email_input"');
-    assert.ok(accessPage.includes('<ErgonomicScaleSwitch compact />'), 'AccessPage debe ofrecer control de tamaño visual');
+    assert.equal(accessPage.includes('ErgonomicScaleSwitch'), false, 'AccessPage no debe incluir control de tamaño visual');
+    assert.equal(accessPage.includes('to="/dev"') || accessPage.includes('footer_dev_gateway'), false,
+        'AccessPage no debe exponer enlace público hacia /dev');
     assert.ok(passkeyPos > 0 && emailInputPos > passkeyPos, 'AccessPage debe priorizar Passkey antes del flujo por correo');
 
     assert.equal(fs.existsSync(path.join(WEB_SRC, 'components/pilot/TestPilotTransversalHUD.tsx')), false,
         'TestPilotTransversalHUD debe permanecer eliminado por aislamiento hermético 3º TEST-PILOT');
 
     const devFieldLaunchpad = fs.readFileSync(path.join(WEB_SRC, 'pages/mobile/DevFieldTestLaunchpad.tsx'), 'utf8');
-    assert.ok(devFieldLaunchpad.includes('<ReadAloudButton compact'), 'DevFieldTestLaunchpad debe incluir lectura offline');
+    assert.equal(devFieldLaunchpad.includes('ReadAloudButton'), false, 'DevFieldTestLaunchpad no debe incluir ReadAloudButton');
+    assert.equal(devFieldLaunchpad.includes('ErgonomicScaleSwitch'), false, 'DevFieldTestLaunchpad no debe incluir ErgonomicScaleSwitch');
     assert.ok(devFieldLaunchpad.includes('useXCoverHardwareKey'), 'DevFieldTestLaunchpad debe soportar botón físico XCover Key');
 
     const pilotWs = fs.readFileSync(path.join(WEB_SRC, 'pages/pilot/TestPilotWorkspace.tsx'), 'utf8');
     assert.equal(pilotWs.includes('p3_reserved_notice'), false, 'TestPilotWorkspace no debe mostrar aviso meta-software en barra lateral');
-    assert.ok(pilotWs.includes('<ReadAloudButton compact'), 'TestPilotWorkspace debe incluir lectura offline');
+    assert.equal(pilotWs.includes('ReadAloudButton'), false, 'TestPilotWorkspace no debe incluir ReadAloudButton');
+    assert.equal(pilotWs.includes('ContextOrientationBar'), false, 'TestPilotWorkspace no debe incluir ContextOrientationBar');
+    assert.equal(pilotWs.includes('PILOT_SIDEBAR_CALLOUT_CLASS'), false, 'TestPilotWorkspace no debe incluir callouts laterales');
+
+    const hitlModal = fs.readFileSync(path.join(WEB_SRC, 'components/common/HitlConfirmModal.tsx'), 'utf8');
+    assert.ok(hitlModal.includes("keyword = 'ACTUALIZAR'"), 'HitlConfirmModal debe exigir palabra clave manual ACTUALIZAR');
+    assert.equal(hitlModal.includes('hitl_step2_insert'), false, 'HitlConfirmModal no debe incluir botón de auto-escritura de palabra clave');
+    assert.equal(hitlModal.includes('ReadAloudButton'), false, 'HitlConfirmModal no debe incluir ReadAloudButton');
+    assert.equal(hitlModal.includes('SovereignVoiceInput'), false, 'HitlConfirmModal no debe incluir dictado automático');
 
     const copilot = fs.readFileSync(path.join(WEB_SRC, 'components/ai/MiningAICopilot.tsx'), 'utf8');
     assert.equal(copilot.includes('JSON.stringify(raw.currentValues)'), false, 'MiningAICopilot no debe exponer JSON crudo');
@@ -506,7 +535,7 @@ async function testPillar3OrientationAndPillar4AccessHitl(): Promise<void> {
 
     const kvDashboard = fs.readFileSync(path.join(WEB_SRC, 'modules/opermaq/components/KnowledgeVaultDashboard.tsx'), 'utf8');
     assert.ok(kvDashboard.includes(".trim().toUpperCase() !== 'ACTUALIZAR'"), 'KnowledgeVaultDashboard debe tolerar ACTUALIZAR en aprobación masiva');
-    assert.ok(kvDashboard.includes('<ReadAloudButton compact'), 'KnowledgeVaultDashboard debe incluir ReadAloudButton en barra del pilar');
+    assert.equal(kvDashboard.includes('<ReadAloudButton'), false, 'KnowledgeVaultDashboard no debe incluir ReadAloudButton en barra del pilar');
 
     assert.equal(fs.existsSync(path.join(WEB_SRC, 'modules/opermaq/components/VaultPilotFeedbackBox.tsx')), false,
         'VaultPilotFeedbackBox debe permanecer eliminado de OPERMAQ/DEV');

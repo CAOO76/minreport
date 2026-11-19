@@ -1,0 +1,432 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Capacitor } from '@capacitor/core';
+import { Geolocation } from '@capacitor/geolocation';
+import { wgs84ToUtm } from '../../../core/geo/wgs84UtmProjection';
+import {
+    clearCaptureDraft,
+    loadCaptureDraft,
+    saveCaptureDraft,
+} from '../../../core/offline/OfflineSessionVault';
+import type {
+    GeolappGeometryType,
+    GeolappGnssStatus,
+    MiningSiteProfile,
+    StockpileAsset,
+} from '../core/types/GeolappTypes';
+import { triggerFieldImpact } from '../core/utils/fieldHaptics';
+import { ManualCapture } from './ManualCapture';
+import { MobileScanner } from './MobileScanner';
+
+export interface QuickStockpileCaptureProps {
+    existingAsset?: StockpileAsset | null;
+    initialMethod?: 'manual' | 'digital';
+    initialGeometry?: GeolappGeometryType;
+    allowManualFallback?: boolean;
+    sites?: MiningSiteProfile[];
+    selectedFaenaId?: string | null;
+    onComplete: (result: {
+        assetId: string;
+        measurementId: string;
+        isNewAsset: boolean;
+    }) => void;
+    onCancel: () => void;
+    hideCancelButton?: boolean;
+}
+
+const UNDERGROUND_SECTORS = ['RAJO', 'NIVEL', 'CANCHA', 'CHANCADO'] as const;
+
+export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
+    existingAsset,
+    initialMethod = 'digital',
+    initialGeometry,
+    allowManualFallback = false,
+    sites = [],
+    selectedFaenaId = null,
+    onComplete,
+    onCancel,
+    hideCancelButton = false,
+}) => {
+    const { t } = useTranslation();
+    const isNewAsset = !existingAsset;
+    const draftKey = existingAsset?.id ? `asset_${existingAsset.id}` : 'new_stockpile';
+
+    const [defaultCode] = useState(() => `STK-${String(Date.now()).slice(-6)}`);
+    const [stockpileName, setStockpileName] = useState<string>(() => {
+        if (existingAsset?.name) return existingAsset.name;
+        const saved = loadCaptureDraft<{ stockpileName?: string }>('new_stockpile');
+        return saved?.stockpileName || defaultCode;
+    });
+    const [isEditingName, setIsEditingName] = useState<boolean>(false);
+
+    const resolvedSite = useMemo<MiningSiteProfile | null>(() => {
+        if (existingAsset?.project_id) {
+            const match = sites.find((s) => s.id === existingAsset.project_id);
+            if (match) return match;
+            return {
+                id: existingAsset.project_id,
+                tenantId: existingAsset.tenantId || '',
+                accountId: existingAsset.accountId || '',
+                name: existingAsset.project_name || existingAsset.project_id,
+                status: 'ACTIVE',
+                source: 'MINREPORT_PROJECTS_MODULE',
+                createdAt: existingAsset.createdAt,
+                createdBy: existingAsset.createdBy,
+            };
+        }
+        if (selectedFaenaId) {
+            const byId = sites.find((s) => s.id === selectedFaenaId);
+            if (byId) return byId;
+        }
+        return null;
+    }, [existingAsset, selectedFaenaId, sites]);
+
+    const [undergroundSector, setUndergroundSector] = useState<string>(() => {
+        if (existingAsset?.underground_sector) return existingAsset.underground_sector;
+        if (existingAsset?.location_ref) return existingAsset.location_ref;
+        const saved = loadCaptureDraft<{ undergroundSector?: string }>(draftKey);
+        return saved?.undergroundSector || '';
+    });
+
+    const [method, setMethod] = useState<'manual' | 'digital'>(() =>
+        allowManualFallback ? initialMethod : 'digital'
+    );
+
+    useEffect(() => {
+        if (!allowManualFallback) {
+            setMethod('digital');
+        }
+    }, [allowManualFallback]);
+
+    const [geoPoint, setGeoPoint] = useState<StockpileAsset['geo_point'] | undefined>(
+        existingAsset?.geo_point
+    );
+    const [gnssStatus, setGnssStatus] = useState<GeolappGnssStatus>(
+        existingAsset?.geo_point ? 'FIX_OK' : 'UNDERGROUND_NO_FIX'
+    );
+    const [isLocating, setIsLocating] = useState<boolean>(false);
+
+    useEffect(() => {
+        if (!isNewAsset) return;
+        saveCaptureDraft(draftKey, {
+            stockpileName,
+            undergroundSector,
+        });
+    }, [draftKey, isNewAsset, stockpileName, undergroundSector]);
+
+    const captureGnssFix = useCallback(async () => {
+        if (isLocating) return;
+        setIsLocating(true);
+        try {
+            if (Capacitor.isNativePlatform()) {
+                const pos = await Geolocation.getCurrentPosition({
+                    enableHighAccuracy: true,
+                    timeout: 6000,
+                    maximumAge: 15000,
+                });
+                const lat = pos.coords.latitude;
+                const lng = pos.coords.longitude;
+                if (Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)) {
+                    setGeoPoint({
+                        latitude: lat,
+                        longitude: lng,
+                        altitude: pos.coords.altitude ?? null,
+                        accuracy: pos.coords.accuracy ?? undefined,
+                    });
+                    setGnssStatus('FIX_OK');
+                    return;
+                }
+            } else if (typeof navigator !== 'undefined' && navigator.geolocation) {
+                const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+                    navigator.geolocation.getCurrentPosition(resolve, reject, {
+                        enableHighAccuracy: true,
+                        timeout: 5500,
+                        maximumAge: 15000,
+                    });
+                });
+                const lat = pos.coords.latitude;
+                const lng = pos.coords.longitude;
+                if (Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)) {
+                    setGeoPoint({
+                        latitude: lat,
+                        longitude: lng,
+                        altitude: pos.coords.altitude ?? null,
+                        accuracy: pos.coords.accuracy ?? undefined,
+                    });
+                    setGnssStatus('FIX_OK');
+                    return;
+                }
+            }
+            setGnssStatus('UNDERGROUND_NO_FIX');
+        } catch {
+            setGnssStatus('UNDERGROUND_NO_FIX');
+        } finally {
+            setIsLocating(false);
+        }
+    }, [isLocating]);
+
+    useEffect(() => {
+        if (!existingAsset) {
+            void captureGnssFix();
+        }
+    }, []);
+
+    const utmBadgeText = useMemo(() => {
+        if (isLocating) {
+            return t('capture_v2.gnss_locating', 'BUSCANDO GNSS...');
+        }
+        if (
+            gnssStatus === 'FIX_OK' &&
+            geoPoint &&
+            Number.isFinite(geoPoint.latitude) &&
+            Number.isFinite(geoPoint.longitude)
+        ) {
+            try {
+                const utm = wgs84ToUtm(geoPoint.latitude, geoPoint.longitude);
+                return `UTM ${utm.zone}${utm.band} · ${Math.round(utm.eastingM)}E`;
+            } catch {
+                return `${geoPoint.latitude.toFixed(4)}, ${geoPoint.longitude.toFixed(4)}`;
+            }
+        }
+        return t('capture_v2.underground_mode', 'SUBTERRÁNEA');
+    }, [geoPoint, gnssStatus, isLocating, t]);
+
+    const handleChildSuccess = useCallback(
+        (measurementId: string, createdAssetId?: string) => {
+            clearCaptureDraft(draftKey);
+            const finalAssetId = existingAsset?.id || createdAssetId || '';
+            onComplete({
+                assetId: finalAssetId,
+                measurementId,
+                isNewAsset: Boolean(!existingAsset),
+            });
+        },
+        [draftKey, existingAsset, onComplete]
+    );
+
+    const draftAssetPayload = useMemo(
+        () =>
+            isNewAsset && resolvedSite
+                ? {
+                    name: stockpileName.trim() || defaultCode,
+                    projectId: resolvedSite.id,
+                    projectName: resolvedSite.name,
+                    geoPoint,
+                    gnssStatus,
+                    undergroundSector: undergroundSector || undefined,
+                }
+                : undefined,
+        [defaultCode, geoPoint, gnssStatus, isNewAsset, resolvedSite, stockpileName, undergroundSector]
+    );
+
+    if (isNewAsset && !resolvedSite) {
+        return (
+            <div className="h-full w-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-atkinson overflow-hidden rounded-none shadow-none select-none">
+                <header className="shrink-0 px-fib-13 h-14 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center gap-fib-8">
+                    {!hideCancelButton && (
+                        <button
+                            type="button"
+                            onClick={onCancel}
+                            aria-label={t('common.back_button', 'VOLVER')}
+                            className="min-w-[48px] min-h-[48px] bg-transparent border-0 text-[#0F172A] dark:text-[#F3F4F6] flex items-center justify-center cursor-pointer rounded-none shrink-0"
+                        >
+                            <span className="material-symbols-outlined text-[24px]">
+                                arrow_back
+                            </span>
+                        </button>
+                    )}
+                    <span className="text-h2-section font-mono font-bold uppercase truncate">
+                        {t('faenas.site_label', 'FAENA MINERA')}
+                    </span>
+                </header>
+
+                <div className="flex-1 min-h-0 flex flex-col items-center justify-center px-fib-21 py-fib-55 text-center space-y-fib-13">
+                    <span className="material-symbols-outlined text-[36px] text-[#94A3B8] dark:text-[#5A6072]">
+                        domain
+                    </span>
+                    <p className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] max-w-sm">
+                        {t(
+                            'faenas.select_site_first',
+                            'Seleccione una faena minera registrada desde escritorio.'
+                        )}
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="h-full w-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-atkinson overflow-hidden rounded-none shadow-none select-none">
+            <header className="shrink-0 bg-[#FFFFFF] dark:bg-[#000000] border-b border-[#E2E8F0] dark:border-[#12151C]">
+                <div className="px-fib-13 py-fib-8 flex items-center justify-between gap-fib-8">
+                    {!hideCancelButton && (
+                        <button
+                            type="button"
+                            onClick={onCancel}
+                            aria-label={t('common.back_button', 'VOLVER')}
+                            className="min-w-[48px] min-h-[48px] bg-transparent border-0 text-[#0F172A] dark:text-[#F3F4F6] flex items-center justify-center cursor-pointer rounded-none shrink-0"
+                        >
+                            <span className="material-symbols-outlined text-[24px]">
+                                arrow_back
+                            </span>
+                        </button>
+                    )}
+
+                    {isNewAsset ? (
+                        <div className="flex-1 min-w-0 flex items-center gap-fib-8">
+                            {isEditingName ? (
+                                <input
+                                    type="text"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    value={stockpileName}
+                                    onChange={(e) => setStockpileName(e.target.value)}
+                                    aria-label={t('registration.name_label', 'ID / NOMBRE DEL ACOPIO')}
+                                    className="flex-1 min-w-0 h-11 px-fib-8 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#C68346] outline-none font-mono font-bold text-data-dense uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
+                                />
+                            ) : (
+                                <div className="flex-1 min-w-0">
+                                    <span className="block text-microcopy font-mono font-bold uppercase text-[#C68346] truncate">
+                                        {resolvedSite?.name ||
+                                            t('capture_v2.new_stockpile_title', 'NUEVO ACOPIO')}
+                                    </span>
+                                    <span className="block text-h2-section font-mono font-bold uppercase truncate text-[#0F172A] dark:text-[#F3F4F6]">
+                                        {stockpileName}
+                                    </span>
+                                </div>
+                            )}
+
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    void triggerFieldImpact('LIGHT');
+                                    setIsEditingName((prev) => !prev);
+                                }}
+                                aria-label={
+                                    isEditingName
+                                        ? t('digital_v2.confirm_code', 'Confirmar código')
+                                        : t('digital_v2.edit_code', 'Editar código')
+                                }
+                                className="min-w-[48px] min-h-[48px] bg-transparent border-0 text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] flex items-center justify-center cursor-pointer rounded-none shrink-0"
+                            >
+                                <span className="material-symbols-outlined text-[22px]">
+                                    {isEditingName ? 'check' : 'edit'}
+                                </span>
+                            </button>
+                        </div>
+                    ) : (
+                        <div className="flex-1 min-w-0">
+                            <span className="block text-microcopy font-mono font-bold uppercase text-[#00AEEF] truncate">
+                                {resolvedSite?.name ||
+                                    t('analytics.new_measurement_button', 'NUEVA CAPTURA')}
+                            </span>
+                            <span className="block text-h2-section font-mono font-bold uppercase truncate text-[#0F172A] dark:text-[#F3F4F6]">
+                                {existingAsset?.name}
+                            </span>
+                        </div>
+                    )}
+                </div>
+
+                <div className="px-fib-13 py-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border-t border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between gap-fib-8">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            void triggerFieldImpact('LIGHT');
+                            void captureGnssFix();
+                        }}
+                        aria-label={t('capture_v2.gnss_refresh', 'Actualizar georreferencia GNSS')}
+                        className={`bg-transparent border-0 p-0 font-mono text-microcopy font-bold uppercase flex items-center gap-1 cursor-pointer rounded-none ${gnssStatus === 'FIX_OK' ? 'text-[#00AEEF]' : 'text-[#C68346]'
+                            }`}
+                    >
+                        <span className="material-symbols-outlined text-[16px]">
+                            {gnssStatus === 'FIX_OK' ? 'my_location' : 'location_off'}
+                        </span>
+                        <span className="tabular-nums truncate">{utmBadgeText}</span>
+                    </button>
+
+                    {resolvedSite?.name && (
+                        <span className="max-w-[160px] font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6] truncate text-right">
+                            {resolvedSite.name}
+                        </span>
+                    )}
+                </div>
+
+                {isNewAsset && gnssStatus === 'UNDERGROUND_NO_FIX' && (
+                    <div className="grid grid-cols-4 border-t border-[#E2E8F0] dark:border-[#12151C] divide-x divide-[#E2E8F0] dark:divide-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+                        {UNDERGROUND_SECTORS.map((sector) => {
+                            const active = undergroundSector === sector;
+                            return (
+                                <button
+                                    key={sector}
+                                    type="button"
+                                    onClick={() => {
+                                        void triggerFieldImpact('LIGHT');
+                                        setUndergroundSector((prev) =>
+                                            prev === sector ? '' : sector
+                                        );
+                                    }}
+                                    className={`min-h-[44px] border-0 font-mono text-microcopy font-bold uppercase cursor-pointer rounded-none transition-colors ${active
+                                        ? 'bg-[#C68346] text-white'
+                                        : 'bg-transparent text-[#475569] dark:text-[#8A93A6]'
+                                        }`}
+                                >
+                                    {t(`capture_v2.sector_${sector.toLowerCase()}`, sector)}
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {allowManualFallback && (
+                    <div className="grid grid-cols-2 border-t border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] rounded-none">
+                        <button
+                            type="button"
+                            onClick={() => setMethod('digital')}
+                            className={`min-h-[44px] font-mono text-microcopy font-bold uppercase border-0 cursor-pointer flex items-center justify-center gap-fib-8 rounded-none ${method === 'digital'
+                                ? 'bg-[#C68346] text-white'
+                                : 'bg-transparent text-[#475569] dark:text-[#8A93A6]'
+                                }`}
+                        >
+                            <span className="material-symbols-outlined text-[18px]">
+                                photo_camera
+                            </span>
+                            <span>{t('digital_v2.mode_digital', 'DIGITAL IA')}</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setMethod('manual')}
+                            className={`min-h-[44px] font-mono text-microcopy font-bold uppercase border-0 cursor-pointer flex items-center justify-center gap-fib-8 rounded-none ${method === 'manual'
+                                ? 'bg-[#C68346] text-white'
+                                : 'bg-transparent text-[#475569] dark:text-[#8A93A6]'
+                                }`}
+                        >
+                            <span className="material-symbols-outlined text-[18px]">straighten</span>
+                            <span>{t('capture.manual_title', 'COTAS ESCRITORIO')}</span>
+                        </button>
+                    </div>
+                )}
+            </header>
+
+            <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                {allowManualFallback && method === 'manual' ? (
+                    <ManualCapture
+                        assetId={existingAsset?.id}
+                        draftAsset={draftAssetPayload}
+                        initialGeometry={initialGeometry}
+                        onSuccess={handleChildSuccess}
+                        onBack={onCancel}
+                        hideHeader
+                    />
+                ) : (
+                    <MobileScanner
+                        assetId={existingAsset?.id}
+                        draftAsset={draftAssetPayload}
+                        onSuccess={handleChildSuccess}
+                        onBack={onCancel}
+                        hideHeader
+                    />
+                )}
+            </div>
+        </div>
+    );
+};

@@ -206,9 +206,36 @@ app.use(
 app.use(express.json({ limit: '15mb' }));
 app.use(DevEmulatorCheckpointService.expressMutationMiddleware());
 
-// Global Request Logger
+// Global Request Logger con supresión de ráfagas para proteger TTY local
+const REQUEST_LOG_WINDOW_MS = 2_000;
+const REQUEST_LOG_BURST_LIMIT = 6;
+const REQUEST_LOG_MAX_KEYS = 200;
+const requestLogBurstState = new Map<
+    string,
+    { windowStartMs: number; count: number; suppressed: number }
+>();
+
 app.use((req, _res, next) => {
-    console.log(`[CORE-API] ${new Date().toISOString()} ${req.method} ${req.url}`);
+    const pathname = req.path || req.url.split('?')[0] || '/';
+    const key = `${req.method}:${pathname}`;
+    const now = Date.now();
+    const entry = requestLogBurstState.get(key);
+
+    if (!entry || now - entry.windowStartMs >= REQUEST_LOG_WINDOW_MS) {
+        const suppressedFromPrev = entry?.suppressed ?? 0;
+        if (!entry && requestLogBurstState.size >= REQUEST_LOG_MAX_KEYS) {
+            const oldestKey = requestLogBurstState.keys().next().value;
+            if (oldestKey) requestLogBurstState.delete(oldestKey);
+        }
+        requestLogBurstState.set(key, { windowStartMs: now, count: 1, suppressed: 0 });
+        const burstNote = suppressedFromPrev > 0 ? ` (+${suppressedFromPrev} en ráfaga)` : '';
+        console.log(`[CORE-API] ${new Date().toISOString()} ${req.method} ${req.url}${burstNote}`);
+    } else if (entry.count < REQUEST_LOG_BURST_LIMIT) {
+        entry.count += 1;
+        console.log(`[CORE-API] ${new Date().toISOString()} ${req.method} ${req.url}`);
+    } else {
+        entry.suppressed += 1;
+    }
     next();
 });
 

@@ -14,10 +14,14 @@ export interface ManufacturerLogoBadgeProps {
 }
 
 const CACHE_TTL_MS = 120_000;
+const FAILURE_COOLDOWN_MS = 30_000;
 let cachedIndex = new Map<string, ManufacturerRecord>();
 let cachedAt = 0;
-let inflightRequest: Promise<Map<string, ManufacturerRecord>> | null = null;
+let lastFailedAt = 0;
+let invalidationEpoch = 0;
+let inflightRequest: Promise<boolean> | null = null;
 const cacheListeners = new Set<() => void>();
+const invalidationListeners = new Set<() => void>();
 
 function normalizeLookupKey(raw: string): string {
     return raw
@@ -42,22 +46,31 @@ function indexRecords(rows: ManufacturerRecord[]): Map<string, ManufacturerRecor
     return next;
 }
 
-async function fetchManufacturersIndex(): Promise<Map<string, ManufacturerRecord>> {
+async function fetchManufacturersIndex(): Promise<boolean> {
     if (cachedAt > 0 && Date.now() - cachedAt < CACHE_TTL_MS) {
-        return cachedIndex;
+        return false;
+    }
+    if (lastFailedAt > 0 && Date.now() - lastFailedAt < FAILURE_COOLDOWN_MS) {
+        return false;
     }
     if (inflightRequest) return inflightRequest;
 
     inflightRequest = (async () => {
         try {
             const res = await authFetch('/api/manufacturers');
-            if (!res.ok) return cachedIndex;
+            if (!res.ok) {
+                lastFailedAt = Date.now();
+                return false;
+            }
             const payload = (await res.json()) as { manufacturers?: ManufacturerRecord[] };
             cachedIndex = indexRecords(Array.isArray(payload.manufacturers) ? payload.manufacturers : []);
             cachedAt = Date.now();
-            return cachedIndex;
+            lastFailedAt = 0;
+            for (const notify of cacheListeners) notify();
+            return true;
         } catch {
-            return cachedIndex;
+            lastFailedAt = Date.now();
+            return false;
         } finally {
             inflightRequest = null;
         }
@@ -76,8 +89,11 @@ export function invalidateManufacturerLogoCache(keyOrMake?: string): void {
         cachedIndex.delete(normalizeLookupKey(keyOrMake));
     }
     cachedAt = 0;
+    lastFailedAt = 0;
     inflightRequest = null;
+    invalidationEpoch += 1;
     for (const notify of cacheListeners) notify();
+    for (const notifyInv of invalidationListeners) notifyInv();
 }
 
 export function buildManufacturerMonogram(raw?: string | null): string {
@@ -136,39 +152,52 @@ const FRAMELESS_IMG_CLASSES: Record<'sm' | 'md' | 'lg', string> = {
 };
 
 /**
- * Resuelve el nombre oficial OEM de una marca desde el índice cacheado de `global_manufacturers`.
+ * Suscribe un componente al índice en caché de fabricantes OEM y dispara una sola
+ * consulta coalescida cuando existe clave válida sin caché fresco ni cooldown activo.
  */
-export function useResolvedManufacturerName(make?: string | null): string {
+function useCachedManufacturerRecord(
+    make?: string | null,
+    recordOverride?: ManufacturerRecord | null
+): ManufacturerRecord | null {
     const normalizedKey = useMemo(() => (make ? normalizeLookupKey(make) : ''), [make]);
     const [revision, setRevision] = useState(0);
+    const [invalidationTick, setInvalidationTick] = useState(() => invalidationEpoch);
 
     useEffect(() => {
         const listener = () => setRevision((v) => v + 1);
+        const invListener = () => setInvalidationTick(invalidationEpoch);
         cacheListeners.add(listener);
+        invalidationListeners.add(invListener);
         return () => {
             cacheListeners.delete(listener);
+            invalidationListeners.delete(invListener);
         };
     }, []);
 
     useEffect(() => {
-        if (!normalizedKey) return;
+        if (recordOverride || !normalizedKey) return;
         if (cachedAt > 0 && Date.now() - cachedAt < CACHE_TTL_MS) return;
-        let active = true;
-        void fetchManufacturersIndex().then(() => {
-            if (active) setRevision((v) => v + 1);
-        });
-        return () => {
-            active = false;
-        };
-    }, [normalizedKey, revision]);
+        if (lastFailedAt > 0 && Date.now() - lastFailedAt < FAILURE_COOLDOWN_MS) return;
+        void fetchManufacturersIndex();
+    }, [normalizedKey, recordOverride, invalidationTick]);
 
     return useMemo(() => {
-        const rec = normalizedKey ? cachedIndex.get(normalizedKey) : undefined;
+        if (recordOverride) return recordOverride;
+        return normalizedKey ? cachedIndex.get(normalizedKey) ?? null : null;
+    }, [recordOverride, normalizedKey, revision]);
+}
+
+/**
+ * Resuelve el nombre oficial OEM de una marca desde el índice cacheado de `global_manufacturers`.
+ */
+export function useResolvedManufacturerName(make?: string | null): string {
+    const rec = useCachedManufacturerRecord(make);
+    return useMemo(() => {
         if (rec?.officialName?.trim()) {
             return rec.officialName.trim().toUpperCase();
         }
         return (make || '').trim().toUpperCase();
-    }, [normalizedKey, make, revision]);
+    }, [rec, make]);
 }
 
 export const ManufacturerLogoBadge: React.FC<ManufacturerLogoBadgeProps> = ({
@@ -180,34 +209,8 @@ export const ManufacturerLogoBadge: React.FC<ManufacturerLogoBadgeProps> = ({
     recordOverride,
     showMonogramFallback = false,
 }) => {
-    const normalizedKey = useMemo(() => (make ? normalizeLookupKey(make) : ''), [make]);
-    const [revision, setRevision] = useState(0);
+    const resolvedRecord = useCachedManufacturerRecord(make, recordOverride);
     const [imgFailed, setImgFailed] = useState(false);
-
-    useEffect(() => {
-        const listener = () => setRevision((v) => v + 1);
-        cacheListeners.add(listener);
-        return () => {
-            cacheListeners.delete(listener);
-        };
-    }, []);
-
-    useEffect(() => {
-        if (recordOverride || !normalizedKey) return;
-        if (cachedAt > 0 && Date.now() - cachedAt < CACHE_TTL_MS) return;
-        let active = true;
-        void fetchManufacturersIndex().then(() => {
-            if (active) setRevision((v) => v + 1);
-        });
-        return () => {
-            active = false;
-        };
-    }, [normalizedKey, recordOverride, revision]);
-
-    const resolvedRecord = useMemo(() => {
-        if (recordOverride) return recordOverride;
-        return normalizedKey ? cachedIndex.get(normalizedKey) ?? null : null;
-    }, [recordOverride, normalizedKey, revision]);
 
     const descriptor = useMemo(() => resolveLogoDescriptor(resolvedRecord), [resolvedRecord]);
     const logoUrl =
