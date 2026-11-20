@@ -99,7 +99,7 @@ export default defineConfig({
                 maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
                 navigateFallback: 'index.html',
                 navigateFallbackAllowlist: [/^(?!\/__).*/],
-                navigateFallbackDenylist: [/^\/api\//, /^\/health$/, /^\/src/, /^\/node_modules/, /^\/@/],
+                navigateFallbackDenylist: [/^\/api\//, /^\/health$/, /^\/\.well-known\//, /^\/src/, /^\/node_modules/, /^\/@/],
                 runtimeCaching: [
                     {
                         urlPattern: ({ url }) =>

@@ -1,0 +1,15 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls",
+      "delegate_permission/common.get_login_creds"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.minreport.app.fieldtest",
+      "sha256_cert_fingerprints": [
+        "33:C6:31:42:5E:E6:6B:6F:B1:33:36:DD:23:0F:EB:3D:AD:98:08:59:18:C3:83:7E:5C:A8:2D:ED:73:B3:E7:62"
+      ]
+    }
+  }
+]
