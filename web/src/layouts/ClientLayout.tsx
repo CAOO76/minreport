@@ -16,6 +16,7 @@ const ClientLayout = () => {
     const location = useLocation();
     const isFullBleedModule =
         location.pathname.startsWith('/opermaq') ||
+        location.pathname.startsWith('/acopios') ||
         location.pathname.startsWith('/stockpile') ||
         location.pathname.startsWith('/geolapp');
     const [activeFloatingPanel, setActiveFloatingPanel] = useState<'none' | 'copilot'>('none');

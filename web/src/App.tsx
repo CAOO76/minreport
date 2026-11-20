@@ -289,7 +289,8 @@ const AppRoutes = () => {
                 <Route path="/mobile/dev-login" element={<DevFieldTestLogin />} />
                 <Route path="/mobile/dev-home" element={<DevFieldTestLaunchpad />} />
                 <Route path="/mobile/dev-launchpad" element={<Navigate to="/mobile/dev-home" replace />} />
-                <Route path="/mobile/dev-geolapp" element={<DevFieldTestModuleShell />} />
+                <Route path="/mobile/dev-acopios" element={<DevFieldTestModuleShell />} />
+                <Route path="/mobile/dev-geolapp" element={<Navigate to="/mobile/dev-acopios" replace />} />
                 <Route
                     path="/"
                     element={
@@ -382,16 +383,20 @@ const AppRoutes = () => {
                     element={<ModuleHost moduleId="opermaq" embedded={true} domainMode="SUPPLIERS" />}
                 />
                 <Route
-                    path="/geolapp/stockpiles"
+                    path="/acopios"
                     element={<ModuleHost moduleId="stockpile" embedded={true} domainMode="STOCKPILE" />}
                 />
                 <Route
+                    path="/geolapp/stockpiles"
+                    element={<Navigate to="/acopios" replace />}
+                />
+                <Route
                     path="/geolapp"
-                    element={<Navigate to="/geolapp/stockpiles" replace />}
+                    element={<Navigate to="/acopios" replace />}
                 />
                 <Route
                     path="/stockpile"
-                    element={<Navigate to="/geolapp/stockpiles" replace />}
+                    element={<Navigate to="/acopios" replace />}
                 />
                 <Route
                     path="/b2b/equipo"

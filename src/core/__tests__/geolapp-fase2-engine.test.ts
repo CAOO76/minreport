@@ -183,6 +183,9 @@ function loadWebModule(absPath: string): any {
         if (spec === '@capacitor/share') {
             return { Share: {} };
         }
+        if (spec.endsWith('/StorageService') || spec === '../services/StorageService') {
+            return { resolveStockpileImageUrl: async (u: string) => u };
+        }
         if (spec.startsWith('.')) {
             const target = resolveTsFile(path.dirname(normalized), spec);
             return loadWebModule(target);

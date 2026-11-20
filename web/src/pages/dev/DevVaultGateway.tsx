@@ -1085,7 +1085,7 @@ export const DevVaultGateway: React.FC = () => {
                     {/* SEPARADOR DE PRECISIÓN FIBONACCI */}
                     <div className="w-7 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[13px] shrink-0" />
 
-                    {/* GRUPO 2: MÓDULO GEOLAPP® · STOCKPILE CONTROL */}
+                    {/* GRUPO 2: MÓDULO ACOPIOS (MINREPORT) */}
                     <div className="flex flex-col items-center gap-1 w-full">
                         <button
                             type="button"
@@ -1516,11 +1516,11 @@ export const DevVaultGateway: React.FC = () => {
                             </div>
                         )}
 
-                        {/* MÓDULO INDUSTRIAL 1: GEOLAPP® · STOCKPILE CONTROL */}
+                        {/* MÓDULO INDUSTRIAL 1: ACOPIOS (MINREPORT) */}
                         {activeSection === 'MODULE_STOCKPILE' && (
                             <div className="w-full h-full min-h-0 overflow-hidden flex-1 flex flex-col">
                                 <ModuleHost
-                                    key="dev-geolapp-stockpile"
+                                    key="dev-stockpile"
                                     moduleId="stockpile"
                                     embedded={true}
                                     domainMode="STOCKPILE"

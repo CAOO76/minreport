@@ -72,7 +72,7 @@ export const MiningAICopilot: React.FC<MiningAICopilotProps> = ({
     const location = useLocation();
     const detectedModule: 'core' | 'opermaq' | 'stockpile' = location.pathname.startsWith('/opermaq')
         ? 'opermaq'
-        : location.pathname.startsWith('/stockpile')
+        : location.pathname.startsWith('/acopios') || location.pathname.startsWith('/stockpile')
         ? 'stockpile'
         : 'core';
     const canCurateProposals = Boolean(

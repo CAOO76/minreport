@@ -7,7 +7,7 @@
 
 ## 1. Identidad y Entorno de Proyecto
 
-- **Proyecto:** MINREPORT
+- **Proyecto y Marca Única Soberana:** **MINREPORT** (única marca visible del ecosistema; queda terminantemente prohibida cualquier referencia visible o documental a marcas externas, sub-marcas comerciales heredadas o denominaciones paralelas para el módulo de acopios, unificando todo bajo **MINREPORT · ACOPIOS**).
 - **URL de Acceso Clientes:** `https://minreport-access.web.app`
 - **Naturaleza:** Plataforma de reportería y analítica industrial de alta precisión y accesibilidad ergonómica para la minería.
 - **Región Google Cloud Obligatoria:** `southamerica-west1` (Santiago, Chile) para TODOS los servicios.
@@ -18,12 +18,12 @@
 ### 1.1 Jerarquía Soberana de 5 Tipos de Cuenta
 1. **1º DEV (`DEV_ROOT` / `dev@minreport.com`):** Gobierno de ingeniería, arquitectura núcleo, bóvedas maestras ISO, monitoreo de métricas de usuarios `TEST-PILOT` (`[Desarrollo pendiente]`) y uso exclusivo actual de la app móvil de pruebas `MINREPORT TEST` (`com.minreport.app.fieldtest`). Quedan prohibidas las funciones operativas `TEST-PILOT` dentro de `/dev` (cero creación/gestión operativa en UI o bandejas `pilot_feedback`).
 2. **2º ADMIN (`SUPER_ADMIN` / `admin@minreport.com`):** Operación comercial y administrativa del negocio MINREPORT, clientes B2B, aprobaciones EDU, disponibilidad de módulos (`modules_status`) y auditoría del ledger.
-3. **3º TEST-PILOT (`TEST_PILOT` / `PILOT_LEAD`):** Interfaz `/pilot` 100% independiente y hermética respecto de `DEV`, `ADMIN`, `B2B` y `EDU` (cero HUD transversal y cero acceso al catálogo maestro `CATALOG`). Opera como réplica funcional del entorno final `4º B2B` (integrando `OPERMAQ` en modo cliente y `GEOLAPP®` / `STOCKPILE CONTROL` sobre su propio sandbox `pilot-*`), con integración posterior planificada de módulos IA para corregir, mejorar y opinar (`[Desarrollo pendiente]`).
+3. **3º TEST-PILOT (`TEST_PILOT` / `PILOT_LEAD`):** Interfaz `/pilot` 100% independiente y hermética respecto de `DEV`, `ADMIN`, `B2B` y `EDU` (cero HUD transversal y cero acceso al catálogo maestro `CATALOG`). Opera como réplica funcional del entorno final `4º B2B` (integrando los módulos nativos `OPERMAQ` y `ACOPIOS` —`moduleId`: `stockpile`— en modo cliente sobre su propio sandbox `pilot-*`), con integración posterior planificada de módulos IA para corregir, mejorar y opinar (`[Desarrollo pendiente]`).
 4. **4º CLIENTES B2B (`B2B`):** Empresas y faenas mineras con aislamiento multi-tenant estricto por `accountId` (`tenantId`).
 5. **5º EDU (`EDUCATIONAL`):** Universidades y centros académicos en entorno sandbox controlado (`isEduSandbox: true`).
 
 ### 1.2 Arquitectura de Módulos Nativos Integrados sobre Base de Datos Única
-- **Módulos Nativos Integrados (`OPERMAQ` y `STOCKPILE CONTROL`):** Operan 100% integrados en MINREPORT (dentro del espacio de trabajo `/dev` para `DEV` sin saltos de ruta, y en `/opermaq` y `/stockpile` para clientes), compartiendo siempre la **misma base de datos Cloud Firestore y Cloud Storage**, la misma autenticación/sesión, los mismos contratos Zod (`web/src/contracts/index.ts`), el mismo motor Offline-First (`SyncQueueEngine`) y el mismo diseño UI/UX. El desarrollo como aplicaciones independientes está pendiente para una fase posterior y no debe insertarse dentro de MINREPORT.
+- **Módulos Nativos Integrados (`OPERMAQ` y `ACOPIOS`):** Operan 100% integrados bajo la marca única **MINREPORT** —**`OPERMAQ`** (`FLOTA`, `moduleId`: `opermaq`, ruta `/opermaq`) y **`ACOPIOS`** (control volumétrico de acopios, `moduleId` técnico interno: `stockpile`, ruta cliente `/acopios` y móvil DEV `/mobile/dev-acopios`, manteniendo redirecciones legacy técnicas sin exponer marcas heredadas)—; dentro del espacio de trabajo `/dev` para `DEV` operan embebidos sin saltos de ruta, compartiendo siempre la **misma base de datos Cloud Firestore y Cloud Storage**, la misma autenticación/sesión, los mismos contratos Zod (`web/src/contracts/index.ts`), el mismo motor Offline-First (`SyncQueueEngine`) y el mismo diseño UI/UX. El desarrollo como aplicaciones independientes está pendiente para una fase posterior y no debe insertarse dentro de MINREPORT.
 - **Prohibición de Plugins/SDK Legacy:** Queda estrictamente prohibido el uso de `@minreport/sdk`, `MockSecureContext`, `core-sdk-shield` o bases de datos aisladas por módulo.
 
 ### 1.3 Cumplimiento Ley Chilena de Protección de Datos (Ley N° 19.628 y Nueva Ley N° 21.719) y Motor Propio Símil NotebookLM
@@ -57,18 +57,25 @@
 
 ---
 
-## 3. Estándar Universal de UI/UX: Minimalismo Industrial Puro (MINREPORT)
+## 3. Estándar Universal de UI/UX: Minimalismo Operativo Absoluto (HMI Aeroespacial & Industrial — MINREPORT)
 
-Inspirado en la ingeniería técnica de alta gama (*Coffee-Tech Engineering* y *Bauhaus Funcional*).
+Inspirado en la ingeniería aeronáutica, aeroespacial y topográfica de alta gama (*NASA OpenMCT*, *SpaceX Dragon HMI*, *Lockheed Martin F-35 PCD / ANSI/ISA-101*, *Mercedes-Benz MBUX Zero-Layer*, *Leica Captivate Field HMI* y *Bauhaus Funcional*).
+
+### 3.0 Referentes HMI Aeroespaciales e Industriales Obligatorios por Defecto
+- **NASA OpenMCT & NASA-STD-3001:** Economía cognitiva absoluta; fusión de telemetría en vivo + curva evolutiva + evidencia visual en un único lienzo operativo sin saltos innecesarios ni prosa explicativa.
+- **SpaceX Dragon Touchscreen HMI:** *Dark Cockpit* (estado nominal silencioso), targets táctiles aptos para guantes y vibración en terreno (`>= 48px–64px`) y gates de confirmación HITL (`"ACTUALIZAR"`) únicamente en mutaciones críticas o irreversibles.
+- **Lockheed Martin F-35 PCD & ANSI/ISA-101 High-Performance HMI:** *Color por Excepción* (`>= 85%` del lienzo monocromático neutro `#000000`/`#F3F4F6` oscuro y `#FFFFFF`/`#0F172A` claro *Sol Atacama*; Cobre `#C68346` reservado exclusivamente a dato protagonista, foco activo o excepción/alerta ej. talud `> 38°`, cola offline o escala pendiente; Cian `#00AEEF` reservado exclusivamente a verificación IA, nivel IMU óptimo e interactividad técnica). Prohibidos badges de texto largos o decoración "árbol de Navidad".
+- **Mercedes-Benz MBUX Zero-Layer:** Controles estrictamente contextuales; prohibido apilar cabeceras o barras globales redundantes.
+- **Leica Captivate Field HMI:** Legibilidad extrema *Sol Atacama* / *Cabina Oscura* WCAG 2.2 AAA, `Atkinson Hyperlegible Next/Mono` con `tabular-nums` y retículas HUD directas.
 
 ### 3.1 Cero Verborrea y Veracidad Técnica Absoluta
-- **Lenguaje Quirúrgico:** Todo texto debe ser técnico, conciso, aséptico y funcional. Prohibida la prosa publicitaria ("la mejor plataforma", "innovación líder") o textos decorativos.
-- **Tolerancia Cero a Datos Falsos e Indicadores Ficticios:** Prohibido inventar datos, métricas o descripciones no verificadas. Prohibidos badges decorativos ficticios ("V2.6 PRO", "SYSTEM SECURED", "100% OPERATIVO"). Lo no comprobado figura vacío o como:
+- **Lenguaje Quirúrgico (Cero Prosa):** Todo texto debe ser técnico, conciso, aséptico y funcional. Prohibida la prosa publicitaria ("la mejor plataforma", "innovación líder"), slogans, párrafos explicativos, textos tutoriales o textos decorativos; las vistas operativas se componen únicamente de botones funcionales, datos tabulares, indicadores precisos, gráficos vectoriales e imágenes/mallas 3D finales.
+- **Tolerancia Cero a Datos Falsos e Indicadores Ficticios:** Prohibido inventar datos, métricas o descripciones no verificadas. Prohibidos badges decorativos ficticios ("V2.6 PRO", "SYSTEM SECURED", "100% OPERATIVO"), badges de texto largos o decoración "árbol de Navidad". Lo no comprobado figura vacío o como:
   `[Información técnica no declarada en ficha]` o `[Pendiente de registro]`.
 - **Protagonismo del Dato:** Los valores operacionales y gráficos respiran en amplio espacio negativo con iluminación sutil (*hero glow*), sin confinamiento en cajas abarrotadas.
 
 ### 3.2 Tipografía Exclusiva y Ergonomía ISO 9241-300 / WCAG 2.2 AAA
-- **Tipografía de Interfaz y Lectura:** **`Atkinson Hyperlegible Next`** (alta diferenciación para visibilidad en faena).
+- **Tipografía de Interfaz y Lectura:** **`Atkinson Hyperlegible Next`** (alta diferenciación para visibilidad extrema *Sol Atacama* / *Cabina Oscura* en faena bajo estándar Leica Captivate Field HMI).
 - **Tipografía de Datos Numéricos y Tablas:** **`Atkinson Hyperlegible Mono`** (alineación tabular obligatoria).
 - **PROHIBICIÓN ABSOLUTA:** Google Sans, Roboto, Inter o cualquier otra fuente no autorizada.
 - **Alineación Numérica Tabular:**
@@ -87,11 +94,12 @@ Inspirado en la ingeniería técnica de alta gama (*Coffee-Tech Engineering* y *
   - `text-secondary`: `#8A93A6` (dark) / `#475569` (light) — Lectura y especificaciones.
   - `text-disabled`: `#5A6072` (dark) / `#94A3B8` (light) — Metadatos y datos no declarados.
 
-### 3.3 Paleta Cromática y Acentos Oficiales MINREPORT
-- **Acento Primario Oficial:** **`#C68346` (Cobre Industrial MINREPORT)**. Exclusivo de la identidad minera. Prohibido el amarillo `#FFCD00`.
-- **Acento Secundario Técnico:** **`#00AEEF` (Cian Tecnológico)** para enlaces de ingeniería, estados activos y sellos verificados.
+### 3.3 Paleta Cromática y Acentos Oficiales MINREPORT (ANSI/ISA-101 Color por Excepción)
+- **Regla F-35 PCD & ANSI/ISA-101 (`>= 85%` Monocromático Neutro):** Al menos el `85%` del lienzo permanece en escala monocromática neutra (`#000000` / `#F3F4F6` en Cabina Oscura; `#FFFFFF` / `#0F172A` en Sol Atacama). El estado nominal es visualmente silencioso (*Dark Cockpit*).
+- **Acento Primario Oficial:** **`#C68346` (Cobre Industrial MINREPORT)**. Exclusivo de la identidad minera y reservado únicamente a dato protagonista, foco activo o excepción/alerta (ej. talud `> 38°`, cola offline o escala pendiente). Prohibido el amarillo `#FFCD00`.
+- **Acento Secundario Técnico:** **`#00AEEF` (Cian Tecnológico)** reservado exclusivamente a verificación IA, nivel IMU óptimo, enlaces de ingeniería, interactividad técnica y sellos verificados.
 - **Fondos Modo Oscuro:** Base `#000000` / Superficie y Paneles `#07090D` / Bordes `#12151C`.
-- **Fondos Modo Claro:** Base `#FFFFFF` / Superficie y Paneles `#F8FAFC` / Bordes `#E2E8F0`.
+- **Fondos Modo Claro (*Sol Atacama*):** Base `#FFFFFF` / Superficie y Paneles `#F8FAFC` / Bordes `#E2E8F0`.
 - **Soporte Dual Obligatorio:** Todo componente DEBE incluir variantes completas para modo claro y modo oscuro (`dark:`). Prohibidas vistas exclusivas para un solo modo.
 
 ### 3.4 Geometría Industrial Pura
@@ -131,29 +139,44 @@ Inspirado en la ingeniería técnica de alta gama (*Coffee-Tech Engineering* y *
 ### 3.8 Gobernanza de Datos: Modo Informe vs Edición Quirúrgica (HITL)
 - **Modo Informe Técnico por Defecto:** Las pantallas de fichas técnicas, normativas y administración se presentan estructuradas como informe oficial (solo lectura), nunca como formularios editables permanentes.
 - **Edición Quirúrgica por Lápiz (`edit`):** Activación puntual por bloque mediante icono de lápiz plano transparente.
-- **Confirmación Obligatoria por Palabra Clave:** Toda modificación manual en registros oficiales exige escribir obligatoriamente `"ACTUALIZAR"` para habilitar el guardado.
+- **Confirmación Obligatoria por Palabra Clave (SpaceX Dragon HITL Gate):** Toda mutación crítica o irreversible en registros oficiales exige escribir obligatoriamente `"ACTUALIZAR"` para habilitar el guardado.
 - **Aprobación Granular 1 a 1 de IA (HITL):** Sugerencias de IA en vista comparativa (`[Actual] ➔ [Sugerido]`), autorizadas campo por campo antes de guardar.
-- **Seguridad en Formularios:** `autocomplete="off"` y `spellCheck={false}` obligatorios en todos los `<form>` e `<input>`.
+- **Seguridad en Formularios:** `autocomplete="off"` (`autoComplete="off"`) y `spellCheck={false}` obligatorios en todos los `<form>` e `<input>`.
 
 ### 3.9 Blindaje de Activos y Seguridad de Interfaz
 - **Blindaje de Medios:** Imágenes y SVGs con `draggable={false}`, CSS `-webkit-user-drag: none;` y clases `select-none pointer-events-none`.
 - **Gobierno de Selección de Texto:** `select-none` en layouts y tarjetas estáticas. `select-text` habilitado exclusivamente en códigos operativos (SKUs, normativas) acompañado de botón de copia.
 
+### 3.10 Estándar Estricto para App Móvil (Terreno Minero Zero-Layer)
+- **Cero Prosa Operativa:** Prohibida toda prosa, slogans, párrafos explicativos y textos tutoriales. Solo botones funcionales, datos tabulares, indicadores precisos, gráficos vectoriales e imágenes/mallas 3D finales.
+- **Lienzo Plano (Prohibidas Tarjetas con Bordes y Relleno):** Prohibido envolver listas o formularios móviles en tarjetas/cajas con borde y relleno. Usar lienzo plano (`#000000` / `#FFFFFF`) con divisores `hairline 1px` (`#12151C` / `#E2E8F0`) y **barra lateral `3px` ISA-101 por excepción** (`#C68346` en alertas/pendientes/cola, `#00AEEF` en verificado IA, transparente en estado nominal).
+- **Cabecera Superior Única Contextual (`56px` — MBUX Zero-Layer):** Máximo una cabecera de `56px` en móvil. Prohibido apilar `TopBar` + subheaders + banners offline redundantes.
+- **Menú Inicial `MINREPORT`:** Renderiza un **único icono plano centrado** (`#C68346`, sin texto ni caja, target táctil apto para guantes `>= 48px–64px` / zona `88×88px`).
+- **Barra Inferior (`56px`) Exclusiva en Detalle de Acopio:** Se muestra únicamente dentro del detalle de acopio con el botón `CÁMARA` (`add_a_photo`) centrado (`#C68346`); prohibida barra inferior en vistas de faenas, listados o monitoreo.
+- **Targets Táctiles de Faena:** Controles primarios con área táctil `>= 48px–64px` (estándar SpaceX Dragon HMI para operación con guantes y vibración).
+
+### 3.11 Estándar Visual Dual Foto Real / Malla 3D Digital en `ACOPIOS` (`stockpile`)
+- **Componente Unificado Obligatorio:** Todo registro de acopio en escritorio (**`FOTO | 3D | DUAL`**) y móvil (**`FOTO | 3D`**) debe integrar visualización optimizada de fotos reales (con perimetrales y detecciones `box_2d` cuando existan) y/o mallas 3D digitales `.glb`/TIN mediante **`StockpileVisualStage`** + **`StockpileTwin3DLazy`** (`StockpileTwin3D`).
+- **Carga Diferida, Compact Mode e Higiene WebGL:** Obligatoria carga diferida con `M3LinearProgress`, modo `compact` para móvil/comparativas y liberación estricta WebGL (`geometry.dispose()`, `material.dispose()`, `texture.dispose()`, `controls.dispose()`, `renderer.dispose()`, `renderer.forceContextLoss()`, `URL.revokeObjectURL`) al desmontar o conmutar de modo (`3D`/`DUAL` ➔ `PHOTO`).
+
 ---
 
 ## 4. Checklist de Pre-Generación Obligatorio (Guardrail Inviolable)
 
-Antes de generar o modificar cualquier componente, interfaz o estilo en MINREPORT, el modelo DEBE validar internamente los siguientes 10 puntos de corte. **Si falla uno solo, el código debe corregirse antes de emitirlo**:
+Antes de generar o modificar cualquier componente, interfaz o estilo en MINREPORT, el modelo DEBE validar internamente los siguientes 15 puntos de corte. **Si falla uno solo, el código debe corregirse antes de emitirlo**:
 
 1. [ ] **Tipografía:** ¿Usa únicamente `Atkinson Hyperlegible Next` y `Atkinson Hyperlegible Mono`? (Cero Google Sans, Roboto o Inter).
-2. [ ] **Color:** ¿El acento es Cobre Industrial `#C68346` y Cian `#00AEEF`? (Cero amarillo CABISEG `#FFCD00`).
-3. [ ] **Soporte Dual:** ¿Cada clase de fondo, texto y borde tiene su contraparte `dark:` completa?
+2. [ ] **Color & ISA-101:** ¿Al menos `>= 85%` del lienzo es monocromático neutro (`#000000`/`#F3F4F6` oscuro y `#FFFFFF`/`#0F172A` claro *Sol Atacama*), reservando `#C68346` a dato protagonista/foco/excepción y `#00AEEF` a verificación IA/IMU óptimo/interactividad? (Cero amarillo `#FFCD00`).
+3. [ ] **Soporte Dual:** ¿Cada clase de fondo, texto y borde tiene su contraparte `dark:` completa con contraste WCAG 2.2 AAA?
 4. [ ] **Geometría:** ¿Todos los contenedores, botones e inputs son `rounded-none` / `0px`? (Cero `rounded-lg`, `rounded-md`, `rounded-full`).
 5. [ ] **Sombras:** ¿Está libre de sombras decorativas difusas o neomorfismo (`shadow-none`)?
-6. [ ] **Verborrea:** ¿El texto es quirúrgico, aséptico y libre de adjetivación publicitaria?
-7. [ ] **Veracidad:** ¿Está libre de badges o estados inventados ("PRO", "ONLINE", "SECURED") y los datos ausentes muestran `[Información técnica no declarada en ficha]`?
-8. [ ] **Iconos:** ¿Usa exclusivamente `material-symbols-outlined`, planos, sin texto adosado y sin marcos en caja?
-9. [ ] **Formularios:** ¿Incluye `autocomplete="off"` y `spellCheck={false}`?
+6. [ ] **Cero Prosa & Minimalismo Operativo:** ¿Está 100% libre de prosa, slogans, párrafos explicativos, textos tutoriales, badges largos o decoración "árbol de Navidad"?
+7. [ ] **Veracidad & Marca Única:** ¿Usa exclusivamente la marca **MINREPORT** y los módulos **`OPERMAQ`** / **`ACOPIOS`** (`moduleId`: `stockpile`), con cero sub-marcas heredadas, cero badges inventados ("PRO", "ONLINE", "SECURED") y `[Información técnica no declarada en ficha]` en datos ausentes?
+8. [ ] **Iconos & M3:** ¿Usa exclusivamente `material-symbols-outlined` planos (sin texto adosado ni cajas), `M3Switch`, `M3LinearProgress` (`4px`, `gap 4px`, `stop indicator 4×4px`) y `M3CircularProgress`?
+9. [ ] **Formularios:** ¿Incluye `autoComplete="off"` / `autocomplete="off"` y `spellCheck={false}`?
 10. [ ] **Métricas:** ¿Los números y tablas usan `tabular-nums font-mono` y espaciado de Fibonacci (`fib-8` a `fib-89`)?
 11. [ ] **Protección de Datos (Ley N° 19.628 / Ley N° 21.719):** ¿Cumple residencia en `southamerica-west1`, cero exposición a servicios de consumo externos (`Drive`/`NotebookLM`/`Colab`), modo `SOVEREIGN_VAULT_FIRST` y sanitización previa por `ConfidentialityAirlockService`?
 12. [ ] **Digestor Multimedia y CAS Ligero (`MINREPORT-MEDIA-DIGESTOR-CAS`):** ¿Todo PDF, imagen, recorte `box_2d`, símbolo SVG o video pasa por `MediaDigestorClient` / `MediaDigestorServer` / `SegmentedDocumentProcessorService` y `CasStorageService` (SHA-256 + `dHash` 64-bit), guardando en las bases de datos únicamente la versión liviana optimizada?
+13. [ ] **Referentes HMI Aeroespaciales & Targets Táctiles:** ¿Cumple NASA OpenMCT (lienzo único telemetría + curva + evidencia), SpaceX Dragon HMI (Dark Cockpit, targets `>= 48px–64px` en faena, HITL `"ACTUALIZAR"` solo en mutaciones críticas) y MBUX Zero-Layer (controles contextuales sin cabeceras apiladas)?
+14. [ ] **Estándar Móvil Plano:** ¿Elimina tarjetas con borde y relleno usando lienzo plano con divisores `hairline 1px` y barra lateral `3px` ISA-101, cabecera única `56px`, menú inicial con único icono plano centrado sin texto ni caja y barra inferior `56px` exclusiva en detalle de acopio con botón `CÁMARA` centrado?
+15. [ ] **Estándar Visual Dual Foto/3D (`ACOPIOS`):** ¿Integra `StockpileVisualStage` + `StockpileTwin3DLazy` (`FOTO | 3D | DUAL` escritorio; `FOTO | 3D` móvil), fotos con perimetrales y `box_2d`, `.glb`/TIN, `compact` mode e higiene GPU `dispose()` al desmontar o conmutar?

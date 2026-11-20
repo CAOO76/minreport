@@ -325,17 +325,12 @@ export const DevFieldTestLogin: React.FC = () => {
     const ttlPct = Math.max(0, Math.min(100, (timeLeft / 600) * 100));
 
     return (
-        <div className="min-h-[100dvh] bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col font-atkinson select-none antialiased">
-            <header className="min-h-[56px] pt-[env(safe-area-inset-top)] px-fib-21 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-fib-8 min-w-0">
-                    <BrandLogo variant="imagotype" className="h-5 w-auto object-contain pointer-events-none" />
-                </div>
-            </header>
-
-            <main className="flex-1 flex items-center justify-center p-fib-21">
-                <div className="w-full max-w-md bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] p-fib-34 rounded-none shadow-none space-y-fib-21">
-                    <div className="flex justify-center pb-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C]">
-                        <BrandLogo variant="isotype" className="h-8 w-8 object-contain pointer-events-none" />
+        <div className="min-h-[100dvh] bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] flex flex-col font-atkinson select-none antialiased pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+            <main className="flex-1 flex items-center justify-center px-fib-21 py-fib-34">
+                <div className="w-full max-w-sm bg-transparent rounded-none shadow-none space-y-fib-34">
+                    <div className="flex flex-col items-center justify-center gap-fib-13">
+                        <BrandLogo variant="isotype" className="h-10 w-10 object-contain pointer-events-none" />
+                        <BrandLogo variant="imagotype" className="h-5 w-auto object-contain pointer-events-none" />
                     </div>
 
                     {loading && (
@@ -345,14 +340,14 @@ export const DevFieldTestLogin: React.FC = () => {
                     {(error || nonDevBlocked) && (
                         <div
                             role="alert"
-                            className="border border-red-500/40 bg-red-500/10 p-fib-13 text-data-dense font-mono text-red-600 dark:text-red-400 rounded-none"
+                            className="border-b border-red-500 py-fib-8 text-data-dense font-mono text-red-600 dark:text-red-400 text-center rounded-none"
                         >
                             {error || t('core_dev_fieldtest.login.non_dev_rejected')}
                         </div>
                     )}
 
                     {authStep === 'IDLE' && (
-                        <div className="flex items-center gap-fib-13">
+                        <div className="flex items-center justify-center gap-fib-34 pt-fib-13">
                             {passkeyAvailable && (
                                 <button
                                     type="button"
@@ -360,9 +355,9 @@ export const DevFieldTestLogin: React.FC = () => {
                                     disabled={loading}
                                     title={t('core_dev_fieldtest.login.passkey_btn')}
                                     aria-label={t('core_dev_fieldtest.login.passkey_btn')}
-                                    className="flex-1 min-h-[56px] px-fib-21 py-fib-13 bg-[#C68346] hover:bg-[#B0743E] text-white rounded-none shadow-none border-0 cursor-pointer flex items-center justify-center transition-colors disabled:opacity-50"
+                                    className="min-w-[72px] min-h-[72px] bg-transparent border-0 outline-none text-[#C68346] hover:opacity-75 rounded-none shadow-none cursor-pointer flex items-center justify-center transition-opacity disabled:opacity-40"
                                 >
-                                    <span className="material-symbols-outlined text-[24px]">fingerprint</span>
+                                    <span className="material-symbols-outlined text-[40px] leading-none">fingerprint</span>
                                 </button>
                             )}
 
@@ -372,9 +367,9 @@ export const DevFieldTestLogin: React.FC = () => {
                                 disabled={loading}
                                 title={t('core_dev_fieldtest.login.oob_btn')}
                                 aria-label={t('core_dev_fieldtest.login.oob_btn')}
-                                className="flex-1 min-h-[56px] px-fib-21 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] hover:border-[#00AEEF] text-[#00AEEF] rounded-none shadow-none cursor-pointer flex items-center justify-center transition-colors disabled:opacity-50"
+                                className="min-w-[72px] min-h-[72px] bg-transparent border-0 outline-none text-[#00AEEF] hover:opacity-75 rounded-none shadow-none cursor-pointer flex items-center justify-center transition-opacity disabled:opacity-40"
                             >
-                                <span className="material-symbols-outlined text-[24px]">shield_lock</span>
+                                <span className="material-symbols-outlined text-[40px] leading-none">shield_lock</span>
                             </button>
                         </div>
                     )}
@@ -410,28 +405,28 @@ export const DevFieldTestLogin: React.FC = () => {
                                     autoComplete="off"
                                     spellCheck={false}
                                     required
-                                    className="w-full min-h-[52px] px-fib-13 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono tabular-nums text-h1-header tracking-[0.35em] text-center rounded-none shadow-none outline-none select-text"
+                                    className="w-full min-h-[52px] px-fib-13 py-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono tabular-nums text-h1-header tracking-[0.35em] text-center rounded-none shadow-none outline-none select-text"
                                 />
                             </div>
 
-                            <div className="flex items-center gap-fib-13">
+                            <div className="flex items-center justify-between gap-fib-13">
                                 <button
                                     type="button"
                                     onClick={handleAbortChallenge}
                                     title={t('core_dev_vault.common.cancel')}
                                     aria-label={t('core_dev_vault.common.cancel')}
-                                    className="bg-transparent border-0 outline-none p-2 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                                    className="min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none p-2 text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] transition-colors cursor-pointer flex items-center justify-center rounded-none"
                                 >
-                                    <span className="material-symbols-outlined text-[20px]">close</span>
+                                    <span className="material-symbols-outlined text-[22px]">close</span>
                                 </button>
                                 <button
                                     type="submit"
                                     disabled={loading}
                                     title={t('core_dev_fieldtest.login.verify_otp_btn')}
                                     aria-label={t('core_dev_fieldtest.login.verify_otp_btn')}
-                                    className="flex-1 min-h-[48px] px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white rounded-none border-0 cursor-pointer disabled:opacity-50 flex items-center justify-center"
+                                    className="min-w-[64px] min-h-[48px] bg-transparent border-0 outline-none text-[#C68346] hover:opacity-75 rounded-none cursor-pointer disabled:opacity-40 flex items-center justify-center"
                                 >
-                                    <span className="material-symbols-outlined text-[20px]">arrow_forward</span>
+                                    <span className="material-symbols-outlined text-[26px]">arrow_forward</span>
                                 </button>
                             </div>
                         </form>
@@ -447,7 +442,7 @@ export const DevFieldTestLogin: React.FC = () => {
                                     {t('core_dev_fieldtest.login.email_label')}
                                 </label>
                                 <div className="relative flex items-center">
-                                    <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">
+                                    <span className="material-symbols-outlined absolute left-1 text-[#475569] dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">
                                         person
                                     </span>
                                     <input
@@ -460,28 +455,28 @@ export const DevFieldTestLogin: React.FC = () => {
                                         autoComplete="off"
                                         spellCheck={false}
                                         required
-                                        className="w-full min-h-[48px] pl-11 pr-3 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
+                                        className="w-full min-h-[48px] pl-9 pr-2 py-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
                                     />
                                 </div>
                             </div>
-                            <div className="flex items-center gap-fib-13">
+                            <div className="flex items-center justify-between gap-fib-13">
                                 <button
                                     type="button"
                                     onClick={handleAbortChallenge}
                                     title={t('core_dev_vault.common.cancel')}
                                     aria-label={t('core_dev_vault.common.cancel')}
-                                    className="bg-transparent border-0 outline-none p-2 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                                    className="min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none p-2 text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] transition-colors cursor-pointer flex items-center justify-center rounded-none"
                                 >
-                                    <span className="material-symbols-outlined text-[20px]">close</span>
+                                    <span className="material-symbols-outlined text-[22px]">close</span>
                                 </button>
                                 <button
                                     type="submit"
                                     disabled={loading}
                                     title={t('core_dev_fieldtest.login.verify_user_btn')}
                                     aria-label={t('core_dev_fieldtest.login.verify_user_btn')}
-                                    className="flex-1 min-h-[48px] px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white rounded-none border-0 cursor-pointer disabled:opacity-50 flex items-center justify-center"
+                                    className="min-w-[64px] min-h-[48px] bg-transparent border-0 outline-none text-[#C68346] hover:opacity-75 rounded-none cursor-pointer disabled:opacity-40 flex items-center justify-center"
                                 >
-                                    <span className="material-symbols-outlined text-[20px]">arrow_forward</span>
+                                    <span className="material-symbols-outlined text-[26px]">arrow_forward</span>
                                 </button>
                             </div>
                         </form>
@@ -499,7 +494,7 @@ export const DevFieldTestLogin: React.FC = () => {
                                             {t('core_dev_fieldtest.login.current_password_label')}
                                         </label>
                                         <div className="relative flex items-center">
-                                            <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">key</span>
+                                            <span className="material-symbols-outlined absolute left-1 text-[#475569] dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">key</span>
                                             <input
                                                 id="dev-ft-old-pwd"
                                                 type="password"
@@ -509,7 +504,7 @@ export const DevFieldTestLogin: React.FC = () => {
                                                 autoComplete="off"
                                                 spellCheck={false}
                                                 required
-                                                className="w-full min-h-[48px] pl-11 pr-3 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
+                                                className="w-full min-h-[48px] pl-9 pr-2 py-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
                                             />
                                         </div>
                                     </div>
@@ -521,7 +516,7 @@ export const DevFieldTestLogin: React.FC = () => {
                                             {t('core_dev_fieldtest.login.new_password_label')}
                                         </label>
                                         <div className="relative flex items-center">
-                                            <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">lock</span>
+                                            <span className="material-symbols-outlined absolute left-1 text-[#475569] dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">lock</span>
                                             <input
                                                 id="dev-ft-new-pwd"
                                                 type="password"
@@ -531,7 +526,7 @@ export const DevFieldTestLogin: React.FC = () => {
                                                 autoComplete="off"
                                                 spellCheck={false}
                                                 required
-                                                className="w-full min-h-[48px] pl-11 pr-3 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
+                                                className="w-full min-h-[48px] pl-9 pr-2 py-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
                                             />
                                         </div>
                                     </div>
@@ -543,7 +538,7 @@ export const DevFieldTestLogin: React.FC = () => {
                                             {t('core_dev_fieldtest.login.confirm_password_label')}
                                         </label>
                                         <div className="relative flex items-center">
-                                            <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">verified_user</span>
+                                            <span className="material-symbols-outlined absolute left-1 text-[#475569] dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">verified_user</span>
                                             <input
                                                 id="dev-ft-confirm-pwd"
                                                 type="password"
@@ -553,7 +548,7 @@ export const DevFieldTestLogin: React.FC = () => {
                                                 autoComplete="off"
                                                 spellCheck={false}
                                                 required
-                                                className="w-full min-h-[48px] pl-11 pr-3 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
+                                                className="w-full min-h-[48px] pl-9 pr-2 py-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
                                             />
                                         </div>
                                     </div>
@@ -567,7 +562,7 @@ export const DevFieldTestLogin: React.FC = () => {
                                         {t('core_dev_fieldtest.login.password_label')}
                                     </label>
                                     <div className="relative flex items-center">
-                                        <span className="material-symbols-outlined absolute left-3 text-slate-400 dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">key</span>
+                                        <span className="material-symbols-outlined absolute left-1 text-[#475569] dark:text-[#8A93A6] text-[20px] select-none pointer-events-none">key</span>
                                         <input
                                             id="dev-ft-pwd"
                                             type="password"
@@ -577,30 +572,30 @@ export const DevFieldTestLogin: React.FC = () => {
                                             autoComplete="off"
                                             spellCheck={false}
                                             required
-                                            className="w-full min-h-[48px] pl-11 pr-3 py-fib-13 bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
+                                            className="w-full min-h-[48px] pl-9 pr-2 py-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C] focus:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-body-main rounded-none shadow-none outline-none select-text"
                                         />
                                     </div>
                                 </div>
                             )}
 
-                            <div className="flex items-center gap-fib-13">
+                            <div className="flex items-center justify-between gap-fib-13">
                                 <button
                                     type="button"
                                     onClick={handleAbortChallenge}
                                     title={t('core_dev_vault.common.cancel')}
                                     aria-label={t('core_dev_vault.common.cancel')}
-                                    className="bg-transparent border-0 outline-none p-2 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                                    className="min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none p-2 text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] transition-colors cursor-pointer flex items-center justify-center rounded-none"
                                 >
-                                    <span className="material-symbols-outlined text-[20px]">close</span>
+                                    <span className="material-symbols-outlined text-[22px]">close</span>
                                 </button>
                                 <button
                                     type="submit"
                                     disabled={loading}
                                     title={t('core_dev_fieldtest.login.enter_btn')}
                                     aria-label={t('core_dev_fieldtest.login.enter_btn')}
-                                    className="flex-1 min-h-[48px] px-fib-21 bg-[#C68346] hover:bg-[#B0743E] text-white rounded-none border-0 cursor-pointer disabled:opacity-50 flex items-center justify-center"
+                                    className="min-w-[64px] min-h-[48px] bg-transparent border-0 outline-none text-[#C68346] hover:opacity-75 rounded-none cursor-pointer disabled:opacity-40 flex items-center justify-center"
                                 >
-                                    <span className="material-symbols-outlined text-[20px]">lock_open</span>
+                                    <span className="material-symbols-outlined text-[26px]">lock_open</span>
                                 </button>
                             </div>
                         </form>

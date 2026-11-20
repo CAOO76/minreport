@@ -28,6 +28,7 @@ export interface StockpileTwin3DProps {
     meshSource?: string;
     className?: string;
     heightPx?: number;
+    compact?: boolean;
 }
 
 interface ParsedMeshTelemetry {
@@ -44,7 +45,7 @@ interface ParsedMeshTelemetry {
 const UNDECLARED_VALUE = '[Información técnica no declarada en ficha]';
 const PENDING_RECORD = '[Pendiente de registro]';
 const FLAT_ICON_BTN_CLASS =
-    'bg-transparent border-0 outline-none p-1 text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer rounded-none shadow-none inline-flex items-center justify-center';
+    'bg-transparent border-0 outline-none p-1 text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] transition-colors cursor-pointer rounded-none shadow-none inline-flex items-center justify-center';
 
 function formatCasBytes(bytes?: number | null): string | null {
     if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return null;
@@ -186,6 +187,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
     meshSource,
     className = '',
     heightPx = 340,
+    compact = false,
 }) => {
     const { t } = useTranslation();
     const viewportHostRef = useRef<HTMLDivElement | null>(null);
@@ -353,7 +355,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
         let gridHelper: THREE.GridHelper | null = null;
 
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(isDark ? 0x000000 : 0xf8fafc);
+        scene.background = new THREE.Color(isDark ? (compact ? 0x030508 : 0x000000) : 0xf8fafc);
         sceneRef.current = scene;
 
         const initWidth = Math.max(1, host.clientWidth || 320);
@@ -366,7 +368,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
                 antialias: true,
                 powerPreference: 'high-performance',
             });
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, compact ? 1.5 : 2));
             renderer.setSize(initWidth, initHeight);
             renderer.outputColorSpace = THREE.SRGBColorSpace;
             renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -542,13 +544,13 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
             }
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [meshBuffer, heightPx]);
+    }, [meshBuffer, heightPx, compact]);
 
     // Actualizar fondo y grilla al alternar modo claro/oscuro liberando geometría previa
     useEffect(() => {
         const scene = sceneRef.current;
         if (!scene) return;
-        scene.background = new THREE.Color(isDark ? 0x000000 : 0xf8fafc);
+        scene.background = new THREE.Color(isDark ? (compact ? 0x030508 : 0x000000) : 0xf8fafc);
 
         const prevGrid = gridRef.current.helper;
         if (prevGrid) {
@@ -569,7 +571,7 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
             gridRef.current.helper = nextGrid;
             scene.add(nextGrid);
         }
-    }, [isDark]);
+    }, [isDark, compact]);
 
     const effectiveTinVolume =
         typeof tinVolumeM3 === 'number' && Number.isFinite(tinVolumeM3)
@@ -613,6 +615,107 @@ export const StockpileTwin3D: React.FC<StockpileTwin3DProps> = ({
             : UNDECLARED_VALUE;
 
     const hasRenderableMesh = Boolean(meshBuffer);
+
+    if (compact) {
+        const compactDimsText =
+            hasDimensions && bbox
+                ? `${bbox.widthX.toFixed(1)}×${bbox.depthZ.toFixed(1)}×${bbox.heightY.toFixed(1)} m`
+                : '--';
+        const compactVolText =
+            effectiveTinVolume !== null && Number.isFinite(effectiveTinVolume)
+                ? `${effectiveTinVolume.toFixed(2)} m³`
+                : '--';
+        const compactTriText =
+            telemetry && telemetry.triangleCount > 0
+                ? `${telemetry.triangleCount.toLocaleString('en-US')} TRI`
+                : '-- TRI';
+
+        return (
+            <section
+                aria-label={t('twin3d.title', 'GEMELO DIGITAL 3D (.GLB)')}
+                className={`w-full border-0 bg-[#F8FAFC] dark:bg-[#030508] rounded-none shadow-none select-none font-atkinson text-[#0F172A] dark:text-[#F3F4F6] ${className}`}
+            >
+                <div className="relative w-full bg-[#F8FAFC] dark:bg-[#030508]">
+                    {isLoading && (
+                        <div className="absolute top-0 inset-x-0 z-20">
+                            <M3LinearProgress
+                                indeterminate
+                                ariaLabel={t('twin3d.loading_mesh', 'CARGANDO MALLA .glb...')}
+                            />
+                        </div>
+                    )}
+
+                    <span className="absolute top-fib-8 left-fib-13 z-10 pointer-events-none font-mono tabular-nums text-microcopy uppercase text-[#C68346]">
+                        TIN · GLB
+                    </span>
+
+                    <div className="absolute top-fib-8 right-fib-8 z-10 flex items-center gap-fib-8">
+                        <button
+                            type="button"
+                            onClick={() => setIsWireframe((prev) => !prev)}
+                            title={t('twin3d.wireframe_toggle', 'MODO WIREFRAME')}
+                            aria-label={t('twin3d.wireframe_toggle', 'MODO WIREFRAME')}
+                            aria-pressed={isWireframe}
+                            disabled={!hasRenderableMesh || webglUnavailable}
+                            className={`${FLAT_ICON_BTN_CLASS} min-w-[40px] min-h-[40px] ${
+                                isWireframe ? 'text-[#00AEEF] dark:text-[#00AEEF]' : ''
+                            } disabled:opacity-40 disabled:cursor-not-allowed`}
+                        >
+                            <span className="material-symbols-outlined text-[18px]">grid_4x4</span>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => resetCameraFnRef.current?.()}
+                            title={t('twin3d.reset_camera', 'Centrar cámara 3D')}
+                            aria-label={t('twin3d.reset_camera', 'Centrar cámara 3D')}
+                            disabled={!hasRenderableMesh || webglUnavailable}
+                            className={`${FLAT_ICON_BTN_CLASS} min-w-[40px] min-h-[40px] disabled:opacity-40 disabled:cursor-not-allowed`}
+                        >
+                            <span className="material-symbols-outlined text-[18px]">
+                                center_focus_strong
+                            </span>
+                        </button>
+                    </div>
+
+                    {hasRenderableMesh && !webglUnavailable ? (
+                        <div
+                            ref={viewportHostRef}
+                            style={{ height: `${heightPx}px` }}
+                            className="w-full relative overflow-hidden rounded-none"
+                        />
+                    ) : (
+                        <div
+                            style={{ height: `${heightPx}px` }}
+                            className="w-full px-fib-21 flex flex-col items-center justify-center gap-fib-8 text-center"
+                        >
+                            <span className="material-symbols-outlined text-[28px] text-[#94A3B8] dark:text-[#5A6072]">
+                                deployed_code
+                            </span>
+                            <span className="text-microcopy font-mono text-[#94A3B8] dark:text-[#5A6072]">
+                                {isLoading
+                                    ? t('twin3d.loading_mesh', 'CARGANDO MALLA .glb...')
+                                    : webglUnavailable
+                                      ? 'WEBGL OFF'
+                                      : PENDING_RECORD}
+                            </span>
+                        </div>
+                    )}
+                </div>
+
+                <div className="flex items-center justify-between gap-fib-8 px-fib-13 py-fib-8 border-t border-[#E2E8F0] dark:border-[#12151C] bg-transparent font-mono tabular-nums text-microcopy text-[#475569] dark:text-[#8A93A6]">
+                    <div className="flex items-center gap-fib-8 min-w-0 truncate">
+                        <span className="truncate">{compactDimsText}</span>
+                        <span aria-hidden="true">·</span>
+                        <span className="text-[#C68346] font-bold shrink-0">{compactVolText}</span>
+                        <span aria-hidden="true">·</span>
+                        <span className="shrink-0">{compactTriText}</span>
+                    </div>
+                    <span className="uppercase text-[#00AEEF] shrink-0">3D</span>
+                </div>
+            </section>
+        );
+    }
 
     return (
         <section

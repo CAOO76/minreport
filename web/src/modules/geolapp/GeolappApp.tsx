@@ -48,11 +48,15 @@ export interface GeolappAppProps {
     domainMode?: GeolappDomainMode;
     hostScope?: 'CLIENT' | 'DEV_GATEWAY' | 'TEST_PILOT';
     embedded?: boolean;
+    onExitModule?: () => void;
+    mobileConnectivitySlot?: React.ReactNode;
 }
 
 export const GeolappApp: React.FC<GeolappAppProps> = ({
     hostScope = 'CLIENT',
     embedded = false,
+    onExitModule,
+    mobileConnectivitySlot,
 }) => {
     const { t } = useTranslation();
     const { isNative } = usePlatform();
@@ -324,6 +328,22 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
         </div>
     );
 
+    const handleToggleClosureFromLayout = useCallback(() => {
+        if (!selectedAsset) return;
+        if (view === 'detail') {
+            setView('summary');
+            if (typeof window !== 'undefined') {
+                window.setTimeout(() => {
+                    window.dispatchEvent(new CustomEvent('minreport:toggle-closure'));
+                }, 60);
+            }
+            return;
+        }
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('minreport:toggle-closure'));
+        }
+    }, [selectedAsset, view]);
+
     const mobileFaenaListElement = (
         <MobileFaenaList
             sites={miningSites}
@@ -331,6 +351,8 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
             measurements={allMeasurements}
             isLoading={isLoadingAssets}
             onSelectFaena={handleSelectFaenaFromList}
+            onBackToHome={onExitModule}
+            connectivitySlot={mobileConnectivitySlot}
         />
     );
 
@@ -344,6 +366,7 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
             onBackToFaenas={handleBackToFaenas}
             onStartNewStockpile={handleStartNewStockpileInFaena}
             onSelectAsset={handleSelectAsset}
+            connectivitySlot={mobileConnectivitySlot}
         />
     ) : (
         mobileFaenaListElement
@@ -515,6 +538,9 @@ export const GeolappApp: React.FC<GeolappAppProps> = ({
                     hasSelectedAsset={Boolean(selectedAsset)}
                     isSelectedAssetClosed={selectedAsset?.status === 'CLOSED'}
                     onTriggerNewMeasurement={handleTriggerNewMeasurement}
+                    onToggleClosure={handleToggleClosureFromLayout}
+                    onExitModule={onExitModule}
+                    mobileConnectivitySlot={mobileConnectivitySlot}
                 >
                     <Suspense fallback={suspenseFallback}>{renderView()}</Suspense>
                 </MainLayout>

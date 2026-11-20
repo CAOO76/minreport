@@ -238,7 +238,7 @@ export const TestPilotWorkspace: React.FC = () => {
             </header>
 
             <div className="flex flex-1 min-h-0 overflow-hidden relative">
-                {/* Rail lateral B2B: solo vistas cliente y GEOLAPP®, cero CATÁLOGO maestro */}
+                {/* Rail lateral B2B: solo vistas cliente y ACOPIOS, cero CATÁLOGO maestro */}
                 <aside className="w-20 h-full flex flex-col items-center py-fib-21 border-r border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] z-30 shrink-0 gap-fib-8">
                     {navItems.map((item) => {
                         const active = activeView === item.id;
@@ -320,7 +320,7 @@ export const TestPilotWorkspace: React.FC = () => {
                                             <div className="space-y-fib-13">
                                                 <div className="flex items-center justify-between">
                                                     <span className="text-microcopy font-mono uppercase text-[#C68346]">
-                                                        GEOLAPP®
+                                                        {t('core_shell.modules.stockpile.name')}
                                                     </span>
                                                     <span className="material-symbols-outlined text-[22px] text-[#00AEEF]">
                                                         terrain

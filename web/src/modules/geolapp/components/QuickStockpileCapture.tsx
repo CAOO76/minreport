@@ -171,9 +171,9 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
         }
     }, []);
 
-    const utmBadgeText = useMemo(() => {
+    const utmChipText = useMemo(() => {
         if (isLocating) {
-            return t('capture_v2.gnss_locating', 'BUSCANDO GNSS...');
+            return 'GNSS...';
         }
         if (
             gnssStatus === 'FIX_OK' &&
@@ -183,13 +183,13 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
         ) {
             try {
                 const utm = wgs84ToUtm(geoPoint.latitude, geoPoint.longitude);
-                return `UTM ${utm.zone}${utm.band} · ${Math.round(utm.eastingM)}E`;
+                return `UTM ${utm.zone}${utm.band}`;
             } catch {
-                return `${geoPoint.latitude.toFixed(4)}, ${geoPoint.longitude.toFixed(4)}`;
+                return 'WGS84';
             }
         }
-        return t('capture_v2.underground_mode', 'SUBTERRÁNEA');
-    }, [geoPoint, gnssStatus, isLocating, t]);
+        return 'SUBT';
+    }, [geoPoint, gnssStatus, isLocating]);
 
     const handleChildSuccess = useCallback(
         (measurementId: string, createdAssetId?: string) => {
@@ -208,13 +208,13 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
         () =>
             isNewAsset && resolvedSite
                 ? {
-                    name: stockpileName.trim() || defaultCode,
-                    projectId: resolvedSite.id,
-                    projectName: resolvedSite.name,
-                    geoPoint,
-                    gnssStatus,
-                    undergroundSector: undergroundSector || undefined,
-                }
+                      name: stockpileName.trim() || defaultCode,
+                      projectId: resolvedSite.id,
+                      projectName: resolvedSite.name,
+                      geoPoint,
+                      gnssStatus,
+                      undergroundSector: undergroundSector || undefined,
+                  }
                 : undefined,
         [defaultCode, geoPoint, gnssStatus, isNewAsset, resolvedSite, stockpileName, undergroundSector]
     );
@@ -222,7 +222,7 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
     if (isNewAsset && !resolvedSite) {
         return (
             <div className="h-full w-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-atkinson overflow-hidden rounded-none shadow-none select-none">
-                <header className="shrink-0 px-fib-13 h-14 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center gap-fib-8">
+                <header className="shrink-0 min-h-[56px] pt-[env(safe-area-inset-top)] px-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center gap-fib-8">
                     {!hideCancelButton && (
                         <button
                             type="button"
@@ -236,20 +236,13 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
                         </button>
                     )}
                     <span className="text-h2-section font-mono font-bold uppercase truncate">
-                        {t('faenas.site_label', 'FAENA MINERA')}
+                        {t('faenas.site_label', 'FAENA')}
                     </span>
                 </header>
 
-                <div className="flex-1 min-h-0 flex flex-col items-center justify-center px-fib-21 py-fib-55 text-center space-y-fib-13">
-                    <span className="material-symbols-outlined text-[36px] text-[#94A3B8] dark:text-[#5A6072]">
-                        domain
-                    </span>
-                    <p className="text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] max-w-sm">
-                        {t(
-                            'faenas.select_site_first',
-                            'Seleccione una faena minera registrada desde escritorio.'
-                        )}
-                    </p>
+                <div className="flex-1 min-h-0 flex flex-col items-center justify-center px-fib-21 py-fib-55 text-center gap-fib-8 text-[#94A3B8] dark:text-[#5A6072]">
+                    <span className="material-symbols-outlined text-[36px]">domain</span>
+                    <span className="text-h2-section font-mono font-bold tabular-nums">0</span>
                 </div>
             </div>
         );
@@ -258,13 +251,13 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
     return (
         <div className="h-full w-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-atkinson overflow-hidden rounded-none shadow-none select-none">
             <header className="shrink-0 bg-[#FFFFFF] dark:bg-[#000000] border-b border-[#E2E8F0] dark:border-[#12151C]">
-                <div className="px-fib-13 py-fib-8 flex items-center justify-between gap-fib-8">
+                <div className="min-h-[56px] pt-[env(safe-area-inset-top)] px-fib-13 flex items-center justify-between gap-fib-8">
                     {!hideCancelButton && (
                         <button
                             type="button"
                             onClick={onCancel}
                             aria-label={t('common.back_button', 'VOLVER')}
-                            className="min-w-[48px] min-h-[48px] bg-transparent border-0 text-[#0F172A] dark:text-[#F3F4F6] flex items-center justify-center cursor-pointer rounded-none shrink-0"
+                            className="min-w-[48px] min-h-[48px] bg-transparent border-0 text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] flex items-center justify-center cursor-pointer rounded-none shrink-0"
                         >
                             <span className="material-symbols-outlined text-[24px]">
                                 arrow_back
@@ -273,7 +266,7 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
                     )}
 
                     {isNewAsset ? (
-                        <div className="flex-1 min-w-0 flex items-center gap-fib-8">
+                        <div className="flex-1 min-w-0 flex items-center gap-1">
                             {isEditingName ? (
                                 <input
                                     type="text"
@@ -282,18 +275,12 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
                                     value={stockpileName}
                                     onChange={(e) => setStockpileName(e.target.value)}
                                     aria-label={t('registration.name_label', 'ID / NOMBRE DEL ACOPIO')}
-                                    className="flex-1 min-w-0 h-11 px-fib-8 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#C68346] outline-none font-mono font-bold text-data-dense uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
+                                    className="flex-1 min-w-0 h-10 px-fib-8 bg-transparent border-0 border-b border-[#C68346] outline-none font-mono font-bold text-data-dense uppercase text-[#0F172A] dark:text-[#F3F4F6] rounded-none"
                                 />
                             ) : (
-                                <div className="flex-1 min-w-0">
-                                    <span className="block text-microcopy font-mono font-bold uppercase text-[#C68346] truncate">
-                                        {resolvedSite?.name ||
-                                            t('capture_v2.new_stockpile_title', 'NUEVO ACOPIO')}
-                                    </span>
-                                    <span className="block text-h2-section font-mono font-bold uppercase truncate text-[#0F172A] dark:text-[#F3F4F6]">
-                                        {stockpileName}
-                                    </span>
-                                </div>
+                                <span className="flex-1 min-w-0 text-h2-section font-mono font-bold uppercase truncate text-[#0F172A] dark:text-[#F3F4F6]">
+                                    {stockpileName}
+                                </span>
                             )}
 
                             <button
@@ -309,25 +296,17 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
                                 }
                                 className="min-w-[48px] min-h-[48px] bg-transparent border-0 text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346] flex items-center justify-center cursor-pointer rounded-none shrink-0"
                             >
-                                <span className="material-symbols-outlined text-[22px]">
+                                <span className="material-symbols-outlined text-[20px]">
                                     {isEditingName ? 'check' : 'edit'}
                                 </span>
                             </button>
                         </div>
                     ) : (
-                        <div className="flex-1 min-w-0">
-                            <span className="block text-microcopy font-mono font-bold uppercase text-[#00AEEF] truncate">
-                                {resolvedSite?.name ||
-                                    t('analytics.new_measurement_button', 'NUEVA CAPTURA')}
-                            </span>
-                            <span className="block text-h2-section font-mono font-bold uppercase truncate text-[#0F172A] dark:text-[#F3F4F6]">
-                                {existingAsset?.name}
-                            </span>
-                        </div>
+                        <span className="flex-1 min-w-0 text-h2-section font-mono font-bold uppercase truncate text-[#0F172A] dark:text-[#F3F4F6]">
+                            {existingAsset?.name}
+                        </span>
                     )}
-                </div>
 
-                <div className="px-fib-13 py-fib-8 bg-[#FFFFFF] dark:bg-[#000000] border-t border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between gap-fib-8">
                     <button
                         type="button"
                         onClick={() => {
@@ -335,24 +314,19 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
                             void captureGnssFix();
                         }}
                         aria-label={t('capture_v2.gnss_refresh', 'Actualizar georreferencia GNSS')}
-                        className={`bg-transparent border-0 p-0 font-mono text-microcopy font-bold uppercase flex items-center gap-1 cursor-pointer rounded-none ${gnssStatus === 'FIX_OK' ? 'text-[#00AEEF]' : 'text-[#C68346]'
-                            }`}
+                        className={`min-h-[48px] px-1 bg-transparent border-0 font-mono text-microcopy font-bold uppercase tabular-nums flex items-center gap-1 cursor-pointer rounded-none shrink-0 ${
+                            gnssStatus === 'FIX_OK' ? 'text-[#00AEEF]' : 'text-[#C68346]'
+                        }`}
                     >
                         <span className="material-symbols-outlined text-[16px]">
                             {gnssStatus === 'FIX_OK' ? 'my_location' : 'location_off'}
                         </span>
-                        <span className="tabular-nums truncate">{utmBadgeText}</span>
+                        <span>{utmChipText}</span>
                     </button>
-
-                    {resolvedSite?.name && (
-                        <span className="max-w-[160px] font-mono text-microcopy uppercase text-[#475569] dark:text-[#8A93A6] truncate text-right">
-                            {resolvedSite.name}
-                        </span>
-                    )}
                 </div>
 
                 {isNewAsset && gnssStatus === 'UNDERGROUND_NO_FIX' && (
-                    <div className="grid grid-cols-4 border-t border-[#E2E8F0] dark:border-[#12151C] divide-x divide-[#E2E8F0] dark:divide-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+                    <div className="grid grid-cols-4 border-t border-[#E2E8F0] dark:border-[#12151C] divide-x divide-[#E2E8F0] dark:divide-[#12151C] bg-transparent">
                         {UNDERGROUND_SECTORS.map((sector) => {
                             const active = undergroundSector === sector;
                             return (
@@ -365,10 +339,11 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
                                             prev === sector ? '' : sector
                                         );
                                     }}
-                                    className={`min-h-[44px] border-0 font-mono text-microcopy font-bold uppercase cursor-pointer rounded-none transition-colors ${active
-                                        ? 'bg-[#C68346] text-white'
-                                        : 'bg-transparent text-[#475569] dark:text-[#8A93A6]'
-                                        }`}
+                                    className={`min-h-[40px] border-0 border-b-2 font-mono text-microcopy font-bold uppercase cursor-pointer rounded-none transition-colors bg-transparent ${
+                                        active
+                                            ? 'border-[#C68346] text-[#C68346]'
+                                            : 'border-transparent text-[#475569] dark:text-[#8A93A6]'
+                                    }`}
                                 >
                                     {t(`capture_v2.sector_${sector.toLowerCase()}`, sector)}
                                 </button>
@@ -378,14 +353,15 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
                 )}
 
                 {allowManualFallback && (
-                    <div className="grid grid-cols-2 border-t border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] rounded-none">
+                    <div className="grid grid-cols-2 border-t border-[#E2E8F0] dark:border-[#12151C] bg-transparent rounded-none">
                         <button
                             type="button"
                             onClick={() => setMethod('digital')}
-                            className={`min-h-[44px] font-mono text-microcopy font-bold uppercase border-0 cursor-pointer flex items-center justify-center gap-fib-8 rounded-none ${method === 'digital'
-                                ? 'bg-[#C68346] text-white'
-                                : 'bg-transparent text-[#475569] dark:text-[#8A93A6]'
-                                }`}
+                            className={`min-h-[44px] font-mono text-microcopy font-bold uppercase border-0 border-b-2 cursor-pointer flex items-center justify-center gap-fib-8 rounded-none bg-transparent ${
+                                method === 'digital'
+                                    ? 'border-[#C68346] text-[#C68346]'
+                                    : 'border-transparent text-[#475569] dark:text-[#8A93A6]'
+                            }`}
                         >
                             <span className="material-symbols-outlined text-[18px]">
                                 photo_camera
@@ -395,10 +371,11 @@ export const QuickStockpileCapture: React.FC<QuickStockpileCaptureProps> = ({
                         <button
                             type="button"
                             onClick={() => setMethod('manual')}
-                            className={`min-h-[44px] font-mono text-microcopy font-bold uppercase border-0 cursor-pointer flex items-center justify-center gap-fib-8 rounded-none ${method === 'manual'
-                                ? 'bg-[#C68346] text-white'
-                                : 'bg-transparent text-[#475569] dark:text-[#8A93A6]'
-                                }`}
+                            className={`min-h-[44px] font-mono text-microcopy font-bold uppercase border-0 border-b-2 cursor-pointer flex items-center justify-center gap-fib-8 rounded-none bg-transparent ${
+                                method === 'manual'
+                                    ? 'border-[#C68346] text-[#C68346]'
+                                    : 'border-transparent text-[#475569] dark:text-[#8A93A6]'
+                            }`}
                         >
                             <span className="material-symbols-outlined text-[18px]">straighten</span>
                             <span>{t('capture.manual_title', 'COTAS ESCRITORIO')}</span>

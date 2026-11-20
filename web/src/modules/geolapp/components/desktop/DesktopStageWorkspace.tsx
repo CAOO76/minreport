@@ -14,11 +14,19 @@ import { UNDECLARED_TECH_VALUE } from '../../../../components/common/ReportBlock
 import { useOptionalTheme } from '../../../../context/ThemeContext';
 import { computeStockpileMeasurementChain } from '../../core/services/calculation-engine';
 import { dataService } from '../../core/services/DataService';
+import {
+    photogrammetry3dService,
+    type Reconstruct3DResult,
+} from '../../core/services/photogrammetry3d.service';
 import { useResolvedStockpileImage } from '../../core/services/StorageService';
 import { downloadGeolappVectorPdf } from '../../core/utils/vectorPdfGenerator';
 import type { StockpileAsset, StockpileMeasurement } from '../../core/types/GeolappTypes';
 import { StockpileStaticMapCard } from '../StockpileStaticMapCard';
 import { StockpileTwin3DLazy } from '../StockpileTwin3DLazy';
+import {
+    StockpileVisualStage,
+    type StockpileVisualMode,
+} from '../StockpileVisualStage';
 import {
     computeAssetMetallurgySummary,
     formatCasTraceLabel,
@@ -135,8 +143,8 @@ const CampaignComparisonPanel: React.FC<{
                     <button
                         type="button"
                         onClick={onClose}
-                        aria-label={t('common.close', 'Cerrar')}
-                        title={t('common.close', 'Cerrar')}
+                        aria-label={t('common.close_button', 'CERRAR')}
+                        title={t('common.close_button', 'CERRAR')}
                         className="bg-transparent border-0 outline-none p-1 text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] cursor-pointer rounded-none"
                     >
                         <span className="material-symbols-outlined text-[18px]">close</span>
@@ -254,13 +262,20 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
     const isDark = themeCtx?.theme === 'dark';
 
     const [stageTab, setStageTab] = useState<StageTab>('OVERVIEW');
-    const [heroPhotoMode, setHeroPhotoMode] = useState<'latest' | 'initial'>('latest');
+    const [visualMode, setVisualMode] = useState<StockpileVisualMode>('DUAL');
     const [ledgerCompareOpen, setLedgerCompareOpen] = useState(false);
+    const [isReconstructing3D, setIsReconstructing3D] = useState(false);
+    const [localMeshByKey, setLocalMeshByKey] = useState<Record<string, Reconstruct3DResult>>({});
+    const [reconstructNotice, setReconstructNotice] = useState<{
+        type: 'success' | 'error';
+        text: string;
+    } | null>(null);
 
     useEffect(() => {
         setStageTab('OVERVIEW');
-        setHeroPhotoMode('latest');
+        setVisualMode('DUAL');
         setLedgerCompareOpen(false);
+        setReconstructNotice(null);
     }, [asset?.id]);
 
     const chain = useMemo(
@@ -285,32 +300,17 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
         [activeMeas]
     );
 
-    const heroPhotoRaw =
-        heroPhotoMode === 'initial' && asset?.initial_photo_url
-            ? asset.initial_photo_url
-            : chain.summary.lastPhotoUrl ||
-            asset?.last_photo_url ||
-            asset?.initial_photo_url ||
-            asset?.thumbnail_url;
-    const resolvedHeroPhoto = useResolvedStockpileImage(heroPhotoRaw);
-
     const canonicalFix = useMemo(() => resolveCanonicalFix(asset), [asset]);
 
     if (!asset) {
         return (
             <section className="flex-1 flex items-center justify-center p-fib-55 bg-[#FFFFFF] dark:bg-[#000000]">
-                <div className="text-center space-y-fib-13 max-w-md">
+                <div className="text-center space-y-fib-13">
                     <span className="material-symbols-outlined text-[48px] text-[#94A3B8] dark:text-[#5A6072]">
                         landscape
                     </span>
-                    <p className="text-body-main font-mono text-[#0F172A] dark:text-[#F3F4F6]">
+                    <p className="text-body-main font-mono uppercase text-[#0F172A] dark:text-[#F3F4F6]">
                         {t('analytics.no_assets', 'Sin acopios registrados')}
-                    </p>
-                    <p className="text-data-dense font-mono text-[#475569] dark:text-[#8A93A6]">
-                        {t(
-                            'monitoring.field_only_create_hint',
-                            'Los acopios nuevos se levantan en terreno desde la aplicación móvil MINREPORT.'
-                        )}
                     </p>
                 </div>
             </section>
@@ -323,14 +323,112 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
         chain.summary.lastDeltaVolumenM3 ?? asset.last_delta_volumen_m3,
         chain.summary.lastDeltaVolumenPct ?? asset.last_delta_volumen_pct
     );
-    const hasInitialAlt = Boolean(
-        asset.initial_photo_url &&
-        chain.summary.lastPhotoUrl &&
-        asset.initial_photo_url !== chain.summary.lastPhotoUrl
-    );
     const selectedMeas =
         orderedMeas.find((m) => m.id === selectedMeasurementId) ||
         chain.summary.latestActive ||
+        null;
+    const meshCacheKey = `${asset.id}:${selectedMeas?.id || 'asset'}`;
+    const localMeshResult = localMeshByKey[meshCacheKey] ?? null;
+
+    const effMeshUrl =
+        localMeshResult?.meshUrl ?? selectedMeas?.mesh_url ?? asset.mesh_url ?? null;
+    const effMeshSha256 =
+        localMeshResult?.sha256 ?? selectedMeas?.mesh_sha256 ?? asset.mesh_sha256;
+    const effMeshSource =
+        localMeshResult?.source ?? selectedMeas?.mesh_source ?? asset.mesh_source;
+    const effTinVolumeM3 =
+        localMeshResult?.tinVolumeM3 ?? selectedMeas?.tin_volume_m3 ?? asset.tin_volume_m3 ?? null;
+    const effMeshCas =
+        localMeshResult ||
+        selectedMeas?.mesh_original_bytes !== undefined ||
+        selectedMeas?.mesh_optimized_bytes !== undefined ||
+        asset.mesh_original_bytes !== undefined ||
+        asset.mesh_optimized_bytes !== undefined ||
+        effMeshSha256
+            ? {
+                  originalBytes:
+                      localMeshResult?.originalBytes ??
+                      selectedMeas?.mesh_original_bytes ??
+                      asset.mesh_original_bytes,
+                  optimizedBytes:
+                      localMeshResult?.optimizedBytes ??
+                      selectedMeas?.mesh_optimized_bytes ??
+                      asset.mesh_optimized_bytes,
+                  savingsPct:
+                      localMeshResult?.savingsPct ??
+                      selectedMeas?.mesh_savings_pct ??
+                      asset.mesh_savings_pct,
+                  sha256: effMeshSha256,
+              }
+            : undefined;
+
+    const hasDeclaredGeometry = Boolean(
+        selectedMeas?.geometry?.type &&
+            selectedMeas?.geometry?.dimensions &&
+            Object.values(selectedMeas.geometry.dimensions).some(
+                (v) => typeof v === 'number' && Number.isFinite(v) && v > 0
+            )
+    );
+
+    const handleReconstruct3D = async () => {
+        if (!selectedMeas?.geometry?.type || !selectedMeas?.geometry?.dimensions) return;
+        setIsReconstructing3D(true);
+        setReconstructNotice(null);
+        try {
+            const result = await photogrammetry3dService.reconstructStockpile3D({
+                stockpileId: asset.id,
+                measurementId: selectedMeas.id,
+                geometryType: selectedMeas.geometry.type,
+                dimensions: selectedMeas.geometry.dimensions as Record<string, number | undefined>,
+                photoUrls: [
+                    ...(selectedMeas.photo_url ? [selectedMeas.photo_url] : []),
+                    ...(selectedMeas.perimeter_photo_urls || asset.perimeter_photo_urls || []),
+                ].filter((u) => Boolean(u) && !u.startsWith('data:')),
+            });
+            setLocalMeshByKey((prev) => ({ ...prev, [meshCacheKey]: result }));
+            await dataService.saveStockpileData(
+                {
+                    mesh_url: result.meshUrl,
+                    mesh_sha256: result.sha256,
+                    mesh_source: result.source,
+                    tin_volume_m3: result.tinVolumeM3,
+                    mesh_original_bytes: result.originalBytes,
+                    mesh_optimized_bytes: result.optimizedBytes,
+                    mesh_savings_pct: result.savingsPct,
+                },
+                asset.id
+            );
+            setReconstructNotice({
+                type: 'success',
+                text:
+                    result.source === 'LOCAL_DETERMINISTIC_TIN_GLB'
+                        ? t(
+                              'twin3d.reconstruction_offline',
+                              'Malla .glb generada localmente (TIN Determinista Offline-First).'
+                          )
+                        : t(
+                              'twin3d.reconstruction_ready',
+                              'Malla 3D .glb verificada y consolidada en CAS.'
+                          ),
+            });
+        } catch (err) {
+            setReconstructNotice({
+                type: 'error',
+                text: `${t('twin3d.reconstruction_error', 'Error al reconstruir gemelo 3D .glb')}${
+                    err instanceof Error && err.message ? `: ${err.message}` : ''
+                }`,
+            });
+        } finally {
+            setIsReconstructing3D(false);
+        }
+    };
+
+    const stagePhotoUrl =
+        selectedMeas?.photo_url ||
+        chain.summary.lastPhotoUrl ||
+        asset.last_photo_url ||
+        asset.initial_photo_url ||
+        asset.thumbnail_url ||
         null;
 
     return (
@@ -480,97 +578,135 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
                             </div>
                         </div>
 
-                        {/* Temporal Evolution Chart */}
-                        {chartData.length > 0 && (
-                            <div className="p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] rounded-none">
-                                <h3 className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mb-fib-13">
-                                    {t('analytics.evolution_chart_title', 'EVOLUCIÓN VOLUMEN (m³)')}
-                                </h3>
-                                <div className="h-52 w-full">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <AreaChart data={chartData}>
-                                            <CartesianGrid
-                                                strokeDasharray="3 3"
-                                                stroke={isDark ? '#12151C' : '#E2E8F0'}
-                                            />
-                                            <XAxis
-                                                dataKey="date"
-                                                tick={{
-                                                    fill: isDark ? '#8A93A6' : '#475569',
-                                                    fontSize: 11,
-                                                }}
-                                            />
-                                            <YAxis
-                                                tick={{
-                                                    fill: isDark ? '#8A93A6' : '#475569',
-                                                    fontSize: 11,
-                                                }}
-                                            />
-                                            <Tooltip
-                                                contentStyle={{
-                                                    backgroundColor: isDark ? '#07090D' : '#FFFFFF',
-                                                    borderColor: isDark ? '#12151C' : '#E2E8F0',
-                                                    borderRadius: 0,
-                                                    color: isDark ? '#F3F4F6' : '#0F172A',
-                                                }}
-                                            />
-                                            <Area
-                                                type="monotone"
-                                                dataKey="volumen"
-                                                stroke="#C68346"
-                                                fill="#C68346"
-                                                fillOpacity={0.18}
-                                                strokeWidth={2}
-                                            />
-                                        </AreaChart>
-                                    </ResponsiveContainer>
-                                </div>
+                        {reconstructNotice && (
+                            <div
+                                role="status"
+                                className={`p-fib-13 border rounded-none shadow-none flex items-center justify-between gap-fib-13 text-data-dense font-mono ${
+                                    reconstructNotice.type === 'error'
+                                        ? 'border-red-600/50 bg-red-600/10 text-red-700 dark:text-red-400'
+                                        : 'border-[#00AEEF]/50 bg-[#00AEEF]/10 text-[#0F172A] dark:text-[#F3F4F6]'
+                                }`}
+                            >
+                                <span>{reconstructNotice.text}</span>
+                                <button
+                                    type="button"
+                                    onClick={() => setReconstructNotice(null)}
+                                    aria-label={t('common.close_button', 'CERRAR')}
+                                    className="bg-transparent border-0 outline-none p-1 text-current cursor-pointer rounded-none"
+                                >
+                                    <span className="material-symbols-outlined text-[16px]">
+                                        close
+                                    </span>
+                                </button>
                             </div>
                         )}
 
-                        {/* Dual Golden Ratio Visual Strip: CAS Hero Photo + Static Map */}
-                        <div className="grid grid-cols-1 md:grid-cols-[1.618fr_1fr] gap-fib-13 items-stretch">
-                            <div className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] rounded-none flex flex-col overflow-hidden">
-                                <div className="px-fib-13 py-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between">
-                                    <span className="text-microcopy font-mono font-bold uppercase text-[#475569] dark:text-[#8A93A6]">
-                                        {heroPhotoMode === 'initial'
-                                            ? t('hero.initial_photo_label', 'FOTO INICIAL')
-                                            : t('hero.latest_photo_label', 'ÚLTIMA CAPTURA')}
-                                    </span>
-                                    {hasInitialAlt && (
-                                        <button
-                                            type="button"
-                                            onClick={() =>
-                                                setHeroPhotoMode((p) =>
-                                                    p === 'latest' ? 'initial' : 'latest'
-                                                )
-                                            }
-                                            className="bg-transparent border-0 text-microcopy font-mono font-bold uppercase text-[#00AEEF] cursor-pointer rounded-none"
-                                        >
-                                            {heroPhotoMode === 'latest'
-                                                ? t('hero.switch_to_initial', 'VER INICIAL')
-                                                : t('hero.switch_to_latest', 'VER ÚLTIMA')}
-                                        </button>
-                                    )}
-                                </div>
-                                {resolvedHeroPhoto ? (
-                                    <SecureImage
-                                        src={resolvedHeroPhoto}
-                                        alt={asset.name}
-                                        className="w-full h-56 object-cover"
-                                    />
-                                ) : (
-                                    <div className="h-56 flex items-center justify-center text-[#94A3B8] dark:text-[#5A6072]">
-                                        <span className="material-symbols-outlined text-[40px]">
-                                            landscape
-                                        </span>
+                        {/* Escenario Visual Unificado: Foto Real / Malla 3D / Dual */}
+                        <div className="p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] rounded-none shadow-none">
+                            <StockpileVisualStage
+                                photoUrl={stagePhotoUrl}
+                                initialPhotoUrl={asset.initial_photo_url}
+                                perimeterPhotoUrls={
+                                    selectedMeas?.perimeter_photo_urls ??
+                                    asset.perimeter_photo_urls ??
+                                    []
+                                }
+                                boulderDetections={
+                                    selectedMeas?.boulder_detections ?? asset.boulder_detections
+                                }
+                                slopeAngleDeg={
+                                    selectedMeas?.detected_slope_angle_deg ??
+                                    asset.detected_slope_angle_deg ??
+                                    null
+                                }
+                                meshUrl={effMeshUrl}
+                                fallbackGeometry={
+                                    hasDeclaredGeometry && selectedMeas?.geometry
+                                        ? {
+                                              type: selectedMeas.geometry.type,
+                                              dimensions: selectedMeas.geometry.dimensions,
+                                          }
+                                        : null
+                                }
+                                copperDomain={asset.copper_domain}
+                                tinVolumeM3={effTinVolumeM3}
+                                casMetrics={effMeshCas}
+                                meshSource={effMeshSource}
+                                altLabel={asset.name}
+                                isMobile={false}
+                                heightPx={320}
+                                canReconstruct3D={hasDeclaredGeometry}
+                                isReconstructing3D={isReconstructing3D}
+                                onReconstruct3D={() => void handleReconstruct3D()}
+                                mode={visualMode}
+                                onModeChange={setVisualMode}
+                            />
+                        </div>
+
+                        {/* Golden Ratio Temporal Chart + Static Satellite Map */}
+                        <div
+                            className={
+                                chartData.length > 0
+                                    ? 'grid grid-cols-1 xl:grid-cols-[1.618fr_1fr] gap-fib-13 items-stretch'
+                                    : ''
+                            }
+                        >
+                            {chartData.length > 0 && (
+                                <div className="p-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] rounded-none">
+                                    <h3 className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6] mb-fib-13">
+                                        {t(
+                                            'analytics.evolution_chart_title',
+                                            'EVOLUCIÓN VOLUMEN (m³)'
+                                        )}
+                                    </h3>
+                                    <div className="h-52 w-full">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <AreaChart data={chartData}>
+                                                <CartesianGrid
+                                                    strokeDasharray="3 3"
+                                                    stroke={isDark ? '#12151C' : '#E2E8F0'}
+                                                />
+                                                <XAxis
+                                                    dataKey="date"
+                                                    tick={{
+                                                        fill: isDark ? '#8A93A6' : '#475569',
+                                                        fontSize: 11,
+                                                    }}
+                                                />
+                                                <YAxis
+                                                    tick={{
+                                                        fill: isDark ? '#8A93A6' : '#475569',
+                                                        fontSize: 11,
+                                                    }}
+                                                />
+                                                <Tooltip
+                                                    contentStyle={{
+                                                        backgroundColor: isDark
+                                                            ? '#07090D'
+                                                            : '#FFFFFF',
+                                                        borderColor: isDark ? '#12151C' : '#E2E8F0',
+                                                        borderRadius: 0,
+                                                        color: isDark ? '#F3F4F6' : '#0F172A',
+                                                    }}
+                                                />
+                                                <Area
+                                                    type="monotone"
+                                                    dataKey="volumen"
+                                                    stroke="#C68346"
+                                                    fill="#C68346"
+                                                    fillOpacity={0.18}
+                                                    strokeWidth={2}
+                                                />
+                                            </AreaChart>
+                                        </ResponsiveContainer>
                                     </div>
-                                )}
-                            </div>
+                                </div>
+                            )}
+
                             <StockpileStaticMapCard
                                 asset={asset}
                                 fix={canonicalFix}
-                                heightPx={224}
+                                heightPx={208}
                             />
                         </div>
                     </>
@@ -579,28 +715,19 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
                 {stageTab === 'TWIN_3D' && (
                     <div className="space-y-fib-21">
                         <StockpileTwin3DLazy
-                            meshUrl={selectedMeas?.mesh_url || asset.mesh_url}
+                            meshUrl={effMeshUrl}
                             fallbackGeometry={
-                                selectedMeas?.geometry
+                                hasDeclaredGeometry && selectedMeas?.geometry
                                     ? {
-                                        type: selectedMeas.geometry.type,
-                                        dimensions: selectedMeas.geometry.dimensions,
-                                    }
+                                          type: selectedMeas.geometry.type,
+                                          dimensions: selectedMeas.geometry.dimensions,
+                                      }
                                     : null
                             }
                             copperDomain={asset.copper_domain}
-                            tinVolumeM3={selectedMeas?.tin_volume_m3 ?? asset.tin_volume_m3}
-                            meshSource={selectedMeas?.mesh_source ?? asset.mesh_source}
-                            casMetrics={{
-                                originalBytes:
-                                    selectedMeas?.mesh_original_bytes ?? asset.mesh_original_bytes,
-                                optimizedBytes:
-                                    selectedMeas?.mesh_optimized_bytes ??
-                                    asset.mesh_optimized_bytes,
-                                savingsPct:
-                                    selectedMeas?.mesh_savings_pct ?? asset.mesh_savings_pct,
-                                sha256: selectedMeas?.mesh_sha256 ?? asset.mesh_sha256,
-                            }}
+                            tinVolumeM3={effTinVolumeM3}
+                            meshSource={effMeshSource}
+                            casMetrics={effMeshCas}
                             heightPx={380}
                         />
                     </div>
@@ -611,7 +738,10 @@ export const DesktopStageWorkspace: React.FC<DesktopStageWorkspaceProps> = ({
                         {ledgerCompareOpen && selectedMeas && (
                             <CampaignComparisonPanel
                                 measurement={selectedMeas}
-                                onOpen3D={() => setStageTab('TWIN_3D')}
+                                onOpen3D={() => {
+                                    setVisualMode('3D');
+                                    setStageTab('OVERVIEW');
+                                }}
                                 onClose={() => setLedgerCompareOpen(false)}
                             />
                         )}

@@ -1551,7 +1551,7 @@ function extractOpeningTags(source: string, tagNames: string[]): string[] {
         'StockpileDossierView móvil no debe duplicar footer de captura sobre barra inferior'
     );
 
-    // Aserciones publicación privada 1º DEV en minreport.com + App móvil GEOLAPP-only
+    // Aserciones publicación privada 1º DEV en minreport.com + App móvil MINREPORT ACOPIOS-only
     assert.ok(fs.existsSync(path.join(ROOT_DIR, 'Dockerfile')), 'Debe existir Dockerfile raíz para Cloud Run southamerica-west1');
     assert.ok(fs.existsSync(path.join(ROOT_DIR, '.dockerignore')), 'Debe existir .dockerignore raíz');
     assert.ok(fs.existsSync(path.join(WEB_SRC, 'config/releaseStage.ts')), 'Debe existir web/src/config/releaseStage.ts');
@@ -1600,9 +1600,9 @@ function extractOpeningTags(source: string, tagNames: string[]): string[] {
     );
     assert.ok(
         devLaunchpadSrc.includes('items-center justify-center') &&
-            devLaunchpadSrc.includes("id: 'geolapp'") &&
+            devLaunchpadSrc.includes("id: 'stockpile'") &&
             !devLaunchpadSrc.includes("id: 'opermaq'"),
-        'DevFieldTestLaunchpad debe centrar el icono único de GEOLAPP® sin mostrar otros módulos aún'
+        'DevFieldTestLaunchpad debe centrar el icono único de MINREPORT ACOPIOS sin mostrar otros módulos aún'
     );
     assert.ok(
         androidManifestSrc.includes('android:usesCleartextTraffic="false"'),

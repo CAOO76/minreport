@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Capacitor } from '@capacitor/core';
 import {
@@ -18,7 +18,7 @@ import { downloadGeolappVectorPdf } from '../core/utils/vectorPdfGenerator';
 import { isValidBox2D } from '../core/utils/rosinRammler';
 import { buildCanonicalGeoFix } from '../../../core/geo/wgs84UtmProjection';
 import { StockpileStaticMapCard } from './StockpileStaticMapCard';
-import { StockpileTwin3DLazy } from './StockpileTwin3DLazy';
+import { StockpileVisualStage } from './StockpileVisualStage';
 import {
     ReportBlockEditable,
     ReportFieldRow,
@@ -67,35 +67,6 @@ const formatSignedDeltaValue = (
     return base;
 };
 
-const PerimeterPhotoThumb: React.FC<{ url: string; index: number; flat?: boolean }> = ({
-    url,
-    index,
-    flat = false,
-}) => {
-    const resolved = useResolvedStockpileImage(url);
-    return (
-        <div
-            className={`w-24 h-20 shrink-0 flex items-center justify-center overflow-hidden rounded-none ${
-                flat
-                    ? 'bg-transparent border-0'
-                    : 'bg-[#F8FAFC] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C]'
-            }`}
-        >
-            {resolved ? (
-                <SecureImage
-                    src={resolved}
-                    alt={`P${index + 1}`}
-                    className="w-full h-full object-cover"
-                />
-            ) : (
-                <span className="material-symbols-outlined text-[20px] text-[#94A3B8] dark:text-[#5A6072]">
-                    photo_camera
-                </span>
-            )}
-        </div>
-    );
-};
-
 export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
     measurement,
     asset,
@@ -121,6 +92,10 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
     const [isReconstructing3D, setIsReconstructing3D] = useState(false);
     const [localMeshResult, setLocalMeshResult] = useState<Reconstruct3DResult | null>(null);
     const [localRosinOverride, setLocalRosinOverride] = useState<RosinRammlerProfile | null>(null);
+
+    useEffect(() => {
+        setLocalMeshResult(null);
+    }, [measurement.id]);
     const [isSavingHitl, setIsSavingHitl] = useState(false);
     const [statusBanner, setStatusBanner] = useState<{
         type: 'success' | 'error' | 'info';
@@ -606,35 +581,70 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
         }
     };
 
+    const effMeshUrl = localMeshResult?.meshUrl ?? measurement.mesh_url ?? null;
+    const effMeshSha256 = localMeshResult?.sha256 ?? measurement.mesh_sha256;
+    const effMeshSource = localMeshResult?.source ?? measurement.mesh_source;
+    const effTinVolumeM3 = localMeshResult?.tinVolumeM3 ?? measurement.tin_volume_m3 ?? null;
+    const effMeshCas =
+        localMeshResult ||
+        measurement.mesh_original_bytes !== undefined ||
+        measurement.mesh_optimized_bytes !== undefined ||
+        effMeshSha256
+            ? {
+                  originalBytes:
+                      localMeshResult?.originalBytes ?? measurement.mesh_original_bytes,
+                  optimizedBytes:
+                      localMeshResult?.optimizedBytes ?? measurement.mesh_optimized_bytes,
+                  savingsPct:
+                      localMeshResult?.savingsPct ?? measurement.mesh_savings_pct,
+                  sha256: effMeshSha256,
+              }
+            : undefined;
+    const hasDeclaredGeometry = Boolean(
+        measurement.geometry?.type &&
+            measurement.geometry?.dimensions &&
+            Object.values(measurement.geometry.dimensions).some(
+                (v) => typeof v === 'number' && Number.isFinite(v) && v > 0
+            )
+    );
+
     return (
         <main className="h-full w-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-atkinson overflow-hidden rounded-none shadow-none">
             <header
-                className={`shrink-0 px-fib-13 h-14 border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between gap-fib-8 no-print ${
+                className={`shrink-0 h-14 flex items-center justify-between gap-fib-8 no-print rounded-none shadow-none ${
                     isMobile
-                        ? 'bg-[#FFFFFF] dark:bg-[#000000]'
-                        : 'px-fib-21 bg-[#F8FAFC] dark:bg-[#07090D]'
+                        ? 'px-fib-13 bg-transparent border-0 border-b border-[#E2E8F0] dark:border-[#12151C]'
+                        : 'px-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C]'
                 }`}
             >
-                <div className="flex items-center gap-fib-13 min-w-0">
+                <div className="flex items-center gap-fib-8 min-w-0">
                     <button
                         type="button"
                         onClick={onBack}
                         title={t('common.back_button', 'VOLVER')}
                         aria-label={t('common.back_button', 'VOLVER')}
-                        className="bg-transparent border-0 outline-none p-2 text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] cursor-pointer rounded-none"
+                        className={`bg-transparent border-0 outline-none text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] cursor-pointer rounded-none shrink-0 flex items-center justify-center ${
+                            isMobile ? 'min-w-[48px] min-h-[48px]' : 'p-2'
+                        }`}
                     >
                         <span className="material-symbols-outlined text-[24px] text-[#C68346]">
                             arrow_back
                         </span>
                     </button>
-                    <div className="min-w-0">
-                        <span className="block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] truncate">
-                            {asset?.name || measurement.assetId} · {measurement.id}
-                        </span>
-                        <h1 className="text-h1-header font-bold uppercase tracking-tight truncate">
-                            {t('analytics.detail_title', 'DOSSIER DE MEDICIÓN')}
+                    {isMobile ? (
+                        <h1 className="text-h2-section font-mono font-bold uppercase tracking-tight truncate">
+                            {asset?.name || measurement.assetId}
                         </h1>
-                    </div>
+                    ) : (
+                        <div className="min-w-0">
+                            <span className="block text-microcopy font-mono uppercase text-[#475569] dark:text-[#8A93A6] truncate">
+                                {asset?.name || measurement.assetId} · {measurement.id}
+                            </span>
+                            <h1 className="text-h1-header font-bold uppercase tracking-tight truncate">
+                                {t('analytics.detail_title', 'DOSSIER DE MEDICIÓN')}
+                            </h1>
+                        </div>
+                    )}
                 </div>
 
                 <div className="flex items-center gap-fib-8 shrink-0">
@@ -644,7 +654,9 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                         disabled={isExportingPdf}
                         title={t('pdf.export_button', 'EXPORTAR PDF VECTORIAL')}
                         aria-label={t('pdf.export_button', 'EXPORTAR PDF VECTORIAL')}
-                        className="bg-transparent border-0 outline-none p-2 text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] disabled:opacity-40 cursor-pointer rounded-none"
+                        className={`bg-transparent border-0 outline-none text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] disabled:opacity-40 cursor-pointer rounded-none flex items-center justify-center ${
+                            isMobile ? 'min-w-[48px] min-h-[48px]' : 'p-2'
+                        }`}
                     >
                         <span className="material-symbols-outlined text-[24px]">
                             picture_as_pdf
@@ -660,7 +672,9 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                                     : t('analytics.ignored_label', 'IGNORADO')
                             }
                             aria-label={t('analytics.ignored_label', 'IGNORADO')}
-                            className={`bg-transparent border-0 outline-none p-2 cursor-pointer rounded-none ${measurement.ignored
+                            className={`bg-transparent border-0 outline-none cursor-pointer rounded-none flex items-center justify-center ${
+                                isMobile ? 'min-w-[48px] min-h-[48px]' : 'p-2'
+                            } ${measurement.ignored
                                 ? 'text-red-600 dark:text-red-400'
                                 : 'text-[#475569] dark:text-[#8A93A6] hover:text-[#C68346]'
                                 }`}
@@ -682,7 +696,11 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                 </div>
             )}
 
-            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-fib-21">
+            <div
+                className={`flex-1 min-h-0 overflow-y-auto custom-scrollbar ${
+                    isMobile ? 'px-fib-13 py-fib-13' : 'p-fib-21'
+                }`}
+            >
                 <div className="max-w-5xl mx-auto flex flex-col gap-fib-21 pb-fib-55">
                     {statusBanner && (
                         <div
@@ -713,84 +731,37 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                                 : 'p-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none flex flex-col gap-fib-13'
                         }
                     >
-                        <div
-                            className={`relative w-full h-64 sm:h-80 flex items-center justify-center overflow-hidden rounded-none ${
-                                isMobile
-                                    ? 'bg-transparent border-0'
-                                    : 'bg-[#FFFFFF] dark:bg-[#000000] border border-[#E2E8F0] dark:border-[#12151C]'
-                            }`}
-                        >
-                            {resolvedPhoto ? (
-                                <>
-                                    <SecureImage
-                                        src={resolvedPhoto}
-                                        alt={asset?.name || measurement.assetId}
-                                        className="w-full h-full object-contain"
-                                    />
-                                    {effBoulders.length > 0 && (
-                                        <svg
-                                            viewBox="0 0 1000 1000"
-                                            preserveAspectRatio="none"
-                                            aria-hidden="true"
-                                            className="absolute inset-0 w-full h-full pointer-events-none"
-                                        >
-                                            {effBoulders.map((b, idx) => {
-                                                const [ymin, xmin, ymax, xmax] = b.box_2d;
-                                                const isOversize =
-                                                    typeof b.estimated_mm === 'number' &&
-                                                    b.estimated_mm >= 250;
-                                                const stroke = isOversize ? '#C68346' : '#00AEEF';
-                                                return (
-                                                    <g
-                                                        key={`${ymin}_${xmin}_${ymax}_${xmax}_${idx}`}
-                                                    >
-                                                        <rect
-                                                            x={xmin}
-                                                            y={ymin}
-                                                            width={Math.max(1, xmax - xmin)}
-                                                            height={Math.max(1, ymax - ymin)}
-                                                            fill="none"
-                                                            stroke={stroke}
-                                                            strokeWidth={4}
-                                                            vectorEffect="non-scaling-stroke"
-                                                        />
-                                                        {typeof b.estimated_mm === 'number' && (
-                                                            <text
-                                                                x={Math.min(910, xmin + 8)}
-                                                                y={Math.max(26, ymin + 24)}
-                                                                fill={stroke}
-                                                                fontSize="24"
-                                                                fontFamily="monospace"
-                                                                fontWeight="700"
-                                                            >
-                                                                {Math.round(b.estimated_mm)}mm
-                                                            </text>
-                                                        )}
-                                                    </g>
-                                                );
-                                            })}
-                                        </svg>
-                                    )}
-                                </>
-                            ) : (
-                                <span className="material-symbols-outlined text-[40px] text-[#94A3B8] dark:text-[#5A6072]">
-                                    image_not_supported
-                                </span>
-                            )}
-                        </div>
-
-                        {perimeterUrls.length > 0 && (
-                            <div className="flex items-center gap-fib-8 overflow-x-auto hide-scrollbar pt-fib-8">
-                                {perimeterUrls.map((url, idx) => (
-                                    <PerimeterPhotoThumb
-                                        key={`${url}_${idx}`}
-                                        url={url}
-                                        index={idx}
-                                        flat={isMobile}
-                                    />
-                                ))}
-                            </div>
-                        )}
+                        <StockpileVisualStage
+                            photoUrl={measurement.photo_url}
+                            initialPhotoUrl={asset?.initial_photo_url}
+                            perimeterPhotoUrls={perimeterUrls}
+                            boulderDetections={effBoulders}
+                            slopeAngleDeg={
+                                measurement.detected_slope_angle_deg ??
+                                asset?.detected_slope_angle_deg ??
+                                null
+                            }
+                            meshUrl={effMeshUrl}
+                            fallbackGeometry={
+                                hasDeclaredGeometry && measurement.geometry
+                                    ? {
+                                          type: measurement.geometry.type,
+                                          dimensions: measurement.geometry
+                                              .dimensions as Record<string, number | undefined>,
+                                      }
+                                    : null
+                            }
+                            copperDomain={effDomain}
+                            tinVolumeM3={effTinVolumeM3}
+                            casMetrics={effMeshCas}
+                            meshSource={effMeshSource}
+                            altLabel={asset?.name || measurement.assetId}
+                            isMobile={isMobile}
+                            heightPx={isMobile ? 236 : 340}
+                            canReconstruct3D={hasDeclaredGeometry}
+                            isReconstructing3D={isReconstructing3D}
+                            onReconstruct3D={() => void handleReconstruct3D()}
+                        />
 
                         <ReportFieldRow
                             label={t('capture.cas_trace_label', 'TRAZABILIDAD CAS')}
@@ -894,103 +865,6 @@ export const MeasurementDetail: React.FC<MeasurementDetailProps> = ({
                             </div>
                         </div>
                     </section>
-
-                    {/* Gemelo Digital 3D (.glb) (Solo Escritorio) */}
-                    {!isMobile && (() => {
-                        const effMeshUrl = localMeshResult?.meshUrl ?? measurement.mesh_url ?? null;
-                        const effMeshSha256 =
-                            localMeshResult?.sha256 ?? measurement.mesh_sha256;
-                        const effMeshSource =
-                            localMeshResult?.source ?? measurement.mesh_source;
-                        const effTinVolumeM3 =
-                            localMeshResult?.tinVolumeM3 ?? measurement.tin_volume_m3 ?? null;
-                        const effMeshCas =
-                            localMeshResult ||
-                                measurement.mesh_original_bytes !== undefined ||
-                                measurement.mesh_optimized_bytes !== undefined ||
-                                effMeshSha256
-                                ? {
-                                    originalBytes:
-                                        localMeshResult?.originalBytes ??
-                                        measurement.mesh_original_bytes,
-                                    optimizedBytes:
-                                        localMeshResult?.optimizedBytes ??
-                                        measurement.mesh_optimized_bytes,
-                                    savingsPct:
-                                        localMeshResult?.savingsPct ??
-                                        measurement.mesh_savings_pct,
-                                    sha256: effMeshSha256,
-                                }
-                                : undefined;
-                        const hasDeclaredGeometry = Boolean(
-                            measurement.geometry?.type &&
-                            measurement.geometry?.dimensions &&
-                            Object.values(measurement.geometry.dimensions).some(
-                                (v) => typeof v === 'number' && Number.isFinite(v) && v > 0
-                            )
-                        );
-
-                        return (
-                            <section className="p-fib-21 bg-[#FFFFFF] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none flex flex-col gap-fib-13">
-                                <div className="flex items-center justify-between gap-fib-8">
-                                    <h3 className="text-microcopy font-mono font-bold uppercase tracking-wider text-[#0F172A] dark:text-[#F3F4F6]">
-                                        {t('twin3d.title', 'GEMELO DIGITAL 3D (.glb)')}
-                                    </h3>
-                                    {!effMeshUrl && hasDeclaredGeometry && (
-                                        <button
-                                            type="button"
-                                            onClick={() => void handleReconstruct3D()}
-                                            disabled={isReconstructing3D}
-                                            title={t(
-                                                'twin3d.reconstruct_button',
-                                                'RECONSTRUIR GEMELO 3D'
-                                            )}
-                                            aria-label={t(
-                                                'twin3d.reconstruct_button',
-                                                'RECONSTRUIR GEMELO 3D'
-                                            )}
-                                            className="bg-transparent border-0 outline-none p-1 text-[#475569] dark:text-[#8A93A6] hover:text-[#00AEEF] disabled:opacity-40 transition-colors cursor-pointer"
-                                        >
-                                            <span className="material-symbols-outlined text-[20px]">
-                                                view_in_ar
-                                            </span>
-                                        </button>
-                                    )}
-                                </div>
-
-                                {isReconstructing3D && (
-                                    <M3LinearProgress
-                                        indeterminate
-                                        ariaLabel={t(
-                                            'twin3d.reconstructing',
-                                            'RECONSTRUYENDO GEMELO 3D .glb...'
-                                        )}
-                                    />
-                                )}
-
-                                <StockpileTwin3DLazy
-                                    meshUrl={effMeshUrl}
-                                    fallbackGeometry={
-                                        hasDeclaredGeometry && measurement.geometry
-                                            ? {
-                                                type: measurement.geometry.type,
-                                                dimensions: measurement.geometry
-                                                    .dimensions as Record<
-                                                        string,
-                                                        number | undefined
-                                                    >,
-                                            }
-                                            : null
-                                    }
-                                    copperDomain={effDomain}
-                                    tinVolumeM3={effTinVolumeM3}
-                                    casMetrics={effMeshCas}
-                                    meshSource={effMeshSource}
-                                    heightPx={360}
-                                />
-                            </section>
-                        );
-                    })()}
 
                     <section
                         className={

@@ -157,7 +157,7 @@ interface PdfCopy {
 const PDF_COPY: Record<PdfLocale, PdfCopy> = {
     es: {
         undeclared: '[Información técnica no declarada en ficha]',
-        brandTitle: 'MINREPORT · GEOLAPP(R)',
+        brandTitle: 'MINREPORT',
         certificateTitle: 'CERTIFICADO TÉCNICO VECTORIAL DE ACOPIO (Cu)',
         sovereignRegion: 'southamerica-west1',
         assetId: 'CÓDIGO ACOPIO',
@@ -254,13 +254,13 @@ const PDF_COPY: Record<PdfLocale, PdfCopy> = {
         colGrade: 'CuT/CuS%',
         colFine: 'Cu FINO',
         colCas: 'CAS',
-        footerText: 'MINREPORT · GEOLAPP(R) | southamerica-west1 | CERTIFICADO VECTORIAL',
+        footerText: 'MINREPORT | southamerica-west1 | CERTIFICADO VECTORIAL',
         pageLabel: 'PÁGINA',
         continuationSuffix: 'CONTINUACIÓN',
     },
     en: {
         undeclared: '[Technical information not declared on record]',
-        brandTitle: 'MINREPORT · GEOLAPP(R)',
+        brandTitle: 'MINREPORT',
         certificateTitle: 'VECTOR TECHNICAL STOCKPILE CERTIFICATE (Cu)',
         sovereignRegion: 'southamerica-west1',
         assetId: 'STOCKPILE CODE',
@@ -357,13 +357,13 @@ const PDF_COPY: Record<PdfLocale, PdfCopy> = {
         colGrade: 'CuT/CuS%',
         colFine: 'FINE Cu',
         colCas: 'CAS',
-        footerText: 'MINREPORT · GEOLAPP(R) | southamerica-west1 | VECTOR CERTIFICATE',
+        footerText: 'MINREPORT | southamerica-west1 | VECTOR CERTIFICATE',
         pageLabel: 'PAGE',
         continuationSuffix: 'CONTINUATION',
     },
     pt: {
         undeclared: '[Informação técnica não declarada na ficha]',
-        brandTitle: 'MINREPORT · GEOLAPP(R)',
+        brandTitle: 'MINREPORT',
         certificateTitle: 'CERTIFICADO TÉCNICO VETORIAL DE PILHA (Cu)',
         sovereignRegion: 'southamerica-west1',
         assetId: 'CÓDIGO DA PILHA',
@@ -460,7 +460,7 @@ const PDF_COPY: Record<PdfLocale, PdfCopy> = {
         colGrade: 'CuT/CuS%',
         colFine: 'Cu FINO',
         colCas: 'CAS',
-        footerText: 'MINREPORT · GEOLAPP(R) | southamerica-west1 | CERTIFICADO VETORIAL',
+        footerText: 'MINREPORT | southamerica-west1 | CERTIFICADO VETORIAL',
         pageLabel: 'PÁGINA',
         continuationSuffix: 'CONTINUAÇÃO',
     },
@@ -813,7 +813,7 @@ function buildSafeFilename(asset: StockpileAsset, explicit?: string): string {
         .replace(/^_+|_+$/g, '')
         .slice(0, 48) || 'STOCKPILE';
     const dateStamp = new Date().toISOString().slice(0, 10);
-    return `GEOLAPP_${baseName}_${dateStamp}.pdf`;
+    return `MINREPORT_${baseName}_${dateStamp}.pdf`;
 }
 
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -1237,7 +1237,7 @@ function drawVectorUtmCrosshairFallback(
 }
 
 /**
- * Genera el Certificado Técnico Vectorial A4 de GEOLAPP® en memoria mediante `pdf-lib`
+ * Genera el Certificado Técnico Vectorial A4 de MINREPORT en memoria mediante `pdf-lib`
  * (sin captura raster de DOM). Compatible con Node y Browser/Capacitor.
  */
 export async function generateGeolappVectorPdf(
@@ -1261,7 +1261,7 @@ export async function generateGeolappVectorPdf(
     pdfDoc.setTitle(sanitizePdfText(`${copy.brandTitle} - ${asset.name || asset.id}`));
     pdfDoc.setAuthor(sanitizePdfText(options?.authorEmail || asset.createdBy || 'MINREPORT'));
     pdfDoc.setSubject(sanitizePdfText(copy.certificateTitle));
-    pdfDoc.setProducer('MINREPORT GEOLAPP Vector PDF Engine (pdf-lib)');
+    pdfDoc.setProducer('MINREPORT Vector PDF Engine (pdf-lib)');
     pdfDoc.setCreator('MINREPORT southamerica-west1');
 
     const fonts: FontSet = {
@@ -2355,7 +2355,7 @@ export async function downloadGeolappVectorPdf(
                 try {
                     await Share.share({
                         title: filename,
-                        text: sanitizePdfText(`MINREPORT · GEOLAPP(R) - ${asset.name || asset.id}`),
+                        text: sanitizePdfText(`MINREPORT - ${asset.name || asset.id}`),
                         url: cachedFile.uri,
                         dialogTitle: filename,
                     });

@@ -26,9 +26,9 @@ export const M3ModuleHudFallback: React.FC<M3ModuleHudFallbackProps> = ({
             role="status"
             aria-live="polite"
         >
-            <div className="w-full max-w-md p-fib-21 bg-[#F8FAFC] dark:bg-[#07090D] border border-[#E2E8F0] dark:border-[#12151C] rounded-none shadow-none space-y-fib-13">
+            <div className="w-full max-w-md space-y-fib-13">
                 <M3LinearProgress indeterminate ariaLabel={normalizedLabel} />
-                <span className="block font-mono text-microcopy uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
+                <span className="block font-mono text-microcopy uppercase tracking-wider text-center text-[#475569] dark:text-[#8A93A6]">
                     {normalizedLabel}
                 </span>
             </div>
@@ -149,6 +149,8 @@ export interface ModuleHostProps {
     domainMode?: OpermaqDomainMode | GeolappDomainMode;
     hostScope?: 'CLIENT' | 'DEV_GATEWAY' | 'TEST_PILOT';
     enforceEntitlement?: boolean;
+    onExitModule?: () => void;
+    mobileConnectivitySlot?: React.ReactNode;
 }
 
 function resolveModuleFallbackLabel(
@@ -164,7 +166,7 @@ function resolveModuleFallbackLabel(
         if (domainMode === 'SUPPLIERS') return t('core_shell.loading_opermaq_suppliers', 'CARGANDO MÓDULO OPERMAQ · PROVEEDORES');
         return t('core_shell.loading_opermaq', 'CARGANDO MÓDULO OPERMAQ');
     }
-    return t('core_shell.loading_geolapp_stockpile', 'CARGANDO GEOLAPP® · CONTROL DE STOCKPILES');
+    return t('core_shell.loading_geolapp_stockpile', 'MINREPORT · ACOPIOS');
 }
 
 export const ModuleHost: React.FC<ModuleHostProps> = ({
@@ -173,6 +175,8 @@ export const ModuleHost: React.FC<ModuleHostProps> = ({
     domainMode,
     hostScope,
     enforceEntitlement = true,
+    onExitModule,
+    mobileConnectivitySlot,
 }) => {
     const { t } = useTranslation();
     const descriptor = CORE_MODULE_MAP[moduleId];
@@ -188,6 +192,12 @@ export const ModuleHost: React.FC<ModuleHostProps> = ({
     }
     if (descriptor.supportsDomainMode && hostScope) {
         moduleProps.hostScope = hostScope;
+    }
+    if (onExitModule) {
+        moduleProps.onExitModule = onExitModule;
+    }
+    if (mobileConnectivitySlot !== undefined) {
+        moduleProps.mobileConnectivitySlot = mobileConnectivitySlot;
     }
 
     const hostNode = (

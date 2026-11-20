@@ -27,12 +27,12 @@ import {
     type SpokenStockpileSpecs,
 } from '../core/utils/spokenStockpileParser';
 import {
-    CasTelemetryBadge,
     type CasTelemetryMetrics,
     InlineStatusBanner,
     type InlineStatusMessage,
     computeCasMetrics,
     dataUrlToBlob,
+    formatCasSize,
     parseOptionalNonNegative,
 } from '../core/utils/captureHelpers';
 import type {
@@ -72,7 +72,7 @@ const ANCHOR_OPTIONS: Array<{
     icon: string;
     labelKey: string;
     fallbackLabel: string;
-    subLabel: string;
+    shortTag: string;
 }> = [
     {
         id: 'CONO_070',
@@ -80,7 +80,7 @@ const ANCHOR_OPTIONS: Array<{
         icon: 'traffic',
         labelKey: 'digital_v2.anchor_cone',
         fallbackLabel: 'CONO',
-        subLabel: '0.70 m',
+        shortTag: '0.7',
     },
     {
         id: 'MIRA_100',
@@ -88,7 +88,7 @@ const ANCHOR_OPTIONS: Array<{
         icon: 'straighten',
         labelKey: 'digital_v2.anchor_rod',
         fallbackLabel: 'MIRA',
-        subLabel: '1.00 m',
+        shortTag: '1.0',
     },
     {
         id: 'BALDE_280',
@@ -96,21 +96,21 @@ const ANCHOR_OPTIONS: Array<{
         icon: 'front_loader',
         labelKey: 'digital_v2.anchor_bucket',
         fallbackLabel: 'BALDE',
-        subLabel: '2.80 m',
+        shortTag: '2.8',
     },
     {
         id: 'MANUAL_BASE_M',
         icon: 'edit',
         labelKey: 'digital_v2.anchor_manual',
-        fallbackLabel: 'BASE m',
-        subLabel: '1 COTA',
+        fallbackLabel: 'BASE',
+        shortTag: 'm',
     },
     {
         id: 'NONE',
-        icon: 'do_not_disturb_on',
+        icon: 'auto_awesome',
         labelKey: 'digital_v2.anchor_none',
-        fallbackLabel: 'SIN ANCLA',
-        subLabel: 'AUTO IA',
+        fallbackLabel: 'AUTO',
+        shortTag: '',
     },
 ];
 
@@ -368,12 +368,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
             const msg = err instanceof Error ? err.message : '';
             setStatusMessage({
                 severity: 'warning',
-                text:
-                    msg ||
-                    t(
-                        'digital_v2.ai_deferred_notice',
-                        'IA no disponible ahora; la captura quedará en cola automática.'
-                    ),
+                text: msg || 'IA -> COLA',
             });
             void triggerFieldNotification('WARNING');
             return null;
@@ -387,7 +382,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         if (!photoBlob) {
             setStatusMessage({
                 severity: 'error',
-                text: t('digital_v2.photo_required', 'Capture una fotografía del acopio para guardar.'),
+                text: t('digital_v2.photo_required', 'FOTO REQUERIDA'),
             });
             void triggerFieldNotification('ERROR');
             return;
@@ -396,10 +391,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
             setShowNumPad(true);
             setStatusMessage({
                 severity: 'warning',
-                text: t(
-                    'digital_v2.manual_base_required',
-                    'Ingrese la cota base de referencia en el teclado numérico.'
-                ),
+                text: t('digital_v2.base_dim_label', 'BASE m'),
             });
             void triggerFieldNotification('WARNING');
             return;
@@ -583,7 +575,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
             const msg = err instanceof Error ? err.message : '';
             setStatusMessage({
                 severity: 'error',
-                text: msg || t('digital_v2.save_error', 'No se pudo guardar la captura.'),
+                text: msg || t('digital_v2.save_error', 'ERROR'),
             });
             void triggerFieldNotification('ERROR');
         } finally {
@@ -591,10 +583,20 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
         }
     };
 
+    const casCompactLabel = useMemo(() => {
+        if (casMetrics) {
+            return `${formatCasSize(casMetrics.originalBytes)} -> ${formatCasSize(casMetrics.optimizedBytes)} (-${casMetrics.savingsPct.toFixed(0)}%)`;
+        }
+        if (photoBlob && photoBlob.size > 0) {
+            return formatCasSize(photoBlob.size);
+        }
+        return null;
+    }, [casMetrics, photoBlob]);
+
     return (
         <div className="h-full w-full flex-1 flex flex-col bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-atkinson overflow-hidden rounded-none shadow-none select-none">
             {!hideHeader && (
-                <header className="shrink-0 px-fib-13 py-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-between gap-fib-8">
+                <header className="shrink-0 min-h-[56px] pt-[env(safe-area-inset-top)] px-fib-13 border-b border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] flex items-center justify-between gap-fib-8">
                     <button
                         type="button"
                         onClick={onBack}
@@ -604,7 +606,7 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                         <span className="material-symbols-outlined text-[24px]">arrow_back</span>
                     </button>
                     <h2 className="flex-1 text-h2-section font-mono font-bold uppercase truncate">
-                        {draftAsset?.name || t('scanner.title', 'CAPTURA DIGITAL IA')}
+                        {draftAsset?.name || t('scanner.title', 'CAPTURA')}
                     </h2>
                     <span className="material-symbols-outlined text-[22px] text-[#00AEEF]">
                         photo_camera
@@ -612,7 +614,6 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 </header>
             )}
 
-            {/* Ocultos para compatibilidad nativa / web fallback */}
             <input
                 ref={cameraInputRef}
                 type="file"
@@ -643,19 +644,42 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                 className="hidden"
             />
 
-            <div className="flex-1 min-h-0 overflow-y-auto p-fib-21 space-y-fib-21 pb-fib-55">
-                {statusMessage && (
-                    <InlineStatusBanner
-                        message={statusMessage}
-                        onDismiss={() => setStatusMessage(null)}
-                    />
-                )}
+            {/* HUD IMU + Red (1 franja hairline) */}
+            <div className="shrink-0 px-fib-13 h-10 border-b border-[#E2E8F0] dark:border-[#12151C] bg-transparent flex items-center justify-between gap-fib-8 font-mono text-microcopy font-bold uppercase tabular-nums">
+                <div className="flex items-center gap-fib-8 min-w-0">
+                    <span
+                        className={`material-symbols-outlined text-[18px] ${
+                            isImuLevelOptimal ? 'text-[#00AEEF]' : 'text-[#C68346]'
+                        }`}
+                    >
+                        screen_rotation
+                    </span>
+                    <span className="text-[#0F172A] dark:text-[#F3F4F6] truncate">
+                        {imu.pitchDeg !== null && imu.rollDeg !== null
+                            ? `${imu.pitchDeg.toFixed(1)}° · ${imu.rollDeg.toFixed(1)}°`
+                            : '--° · --°'}
+                    </span>
+                    <span className={isImuLevelOptimal ? 'text-[#00AEEF]' : 'text-[#C68346]'}>
+                        {isImuLevelOptimal
+                            ? t('digital_v2.imu_level_ok', 'NIVELADO')
+                            : t('digital_v2.imu_level_aim', 'ENCUADRAR')}
+                    </span>
+                </div>
 
-                {(isAnalyzing || isSaving) && (
-                    <div className="space-y-fib-8 p-fib-13 border border-[#00AEEF] bg-[#00AEEF]/10 rounded-none">
-                        <div className="flex items-center gap-fib-13">
+                {!isOnline && (
+                    <div className="flex items-center gap-1 text-[#C68346] shrink-0">
+                        <span className="material-symbols-outlined text-[16px]">cloud_off</span>
+                        <span>COLA</span>
+                    </div>
+                )}
+            </div>
+
+            {(isAnalyzing || isSaving) && (
+                <div className="shrink-0 px-fib-13 py-fib-8 border-b border-[#00AEEF] bg-transparent space-y-fib-8">
+                    <div className="flex items-center justify-between gap-fib-8">
+                        <div className="flex items-center gap-fib-8">
                             <M3CircularProgress
-                                size={22}
+                                size={18}
                                 indeterminate={!isSaving}
                                 value={isSaving ? uploadProgress : undefined}
                                 ariaLabel={
@@ -664,106 +688,90 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                                         : t('digital_v2.analyzing_progress', 'Analizando con IA')
                                 }
                             />
-                            <span className="text-microcopy font-mono font-bold uppercase text-[#0F172A] dark:text-[#F3F4F6]">
-                                {isSaving
-                                    ? t('digital_v2.saving_label', 'CONSOLIDANDO EVIDENCIA CAS...')
-                                    : t('digital_v2.analyzing_label', 'MOTOR GEMINI ANALIZANDO TALUD Y VOLUMEN...')}
+                            <span className="text-microcopy font-mono font-bold uppercase text-[#00AEEF]">
+                                {isSaving ? 'CAS' : 'IA'}
                             </span>
                         </div>
-                        <M3LinearProgress
-                            indeterminate={!isSaving}
-                            value={isSaving ? uploadProgress : undefined}
-                            ariaLabel={t('digital_v2.progress_aria', 'Progreso de captura')}
-                        />
+                        {isSaving && (
+                            <span className="text-microcopy font-mono font-bold tabular-nums text-[#00AEEF]">
+                                {uploadProgress}%
+                            </span>
+                        )}
                     </div>
-                )}
+                    <M3LinearProgress
+                        indeterminate={!isSaving}
+                        value={isSaving ? uploadProgress : undefined}
+                        ariaLabel={t('digital_v2.progress_aria', 'Progreso de captura')}
+                    />
+                </div>
+            )}
 
-                {/* Nivelador IMU + Botón Cámara sobrio cuando aún no hay foto */}
+            {statusMessage && (
+                <div className="shrink-0 px-fib-13 pt-fib-8">
+                    <InlineStatusBanner
+                        message={statusMessage}
+                        onDismiss={() => setStatusMessage(null)}
+                    />
+                </div>
+            )}
+
+            {/* Visor Fotogramétrico HUD + Controles */}
+            <div className="flex-1 min-h-0 overflow-y-auto flex flex-col">
                 {!photoPreview ? (
-                    <section className="space-y-fib-21">
-                        <div className="px-fib-13 py-fib-8 bg-[#F8FAFC] dark:bg-[#07090D] border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between gap-fib-8 rounded-none">
-                            <div className="flex items-center gap-fib-8 min-w-0">
-                                <span
-                                    className={`material-symbols-outlined text-[20px] ${
-                                        isImuLevelOptimal ? 'text-[#00AEEF]' : 'text-[#C68346]'
-                                    }`}
-                                >
-                                    screen_rotation
-                                </span>
-                                <span className="text-microcopy font-mono font-bold uppercase tabular-nums truncate text-[#475569] dark:text-[#8A93A6]">
-                                    {imu.pitchDeg !== null && imu.rollDeg !== null
-                                        ? `${imu.pitchDeg.toFixed(1)}° · ${imu.rollDeg.toFixed(1)}°`
-                                        : t('digital_v2.imu_standby', 'NIVEL ÓPTICO LISTO')}
-                                </span>
-                            </div>
-                            <span
-                                className={`text-microcopy font-mono font-bold uppercase ${
-                                    isImuLevelOptimal ? 'text-[#00AEEF]' : 'text-[#C68346]'
-                                }`}
-                            >
-                                {isImuLevelOptimal
-                                    ? t('digital_v2.imu_level_ok', 'NIVELADO')
-                                    : t('digital_v2.imu_level_aim', 'ENCUADRAR')}
+                    <div className="flex-1 min-h-[180px] relative flex flex-col items-center justify-center p-fib-21 bg-transparent">
+                        <div
+                            aria-hidden="true"
+                            className={`relative w-44 h-36 flex flex-col items-center justify-center gap-fib-8 ${
+                                isImuLevelOptimal ? 'text-[#00AEEF]' : 'text-[#C68346]'
+                            }`}
+                        >
+                            <span className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-current" />
+                            <span className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-current" />
+                            <span className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-current" />
+                            <span className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-current" />
+                            <span className="material-symbols-outlined text-[40px] leading-none">
+                                center_focus_weak
+                            </span>
+                            <span className="font-mono text-microcopy font-bold tabular-nums">
+                                {imu.pitchDeg !== null && imu.rollDeg !== null
+                                    ? `${imu.pitchDeg.toFixed(1)}° · ${imu.rollDeg.toFixed(1)}°`
+                                    : 'HUD'}
                             </span>
                         </div>
-
-                        <button
-                            type="button"
-                            onClick={() => void handleCaptureSource('CAMERA', 'PRIMARY')}
-                            className="w-full min-h-[168px] bg-[#C68346] hover:bg-[#b5753b] active:bg-[#9c6330] text-white border-0 flex flex-col items-center justify-center gap-fib-13 cursor-pointer rounded-none shadow-none"
-                        >
-                            <span className="material-symbols-outlined text-[48px]">
-                                photo_camera
-                            </span>
-                            <span className="text-h2-section font-mono font-bold uppercase tracking-wider">
-                                {t('digital_v2.capture_primary_btn', 'TOMAR FOTO ACOPIO')}
-                            </span>
-                        </button>
-
-                        <button
-                            type="button"
-                            onClick={() => void handleCaptureSource('PHOTOS', 'PRIMARY')}
-                            className="w-full min-h-[52px] border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] hover:border-[#C68346] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-microcopy font-bold uppercase tracking-wider flex items-center justify-center gap-fib-8 cursor-pointer rounded-none"
-                        >
-                            <span className="material-symbols-outlined text-[20px] text-[#475569] dark:text-[#8A93A6]">
-                                photo_library
-                            </span>
-                            <span>{t('digital_v2.gallery_btn', 'SELECCIONAR DE GALERÍA')}</span>
-                        </button>
-                    </section>
+                    </div>
                 ) : (
                     <>
-                        {/* Evidencia Fotográfica Principal + CAS */}
-                        <section className="border border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] p-fib-8 rounded-none space-y-fib-8">
-                            <div className="relative w-full h-56 bg-[#000000] overflow-hidden border border-[#E2E8F0] dark:border-[#12151C] rounded-none">
-                                <SecureImage
-                                    src={photoPreview}
-                                    alt={t('digital_v2.photo_alt', 'Captura acopio')}
-                                    className="w-full h-full object-cover"
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() => void handleCaptureSource('CAMERA', 'PRIMARY')}
-                                    aria-label={t('digital_v2.retake_btn', 'RECAPTURAR')}
-                                    className="min-w-[48px] min-h-[48px] absolute top-2 right-2 bg-[#000000]/85 border border-[#C68346] text-white flex items-center justify-center cursor-pointer rounded-none"
-                                >
-                                    <span className="material-symbols-outlined text-[22px]">
-                                        refresh
-                                    </span>
-                                </button>
-                            </div>
-
-                            <CasTelemetryBadge
-                                metrics={casMetrics}
-                                origBytesFallback={photoBlob?.size}
+                        <div className="relative w-full h-56 shrink-0 bg-[#000000] overflow-hidden border-b border-[#E2E8F0] dark:border-[#12151C]">
+                            <SecureImage
+                                src={photoPreview}
+                                alt={t('digital_v2.photo_alt', 'Captura acopio')}
+                                className="w-full h-full object-cover"
                             />
+                            <button
+                                type="button"
+                                onClick={() => void handleCaptureSource('CAMERA', 'PRIMARY')}
+                                aria-label={t('digital_v2.retake_btn', 'RECAPTURAR')}
+                                className="min-w-[48px] min-h-[48px] absolute top-2 right-2 bg-[#000000]/70 border-0 text-white hover:text-[#C68346] flex items-center justify-center cursor-pointer rounded-none"
+                            >
+                                <span className="material-symbols-outlined text-[22px]">refresh</span>
+                            </button>
+                        </div>
 
-                            {/* Hasta 3 ángulos adicionales */}
-                            <div className="flex items-center gap-fib-8 overflow-x-auto pt-1">
+                        {casCompactLabel && (
+                            <div className="shrink-0 px-fib-13 py-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center justify-between gap-fib-8 font-mono text-microcopy tabular-nums">
+                                <span className="font-bold uppercase text-[#475569] dark:text-[#8A93A6]">
+                                    CAS
+                                </span>
+                                <span className="font-bold text-[#00AEEF]">{casCompactLabel}</span>
+                            </div>
+                        )}
+
+                        {extraPhotos.length > 0 && (
+                            <div className="shrink-0 px-fib-13 py-fib-8 border-b border-[#E2E8F0] dark:border-[#12151C] flex items-center gap-fib-8 overflow-x-auto">
                                 {extraPhotos.map((extra, idx) => (
                                     <div
                                         key={`${extra.previewUrl}_${idx}`}
-                                        className="relative w-14 h-14 shrink-0 border border-[#E2E8F0] dark:border-[#12151C] bg-[#000000] rounded-none"
+                                        className="relative w-12 h-12 shrink-0 border border-[#E2E8F0] dark:border-[#12151C] bg-[#000000] rounded-none"
                                     >
                                         <SecureImage
                                             src={extra.previewUrl}
@@ -777,8 +785,8 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                                                     prev.filter((_, i) => i !== idx)
                                                 )
                                             }
-                                            aria-label="Quitar ángulo"
-                                            className="w-6 h-6 absolute -top-1 -right-1 bg-[#000000] text-white border border-white flex items-center justify-center cursor-pointer rounded-none"
+                                            aria-label={t('common.delete_button', 'ELIMINAR')}
+                                            className="w-6 h-6 absolute top-0 right-0 bg-[#000000]/85 text-white border-0 flex items-center justify-center cursor-pointer rounded-none"
                                         >
                                             <span className="material-symbols-outlined text-[14px]">
                                                 close
@@ -786,214 +794,156 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                                         </button>
                                     </div>
                                 ))}
-
-                                {extraPhotos.length < 3 && (
-                                    <button
-                                        type="button"
-                                        onClick={() => void handleCaptureSource('CAMERA', 'EXTRA')}
-                                        className="min-h-[48px] px-fib-13 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-microcopy font-bold uppercase flex items-center gap-fib-8 shrink-0 cursor-pointer rounded-none"
-                                    >
-                                        <span className="material-symbols-outlined text-[18px]">
-                                            add_a_photo
-                                        </span>
-                                        <span>
-                                            +{t('capture_v2.extra_angle', 'ÁNGULO')} ({extraPhotos.length}/3)
-                                        </span>
-                                    </button>
-                                )}
                             </div>
-                        </section>
-
-                        {/* Selector 1-Tap de Referencia Métrica (Cero invención de escala) */}
-                        <section className="space-y-fib-8">
-                            <span className="block text-microcopy font-mono font-bold uppercase tracking-wider text-[#475569] dark:text-[#8A93A6]">
-                                {t('digital_v2.scale_anchor_title', 'REFERENCIA MÉTRICA DE ESCALA')}
-                            </span>
-                            <div className="grid grid-cols-3 sm:grid-cols-5 gap-fib-8">
-                                {ANCHOR_OPTIONS.map((opt) => {
-                                    const active = scaleAnchorType === opt.id;
-                                    return (
-                                        <button
-                                            key={opt.id}
-                                            type="button"
-                                            onClick={() => {
-                                                void triggerFieldImpact('LIGHT');
-                                                setScaleAnchorType(opt.id);
-                                                setDigitalResult(null);
-                                                setShowNumPad(opt.id === 'MANUAL_BASE_M');
-                                            }}
-                                            className={`min-h-[60px] p-fib-8 border flex flex-col items-center justify-center gap-1 cursor-pointer rounded-none transition-colors ${
-                                                active
-                                                    ? 'border-[#C68346] bg-[#C68346] text-white'
-                                                    : 'border-[#E2E8F0] dark:border-[#12151C] bg-[#F8FAFC] dark:bg-[#07090D] text-[#0F172A] dark:text-[#F3F4F6]'
-                                            }`}
-                                        >
-                                            <span className="material-symbols-outlined text-[20px]">
-                                                {opt.icon}
-                                            </span>
-                                            <span className="text-microcopy font-mono font-bold uppercase leading-none">
-                                                {t(opt.labelKey, opt.fallbackLabel)}
-                                            </span>
-                                            <span
-                                                className={`text-microcopy font-mono tabular-nums leading-none ${
-                                                    active
-                                                        ? 'text-white/90'
-                                                        : 'text-[#475569] dark:text-[#8A93A6]'
-                                                }`}
-                                            >
-                                                {opt.id === 'MANUAL_BASE_M' && parsedReferenceBase
-                                                    ? `${parsedReferenceBase} m`
-                                                    : opt.subLabel}
-                                            </span>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        </section>
-
-                        {/* Teclado XL Integrado + Voz para 1 Cota Base (MANUAL_BASE_M) */}
-                        {scaleAnchorType === 'MANUAL_BASE_M' && (
-                            <section className="space-y-fib-8">
-                                <div className="flex items-center justify-between gap-fib-8">
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowNumPad((prev) => !prev)}
-                                        className="flex-1 min-h-[48px] px-fib-13 border border-[#00AEEF] bg-[#00AEEF]/10 text-[#0F172A] dark:text-[#F3F4F6] font-mono text-data-dense font-bold uppercase flex items-center justify-between cursor-pointer rounded-none"
-                                    >
-                                        <span>
-                                            {t('digital_v2.base_dim_label', 'ANCHO / LARGO BASE')}
-                                        </span>
-                                        <span className="tabular-nums text-[#00AEEF]">
-                                            {parsedReferenceBase ? `${parsedReferenceBase} m` : '-- m'}
-                                        </span>
-                                    </button>
-                                    <SovereignVoiceInput
-                                        module="stockpile"
-                                        compact
-                                        onTranscript={handleVoiceTranscript}
-                                    />
-                                </div>
-                                {showNumPad && (
-                                    <FieldNumPad
-                                        value={referenceBaseText}
-                                        unit="m"
-                                        onChange={(nextVal) => {
-                                            setReferenceBaseText(nextVal);
-                                            setDigitalResult(null);
-                                        }}
-                                        onConfirm={() => setShowNumPad(false)}
-                                        onClear={() => {
-                                            setReferenceBaseText('');
-                                            setDigitalResult(null);
-                                        }}
-                                    />
-                                )}
-                            </section>
-                        )}
-
-                        {/* Análisis IA en Línea o Aviso Subterráneo Diferido */}
-                        {isOnline ? (
-                            <section className="space-y-fib-13">
-                                <button
-                                    type="button"
-                                    onClick={() => void runOnlineAiAnalysis()}
-                                    disabled={isAnalyzing || isSaving}
-                                    className="w-full min-h-[54px] bg-[#00AEEF] hover:bg-[#0096CE] text-white border-0 font-mono text-data-dense font-bold uppercase tracking-wider flex items-center justify-center gap-fib-8 cursor-pointer disabled:opacity-50 rounded-none"
-                                >
-                                    <span className="material-symbols-outlined text-[22px]">
-                                        auto_awesome
-                                    </span>
-                                    <span>
-                                        {digitalResult
-                                            ? t('digital_v2.reanalyze_ai', 'REANALIZAR IA')
-                                            : t('digital_v2.analyze_ai', 'ANALIZAR CON IA AHORA')}
-                                    </span>
-                                </button>
-
-                                {digitalResult && (
-                                    <div className="p-fib-13 border border-[#00AEEF] bg-[#F8FAFC] dark:bg-[#07090D] space-y-fib-8 rounded-none">
-                                        <div className="flex items-baseline justify-between gap-fib-8">
-                                            <span className="text-microcopy font-mono font-bold uppercase text-[#475569] dark:text-[#8A93A6]">
-                                                {digitalResult.scaleVerified
-                                                    ? t('digital_v2.verified_volume', 'CUBICACIÓN IA')
-                                                    : t(
-                                                          'digital_v2.pending_scale_label',
-                                                          'ESCALA PENDIENTE'
-                                                      )}
-                                            </span>
-                                            <span className="text-kpi-display font-mono font-bold tabular-nums text-[#C68346]">
-                                                {digitalResult.scaleVerified
-                                                    ? `${digitalResult.volumeM3.toFixed(1)} m³`
-                                                    : '-- m³'}
-                                            </span>
-                                        </div>
-
-                                        <div className="grid grid-cols-2 gap-fib-8 text-microcopy font-mono uppercase">
-                                            <div className="p-fib-8 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
-                                                <span className="block text-[#475569] dark:text-[#8A93A6]">
-                                                    {t('digital_v2.slope_label', 'TALUD DETECTADO')}
-                                                </span>
-                                                <span className="font-bold tabular-nums">
-                                                    {typeof digitalResult.slopeAngleAvgDeg === 'number'
-                                                        ? `α ${digitalResult.slopeAngleAvgDeg.toFixed(1)}°`
-                                                        : '--'}
-                                                </span>
-                                            </div>
-                                            <div className="p-fib-8 border border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
-                                                <span className="block text-[#475569] dark:text-[#8A93A6]">
-                                                    {t('digital_v2.domain_label', 'MATERIAL Cu')}
-                                                </span>
-                                                <span className="font-bold truncate block">
-                                                    {digitalResult.copperDomain ||
-                                                        digitalResult.granulometry ||
-                                                        '--'}
-                                                </span>
-                                            </div>
-                                        </div>
-
-                                        {digitalResult.slopeWarning && (
-                                            <div className="p-fib-8 border border-[#C68346] bg-[#C68346]/15 text-microcopy font-mono text-[#0F172A] dark:text-[#F3F4F6]">
-                                                {digitalResult.slopeWarning}
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-                            </section>
-                        ) : (
-                            <section className="p-fib-13 border border-[#C68346] bg-[#C68346]/10 space-y-1 rounded-none">
-                                <div className="flex items-center gap-fib-8 text-[#C68346]">
-                                    <span className="material-symbols-outlined text-[20px]">
-                                        cloud_off
-                                    </span>
-                                    <span className="text-microcopy font-mono font-bold uppercase">
-                                        {t(
-                                            'digital_v2.offline_mode_title',
-                                            'SIN CONEXIÓN — COLA IA AUTOMÁTICA'
-                                        )}
-                                    </span>
-                                </div>
-                                <p className="text-microcopy font-mono text-[#475569] dark:text-[#8A93A6]">
-                                    {t(
-                                        'digital_v2.offline_mode_desc',
-                                        'Se guardará localmente con evidencia CAS y se cubicará por IA al recuperar señal.'
-                                    )}
-                                </p>
-                            </section>
                         )}
                     </>
                 )}
+
+                {/* Tira horizontal 5 anclas de escala */}
+                <div className="shrink-0 border-y border-[#E2E8F0] dark:border-[#12151C] bg-transparent overflow-x-auto">
+                    <div className="grid grid-cols-5 min-w-[320px] divide-x divide-[#E2E8F0] dark:divide-[#12151C]">
+                        {ANCHOR_OPTIONS.map((opt) => {
+                            const active = scaleAnchorType === opt.id;
+                            const labelText =
+                                opt.id === 'MANUAL_BASE_M' && parsedReferenceBase
+                                    ? `${parsedReferenceBase}m`
+                                    : `${opt.fallbackLabel}${opt.shortTag ? ` ${opt.shortTag}` : ''}`;
+                            return (
+                                <button
+                                    key={opt.id}
+                                    type="button"
+                                    onClick={() => {
+                                        void triggerFieldImpact('LIGHT');
+                                        setScaleAnchorType(opt.id);
+                                        setDigitalResult(null);
+                                        setShowNumPad(opt.id === 'MANUAL_BASE_M');
+                                    }}
+                                    aria-label={t(opt.labelKey, opt.fallbackLabel)}
+                                    className={`min-h-[52px] px-1 bg-transparent border-0 border-b-2 flex flex-col items-center justify-center gap-0.5 cursor-pointer rounded-none transition-colors ${
+                                        active
+                                            ? 'border-[#C68346] text-[#C68346]'
+                                            : 'border-transparent text-[#475569] dark:text-[#8A93A6]'
+                                    }`}
+                                >
+                                    <span className="material-symbols-outlined text-[18px]">
+                                        {opt.icon}
+                                    </span>
+                                    <span className="text-microcopy font-mono font-bold uppercase tabular-nums leading-none whitespace-nowrap">
+                                        {labelText}
+                                    </span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* Cota Base Manual + Voz (cuando MANUAL_BASE_M activo) */}
+                {scaleAnchorType === 'MANUAL_BASE_M' && (
+                    <div className="shrink-0 border-b border-[#E2E8F0] dark:border-[#12151C] px-fib-13 py-fib-8 space-y-fib-8">
+                        <div className="flex items-center justify-between gap-fib-8">
+                            <button
+                                type="button"
+                                onClick={() => setShowNumPad((prev) => !prev)}
+                                className="flex-1 min-h-[48px] bg-transparent border-0 border-b border-[#00AEEF] text-[#0F172A] dark:text-[#F3F4F6] font-mono text-data-dense font-bold uppercase flex items-center justify-between cursor-pointer rounded-none px-1"
+                            >
+                                <span>{t('digital_v2.base_dim_label', 'BASE m')}</span>
+                                <span className="tabular-nums text-[#00AEEF]">
+                                    {parsedReferenceBase ? `${parsedReferenceBase} m` : '-- m'}
+                                </span>
+                            </button>
+                            <SovereignVoiceInput
+                                module="stockpile"
+                                compact
+                                onTranscript={handleVoiceTranscript}
+                            />
+                        </div>
+                        {showNumPad && (
+                            <FieldNumPad
+                                value={referenceBaseText}
+                                unit="m"
+                                onChange={(nextVal) => {
+                                    setReferenceBaseText(nextVal);
+                                    setDigitalResult(null);
+                                }}
+                                onConfirm={() => setShowNumPad(false)}
+                                onClear={() => {
+                                    setReferenceBaseText('');
+                                    setDigitalResult(null);
+                                }}
+                            />
+                        )}
+                    </div>
+                )}
+
+                {/* Evaluación IA en línea (opcional pre-guardado) */}
+                {photoPreview && isOnline && (
+                    <div className="shrink-0 border-b border-[#E2E8F0] dark:border-[#12151C] px-fib-13 py-fib-8 space-y-fib-8">
+                        <div className="flex items-center justify-between gap-fib-8">
+                            <button
+                                type="button"
+                                onClick={() => void runOnlineAiAnalysis()}
+                                disabled={isAnalyzing || isSaving}
+                                className="min-h-[44px] bg-transparent border-0 text-[#00AEEF] hover:opacity-75 font-mono text-microcopy font-bold uppercase flex items-center gap-1 cursor-pointer disabled:opacity-40 rounded-none p-0"
+                            >
+                                <span className="material-symbols-outlined text-[18px]">
+                                    auto_awesome
+                                </span>
+                                <span>
+                                    {digitalResult
+                                        ? t('digital_v2.reanalyze_ai', 'REANALIZAR IA')
+                                        : t('digital_v2.analyze_ai', 'ANALIZAR IA')}
+                                </span>
+                            </button>
+
+                            {digitalResult && (
+                                <span className="text-h2-section font-mono font-bold tabular-nums text-[#C68346]">
+                                    {digitalResult.scaleVerified
+                                        ? `${digitalResult.volumeM3.toFixed(1)} m³`
+                                        : '-- m³'}
+                                </span>
+                            )}
+                        </div>
+
+                        {digitalResult && (
+                            <div className="grid grid-cols-2 divide-x divide-[#E2E8F0] dark:divide-[#12151C] border-t border-[#E2E8F0] dark:border-[#12151C] pt-fib-8 text-microcopy font-mono uppercase tabular-nums">
+                                <div className="pr-fib-8">
+                                    <span className="text-[#475569] dark:text-[#8A93A6] mr-1">
+                                        α
+                                    </span>
+                                    <span
+                                        className={`font-bold ${
+                                            typeof digitalResult.slopeAngleAvgDeg === 'number' &&
+                                            digitalResult.slopeAngleAvgDeg > 38
+                                                ? 'text-[#C68346]'
+                                                : 'text-[#00AEEF]'
+                                        }`}
+                                    >
+                                        {typeof digitalResult.slopeAngleAvgDeg === 'number'
+                                            ? `${digitalResult.slopeAngleAvgDeg.toFixed(1)}°`
+                                            : '--'}
+                                    </span>
+                                </div>
+                                <div className="pl-fib-8 truncate font-bold text-[#0F172A] dark:text-[#F3F4F6]">
+                                    {digitalResult.copperDomain ||
+                                        digitalResult.granulometry ||
+                                        '--'}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
-            {/* Acción Final Pegada al Pulgar Inferior */}
-            {photoPreview && (
-                <footer className="shrink-0 p-fib-13 border-t border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000]">
+            {/* Acción guardar cuando hay foto + Barra inferior pegada al pulgar */}
+            <footer className="shrink-0 border-t border-[#E2E8F0] dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#000000] pb-[env(safe-area-inset-bottom)]">
+                {photoPreview && (
                     <button
                         type="button"
                         onClick={() => void handleSaveCapture()}
                         disabled={isSaving || isAnalyzing}
-                        className="w-full min-h-[60px] bg-[#C68346] hover:bg-[#b5753b] active:bg-[#9c6330] text-white border-0 font-mono text-h2-section font-bold uppercase tracking-wider flex items-center justify-center gap-fib-13 cursor-pointer disabled:opacity-50 rounded-none shadow-none"
+                        className="w-full min-h-[52px] bg-[#C68346] hover:bg-[#b5753b] active:bg-[#9c6330] text-white border-0 border-b border-[#E2E8F0] dark:border-[#12151C] font-mono text-h2-section font-bold uppercase tracking-wider flex items-center justify-center gap-fib-8 cursor-pointer disabled:opacity-40 rounded-none shadow-none"
                     >
-                        <span className="material-symbols-outlined text-[24px]">
+                        <span className="material-symbols-outlined text-[22px]">
                             {isOnline ? 'cloud_done' : 'save'}
                         </span>
                         <span>
@@ -1002,8 +952,45 @@ export const MobileScanner: React.FC<MobileScannerProps> = ({
                                 : t('digital_v2.save_capture', 'GUARDAR CAPTURA')}
                         </span>
                     </button>
-                </footer>
-            )}
+                )}
+
+                <div className="min-h-[80px] px-fib-21 grid grid-cols-3 items-center">
+                    <button
+                        type="button"
+                        onClick={() => void handleCaptureSource('PHOTOS', 'PRIMARY')}
+                        disabled={isSaving || isAnalyzing}
+                        aria-label={t('digital_v2.gallery_btn', 'GALERÍA')}
+                        className="min-w-[56px] min-h-[56px] bg-transparent border-0 text-[#475569] dark:text-[#8A93A6] hover:text-[#0F172A] dark:hover:text-[#F3F4F6] flex flex-col items-center justify-center gap-0.5 cursor-pointer disabled:opacity-35 rounded-none"
+                    >
+                        <span className="material-symbols-outlined text-[24px]">
+                            photo_library
+                        </span>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => void handleCaptureSource('CAMERA', 'PRIMARY')}
+                        disabled={isSaving || isAnalyzing}
+                        aria-label={t('digital_v2.capture_primary_btn', 'DISPARAR')}
+                        className="w-16 h-16 mx-auto bg-[#C68346] hover:bg-[#b5753b] active:bg-[#9c6330] text-white border-0 flex items-center justify-center cursor-pointer disabled:opacity-40 rounded-none shadow-none"
+                    >
+                        <span className="material-symbols-outlined text-[28px]">photo_camera</span>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => void handleCaptureSource('CAMERA', 'EXTRA')}
+                        disabled={!photoBlob || extraPhotos.length >= 3 || isSaving || isAnalyzing}
+                        aria-label={t('capture_v2.extra_angle', 'ÁNGULO')}
+                        className="min-w-[56px] min-h-[56px] bg-transparent border-0 text-[#0F172A] dark:text-[#F3F4F6] hover:text-[#C68346] flex flex-col items-center justify-center gap-0.5 cursor-pointer disabled:opacity-35 rounded-none"
+                    >
+                        <span className="material-symbols-outlined text-[22px]">add_a_photo</span>
+                        <span className="text-microcopy font-mono font-bold tabular-nums">
+                            {extraPhotos.length}/3
+                        </span>
+                    </button>
+                </div>
+            </footer>
         </div>
     );
 };
