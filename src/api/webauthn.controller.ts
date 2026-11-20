@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { auth, db } from '../config/firebase';
-import { env } from '../config/env';
+import { env, isDevPrivateReleaseStage } from '../config/env';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { authRateLimiter, extractClientIp } from '../middleware/rateLimiter';
 import { AuditLedger } from '../core/audit-ledger';
@@ -28,9 +28,12 @@ const CHALLENGE_TTL_MS = 5 * 60 * 1000; // 5 minutos
 
 function getAllowedWebAuthnOrigins(): Set<string> {
     const origins = new Set<string>([
+        'https://minreport.com',
+        'https://www.minreport.com',
         'https://minreport-access.web.app',
         'https://minreport-8f2a8.web.app',
         'https://minreport-8f2a8.firebaseapp.com',
+        'https://localhost',
         'capacitor://localhost',
         'http://localhost:5173',
         'http://127.0.0.1:5173',
@@ -57,7 +60,7 @@ function resolveRpIdForRequest(req: Request): string {
         }
     }
 
-    return env.NODE_ENV === 'production' ? 'minreport-access.web.app' : 'localhost';
+    return env.NODE_ENV === 'production' ? 'minreport.com' : 'localhost';
 }
 
 function toBase64Url(buf: Buffer): string {
@@ -605,6 +608,16 @@ webauthnRouter.post('/login-options', authRateLimiter, async (req: Request, res:
             return res.status(400).json({ error: 'Formato de solicitud inválido' });
         }
 
+        if (isDevPrivateReleaseStage()) {
+            const rawIdentifier = String(parsed.data.identifier || '').trim().toLowerCase();
+            if (rawIdentifier && rawIdentifier !== 'dev@minreport.com') {
+                return res.status(403).json({
+                    error: 'RELEASE_STAGE_DEV_ONLY: Passkey restringida exclusivamente a 1º DEV.',
+                    code: 'RELEASE_STAGE_DEV_ONLY',
+                });
+            }
+        }
+
         const rpId = resolveRpIdForRequest(req);
         const challenge = toBase64Url(crypto.randomBytes(32));
         const challengeId = crypto.randomUUID();
@@ -615,6 +628,12 @@ webauthnRouter.post('/login-options', authRateLimiter, async (req: Request, res:
 
         if (parsed.data.identifier) {
             resolvedUid = await resolveUidByIdentifier(parsed.data.identifier, parsed.data.accountId);
+            if (isDevPrivateReleaseStage() && resolvedUid && resolvedUid !== 'dev-master-root-uid') {
+                return res.status(403).json({
+                    error: 'RELEASE_STAGE_DEV_ONLY: Identidad fuera de 1º DEV bloqueada.',
+                    code: 'RELEASE_STAGE_DEV_ONLY',
+                });
+            }
             if (resolvedUid) {
                 const credsSnap = await db
                     .collection(CREDENTIALS_COLLECTION)
@@ -801,6 +820,20 @@ webauthnRouter.post('/login-verify', authRateLimiter, async (req: Request, res: 
             return res.status(403).json({ error: 'Cuenta de usuario suspendida o revocada.' });
         }
 
+        const resolvedEmailLower = String(credData.email || userData.email || '').trim().toLowerCase();
+        const resolvedRoleUpper = String(userData.role || '').trim().toUpperCase();
+        const isDevIdentity =
+            uid === 'dev-master-root-uid' ||
+            resolvedEmailLower === 'dev@minreport.com' ||
+            resolvedRoleUpper === 'DEV_ROOT';
+
+        if (isDevPrivateReleaseStage() && !isDevIdentity) {
+            return res.status(403).json({
+                error: 'RELEASE_STAGE_DEV_ONLY: Acceso Passkey restringido exclusivamente a 1º DEV.',
+                code: 'RELEASE_STAGE_DEV_ONLY',
+            });
+        }
+
         const activeAccountId =
             data.accountId ||
             chData.accountId ||
@@ -818,6 +851,13 @@ webauthnRouter.post('/login-verify', authRateLimiter, async (req: Request, res: 
         };
         if (userData.role) claims.role = userData.role;
         else if (membership?.role) claims.role = membership.role;
+        if (isDevIdentity) {
+            claims.role = 'DEV_ROOT';
+            claims.accountTier = 1;
+            claims.classification = 'dev-root';
+            claims.isMasterDev = true;
+            claims.suiteAccess = true;
+        }
         if (activeAccountId) claims.activeAccountId = activeAccountId;
 
         const customToken = await auth.createCustomToken(uid, claims);

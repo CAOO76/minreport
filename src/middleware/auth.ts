@@ -1,8 +1,23 @@
 import { Request, Response, NextFunction } from 'express';
 import { auth } from '../config/firebase';
+import { isDevPrivateReleaseStage } from '../config/env';
 
 export interface AuthRequest extends Request {
     user?: any;
+}
+
+export function isDecodedDevRootToken(decoded: Record<string, any> | null | undefined): boolean {
+    if (!decoded) return false;
+    const uid = String(decoded.uid || '').trim();
+    const emailLower = String(decoded.email || '').trim().toLowerCase();
+    const emailVerifiedOk = decoded.email_verified !== false;
+    const roleUpper = String(decoded.role || '').trim().toUpperCase();
+    return Boolean(
+        decoded.isMasterDev === true ||
+            roleUpper === 'DEV_ROOT' ||
+            uid === 'dev-master-root-uid' ||
+            (emailVerifiedOk && emailLower === 'dev@minreport.com')
+    );
 }
 
 const AUTH_LOG_WINDOW_MS = 5_000;
@@ -64,6 +79,13 @@ export const requireAuth = async (req: AuthRequest, res: Response, next: NextFun
 
         // Verificación criptográfica estricta (soporta Auth Emulator cuando FIREBASE_AUTH_EMULATOR_HOST está activo)
         const decodedToken = await auth.verifyIdToken(token);
+
+        if (isDevPrivateReleaseStage() && !isDecodedDevRootToken(decodedToken)) {
+            return res.status(403).json({
+                error: 'RELEASE_STAGE_DEV_ONLY: Acceso restringido exclusivamente a 1º DEV.',
+                code: 'RELEASE_STAGE_DEV_ONLY',
+            });
+        }
 
         req.user = decodedToken;
         return next();

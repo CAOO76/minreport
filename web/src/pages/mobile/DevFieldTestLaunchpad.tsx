@@ -85,10 +85,20 @@ export const DevFieldTestLaunchpad: React.FC = () => {
                 flavorLabel={flavor}
             />
 
-            <main className="flex-1 min-h-0 overflow-y-auto px-fib-21 py-fib-55 max-w-4xl w-full mx-auto">
+            <main
+                className={
+                    DEV_MOBILE_MODULES.length === 1
+                        ? 'flex-1 min-h-0 flex items-center justify-center p-fib-34'
+                        : 'flex-1 min-h-0 overflow-y-auto px-fib-21 py-fib-55 max-w-4xl w-full mx-auto'
+                }
+            >
                 <section
                     aria-label={t('core_dev_fieldtest.launchpad.modules_heading', 'MÓDULOS')}
-                    className="grid grid-cols-3 sm:grid-cols-4 gap-fib-34 place-items-center"
+                    className={
+                        DEV_MOBILE_MODULES.length === 1
+                            ? 'flex items-center justify-center'
+                            : 'grid grid-cols-3 sm:grid-cols-4 gap-fib-34 place-items-center'
+                    }
                 >
                     {DEV_MOBILE_MODULES.map((mod) => (
                         <button
@@ -97,7 +107,11 @@ export const DevFieldTestLaunchpad: React.FC = () => {
                             onClick={() => navigate(mod.path)}
                             aria-label={mod.name}
                             title={mod.name}
-                            className="min-w-[64px] min-h-[64px] p-fib-13 bg-transparent border-0 outline-none flex items-center justify-center cursor-pointer rounded-none shadow-none text-[#C68346] hover:opacity-75 transition-opacity"
+                            className={
+                                DEV_MOBILE_MODULES.length === 1
+                                    ? 'min-w-[80px] min-h-[80px] p-fib-21 bg-transparent border-0 outline-none flex items-center justify-center cursor-pointer rounded-none shadow-none text-[#C68346] hover:opacity-75 transition-opacity'
+                                    : 'min-w-[64px] min-h-[64px] p-fib-13 bg-transparent border-0 outline-none flex items-center justify-center cursor-pointer rounded-none shadow-none text-[#C68346] hover:opacity-75 transition-opacity'
+                            }
                         >
                             {mod.svgSrc ? (
                                 <SecureImage
@@ -106,7 +120,11 @@ export const DevFieldTestLaunchpad: React.FC = () => {
                                     className="w-12 h-12 object-contain pointer-events-none"
                                 />
                             ) : (
-                                <span className="material-symbols-outlined text-[48px] leading-none text-[#C68346]">
+                                <span
+                                    className={`material-symbols-outlined leading-none text-[#C68346] ${
+                                        DEV_MOBILE_MODULES.length === 1 ? 'text-[56px]' : 'text-[48px]'
+                                    }`}
+                                >
                                     {mod.icon}
                                 </span>
                             )}

@@ -17,6 +17,7 @@ import { LanguageSwitch } from './components/LanguageSwitch';
 import { ThemeSwitch } from './components/ThemeSwitch';
 import { ModuleHost, M3ModuleHudFallback } from './core/modules/ModuleHost';
 import { isFieldTestApp } from './core/runtime/appFlavor';
+import { isDevPrivateReleaseStage } from './config/releaseStage';
 import type { AccountReference } from './types/user_directory';
 
 // Carga diferida de módulos pesados, cabinas y rutas móviles (Capa 2 Performance)
@@ -315,6 +316,18 @@ const AppRoutes = () => {
                         )
                     }
                 />
+            </Routes>
+        );
+    }
+
+    // Etapa privada exclusiva 1º DEV en minreport.com: desmonta superficie comercial, B2B, EDU, ADMIN y PILOT
+    if (isDevPrivateReleaseStage()) {
+        return (
+            <Routes>
+                <Route path="/dev" element={<DevVaultGateway />} />
+                <Route path="/dev-vault-gateway" element={<Navigate to="/dev" replace />} />
+                <Route path="/" element={<Navigate to="/dev" replace />} />
+                <Route path="*" element={<Navigate to="/dev" replace />} />
             </Routes>
         );
     }

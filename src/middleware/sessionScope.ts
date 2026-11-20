@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { auth, db } from '../config/firebase';
-import { env } from '../config/env';
+import { env, isDevPrivateReleaseStage } from '../config/env';
 import { evaluatePilotExpiration, resolveEffectiveModuleAccess } from '../contracts/session.contracts';
 import { CoreModuleId, isCoreModuleId } from '../core/modules/module-registry';
 import { logThrottledAuthFailure } from './auth';
@@ -134,6 +134,13 @@ export function resolveModuleSessionScope(moduleId: CoreModuleId = 'opermaq') {
                 tokenRole === 'DEV_ROOT' ||
                 uid === 'dev-master-root-uid' ||
                 (emailVerifiedOk && emailLower === 'dev@minreport.com');
+
+            if (isDevPrivateReleaseStage() && !isDevRoot) {
+                return res.status(403).json({
+                    error: 'RELEASE_STAGE_DEV_ONLY: Acceso restringido exclusivamente a 1º DEV.',
+                    code: 'RELEASE_STAGE_DEV_ONLY',
+                });
+            }
 
             const isSuperAdmin =
                 !isDevRoot &&

@@ -1551,6 +1551,70 @@ function extractOpeningTags(source: string, tagNames: string[]): string[] {
         'StockpileDossierView móvil no debe duplicar footer de captura sobre barra inferior'
     );
 
+    // Aserciones publicación privada 1º DEV en minreport.com + App móvil GEOLAPP-only
+    assert.ok(fs.existsSync(path.join(ROOT_DIR, 'Dockerfile')), 'Debe existir Dockerfile raíz para Cloud Run southamerica-west1');
+    assert.ok(fs.existsSync(path.join(ROOT_DIR, '.dockerignore')), 'Debe existir .dockerignore raíz');
+    assert.ok(fs.existsSync(path.join(WEB_SRC, 'config/releaseStage.ts')), 'Debe existir web/src/config/releaseStage.ts');
+    const robotsTxtPath = path.join(ROOT_DIR, 'web/public/robots.txt');
+    assert.ok(fs.existsSync(robotsTxtPath), 'Debe existir web/public/robots.txt');
+    const robotsTxt = fs.readFileSync(robotsTxtPath, 'utf8');
+    assert.ok(robotsTxt.includes('Disallow: /'), 'robots.txt debe bloquear indexación (Disallow: /)');
+
+    const backendIndexSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/index.ts'), 'utf8');
+    const authMiddlewareSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/middleware/auth.ts'), 'utf8');
+    const sessionScopeSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/middleware/sessionScope.ts'), 'utf8');
+    const backendEnvSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/config/env.ts'), 'utf8');
+    const webauthnSrc = fs.readFileSync(path.join(ROOT_DIR, 'src/api/webauthn.controller.ts'), 'utf8');
+    const webAppSrc = fs.readFileSync(path.join(WEB_SRC, 'App.tsx'), 'utf8');
+    const webNetworkSrc = fs.readFileSync(path.join(WEB_SRC, 'utils/network.ts'), 'utf8');
+    const firebaseJsonSrc = fs.readFileSync(path.join(ROOT_DIR, 'firebase.json'), 'utf8');
+    const viteConfigSrc = fs.readFileSync(path.join(ROOT_DIR, 'web/vite.config.ts'), 'utf8');
+    const androidManifestSrc = fs.readFileSync(
+        path.join(ROOT_DIR, 'web/android/app/src/main/AndroidManifest.xml'),
+        'utf8'
+    );
+    const gitignoreSrc = fs.readFileSync(path.join(ROOT_DIR, '.gitignore'), 'utf8');
+
+    assert.ok(
+        backendIndexSrc.includes('RELEASE_STAGE_DEV_ONLY') &&
+            authMiddlewareSrc.includes('RELEASE_STAGE_DEV_ONLY') &&
+            sessionScopeSrc.includes('RELEASE_STAGE_DEV_ONLY') &&
+            webAppSrc.includes('isDevPrivateReleaseStage'),
+        'Backend y Web deben implementar compuerta DEV_PRIVATE / RELEASE_STAGE_DEV_ONLY'
+    );
+    assert.ok(
+        backendIndexSrc.includes('https://minreport.com') &&
+            backendEnvSrc.includes('https://minreport.com') &&
+            webauthnSrc.includes('https://minreport.com') &&
+            webNetworkSrc.includes('https://minreport.com') &&
+            firebaseJsonSrc.includes('https://minreport.com'),
+        'El dominio canónico https://minreport.com debe estar configurado en backend, WebAuthn, frontend y Firebase Hosting'
+    );
+    assert.ok(
+        firebaseJsonSrc.includes('X-Robots-Tag') && firebaseJsonSrc.includes('noindex, nofollow, noarchive'),
+        'firebase.json debe declarar X-Robots-Tag: noindex, nofollow, noarchive'
+    );
+    assert.ok(
+        viteConfigSrc.includes('/^\\/api\\//') || viteConfigSrc.includes('/^\\\\/api\\\\//'),
+        'web/vite.config.ts debe excluir /^\\/api\\// en navigateFallbackDenylist'
+    );
+    assert.ok(
+        devLaunchpadSrc.includes('items-center justify-center') &&
+            devLaunchpadSrc.includes("id: 'geolapp'") &&
+            !devLaunchpadSrc.includes("id: 'opermaq'"),
+        'DevFieldTestLaunchpad debe centrar el icono único de GEOLAPP® sin mostrar otros módulos aún'
+    );
+    assert.ok(
+        androidManifestSrc.includes('android:usesCleartextTraffic="false"'),
+        'AndroidManifest principal debe bloquear cleartext en Release (usesCleartextTraffic="false")'
+    );
+    for (const ignoredPattern of ['*.keystore', '*.jks', 'keystore.properties', '*.apk']) {
+        assert.ok(
+            gitignoreSrc.includes(ignoredPattern),
+            `.gitignore debe proteger ${ignoredPattern}`
+        );
+    }
+
     passedCases++;
     assert.equal(
         passedCases,

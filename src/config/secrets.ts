@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
 import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
-import { env } from './env';
+import { env, isDevPrivateReleaseStage } from './env';
 
 /**
  * GESTOR SOBERANO DE SECRETOS (Capa 5 MINREPORT — southamerica-west1)
@@ -159,11 +159,11 @@ export async function getSecret(secretName: string): Promise<string | null> {
     const location = env.GCP_LOCATION || 'southamerica-west1';
     const candidateLookups: Array<{ resourceName: string; regionalLocation?: string }> = [
         {
-            resourceName: `projects/${env.GCP_PROJECT_ID}/locations/${location}/secrets/${secretName}/versions/latest`,
-            regionalLocation: location,
+            resourceName: `projects/${env.GCP_PROJECT_ID}/secrets/${secretName}/versions/latest`,
         },
         {
-            resourceName: `projects/${env.GCP_PROJECT_ID}/secrets/${secretName}/versions/latest`,
+            resourceName: `projects/${env.GCP_PROJECT_ID}/locations/${location}/secrets/${secretName}/versions/latest`,
+            regionalLocation: location,
         },
     ];
 
@@ -199,15 +199,19 @@ export async function getSecret(secretName: string): Promise<string | null> {
  * en el arranque del servidor cuando no se ejecuta en emulador local.
  */
 export async function hydrateCoreSecrets(): Promise<void> {
+    const secretsToHydrate: readonly string[] = isDevPrivateReleaseStage()
+        ? ['GEMINI_API_KEY', 'RESEND_API_KEY', 'DEV_ROOT_PASSWORD', 'X402_HMAC_SECRET', 'FIREBASE_API_KEY']
+        : CORE_HYDRATED_SECRETS;
+
     if (isRunningAgainstLocalEmulator()) {
-        for (const name of CORE_HYDRATED_SECRETS) {
+        for (const name of secretsToHydrate) {
             readLocalEnvHot(name);
         }
         return;
     }
 
     await Promise.all(
-        CORE_HYDRATED_SECRETS.map(async (secretName) => {
+        secretsToHydrate.map(async (secretName) => {
             await getSecret(secretName);
         })
     );

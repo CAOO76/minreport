@@ -95,11 +95,11 @@ export default defineConfig({
             },
             workbox: {
                 cleanupOutdatedCaches: true,
-                globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+                globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
                 maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
                 navigateFallback: 'index.html',
                 navigateFallbackAllowlist: [/^(?!\/__).*/],
-                navigateFallbackDenylist: [/^\/src/, /^\/node_modules/, /^\/@/],
+                navigateFallbackDenylist: [/^\/api\//, /^\/health$/, /^\/src/, /^\/node_modules/, /^\/@/],
                 runtimeCaching: [
                     {
                         urlPattern: ({ url }) =>
@@ -115,7 +115,10 @@ export default defineConfig({
                         },
                     },
                     {
-                        urlPattern: ({ url }) => url.hostname.includes('firestore') || url.pathname.includes('api'),
+                        urlPattern: ({ url }) =>
+                            !url.pathname.startsWith('/api/dev/auth/') &&
+                            !url.pathname.startsWith('/api/auth/') &&
+                            (url.hostname.includes('firestore') || url.pathname.startsWith('/api/')),
                         handler: 'NetworkFirst',
                         options: {
                             cacheName: 'api-cache',

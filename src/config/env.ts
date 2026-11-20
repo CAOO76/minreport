@@ -12,14 +12,18 @@ const envSchema = z.object({
     GOOGLE_GEOCODING_API_KEY: z.string().optional().default(''),
     PORT: z.string().default('8080'),
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+    MINREPORT_RELEASE_STAGE: z.enum(['DEV_PRIVATE', 'FULL']).default('FULL'),
     GCP_PROJECT_ID: z.string().default('minreport-8f2a8'),
     GCP_LOCATION: z.string().default('southamerica-west1'),
     STORAGE_BUCKET: z.string().default('minreport-8f2a8.firebasestorage.app'),
     CLOUD_TASKS_QUEUE: z.string().default('opermaq-hunt-queue'),
     WORKER_SERVICE_URL: z.string().optional(),
     WORKER_SA_EMAIL: z.string().optional(),
+    FIREBASE_API_KEY: z.string().optional().default(''),
     SUPER_ADMIN_EMAIL: z.string().email().default('admin@minreport.com'),
     SUPER_ADMIN_PASSWORD: z.string().optional().default(''),
+    DEV_ROOT_EMAIL: z.string().optional().default('dev@minreport.com'),
+    DEV_NOTIFICATION_EMAIL: z.string().optional().default(''),
     DEV_ROOT_PASSWORD: z.string().optional().default(''),
     X402_HMAC_SECRET: z.string().optional().default(''),
     WEB_URL: z.string().optional().default(''),
@@ -38,6 +42,14 @@ if (!parsedEnv.success) {
 
 export const env = parsedEnv.data;
 
+export function isDevPrivateReleaseStage(): boolean {
+    return (
+        String(process.env.MINREPORT_RELEASE_STAGE || env.MINREPORT_RELEASE_STAGE || 'FULL')
+            .trim()
+            .toUpperCase() === 'DEV_PRIVATE'
+    );
+}
+
 /**
  * Retorna la URL base canónica del frontend sin confiar en el header Host del cliente.
  */
@@ -47,7 +59,7 @@ export function getCanonicalWebUrl(): string {
         return configured.replace(/\/+$/, '');
     }
     return env.NODE_ENV === 'production'
-        ? 'https://minreport-access.web.app'
+        ? 'https://minreport.com'
         : 'http://localhost:5173';
 }
 
@@ -60,6 +72,6 @@ export function getCanonicalApiUrl(): string {
         return configured.replace(/\/+$/, '');
     }
     return env.NODE_ENV === 'production'
-        ? 'https://minreport-access.web.app'
+        ? 'https://minreport.com'
         : `http://localhost:${env.PORT || '8080'}`;
 }

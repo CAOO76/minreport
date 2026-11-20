@@ -1,5 +1,30 @@
 apply plugin: 'com.android.application'
 
+def keystorePropertiesFile = rootProject.file('keystore.properties')
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+def resolveReleaseSigningValue = { String propKey, String envKey ->
+    def propVal = keystoreProperties.getProperty(propKey)
+    if (propVal != null && propVal.trim().length() > 0) {
+        return propVal.trim()
+    }
+    def envVal = System.getenv(envKey)
+    return (envVal != null && envVal.trim().length() > 0) ? envVal.trim() : null
+}
+
+def releaseKeystorePath = resolveReleaseSigningValue('storeFile', 'MINREPORT_KEYSTORE_PATH')
+def releaseKeystorePassword = resolveReleaseSigningValue('storePassword', 'MINREPORT_KEYSTORE_PASSWORD')
+def releaseKeyAlias = resolveReleaseSigningValue('keyAlias', 'MINREPORT_KEY_ALIAS')
+def releaseKeyPassword = resolveReleaseSigningValue('keyPassword', 'MINREPORT_KEY_PASSWORD')
+def hasReleaseKeystore = releaseKeystorePath != null &&
+    releaseKeystorePassword != null &&
+    releaseKeyAlias != null &&
+    releaseKeyPassword != null &&
+    file(releaseKeystorePath).exists()
+
 android {
     namespace "com.minreport.app"
     compileSdk rootProject.ext.compileSdkVersion
@@ -28,11 +53,24 @@ android {
             versionNameSuffix "-fieldtest"
         }
     }
+    signingConfigs {
+        release {
+            if (hasReleaseKeystore) {
+                storeFile file(releaseKeystorePath)
+                storePassword releaseKeystorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
     buildTypes {
         debug {
             applicationIdSuffix ".debug"
         }
         release {
+            if (hasReleaseKeystore) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }

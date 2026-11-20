@@ -4,7 +4,7 @@ import path from 'path';
 import os from 'os';
 import admin, { db, auth } from '../config/firebase';
 import { env, getCanonicalApiUrl, getCanonicalWebUrl } from '../config/env';
-import { resolveDevRootPassword } from '../config/secrets';
+import { getSecret, resolveDevRootPassword } from '../config/secrets';
 import { constantTimeEqualStrings } from '../utils/security';
 import { DEV_ROOT_EMAIL, DEV_ROOT_UID, ensureDevRootAccount } from './bootstrap.service';
 import { EmailService } from './EmailService';
@@ -66,6 +66,16 @@ const sha256 = (data: string): string => {
 const hashPassword = (password: string, salt: string): string => {
     return crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
 };
+
+/**
+ * Resuelve el correo de notificación DEV con respaldo determinista a DEV_ROOT_EMAIL.
+ */
+const resolveDevNotificationEmail = (): string =>
+    process.env.DEV_NOTIFICATION_EMAIL ||
+    env.DEV_NOTIFICATION_EMAIL ||
+    process.env.DEV_ROOT_EMAIL ||
+    env.DEV_ROOT_EMAIL ||
+    DEV_ROOT_EMAIL;
 
 /**
  * Servicio Soberano para el Gateway de Desarrollo MINREPORT (Zero-Trust & Out-of-Band Challenge)
@@ -183,7 +193,7 @@ export class DevChallengeService {
             </div>
         `;
 
-        const targetEmail = process.env.DEV_NOTIFICATION_EMAIL || process.env.DEV_ROOT_EMAIL || DEV_ROOT_EMAIL;
+        const targetEmail = resolveDevNotificationEmail();
 
         try {
             await EmailService.sendEmail({
@@ -534,9 +544,10 @@ export class DevChallengeService {
             }
 
             try {
+                const targetEmail = resolveDevNotificationEmail();
                 await EmailService.sendEmail({
                     from: 'MINREPORT Security <security@minreport.com>',
-                    to: DEV_ROOT_EMAIL,
+                    to: targetEmail,
                     subject: '[SEGURIDAD] Rotación de Clave Maestra DEV Confirmada',
                     html: `
                         <div style="background-color: #000000; color: #F3F4F6; font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; padding: 34px; border: 1px solid #12151C;">
@@ -569,7 +580,13 @@ export class DevChallengeService {
 
         let idToken = customToken;
         const emulatorHost = process.env.FIREBASE_AUTH_EMULATOR_HOST;
-        const apiKey = process.env.VITE_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || 'fake-api-key';
+        const apiKey = (
+            process.env.FIREBASE_API_KEY ||
+            env.FIREBASE_API_KEY ||
+            process.env.VITE_FIREBASE_API_KEY ||
+            (await getSecret('FIREBASE_API_KEY')) ||
+            'fake-api-key'
+        ).trim();
         const exchangeUrl = emulatorHost
             ? `http://${emulatorHost}/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${apiKey}`
             : `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${apiKey}`;

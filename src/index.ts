@@ -3,7 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { z } from 'zod';
 import { db } from './config/firebase';
-import { env } from './config/env';
+import { env, isDevPrivateReleaseStage } from './config/env';
 import { hydrateCoreSecrets } from './config/secrets';
 import { x402Gatekeeper, X402AuthenticatedRequest } from './middleware/x402Gatekeeper';
 import { authRateLimiter, aiRateLimiter, mutationRateLimiter, m2mRateLimiter, extractClientIp } from './middleware/rateLimiter';
@@ -117,6 +117,8 @@ app.use(
                       ],
                       connectSrc: [
                           "'self'",
+                          'https://minreport.com',
+                          'https://www.minreport.com',
                           'https://minreport-access.web.app',
                           'https://*.web.app',
                           'https://*.firebaseapp.com',
@@ -144,6 +146,8 @@ app.use(
 
 // Lista blanca explícita de orígenes CORS autorizados (incluye esquemas nativos Capacitor 6 iOS/Android)
 const ALLOWED_CORS_ORIGINS = new Set<string>([
+    'https://minreport.com',
+    'https://www.minreport.com',
     'https://minreport-access.web.app',
     'https://minreport-8f2a8.web.app',
     'https://minreport-8f2a8.firebaseapp.com',
@@ -256,12 +260,45 @@ app.get('/', (_req, res) => {
 });
 
 // Health Check
-app.get('/health', (_req, res) => {
+const handleHealthCheck = (_req: express.Request, res: express.Response) => {
     res.status(200).json({
         service: 'minreport-core-api',
         region: 'southamerica-west1',
+        releaseStage: isDevPrivateReleaseStage() ? 'DEV_PRIVATE' : 'FULL',
         timestamp: new Date().toISOString(),
     });
+};
+
+app.get('/health', handleHealthCheck);
+app.get('/api/health', handleHealthCheck);
+
+// Compuerta estricta de etapa privada 1º DEV (bloquea superficie comercial, B2B/EDU/ADMIN/PILOT/M2M)
+const DEV_PRIVATE_BLOCKED_PREFIXES = [
+    '/api/auth/access',
+    '/api/auth/tunnel',
+    '/api/admin',
+    '/api/pilot',
+    '/api/edu',
+    '/api/m2m',
+    '/api/staff',
+    '/api/equipment-onboarding',
+];
+
+app.use((req, res, next) => {
+    if (isDevPrivateReleaseStage()) {
+        const reqPath = (req.path || '').toLowerCase();
+        if (
+            DEV_PRIVATE_BLOCKED_PREFIXES.some(
+                (prefix) => reqPath === prefix || reqPath.startsWith(`${prefix}/`)
+            )
+        ) {
+            return res.status(403).json({
+                error: 'RELEASE_STAGE_DEV_ONLY: Funcionalidad comercial no habilitada en etapa privada DEV.',
+                code: 'RELEASE_STAGE_DEV_ONLY',
+            });
+        }
+    }
+    return next();
 });
 
 // Public Read-Only Routes
@@ -845,7 +882,7 @@ async function startServer(): Promise<void> {
     }
 
     const bindWithRetry = (attempt: number = 1) => {
-        const server = app.listen(port, async () => {
+        const server = app.listen(port, '0.0.0.0', async () => {
             console.log(
                 `[CORE-API] Servidor escuchando en localhost:${port} (dual-stack IPv4/IPv6, región: southamerica-west1, env: ${process.env.NODE_ENV || 'development'})`
             );

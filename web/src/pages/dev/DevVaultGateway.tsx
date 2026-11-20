@@ -10,6 +10,7 @@ import BrandingManager from '../../components/admin/BrandingManager';
 import M3LinearProgress from '../../components/common/M3LinearProgress';
 import M3CircularProgress from '../../components/common/M3CircularProgress';
 import { useMinReportSession } from '../../context/MinReportSessionContext';
+import { isGeolappOnlyDevStage } from '../../config/releaseStage';
 import { ModuleHost, M3ModuleHudFallback } from '../../core/modules/ModuleHost';
 import { getApiUrl } from '../../utils/network';
 import {
@@ -95,7 +96,9 @@ interface DevPilotAggregatedMetrics {
 export const DevVaultGateway: React.FC = () => {
     const { t } = useTranslation();
     const { session, isLoaded } = useMinReportSession();
-    const [activeSection, setActiveSection] = useState<DevSection>('MODULE_OPERMAQ_CATALOG');
+    const geolappOnlyStage = isGeolappOnlyDevStage();
+    const defaultSection: DevSection = geolappOnlyStage ? 'MODULE_STOCKPILE' : 'MODULE_OPERMAQ_CATALOG';
+    const [activeSection, setActiveSection] = useState<DevSection>(defaultSection);
     const isModuleSection = activeSection.startsWith('MODULE_');
 
     // Estado Auth DEV
@@ -982,7 +985,7 @@ export const DevVaultGateway: React.FC = () => {
             <header className="h-14 px-[21px] border-b border-slate-200 dark:border-[#12151C] bg-[#FFFFFF] dark:bg-[#07090D] flex items-center justify-between shrink-0 z-50">
                 <button
                     type="button"
-                    onClick={() => setActiveSection('MODULE_OPERMAQ_CATALOG')}
+                    onClick={() => setActiveSection(defaultSection)}
                     title={t('core_dev_vault.nav.back_to_main')}
                     aria-label={t('core_dev_vault.nav.back_to_main')}
                     className="min-h-[48px] bg-transparent border-0 outline-none p-0 cursor-pointer flex items-center"
@@ -1014,7 +1017,7 @@ export const DevVaultGateway: React.FC = () => {
                     {/* CABECERA COLUMNA MENÚ: ISOTIPO OFICIAL */}
                     <button
                         type="button"
-                        onClick={() => setActiveSection('MODULE_OPERMAQ_CATALOG')}
+                        onClick={() => setActiveSection(defaultSection)}
                         title={t('core_dev_vault.nav.back_to_main')}
                         aria-label={t('core_dev_vault.nav.back_to_main')}
                         className="mb-3 min-w-[48px] min-h-[48px] bg-transparent border-0 outline-none p-1 cursor-pointer flex items-center justify-center rounded-none shadow-none"
@@ -1026,37 +1029,41 @@ export const DevVaultGateway: React.FC = () => {
 
                     {/* GRUPO 1: CONFIGURAR MINREPORT (BOTONES PLANOS TRANSPARENTES) */}
                     <div className="flex flex-col items-center gap-1 w-full">
-                        <button
-                            type="button"
-                            onClick={() => setActiveSection('PILOT_METRICS')}
-                            title={t('core_dev_vault.nav.pilot_metrics_title')}
-                            aria-label={t('core_dev_vault.nav.pilot_metrics_aria')}
-                            className={`group min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'PILOT_METRICS'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                                }`}
-                        >
-                            {activeSection === 'PILOT_METRICS' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
-                            )}
-                            <span className="material-symbols-outlined text-[22px]">monitoring</span>
-                        </button>
+                        {!geolappOnlyStage && (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={() => setActiveSection('PILOT_METRICS')}
+                                    title={t('core_dev_vault.nav.pilot_metrics_title')}
+                                    aria-label={t('core_dev_vault.nav.pilot_metrics_aria')}
+                                    className={`group min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'PILOT_METRICS'
+                                        ? 'text-[#C68346]'
+                                        : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                        }`}
+                                >
+                                    {activeSection === 'PILOT_METRICS' && (
+                                        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
+                                    )}
+                                    <span className="material-symbols-outlined text-[22px]">monitoring</span>
+                                </button>
 
-                        <button
-                            type="button"
-                            onClick={() => setActiveSection('EQUIPMENT_ONBOARDING')}
-                            title={t('core_dev_vault.nav.eq_onboarding_title')}
-                            aria-label={t('core_dev_vault.nav.eq_onboarding_title')}
-                            className={`min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'EQUIPMENT_ONBOARDING'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                                }`}
-                        >
-                            {activeSection === 'EQUIPMENT_ONBOARDING' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
-                            )}
-                            <span className="material-symbols-outlined text-[22px]">precision_manufacturing</span>
-                        </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setActiveSection('EQUIPMENT_ONBOARDING')}
+                                    title={t('core_dev_vault.nav.eq_onboarding_title')}
+                                    aria-label={t('core_dev_vault.nav.eq_onboarding_title')}
+                                    className={`min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'EQUIPMENT_ONBOARDING'
+                                        ? 'text-[#C68346]'
+                                        : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                        }`}
+                                >
+                                    {activeSection === 'EQUIPMENT_ONBOARDING' && (
+                                        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
+                                    )}
+                                    <span className="material-symbols-outlined text-[22px]">precision_manufacturing</span>
+                                </button>
+                            </>
+                        )}
 
                         <button
                             type="button"
@@ -1097,106 +1104,110 @@ export const DevVaultGateway: React.FC = () => {
                         </button>
                     </div>
 
-                    {/* SEPARADOR DE PRECISIÓN FIBONACCI — MÓDULO OPERMAQ */}
-                    <div className="w-7 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[13px] shrink-0" />
+                    {!geolappOnlyStage && (
+                        <>
+                            {/* SEPARADOR DE PRECISIÓN FIBONACCI — MÓDULO OPERMAQ */}
+                            <div className="w-7 h-[1px] bg-[#CBD5E1] dark:bg-[#5A6072]/50 my-[13px] shrink-0" />
 
-                    {/* GRUPO 3: MÓDULO OPERMAQ (CATÁLOGO, FLOTA & SIMBOLOGÍA TRANSVERSAL) */}
-                    <div className="flex flex-col items-center gap-1 w-full">
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setActiveSection('MODULE_OPERMAQ_CATALOG');
-                                window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
-                            }}
-                            title={t('core_dev_vault.nav.catalog_title')}
-                            aria-label={t('core_dev_vault.nav.catalog_aria')}
-                            className={`group min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_CATALOG'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                                }`}
-                        >
-                            {activeSection === 'MODULE_OPERMAQ_CATALOG' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
-                            )}
-                            <span className="material-symbols-outlined text-[22px]">front_loader</span>
-                        </button>
+                            {/* GRUPO 3: MÓDULO OPERMAQ (CATÁLOGO, FLOTA & SIMBOLOGÍA TRANSVERSAL) */}
+                            <div className="flex flex-col items-center gap-1 w-full">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setActiveSection('MODULE_OPERMAQ_CATALOG');
+                                        window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
+                                    }}
+                                    title={t('core_dev_vault.nav.catalog_title')}
+                                    aria-label={t('core_dev_vault.nav.catalog_aria')}
+                                    className={`group min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_CATALOG'
+                                        ? 'text-[#C68346]'
+                                        : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                        }`}
+                                >
+                                    {activeSection === 'MODULE_OPERMAQ_CATALOG' && (
+                                        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
+                                    )}
+                                    <span className="material-symbols-outlined text-[22px]">front_loader</span>
+                                </button>
 
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setActiveSection('MODULE_OPERMAQ_FLEET');
-                                window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
-                            }}
-                            title={t('core_dev_vault.nav.fleet_title')}
-                            aria-label={t('core_dev_vault.nav.fleet_aria')}
-                            className={`min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_FLEET'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                                }`}
-                        >
-                            {activeSection === 'MODULE_OPERMAQ_FLEET' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
-                            )}
-                            <span className="material-symbols-outlined text-[22px]">lists</span>
-                        </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setActiveSection('MODULE_OPERMAQ_FLEET');
+                                        window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
+                                    }}
+                                    title={t('core_dev_vault.nav.fleet_title')}
+                                    aria-label={t('core_dev_vault.nav.fleet_aria')}
+                                    className={`min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_FLEET'
+                                        ? 'text-[#C68346]'
+                                        : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                        }`}
+                                >
+                                    {activeSection === 'MODULE_OPERMAQ_FLEET' && (
+                                        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
+                                    )}
+                                    <span className="material-symbols-outlined text-[22px]">lists</span>
+                                </button>
 
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setActiveSection('MODULE_OPERMAQ_SYMBOLOGY');
-                                window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
-                            }}
-                            title={t('core_dev_vault.nav.symbology_title')}
-                            aria-label={t('core_dev_vault.nav.symbology_aria')}
-                            className={`min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_SYMBOLOGY'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                                }`}
-                        >
-                            {activeSection === 'MODULE_OPERMAQ_SYMBOLOGY' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
-                            )}
-                            <span className="material-symbols-outlined text-[22px]">shapes</span>
-                        </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setActiveSection('MODULE_OPERMAQ_SYMBOLOGY');
+                                        window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
+                                    }}
+                                    title={t('core_dev_vault.nav.symbology_title')}
+                                    aria-label={t('core_dev_vault.nav.symbology_aria')}
+                                    className={`min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_SYMBOLOGY'
+                                        ? 'text-[#C68346]'
+                                        : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                        }`}
+                                >
+                                    {activeSection === 'MODULE_OPERMAQ_SYMBOLOGY' && (
+                                        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
+                                    )}
+                                    <span className="material-symbols-outlined text-[22px]">shapes</span>
+                                </button>
 
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setActiveSection('MODULE_OPERMAQ_MANUFACTURERS');
-                                window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
-                            }}
-                            title={t('core_dev_vault.nav.manufacturers_title')}
-                            aria-label={t('core_dev_vault.nav.manufacturers_aria')}
-                            className={`min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_MANUFACTURERS'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                                }`}
-                        >
-                            {activeSection === 'MODULE_OPERMAQ_MANUFACTURERS' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
-                            )}
-                            <span className="material-symbols-outlined text-[22px]">factory</span>
-                        </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setActiveSection('MODULE_OPERMAQ_MANUFACTURERS');
+                                        window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
+                                    }}
+                                    title={t('core_dev_vault.nav.manufacturers_title')}
+                                    aria-label={t('core_dev_vault.nav.manufacturers_aria')}
+                                    className={`min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_MANUFACTURERS'
+                                        ? 'text-[#C68346]'
+                                        : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                        }`}
+                                >
+                                    {activeSection === 'MODULE_OPERMAQ_MANUFACTURERS' && (
+                                        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
+                                    )}
+                                    <span className="material-symbols-outlined text-[22px]">factory</span>
+                                </button>
 
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setActiveSection('MODULE_OPERMAQ_SUPPLIERS');
-                                window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
-                            }}
-                            title={t('core_dev_vault.nav.suppliers_title')}
-                            aria-label={t('core_dev_vault.nav.suppliers_aria')}
-                            className={`min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_SUPPLIERS'
-                                ? 'text-[#C68346]'
-                                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                                }`}
-                        >
-                            {activeSection === 'MODULE_OPERMAQ_SUPPLIERS' && (
-                                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
-                            )}
-                            <span className="material-symbols-outlined text-[22px]">storefront</span>
-                        </button>
-                    </div>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setActiveSection('MODULE_OPERMAQ_SUPPLIERS');
+                                        window.dispatchEvent(new CustomEvent('opermaq:navigate-home'));
+                                    }}
+                                    title={t('core_dev_vault.nav.suppliers_title')}
+                                    aria-label={t('core_dev_vault.nav.suppliers_aria')}
+                                    className={`min-w-[48px] min-h-[48px] w-full py-2.5 bg-transparent border-0 outline-none transition-colors cursor-pointer rounded-none relative flex items-center justify-center ${activeSection === 'MODULE_OPERMAQ_SUPPLIERS'
+                                        ? 'text-[#C68346]'
+                                        : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                        }`}
+                                >
+                                    {activeSection === 'MODULE_OPERMAQ_SUPPLIERS' && (
+                                        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-[#C68346]" />
+                                    )}
+                                    <span className="material-symbols-outlined text-[22px]">storefront</span>
+                                </button>
+                            </div>
+                        </>
+                    )}
                 </aside>
 
                 {/* =========================================================================

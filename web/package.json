@@ -9,6 +9,8 @@
     "dev:mobile:web-preview": "BROWSERSLIST_IGNORE_OLD_DATA=true vite --host --open '/?flavor=fieldtest'",
     "clean:android": "bash scripts/clean-android.sh",
     "build:apk": "bash scripts/build-apk.sh",
+    "build:prod-dev": "bash scripts/build-prod-dev.sh",
+    "build:apk:fieldtest-release": "bash scripts/build-prod-dev.sh --android",
     "usb:bridge": "bash scripts/usb-bridge.sh",
     "build": "NODE_ENV=production BROWSERSLIST_IGNORE_OLD_DATA=true vite build",
     "preview": "vite preview --host",

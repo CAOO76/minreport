@@ -149,16 +149,6 @@
       ]
     },
     {
-      "collectionGroup": "audit_ledger",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "seq",
-          "order": "DESCENDING"
-        }
-      ]
-    },
-    {
       "collectionGroup": "tenant_assets",
       "queryScope": "COLLECTION",
       "fields": [

@@ -7,7 +7,7 @@ import * as logger from "firebase-functions/logger";
 export const systemHealthCheck = onRequest(
     {
         region: "southamerica-west1",
-        cors: ["https://minreport-access.web.app"],
+        cors: ["https://minreport.com", "https://www.minreport.com", "https://minreport-access.web.app"],
         maxInstances: 5,
     },
     (request, response) => {

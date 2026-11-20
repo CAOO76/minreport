@@ -45,7 +45,7 @@ jobs:
           VITE_FIREBASE_AUTH_DOMAIN: 'minreport-8f2a8.firebaseapp.com'
           VITE_FIREBASE_PROJECT_ID: 'minreport-8f2a8'
           VITE_FIREBASE_STORAGE_BUCKET: 'minreport-8f2a8.firebasestorage.app'
-          VITE_USE_EMULATORS: 'false'
+          VITE_USE_FIREBASE_EMULATOR: 'false'
         run: |
           cd web
           npm ci

@@ -11,7 +11,7 @@ import { isNativeDebugApp, isAndroidEmulatorRuntime } from '../core/runtime/appF
  * - Dispositivos Físicos Locales: Configurable opcionalmente por VITE_DEV_HOST_IP
  */
 
-const DEFAULT_CLOUD_ORIGIN = 'https://minreport-access.web.app';
+const DEFAULT_CLOUD_ORIGIN = 'https://minreport.com';
 const LOCAL_DEV_ORIGIN_REGEX =
     /^https?:\/\/(localhost|127\.0\.0\.1|10\.0\.2\.2|192\.168\.\d{1,3}\.\d{1,3})(:\d+)?(\/|$)/i;
 
