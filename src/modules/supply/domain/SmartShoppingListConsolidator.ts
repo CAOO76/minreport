@@ -41,7 +41,7 @@ const URGENCY_RANK: Readonly<Record<SupplyUrgency, number>> = {
     CRITICAL: 0,
     HIGH: 1,
     STANDARD: 2,
-    LOW: 3,
+    PLANNED: 3,
 };
 
 const CANONICAL_BUCKET_ORDER: readonly ProcurementBucket[] = [
@@ -108,7 +108,12 @@ export function consolidateRequisitionsToShoppingList(
         if (!inferredTenantId && req.tenantId) inferredTenantId = req.tenantId;
         if (!inferredSiteId && req.siteId) inferredSiteId = req.siteId;
 
-        if (req.status === 'CANCELLED' || req.status === 'FULFILLED') {
+        if (
+            req.status === 'CANCELLED' ||
+            req.status === 'FULFILLED' ||
+            req.status === 'CLOSED' ||
+            req.status === 'DRAFT'
+        ) {
             continue;
         }
 

@@ -95,7 +95,7 @@ export type PurchaseMode =
  */
 export type SiiDteType = 33 | 34 | 39 | 41 | 52 | 61 | 0;
 
-export type SupplyUrgency = 'CRITICAL' | 'HIGH' | 'STANDARD' | 'LOW';
+export type SupplyUrgency = 'CRITICAL' | 'HIGH' | 'STANDARD' | 'PLANNED';
 
 export type SupplyCostCenter =
     | 'CC-CAMPAMENTO'
@@ -103,6 +103,7 @@ export type SupplyCostCenter =
     | 'CC-OPERACIONES'
     | 'CC-HSEC'
     | 'CC-CAPEX'
+    | 'CC-ADMINISTRACION'
     | (string & {});
 
 export type SupplyPaymentMethod =
@@ -110,7 +111,9 @@ export type SupplyPaymentMethod =
     | 'FONDO_POR_RENDIR'
     | 'REEMBOLSO_GERENCIA'
     | 'TRANSFERENCIA'
-    | 'CREDITO_PROVEEDOR';
+    | 'TARJETA_CORPORATIVA'
+    | 'CREDITO_PROVEEDOR'
+    | 'EFECTIVO';
 
 export type SupplyLineDestination =
     | 'STOCK_IN_TRANSIT'
@@ -118,7 +121,14 @@ export type SupplyLineDestination =
     | 'CAPEX_ASSET'
     | 'DIRECT_EXPENSE';
 
-export type RequisitionStatus = 'OPEN' | 'PARTIAL' | 'FULFILLED' | 'CANCELLED' | 'PENDING_REVIEW';
+export type RequisitionStatus =
+    | 'DRAFT'
+    | 'OPEN'
+    | 'PARTIAL'
+    | 'FULFILLED'
+    | 'CANCELLED'
+    | 'CLOSED'
+    | 'PENDING_REVIEW';
 
 export type RequisitionLineStatus = 'OPEN' | 'PARTIAL' | 'FULFILLED' | 'CANCELLED';
 
@@ -142,9 +152,9 @@ export type RequiredSlotName =
     | 'urgency';
 
 export interface SupplyCommunicationStyle {
-    register: 'INFORMAL_FIELD' | 'NEUTRAL_TECHNICAL' | 'EXECUTIVE_BRIEF';
-    preferredModality: 'TEXT' | 'VOICE' | 'MIXED';
-    dialect: 'ES_CL' | 'ES_PE' | 'ES_LATAM' | 'PT_BR' | 'EN';
+    register: 'COLLOQUIAL_FIELD' | 'TECHNICAL_DIRECT' | 'EXECUTIVE_BRIEF';
+    preferredModality: 'TEXT' | 'AUDIO_VOICE' | 'HYBRID';
+    dialect: 'es-CL' | 'es-PE' | 'es-AR' | 'pt-BR' | 'en-US';
 }
 
 export interface SupplyMemberProfile {
@@ -187,13 +197,22 @@ export interface CanonicalSupplySku {
 }
 
 export interface CasEvidenceRef {
-    casSha256: string;
+    sha256: string;
+    phashHex?: string;
+    downloadUrl?: string;
     storagePath?: string;
     mimeType: string;
+    extension?: string;
+    originalFilename?: string;
     originalBytes: number;
     optimizedBytes: number;
     savingsPct: number;
+    savingsRatio?: number;
+    deduplicatedHit?: boolean;
+    capturedAt?: string;
 }
+
+export type SupplyEvidenceCasRef = CasEvidenceRef;
 
 export interface GeoFix {
     lat: number;
@@ -514,24 +533,24 @@ export interface DemandForecast {
 
 /**
  * Señal agregada y estrictamente anónima para futuro Marketplace MINREPORT.
- * Cumplimiento Ley N° 21.719: sin `tenantId`, sin `siteId`, sin coordenadas GPS,
- * exigiendo opt-in explícito y k-anonimato (k >= 3).
+ * Cumplimiento Ley N° 21.719: alineada 1:1 con `DemandPoolSignalSchema.strict()`,
+ * sin `tenantId`, sin `siteId`, sin coordenadas GPS, exigiendo opt-in explícito y k-anonimato (k >= 3).
  */
 export interface DemandPoolSignal {
     signalId: string;
     districtCode: string;
+    periodWindow: string;
     canonicalSkuId: string;
+    skuName: string;
+    categoryCode: SupplyCategoryCode;
     procurementBucket: ProcurementBucket;
     unitSi: SupplyUnitSi;
-    windowStartIso: string;
-    windowEndIso: string;
-    contributingSiteCount: number;
-    contributingTenantCount: number;
-    aggregatedDemandSi: number;
-    medianUnitPriceBandClp?: { min: number; max: number };
-    anonymityThresholdK: number;
-    ley21719Compliant: true;
+    aggregatedQty: number;
+    participatingEntitiesCount: number;
+    optInVerified: true;
+    medianReferenceUnitClp?: number;
     generatedAt: string;
+    expiresAt: string;
 }
 
 /**

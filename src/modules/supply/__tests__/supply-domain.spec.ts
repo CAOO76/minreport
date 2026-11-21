@@ -1482,10 +1482,35 @@ test('8.2 DemandAndCostForecaster: DemandSignalProjector (Ley N° 21.719) exige 
 
     const signal = projected.signals[0];
     assert.equal(signal.districtCode, 'CL-III-COPIAPO');
-    assert.equal(signal.contributingTenantCount, 3);
-    assert.equal(signal.contributingSiteCount, 3);
-    assert.equal(signal.aggregatedDemandSi, 1000); // 300 + 450 + 250 (opt-out 999 excluido!)
-    assert.equal(signal.ley21719Compliant, true);
+    assert.equal(signal.periodWindow, '2026-11-21..2026-11-28');
+    assert.equal(signal.skuName, 'Papas');
+    assert.equal(signal.categoryCode, 'VIVERES_ALIMENTACION');
+    assert.equal(signal.participatingEntitiesCount, 3);
+    assert.equal(signal.aggregatedQty, 1000); // 300 + 450 + 250 (opt-out 999 excluido!)
+    assert.equal(signal.medianReferenceUnitClp, 1150);
+    assert.equal(signal.optInVerified, true);
+    assert.equal(signal.expiresAt, '2026-11-28T00:00:00Z');
+
+    // Verificar estrictamente que las llaves coinciden 1:1 con DemandPoolSignalSchema.strict() (#9)
+    const allowedStrictKeys = new Set([
+        'signalId',
+        'districtCode',
+        'periodWindow',
+        'canonicalSkuId',
+        'skuName',
+        'categoryCode',
+        'procurementBucket',
+        'unitSi',
+        'aggregatedQty',
+        'participatingEntitiesCount',
+        'optInVerified',
+        'medianReferenceUnitClp',
+        'generatedAt',
+        'expiresAt',
+    ]);
+    for (const k of Object.keys(signal)) {
+        assert.ok(allowedStrictKeys.has(k), `Llave inesperada fuera de DemandPoolSignalSchema.strict(): ${k}`);
+    }
 
     // Auditoría estricta de cero fuga PII/tenantId/GPS en JSON emitido
     const serialized = JSON.stringify(projected.signals);

@@ -626,7 +626,7 @@ export const DEFAULT_ROLE_PROFILES: Record<SupplyOperationalRole, SupplyMemberPr
         licensedForControlledItems: false,
         defaultCostCenter: 'CC-CAMPAMENTO',
         assignedSiteIds: [],
-        communicationStyle: { register: 'INFORMAL_FIELD', preferredModality: 'MIXED', dialect: 'ES_CL' },
+        communicationStyle: { register: 'COLLOQUIAL_FIELD', preferredModality: 'HYBRID', dialect: 'es-CL' },
     },
     MECHANIC_TECH: {
         role: 'MECHANIC_TECH',
@@ -646,7 +646,7 @@ export const DEFAULT_ROLE_PROFILES: Record<SupplyOperationalRole, SupplyMemberPr
         licensedForControlledItems: false,
         defaultCostCenter: 'CC-FLOTA',
         assignedSiteIds: [],
-        communicationStyle: { register: 'NEUTRAL_TECHNICAL', preferredModality: 'MIXED', dialect: 'ES_CL' },
+        communicationStyle: { register: 'TECHNICAL_DIRECT', preferredModality: 'HYBRID', dialect: 'es-CL' },
     },
     OPS_FOREMAN: {
         role: 'OPS_FOREMAN',
@@ -667,7 +667,7 @@ export const DEFAULT_ROLE_PROFILES: Record<SupplyOperationalRole, SupplyMemberPr
         licensedForControlledItems: false,
         defaultCostCenter: 'CC-OPERACIONES',
         assignedSiteIds: [],
-        communicationStyle: { register: 'NEUTRAL_TECHNICAL', preferredModality: 'MIXED', dialect: 'ES_CL' },
+        communicationStyle: { register: 'TECHNICAL_DIRECT', preferredModality: 'HYBRID', dialect: 'es-CL' },
     },
     WAREHOUSE_KEEPER: {
         role: 'WAREHOUSE_KEEPER',
@@ -680,7 +680,7 @@ export const DEFAULT_ROLE_PROFILES: Record<SupplyOperationalRole, SupplyMemberPr
         licensedForControlledItems: false,
         defaultCostCenter: 'CC-OPERACIONES',
         assignedSiteIds: [],
-        communicationStyle: { register: 'NEUTRAL_TECHNICAL', preferredModality: 'TEXT', dialect: 'ES_CL' },
+        communicationStyle: { register: 'TECHNICAL_DIRECT', preferredModality: 'TEXT', dialect: 'es-CL' },
     },
     HSEC_OFFICER: {
         role: 'HSEC_OFFICER',
@@ -693,7 +693,7 @@ export const DEFAULT_ROLE_PROFILES: Record<SupplyOperationalRole, SupplyMemberPr
         licensedForControlledItems: false,
         defaultCostCenter: 'CC-HSEC',
         assignedSiteIds: [],
-        communicationStyle: { register: 'NEUTRAL_TECHNICAL', preferredModality: 'TEXT', dialect: 'ES_CL' },
+        communicationStyle: { register: 'TECHNICAL_DIRECT', preferredModality: 'TEXT', dialect: 'es-CL' },
     },
     BUYER: {
         role: 'BUYER',
@@ -706,7 +706,7 @@ export const DEFAULT_ROLE_PROFILES: Record<SupplyOperationalRole, SupplyMemberPr
         licensedForControlledItems: false,
         defaultCostCenter: 'CC-OPERACIONES',
         assignedSiteIds: [],
-        communicationStyle: { register: 'NEUTRAL_TECHNICAL', preferredModality: 'TEXT', dialect: 'ES_CL' },
+        communicationStyle: { register: 'TECHNICAL_DIRECT', preferredModality: 'TEXT', dialect: 'es-CL' },
     },
     SITE_ADMIN: {
         role: 'SITE_ADMIN',
@@ -719,7 +719,7 @@ export const DEFAULT_ROLE_PROFILES: Record<SupplyOperationalRole, SupplyMemberPr
         licensedForControlledItems: false,
         defaultCostCenter: 'CC-OPERACIONES',
         assignedSiteIds: [],
-        communicationStyle: { register: 'EXECUTIVE_BRIEF', preferredModality: 'TEXT', dialect: 'ES_CL' },
+        communicationStyle: { register: 'EXECUTIVE_BRIEF', preferredModality: 'TEXT', dialect: 'es-CL' },
     },
     OWNER_EXEC: {
         role: 'OWNER_EXEC',
@@ -732,7 +732,7 @@ export const DEFAULT_ROLE_PROFILES: Record<SupplyOperationalRole, SupplyMemberPr
         licensedForControlledItems: true,
         defaultCostCenter: 'CC-OPERACIONES',
         assignedSiteIds: [],
-        communicationStyle: { register: 'EXECUTIVE_BRIEF', preferredModality: 'MIXED', dialect: 'ES_CL' },
+        communicationStyle: { register: 'EXECUTIVE_BRIEF', preferredModality: 'HYBRID', dialect: 'es-CL' },
     },
 };
 

@@ -154,7 +154,14 @@ export function matchPurchaseToRequisitions(
     >();
 
     for (const req of clonedReqs) {
-        if (req.status === 'CANCELLED' || req.status === 'FULFILLED') continue;
+        if (
+            req.status === 'CANCELLED' ||
+            req.status === 'FULFILLED' ||
+            req.status === 'CLOSED' ||
+            req.status === 'DRAFT'
+        ) {
+            continue;
+        }
         const createdMs = Date.parse(req.createdAt) || 0;
         for (const line of req.lines) {
             if (line.lineStatus === 'CANCELLED' || line.lineStatus === 'FULFILLED') continue;

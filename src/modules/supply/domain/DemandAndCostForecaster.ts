@@ -11,6 +11,7 @@
  */
 
 import {
+    CanonicalSupplySku,
     DemandForecast,
     DemandPoolSignal,
     Ds594WaterGuardrailEvaluation,
@@ -21,6 +22,7 @@ import {
     roundClp,
     roundSupplyQty,
 } from './types';
+import { findCanonicalSkuById } from '../catalog/DefaultSupplyCatalogSeed';
 
 export const DS594_MIN_WATER_L_PER_PAX_DAY = 100;
 export const DS594_DEFAULT_WATER_L_PER_PAX_DAY = 120;
@@ -60,6 +62,8 @@ export interface TenantDemandObservation {
     geoFix?: { lat: number; lng: number };
     optInMarketplace: boolean;
     canonicalSkuId: string;
+    skuName?: string;
+    categoryCode?: SupplyCategoryCode;
     procurementBucket: ProcurementBucket;
     unitSi: SupplyUnitSi;
     projectedDemandSi: number;
@@ -69,6 +73,9 @@ export interface TenantDemandObservation {
 export interface DemandSignalProjectionOptions {
     windowStartIso: string;
     windowEndIso: string;
+    periodWindow?: string;
+    expiresAt?: string;
+    customCatalog?: readonly CanonicalSupplySku[];
     /** Mínimo k-anonimato (se aplica piso inviolable `>= 3` por Ley N° 21.719) */
     minK?: number;
     generatedAt?: string;
@@ -234,23 +241,19 @@ export function forecastSkuDemand(input: ForecastSkuDemandInput): DemandForecast
     };
 }
 
-function computeMedianBand(prices: readonly number[]): { min: number; max: number } | undefined {
+function computeMedianReferenceClp(prices: readonly number[]): number | undefined {
     const valid = prices.filter((p) => Number.isFinite(p) && p > 0).sort((a, b) => a - b);
     if (valid.length === 0) return undefined;
     const mid = Math.floor(valid.length / 2);
     const median =
         valid.length % 2 === 0 ? (valid[mid - 1] + valid[mid]) / 2 : valid[mid];
-    // Banda anónima ±5% alrededor de la mediana para evitar inferencia de precios individuales
-    return {
-        min: roundClp(median * 0.95),
-        max: roundClp(median * 1.05),
-    };
+    return roundClp(median);
 }
 
 /**
  * `DemandSignalProjector` — Proyector Anónimo de Demanda para Marketplace (Ley N° 21.719 Chile).
  *
- * Garantías inviolables:
+ * Garantías inviolables (alineado 1:1 con `DemandPoolSignalSchema.strict()`):
  * 1. Opt-in explícito: descarta toda observación con `optInMarketplace !== true`.
  * 2. k-anonimato estricto (`k >= 3`): solo emite señal si existen al menos `k` tenants distintos
  *    Y `k` sitios distintos en el mismo `districtCode` + `canonicalSkuId`.
@@ -262,12 +265,18 @@ export function projectAnonymousDemandSignals(
 ): DemandSignalProjectionResult {
     const enforcedK = Math.max(LEY21719_MIN_K_ANONYMITY, Math.floor(options.minK ?? LEY21719_MIN_K_ANONYMITY));
     const generatedAt = options.generatedAt || new Date().toISOString();
+    const periodWindow =
+        options.periodWindow ||
+        `${options.windowStartIso.slice(0, 10)}..${options.windowEndIso.slice(0, 10)}`;
+    const expiresAt = options.expiresAt || options.windowEndIso;
 
     let droppedOptOutCount = 0;
 
     interface GroupBucket {
         districtCode: string;
         canonicalSkuId: string;
+        skuName: string;
+        categoryCode: SupplyCategoryCode;
         procurementBucket: ProcurementBucket;
         unitSi: SupplyUnitSi;
         distinctTenants: Set<string>;
@@ -289,12 +298,15 @@ export function projectAnonymousDemandSignals(
 
         const districtCode = obs.districtCode.trim().toUpperCase();
         const key = `${districtCode}::${obs.canonicalSkuId}::${obs.unitSi}`;
+        const catalogSku = findCanonicalSkuById(obs.canonicalSkuId, options.customCatalog);
 
         let group = groups.get(key);
         if (!group) {
             group = {
                 districtCode,
                 canonicalSkuId: obs.canonicalSkuId,
+                skuName: obs.skuName || catalogSku?.name || obs.canonicalSkuId,
+                categoryCode: obs.categoryCode || catalogSku?.categoryCode || 'OTROS_OPERACIONAL',
                 procurementBucket: obs.procurementBucket,
                 unitSi: obs.unitSi,
                 distinctTenants: new Set<string>(),
@@ -325,21 +337,22 @@ export function projectAnonymousDemandSignals(
             continue;
         }
 
+        const medianRef = computeMedianReferenceClp(group.unitPricesClp);
         const signal: DemandPoolSignal = {
             signalId: `sig-${group.districtCode}-${group.canonicalSkuId}-${options.windowStartIso.slice(0, 10)}`,
             districtCode: group.districtCode,
+            periodWindow,
             canonicalSkuId: group.canonicalSkuId,
+            skuName: group.skuName,
+            categoryCode: group.categoryCode,
             procurementBucket: group.procurementBucket,
             unitSi: group.unitSi,
-            windowStartIso: options.windowStartIso,
-            windowEndIso: options.windowEndIso,
-            contributingSiteCount: group.distinctSites.size,
-            contributingTenantCount: group.distinctTenants.size,
-            aggregatedDemandSi: group.totalDemandSi,
-            medianUnitPriceBandClp: computeMedianBand(group.unitPricesClp),
-            anonymityThresholdK: enforcedK,
-            ley21719Compliant: true,
+            aggregatedQty: group.totalDemandSi,
+            participatingEntitiesCount: group.distinctTenants.size,
+            optInVerified: true,
+            ...(medianRef !== undefined ? { medianReferenceUnitClp: medianRef } : {}),
             generatedAt,
+            expiresAt,
         };
 
         signals.push(signal);
